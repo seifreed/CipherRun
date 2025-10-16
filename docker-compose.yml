@@ -1,0 +1,38 @@
+services:
+  cipherrun:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: cipherrun:latest
+    container_name: cipherrun-testing
+
+    # Network mode host for proper packet capture
+    network_mode: host
+
+    # Privileged mode for tcpdump
+    privileged: true
+
+    # Capabilities for packet capture
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+
+    # Volumes for persistent data
+    volumes:
+      - ./captures:/captures
+      - ./results:/results
+      - ./src:/cipherrun/src:ro
+      - ./data:/cipherrun/data:ro
+
+    # Environment variables
+    environment:
+      - RUST_LOG=info
+      - PCAP_DIR=/captures
+      - RESULTS_DIR=/results
+
+    # Keep container running
+    stdin_open: true
+    tty: true
+
+    # Default command
+    command: /bin/bash

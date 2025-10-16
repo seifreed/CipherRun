@@ -1,0 +1,613 @@
+// CLI module - Command line interface and argument parsing
+
+use clap::Parser;
+use std::path::PathBuf;
+
+#[derive(Parser, Debug, Clone, Default)]
+#[command(author, version, about, long_about = None)]
+#[command(name = "cipherrun")]
+#[command(about = "Fast, modular TLS/SSL security scanner", long_about = None)]
+pub struct Args {
+    /// Target URI (host:port or URL)
+    #[arg(value_name = "URI")]
+    pub target: Option<String>,
+
+    /// Input file with multiple targets
+    #[arg(short = 'f', long = "file", value_name = "FILE")]
+    pub input_file: Option<PathBuf>,
+
+    /// Test MX records for a domain (mail servers)
+    #[arg(long = "mx", value_name = "DOMAIN")]
+    pub mx_domain: Option<String>,
+
+    /// STARTTLS protocol (smtp, imap, pop3, ftp, xmpp, etc.)
+    #[arg(short = 't', long = "starttls", value_name = "PROTOCOL")]
+    pub starttls: Option<String>,
+
+    /// Test all protocols
+    #[arg(short = 'p', long = "protocols")]
+    pub protocols: bool,
+
+    /// Test all ciphers
+    #[arg(short = 'e', long = "each-cipher")]
+    pub each_cipher: bool,
+
+    /// Test ciphers per protocol
+    #[arg(short = 'E', long = "cipher-per-proto")]
+    pub cipher_per_proto: bool,
+
+    /// Test standard cipher categories
+    #[arg(short = 's', long = "std")]
+    pub categories: bool,
+
+    /// Test forward secrecy
+    #[arg(short = 'F', long = "fs")]
+    pub forward_secrecy: bool,
+
+    /// Test server defaults
+    #[arg(short = 'S', long = "server-defaults")]
+    pub server_defaults: bool,
+
+    /// Test server cipher preference
+    #[arg(short = 'P', long = "server-preference")]
+    pub server_preference: bool,
+
+    /// Test HTTP headers
+    #[arg(short = 'h', long = "headers")]
+    pub headers: bool,
+
+    /// Test all vulnerabilities
+    #[arg(short = 'U', long = "vulnerable")]
+    pub vulnerabilities: bool,
+
+    /// Test for Heartbleed
+    #[arg(short = 'H', long = "heartbleed")]
+    pub heartbleed: bool,
+
+    /// Test for CCS Injection
+    #[arg(short = 'I', long = "ccs")]
+    pub ccs: bool,
+
+    /// Test for Ticketbleed
+    #[arg(short = 'T', long = "ticketbleed")]
+    pub ticketbleed: bool,
+
+    /// Test for ROBOT
+    #[arg(long = "robot")]
+    pub robot: bool,
+
+    /// Test for renegotiation vulnerabilities
+    #[arg(short = 'R', long = "renegotiation")]
+    pub renegotiation: bool,
+
+    /// Test for CRIME
+    #[arg(short = 'C', long = "crime")]
+    pub crime: bool,
+
+    /// Test for BREACH
+    #[arg(short = 'B', long = "breach")]
+    pub breach: bool,
+
+    /// Test for POODLE
+    #[arg(short = 'O', long = "poodle")]
+    pub poodle: bool,
+
+    /// Test for TLS_FALLBACK_SCSV
+    #[arg(short = 'Z', long = "tls-fallback")]
+    pub fallback: bool,
+
+    /// Test for SWEET32
+    #[arg(short = 'W', long = "sweet32")]
+    pub sweet32: bool,
+
+    /// Test for BEAST
+    #[arg(short = 'A', long = "beast")]
+    pub beast: bool,
+
+    /// Test for LUCKY13
+    #[arg(short = 'L', long = "lucky13")]
+    pub lucky13: bool,
+
+    /// Test for FREAK
+    #[arg(long = "freak")]
+    pub freak: bool,
+
+    /// Test for LOGJAM
+    #[arg(short = 'J', long = "logjam")]
+    pub logjam: bool,
+
+    /// Test for DROWN
+    #[arg(short = 'D', long = "drown")]
+    pub drown: bool,
+
+    /// Test for 0-RTT / Early Data replay attacks (TLS 1.3)
+    #[arg(long = "early-data")]
+    pub early_data: bool,
+
+    /// Test client simulations
+    #[arg(short = 'c', long = "client-simulation")]
+    pub client_simulation: bool,
+
+    /// Run full test suite
+    #[arg(short = '9', long = "full")]
+    pub full: bool,
+
+    /// Quiet mode (no banner)
+    #[arg(short = 'q', long = "quiet")]
+    pub quiet: bool,
+
+    /// Wide output
+    #[arg(long = "wide")]
+    pub wide: bool,
+
+    /// Color output mode (0-3)
+    #[arg(long = "color", value_name = "MODE", default_value = "2")]
+    pub color: u8,
+
+    /// Output to JSON file
+    #[arg(long = "json", value_name = "FILE")]
+    pub json: Option<PathBuf>,
+
+    /// Pretty print JSON output
+    #[arg(long = "json-pretty")]
+    pub json_pretty: bool,
+
+    /// Output to CSV file
+    #[arg(long = "csv", value_name = "FILE")]
+    pub csv: Option<PathBuf>,
+
+    /// Output to HTML file
+    #[arg(long = "html", value_name = "FILE")]
+    pub html: Option<PathBuf>,
+
+    /// Run all tests
+    #[arg(short = 'a', long = "all")]
+    pub all: bool,
+
+    /// Port to test
+    #[arg(long = "port", value_name = "PORT")]
+    pub port: Option<u16>,
+
+    /// Log file
+    #[arg(long = "logfile", value_name = "FILE")]
+    pub logfile: Option<PathBuf>,
+
+    /// Parallel testing mode
+    #[arg(long = "parallel")]
+    pub parallel: bool,
+
+    /// Maximum parallel connections
+    #[arg(long = "max-parallel", value_name = "NUM", default_value = "20")]
+    pub max_parallel: usize,
+
+    /// Socket timeout in seconds
+    #[arg(long = "socket-timeout", value_name = "SECONDS")]
+    pub socket_timeout: Option<u64>,
+
+    /// OpenSSL binary path
+    #[arg(long = "openssl", value_name = "PATH")]
+    pub openssl_path: Option<PathBuf>,
+
+    /// Use only IPv4
+    #[arg(short = '4')]
+    pub ipv4_only: bool,
+
+    /// Use only IPv6
+    #[arg(short = '6')]
+    pub ipv6_only: bool,
+
+    /// Specific IP to test
+    #[arg(long = "ip", value_name = "IP")]
+    pub ip: Option<String>,
+
+    /// Proxy (host:port)
+    #[arg(long = "proxy", value_name = "HOST:PORT")]
+    pub proxy: Option<String>,
+
+    /// HTTP Basic Authentication (user:password)
+    #[arg(long = "basicauth", value_name = "USER:PASS")]
+    pub basicauth: Option<String>,
+
+    /// Custom User-Agent string
+    #[arg(long = "user-agent", value_name = "STRING")]
+    pub user_agent: Option<String>,
+
+    /// IDS-friendly mode (slower, avoid triggering IDS/IPS)
+    #[arg(long = "ids-friendly")]
+    pub ids_friendly: bool,
+
+    /// Show hints for findings
+    #[arg(long = "hints")]
+    pub hints: bool,
+
+    /// Filter findings by minimum severity (low, medium, high, critical)
+    #[arg(long = "severity", value_name = "LEVEL")]
+    pub severity: Option<String>,
+
+    /// Enable phone-out (CRL, OCSP checks)
+    #[arg(long = "phone-out")]
+    pub phone_out: bool,
+
+    /// Additional CA file or directory
+    #[arg(long = "add-ca", value_name = "PATH")]
+    pub add_ca: Option<PathBuf>,
+
+    /// Client certificate for mTLS (PEM file with cert and unencrypted key)
+    #[arg(long = "mtls", value_name = "FILE")]
+    pub mtls_cert: Option<PathBuf>,
+
+    /// Custom HTTP request headers (can be specified multiple times)
+    #[arg(long = "reqheader", value_name = "HEADER")]
+    pub custom_headers: Vec<String>,
+
+    /// Sneaky mode - leave less traces in target logs
+    #[arg(long = "sneaky")]
+    pub sneaky: bool,
+
+    /// Show RFC/IANA cipher names instead of OpenSSL names
+    #[arg(long = "mapping", value_name = "no-openssl|no-rfc")]
+    pub cipher_mapping: Option<String>,
+
+    /// Show each cipher tested (not just supported ones)
+    #[arg(long = "show-each")]
+    pub show_each: bool,
+
+    /// Colorblind mode (adjust colors for accessibility)
+    #[arg(long = "colorblind")]
+    pub colorblind: bool,
+
+    /// Verbose level (0-6)
+    #[arg(short = 'v', long = "verbose", action = clap::ArgAction::Count)]
+    pub verbose: u8,
+
+    // ============ NEW: Missing CLI Options ============
+    /// XMPP host domain (for STARTTLS XMPP)
+    #[arg(long = "xmpphost", value_name = "DOMAIN")]
+    pub xmpphost: Option<String>,
+
+    /// OpenSSL timeout in seconds
+    #[arg(long = "openssl-timeout", value_name = "SECONDS")]
+    pub openssl_timeout: Option<u64>,
+
+    /// Use OpenSSL native instead of sockets
+    #[arg(long = "ssl-native")]
+    pub ssl_native: bool,
+
+    /// Enable OpenSSL bugs workarounds
+    #[arg(long = "bugs")]
+    pub bugs: bool,
+
+    /// Assume HTTP protocol when detection fails
+    #[arg(long = "assume-http")]
+    pub assume_http: bool,
+
+    /// Warning control mode (batch, off, or default)
+    #[arg(long = "warnings", value_name = "MODE")]
+    pub warnings: Option<String>,
+
+    /// Fast mode - skip some tests for speed
+    #[arg(long = "fast")]
+    pub fast: bool,
+
+    /// List local OpenSSL ciphers and exit
+    #[arg(long = "local")]
+    pub local: bool,
+
+    /// Append to output files instead of overwriting
+    #[arg(long = "append")]
+    pub append: bool,
+
+    /// Overwrite output files without prompting
+    #[arg(long = "overwrite")]
+    pub overwrite: bool,
+
+    /// Prefix for output filenames
+    #[arg(long = "outprefix", value_name = "PREFIX")]
+    pub outprefix: Option<String>,
+
+    /// Disable SSL Labs rating
+    #[arg(long = "disable-rating")]
+    pub disable_rating: bool,
+
+    /// Output all formats with basename (like nmap -oA)
+    #[arg(short = 'o', long = "output-all", value_name = "BASENAME")]
+    pub output_all: Option<PathBuf>,
+
+    // ============ NEW: sslscan parity features ============
+    /// Sleep between connection requests in milliseconds
+    #[arg(long = "sleep", value_name = "MSEC")]
+    pub sleep: Option<u64>,
+
+    /// Connection timeout in seconds (separate from socket timeout)
+    #[arg(long = "connect-timeout", value_name = "SECONDS")]
+    pub connect_timeout: Option<u64>,
+
+    /// Show handshake times in milliseconds
+    #[arg(long = "show-times")]
+    pub show_times: bool,
+
+    /// RDP mode - send RDP preamble before TLS handshake
+    #[arg(long = "rdp")]
+    pub rdp: bool,
+
+    /// Enumerate server signature algorithms
+    #[arg(long = "show-sigs")]
+    pub show_sigs: bool,
+
+    /// Enumerate key exchange groups (curves, DH groups)
+    #[arg(long = "show-groups")]
+    pub show_groups: bool,
+
+    /// Show list of CAs acceptable for client certificates
+    #[arg(long = "show-client-cas")]
+    pub show_client_cas: bool,
+
+    /// Client private key file for mTLS
+    #[arg(long = "pk", value_name = "FILE")]
+    pub client_key: Option<PathBuf>,
+
+    /// Password for client private key
+    #[arg(long = "pkpass", value_name = "PASSWORD")]
+    pub client_key_password: Option<String>,
+
+    /// Client certificate file for mTLS (can be different from --pk)
+    #[arg(long = "certs", value_name = "FILE")]
+    pub client_certs: Option<PathBuf>,
+
+    /// Output to XML file
+    #[arg(long = "xml", value_name = "FILE")]
+    pub xml: Option<PathBuf>,
+
+    // ============ NEW: Additional sslscan parity features ============
+    /// STARTTLS for SMTP (ports 25, 587, 465)
+    #[arg(long = "starttls-smtp")]
+    pub starttls_smtp: bool,
+
+    /// STARTTLS for IMAP (port 143)
+    #[arg(long = "starttls-imap")]
+    pub starttls_imap: bool,
+
+    /// STARTTLS for POP3 (port 110)
+    #[arg(long = "starttls-pop3")]
+    pub starttls_pop3: bool,
+
+    /// STARTTLS for FTP (port 21)
+    #[arg(long = "starttls-ftp")]
+    pub starttls_ftp: bool,
+
+    /// STARTTLS for LDAP (port 389)
+    #[arg(long = "starttls-ldap")]
+    pub starttls_ldap: bool,
+
+    /// STARTTLS for XMPP/Jabber (port 5222)
+    #[arg(long = "starttls-xmpp")]
+    pub starttls_xmpp: bool,
+
+    /// STARTTLS for PostgreSQL (port 5432)
+    #[arg(long = "starttls-psql")]
+    pub starttls_psql: bool,
+
+    /// STARTTLS for MySQL (port 3306)
+    #[arg(long = "starttls-mysql")]
+    pub starttls_mysql: bool,
+
+    /// STARTTLS for IRC (port 6667)
+    #[arg(long = "starttls-irc")]
+    pub starttls_irc: bool,
+
+    /// XMPP server-to-server mode (alternative to --starttls-xmpp)
+    #[arg(long = "xmpp-server")]
+    pub xmpp_server: bool,
+
+    /// Use IANA/RFC cipher names instead of OpenSSL names
+    #[arg(long = "iana-names")]
+    pub iana_names: bool,
+
+    /// Show hexadecimal cipher IDs
+    #[arg(long = "show-cipher-ids")]
+    pub show_cipher_ids: bool,
+
+    /// List all ciphers supported by CipherRun and exit
+    #[arg(long = "show-ciphers")]
+    pub show_ciphers: bool,
+
+    /// Show the full certificate chain (not just leaf)
+    #[arg(long = "show-certificates")]
+    pub show_certificates: bool,
+
+    /// Skip cipher suite enumeration (faster, only protocols + vulnerabilities)
+    #[arg(long = "no-ciphersuites")]
+    pub no_ciphersuites: bool,
+
+    /// Skip TLS Fallback SCSV check
+    #[arg(long = "no-fallback")]
+    pub no_fallback: bool,
+
+    /// Hide EC curve names and DHE key lengths
+    #[arg(long = "no-cipher-details")]
+    pub no_cipher_details: bool,
+
+    /// Display OCSP stapling status
+    #[arg(long = "ocsp")]
+    pub ocsp: bool,
+
+    /// Display version information and exit
+    #[arg(long = "version", short = 'V')]
+    pub version: bool,
+
+    /// Disable colored output (alias for --color 0)
+    #[arg(long = "no-colour")]
+    pub no_colour: bool,
+
+    /// Disable colored output (US spelling, alias for --color 0)
+    #[arg(long = "no-color")]
+    pub no_color: bool,
+
+    /// Custom SNI hostname (for CDN/vhost testing)
+    #[arg(long = "sni-name", value_name = "NAME")]
+    pub sni_name: Option<String>,
+
+    /// Test only SSLv2
+    #[arg(long = "ssl2")]
+    pub ssl2: bool,
+
+    /// Test only SSLv3
+    #[arg(long = "ssl3")]
+    pub ssl3: bool,
+
+    /// Test only TLS 1.0
+    #[arg(long = "tls10")]
+    pub tls10: bool,
+
+    /// Test only TLS 1.1
+    #[arg(long = "tls11")]
+    pub tls11: bool,
+
+    /// Test only TLS 1.2
+    #[arg(long = "tls12")]
+    pub tls12: bool,
+
+    /// Test only TLS 1.3
+    #[arg(long = "tls13")]
+    pub tls13: bool,
+
+    /// Test all TLS protocols (skip SSLv2/SSLv3)
+    #[arg(long = "tlsall")]
+    pub tlsall: bool,
+
+    /// Skip key exchange groups enumeration
+    #[arg(long = "no-groups")]
+    pub no_groups: bool,
+
+    /// Skip TLS compression check (CRIME)
+    #[arg(long = "no-compression")]
+    pub no_compression: bool,
+
+    /// Skip Heartbleed vulnerability check
+    #[arg(long = "no-heartbleed")]
+    pub no_heartbleed: bool,
+
+    /// Skip renegotiation vulnerability check
+    #[arg(long = "no-renegotiation")]
+    pub no_renegotiation: bool,
+
+    /// Skip certificate validation warnings
+    #[arg(long = "no-check-certificate")]
+    pub no_check_certificate: bool,
+}
+
+impl Args {
+    /// Detect which STARTTLS protocol is requested
+    pub fn starttls_protocol(&self) -> Option<crate::starttls::StarttlsProtocol> {
+        use crate::starttls::StarttlsProtocol;
+
+        if self.starttls_smtp {
+            Some(StarttlsProtocol::SMTP)
+        } else if self.starttls_imap {
+            Some(StarttlsProtocol::IMAP)
+        } else if self.starttls_pop3 {
+            Some(StarttlsProtocol::POP3)
+        } else if self.starttls_ftp {
+            Some(StarttlsProtocol::FTP)
+        } else if self.starttls_ldap {
+            Some(StarttlsProtocol::LDAP)
+        } else if self.starttls_xmpp || self.xmpp_server {
+            Some(StarttlsProtocol::XMPP)
+        } else if self.starttls_psql {
+            Some(StarttlsProtocol::POSTGRES)
+        } else if self.starttls_mysql {
+            Some(StarttlsProtocol::MYSQL)
+        } else if self.starttls_irc {
+            Some(StarttlsProtocol::IRC)
+        } else {
+            None
+        }
+    }
+
+    /// Check if we should run the default test suite
+    pub fn run_default_suite(&self) -> bool {
+        !self.protocols
+            && !self.each_cipher
+            && !self.cipher_per_proto
+            && !self.categories
+            && !self.forward_secrecy
+            && !self.server_defaults
+            && !self.server_preference
+            && !self.headers
+            && !self.vulnerabilities
+            && !self.heartbleed
+            && !self.client_simulation
+            && !self.full
+    }
+
+    /// Check if vulnerability testing is enabled
+    pub fn test_vulnerabilities(&self) -> bool {
+        self.vulnerabilities
+            || self.heartbleed
+            || self.ccs
+            || self.ticketbleed
+            || self.robot
+            || self.renegotiation
+            || self.crime
+            || self.breach
+            || self.poodle
+            || self.fallback
+            || self.sweet32
+            || self.beast
+            || self.lucky13
+            || self.freak
+            || self.logjam
+            || self.drown
+            || self.early_data
+            || self.full
+    }
+
+    /// Get the SNI hostname to use (custom or default)
+    pub fn effective_sni(&self, default_hostname: &str) -> String {
+        self.sni_name
+            .clone()
+            .unwrap_or_else(|| default_hostname.to_string())
+    }
+
+    /// Get list of protocols to test based on flags
+    pub fn protocols_to_test(&self) -> Option<Vec<crate::protocols::Protocol>> {
+        use crate::protocols::Protocol;
+
+        // If specific protocol flags are set, only test those
+        if self.ssl2 || self.ssl3 || self.tls10 || self.tls11 || self.tls12 || self.tls13 {
+            let mut protocols = Vec::new();
+            if self.ssl2 {
+                protocols.push(Protocol::SSLv2);
+            }
+            if self.ssl3 {
+                protocols.push(Protocol::SSLv3);
+            }
+            if self.tls10 {
+                protocols.push(Protocol::TLS10);
+            }
+            if self.tls11 {
+                protocols.push(Protocol::TLS11);
+            }
+            if self.tls12 {
+                protocols.push(Protocol::TLS12);
+            }
+            if self.tls13 {
+                protocols.push(Protocol::TLS13);
+            }
+            return Some(protocols);
+        }
+
+        // If --tlsall is set, skip SSL protocols
+        if self.tlsall {
+            return Some(vec![
+                Protocol::TLS10,
+                Protocol::TLS11,
+                Protocol::TLS12,
+                Protocol::TLS13,
+            ]);
+        }
+
+        // Otherwise test all protocols
+        None
+    }
+}

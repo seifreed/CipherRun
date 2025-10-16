@@ -1,0 +1,90 @@
+================================================================================
+                              CipherRun
+           Fast, Modular TLS/SSL Security Scanner Written in Rust
+================================================================================
+
+Copyright (C) 2025 Marc Rivero (@seifreed)
+
+This software is licensed under the GNU General Public License v3.0 (GPL-3.0)
+
+================================================================================
+                         ATTRIBUTION REQUIREMENTS
+================================================================================
+
+If you use, modify, or distribute this software, you MUST:
+
+1. CREDIT THE ORIGINAL AUTHOR
+   - Mention: Marc Rivero (@seifreed)
+   - Include this copyright notice in all copies
+   - Maintain all copyright and license notices
+
+2. PUBLISH YOUR SOURCE CODE
+   - If you distribute the software, you must provide source code
+   - If you modify the software, you must release your changes
+   - All modifications must be under GPL-3.0
+
+3. INCLUDE THE LICENSE
+   - Include a copy of the GPL-3.0 license (see LICENSE file)
+   - Reference the license in your documentation
+   - Make it clear that the software is under GPL-3.0
+
+4. INDICATE CHANGES
+   - If you modify the software, clearly state what you changed
+   - Include a prominent notice that you modified the software
+   - Maintain a changelog if distributing modifications
+
+================================================================================
+                            USAGE EXAMPLES
+================================================================================
+
+CORRECT Attribution Examples:
+
+  "Built with CipherRun by Marc Rivero (@seifreed)"
+  "Based on CipherRun (https://github.com/seifreed/cipherrun)"
+  "Powered by CipherRun - Copyright (C) 2025 Marc Rivero"
+  "Uses CipherRun TLS/SSL scanner by @seifreed"
+
+In README.md or documentation:
+  ## Credits
+  This project uses [CipherRun](https://github.com/seifreed/cipherrun)
+  by Marc Rivero (@seifreed), licensed under GPL-3.0.
+
+In source code headers:
+  // Based on CipherRun by Marc Rivero (@seifreed)
+  // Original: https://github.com/seifreed/cipherrun
+  // Licensed under GPL-3.0
+
+INCORRECT (Not Enough):
+  ❌ No mention of author
+  ❌ Claiming you created it without attribution
+  ❌ Removing copyright notices
+  ❌ Distributing without source code
+  ❌ Using a different license for modifications
+
+================================================================================
+                               CONTACT
+================================================================================
+
+Author:   Marc Rivero
+GitHub:   @seifreed
+Twitter:  @seifreed
+Project:  https://github.com/seifreed/cipherrun
+
+For questions about licensing, please open an issue on GitHub.
+
+================================================================================
+                          WHY GPL-3.0?
+================================================================================
+
+This license ensures:
+✓ The software remains free and open source forever
+✓ Contributors and users get proper credit
+✓ Improvements benefit the entire community
+✓ No one can create closed-source derivatives
+✓ Everyone has the freedom to study, modify, and share
+
+================================================================================
+
+See LICENSE file for the full GNU General Public License v3.0 text.
+
+Last updated: October 2025
