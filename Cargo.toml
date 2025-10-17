@@ -15,7 +15,7 @@ exclude = [
     "tests/*",
     "testssl.sh/*",
     "sslscan/*",
-    "*.txt",
+    "/targets.txt",
     "*.pcap",
     ".git*",
     "Dockerfile",
