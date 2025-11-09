@@ -8,7 +8,6 @@ use crate::utils::network::Target;
 use std::collections::HashMap;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
 use tokio::time::timeout;
 
 use serde::{Deserialize, Serialize};
@@ -56,6 +55,8 @@ pub struct CipherTester {
     sleep_duration: Option<Duration>,
     use_rdp: bool,
     starttls_protocol: Option<crate::starttls::StarttlsProtocol>,
+    test_all_ips: bool,
+    retry_config: Option<crate::utils::retry::RetryConfig>,
 }
 
 impl CipherTester {
@@ -72,6 +73,8 @@ impl CipherTester {
             sleep_duration: None,
             use_rdp,
             starttls_protocol: None,
+            test_all_ips: false,
+            retry_config: None,
         }
     }
 
@@ -108,6 +111,18 @@ impl CipherTester {
     /// Set STARTTLS protocol
     pub fn with_starttls(mut self, protocol: Option<crate::starttls::StarttlsProtocol>) -> Self {
         self.starttls_protocol = protocol;
+        self
+    }
+
+    /// Enable testing all resolved IP addresses (for Anycast pools)
+    pub fn with_test_all_ips(mut self, enable: bool) -> Self {
+        self.test_all_ips = enable;
+        self
+    }
+
+    /// Set retry configuration for handling transient network failures
+    pub fn with_retry_config(mut self, config: Option<crate::utils::retry::RetryConfig>) -> Self {
+        self.retry_config = config;
         self
     }
 
@@ -221,12 +236,49 @@ impl CipherTester {
 
     /// Attempt TLS handshake with specific cipher
     async fn try_cipher_handshake(&self, protocol: Protocol, cipher_hexcode: u16) -> Result<bool> {
-        let addr = self.target.socket_addrs()[0];
+        if self.test_all_ips {
+            // Test all IPs and return true only if ALL support the cipher
+            self.try_cipher_handshake_all_ips(protocol, cipher_hexcode).await
+        } else {
+            // Test only first IP (default behavior)
+            let addr = self.target.socket_addrs()[0];
+            self.try_cipher_handshake_on_ip(protocol, cipher_hexcode, addr).await
+        }
+    }
 
-        // Connect TCP
-        let mut stream = match timeout(self.connect_timeout, TcpStream::connect(addr)).await {
-            Ok(Ok(s)) => s,
-            _ => return Ok(false),
+    /// Test cipher on all IPs
+    async fn try_cipher_handshake_all_ips(&self, protocol: Protocol, cipher_hexcode: u16) -> Result<bool> {
+        let addrs = self.target.socket_addrs();
+
+        if addrs.is_empty() {
+            return Ok(false);
+        }
+
+        let mut all_support = true;
+
+        for addr in &addrs {
+            let ip_supports = self.try_cipher_handshake_on_ip(protocol, cipher_hexcode, *addr).await?;
+            if !ip_supports {
+                all_support = false;
+                break; // Early exit for performance
+            }
+        }
+
+        Ok(all_support)
+    }
+
+    /// Attempt TLS handshake with specific cipher on specific IP
+    async fn try_cipher_handshake_on_ip(&self, protocol: Protocol, cipher_hexcode: u16, addr: std::net::SocketAddr) -> Result<bool> {
+        // Connect TCP with retry logic
+        let mut stream = match crate::utils::network::connect_with_timeout(
+            addr,
+            self.connect_timeout,
+            self.retry_config.as_ref(),
+        )
+        .await
+        {
+            Ok(s) => s,
+            Err(_) => return Ok(false),
         };
 
         // Send RDP preamble if needed
@@ -367,11 +419,19 @@ impl CipherTester {
         protocol: Protocol,
         cipher_hexcodes: &[u16],
     ) -> Result<Option<u16>> {
+        // For cipher preference detection, we only need to test one IP
+        // Use first IP regardless of test_all_ips flag
         let addr = self.target.socket_addrs()[0];
 
-        let mut stream = match timeout(self.connect_timeout, TcpStream::connect(addr)).await {
-            Ok(Ok(s)) => s,
-            _ => return Ok(None),
+        let mut stream = match crate::utils::network::connect_with_timeout(
+            addr,
+            self.connect_timeout,
+            self.retry_config.as_ref(),
+        )
+        .await
+        {
+            Ok(s) => s,
+            Err(_) => return Ok(None),
         };
 
         // Perform STARTTLS negotiation if needed

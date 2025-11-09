@@ -494,6 +494,84 @@ pub struct Args {
     /// Skip certificate validation warnings
     #[arg(long = "no-check-certificate")]
     pub no_check_certificate: bool,
+
+    /// Test all IP addresses resolved for hostname (Anycast pools support)
+    /// By default only the first IP is tested. This flag enables testing
+    /// all IPs and reporting the minimum capability across them.
+    #[arg(long = "test-all-ips")]
+    pub test_all_ips: bool,
+
+    // ============ Retry Configuration ============
+    /// Maximum number of retries for transient network failures (0 = no retries)
+    /// Helps distinguish between permanent failures (connection refused) and
+    /// transient failures (timeouts, connection resets)
+    #[arg(long = "max-retries", value_name = "COUNT", default_value = "3")]
+    pub max_retries: usize,
+
+    /// Initial backoff duration in milliseconds for retry logic
+    /// Backoff doubles with each retry (exponential backoff) up to max-backoff
+    #[arg(long = "retry-backoff", value_name = "MSEC", default_value = "100")]
+    pub retry_backoff_ms: u64,
+
+    /// Maximum backoff duration in milliseconds for retry logic
+    /// Prevents excessive delays during multiple retries
+    #[arg(long = "max-backoff", value_name = "MSEC", default_value = "5000")]
+    pub max_backoff_ms: u64,
+
+    /// Disable retry logic (fail immediately on first error)
+    /// Equivalent to --max-retries 0
+    #[arg(long = "no-retry")]
+    pub no_retry: bool,
+
+    // ============ Database Persistence ============
+    /// Database configuration file (TOML format)
+    #[arg(long = "db-config", value_name = "FILE")]
+    pub db_config: Option<PathBuf>,
+
+    /// Store scan results in database
+    #[arg(long = "store")]
+    pub store_results: bool,
+
+    /// Query scan history for target (hostname:port)
+    #[arg(long = "history", value_name = "HOSTNAME:PORT")]
+    pub history: Option<String>,
+
+    /// Limit for history results
+    #[arg(long = "history-limit", value_name = "COUNT", default_value = "10")]
+    pub history_limit: i64,
+
+    /// Cleanup old scans (delete scans older than N days)
+    #[arg(long = "cleanup-days", value_name = "DAYS")]
+    pub cleanup_days: Option<i64>,
+
+    /// Initialize database (create tables and run migrations)
+    #[arg(long = "db-init")]
+    pub db_init: bool,
+
+    /// Generate example database configuration file
+    #[arg(long = "db-config-example", value_name = "FILE")]
+    pub db_config_example: Option<PathBuf>,
+
+    // ============ Certificate Monitoring ============
+    /// Start the monitoring daemon
+    #[arg(long = "monitor")]
+    pub monitor: bool,
+
+    /// Monitoring configuration file (TOML format)
+    #[arg(long = "monitor-config", value_name = "FILE")]
+    pub monitor_config: Option<PathBuf>,
+
+    /// File with domains to monitor (one per line, host:port format)
+    #[arg(long = "monitor-domains", value_name = "FILE")]
+    pub monitor_domains: Option<PathBuf>,
+
+    /// Single domain to monitor (host:port format)
+    #[arg(long = "monitor-domain", value_name = "HOST:PORT")]
+    pub monitor_domain: Option<String>,
+
+    /// Test alert channels (send test alert to all configured channels)
+    #[arg(long = "test-alert")]
+    pub test_alert: bool,
 }
 
 impl Args {
@@ -609,5 +687,21 @@ impl Args {
 
         // Otherwise test all protocols
         None
+    }
+
+    /// Build a RetryConfig from CLI arguments
+    ///
+    /// Returns None if retry is disabled (--no-retry or --max-retries 0)
+    /// Otherwise returns a configured RetryConfig with the specified parameters
+    pub fn retry_config(&self) -> Option<crate::utils::retry::RetryConfig> {
+        if self.no_retry || self.max_retries == 0 {
+            return None;
+        }
+
+        Some(crate::utils::retry::RetryConfig::new(
+            self.max_retries,
+            std::time::Duration::from_millis(self.retry_backoff_ms),
+            std::time::Duration::from_millis(self.max_backoff_ms),
+        ))
     }
 }

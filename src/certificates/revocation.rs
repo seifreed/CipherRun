@@ -2,6 +2,9 @@
 
 use super::parser::CertificateInfo;
 use crate::Result;
+use openssl::hash::MessageDigest;
+use openssl::ocsp::{OcspCertId, OcspRequest, OcspResponse, OcspResponseStatus};
+use openssl::x509::X509;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tokio::time::timeout;
@@ -230,59 +233,150 @@ impl RevocationChecker {
         .await??;
 
         if !response.status().is_success() {
-            anyhow::bail!("OCSP responder returned error: {}", response.status());
+            return Err(anyhow::anyhow!("OCSP responder returned error: {}", response.status()).into());
         }
 
         let response_bytes = response.bytes().await?;
 
         // Parse OCSP response
-        self.parse_ocsp_response(&response_bytes)
+        self.parse_ocsp_response(&response_bytes, cert, issuer)
     }
 
-    /// Build OCSP request (simplified)
+    /// Build OCSP request using OpenSSL
     fn build_ocsp_request(
         &self,
-        _cert: &CertificateInfo,
+        cert: &CertificateInfo,
         issuer: Option<&CertificateInfo>,
     ) -> Result<Vec<u8>> {
-        // In a full implementation, we would construct a proper OCSP request
-        // using ASN.1 encoding with the certificate serial number and issuer
-        // For now, return placeholder
+        // Issuer certificate is required for building OCSP requests
+        let issuer_info = issuer.ok_or_else(|| {
+            anyhow::anyhow!("Issuer certificate required for OCSP request")
+        })?;
 
-        // This is a simplified stub - real implementation would:
-        // 1. Parse certificate serial number
-        // 2. Get issuer name hash and key hash
-        // 3. Build OCSP Request ASN.1 structure
-        // 4. DER encode the request
+        // Parse certificates from DER bytes using OpenSSL
+        let cert_x509 = X509::from_der(&cert.der_bytes)
+            .map_err(|e| anyhow::anyhow!("Failed to parse certificate DER: {}", e))?;
 
-        if issuer.is_none() {
-            anyhow::bail!("Issuer certificate required for OCSP request");
-        }
+        let issuer_x509 = X509::from_der(&issuer_info.der_bytes)
+            .map_err(|e| anyhow::anyhow!("Failed to parse issuer certificate DER: {}", e))?;
 
-        // Placeholder - would need full OCSP request builder
-        anyhow::bail!("OCSP request building not fully implemented")
+        // Create OCSP certificate ID
+        // This combines the certificate serial number with hashes of the issuer's name and public key
+        let cert_id = OcspCertId::from_cert(MessageDigest::sha1(), &cert_x509, &issuer_x509)
+            .map_err(|e| anyhow::anyhow!("Failed to create OCSP CertId: {}", e))?;
+
+        // Build OCSP request
+        let mut ocsp_req = OcspRequest::new()
+            .map_err(|e| anyhow::anyhow!("Failed to create OCSP request: {}", e))?;
+
+        // Add the certificate ID to the request
+        ocsp_req.add_id(cert_id)
+            .map_err(|e| anyhow::anyhow!("Failed to add CertId to OCSP request: {}", e))?;
+
+        // Optionally add a nonce for replay protection (recommended but not required)
+        // Some OCSP responders may not support nonces
+        // ocsp_req.add_nonce()
+        //     .map_err(|e| anyhow::anyhow!("Failed to add nonce to OCSP request: {}", e))?;
+
+        // Serialize the request to DER format
+        let request_der = ocsp_req.to_der()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize OCSP request to DER: {}", e))?;
+
+        Ok(request_der)
     }
 
-    /// Parse OCSP response (simplified)
-    fn parse_ocsp_response(&self, response_bytes: &[u8]) -> Result<RevocationStatus> {
-        // In a full implementation, we would parse the OCSP response
-        // and extract the certificate status
+    /// Parse OCSP response using OpenSSL
+    fn parse_ocsp_response(
+        &self,
+        response_bytes: &[u8],
+        cert: &CertificateInfo,
+        issuer: Option<&CertificateInfo>,
+    ) -> Result<RevocationStatus> {
+        // Parse the OCSP response from DER bytes
+        let ocsp_response = OcspResponse::from_der(response_bytes)
+            .map_err(|e| anyhow::anyhow!("Failed to parse OCSP response: {}", e))?;
 
-        // This is a simplified stub - real implementation would:
-        // 1. Parse OCSP Response ASN.1 structure
-        // 2. Verify response signature
-        // 3. Check response validity period
-        // 4. Extract certificate status (good/revoked/unknown)
+        // Check the response status
+        let response_status = ocsp_response.status();
 
-        // For now, check basic response structure
-        if response_bytes.len() < 10 {
-            return Ok(RevocationStatus::Error);
+        match response_status {
+            OcspResponseStatus::SUCCESSFUL => {
+                // Response is successful, extract the basic response
+            }
+            OcspResponseStatus::MALFORMED_REQUEST => {
+                return Err(anyhow::anyhow!("OCSP responder reported malformed request").into());
+            }
+            OcspResponseStatus::INTERNAL_ERROR => {
+                return Err(anyhow::anyhow!("OCSP responder reported internal error").into());
+            }
+            OcspResponseStatus::TRY_LATER => {
+                return Err(anyhow::anyhow!("OCSP responder is temporarily unavailable").into());
+            }
+            OcspResponseStatus::SIG_REQUIRED => {
+                return Err(anyhow::anyhow!("OCSP responder requires signed request").into());
+            }
+            OcspResponseStatus::UNAUTHORIZED => {
+                return Err(anyhow::anyhow!("OCSP responder reported unauthorized request").into());
+            }
+            _ => {
+                return Err(anyhow::anyhow!("OCSP responder returned unknown status: {:?}", response_status).into());
+            }
         }
 
-        // Placeholder - would need full OCSP response parser
-        // In testssl.sh, this uses OpenSSL's ocsp command
+        // Get the basic response from the OCSP response
+        let basic_response = ocsp_response.basic()
+            .map_err(|e| anyhow::anyhow!("Failed to get basic OCSP response: {}", e))?;
+
+        // Recreate the certificate ID to look up the status
+        let issuer_info = issuer.ok_or_else(|| {
+            anyhow::anyhow!("Issuer certificate required for OCSP response parsing")
+        })?;
+
+        let cert_x509 = X509::from_der(&cert.der_bytes)
+            .map_err(|e| anyhow::anyhow!("Failed to parse certificate DER: {}", e))?;
+
+        let issuer_x509 = X509::from_der(&issuer_info.der_bytes)
+            .map_err(|e| anyhow::anyhow!("Failed to parse issuer certificate DER: {}", e))?;
+
+        let cert_id = OcspCertId::from_cert(MessageDigest::sha1(), &cert_x509, &issuer_x509)
+            .map_err(|e| anyhow::anyhow!("Failed to create OCSP CertId: {}", e))?;
+
+        // Find the status for our certificate
+        if let Some(status) = basic_response.find_status(&cert_id) {
+            // Check the certificate status
+            match status.status {
+                openssl::ocsp::OcspCertStatus::GOOD => {
+                    tracing::debug!("OCSP response: Certificate status is GOOD");
+                    return Ok(RevocationStatus::Good);
+                }
+                openssl::ocsp::OcspCertStatus::REVOKED => {
+                    tracing::warn!("OCSP response: Certificate status is REVOKED");
+                    
+                    // Revocation reason is available
+                    tracing::warn!("Revocation reason: {:?}", status.reason);
+                    
+                    if let Some(revocation_time) = status.revocation_time {
+                        tracing::warn!("Revocation time: {}", revocation_time);
+                    }
+                    
+                    return Ok(RevocationStatus::Revoked);
+                }
+                openssl::ocsp::OcspCertStatus::UNKNOWN => {
+                    tracing::debug!("OCSP response: Certificate status is UNKNOWN");
+                    return Ok(RevocationStatus::Unknown);
+                }
+                _ => {
+                    tracing::warn!("OCSP response: Unexpected certificate status");
+                    return Ok(RevocationStatus::Error);
+                }
+            }
+        }
+
+        // No certificate status found in response for this cert_id
+        tracing::warn!("OCSP response contains no status for the requested certificate");
         Ok(RevocationStatus::Unknown)
     }
+
 
     /// Check CRL revocation status
     async fn check_crl(&self, cert: &CertificateInfo, crl_url: &str) -> Result<RevocationStatus> {
@@ -294,7 +388,7 @@ impl RevocationChecker {
         let response = timeout(self.check_timeout, client.get(crl_url).send()).await??;
 
         if !response.status().is_success() {
-            anyhow::bail!("CRL download failed: {}", response.status());
+            return Err(anyhow::anyhow!("CRL download failed: {}", response.status()).into());
         }
 
         let crl_bytes = response.bytes().await?;
@@ -369,13 +463,21 @@ mod tests {
             serial_number: "123".to_string(),
             not_before: "2024-01-01".to_string(),
             not_after: "2025-01-01".to_string(),
+            expiry_countdown: Some("expires in 1 year".to_string()),
             signature_algorithm: "sha256WithRSAEncryption".to_string(),
             public_key_algorithm: "rsaEncryption".to_string(),
             public_key_size: Some(2048),
+            rsa_exponent: None,
             san: vec![],
             is_ca: false,
             key_usage: vec![],
             extended_key_usage: vec![],
+            extended_validation: false,
+            ev_oids: vec![],
+            pin_sha256: None,
+            fingerprint_sha256: None,
+            debian_weak_key: None,
+            aia_url: None,
             der_bytes: vec![],
         };
 

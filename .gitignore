@@ -1,0 +1,42 @@
+# Rust build artifacts
+/target
+Cargo.lock
+
+# Test output directories
+/captures
+/results
+*.pcap
+*.pcapng
+
+# External tools (should not be in repo)
+/sslscan
+/testssl.sh
+
+# Test files
+targets.txt
+*.tmp
+*.test
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+*.log
+
+# Output files
+*.json
+*.csv
+*.html
+
+# Environment
+.env
+.env.local
+
+# Claude Code
+.claude/
+PUBLISHING.md

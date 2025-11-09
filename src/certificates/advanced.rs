@@ -365,7 +365,7 @@ impl CertificateAdvancedTester {
 
                 Ok(cipher.name().to_string())
             }
-            Err(e) => Err(anyhow::anyhow!("Connection failed: {}", e)),
+            Err(e) => Err(anyhow::anyhow!("Connection failed: {}", e).into()),
         }
     }
 }

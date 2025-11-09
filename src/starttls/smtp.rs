@@ -24,12 +24,16 @@ impl SmtpNegotiator {
         reader.read_line(&mut line).await?;
 
         if line.len() < 3 {
-            return Err(anyhow::anyhow!("Invalid SMTP response: too short"));
+            return Err(crate::error::TlsError::ParseError {
+                message: "Invalid SMTP response: too short".to_string(),
+            });
         }
 
-        let code: u16 = line[0..3]
-            .parse()
-            .map_err(|_| anyhow::anyhow!("Invalid SMTP status code"))?;
+        let code: u16 = line[0..3].parse().map_err(|_| {
+            crate::error::TlsError::ParseError {
+                message: "Invalid SMTP status code".to_string(),
+            }
+        })?;
 
         Ok((code, line))
     }
@@ -43,10 +47,9 @@ impl StarttlsNegotiator for SmtpNegotiator {
         // 1. Read server greeting (220)
         let (code, _response) = Self::read_response(&mut reader).await?;
         if code != 220 {
-            return Err(anyhow::anyhow!(
-                "SMTP greeting failed: expected 220, got {}",
-                code
-            ));
+            return Err(crate::error::TlsError::UnexpectedResponse {
+                details: format!("SMTP greeting failed: expected 220, got {}", code),
+            });
         }
 
         // 2. Send EHLO
@@ -60,10 +63,9 @@ impl StarttlsNegotiator for SmtpNegotiator {
         loop {
             let (code, line) = Self::read_response(&mut reader).await?;
             if code != 250 {
-                return Err(anyhow::anyhow!(
-                    "SMTP EHLO failed: expected 250, got {}",
-                    code
-                ));
+                return Err(crate::error::TlsError::UnexpectedResponse {
+                    details: format!("SMTP EHLO failed: expected 250, got {}", code),
+                });
             }
 
             // Check for STARTTLS capability
@@ -79,7 +81,10 @@ impl StarttlsNegotiator for SmtpNegotiator {
         }
 
         if !starttls_supported {
-            return Err(anyhow::anyhow!("SMTP server does not support STARTTLS"));
+            return Err(crate::error::TlsError::StarttlsError {
+                protocol: "SMTP".to_string(),
+                details: "Server does not support STARTTLS".to_string(),
+            });
         }
 
         // 4. Send STARTTLS command
@@ -89,10 +94,10 @@ impl StarttlsNegotiator for SmtpNegotiator {
         // 5. Read STARTTLS response (220)
         let (code, _) = Self::read_response(&mut reader).await?;
         if code != 220 {
-            return Err(anyhow::anyhow!(
-                "SMTP STARTTLS failed: expected 220, got {}",
-                code
-            ));
+            return Err(crate::error::TlsError::StarttlsError {
+                protocol: "SMTP".to_string(),
+                details: format!("Expected 220, got {}", code),
+            });
         }
 
         // STARTTLS negotiation successful, TLS handshake can now begin

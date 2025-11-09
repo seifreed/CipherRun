@@ -10,5 +10,6 @@ pub mod mx;
 pub mod network;
 pub mod nmap;
 pub mod proxy;
+pub mod retry;
 pub mod sneaky;
 pub mod timing;

@@ -26,7 +26,9 @@ impl XmppNegotiator {
         loop {
             let n = stream.read(&mut buffer).await?;
             if n == 0 {
-                return Err(anyhow::anyhow!("Connection closed while reading"));
+                return Err(crate::error::TlsError::ConnectionClosed {
+                    details: "Connection closed while reading".to_string(),
+                });
             }
 
             let chunk = String::from_utf8_lossy(&buffer[..n]);
@@ -37,7 +39,7 @@ impl XmppNegotiator {
             }
 
             if accumulated.len() > 65536 {
-                return Err(anyhow::anyhow!("Response too large"));
+                return Err(crate::error::TlsError::Other("Response too large".to_string()));
             }
         }
     }
@@ -59,7 +61,10 @@ impl StarttlsNegotiator for XmppNegotiator {
 
         // Check if STARTTLS is offered
         if !response.contains("<starttls") {
-            return Err(anyhow::anyhow!("XMPP server does not offer STARTTLS"));
+            return Err(crate::error::TlsError::StarttlsError {
+                protocol: "XMPP".to_string(),
+                details: "Server does not offer STARTTLS".to_string(),
+            });
         }
 
         // 3. Send STARTTLS request
@@ -74,11 +79,14 @@ impl StarttlsNegotiator for XmppNegotiator {
             // STARTTLS negotiation successful
             Ok(())
         } else if response.contains("<failure") {
-            Err(anyhow::anyhow!(
-                "XMPP STARTTLS failed: server sent <failure/>"
-            ))
+            Err(crate::error::TlsError::StarttlsError {
+                protocol: "XMPP".to_string(),
+                details: "Server sent <failure/>".to_string(),
+            })
         } else {
-            Err(anyhow::anyhow!("XMPP STARTTLS: unexpected response"))
+            Err(crate::error::TlsError::UnexpectedResponse {
+                details: "XMPP STARTTLS: unexpected response".to_string(),
+            })
         }
     }
 

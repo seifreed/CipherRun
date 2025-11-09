@@ -104,10 +104,10 @@ impl Dig {
                 raw_output: stdout,
             })
         } else {
-            Err(anyhow::anyhow!(
+            Err(crate::error::TlsError::Other(format!(
                 "dig lookup failed: {}",
                 String::from_utf8_lossy(&output.stderr)
-            ))
+            )))
         }
     }
 
@@ -134,10 +134,10 @@ impl Dig {
                 raw_output: stdout,
             })
         } else {
-            Err(anyhow::anyhow!(
+            Err(crate::error::TlsError::Other(format!(
                 "dig detailed lookup failed: {}",
                 String::from_utf8_lossy(&output.stderr)
-            ))
+            )))
         }
     }
 
@@ -159,10 +159,10 @@ impl Dig {
 
             Ok(records)
         } else {
-            Err(anyhow::anyhow!(
+            Err(crate::error::TlsError::Other(format!(
                 "dig reverse lookup failed: {}",
                 String::from_utf8_lossy(&output.stderr)
-            ))
+            )))
         }
     }
 
@@ -196,10 +196,10 @@ impl Dig {
                 raw_output: stdout,
             })
         } else {
-            Err(anyhow::anyhow!(
+            Err(crate::error::TlsError::Other(format!(
                 "dig nameserver query failed: {}",
                 String::from_utf8_lossy(&output.stderr)
-            ))
+            )))
         }
     }
 }
@@ -244,10 +244,10 @@ impl Host {
             let addresses = parse_host_output(&stdout);
             Ok(addresses)
         } else {
-            Err(anyhow::anyhow!(
+            Err(crate::error::TlsError::Other(format!(
                 "host lookup failed: {}",
                 String::from_utf8_lossy(&output.stderr)
-            ))
+            )))
         }
     }
 
@@ -264,10 +264,10 @@ impl Host {
             let records = parse_host_output(&stdout);
             Ok(records)
         } else {
-            Err(anyhow::anyhow!(
+            Err(crate::error::TlsError::Other(format!(
                 "host type lookup failed: {}",
                 String::from_utf8_lossy(&output.stderr)
-            ))
+            )))
         }
     }
 
@@ -280,10 +280,10 @@ impl Host {
             let records = parse_host_output(&stdout);
             Ok(records)
         } else {
-            Err(anyhow::anyhow!(
+            Err(crate::error::TlsError::Other(format!(
                 "host reverse lookup failed: {}",
                 String::from_utf8_lossy(&output.stderr)
-            ))
+            )))
         }
     }
 }

@@ -21,9 +21,11 @@ impl LmtpNegotiator {
         let mut response = String::new();
         reader.read_line(&mut response).await?;
 
-        let code = response[0..3]
-            .parse::<u16>()
-            .map_err(|_| anyhow::anyhow!("Invalid LMTP response code"))?;
+        let code = response[0..3].parse::<u16>().map_err(|_| {
+            crate::error::TlsError::ParseError {
+                message: "Invalid LMTP response code".to_string(),
+            }
+        })?;
 
         Ok((code, response))
     }
@@ -37,10 +39,9 @@ impl StarttlsNegotiator for LmtpNegotiator {
         // Read server greeting (220)
         let (code, _response) = Self::read_response(&mut reader).await?;
         if code != 220 {
-            return Err(anyhow::anyhow!(
-                "LMTP greeting failed: expected 220, got {}",
-                code
-            ));
+            return Err(crate::error::TlsError::UnexpectedResponse {
+                details: format!("LMTP greeting failed: expected 220, got {}", code),
+            });
         }
 
         // Send LHLO (LMTP equivalent of EHLO)
@@ -54,7 +55,10 @@ impl StarttlsNegotiator for LmtpNegotiator {
 
             // 250 = success, 250- means more lines follow
             if code != 250 {
-                return Err(anyhow::anyhow!("LHLO failed: {}", response));
+                return Err(crate::error::TlsError::StarttlsError {
+                    protocol: "LMTP".to_string(),
+                    details: format!("LHLO failed: {}", response),
+                });
             }
 
             // Check if STARTTLS is supported
@@ -75,7 +79,10 @@ impl StarttlsNegotiator for LmtpNegotiator {
         // Read STARTTLS response (220 = ready to start TLS)
         let (code, response) = Self::read_response(&mut reader).await?;
         if code != 220 {
-            return Err(anyhow::anyhow!("STARTTLS failed: {}", response));
+            return Err(crate::error::TlsError::StarttlsError {
+                protocol: "LMTP".to_string(),
+                details: format!("STARTTLS failed: {}", response),
+            });
         }
 
         Ok(())

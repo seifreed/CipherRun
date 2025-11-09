@@ -361,12 +361,21 @@ impl ClientHelloBuilder {
     }
 }
 
+/// Extended handshake information from ServerHello
+#[derive(Debug, Clone)]
+pub struct ServerHelloInfo {
+    pub protocol: Protocol,
+    pub cipher: String,
+    pub alpn: Option<String>,
+    pub key_exchange_group: Option<u16>,
+}
+
 /// Perform custom TLS handshake
 pub async fn perform_custom_handshake(
     stream: &mut TcpStream,
     client_hello: &[u8],
     timeout_duration: Duration,
-) -> Result<(Protocol, String)> {
+) -> Result<ServerHelloInfo> {
     use tokio::time::timeout;
 
     // Send ClientHello
@@ -377,29 +386,35 @@ pub async fn perform_custom_handshake(
     let n = timeout(timeout_duration, stream.read(&mut buffer)).await??;
 
     if n == 0 {
-        anyhow::bail!("Server closed connection");
+        return Err(crate::error::TlsError::ConnectionClosed {
+            details: "Server closed connection".to_string()
+        });
     }
 
-    // Parse ServerHello
-    let (protocol, cipher) = parse_server_hello(&buffer[..n])?;
-
-    Ok((protocol, cipher))
+    // Parse ServerHello with extended info
+    parse_server_hello_extended(&buffer[..n])
 }
 
 /// Parse ServerHello to extract protocol and cipher
 fn parse_server_hello(data: &[u8]) -> Result<(Protocol, String)> {
-    // Basic parsing - look for ServerHello (0x02)
+    let info = parse_server_hello_extended(data)?;
+    Ok((info.protocol, info.cipher))
+}
+
+/// Parse ServerHello with extended information (ALPN, key exchange)
+fn parse_server_hello_extended(data: &[u8]) -> Result<ServerHelloInfo> {
+    // Look for ServerHello (0x02)
     for i in 0..data.len().saturating_sub(10) {
         if data[i] == 0x16 && // Handshake
            i + 5 < data.len() &&
            data[i + 5] == 0x02
         {
-            // ServerHello
+            // ServerHello found
 
             // Extract version (bytes 9-10 in ServerHello)
             if i + 11 < data.len() {
                 let version = u16::from_be_bytes([data[i + 9], data[i + 10]]);
-                let protocol = match version {
+                let mut protocol = match version {
                     0x0304 => Protocol::TLS13,
                     0x0303 => Protocol::TLS12,
                     0x0302 => Protocol::TLS11,
@@ -409,25 +424,114 @@ fn parse_server_hello(data: &[u8]) -> Result<(Protocol, String)> {
                 };
 
                 // Extract cipher suite (after 32-byte random + session ID)
-                // Skip to cipher suite field
+                let mut cipher_name = "Unknown".to_string();
+                let mut alpn = None;
+                let mut key_exchange_group = None;
+
                 if i + 44 < data.len() {
                     let session_id_len = data[i + 43] as usize;
                     let cipher_pos = i + 44 + session_id_len;
 
                     if cipher_pos + 1 < data.len() {
                         let cipher = u16::from_be_bytes([data[cipher_pos], data[cipher_pos + 1]]);
-                        let cipher_name = format!("0x{:04X}", cipher);
+                        cipher_name = format_cipher_name(cipher);
 
-                        return Ok((protocol, cipher_name));
+                        // Parse extensions (after cipher suite + compression method)
+                        let ext_start = cipher_pos + 2 + 1; // +2 for cipher, +1 for compression
+                        if ext_start + 2 < data.len() {
+                            let ext_len = u16::from_be_bytes([data[ext_start], data[ext_start + 1]]) as usize;
+                            let mut ext_pos = ext_start + 2;
+                            let ext_end = ext_pos + ext_len;
+
+                            // Parse each extension
+                            while ext_pos + 4 <= ext_end && ext_pos + 4 <= data.len() {
+                                let ext_type = u16::from_be_bytes([data[ext_pos], data[ext_pos + 1]]);
+                                let ext_data_len = u16::from_be_bytes([data[ext_pos + 2], data[ext_pos + 3]]) as usize;
+                                ext_pos += 4;
+
+                                if ext_pos + ext_data_len > data.len() {
+                                    break;
+                                }
+
+                                match ext_type {
+                                    0x0010 => {
+                                        // ALPN extension
+                                        if ext_data_len >= 3 {
+                                            let list_len = u16::from_be_bytes([data[ext_pos], data[ext_pos + 1]]) as usize;
+                                            if ext_pos + 2 + list_len <= data.len() {
+                                                let proto_len = data[ext_pos + 2] as usize;
+                                                if ext_pos + 3 + proto_len <= data.len() {
+                                                    alpn = String::from_utf8(data[ext_pos + 3..ext_pos + 3 + proto_len].to_vec()).ok();
+                                                }
+                                            }
+                                        }
+                                    }
+                                    0x002b => {
+                                        // Supported versions (TLS 1.3)
+                                        if ext_data_len >= 2 {
+                                            let selected_version = u16::from_be_bytes([data[ext_pos], data[ext_pos + 1]]);
+                                            protocol = match selected_version {
+                                                0x0304 => Protocol::TLS13,
+                                                0x0303 => Protocol::TLS12,
+                                                _ => protocol,
+                                            };
+                                        }
+                                    }
+                                    0x0033 => {
+                                        // Key share (TLS 1.3)
+                                        if ext_data_len >= 2 {
+                                            key_exchange_group = Some(u16::from_be_bytes([data[ext_pos], data[ext_pos + 1]]));
+                                        }
+                                    }
+                                    _ => {}
+                                }
+
+                                ext_pos += ext_data_len;
+                            }
+                        }
                     }
                 }
 
-                return Ok((protocol, "Unknown".to_string()));
+                return Ok(ServerHelloInfo {
+                    protocol,
+                    cipher: cipher_name,
+                    alpn,
+                    key_exchange_group,
+                });
             }
         }
     }
 
-    anyhow::bail!("Could not parse ServerHello")
+    Err(crate::error::TlsError::InvalidHandshake {
+        details: "Could not parse ServerHello".to_string()
+    })
+}
+
+/// Format cipher suite code to human-readable name
+fn format_cipher_name(cipher: u16) -> String {
+    match cipher {
+        // TLS 1.3 cipher suites
+        0x1301 => "TLS_AES_128_GCM_SHA256".to_string(),
+        0x1302 => "TLS_AES_256_GCM_SHA384".to_string(),
+        0x1303 => "TLS_CHACHA20_POLY1305_SHA256".to_string(),
+        0x1304 => "TLS_AES_128_CCM_SHA256".to_string(),
+        0x1305 => "TLS_AES_128_CCM_8_SHA256".to_string(),
+
+        // TLS 1.2 ECDHE cipher suites
+        0xc02b => "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256".to_string(),
+        0xc02c => "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384".to_string(),
+        0xc02f => "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256".to_string(),
+        0xc030 => "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384".to_string(),
+        0xcca8 => "TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256".to_string(),
+        0xcca9 => "TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256".to_string(),
+
+        // Other common cipher suites
+        0x009e => "TLS_DHE_RSA_WITH_AES_128_GCM_SHA256".to_string(),
+        0x009f => "TLS_DHE_RSA_WITH_AES_256_GCM_SHA384".to_string(),
+
+        // Default: hex representation
+        _ => format!("0x{:04X}", cipher),
+    }
 }
 
 #[cfg(test)]

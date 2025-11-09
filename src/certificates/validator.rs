@@ -1,6 +1,7 @@
 // Certificate Validator - Validate certificates against CA stores and check validity
 
 use super::parser::{CertificateChain, CertificateInfo};
+use super::trust_stores::{TrustStoreValidator, TrustValidationResult};
 use crate::Result;
 use crate::data::CA_STORES;
 use chrono::Utc;
@@ -16,6 +17,8 @@ pub struct ValidationResult {
     pub not_expired: bool,
     pub signature_valid: bool,
     pub trusted_ca: Option<String>,
+    /// Multi-platform trust validation result
+    pub platform_trust: Option<TrustValidationResult>,
 }
 
 /// Validation issue
@@ -52,6 +55,8 @@ pub enum IssueType {
 pub struct CertificateValidator {
     hostname: String,
     skip_warnings: bool,
+    /// Optional trust store validator for multi-platform validation
+    trust_validator: Option<TrustStoreValidator>,
 }
 
 impl CertificateValidator {
@@ -60,6 +65,7 @@ impl CertificateValidator {
         Self {
             hostname,
             skip_warnings: false,
+            trust_validator: None,
         }
     }
 
@@ -68,7 +74,30 @@ impl CertificateValidator {
         Self {
             hostname,
             skip_warnings: skip,
+            trust_validator: None,
         }
+    }
+
+    /// Create validator with multi-platform trust validation enabled
+    pub fn with_platform_trust(hostname: String) -> Result<Self> {
+        Ok(Self {
+            hostname,
+            skip_warnings: false,
+            trust_validator: Some(TrustStoreValidator::new()?),
+        })
+    }
+
+    /// Create validator with full configuration
+    pub fn with_config(hostname: String, skip_warnings: bool, enable_platform_trust: bool) -> Result<Self> {
+        Ok(Self {
+            hostname,
+            skip_warnings,
+            trust_validator: if enable_platform_trust {
+                Some(TrustStoreValidator::new()?)
+            } else {
+                None
+            },
+        })
     }
 
     /// Validate certificate chain
@@ -93,6 +122,7 @@ impl CertificateValidator {
                     not_expired: false,
                     signature_valid: false,
                     trusted_ca: None,
+                    platform_trust: None,
                 });
             }
         };
@@ -130,6 +160,23 @@ impl CertificateValidator {
             });
         }
 
+        // 7. Perform multi-platform trust validation if enabled
+        let platform_trust = if let Some(ref validator) = self.trust_validator {
+            match validator.validate_chain(chain) {
+                Ok(result) => Some(result),
+                Err(e) => {
+                    issues.push(ValidationIssue {
+                        severity: IssueSeverity::Info,
+                        issue_type: IssueType::UntrustedCA,
+                        description: format!("Platform trust validation failed: {}", e),
+                    });
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         Ok(ValidationResult {
             valid,
             issues,
@@ -138,6 +185,7 @@ impl CertificateValidator {
             not_expired,
             signature_valid: true, // Simplified for now
             trusted_ca,
+            platform_trust,
         })
     }
 
@@ -427,13 +475,21 @@ mod tests {
             serial_number: "123".to_string(),
             not_before: "2024-01-01".to_string(),
             not_after: "2025-01-01".to_string(),
+            expiry_countdown: None,
             signature_algorithm: "sha256WithRSAEncryption".to_string(),
             public_key_algorithm: "rsaEncryption".to_string(),
             public_key_size: Some(2048),
+            rsa_exponent: None,
             san: vec!["example.com".to_string(), "www.example.com".to_string()],
             is_ca: false,
             key_usage: vec![],
             extended_key_usage: vec![],
+            extended_validation: false,
+            ev_oids: vec![],
+            pin_sha256: None,
+            fingerprint_sha256: None,
+            debian_weak_key: None,
+            aia_url: None,
             der_bytes: vec![],
         };
 
@@ -452,13 +508,21 @@ mod tests {
             serial_number: "123".to_string(),
             not_before: "2024-01-01".to_string(),
             not_after: "2025-01-01".to_string(),
+            expiry_countdown: Some("expires in 1 year".to_string()),
             signature_algorithm: "sha256WithRSAEncryption".to_string(),
             public_key_algorithm: "rsaEncryption".to_string(),
             public_key_size: Some(1024), // Weak!
+            rsa_exponent: Some("e 65537".to_string()),
             san: vec!["example.com".to_string()],
             is_ca: false,
             key_usage: vec![],
             extended_key_usage: vec![],
+            extended_validation: false,
+            ev_oids: vec![],
+            pin_sha256: None,
+            fingerprint_sha256: None,
+            debian_weak_key: None,
+            aia_url: None,
             der_bytes: vec![],
         };
 

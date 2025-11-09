@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use super::hsts_preload::PreloadStatus;
 
 /// Security header issue severity
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -21,6 +22,8 @@ pub struct HeaderIssue {
     pub issue_type: IssueType,
     pub description: String,
     pub recommendation: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preload_status: Option<PreloadStatus>,
 }
 
 /// Type of header issue
@@ -37,12 +40,51 @@ pub enum IssueType {
 pub struct SecurityHeaderChecker;
 
 impl SecurityHeaderChecker {
-    /// Check all security headers
+    /// Check all security headers (synchronous version without preload check)
     pub fn check_all_headers(headers: &HashMap<String, String>) -> Vec<HeaderIssue> {
         let mut issues = Vec::new();
 
         // Check critical security headers
-        Self::check_hsts(headers, &mut issues);
+        Self::check_hsts(headers, &mut issues, None);
+        Self::check_csp(headers, &mut issues);
+        Self::check_x_frame_options(headers, &mut issues);
+        Self::check_x_content_type_options(headers, &mut issues);
+        Self::check_x_xss_protection(headers, &mut issues);
+        Self::check_referrer_policy(headers, &mut issues);
+        Self::check_permissions_policy(headers, &mut issues);
+        Self::check_expect_ct(headers, &mut issues);
+        Self::check_expect_staple(headers, &mut issues);
+        Self::check_cors(headers, &mut issues);
+
+        issues
+    }
+
+    /// Check all security headers with HSTS preload verification (async version)
+    pub async fn check_all_headers_with_preload(
+        headers: &HashMap<String, String>,
+        domain: &str,
+    ) -> Vec<HeaderIssue> {
+        let mut issues = Vec::new();
+
+        // Check HSTS with preload verification
+        use super::hsts_preload::HstsPreloadChecker;
+        let checker = HstsPreloadChecker::new();
+
+        // Check if HSTS has preload directive
+        let has_preload = if let Some((_, value)) = Self::find_header_case_insensitive(headers, "strict-transport-security") {
+            value.to_lowercase().contains("preload")
+        } else {
+            false
+        };
+
+        // Only check preload status if preload directive is present
+        let preload_status = if has_preload {
+            checker.check_preload_status(domain).await.ok()
+        } else {
+            None
+        };
+
+        Self::check_hsts(headers, &mut issues, preload_status);
         Self::check_csp(headers, &mut issues);
         Self::check_x_frame_options(headers, &mut issues);
         Self::check_x_content_type_options(headers, &mut issues);
@@ -57,7 +99,11 @@ impl SecurityHeaderChecker {
     }
 
     /// Check HTTP Strict Transport Security (HSTS)
-    fn check_hsts(headers: &HashMap<String, String>, issues: &mut Vec<HeaderIssue>) {
+    fn check_hsts(
+        headers: &HashMap<String, String>,
+        issues: &mut Vec<HeaderIssue>,
+        preload_status: Option<PreloadStatus>,
+    ) {
         let key = Self::find_header_case_insensitive(headers, "strict-transport-security");
 
         if let Some((_, value)) = key {
@@ -80,6 +126,7 @@ impl SecurityHeaderChecker {
                                 age
                             ),
                             recommendation: "Set max-age to at least 31536000 (1 year)".to_string(),
+                            preload_status: None,
                         });
                     }
                 } else {
@@ -89,6 +136,7 @@ impl SecurityHeaderChecker {
                         issue_type: IssueType::Invalid,
                         description: "HSTS max-age value is invalid".to_string(),
                         recommendation: "Set a valid max-age directive".to_string(),
+                        preload_status: None,
                     });
                 }
             } else {
@@ -98,6 +146,7 @@ impl SecurityHeaderChecker {
                     issue_type: IssueType::Invalid,
                     description: "HSTS header missing max-age directive".to_string(),
                     recommendation: "Add max-age directive".to_string(),
+                    preload_status: None,
                 });
             }
 
@@ -108,6 +157,7 @@ impl SecurityHeaderChecker {
                     issue_type: IssueType::Weak,
                     description: "HSTS does not include subdomains".to_string(),
                     recommendation: "Consider adding 'includeSubDomains' directive".to_string(),
+                    preload_status: None,
                 });
             }
 
@@ -119,7 +169,50 @@ impl SecurityHeaderChecker {
                     description: "HSTS preload not enabled".to_string(),
                     recommendation: "Consider adding 'preload' directive for browser preload lists"
                         .to_string(),
+                    preload_status: None,
                 });
+            } else if let Some(status) = &preload_status {
+                // Preload directive is present, check if actually preloaded
+                use super::hsts_preload::PreloadSource;
+
+                let not_in_browsers = !status.in_chrome || !status.in_firefox || !status.in_edge;
+
+                if not_in_browsers && !matches!(status.source, PreloadSource::Error(_)) {
+                    let mut browsers_missing = Vec::new();
+                    if !status.in_chrome {
+                        browsers_missing.push("Chrome");
+                    }
+                    if !status.in_firefox {
+                        browsers_missing.push("Firefox");
+                    }
+                    if !status.in_edge {
+                        browsers_missing.push("Edge");
+                    }
+                    if !status.in_safari {
+                        browsers_missing.push("Safari");
+                    }
+
+                    let severity = if browsers_missing.len() >= 3 {
+                        IssueSeverity::Medium
+                    } else {
+                        IssueSeverity::Low
+                    };
+
+                    issues.push(HeaderIssue {
+                        header_name: "Strict-Transport-Security".to_string(),
+                        severity,
+                        issue_type: IssueType::Weak,
+                        description: format!(
+                            "HSTS preload directive present but not in browser preload lists: {}",
+                            browsers_missing.join(", ")
+                        ),
+                        recommendation: format!(
+                            "Submit domain to https://hstspreload.org/ (Status: {})",
+                            status.chromium_status.as_deref().unwrap_or("unknown")
+                        ),
+                        preload_status: Some(status.clone()),
+                    });
+                }
             }
         } else {
             issues.push(HeaderIssue {
@@ -130,6 +223,7 @@ impl SecurityHeaderChecker {
                 recommendation:
                     "Add 'Strict-Transport-Security: max-age=31536000; includeSubDomains; preload'"
                         .to_string(),
+                preload_status: None,
             });
         }
     }
@@ -148,6 +242,7 @@ impl SecurityHeaderChecker {
                     description: "CSP allows 'unsafe-inline' which reduces XSS protection"
                         .to_string(),
                     recommendation: "Remove 'unsafe-inline' and use nonces or hashes".to_string(),
+                    preload_status: None,
                 });
             }
 
@@ -159,6 +254,7 @@ impl SecurityHeaderChecker {
                     description: "CSP allows 'unsafe-eval' which can enable code injection"
                         .to_string(),
                     recommendation: "Remove 'unsafe-eval' directive".to_string(),
+                    preload_status: None,
                 });
             }
 
@@ -169,6 +265,7 @@ impl SecurityHeaderChecker {
                     issue_type: IssueType::Weak,
                     description: "CSP missing default-src or script-src directive".to_string(),
                     recommendation: "Add default-src or script-src directive".to_string(),
+                    preload_status: None,
                 });
             }
         } else {
@@ -179,6 +276,7 @@ impl SecurityHeaderChecker {
                 description: "CSP header is missing".to_string(),
                 recommendation: "Add Content-Security-Policy header to prevent XSS attacks"
                     .to_string(),
+                preload_status: None,
             });
         }
     }
@@ -199,6 +297,7 @@ impl SecurityHeaderChecker {
                     issue_type: IssueType::Invalid,
                     description: format!("Invalid X-Frame-Options value: {}", value),
                     recommendation: "Use 'DENY' or 'SAMEORIGIN'".to_string(),
+                    preload_status: None,
                 });
             }
         } else {
@@ -210,6 +309,7 @@ impl SecurityHeaderChecker {
                 recommendation:
                     "Add 'X-Frame-Options: DENY' or 'SAMEORIGIN' to prevent clickjacking"
                         .to_string(),
+                preload_status: None,
             });
         }
     }
@@ -229,6 +329,7 @@ impl SecurityHeaderChecker {
                     issue_type: IssueType::Invalid,
                     description: format!("Invalid X-Content-Type-Options value: {}", value),
                     recommendation: "Set to 'nosniff'".to_string(),
+                    preload_status: None,
                 });
             }
         } else {
@@ -239,6 +340,7 @@ impl SecurityHeaderChecker {
                 description: "X-Content-Type-Options header is missing".to_string(),
                 recommendation: "Add 'X-Content-Type-Options: nosniff' to prevent MIME-sniffing"
                     .to_string(),
+                preload_status: None,
             });
         }
     }
@@ -258,6 +360,7 @@ impl SecurityHeaderChecker {
                     recommendation:
                         "Enable with '1; mode=block' or remove (deprecated, use CSP instead)"
                             .to_string(),
+                    preload_status: None,
                 });
             }
         } else {
@@ -268,6 +371,7 @@ impl SecurityHeaderChecker {
                 description: "X-XSS-Protection header is missing (deprecated)".to_string(),
                 recommendation: "Header is deprecated. Use Content-Security-Policy instead"
                     .to_string(),
+                preload_status: None,
             });
         }
     }
@@ -287,6 +391,7 @@ impl SecurityHeaderChecker {
                     recommendation:
                         "Use 'no-referrer', 'strict-origin', or 'strict-origin-when-cross-origin'"
                             .to_string(),
+                    preload_status: None,
                 });
             }
         } else {
@@ -297,6 +402,7 @@ impl SecurityHeaderChecker {
                 description: "Referrer-Policy header is missing".to_string(),
                 recommendation: "Add 'Referrer-Policy: strict-origin-when-cross-origin'"
                     .to_string(),
+                preload_status: None,
             });
         }
     }
@@ -315,6 +421,7 @@ impl SecurityHeaderChecker {
                 description: "Permissions-Policy header is missing".to_string(),
                 recommendation: "Consider adding Permissions-Policy to control browser features"
                     .to_string(),
+                preload_status: None,
             });
         }
     }
@@ -330,6 +437,7 @@ impl SecurityHeaderChecker {
                 issue_type: IssueType::Deprecated,
                 description: "Expect-CT header is deprecated".to_string(),
                 recommendation: "Header is no longer needed as CT is now mandatory".to_string(),
+                preload_status: None,
             });
         }
     }
@@ -345,6 +453,7 @@ impl SecurityHeaderChecker {
                 issue_type: IssueType::Deprecated,
                 description: "Expect-Staple header was never standardized".to_string(),
                 recommendation: "Remove this header".to_string(),
+                preload_status: None,
             });
         }
     }
@@ -368,6 +477,7 @@ impl SecurityHeaderChecker {
                     description: "CORS allows credentials with wildcard origin".to_string(),
                     recommendation: "Do not use '*' with Access-Control-Allow-Credentials: true"
                         .to_string(),
+                    preload_status: None,
                 });
             }
 
@@ -377,6 +487,7 @@ impl SecurityHeaderChecker {
                 issue_type: IssueType::Weak,
                 description: "CORS allows all origins with '*'".to_string(),
                 recommendation: "Specify allowed origins explicitly".to_string(),
+                preload_status: None,
             });
         }
     }

@@ -1,5 +1,45 @@
 // SSL Labs Scoring System - Calculate component scores
 // Based on: https://github.com/ssllabs/research/wiki/SSL-Server-Rating-Guide
+//
+// ## SSL Labs Compatibility Mode
+//
+// This implementation aligns with SSL Labs grading methodology:
+//
+// ### TLS 1.3 Requirement (Gap 7 Implementation)
+// - **Grade A (85+) requires TLS 1.3 support**
+// - Without TLS 1.3, the grade is **capped at A- (score 84)**
+// - This matches SSL Labs policy: "This server does not support TLS 1.3" → caps grade at A-
+//
+// ### Score Ranges
+// - A+: 95-100 (excellent - best practice security)
+// - A:  85-94  (excellent - strong security) **REQUIRES TLS 1.3**
+// - A-: 80-84  (excellent - minor issues)
+// - B:  65-79  (good - adequate security)
+// - C:  50-64  (fair - mediocre security)
+// - D:  35-49  (poor - weak security)
+// - E:  20-34  (poor - very weak security)
+// - F:  0-19   (failing - critical security issues)
+// - T:  Certificate not trusted
+// - M:  Certificate name mismatch
+//
+// ### Component Weights
+// - Certificate:   30%
+// - Protocol:      30%
+// - Key Exchange:  20%
+// - Cipher:        20%
+//
+// ### Instant Failures
+// - SSLv2 support → Score 0 (grade F)
+// - NULL ciphers → Score 0 (grade F)
+// - EXPORT ciphers → Score 0 (grade F)
+// - Certificate expired → Grade T
+// - Certificate hostname mismatch → Grade M
+// - Certificate trust chain invalid → Grade T
+//
+// ### License
+// Copyright (C) 2025 Marc Rivero López (@seifreed)
+// Licensed under GPL-3.0
+//
 
 use crate::certificates::validator::ValidationResult;
 use crate::ciphers::tester::ProtocolCipherSummary;
@@ -113,6 +153,11 @@ impl RatingCalculator {
     }
 
     /// Calculate protocol support score (0-100)
+    ///
+    /// SSL Labs Compatibility Mode:
+    /// - TLS 1.3 is REQUIRED for grade A (score 85+)
+    /// - Without TLS 1.3, grade is capped at A- (score 84)
+    /// - This aligns with SSL Labs methodology where TLS 1.3 is mandatory for best grades
     fn calculate_protocol_score(protocols: &[ProtocolTestResult]) -> u8 {
         let mut score = 100u8;
 
@@ -136,6 +181,17 @@ impl RatingCalculator {
 
         if !has_modern_tls {
             score = score.saturating_sub(20);
+        }
+
+        // SSL Labs Compatibility: Cap grade at A- (84) if TLS 1.3 is not supported
+        // This matches SSL Labs requirement: "TLS 1.3 is required for grade A"
+        let has_tls13 = protocols.iter().any(|p| {
+            p.supported && p.protocol == Protocol::TLS13
+        });
+
+        if !has_tls13 {
+            // Cap at 84 (A- range is 80-84)
+            score = score.min(84);
         }
 
         score
@@ -273,5 +329,149 @@ mod tests {
     fn test_certificate_score_expired() {
         // Test with expired certificate would require building a ValidationResult
         // Leaving as placeholder for integration tests
+    }
+
+    #[test]
+    fn test_protocol_score_with_tls13() {
+        // Server with TLS 1.3 should get full score (no cap)
+        let protocols = vec![
+            ProtocolTestResult {
+                protocol: Protocol::TLS12,
+                supported: true,
+                preferred: false,
+                ciphers_count: 10,
+                handshake_time_ms: None,
+                heartbeat_enabled: None,
+            },
+            ProtocolTestResult {
+                protocol: Protocol::TLS13,
+                supported: true,
+                preferred: true,
+                ciphers_count: 5,
+                handshake_time_ms: None,
+                heartbeat_enabled: None,
+            },
+        ];
+        let score = RatingCalculator::calculate_protocol_score(&protocols);
+        assert_eq!(score, 100, "Server with TLS 1.3 should get full score");
+    }
+
+    #[test]
+    fn test_protocol_score_without_tls13_caps_at_84() {
+        // Server with only TLS 1.2 (no TLS 1.3) should be capped at 84 (A-)
+        let protocols = vec![
+            ProtocolTestResult {
+                protocol: Protocol::TLS12,
+                supported: true,
+                preferred: true,
+                ciphers_count: 10,
+                handshake_time_ms: None,
+                heartbeat_enabled: None,
+            },
+        ];
+        let score = RatingCalculator::calculate_protocol_score(&protocols);
+        assert_eq!(score, 84, "Server without TLS 1.3 should be capped at 84 (A-)");
+    }
+
+    #[test]
+    fn test_protocol_score_without_tls13_with_old_tls() {
+        // Server with TLS 1.0, 1.1, 1.2 but no TLS 1.3 should be capped at 84
+        // Initial score 100 - 5 (TLS 1.0) - 3 (TLS 1.1) = 92
+        // Then capped at 84 due to missing TLS 1.3
+        let protocols = vec![
+            ProtocolTestResult {
+                protocol: Protocol::TLS10,
+                supported: true,
+                preferred: false,
+                ciphers_count: 20,
+                handshake_time_ms: None,
+                heartbeat_enabled: None,
+            },
+            ProtocolTestResult {
+                protocol: Protocol::TLS11,
+                supported: true,
+                preferred: false,
+                ciphers_count: 15,
+                handshake_time_ms: None,
+                heartbeat_enabled: None,
+            },
+            ProtocolTestResult {
+                protocol: Protocol::TLS12,
+                supported: true,
+                preferred: true,
+                ciphers_count: 10,
+                handshake_time_ms: None,
+                heartbeat_enabled: None,
+            },
+        ];
+        let score = RatingCalculator::calculate_protocol_score(&protocols);
+        // Score would be 92 (100 - 5 - 3), but capped at 84
+        assert_eq!(score, 84, "Server without TLS 1.3 should be capped at 84 even with high score");
+    }
+
+    #[test]
+    fn test_protocol_score_sslv3_no_cap_due_to_penalty() {
+        // Server with SSLv3 and TLS 1.2 (no TLS 1.3)
+        // Initial score 100 - 20 (SSLv3) = 80, then cap at 84 (no effect since already below)
+        let protocols = vec![
+            ProtocolTestResult {
+                protocol: Protocol::SSLv3,
+                supported: true,
+                preferred: false,
+                ciphers_count: 50,
+                handshake_time_ms: None,
+                heartbeat_enabled: None,
+            },
+            ProtocolTestResult {
+                protocol: Protocol::TLS12,
+                supported: true,
+                preferred: true,
+                ciphers_count: 10,
+                handshake_time_ms: None,
+                heartbeat_enabled: None,
+            },
+        ];
+        let score = RatingCalculator::calculate_protocol_score(&protocols);
+        assert_eq!(score, 80, "Server with SSLv3 gets 80, cap at 84 doesn't apply");
+    }
+
+    #[test]
+    fn test_protocol_score_sslv2_instant_fail() {
+        // SSLv2 should result in instant 0 score regardless of TLS 1.3
+        let protocols = vec![
+            ProtocolTestResult {
+                protocol: Protocol::SSLv2,
+                supported: true,
+                preferred: false,
+                ciphers_count: 20,
+                handshake_time_ms: None,
+                heartbeat_enabled: None,
+            },
+            ProtocolTestResult {
+                protocol: Protocol::TLS13,
+                supported: true,
+                preferred: true,
+                ciphers_count: 5,
+                handshake_time_ms: None,
+                heartbeat_enabled: None,
+            },
+        ];
+        let score = RatingCalculator::calculate_protocol_score(&protocols);
+        assert_eq!(score, 0, "SSLv2 support should result in instant fail");
+    }
+
+    #[test]
+    fn test_grade_conversion_with_tls13_cap() {
+        // Test that score of 84 converts to A- grade
+        let grade = Grade::from_score(84);
+        assert_eq!(grade, Grade::AMinus, "Score 84 should be grade A-");
+
+        // Test that score of 85 converts to A grade
+        let grade = Grade::from_score(85);
+        assert_eq!(grade, Grade::A, "Score 85 should be grade A");
+
+        // Test that score of 100 converts to A+ grade
+        let grade = Grade::from_score(100);
+        assert_eq!(grade, Grade::APlus, "Score 100 should be grade A+");
     }
 }

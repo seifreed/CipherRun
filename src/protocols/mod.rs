@@ -91,6 +91,11 @@ pub struct ProtocolTestResult {
     pub preferred: bool,
     pub ciphers_count: usize,
     pub handshake_time_ms: Option<u64>,
+    /// Heartbeat extension (RFC 6520) support detection
+    /// Some(true) if server supports heartbeat extension (type 0x000f)
+    /// Some(false) if server does not support it
+    /// None if not tested or handshake failed
+    pub heartbeat_enabled: Option<bool>,
 }
 
 /// TLS extension
@@ -141,6 +146,7 @@ pub mod extensions_complete;
 pub mod fallback_scsv;
 pub mod groups;
 pub mod handshake;
+pub mod intolerance;
 pub mod legacy_compat;
 pub mod npn;
 pub mod rc4;

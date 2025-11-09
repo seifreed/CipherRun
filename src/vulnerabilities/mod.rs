@@ -26,6 +26,11 @@ pub enum VulnerabilityType {
     StarttlsInjection,
     Opossum,
     EarlyDataReplay,
+    PaddingOracle2016, // CVE-2016-2107
+    ZombiePoodle,      // CVE-2019-5592 - Observable MAC validity oracle
+    GoldenDoodle,      // CVE-2019-5592 - Padding oracle via error differentiation
+    SleepingPoodle,    // CVE-2019-5592 - Timing-based padding oracle
+    OpenSsl0Length,    // CVE-2011-4576 - Zero-length TLS fragment vulnerability
 }
 
 /// Vulnerability test result
@@ -53,6 +58,7 @@ pub mod beast;
 pub mod breach;
 pub mod ccs;
 pub mod crime;
+pub mod debian_keys;
 pub mod drown;
 pub mod early_data;
 pub mod freak;
@@ -61,6 +67,7 @@ pub mod heartbleed;
 pub mod logjam;
 pub mod lucky13;
 pub mod opossum;
+pub mod padding_oracle_2016;
 pub mod poodle;
 pub mod robot;
 pub mod starttls_injection;

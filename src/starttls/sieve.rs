@@ -48,7 +48,7 @@ impl StarttlsNegotiator for SieveNegotiator {
         }
 
         if !starttls_supported {
-            return Err(anyhow::anyhow!("Sieve server does not support STARTTLS"));
+            return Err(crate::error::TlsError::StarttlsError { protocol: "Sieve".to_string(), details: "Server does not support STARTTLS".to_string() });
         }
 
         // Send STARTTLS command
@@ -58,7 +58,10 @@ impl StarttlsNegotiator for SieveNegotiator {
         // Read STARTTLS response (OK = ready to start TLS)
         let response = Self::read_response(&mut reader).await?;
         if !response.starts_with("OK") {
-            return Err(anyhow::anyhow!("STARTTLS failed: {}", response));
+            return Err(crate::error::TlsError::StarttlsError {
+                protocol: "Sieve".to_string(),
+                details: format!("STARTTLS failed: {}", response),
+            });
         }
 
         Ok(())

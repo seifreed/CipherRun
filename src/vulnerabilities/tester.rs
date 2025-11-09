@@ -37,8 +37,14 @@ impl VulnerabilityScanner {
 
     /// Create new vulnerability scanner with CLI args
     pub fn with_args(target: Target, args: &crate::Args) -> Self {
-        let protocol_tester = ProtocolTester::new(target.clone());
-        let cipher_tester = CipherTester::new(target.clone());
+        let mut protocol_tester = ProtocolTester::new(target.clone());
+        let mut cipher_tester = CipherTester::new(target.clone());
+
+        // Enable testing all IPs if specified
+        if args.test_all_ips {
+            protocol_tester = protocol_tester.with_test_all_ips(true);
+            cipher_tester = cipher_tester.with_test_all_ips(true);
+        }
 
         Self {
             target,
@@ -85,6 +91,10 @@ impl VulnerabilityScanner {
         results.push(self.test_drown().await?);
         results.push(self.test_poodle_ssl().await?);
 
+        // Extended POODLE variants (CBC padding oracles)
+        let poodle_variants = self.test_poodle_variants().await?;
+        results.extend(poodle_variants);
+
         // Cipher-based checks (use cache)
         results.push(self.test_rc4_cached(&cipher_cache).await?);
         results.push(self.test_3des_cached(&cipher_cache).await?);
@@ -114,6 +124,9 @@ impl VulnerabilityScanner {
 
         // 0-RTT / Early Data replay attacks (TLS 1.3)
         results.push(self.test_early_data().await?);
+
+        // OpenSSL Padding Oracle (CVE-2016-2107)
+        results.push(self.test_padding_oracle_2016().await?);
 
         // More complex checks that require specific handshakes
         // These will be implemented in separate modules
@@ -345,6 +358,74 @@ impl VulnerabilityScanner {
         })
     }
 
+    /// Test for all POODLE variants (Zombie, GOLDENDOODLE, Sleeping, 0-Length)
+    /// Returns a vector of vulnerability results, one for each variant
+    pub async fn test_poodle_variants(&self) -> Result<Vec<VulnerabilityResult>> {
+        use crate::vulnerabilities::poodle::PoodleTester;
+
+        let tester = PoodleTester::new(self.target.clone());
+        let test_result = tester.test_all_variants().await?;
+
+        let mut results = Vec::new();
+
+        // Convert each variant result to VulnerabilityResult
+        for variant_result in test_result.variants {
+            // Skip SSLv3 and TLS POODLE as they're already tested separately
+            if matches!(
+                variant_result.variant,
+                crate::vulnerabilities::poodle::PoodleVariant::SslV3
+                    | crate::vulnerabilities::poodle::PoodleVariant::Tls
+            ) {
+                continue;
+            }
+
+            let vuln_type = match variant_result.variant {
+                crate::vulnerabilities::poodle::PoodleVariant::ZombiePoodle => {
+                    VulnerabilityType::ZombiePoodle
+                }
+                crate::vulnerabilities::poodle::PoodleVariant::GoldenDoodle => {
+                    VulnerabilityType::GoldenDoodle
+                }
+                crate::vulnerabilities::poodle::PoodleVariant::SleepingPoodle => {
+                    VulnerabilityType::SleepingPoodle
+                }
+                crate::vulnerabilities::poodle::PoodleVariant::OpenSsl0Length => {
+                    VulnerabilityType::OpenSsl0Length
+                }
+                _ => continue, // Skip SSLv3 and TLS variants
+            };
+
+            let severity = if variant_result.vulnerable {
+                match variant_result.variant {
+                    crate::vulnerabilities::poodle::PoodleVariant::ZombiePoodle
+                    | crate::vulnerabilities::poodle::PoodleVariant::GoldenDoodle => {
+                        Severity::High
+                    }
+                    crate::vulnerabilities::poodle::PoodleVariant::SleepingPoodle => {
+                        Severity::Medium
+                    }
+                    crate::vulnerabilities::poodle::PoodleVariant::OpenSsl0Length => {
+                        Severity::High
+                    }
+                    _ => Severity::Info,
+                }
+            } else {
+                Severity::Info
+            };
+
+            results.push(VulnerabilityResult {
+                vuln_type,
+                vulnerable: variant_result.vulnerable,
+                details: variant_result.details.clone(),
+                cve: Some(variant_result.variant.cve().to_string()),
+                cwe: Some("CWE-310".to_string()), // Cryptographic Issues
+                severity,
+            });
+        }
+
+        Ok(results)
+    }
+
     /// Test for BEAST (CVE-2011-3389)
     /// Affects TLS 1.0 with CBC ciphers
     pub async fn test_beast(&self) -> Result<VulnerabilityResult> {
@@ -422,7 +503,7 @@ impl VulnerabilityScanner {
     pub async fn test_tls_fallback(&self) -> Result<VulnerabilityResult> {
         use crate::protocols::fallback_scsv::FallbackScsvTester;
 
-        let tester = FallbackScsvTester::new(self.target.clone());
+        let mut tester = FallbackScsvTester::new(self.target.clone());
         let result = tester.test().await?;
 
         Ok(VulnerabilityResult {
@@ -500,6 +581,28 @@ impl VulnerabilityScanner {
             cwe: Some("CWE-294".to_string()), // CWE-294: Authentication Bypass by Capture-replay
             severity: if result.vulnerable {
                 Severity::Medium
+            } else {
+                Severity::Info
+            },
+        })
+    }
+
+    /// Test for OpenSSL Padding Oracle (CVE-2016-2107)
+    /// Affects OpenSSL 1.0.1 - 1.0.1t and 1.0.2 - 1.0.2h with AES-NI
+    pub async fn test_padding_oracle_2016(&self) -> Result<VulnerabilityResult> {
+        use crate::vulnerabilities::padding_oracle_2016::PaddingOracle2016Tester;
+
+        let tester = PaddingOracle2016Tester::new(self.target.clone());
+        let result = tester.test().await?;
+
+        Ok(VulnerabilityResult {
+            vuln_type: VulnerabilityType::PaddingOracle2016,
+            vulnerable: result.vulnerable,
+            details: result.details,
+            cve: Some("CVE-2016-2107".to_string()),
+            cwe: Some("CWE-203".to_string()), // CWE-203: Observable Discrepancy (timing attack)
+            severity: if result.vulnerable {
+                Severity::High
             } else {
                 Severity::Info
             },

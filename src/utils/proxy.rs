@@ -99,7 +99,7 @@ pub async fn connect_via_proxy(
 
     // Parse status line
     if !status_line.contains("200") {
-        anyhow::bail!("Proxy CONNECT failed: {}", status_line.trim());
+        crate::tls_bail!("Proxy CONNECT failed: {}", status_line.trim());
     }
 
     // Read remaining headers until empty line

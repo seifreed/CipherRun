@@ -32,7 +32,10 @@ impl StarttlsNegotiator for ImapNegotiator {
         // 1. Read server greeting (* OK)
         let greeting = Self::read_response(&mut reader).await?;
         if !greeting.starts_with("* OK") {
-            return Err(anyhow::anyhow!("IMAP greeting failed: {}", greeting));
+            return Err(crate::error::TlsError::StarttlsError {
+                protocol: "IMAP".to_string(),
+                details: format!("Greeting failed: {}", greeting),
+            });
         }
 
         // 2. Send CAPABILITY command to check STARTTLS support
@@ -54,12 +57,18 @@ impl StarttlsNegotiator for ImapNegotiator {
             }
 
             if line.starts_with("a001 NO") || line.starts_with("a001 BAD") {
-                return Err(anyhow::anyhow!("IMAP CAPABILITY command failed"));
+                return Err(crate::error::TlsError::StarttlsError {
+                    protocol: "IMAP".to_string(),
+                    details: "CAPABILITY command failed".to_string(),
+                });
             }
         }
 
         if !starttls_supported {
-            return Err(anyhow::anyhow!("IMAP server does not support STARTTLS"));
+            return Err(crate::error::TlsError::StarttlsError {
+                protocol: "IMAP".to_string(),
+                details: "Server does not support STARTTLS".to_string(),
+            });
         }
 
         // 4. Send STARTTLS command
@@ -69,7 +78,10 @@ impl StarttlsNegotiator for ImapNegotiator {
         // 5. Read STARTTLS response
         let response = Self::read_response(&mut reader).await?;
         if !response.starts_with("a002 OK") {
-            return Err(anyhow::anyhow!("IMAP STARTTLS failed: {}", response));
+            return Err(crate::error::TlsError::StarttlsError {
+                protocol: "IMAP".to_string(),
+                details: format!("STARTTLS failed: {}", response),
+            });
         }
 
         // STARTTLS negotiation successful

@@ -1,7 +1,7 @@
 // FTP STARTTLS Negotiator (AUTH TLS)
 
 use super::protocols::{StarttlsNegotiator, StarttlsProtocol};
-use crate::Result;
+use crate::{Result, tls_bail};
 use async_trait::async_trait;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWriteExt, BufReader};
 
@@ -26,12 +26,14 @@ impl FtpNegotiator {
             reader.read_line(&mut line).await?;
 
             if line.len() < 3 {
-                return Err(anyhow::anyhow!("Invalid FTP response: too short"));
+                tls_bail!("Invalid FTP response: too short");
             }
 
             let code: u16 = line[0..3]
                 .parse()
-                .map_err(|_| anyhow::anyhow!("Invalid FTP status code"))?;
+                .map_err(|_| crate::error::TlsError::ParseError {
+                    message: "Invalid FTP status code".to_string()
+                })?;
 
             if first_code == 0 {
                 first_code = code;
@@ -58,10 +60,7 @@ impl StarttlsNegotiator for FtpNegotiator {
         // 1. Read server greeting (220)
         let (code, _response) = Self::read_response(&mut reader).await?;
         if code != 220 {
-            return Err(anyhow::anyhow!(
-                "FTP greeting failed: expected 220, got {}",
-                code
-            ));
+            tls_bail!("FTP greeting failed: expected 220, got {}", code);
         }
 
         // 2. Send AUTH TLS command
@@ -73,13 +72,9 @@ impl StarttlsNegotiator for FtpNegotiator {
         if code != 234 {
             // Some servers might return 502 (command not implemented)
             if code == 502 {
-                return Err(anyhow::anyhow!("FTP server does not support AUTH TLS"));
+                tls_bail!("FTP server does not support AUTH TLS");
             }
-            return Err(anyhow::anyhow!(
-                "FTP AUTH TLS failed: expected 234, got {}: {}",
-                code,
-                response
-            ));
+            tls_bail!("FTP AUTH TLS failed: expected 234, got {}: {}", code, response);
         }
 
         // STARTTLS negotiation successful

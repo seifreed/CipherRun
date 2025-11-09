@@ -71,6 +71,98 @@ pub fn generate_csv(results: &ScanResults) -> Result<String> {
             }
             output.push('\n');
         }
+
+        // Advanced Header Analysis
+        if let Some(hsts) = &headers.hsts_analysis {
+            output.push_str("=== HSTS ANALYSIS ===\n");
+            output.push_str("Enabled,Grade,Max-Age,IncludeSubDomains,Preload,Details\n");
+            output.push_str(&format!(
+                "{},{:?},{},{},{},{}\n",
+                hsts.enabled,
+                hsts.grade,
+                hsts.max_age.unwrap_or(0),
+                hsts.include_subdomains,
+                hsts.preload,
+                hsts.details.replace(',', ";")
+            ));
+            output.push('\n');
+        }
+
+        if let Some(cookies) = &headers.cookie_analysis {
+            output.push_str("=== COOKIE SECURITY ===\n");
+            output.push_str("Total Cookies,Secure Count,HttpOnly Count,SameSite Count,Insecure Count,Grade\n");
+            output.push_str(&format!(
+                "{},{},{},{},{},{:?}\n",
+                cookies.cookies.len(),
+                cookies.secure_count,
+                cookies.httponly_count,
+                cookies.samesite_count,
+                cookies.insecure_count,
+                cookies.grade
+            ));
+            output.push('\n');
+
+            if !cookies.cookies.is_empty() {
+                output.push_str("=== COOKIE DETAILS ===\n");
+                output.push_str("Name,Secure,HttpOnly,SameSite,Domain,Path\n");
+                for cookie in &cookies.cookies {
+                    output.push_str(&format!(
+                        "{},{},{},{},{},{}\n",
+                        cookie.name,
+                        cookie.secure,
+                        cookie.httponly,
+                        cookie.samesite.as_deref().unwrap_or("N/A"),
+                        cookie.domain.as_deref().unwrap_or("N/A"),
+                        cookie.path.as_deref().unwrap_or("N/A")
+                    ));
+                }
+                output.push('\n');
+            }
+        }
+
+        if let Some(datetime) = &headers.datetime_check {
+            output.push_str("=== DATE/TIME CHECK ===\n");
+            output.push_str("Server Date,Synchronized,Skew (seconds),Details\n");
+            output.push_str(&format!(
+                "{},{},{},{}\n",
+                datetime.server_date.as_deref().unwrap_or("N/A"),
+                datetime.synchronized,
+                datetime.skew_seconds.unwrap_or(0),
+                datetime.details.replace(',', ";")
+            ));
+            output.push('\n');
+        }
+
+        if let Some(banners) = &headers.banner_detection {
+            output.push_str("=== SERVER BANNERS ===\n");
+            output.push_str("Server,X-Powered-By,Application,Version Exposed,Grade\n");
+            output.push_str(&format!(
+                "{},{},{},{},{:?}\n",
+                banners.server.as_deref().unwrap_or("N/A"),
+                banners.powered_by.as_deref().unwrap_or("N/A"),
+                banners.application.as_deref().unwrap_or("N/A"),
+                banners.version_exposed,
+                banners.grade
+            ));
+            output.push('\n');
+        }
+
+        if let Some(proxy) = &headers.reverse_proxy_detection {
+            if proxy.detected {
+                output.push_str("=== REVERSE PROXY DETECTION ===\n");
+                output.push_str("Detected,Type,Via Header,X-Forwarded-For,X-Real-IP,X-Forwarded-Proto\n");
+                output.push_str(&format!(
+                    "{},{},{},{},{},{}\n",
+                    proxy.detected,
+                    proxy.proxy_type.as_deref().unwrap_or("N/A"),
+                    proxy.via_header.as_deref().unwrap_or("N/A"),
+                    proxy.x_forwarded_for,
+                    proxy.x_real_ip,
+                    proxy.x_forwarded_proto
+                ));
+                output.push('\n');
+            }
+        }
     }
 
     // Rating (if available)

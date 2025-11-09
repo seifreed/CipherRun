@@ -55,10 +55,10 @@ impl Xxd {
         if output.status.success() {
             Ok(String::from_utf8_lossy(&output.stdout).to_string())
         } else {
-            Err(anyhow::anyhow!(
+            Err(crate::error::TlsError::Other(format!(
                 "xxd failed: {}",
                 String::from_utf8_lossy(&output.stderr)
-            ))
+            )))
         }
     }
 
@@ -105,10 +105,10 @@ impl Xxd {
         if output.status.success() {
             Ok(String::from_utf8_lossy(&output.stdout).to_string())
         } else {
-            Err(anyhow::anyhow!(
+            Err(crate::error::TlsError::Other(format!(
                 "xxd failed: {}",
                 String::from_utf8_lossy(&output.stderr)
-            ))
+            )))
         }
     }
 
@@ -132,10 +132,10 @@ impl Xxd {
         if output.status.success() {
             Ok(output.stdout)
         } else {
-            Err(anyhow::anyhow!(
+            Err(crate::error::TlsError::Other(format!(
                 "xxd reverse failed: {}",
                 String::from_utf8_lossy(&output.stderr)
-            ))
+            )))
         }
     }
 
@@ -146,10 +146,10 @@ impl Xxd {
         if output.status.success() {
             Ok(String::from_utf8_lossy(&output.stdout).to_string())
         } else {
-            Err(anyhow::anyhow!(
+            Err(crate::error::TlsError::Other(format!(
                 "xxd file dump failed: {}",
                 String::from_utf8_lossy(&output.stderr)
-            ))
+            )))
         }
     }
 }
@@ -229,14 +229,19 @@ pub fn hex_to_bytes(hex: &str) -> Result<Vec<u8>> {
     let hex = hex.replace([' ', '\n'], "");
 
     if hex.len() % 2 != 0 {
-        return Err(anyhow::anyhow!("Hex string must have even length"));
+        return Err(crate::error::TlsError::ParseError {
+            message: "Hex string must have even length".to_string(),
+        });
     }
 
     let mut bytes = Vec::new();
     for i in (0..hex.len()).step_by(2) {
         let byte_str = &hex[i..i + 2];
-        let byte =
-            u8::from_str_radix(byte_str, 16).map_err(|e| anyhow::anyhow!("Invalid hex: {}", e))?;
+        let byte = u8::from_str_radix(byte_str, 16).map_err(|e| {
+            crate::error::TlsError::ParseError {
+                message: format!("Invalid hex: {}", e),
+            }
+        })?;
         bytes.push(byte);
     }
 

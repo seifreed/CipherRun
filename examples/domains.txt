@@ -1,0 +1,34 @@
+# CipherRun Monitoring Domain List
+#
+# Format: hostname[:port] [interval]
+#
+# Examples:
+#   example.com                  # Uses default port (443) and interval
+#   example.com:443 30m          # Explicit port, scan every 30 minutes
+#   internal.corp.com:8443 5m    # Custom port and interval
+#
+# Supported intervals:
+#   30s  - 30 seconds
+#   5m   - 5 minutes
+#   1h   - 1 hour
+#   2d   - 2 days
+#   3600 - 3600 seconds (plain number)
+#
+# Lines starting with # are comments
+
+# Production domains - scan every hour
+google.com
+github.com
+cloudflare.com
+
+# Critical infrastructure - scan every 15 minutes
+api.example.com 15m
+auth.example.com 15m
+
+# Internal services - scan every 30 minutes
+internal.company.local:8443 30m
+vpn.company.local 30m
+
+# Development servers - scan every 6 hours
+dev.example.com 6h
+staging.example.com 6h

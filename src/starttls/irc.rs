@@ -53,7 +53,10 @@ impl StarttlsNegotiator for IrcNegotiator {
         }
 
         if !starttls_supported {
-            return Err(anyhow::anyhow!("IRC server does not support STARTTLS"));
+            return Err(crate::error::TlsError::StarttlsError {
+                protocol: "IRC".to_string(),
+                details: "Server does not support STARTTLS".to_string(),
+            });
         }
 
         // Request STARTTLS capability
@@ -64,7 +67,10 @@ impl StarttlsNegotiator for IrcNegotiator {
         // Numeric 670 = STARTTLS successful, begin TLS
         let response = Self::read_response(&mut reader).await?;
         if !response.contains("670") {
-            return Err(anyhow::anyhow!("STARTTLS failed: {}", response));
+            return Err(crate::error::TlsError::StarttlsError {
+                protocol: "IRC".to_string(),
+                details: format!("STARTTLS failed: {}", response),
+            });
         }
 
         Ok(())

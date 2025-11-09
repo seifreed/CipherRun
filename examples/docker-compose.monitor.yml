@@ -1,0 +1,66 @@
+version: '3.8'
+
+services:
+  # PostgreSQL database for scan history
+  postgres:
+    image: postgres:16-alpine
+    container_name: cipherrun-postgres
+    environment:
+      POSTGRES_DB: cipherrun
+      POSTGRES_USER: cipherrun_user
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-secure_password_change_me}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cipherrun_user -d cipherrun"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - cipherrun
+
+  # CipherRun monitoring daemon
+  monitor:
+    image: cipherrun:latest
+    container_name: cipherrun-monitor
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    command:
+      - "monitor"
+      - "--config"
+      - "/etc/cipherrun/monitor.toml"
+      - "--domains"
+      - "/etc/cipherrun/domains.txt"
+    volumes:
+      - ./monitor.toml:/etc/cipherrun/monitor.toml:ro
+      - ./domains.txt:/etc/cipherrun/domains.txt:ro
+      - monitor_data:/var/lib/cipherrun
+    environment:
+      - RUST_LOG=cipherrun=info
+      - TZ=UTC
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - cipherrun
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/cipherrun", "monitor", "--status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  postgres_data:
+    driver: local
+  monitor_data:
+    driver: local
+
+networks:
+  cipherrun:
+    driver: bridge

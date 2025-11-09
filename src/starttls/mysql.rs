@@ -66,14 +66,14 @@ impl StarttlsNegotiator for MysqlNegotiator {
         // Check if server supports SSL
         // Capability flags are at offset 2-3 (2 bytes) or 2-5 (4 bytes for newer versions)
         if handshake.len() < 4 {
-            return Err(anyhow::anyhow!("Invalid MySQL handshake packet"));
+            return Err(crate::error::TlsError::StarttlsError { protocol: "MySQL".to_string(), details: "Invalid handshake packet".to_string() });
         }
 
         let capabilities = u16::from_le_bytes([handshake[2], handshake[3]]);
         const CLIENT_SSL: u16 = 0x0800;
 
         if capabilities & CLIENT_SSL == 0 {
-            return Err(anyhow::anyhow!("MySQL server does not support SSL"));
+            return Err(crate::error::TlsError::StarttlsError { protocol: "MySQL".to_string(), details: "Server does not support SSL".to_string() });
         }
 
         // Send SSL request (handshake response with CLIENT_SSL capability)

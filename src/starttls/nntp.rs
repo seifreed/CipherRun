@@ -25,9 +25,11 @@ impl NntpNegotiator {
         let mut response = String::new();
         reader.read_line(&mut response).await?;
 
-        let code = response[0..3]
-            .parse::<u16>()
-            .map_err(|_| anyhow::anyhow!("Invalid NNTP response code"))?;
+        let code = response[0..3].parse::<u16>().map_err(|_| {
+            crate::error::TlsError::ParseError {
+                message: "Invalid NNTP response code".to_string(),
+            }
+        })?;
 
         Ok((code, response))
     }
@@ -41,10 +43,9 @@ impl StarttlsNegotiator for NntpNegotiator {
         // Read server greeting (200 or 201)
         let (code, _response) = Self::read_response(&mut reader).await?;
         if code != 200 && code != 201 {
-            return Err(anyhow::anyhow!(
-                "NNTP greeting failed: expected 200/201, got {}",
-                code
-            ));
+            return Err(crate::error::TlsError::UnexpectedResponse {
+                details: format!("NNTP greeting failed: expected 200/201, got {}", code),
+            });
         }
 
         // Send CAPABILITIES to check STARTTLS support
@@ -54,7 +55,9 @@ impl StarttlsNegotiator for NntpNegotiator {
         // Read capabilities (101 = capability list follows)
         let (code, _response) = Self::read_response(&mut reader).await?;
         if code != 101 {
-            return Err(anyhow::anyhow!("CAPABILITIES failed: {}", code));
+            return Err(crate::error::TlsError::UnexpectedResponse {
+                details: format!("CAPABILITIES failed: {}", code),
+            });
         }
 
         // Read capability lines until we find STARTTLS or end marker
@@ -73,7 +76,10 @@ impl StarttlsNegotiator for NntpNegotiator {
         }
 
         if !starttls_supported {
-            return Err(anyhow::anyhow!("NNTP server does not support STARTTLS"));
+            return Err(crate::error::TlsError::StarttlsError {
+                protocol: "NNTP".to_string(),
+                details: "Server does not support STARTTLS".to_string(),
+            });
         }
 
         // Send STARTTLS command
@@ -83,7 +89,10 @@ impl StarttlsNegotiator for NntpNegotiator {
         // Read STARTTLS response (382 = continue with TLS negotiation)
         let (code, response) = Self::read_response(&mut reader).await?;
         if code != 382 {
-            return Err(anyhow::anyhow!("STARTTLS failed: {}", response));
+            return Err(crate::error::TlsError::StarttlsError {
+                protocol: "NNTP".to_string(),
+                details: format!("STARTTLS failed: {}", response),
+            });
         }
 
         Ok(())

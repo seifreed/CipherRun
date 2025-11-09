@@ -55,10 +55,10 @@ impl Aha {
         if output.status.success() {
             Ok(String::from_utf8_lossy(&output.stdout).to_string())
         } else {
-            Err(anyhow::anyhow!(
+            Err(crate::error::TlsError::Other(format!(
                 "aha conversion failed: {}",
                 String::from_utf8_lossy(&output.stderr)
-            ))
+            )))
         }
     }
 
@@ -101,10 +101,10 @@ impl Aha {
         if output.status.success() {
             Ok(String::from_utf8_lossy(&output.stdout).to_string())
         } else {
-            Err(anyhow::anyhow!(
+            Err(crate::error::TlsError::Other(format!(
                 "aha conversion failed: {}",
                 String::from_utf8_lossy(&output.stderr)
-            ))
+            )))
         }
     }
 
@@ -123,10 +123,10 @@ impl Aha {
         if output.status.success() {
             Ok(())
         } else {
-            Err(anyhow::anyhow!(
+            Err(crate::error::TlsError::Other(format!(
                 "aha file conversion failed: {}",
                 String::from_utf8_lossy(&output.stderr)
-            ))
+            )))
         }
     }
 }
@@ -145,7 +145,9 @@ pub fn convert_report_to_html(report: &str, title: Option<&str>) -> Result<Strin
     let aha = Aha::new();
 
     if !aha.is_available() {
-        return Err(anyhow::anyhow!("aha is not available in PATH"));
+        return Err(crate::error::TlsError::Other(
+            "aha is not available in PATH".to_string(),
+        ));
     }
 
     let options = AhaOptions {

@@ -1,0 +1,26 @@
+# CipherRun Database Configuration
+# This file configures the database backend for storing scan results
+
+[database]
+# Database type: "postgres" or "sqlite"
+type = "postgres"
+
+# ============ PostgreSQL Configuration ============
+# Use PostgreSQL for production environments with concurrent access
+host = "localhost"
+port = 5432
+database = "cipherrun"
+username = "cipherrun_user"
+password = "secure_password"
+max_connections = 10
+
+# ============ SQLite Configuration ============
+# Use SQLite for development or single-user scenarios
+# Uncomment these lines and comment out PostgreSQL settings above
+# type = "sqlite"
+# path = "./cipherrun.db"
+
+[retention]
+# Automatically delete scans older than this (days)
+# Set to 0 to disable automatic cleanup
+max_age_days = 365

@@ -32,7 +32,10 @@ impl StarttlsNegotiator for Pop3Negotiator {
         // 1. Read server greeting (+OK)
         let greeting = Self::read_response(&mut reader).await?;
         if !greeting.starts_with("+OK") {
-            return Err(anyhow::anyhow!("POP3 greeting failed: {}", greeting));
+            return Err(crate::error::TlsError::StarttlsError {
+                protocol: "POP3".to_string(),
+                details: format!("Greeting failed: {}", greeting),
+            });
         }
 
         // 2. Send CAPA command to check capabilities
@@ -43,7 +46,10 @@ impl StarttlsNegotiator for Pop3Negotiator {
         let mut starttls_supported = false;
         let response = Self::read_response(&mut reader).await?;
         if !response.starts_with("+OK") {
-            return Err(anyhow::anyhow!("POP3 CAPA command failed"));
+            return Err(crate::error::TlsError::StarttlsError {
+                protocol: "POP3".to_string(),
+                details: "CAPA command failed".to_string(),
+            });
         }
 
         // Read capability lines until "."
@@ -61,7 +67,10 @@ impl StarttlsNegotiator for Pop3Negotiator {
         }
 
         if !starttls_supported {
-            return Err(anyhow::anyhow!("POP3 server does not support STLS"));
+            return Err(crate::error::TlsError::StarttlsError {
+                protocol: "POP3".to_string(),
+                details: "Server does not support STLS".to_string(),
+            });
         }
 
         // 4. Send STLS command (POP3 uses STLS not STARTTLS)
@@ -71,7 +80,10 @@ impl StarttlsNegotiator for Pop3Negotiator {
         // 5. Read STLS response
         let response = Self::read_response(&mut reader).await?;
         if !response.starts_with("+OK") {
-            return Err(anyhow::anyhow!("POP3 STLS failed: {}", response));
+            return Err(crate::error::TlsError::StarttlsError {
+                protocol: "POP3".to_string(),
+                details: format!("STLS failed: {}", response),
+            });
         }
 
         // STARTTLS negotiation successful

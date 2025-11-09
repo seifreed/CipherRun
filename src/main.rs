@@ -45,6 +45,149 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
+    // Handle --db-config-example (generate example config and exit)
+    if let Some(config_path) = &args.db_config_example {
+        use cipherrun::db::DatabaseConfig;
+        DatabaseConfig::create_example_config(
+            config_path
+                .to_str()
+                .ok_or_else(|| anyhow::anyhow!("Invalid file path"))?,
+        )?;
+        println!("✓ Example database configuration saved to: {}", config_path.display());
+        return Ok(());
+    }
+
+    // Handle database operations
+    if args.db_init || args.cleanup_days.is_some() || args.history.is_some() {
+        use cipherrun::db::CipherRunDatabase;
+
+        let db_config_path = args
+            .db_config
+            .as_ref()
+            .map(|p| p.to_str().unwrap_or("database.toml"))
+            .unwrap_or("database.toml");
+
+        let db = CipherRunDatabase::from_config_file(db_config_path).await?;
+
+        // Initialize database
+        if args.db_init {
+            println!("✓ Database initialized successfully");
+        }
+
+        // Cleanup old scans
+        if let Some(days) = args.cleanup_days {
+            let deleted = db.cleanup_old_scans(days).await?;
+            println!("✓ Deleted {} old scan(s) (older than {} days)", deleted, days);
+        }
+
+        // Query scan history
+        if let Some(history_target) = &args.history {
+            let parts: Vec<&str> = history_target.split(':').collect();
+            let hostname = parts.first().unwrap_or(&"").to_string();
+            let port: u16 = parts.get(1).and_then(|p| p.parse().ok()).unwrap_or(443);
+
+            let scans = db.get_scan_history(&hostname, port, args.history_limit).await?;
+
+            println!("\nScan History for {}:{}", hostname, port);
+            println!("{}", "=".repeat(80));
+
+            if scans.is_empty() {
+                println!("No scan history found");
+            } else {
+                for scan in scans {
+                    println!(
+                        "  {} - Grade: {} | Score: {} | Duration: {}ms",
+                        scan.scan_timestamp.format("%Y-%m-%d %H:%M:%S"),
+                        scan.overall_grade.as_deref().unwrap_or("N/A"),
+                        scan.overall_score.unwrap_or(0),
+                        scan.scan_duration_ms.unwrap_or(0)
+                    );
+                }
+            }
+        }
+
+        db.close().await;
+
+        // Exit if only database operations were requested
+        if args.target.is_none() && args.input_file.is_none() && args.mx_domain.is_none() {
+            return Ok(());
+        }
+    }
+
+    // Handle monitoring operations
+    if args.test_alert || args.monitor {
+        use cipherrun::monitor::{MonitorDaemon, MonitorConfig, MonitoredDomain};
+
+        // Load or create monitoring configuration
+        let monitor_config = if let Some(config_path) = &args.monitor_config {
+            let config_str = std::fs::read_to_string(config_path)?;
+            toml::from_str(&config_str)?
+        } else {
+            // Create default configuration
+            MonitorConfig::default()
+        };
+
+        // Handle test alert
+        if args.test_alert {
+            info!("Testing alert channels...");
+            let daemon = MonitorDaemon::new(monitor_config).await?;
+            let results = daemon.test_alerts().await;
+
+            println!("\nAlert Channel Tests:");
+            println!("{}", "=".repeat(80));
+
+            if results.is_empty() {
+                println!("No alert channels configured");
+            } else {
+                for (channel_name, result) in results {
+                    let status = if result.is_ok() { "✓" } else { "✗" };
+                    let message = result
+                        .as_ref()
+                        .map(|_| "Success".to_string())
+                        .unwrap_or_else(|e| format!("Failed: {}", e));
+                    println!("  {} {} - {}", status, channel_name, message);
+                }
+            }
+            println!();
+
+            return Ok(());
+        }
+
+        // Handle monitor daemon start
+        if args.monitor {
+            info!("Starting certificate monitoring daemon");
+
+            let daemon = MonitorDaemon::new(monitor_config).await?;
+
+            // Load domains from file
+            if let Some(domains_file) = &args.monitor_domains {
+                let path_str = domains_file
+                    .to_str()
+                    .ok_or_else(|| anyhow::anyhow!("Invalid domains file path"))?;
+                daemon.load_domains(path_str).await?;
+            }
+
+            // Add single domain if specified
+            if let Some(domain_str) = &args.monitor_domain {
+                let parts: Vec<&str> = domain_str.split(':').collect();
+                let hostname = parts.first().copied().unwrap_or("localhost");
+                let port: u16 = parts.get(1).and_then(|p| p.parse().ok()).unwrap_or(443);
+
+                let domain = MonitoredDomain::new(
+                    hostname.to_string(),
+                    port,
+                );
+
+                daemon.add_domain(domain).await?;
+            }
+
+            // Start the monitoring daemon
+            daemon.start().await?;
+
+            return Ok(());
+        }
+    }
+
     // Handle --no-colour / --no-color (disable colored output)
     if args.no_colour || args.no_color {
         args.color = 0;
@@ -168,6 +311,23 @@ async fn main() -> Result<()> {
 
         // Output results
         results.display()?;
+
+        // Store results in database if requested
+        if args.store_results && args.db_config.is_some() {
+            use cipherrun::db::CipherRunDatabase;
+
+            let db_config_path = args
+                .db_config
+                .as_ref()
+                .unwrap()
+                .to_str()
+                .ok_or_else(|| anyhow::anyhow!("Invalid database config path"))?;
+
+            let db = CipherRunDatabase::from_config_file(db_config_path).await?;
+            let scan_id = db.store_scan(&results).await?;
+            println!("\n✓ Scan results stored in database (scan_id: {})", scan_id);
+            db.close().await;
+        }
 
         // Export results if requested
         if let Some(json_file) = &args.json {

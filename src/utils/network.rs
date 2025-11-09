@@ -83,25 +83,68 @@ pub async fn resolve_hostname(hostname: &str) -> Result<Vec<IpAddr>> {
     Ok(ips)
 }
 
-/// Test TCP connection to target
-pub async fn test_connection(addr: SocketAddr, connect_timeout: Duration) -> Result<()> {
-    timeout(connect_timeout, TcpStream::connect(addr))
-        .await
-        .context("Connection timeout")??;
+/// Test TCP connection to target with optional retry logic.
+///
+/// This function attempts to establish a TCP connection with configurable retry behavior.
+/// It uses exponential backoff to handle transient network failures while avoiding
+/// unnecessary retries for permanent failures (e.g., connection refused).
+///
+/// # Arguments
+///
+/// * `addr` - The socket address to connect to
+/// * `connect_timeout` - Timeout for each connection attempt
+/// * `retry_config` - Optional retry configuration. If None, no retries are performed.
+pub async fn test_connection(
+    addr: SocketAddr,
+    connect_timeout: Duration,
+    retry_config: Option<&super::retry::RetryConfig>,
+) -> Result<()> {
+    let connect_op = || async {
+        timeout(connect_timeout, TcpStream::connect(addr))
+            .await
+            .context("Connection timeout")??;
+        Ok(())
+    };
 
-    Ok(())
+    if let Some(config) = retry_config {
+        // Use retry logic with exponential backoff
+        super::retry::retry_with_backoff(config, connect_op).await
+    } else {
+        // No retry - fail immediately
+        connect_op().await
+    }
 }
 
-/// Connect to target with timeout
+/// Connect to target with timeout and optional retry logic.
+///
+/// This function attempts to establish a TCP connection and return the stream.
+/// It supports configurable retry behavior with exponential backoff for handling
+/// transient network failures.
+///
+/// # Arguments
+///
+/// * `addr` - The socket address to connect to
+/// * `connect_timeout` - Timeout for each connection attempt
+/// * `retry_config` - Optional retry configuration. If None, no retries are performed.
 pub async fn connect_with_timeout(
     addr: SocketAddr,
     connect_timeout: Duration,
+    retry_config: Option<&super::retry::RetryConfig>,
 ) -> Result<TcpStream> {
-    let stream = timeout(connect_timeout, TcpStream::connect(addr))
-        .await
-        .context("Connection timeout")??;
+    let connect_op = || async {
+        let stream = timeout(connect_timeout, TcpStream::connect(addr))
+            .await
+            .context("Connection timeout")??;
+        Ok(stream)
+    };
 
-    Ok(stream)
+    if let Some(config) = retry_config {
+        // Use retry logic with exponential backoff
+        super::retry::retry_with_backoff(config, connect_op).await
+    } else {
+        // No retry - fail immediately
+        connect_op().await
+    }
 }
 
 /// Parse port from string

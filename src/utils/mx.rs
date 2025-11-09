@@ -49,10 +49,10 @@ impl MxTester {
         };
 
         if mx_records.is_empty() {
-            return Err(anyhow::anyhow!(
+            return Err(crate::error::TlsError::Other(format!(
                 "No MX records found for domain: {}",
                 self.domain
-            ));
+            )));
         }
 
         // Sort by priority (lowest first)

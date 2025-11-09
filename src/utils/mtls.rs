@@ -33,20 +33,26 @@ impl MtlsConfig {
     ) -> Result<Self> {
         // Load certificates
         let cert_file = File::open(cert_path.as_ref())
-            .map_err(|e| anyhow::anyhow!("Failed to open certificate file: {}", e))?;
+            .map_err(|e| crate::error::TlsError::MtlsError {
+                message: format!("Failed to open certificate file: {}", e),
+            })?;
         let mut cert_reader = BufReader::new(cert_file);
 
         let certs: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut cert_reader)
             .collect::<std::result::Result<Vec<_>, std::io::Error>>()
-            .map_err(|e| anyhow::anyhow!("Failed to parse certificates: {}", e))?;
+            .map_err(|e| crate::error::TlsError::MtlsError {
+                message: format!("Failed to parse certificates: {}", e),
+            })?;
 
         if certs.is_empty() {
-            anyhow::bail!("No certificates found in certificate file");
+            crate::tls_bail!("No certificates found in certificate file");
         }
 
         // Load private key
         let key_file = File::open(key_path.as_ref())
-            .map_err(|e| anyhow::anyhow!("Failed to open private key file: {}", e))?;
+            .map_err(|e| crate::error::TlsError::MtlsError {
+                message: format!("Failed to open private key file: {}", e),
+            })?;
         let mut key_reader = BufReader::new(key_file);
 
         let mut keys = Vec::new();
@@ -66,7 +72,7 @@ impl MtlsConfig {
         }
 
         if keys.is_empty() {
-            anyhow::bail!("No private key found in key file");
+            crate::tls_bail!("No private key found in key file");
         }
 
         // Note: Password-protected keys would require additional processing
@@ -82,16 +88,20 @@ impl MtlsConfig {
     /// The PEM file should contain both the certificate chain and the private key
     pub fn from_pem_file<P: AsRef<Path>>(path: P) -> Result<Self> {
         let file = File::open(path.as_ref())
-            .map_err(|e| anyhow::anyhow!("Failed to open mTLS PEM file: {}", e))?;
+            .map_err(|e| crate::error::TlsError::MtlsError {
+                message: format!("Failed to open mTLS PEM file: {}", e),
+            })?;
         let mut reader = BufReader::new(file);
 
         // Read all certificates from the PEM file
         let certs: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut reader)
             .collect::<std::result::Result<Vec<_>, std::io::Error>>()
-            .map_err(|e| anyhow::anyhow!("Failed to parse certificates from PEM: {}", e))?;
+            .map_err(|e| crate::error::TlsError::MtlsError {
+                message: format!("Failed to parse certificates from PEM: {}", e),
+            })?;
 
         if certs.is_empty() {
-            anyhow::bail!("No certificates found in PEM file");
+            crate::tls_bail!("No certificates found in PEM file");
         }
 
         // Reset reader to beginning for key parsing
@@ -118,7 +128,7 @@ impl MtlsConfig {
         }
 
         if keys.is_empty() {
-            anyhow::bail!("No private key found in PEM file");
+            crate::tls_bail!("No private key found in PEM file");
         }
 
         if keys.len() > 1 {
@@ -139,11 +149,15 @@ impl MtlsConfig {
         let config =
             ClientConfig::builder_with_provider(rustls::crypto::ring::default_provider().into())
                 .with_safe_default_protocol_versions()
-                .map_err(|e| anyhow::anyhow!("Failed to set protocol versions: {}", e))?
+                .map_err(|e| crate::error::TlsError::MtlsError {
+                    message: format!("Failed to set protocol versions: {}", e),
+                })?
                 .with_root_certificates(root_store)
                 .with_client_auth_cert(self.cert_chain.clone(), self.private_key.clone_key())
                 .map_err(|e| {
-                    anyhow::anyhow!("Failed to build TLS config with client auth: {}", e)
+                    crate::error::TlsError::MtlsError {
+                        message: format!("Failed to build TLS config with client auth: {}", e),
+                    }
                 })?;
 
         Ok(TlsConnector::from(Arc::new(config)))
@@ -157,11 +171,15 @@ impl MtlsConfig {
         let config =
             ClientConfig::builder_with_provider(rustls::crypto::ring::default_provider().into())
                 .with_safe_default_protocol_versions()
-                .map_err(|e| anyhow::anyhow!("Failed to set protocol versions: {}", e))?
+                .map_err(|e| crate::error::TlsError::MtlsError {
+                    message: format!("Failed to set protocol versions: {}", e),
+                })?
                 .with_root_certificates(root_store)
                 .with_client_auth_cert(self.cert_chain.clone(), self.private_key.clone_key())
                 .map_err(|e| {
-                    anyhow::anyhow!("Failed to build TLS config with client auth: {}", e)
+                    crate::error::TlsError::MtlsError {
+                        message: format!("Failed to build TLS config with client auth: {}", e),
+                    }
                 })?;
 
         Ok(TlsConnector::from(Arc::new(config)))

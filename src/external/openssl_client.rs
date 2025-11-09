@@ -250,7 +250,9 @@ impl OpenSslClient {
         if result.success {
             Ok(extract_certificates(&result.stdout))
         } else {
-            Err(anyhow::anyhow!("Failed to get certificate chain"))
+            Err(crate::error::TlsError::Other(
+                "Failed to get certificate chain".to_string(),
+            ))
         }
     }
 
@@ -290,7 +292,9 @@ impl OpenSslClient {
         if output.status.success() {
             Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
         } else {
-            Err(anyhow::anyhow!("Failed to get OpenSSL version"))
+            Err(crate::error::TlsError::Other(
+                "Failed to get OpenSSL version".to_string(),
+            ))
         }
     }
 }

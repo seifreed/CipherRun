@@ -79,6 +79,7 @@ impl CAStore {
 pub struct CAStores {
     pub mozilla: CAStore,
     pub apple: CAStore,
+    pub android: CAStore,
     pub linux: CAStore,
     pub microsoft: CAStore,
     pub java: CAStore,
@@ -90,6 +91,7 @@ impl CAStores {
         Ok(Self {
             mozilla: CAStore::from_pem("Mozilla", include_str!("../../data/Mozilla.pem"))?,
             apple: CAStore::from_pem("Apple", include_str!("../../data/Apple.pem"))?,
+            android: CAStore::from_pem("Android", include_str!("../../data/Android.pem"))?,
             linux: CAStore::from_pem("Linux", include_str!("../../data/Linux.pem"))?,
             microsoft: CAStore::from_pem("Microsoft", include_str!("../../data/Microsoft.pem"))?,
             java: CAStore::from_pem("Java", include_str!("../../data/Java.pem"))?,
@@ -101,10 +103,24 @@ impl CAStores {
         vec![
             &self.mozilla,
             &self.apple,
+            &self.android,
             &self.linux,
             &self.microsoft,
             &self.java,
         ]
+    }
+
+    /// Get store by name
+    pub fn get_store(&self, name: &str) -> Option<&CAStore> {
+        match name.to_lowercase().as_str() {
+            "mozilla" | "firefox" | "nss" => Some(&self.mozilla),
+            "apple" | "macos" | "ios" => Some(&self.apple),
+            "android" => Some(&self.android),
+            "linux" => Some(&self.linux),
+            "microsoft" | "windows" => Some(&self.microsoft),
+            "java" | "jdk" => Some(&self.java),
+            _ => None,
+        }
     }
 
     /// Total certificate count across all stores
@@ -123,11 +139,24 @@ mod tests {
 
         assert!(!stores.mozilla.certificates.is_empty());
         assert!(!stores.apple.certificates.is_empty());
+        assert!(!stores.android.certificates.is_empty());
         assert!(!stores.linux.certificates.is_empty());
         assert!(!stores.microsoft.certificates.is_empty());
         assert!(!stores.java.certificates.is_empty());
 
         assert!(stores.total_certificates() > 100);
+    }
+
+    #[test]
+    fn test_get_store_by_name() {
+        let stores = CA_STORES.as_ref();
+
+        assert!(stores.get_store("mozilla").is_some());
+        assert!(stores.get_store("apple").is_some());
+        assert!(stores.get_store("android").is_some());
+        assert!(stores.get_store("windows").is_some());
+        assert!(stores.get_store("java").is_some());
+        assert!(stores.get_store("unknown").is_none());
     }
 
     #[test]

@@ -1,6 +1,6 @@
 // RDP Support - Send RDP preamble before TLS handshake
 
-use crate::Result;
+use crate::{Result, tls_bail};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
@@ -36,17 +36,17 @@ impl RdpPreamble {
         let n = stream.read(&mut response).await?;
 
         if n < 11 {
-            anyhow::bail!("RDP response too short");
+            tls_bail!("RDP response too short");
         }
 
         // Verify TPKT header
         if response[0] != 0x03 {
-            anyhow::bail!("Invalid RDP response: not a TPKT packet");
+            tls_bail!("Invalid RDP response: not a TPKT packet");
         }
 
         // Check for CC_TPDU (Connection Confirm)
         if response[5] != 0xD0 {
-            anyhow::bail!("Invalid RDP response: expected CC_TPDU");
+            tls_bail!("Invalid RDP response: expected CC_TPDU");
         }
 
         Ok(())

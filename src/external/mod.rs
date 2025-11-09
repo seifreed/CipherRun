@@ -25,7 +25,10 @@ pub fn get_tool_version(tool: &str) -> Result<String> {
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
     } else {
-        Err(anyhow::anyhow!("Failed to get version for {}", tool))
+        Err(crate::error::TlsError::Other(format!(
+            "Failed to get version for {}",
+            tool
+        )))
     }
 }
 

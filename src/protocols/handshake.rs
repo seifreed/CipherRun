@@ -163,6 +163,20 @@ impl ClientHelloBuilder {
         self
     }
 
+    /// Add status_request extension (OCSP stapling request)
+    /// RFC 6066 Section 8: Certificate Status Request
+    pub fn add_status_request(&mut self) -> &mut Self {
+        let mut data = BytesMut::new();
+        // CertificateStatusType: ocsp(1)
+        data.put_u8(1);
+        // ResponderIDList length (empty)
+        data.put_u16(0);
+        // Extensions length (empty)
+        data.put_u16(0);
+        self.extensions.push(Extension::new(0x0005, data.to_vec()));
+        self
+    }
+
     /// Add supported versions (TLS 1.3)
     pub fn add_supported_versions(&mut self, versions: &[u16]) -> &mut Self {
         let mut data = BytesMut::new();
@@ -383,7 +397,10 @@ impl ClientHelloBuilder {
             // 6. extended_master_secret (0x0017)
             self.add_extended_master_secret();
 
-            // 7. signature_algorithms (0x000d) - Extended list matching OpenSSL
+            // 7. status_request (0x0005) - OCSP stapling
+            self.add_status_request();
+
+            // 8. signature_algorithms (0x000d) - Extended list matching OpenSSL
             self.add_signature_algorithms(&[
                 (0x04, 0x03), // ecdsa_secp256r1_sha256
                 (0x05, 0x03), // ecdsa_secp384r1_sha384
@@ -401,13 +418,13 @@ impl ClientHelloBuilder {
                 (0x06, 0x01), // rsa_pkcs1_sha512
             ]);
 
-            // 8. supported_versions (0x002b) - ONLY TLS 1.3 for TLS 1.3 tests
+            // 9. supported_versions (0x002b) - ONLY TLS 1.3 for TLS 1.3 tests
             self.add_supported_versions(&[0x0304]);
 
-            // 9. psk_key_exchange_modes (0x002d)
+            // 10. psk_key_exchange_modes (0x002d)
             self.add_psk_key_exchange_modes();
 
-            // 10. key_share (0x0033)
+            // 11. key_share (0x0033)
             self.add_key_share(0x001d); // X25519
         } else {
             // TLS 1.2 and earlier - traditional order
@@ -438,6 +455,7 @@ impl ClientHelloBuilder {
             // TLS 1.2 specific extensions
             self.add_extended_master_secret();
             self.add_renegotiation_info();
+            self.add_status_request();
         }
 
         self.build()
@@ -451,20 +469,20 @@ impl ServerHelloParser {
     /// Parse ServerHello from bytes
     pub fn parse(data: &[u8]) -> Result<ServerHello> {
         if data.len() < 6 {
-            anyhow::bail!("ServerHello too short");
+            crate::tls_bail!("ServerHello too short");
         }
 
         let mut offset = 0;
 
         // Skip record header (5 bytes)
         if data[0] != 0x16 {
-            anyhow::bail!("Not a handshake record");
+            crate::tls_bail!("Not a handshake record");
         }
         offset += 5;
 
         // Handshake type
         if data[offset] != 0x02 {
-            anyhow::bail!("Not a ServerHello");
+            crate::tls_bail!("Not a ServerHello");
         }
         offset += 1;
 
@@ -496,6 +514,9 @@ impl ServerHelloParser {
 
         // Extensions (if present)
         let mut extensions = Vec::new();
+        let mut ocsp_stapling_detected = None;
+        let mut heartbeat_enabled = None;
+
         if offset < data.len() {
             let ext_len = u16::from_be_bytes([data[offset], data[offset + 1]]) as usize;
             offset += 2;
@@ -510,10 +531,33 @@ impl ServerHelloParser {
 
                 if offset + ext_data_len <= data.len() {
                     let ext_data = data[offset..offset + ext_data_len].to_vec();
+
+                    // RFC 6066 Section 8: status_request extension (OCSP stapling)
+                    // Extension type 5 in ServerHello indicates server acceptance
+                    if ext_type == 0x0005 {
+                        ocsp_stapling_detected = Some(true);
+                    }
+
+                    // RFC 6520: Heartbeat extension detection
+                    // Extension type 0x000f (15 decimal) in ServerHello indicates server support
+                    if ext_type == 0x000f {
+                        heartbeat_enabled = Some(true);
+                    }
+
                     extensions.push(Extension::new(ext_type, ext_data));
                     offset += ext_data_len;
                 }
             }
+        }
+
+        // If extensions were present but status_request was not found, explicitly mark as false
+        if !extensions.is_empty() && ocsp_stapling_detected.is_none() {
+            ocsp_stapling_detected = Some(false);
+        }
+
+        // If extensions were present but heartbeat was not found, explicitly mark as false
+        if !extensions.is_empty() && heartbeat_enabled.is_none() {
+            heartbeat_enabled = Some(false);
         }
 
         Ok(ServerHello {
@@ -523,6 +567,8 @@ impl ServerHelloParser {
             cipher_suite,
             compression,
             extensions,
+            ocsp_stapling_detected,
+            heartbeat_enabled,
         })
     }
 }
@@ -536,6 +582,13 @@ pub struct ServerHello {
     pub cipher_suite: u16,
     pub compression: u8,
     pub extensions: Vec<Extension>,
+    /// Direct detection of OCSP stapling via status_request extension (type 5, RFC 6066)
+    /// This indicates the server accepted the client's OCSP stapling request
+    pub ocsp_stapling_detected: Option<bool>,
+    /// Direct detection of Heartbeat extension (type 0x000f, RFC 6520)
+    /// This indicates the server supports TLS Heartbeat extension (keepalive mechanism)
+    /// Note: This is separate from Heartbleed (CVE-2014-0160) vulnerability detection
+    pub heartbeat_enabled: Option<bool>,
 }
 
 impl ServerHello {
@@ -554,6 +607,24 @@ impl ServerHello {
         self.extensions
             .iter()
             .find(|e| e.extension_type == ext_type)
+    }
+
+    /// Check if OCSP stapling is supported (status_request extension present)
+    /// RFC 6066 Section 8: Certificate Status Request
+    /// Returns Some(true) if status_request extension (type 5) was found in ServerHello,
+    /// Some(false) if extensions were present but status_request was not,
+    /// None if no extensions were parsed (legacy TLS or parsing error)
+    pub fn supports_ocsp_stapling(&self) -> Option<bool> {
+        self.ocsp_stapling_detected
+    }
+
+    /// Check if Heartbeat extension is enabled
+    /// RFC 6520: Transport Layer Security (TLS) and Datagram Transport Layer Security (DTLS) Heartbeat Extension
+    /// Returns Some(true) if heartbeat extension (type 0x000f) was found in ServerHello,
+    /// Some(false) if extensions were present but heartbeat was not,
+    /// None if no extensions were parsed (legacy TLS or parsing error)
+    pub fn supports_heartbeat(&self) -> Option<bool> {
+        self.heartbeat_enabled
     }
 }
 
@@ -590,5 +661,263 @@ mod tests {
 
         let hello = builder.build_with_defaults(Some("example.com")).unwrap();
         assert!(hello.len() > 100); // Should have several extensions
+    }
+
+    #[test]
+    fn test_client_hello_with_status_request() {
+        let mut builder = ClientHelloBuilder::new(Protocol::TLS12);
+        builder.add_ciphers(&[0xc030]);
+        builder.add_status_request();
+
+        let hello = builder.build().unwrap();
+        assert!(hello.len() > 40);
+
+        // Verify status_request extension is present (type 0x0005)
+        // Extension should have 5 bytes: type(1) + responder_id_list(2) + request_extensions(2)
+        let hello_bytes = &hello;
+        let status_request_present = hello_bytes
+            .windows(2)
+            .any(|w| w == [0x00, 0x05]);
+        assert!(status_request_present, "status_request extension should be present");
+    }
+
+    #[test]
+    fn test_server_hello_ocsp_stapling_detected() {
+        // Build a minimal ServerHello with status_request extension
+        let mut server_hello = vec![
+            0x16, // Handshake record type
+            0x03, 0x03, // TLS 1.2
+            0x00, 0x4A, // Length
+            0x02, // ServerHello type
+            0x00, 0x00, 0x46, // Handshake length
+            0x03, 0x03, // TLS 1.2
+        ];
+
+        // Random (32 bytes)
+        server_hello.extend_from_slice(&[0u8; 32]);
+
+        // Session ID length (0)
+        server_hello.push(0x00);
+
+        // Cipher suite (TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256)
+        server_hello.extend_from_slice(&[0xc0, 0x2f]);
+
+        // Compression method (null)
+        server_hello.push(0x00);
+
+        // Extensions length
+        server_hello.extend_from_slice(&[0x00, 0x05]);
+
+        // status_request extension (type 0x0005)
+        server_hello.extend_from_slice(&[0x00, 0x05]);
+        // Extension data length (1 byte)
+        server_hello.extend_from_slice(&[0x00, 0x01]);
+        // Extension data (empty OCSP response placeholder)
+        server_hello.push(0x00);
+
+        let parsed = ServerHelloParser::parse(&server_hello).unwrap();
+
+        assert_eq!(parsed.ocsp_stapling_detected, Some(true));
+        assert!(parsed.supports_ocsp_stapling().unwrap());
+        assert!(parsed.has_extension(0x0005));
+    }
+
+    #[test]
+    fn test_server_hello_no_ocsp_stapling() {
+        // Build a minimal ServerHello WITHOUT status_request extension
+        let mut server_hello = vec![
+            0x16, // Handshake record type
+            0x03, 0x03, // TLS 1.2
+            0x00, 0x4A, // Length
+            0x02, // ServerHello type
+            0x00, 0x00, 0x46, // Handshake length
+            0x03, 0x03, // TLS 1.2
+        ];
+
+        // Random (32 bytes)
+        server_hello.extend_from_slice(&[0u8; 32]);
+
+        // Session ID length (0)
+        server_hello.push(0x00);
+
+        // Cipher suite
+        server_hello.extend_from_slice(&[0xc0, 0x2f]);
+
+        // Compression method (null)
+        server_hello.push(0x00);
+
+        // Extensions length
+        server_hello.extend_from_slice(&[0x00, 0x08]);
+
+        // SNI extension (type 0x0000) - different extension
+        server_hello.extend_from_slice(&[0x00, 0x00]);
+        server_hello.extend_from_slice(&[0x00, 0x04]);
+        server_hello.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]);
+
+        let parsed = ServerHelloParser::parse(&server_hello).unwrap();
+
+        assert_eq!(parsed.ocsp_stapling_detected, Some(false));
+        assert!(!parsed.supports_ocsp_stapling().unwrap());
+        assert!(!parsed.has_extension(0x0005));
+    }
+
+    #[test]
+    fn test_server_hello_no_extensions() {
+        // Build a minimal ServerHello with NO extensions (legacy TLS)
+        let mut server_hello = vec![
+            0x16, // Handshake record type
+            0x03, 0x01, // TLS 1.0
+            0x00, 0x2A, // Length
+            0x02, // ServerHello type
+            0x00, 0x00, 0x26, // Handshake length
+            0x03, 0x01, // TLS 1.0
+        ];
+
+        // Random (32 bytes)
+        server_hello.extend_from_slice(&[0u8; 32]);
+
+        // Session ID length (0)
+        server_hello.push(0x00);
+
+        // Cipher suite
+        server_hello.extend_from_slice(&[0x00, 0x35]);
+
+        // Compression method (null)
+        server_hello.push(0x00);
+
+        // No extensions section
+
+        let parsed = ServerHelloParser::parse(&server_hello).unwrap();
+
+        assert_eq!(parsed.ocsp_stapling_detected, None);
+        assert_eq!(parsed.supports_ocsp_stapling(), None);
+    }
+
+    #[test]
+    fn test_server_hello_heartbeat_detected() {
+        // Build a minimal ServerHello with heartbeat extension
+        let mut server_hello = vec![
+            0x16, // Handshake record type
+            0x03, 0x03, // TLS 1.2
+            0x00, 0x4A, // Length
+            0x02, // ServerHello type
+            0x00, 0x00, 0x46, // Handshake length
+            0x03, 0x03, // TLS 1.2
+        ];
+
+        // Random (32 bytes)
+        server_hello.extend_from_slice(&[0u8; 32]);
+
+        // Session ID length (0)
+        server_hello.push(0x00);
+
+        // Cipher suite (TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256)
+        server_hello.extend_from_slice(&[0xc0, 0x2f]);
+
+        // Compression method (null)
+        server_hello.push(0x00);
+
+        // Extensions length
+        server_hello.extend_from_slice(&[0x00, 0x05]);
+
+        // heartbeat extension (type 0x000f)
+        server_hello.extend_from_slice(&[0x00, 0x0f]);
+        // Extension data length (1 byte)
+        server_hello.extend_from_slice(&[0x00, 0x01]);
+        // Extension data (peer_allowed_to_send = 1)
+        server_hello.push(0x01);
+
+        let parsed = ServerHelloParser::parse(&server_hello).unwrap();
+
+        assert_eq!(parsed.heartbeat_enabled, Some(true));
+        assert!(parsed.supports_heartbeat().unwrap());
+        assert!(parsed.has_extension(0x000f));
+    }
+
+    #[test]
+    fn test_server_hello_no_heartbeat() {
+        // Build a minimal ServerHello WITHOUT heartbeat extension
+        let mut server_hello = vec![
+            0x16, // Handshake record type
+            0x03, 0x03, // TLS 1.2
+            0x00, 0x4A, // Length
+            0x02, // ServerHello type
+            0x00, 0x00, 0x46, // Handshake length
+            0x03, 0x03, // TLS 1.2
+        ];
+
+        // Random (32 bytes)
+        server_hello.extend_from_slice(&[0u8; 32]);
+
+        // Session ID length (0)
+        server_hello.push(0x00);
+
+        // Cipher suite
+        server_hello.extend_from_slice(&[0xc0, 0x2f]);
+
+        // Compression method (null)
+        server_hello.push(0x00);
+
+        // Extensions length
+        server_hello.extend_from_slice(&[0x00, 0x08]);
+
+        // SNI extension (type 0x0000) - different extension
+        server_hello.extend_from_slice(&[0x00, 0x00]);
+        server_hello.extend_from_slice(&[0x00, 0x04]);
+        server_hello.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]);
+
+        let parsed = ServerHelloParser::parse(&server_hello).unwrap();
+
+        assert_eq!(parsed.heartbeat_enabled, Some(false));
+        assert!(!parsed.supports_heartbeat().unwrap());
+        assert!(!parsed.has_extension(0x000f));
+    }
+
+    #[test]
+    fn test_server_hello_heartbeat_and_ocsp() {
+        // Build a ServerHello with BOTH heartbeat and OCSP stapling extensions
+        let mut server_hello = vec![
+            0x16, // Handshake record type
+            0x03, 0x03, // TLS 1.2
+            0x00, 0x50, // Length
+            0x02, // ServerHello type
+            0x00, 0x00, 0x4C, // Handshake length
+            0x03, 0x03, // TLS 1.2
+        ];
+
+        // Random (32 bytes)
+        server_hello.extend_from_slice(&[0u8; 32]);
+
+        // Session ID length (0)
+        server_hello.push(0x00);
+
+        // Cipher suite
+        server_hello.extend_from_slice(&[0xc0, 0x2f]);
+
+        // Compression method (null)
+        server_hello.push(0x00);
+
+        // Extensions length (two extensions)
+        server_hello.extend_from_slice(&[0x00, 0x0A]);
+
+        // status_request extension (type 0x0005)
+        server_hello.extend_from_slice(&[0x00, 0x05]);
+        server_hello.extend_from_slice(&[0x00, 0x01]);
+        server_hello.push(0x00);
+
+        // heartbeat extension (type 0x000f)
+        server_hello.extend_from_slice(&[0x00, 0x0f]);
+        server_hello.extend_from_slice(&[0x00, 0x01]);
+        server_hello.push(0x01);
+
+        let parsed = ServerHelloParser::parse(&server_hello).unwrap();
+
+        // Both should be detected
+        assert_eq!(parsed.ocsp_stapling_detected, Some(true));
+        assert_eq!(parsed.heartbeat_enabled, Some(true));
+        assert!(parsed.supports_ocsp_stapling().unwrap());
+        assert!(parsed.supports_heartbeat().unwrap());
+        assert!(parsed.has_extension(0x0005));
+        assert!(parsed.has_extension(0x000f));
     }
 }

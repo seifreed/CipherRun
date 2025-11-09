@@ -72,10 +72,14 @@ CipherRun is a comprehensive TLS/SSL security scanner written in Rust, designed 
 - **Compatibility Testing**: Determine which clients can connect
 - **Protocol & Cipher Negotiation**: See what each client would use
 
-### SSL Labs Rating
+### SSL Labs Rating System
 - **Complete Implementation**: Based on SSL Labs Rating Guide
 - **Comprehensive Grading**: A+ through F ratings
+- **SSL Labs Compatibility Mode**: Aligned with SSL Labs methodology
+- **TLS 1.3 Requirement**: Grade A or A+ requires TLS 1.3 support (capped at A- without it)
+- **Component Scoring**: Certificate (30%), Protocol (30%), Key Exchange (20%), Cipher (20%)
 - **Smart Capping**: Grade limits based on vulnerabilities and weaknesses
+- **Instant Failures**: SSLv2, NULL/EXPORT ciphers, expired certificates
 
 ### STARTTLS Support (14 Protocols)
 - SMTP, IMAP, POP3, LMTP

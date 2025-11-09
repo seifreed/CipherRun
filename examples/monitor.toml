@@ -1,0 +1,61 @@
+# CipherRun Certificate Monitoring Configuration
+#
+# This file configures the 24/7 certificate monitoring daemon
+
+[monitor]
+# Default scanning interval in seconds (can be overridden per domain)
+default_interval_seconds = 3600  # 1 hour
+
+# Maximum number of concurrent scans
+max_concurrent_scans = 10
+
+# Database connection (optional - for storing scan history)
+# database_url = "postgres://cipherrun:password@localhost/cipherrun"
+# database_url = "sqlite:///var/lib/cipherrun/monitor.db"
+
+# Expiry warning thresholds
+[monitor.thresholds]
+expiry_30d = true   # Alert when cert expires in 30 days
+expiry_14d = true   # Alert when cert expires in 14 days
+expiry_7d = true    # Alert when cert expires in 7 days
+expiry_1d = true    # Alert when cert expires in 1 day
+on_certificate_change = true  # Alert on any certificate change
+
+# Alert deduplication settings
+[monitor.deduplication]
+window_hours = 24   # Don't send same alert within 24 hours
+
+# Email alerts configuration
+[monitor.alerts.email]
+enabled = true
+smtp_server = "smtp.gmail.com"
+smtp_port = 587
+from_address = "alerts@example.com"
+to_addresses = ["security@example.com", "ops@example.com"]
+username = "alerts@example.com"
+password = "your_app_password_here"
+use_tls = true
+
+# Slack alerts configuration
+[monitor.alerts.slack]
+enabled = true
+webhook_url = "https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
+
+# Microsoft Teams alerts configuration
+[monitor.alerts.teams]
+enabled = false
+webhook_url = "https://outlook.office.com/webhook/YOUR_WEBHOOK_URL"
+
+# PagerDuty alerts configuration
+[monitor.alerts.pagerduty]
+enabled = false
+integration_key = "your_pagerduty_integration_key"
+
+# Generic webhook alerts configuration
+[monitor.alerts.webhook]
+enabled = false
+url = "https://your-webhook-endpoint.com/alerts"
+
+[monitor.alerts.webhook.headers]
+Authorization = "Bearer your_api_token"
+Content-Type = "application/json"

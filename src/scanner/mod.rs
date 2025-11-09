@@ -194,6 +194,15 @@ impl Scanner {
             }
         }
 
+        // Phase 10: TLS Intolerance Tests
+        if self.args.all {
+            println!("\n{}", "Testing TLS Intolerance...".yellow().bold());
+            results.intolerance = self.test_intolerance().await.ok();
+            if let Some(intolerance) = &results.intolerance {
+                self.display_intolerance_results(intolerance);
+            }
+        }
+
         // Calculate overall SSL Labs rating
         if self.args.all || self.args.target.is_some() {
             results.rating = Some(self.calculate_rating(&results));
@@ -240,6 +249,11 @@ impl Scanner {
             tester = tester.with_protocol_filter(Some(protocols));
         }
 
+        // Enable testing all IPs if specified
+        if self.args.test_all_ips {
+            tester = tester.with_test_all_ips(true);
+        }
+
         tester.test_all_protocols().await
     }
 
@@ -268,6 +282,11 @@ impl Scanner {
         // Enable STARTTLS if specified
         if let Some(starttls_proto) = self.args.starttls_protocol() {
             tester = tester.with_starttls(Some(starttls_proto));
+        }
+
+        // Enable testing all IPs if specified
+        if self.args.test_all_ips {
+            tester = tester.with_test_all_ips(true);
         }
 
         // Only test ciphers for supported protocols
@@ -302,11 +321,11 @@ impl Scanner {
         };
         let chain = parser.get_certificate_chain().await?;
 
-        // Validate certificate
+        // Validate certificate with platform trust validation enabled
         let validator = if self.args.no_check_certificate {
-            CertificateValidator::with_skip_warnings(self.target.hostname.clone(), true)
+            CertificateValidator::with_config(self.target.hostname.clone(), true, true)?
         } else {
-            CertificateValidator::new(self.target.hostname.clone())
+            CertificateValidator::with_platform_trust(self.target.hostname.clone())?
         };
         let validation = validator.validate_chain(&chain)?;
 
@@ -402,6 +421,15 @@ impl Scanner {
         tester.enumerate_client_cas().await
     }
 
+    /// Test TLS intolerance
+    async fn test_intolerance(
+        &self,
+    ) -> Result<crate::protocols::intolerance::IntoleranceTestResult> {
+        use crate::protocols::intolerance::IntoleranceTester;
+        let tester = IntoleranceTester::new(self.target.clone());
+        tester.test_all().await
+    }
+
     /// Calculate SSL Labs rating
     fn calculate_rating(&self, results: &ScanResults) -> RatingResult {
         let cert_validation = results.certificate_chain.as_ref().map(|c| &c.validation);
@@ -446,6 +474,34 @@ impl Scanner {
                 "  {:<15} {}{}{}",
                 result.protocol, status, deprecated, timing
             );
+        }
+
+        // Display protocol features (heartbeat extension)
+        let heartbeat_detected = results
+            .iter()
+            .filter(|r| r.supported && r.heartbeat_enabled.is_some())
+            .count();
+
+        if heartbeat_detected > 0 {
+            println!("\n{}", "Protocol Features:".cyan().bold());
+            println!("{}", "-".repeat(50));
+
+            for result in results {
+                if result.supported {
+                    if let Some(heartbeat_enabled) = result.heartbeat_enabled {
+                        let heartbeat_status = if heartbeat_enabled {
+                            "Yes".yellow()
+                        } else {
+                            "No".normal()
+                        };
+
+                        println!(
+                            "  {:<15} Heartbeat Extension: {}",
+                            result.protocol, heartbeat_status
+                        );
+                    }
+                }
+            }
         }
     }
 
@@ -563,6 +619,12 @@ impl Scanner {
             println!("  Issuer:     {}", cert.issuer);
             println!("  Valid From: {}", cert.not_before);
             println!("  Valid To:   {}", cert.not_after);
+
+            // Show expiry countdown if available
+            if let Some(ref countdown) = cert.expiry_countdown {
+                println!("  Expires:    {}", countdown.yellow());
+            }
+
             println!("  Serial:     {}", cert.serial_number);
 
             if let Some(key_size) = cert.public_key_size {
@@ -571,13 +633,36 @@ impl Scanner {
                 } else {
                     key_size.to_string().red()
                 };
-                println!(
-                    "  Key Size:   {} bits ({})",
-                    key_color, cert.public_key_algorithm
-                );
+                print!("  Key Size:   {} bits ({})", key_color, cert.public_key_algorithm);
+
+                // Show RSA exponent if available
+                if let Some(ref exponent) = cert.rsa_exponent {
+                    print!(", {}", exponent);
+                }
+                println!();
             }
 
             println!("  Signature:  {}", cert.signature_algorithm);
+
+            // Show certificate fingerprint SHA256
+            if let Some(ref fingerprint) = cert.fingerprint_sha256 {
+                println!("  Fingerprint SHA256: {}", fingerprint);
+            }
+
+            // Show pin SHA256 (HPKP)
+            if let Some(ref pin) = cert.pin_sha256 {
+                println!("  Pin SHA256 (HPKP):  {}", pin);
+            }
+
+            // Show AIA URL (Authority Information Access - CA Issuers)
+            if let Some(ref aia_url) = cert.aia_url {
+                println!("  AIA URL:            {}", aia_url);
+            }
+
+            // Show Debian weak key warning if detected
+            if let Some(true) = cert.debian_weak_key {
+                println!("  {}",  "⚠ WARNING: Debian Weak Key Detected (CVE-2008-0166)".red().bold());
+            }
 
             if !cert.san.is_empty() {
                 println!("\n  Subject Alternative Names:");
@@ -589,6 +674,7 @@ impl Scanner {
 
         println!("\n{}", "Certificate Chain:".cyan());
         println!("  Chain Length: {} certificates", result.chain.chain_length);
+        println!("  Chain Size:   {} bytes", result.chain.chain_size_bytes);
         println!(
             "  Complete:     {}",
             if result.chain.is_complete() {
@@ -660,6 +746,11 @@ impl Scanner {
 
         if let Some(trusted_ca) = &result.validation.trusted_ca {
             println!("  Trusted CA:       {} {}", "✓".green(), trusted_ca);
+        }
+
+        // Display per-trust-store breakdown (Gap 2)
+        if let Some(ref platform_trust) = result.validation.platform_trust {
+            self.display_platform_trust_breakdown(platform_trust);
         }
 
         if !result.validation.issues.is_empty() {
@@ -759,6 +850,34 @@ impl Scanner {
         println!("\n{}", "HTTP Security Headers:".cyan().bold());
         println!("{}", "=".repeat(50));
 
+        // Display HTTP response metadata (Gap 5)
+        if let Some(status_code) = result.http_status_code {
+            let status_color = if (200..300).contains(&status_code) {
+                status_code.to_string().green()
+            } else if (300..400).contains(&status_code) {
+                status_code.to_string().yellow()
+            } else if status_code >= 400 {
+                status_code.to_string().red()
+            } else {
+                status_code.to_string().normal()
+            };
+            println!("  HTTP Status: {}", status_color);
+        }
+
+        if let Some(ref redirect_location) = result.redirect_location {
+            println!("  Redirect To: {}", redirect_location.yellow());
+        }
+
+        if let Some(ref server) = result.server_hostname {
+            println!("  Server:      {}", server.cyan());
+        }
+
+        if result.http_status_code.is_some()
+            || result.redirect_location.is_some()
+            || result.server_hostname.is_some() {
+            println!();
+        }
+
         // Display grade
         let grade_str = format!("Grade: {:?}", result.grade);
         let grade_colored = match result.grade {
@@ -825,6 +944,250 @@ impl Scanner {
                     .green()
                     .bold()
             );
+        }
+
+        // Display advanced analysis
+        self.display_advanced_header_analysis(result);
+    }
+
+    /// Display per-platform trust store breakdown (Gap 2 - SSL Labs style)
+    fn display_platform_trust_breakdown(&self, platform_trust: &crate::certificates::trust_stores::TrustValidationResult) {
+        use crate::certificates::trust_stores::TrustStore;
+
+        println!("\n{}", "Platform Trust Status:".cyan());
+
+        // Overall trust status
+        let overall_status = if platform_trust.overall_trusted {
+            if platform_trust.trusted_count == platform_trust.total_platforms {
+                "✓ Yes (All platforms)".green().bold()
+            } else {
+                "⚠ Partial".yellow().bold()
+            }
+        } else {
+            "✗ No".red().bold()
+        };
+        println!("  Overall Trusted:  {}", overall_status);
+
+        // Get trusted and untrusted platforms
+        let trusted = platform_trust.trusted_platforms();
+        let untrusted = platform_trust.untrusted_platforms();
+
+        // Display SSL Labs style breakdown: "Trusted: Yes - Mozilla, Apple, Android, Java, Windows"
+        if !trusted.is_empty() {
+            let trusted_names: Vec<String> = trusted
+                .iter()
+                .map(|store| {
+                    // Use shorter names for SSL Labs style
+                    match store {
+                        TrustStore::Mozilla => "Mozilla".to_string(),
+                        TrustStore::Apple => "Apple".to_string(),
+                        TrustStore::Android => "Android".to_string(),
+                        TrustStore::Java => "Java".to_string(),
+                        TrustStore::Windows => "Windows".to_string(),
+                    }
+                })
+                .collect();
+
+            println!("  Trusted By:       {}", trusted_names.join(", ").green());
+        }
+
+        // Display untrusted platforms if any
+        if !untrusted.is_empty() {
+            let untrusted_names: Vec<String> = untrusted
+                .iter()
+                .map(|store| {
+                    match store {
+                        TrustStore::Mozilla => "Mozilla".to_string(),
+                        TrustStore::Apple => "Apple".to_string(),
+                        TrustStore::Android => "Android".to_string(),
+                        TrustStore::Java => "Java".to_string(),
+                        TrustStore::Windows => "Windows".to_string(),
+                    }
+                })
+                .collect();
+
+            println!("  Not Trusted By:   {}", untrusted_names.join(", ").red());
+        }
+
+        // Display detailed per-platform status
+        println!("\n  {}", "Per-Platform Details:".cyan());
+        for store in TrustStore::all() {
+            if let Some(status) = platform_trust.platform_status.get(&store) {
+                let status_symbol = if status.trusted {
+                    "✓".green()
+                } else {
+                    "✗".red()
+                };
+
+                let platform_name = format!("{:<18}", store.name());
+
+                if status.trusted {
+                    if let Some(ref root) = status.trusted_root {
+                        // Truncate long root names for display
+                        let root_display = if root.len() > 50 {
+                            format!("{}...", &root[..47])
+                        } else {
+                            root.clone()
+                        };
+                        println!("    {} {} - {}", status_symbol, platform_name.cyan(), root_display.dimmed());
+                    } else {
+                        println!("    {} {}", status_symbol, platform_name.cyan());
+                    }
+                } else {
+                    let message_display = if status.message.len() > 50 {
+                        format!("{}...", &status.message[..47])
+                    } else {
+                        status.message.clone()
+                    };
+                    println!("    {} {} - {}", status_symbol, platform_name.cyan(), message_display.dimmed());
+                }
+            }
+        }
+    }
+
+    /// Display advanced header analysis results
+    fn display_advanced_header_analysis(&self, result: &HeaderAnalysisResult) {
+        use crate::http::headers_advanced::Grade;
+
+        // HSTS Analysis
+        if let Some(hsts) = &result.hsts_analysis {
+            println!("\n{}", "HSTS Analysis:".cyan());
+            let status = if hsts.enabled {
+                format!("✓ Enabled - {}", hsts.details).green()
+            } else {
+                format!("✗ Disabled - {}", hsts.details).red()
+            };
+            println!("  Status: {}", status);
+            println!("  Grade:  {:?}", hsts.grade);
+            if hsts.enabled {
+                if let Some(max_age) = hsts.max_age {
+                    println!("    max-age:          {} ({} days)", max_age, max_age / 86400);
+                }
+                println!("    includeSubDomains: {}", hsts.include_subdomains);
+                println!("    preload:           {}", hsts.preload);
+            }
+        }
+
+        // HPKP Analysis (informational)
+        if let Some(hpkp) = &result.hpkp_analysis {
+            if hpkp.enabled {
+                println!("\n{}", "HPKP Analysis:".cyan());
+                println!("  {} {}", "⚠".yellow(), hpkp.details.yellow());
+                println!("  Pins: {}", hpkp.pins.len());
+            }
+        }
+
+        // Cookie Analysis
+        if let Some(cookies) = &result.cookie_analysis {
+            println!("\n{}", "Cookie Security:".cyan());
+            println!("  {}", cookies.details);
+            println!("  Grade: {:?}", cookies.grade);
+
+            if !cookies.cookies.is_empty() {
+                println!("\n  Cookies:");
+                for cookie in &cookies.cookies {
+                    let security_flags = format!(
+                        "{}{}{}",
+                        if cookie.secure { "Secure " } else { "" },
+                        if cookie.httponly { "HttpOnly " } else { "" },
+                        if cookie.samesite.is_some() {
+                            format!("SameSite={}", cookie.samesite.as_ref().unwrap())
+                        } else {
+                            String::new()
+                        }
+                    );
+
+                    let status = if cookie.secure && cookie.httponly && cookie.samesite.is_some() {
+                        "✓".green()
+                    } else {
+                        "⚠".yellow()
+                    };
+
+                    println!(
+                        "    {} {} [{}]",
+                        status,
+                        cookie.name.cyan(),
+                        if security_flags.is_empty() {
+                            "no security flags".red().to_string()
+                        } else {
+                            security_flags
+                        }
+                    );
+                }
+            }
+        }
+
+        // Date/Time Check
+        if let Some(datetime) = &result.datetime_check {
+            if let Some(server_date) = &datetime.server_date {
+                println!("\n{}", "Server Time:".cyan());
+                let sync_status = if datetime.synchronized {
+                    "✓ Synchronized".green()
+                } else {
+                    "⚠ Out of sync".yellow()
+                };
+                println!("  {}", sync_status);
+                println!("  Server Date: {}", server_date);
+                if let Some(skew) = datetime.skew_seconds {
+                    println!("  Time Skew:   {} seconds", skew);
+                }
+            }
+        }
+
+        // Banner Detection
+        if let Some(banners) = &result.banner_detection {
+            println!("\n{}", "Server Banners:".cyan());
+            let grade_color = match banners.grade {
+                Grade::A => "Grade A".green().bold(),
+                Grade::B => "Grade B".blue(),
+                Grade::C => "Grade C".yellow(),
+                Grade::D => "Grade D".yellow(),
+                Grade::F => "Grade F".red().bold(),
+            };
+            println!("  {}", grade_color);
+
+            if let Some(server) = &banners.server {
+                println!("  Server:      {}", server);
+            }
+            if let Some(powered_by) = &banners.powered_by {
+                println!("  X-Powered-By: {}", powered_by);
+            }
+            if let Some(app) = &banners.application {
+                println!("  Application:  {}", app);
+            }
+
+            if banners.version_exposed {
+                println!("  {} Version information exposed", "⚠".red());
+            } else {
+                println!("  {} Version information hidden", "✓".green());
+            }
+        }
+
+        // Reverse Proxy Detection
+        if let Some(proxy) = &result.reverse_proxy_detection {
+            if proxy.detected {
+                println!("\n{}", "Reverse Proxy:".cyan());
+                println!("  {}", proxy.details);
+                if let Some(proxy_type) = &proxy.proxy_type {
+                    println!("  Type: {}", proxy_type.cyan());
+                }
+                if let Some(via) = &proxy.via_header {
+                    println!("  Via: {}", via);
+                }
+                let mut headers_found = Vec::new();
+                if proxy.x_forwarded_for {
+                    headers_found.push("X-Forwarded-For");
+                }
+                if proxy.x_real_ip {
+                    headers_found.push("X-Real-IP");
+                }
+                if proxy.x_forwarded_proto {
+                    headers_found.push("X-Forwarded-Proto");
+                }
+                if !headers_found.is_empty() {
+                    println!("  Headers: {}", headers_found.join(", "));
+                }
+            }
         }
     }
 
@@ -1120,6 +1483,136 @@ impl Scanner {
             println!("     DN:  {}", dn_preview.dimmed());
         }
     }
+
+    /// Display TLS intolerance test results
+    fn display_intolerance_results(
+        &self,
+        results: &crate::protocols::intolerance::IntoleranceTestResult,
+    ) {
+        println!("\n{}", "TLS Intolerance Tests:".cyan().bold());
+        println!("{}", "=".repeat(50));
+
+        let mut issues_found = 0;
+
+        // Extension intolerance
+        if results.extension_intolerance {
+            issues_found += 1;
+            println!("\n{} {}", "✗".red().bold(), "Extension Intolerance".red());
+            println!(
+                "  {}",
+                "Server rejects ClientHellos with certain extensions".yellow()
+            );
+            if let Some(detail) = results.details.get("extension_intolerance") {
+                println!("  {}", detail.dimmed());
+            }
+        } else {
+            println!(
+                "\n{} {}",
+                "✓".green(),
+                "Extension Intolerance".green()
+            );
+            println!("  Server properly handles TLS extensions");
+        }
+
+        // Version intolerance
+        if results.version_intolerance {
+            issues_found += 1;
+            println!("\n{} {}", "✗".red().bold(), "Version Intolerance".red());
+            println!(
+                "  {}",
+                "Server rejects high version numbers in record layer".yellow()
+            );
+            if let Some(detail) = results.details.get("version_intolerance") {
+                println!("  {}", detail.dimmed());
+            }
+        } else {
+            println!("\n{} {}", "✓".green(), "Version Intolerance".green());
+            println!("  Server properly handles version negotiation");
+        }
+
+        // Long handshake intolerance
+        if results.long_handshake_intolerance {
+            issues_found += 1;
+            println!(
+                "\n{} {}",
+                "✗".red().bold(),
+                "Long Handshake Intolerance".red()
+            );
+            println!(
+                "  {}",
+                "Server rejects ClientHello messages > 256 bytes".yellow()
+            );
+            if let Some(detail) = results.details.get("long_handshake_intolerance") {
+                println!("  {}", detail.dimmed());
+            }
+        } else {
+            println!(
+                "\n{} {}",
+                "✓".green(),
+                "Long Handshake Intolerance".green()
+            );
+            println!("  Server accepts long ClientHello messages");
+        }
+
+        // Incorrect SNI alerts
+        if results.incorrect_sni_alerts {
+            issues_found += 1;
+            println!(
+                "\n{} {}",
+                "✗".red().bold(),
+                "Incorrect SNI Alerts".red()
+            );
+            println!(
+                "  {}",
+                "Server sends wrong alert type for SNI failures".yellow()
+            );
+            if let Some(detail) = results.details.get("incorrect_sni_alerts") {
+                println!("  {}", detail.dimmed());
+            }
+        } else {
+            println!("\n{} {}", "✓".green(), "Incorrect SNI Alerts".green());
+            println!("  Server sends correct alerts for SNI issues");
+        }
+
+        // Common DH primes
+        if results.uses_common_dh_primes {
+            issues_found += 1;
+            println!(
+                "\n{} {}",
+                "✗".red().bold(),
+                "Common DH Primes".red().bold()
+            );
+            println!(
+                "  {}",
+                "Server uses known weak DH primes (CRITICAL SECURITY ISSUE)"
+                    .red()
+                    .bold()
+            );
+            println!("  This makes the server vulnerable to pre-computation attacks");
+            if let Some(detail) = results.details.get("uses_common_dh_primes") {
+                println!("  {}", detail.dimmed());
+            }
+        } else {
+            println!("\n{} {}", "✓".green(), "Common DH Primes".green());
+            println!("  Server does not use known weak DH primes");
+        }
+
+        // Summary
+        println!("\n{}", "=".repeat(50));
+        if issues_found == 0 {
+            println!(
+                "{}",
+                "✓ No TLS intolerance issues detected!".green().bold()
+            );
+        } else {
+            println!(
+                "{} {} intolerance issue(s) detected",
+                "⚠".yellow().bold(),
+                issues_found.to_string().yellow().bold()
+            );
+            println!("  These issues may cause connectivity problems with some clients");
+        }
+    }
 }
 
 /// Certificate analysis result
@@ -1145,6 +1638,7 @@ pub struct ScanResults {
     pub signature_algorithms: Option<crate::protocols::signatures::SignatureEnumerationResult>,
     pub key_exchange_groups: Option<crate::protocols::groups::GroupEnumerationResult>,
     pub client_cas: Option<crate::protocols::client_cas::ClientCAsResult>,
+    pub intolerance: Option<crate::protocols::intolerance::IntoleranceTestResult>,
 }
 
 impl ScanResults {
@@ -1165,8 +1659,8 @@ impl ScanResults {
                 "✗ Invalid".red()
             };
             println!(
-                "Certificate:     {} ({} in chain)",
-                cert_status, cert.chain.chain_length
+                "Certificate:     {} ({} certs, {} bytes)",
+                cert_status, cert.chain.chain_length, cert.chain.chain_size_bytes
             );
         }
 

@@ -1,7 +1,7 @@
 // Advanced Server Defaults Analysis
 // Cipher order preference, DH parameter analysis, ECDH curves, Key exchange details
 
-use crate::Result;
+use crate::{Result, tls_bail};
 use crate::utils::network::Target;
 use openssl::ssl::{SslConnector, SslMethod};
 use serde::{Deserialize, Serialize};
@@ -178,7 +178,7 @@ impl ServerDefaultsAdvancedTester {
 
         let stream = timeout(connect_timeout, TcpStream::connect(&addr))
             .await
-            .map_err(|_| anyhow::anyhow!("Connection timeout"))??;
+            .map_err(|_| crate::error::TlsError::Timeout { duration: connect_timeout })??;
 
         let std_stream = stream.into_std()?;
 
@@ -203,7 +203,7 @@ impl ServerDefaultsAdvancedTester {
 
         let stream = timeout(connect_timeout, TcpStream::connect(&addr))
             .await
-            .map_err(|_| anyhow::anyhow!("Connection timeout"))??;
+            .map_err(|_| crate::error::TlsError::Timeout { duration: connect_timeout })??;
 
         let std_stream = stream.into_std()?;
 
@@ -336,7 +336,7 @@ impl ServerDefaultsAdvancedTester {
 
         let stream = timeout(connect_timeout, TcpStream::connect(&addr))
             .await
-            .map_err(|_| anyhow::anyhow!("Connection timeout"))??;
+            .map_err(|_| crate::error::TlsError::Timeout { duration: connect_timeout })??;
 
         let std_stream = stream.into_std()?;
 
@@ -349,14 +349,14 @@ impl ServerDefaultsAdvancedTester {
         let cipher = ssl_stream
             .ssl()
             .current_cipher()
-            .ok_or_else(|| anyhow::anyhow!("No cipher negotiated"))?;
+            .ok_or_else(|| crate::error::TlsError::Other("No cipher negotiated".to_string()))?;
 
         let cipher_name = cipher.name();
 
         if cipher_name.contains("ECDHE") {
             Ok(())
         } else {
-            Err(anyhow::anyhow!("ECDHE not negotiated"))
+            tls_bail!("ECDHE not negotiated")
         }
     }
 
@@ -376,7 +376,7 @@ impl ServerDefaultsAdvancedTester {
 
         let stream = timeout(connect_timeout, TcpStream::connect(&addr))
             .await
-            .map_err(|_| anyhow::anyhow!("Connection timeout"))??;
+            .map_err(|_| crate::error::TlsError::Timeout { duration: connect_timeout })??;
 
         let std_stream = stream.into_std()?;
 

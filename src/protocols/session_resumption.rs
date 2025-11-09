@@ -1,7 +1,7 @@
 // Session Resumption Testing - Complete Session Resume Analysis
 // Tests session IDs, session tickets (RFC 5077), and resumption behavior
 
-use crate::Result;
+use crate::{Result, tls_bail};
 use crate::utils::network::Target;
 use openssl::ssl::{SslConnector, SslMethod, SslSessionCacheMode};
 use serde::{Deserialize, Serialize};
@@ -134,7 +134,7 @@ impl SessionResumptionTester {
                 let len = session.id().len();
                 (len, len > 0)
             } else {
-                return Err(anyhow::anyhow!("No session established"));
+                tls_bail!("No session established");
             }
         };
 

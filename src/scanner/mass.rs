@@ -31,7 +31,10 @@ impl MassScanner {
             .collect();
 
         if targets.is_empty() {
-            return Err(anyhow::anyhow!("No targets found in file: {}", file_path));
+            return Err(crate::error::TlsError::Other(format!(
+                "No targets found in file: {}",
+                file_path
+            )));
         }
 
         Ok(Self { args, targets })

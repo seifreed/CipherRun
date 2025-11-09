@@ -6,7 +6,6 @@ use crate::utils::mtls::MtlsConfig;
 use crate::utils::network::Target;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
 use tokio::time::timeout;
 
 /// Protocol testing configuration
@@ -20,6 +19,8 @@ pub struct ProtocolTester {
     starttls_protocol: Option<crate::starttls::StarttlsProtocol>,
     sni_hostname: Option<String>,
     protocol_filter: Option<Vec<Protocol>>,
+    test_all_ips: bool,
+    retry_config: Option<crate::utils::retry::RetryConfig>,
 }
 
 impl ProtocolTester {
@@ -38,6 +39,8 @@ impl ProtocolTester {
             starttls_protocol: None,
             sni_hostname: None,
             protocol_filter: None,
+            test_all_ips: false,
+            retry_config: None,
         }
     }
 
@@ -56,6 +59,8 @@ impl ProtocolTester {
             starttls_protocol: None,
             sni_hostname: None,
             protocol_filter: None,
+            test_all_ips: false,
+            retry_config: None,
         }
     }
 
@@ -101,6 +106,18 @@ impl ProtocolTester {
         self
     }
 
+    /// Enable testing all resolved IP addresses (for Anycast pools)
+    pub fn with_test_all_ips(mut self, enable: bool) -> Self {
+        self.test_all_ips = enable;
+        self
+    }
+
+    /// Set retry configuration for handling transient network failures
+    pub fn with_retry_config(mut self, config: Option<crate::utils::retry::RetryConfig>) -> Self {
+        self.retry_config = config;
+        self
+    }
+
     /// Test all protocols
     pub async fn test_all_protocols(&self) -> Result<Vec<ProtocolTestResult>> {
         let mut results = Vec::new();
@@ -120,17 +137,25 @@ impl ProtocolTester {
     pub async fn test_protocol(&self, protocol: Protocol) -> Result<ProtocolTestResult> {
         let start = std::time::Instant::now();
 
-        let supported = match protocol {
-            Protocol::SSLv2 => self.test_sslv2().await?,
-            Protocol::SSLv3 | Protocol::TLS10 | Protocol::TLS11 | Protocol::TLS12 => {
-                self.test_tls_with_openssl(protocol).await?
-            }
-            Protocol::TLS13 => self.test_tls13().await?,
-            Protocol::QUIC => self.test_quic().await?,
+        let supported = if self.test_all_ips {
+            // Test all IPs and report minimum capability (like SSL Labs)
+            // Protocol is supported ONLY if ALL IPs support it
+            self.test_protocol_all_ips(protocol).await?
+        } else {
+            // Test only first IP (default behavior)
+            let addr = self.target.socket_addrs()[0];
+            self.test_protocol_on_ip(protocol, addr).await?
         };
 
         let handshake_time_ms = if supported {
             Some(start.elapsed().as_millis() as u64)
+        } else {
+            None
+        };
+
+        // Detect heartbeat extension support for supported protocols (TLS 1.0-1.3)
+        let heartbeat_enabled = if supported && !matches!(protocol, Protocol::SSLv2 | Protocol::QUIC) {
+            self.detect_heartbeat_extension(protocol).await.ok()
         } else {
             None
         };
@@ -141,17 +166,99 @@ impl ProtocolTester {
             preferred: false, // Will be determined later
             ciphers_count: 0, // Will be filled by cipher testing
             handshake_time_ms,
+            heartbeat_enabled,
         })
     }
 
+    /// Test protocol across all resolved IPs
+    async fn test_protocol_all_ips(&self, protocol: Protocol) -> Result<bool> {
+        let addrs = self.target.socket_addrs();
+
+        if addrs.is_empty() {
+            return Ok(false);
+        }
+
+        tracing::info!(
+            "Testing {} IPs for hostname {} (protocol: {})",
+            addrs.len(),
+            self.target.hostname,
+            protocol
+        );
+
+        let mut all_support = true;
+        let mut any_tested = false;
+        let mut per_ip_results = Vec::new();
+
+        for (idx, addr) in addrs.iter().enumerate() {
+            any_tested = true;
+            let ip_supports = self.test_protocol_on_ip(protocol, *addr).await?;
+
+            tracing::debug!(
+                "IP {} ({}/{}): {} {} - {}",
+                addr.ip(),
+                idx + 1,
+                addrs.len(),
+                protocol,
+                if ip_supports { "supported" } else { "NOT supported" },
+                if ip_supports { "✓" } else { "✗" }
+            );
+
+            per_ip_results.push((addr.ip(), ip_supports));
+
+            if !ip_supports {
+                all_support = false;
+            }
+        }
+
+        // Check for inconsistencies
+        let inconsistent = per_ip_results.iter().any(|(_, s)| *s)
+            && per_ip_results.iter().any(|(_, s)| !*s);
+
+        if inconsistent {
+            tracing::warn!(
+                "WARNING: Inconsistent {} support across IPs for {}",
+                protocol,
+                self.target.hostname
+            );
+            for (ip, supported) in &per_ip_results {
+                tracing::warn!(
+                    "  {} {} - {}",
+                    ip,
+                    protocol,
+                    if *supported { "SUPPORTED" } else { "NOT SUPPORTED" }
+                );
+            }
+        }
+
+        // Report minimum capability (like SSL Labs): supported only if ALL IPs support it
+        Ok(any_tested && all_support)
+    }
+
+    /// Test protocol on specific IP address
+    async fn test_protocol_on_ip(&self, protocol: Protocol, addr: std::net::SocketAddr) -> Result<bool> {
+        match protocol {
+            Protocol::SSLv2 => self.test_sslv2_on_ip(addr).await,
+            Protocol::SSLv3 | Protocol::TLS10 | Protocol::TLS11 | Protocol::TLS12 => {
+                self.test_tls_with_openssl_on_ip(protocol, addr).await
+            }
+            Protocol::TLS13 => self.test_tls13_on_ip(addr).await,
+            Protocol::QUIC => self.test_quic_on_ip(addr).await,
+        }
+    }
+
     /// Test SSLv2 (custom implementation needed as it's not in modern libraries)
-    async fn test_sslv2(&self) -> Result<bool> {
+    async fn test_sslv2_on_ip(&self, addr: std::net::SocketAddr) -> Result<bool> {
         // SSLv2 uses a different handshake format
         // For now, we'll use a simple probe
-        let addr = self.target.socket_addrs()[0];
+        let stream_result = crate::utils::network::connect_with_timeout(
+            addr,
+            self.connect_timeout,
+            self.retry_config.as_ref(),
+        )
+        .await;
 
-        match timeout(self.connect_timeout, TcpStream::connect(addr)).await {
-            Ok(Ok(mut stream)) => {
+        match stream_result {
+            Ok(mut stream) => {
                 // Send RDP preamble if needed
                 if self.use_rdp
                     && crate::protocols::rdp::RdpPreamble::send(&mut stream)
@@ -231,15 +338,19 @@ impl ProtocolTester {
     }
 
     /// Test TLS protocols using OpenSSL
-    async fn test_tls_with_openssl(&self, protocol: Protocol) -> Result<bool> {
+    async fn test_tls_with_openssl_on_ip(&self, protocol: Protocol, addr: std::net::SocketAddr) -> Result<bool> {
         use openssl::ssl::{SslConnector, SslMethod, SslVersion};
 
-        let addr = self.target.socket_addrs()[0];
-
-        // Connect TCP
-        let mut stream = match timeout(self.connect_timeout, TcpStream::connect(addr)).await {
-            Ok(Ok(s)) => s,
-            _ => return Ok(false),
+        // Connect TCP with retry logic
+        let mut stream = match crate::utils::network::connect_with_timeout(
+            addr,
+            self.connect_timeout,
+            self.retry_config.as_ref(),
+        )
+        .await
+        {
+            Ok(s) => s,
+            Err(_) => return Ok(false),
         };
 
         // Perform STARTTLS negotiation if needed
@@ -295,17 +406,21 @@ impl ProtocolTester {
     }
 
     /// Test TLS 1.3 using rustls
-    async fn test_tls13(&self) -> Result<bool> {
+    async fn test_tls13_on_ip(&self, addr: std::net::SocketAddr) -> Result<bool> {
         use rustls::{ClientConfig, RootCertStore};
         use std::sync::Arc;
         use tokio_rustls::TlsConnector;
 
-        let addr = self.target.socket_addrs()[0];
-
-        // Connect TCP
-        let mut stream = match timeout(self.connect_timeout, TcpStream::connect(addr)).await {
-            Ok(Ok(s)) => s,
-            _ => return Ok(false),
+        // Connect TCP with retry logic
+        let mut stream = match crate::utils::network::connect_with_timeout(
+            addr,
+            self.connect_timeout,
+            self.retry_config.as_ref(),
+        )
+        .await
+        {
+            Ok(s) => s,
+            Err(_) => return Ok(false),
         };
 
         // Perform STARTTLS negotiation if needed
@@ -351,7 +466,7 @@ impl ProtocolTester {
     }
 
     /// Test QUIC support (requires special handling)
-    async fn test_quic(&self) -> Result<bool> {
+    async fn test_quic_on_ip(&self, _addr: std::net::SocketAddr) -> Result<bool> {
         // QUIC requires UDP and is complex
         // For now, we'll return false (to be implemented with quinn crate)
         Ok(false)
@@ -379,6 +494,87 @@ impl ProtocolTester {
         }
 
         Ok(None)
+    }
+
+    /// Detect heartbeat extension support for a specific protocol
+    /// This performs a manual TLS handshake to check if ServerHello contains extension 0x000f
+    async fn detect_heartbeat_extension(&self, protocol: Protocol) -> Result<bool> {
+        use super::handshake::{ClientHelloBuilder, ServerHelloParser};
+
+        let addr = self.target.socket_addrs()[0];
+
+        // Connect TCP
+        let mut stream = match timeout(
+            self.read_timeout,
+            crate::utils::network::connect_with_timeout(
+                addr,
+                self.connect_timeout,
+                self.retry_config.as_ref(),
+            ),
+        )
+        .await
+        {
+            Ok(Ok(s)) => s,
+            _ => return Ok(false),
+        };
+
+        // Send RDP preamble if needed
+        if self.use_rdp
+            && crate::protocols::rdp::RdpPreamble::send(&mut stream)
+                .await
+                .is_err()
+        {
+            return Ok(false);
+        }
+
+        // Perform STARTTLS negotiation if needed
+        if let Some(starttls_proto) = self.starttls_protocol {
+            let negotiator = crate::starttls::protocols::get_negotiator(
+                starttls_proto,
+                self.target.hostname.clone(),
+            );
+            if negotiator.negotiate_starttls(&mut stream).await.is_err() {
+                return Ok(false);
+            }
+        }
+
+        // Build ClientHello with minimal ciphers
+        let mut builder = ClientHelloBuilder::new(protocol);
+        builder.add_ciphers(&[0xc030, 0xc02f, 0x009e, 0x0035]);
+
+        // Use custom SNI if set, otherwise use target hostname
+        let sni_hostname = self
+            .sni_hostname
+            .as_deref()
+            .unwrap_or(&self.target.hostname);
+
+        let client_hello = builder.build_with_defaults(Some(sni_hostname))?;
+
+        // Send ClientHello and receive ServerHello
+        let response = match timeout(self.read_timeout, async {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            stream.write_all(&client_hello).await?;
+
+            // Read ServerHello (up to 16KB)
+            let mut resp = vec![0u8; 16384];
+            let n = stream.read(&mut resp).await?;
+            resp.truncate(n);
+            Ok::<Vec<u8>, anyhow::Error>(resp)
+        })
+        .await
+        {
+            Ok(Ok(resp)) if !resp.is_empty() => resp,
+            _ => return Ok(false),
+        };
+
+        // Parse ServerHello to check for heartbeat extension
+        match ServerHelloParser::parse(&response) {
+            Ok(server_hello) => {
+                // Check if heartbeat extension is present
+                Ok(server_hello.supports_heartbeat().unwrap_or(false))
+            }
+            Err(_) => Ok(false),
+        }
     }
 }
 
