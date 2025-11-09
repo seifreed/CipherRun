@@ -1,0 +1,163 @@
+id: nist-sp800-52r2
+name: NIST SP 800-52 Revision 2
+version: 2.0
+description: Guidelines for the Selection, Configuration, and Use of Transport Layer Security (TLS) Implementations
+organization: National Institute of Standards and Technology (NIST)
+effective_date: 2019-08-01
+
+requirements:
+  - id: NIST-3.1
+    name: TLS 1.2/1.3 Only
+    description: Only TLS 1.2 and TLS 1.3 shall be used
+    category: Protocol Security
+    severity: critical
+    remediation: |
+      Disable all versions of SSL and TLS prior to TLS 1.2.
+      Enable only TLS 1.2 (with secure cipher suites) and TLS 1.3.
+      This requirement applies to both clients and servers.
+    rules:
+      - type: ProtocolVersion
+        allowed:
+          - TLS 1.2
+          - TLS 1.3
+        denied:
+          - SSLv2
+          - SSLv3
+          - TLS 1.0
+          - TLS 1.1
+
+  - id: NIST-3.2
+    name: Forward Secrecy Required
+    description: All cipher suites must provide forward secrecy
+    category: Cipher Security
+    severity: high
+    remediation: |
+      Configure TLS to use only cipher suites with ephemeral key exchange:
+      - ECDHE (Elliptic Curve Diffie-Hellman Ephemeral)
+      - DHE (Diffie-Hellman Ephemeral)
+
+      Disable static RSA key exchange cipher suites.
+    rules:
+      - type: ForwardSecrecy
+        required: true
+
+  - id: NIST-3.3
+    name: AEAD Ciphers Preferred
+    description: Authenticated encryption (AEAD) cipher suites should be used
+    category: Cipher Security
+    severity: medium
+    remediation: |
+      Prioritize AEAD cipher suites in server configuration:
+      - AES-GCM (Galois/Counter Mode)
+      - ChaCha20-Poly1305
+
+      AEAD ciphers provide both confidentiality and message authentication.
+    rules:
+      - type: CipherSuite
+        preferred_patterns:
+          - ".*_GCM$"
+          - ".*_GCM_.*"
+          - ".*_CHACHA20_POLY1305.*"
+
+  - id: NIST-3.4
+    name: Weak Cipher Prohibition
+    description: Weak and NULL encryption algorithms shall not be used
+    category: Cipher Security
+    severity: critical
+    remediation: |
+      Disable cipher suites using:
+      - NULL encryption (no confidentiality)
+      - EXPORT-grade ciphers (deliberately weakened)
+      - DES, 3DES (obsolete encryption)
+      - RC4 (broken stream cipher)
+      - RC2 (weak block cipher)
+    rules:
+      - type: CipherSuite
+        denied_patterns:
+          - ".*_NULL_.*"
+          - ".*_EXPORT_.*"
+          - ".*_DES_.*"
+          - ".*_3DES_.*"
+          - ".*_RC4_.*"
+          - ".*_RC2_.*"
+
+  - id: NIST-4.1
+    name: Certificate Validation
+    description: Server certificates must be validated
+    category: Certificate Security
+    severity: critical
+    remediation: |
+      Ensure proper certificate validation:
+      - Verify certificate chain to a trusted root CA
+      - Check certificate has not expired
+      - Validate hostname matches certificate subject/SAN
+      - Check certificate has not been revoked (CRL/OCSP)
+    rules:
+      - type: CertificateValidation
+        require_valid_chain: true
+        require_unexpired: true
+        require_hostname_match: true
+
+  - id: NIST-4.2
+    name: RSA Key Size 2048+ bits
+    description: RSA keys shall be at least 2048 bits
+    category: Certificate Security
+    severity: high
+    remediation: |
+      Replace certificates with RSA keys smaller than 2048 bits.
+      Recommended key sizes:
+      - RSA: 2048 bits minimum, 3072+ bits for high-security applications
+      - ECC: 256 bits minimum, 384+ bits for high-security applications
+    rules:
+      - type: CertificateKeySize
+        min_rsa_bits: 2048
+        min_ecc_bits: 256
+
+  - id: NIST-4.3
+    name: SHA-2 Signature Algorithm
+    description: Certificate signatures must use SHA-2 family or better
+    category: Certificate Security
+    severity: high
+    remediation: |
+      Replace certificates using MD5 or SHA-1 signatures.
+      Use certificates signed with:
+      - SHA-256 (minimum)
+      - SHA-384
+      - SHA-512
+    rules:
+      - type: SignatureAlgorithm
+        allowed:
+          - sha256
+          - sha384
+          - sha512
+        denied:
+          - md5
+          - sha1
+
+  - id: NIST-5.1
+    name: No CBC Mode with TLS 1.2
+    description: CBC mode cipher suites should be avoided with TLS 1.2 when possible
+    category: Cipher Security
+    severity: low
+    remediation: |
+      While CBC mode ciphers are permitted in TLS 1.2, prefer AEAD ciphers (GCM, ChaCha20-Poly1305).
+      CBC mode is vulnerable to padding oracle attacks if not properly implemented.
+    rules:
+      - type: CipherSuite
+        preferred_patterns:
+          - ".*_GCM.*"
+          - ".*_CHACHA20_POLY1305.*"
+
+  - id: NIST-6.1
+    name: Server Certificate Validity Period
+    description: Server certificates should be monitored for upcoming expiration
+    category: Certificate Security
+    severity: medium
+    remediation: |
+      Implement certificate lifecycle management:
+      - Monitor certificates for expiration (90-day warning recommended)
+      - Automate certificate renewal where possible
+      - Maintain certificate inventory
+    rules:
+      - type: CertificateExpiration
+        max_days_until_expiration: 90

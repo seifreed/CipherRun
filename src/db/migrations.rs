@@ -3,7 +3,6 @@
 
 use crate::db::connection::DatabasePool;
 use sqlx::migrate::Migrator;
-use sqlx::{Row, Sqlite};
 use std::path::Path;
 use std::fs;
 use std::path::PathBuf;

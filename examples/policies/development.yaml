@@ -1,0 +1,47 @@
+policy:
+  name: "Development TLS Policy"
+  version: "1.0"
+  description: "Relaxed TLS security policy for development environments"
+  organization: "Example Corp"
+  effective_date: "2025-01-01"
+
+  # Protocol requirements (more relaxed)
+  protocols:
+    required: ["TLSv1.2"]
+    prohibited: ["SSLv2", "SSLv3"]
+    action: WARN
+
+  # Cipher suite requirements
+  ciphers:
+    min_strength: "LOW"
+    require_forward_secrecy: false
+    require_aead: false
+    prohibited_patterns:
+      - ".*_NULL_.*"
+      - ".*_EXPORT_.*"
+    action: WARN
+
+  # Certificate requirements (relaxed for dev)
+  certificates:
+    min_key_size: 1024
+    max_days_until_expiry: 7
+    prohibited_signature_algorithms: ["MD5"]
+    require_valid_trust_chain: false
+    require_san: false
+    require_hostname_match: false
+    action: INFO
+
+  # Vulnerability thresholds
+  vulnerabilities:
+    max_critical: 0
+    max_high: 3
+    max_medium: 10
+    prohibited:
+      - "Heartbleed"
+      - "DROWN"
+    action: WARN
+
+  # No rating requirements for dev
+  # rating: null
+
+  exceptions: []

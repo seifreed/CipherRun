@@ -1,0 +1,81 @@
+policy:
+  name: "Production TLS Security Policy"
+  version: "2.0"
+  description: "Enterprise TLS security standards for production systems"
+  organization: "Example Corp"
+  effective_date: "2025-01-01"
+
+  # Extend base security policy
+  extends: "base-security.yaml"
+
+  # Protocol requirements (stricter than base)
+  protocols:
+    required: ["TLSv1.2", "TLSv1.3"]
+    prohibited: ["SSLv2", "SSLv3", "TLSv1.0", "TLSv1.1"]
+    action: FAIL
+
+  # Cipher suite requirements (stricter)
+  ciphers:
+    min_strength: "HIGH"
+    require_forward_secrecy: true
+    require_aead: false  # Not all TLS 1.2 ciphers support AEAD
+    prohibited_patterns:
+      - ".*_RC4_.*"
+      - ".*_DES_.*"
+      - ".*_MD5.*"
+      - ".*_NULL_.*"
+      - ".*_EXPORT_.*"
+      - ".*_anon_.*"
+    required_patterns:
+      - ".*_GCM$"  # Prefer GCM ciphers
+    action: FAIL
+
+  # Certificate requirements
+  certificates:
+    min_key_size: 2048
+    max_days_until_expiry: 30
+    prohibited_signature_algorithms: ["SHA1", "MD5"]
+    require_valid_trust_chain: true
+    require_san: true
+    require_hostname_match: true
+    action: FAIL
+
+  # Vulnerability thresholds (zero tolerance)
+  vulnerabilities:
+    max_critical: 0
+    max_high: 0
+    max_medium: 2
+    prohibited:
+      - "POODLE"
+      - "BEAST"
+      - "CRIME"
+      - "BREACH"
+      - "Heartbleed"
+      - "DROWN"
+      - "FREAK"
+      - "LOGJAM"
+    action: FAIL
+
+  # Rating requirements
+  rating:
+    min_grade: "A"
+    min_score: 80
+    action: WARN
+
+  # Policy exceptions
+  exceptions:
+    - domain: "legacy.example.com"
+      rules:
+        - "protocols.prohibited"
+        - "ciphers.prohibited_patterns"
+      reason: "Legacy system, migration scheduled Q2 2026"
+      expires: "2026-06-30"
+      approved_by: "CISO"
+      ticket: "SEC-1234"
+
+    - domain: "*.internal.example.com"
+      rules: ["certificates.max_days_until_expiry"]
+      reason: "Internal systems use short-lived certificates (14 days)"
+      expires: null
+      approved_by: "Security Team"
+      ticket: "SEC-5678"

@@ -1,0 +1,71 @@
+policy:
+  name: "PCI-DSS v4.0 Compliant TLS Policy"
+  version: "1.0"
+  description: "TLS security policy compliant with PCI-DSS v4.0 requirements"
+  organization: "Example Corp"
+  effective_date: "2025-01-01"
+
+  # PCI-DSS requires TLS 1.2+ only (as of June 2024)
+  protocols:
+    required: ["TLSv1.2", "TLSv1.3"]
+    prohibited: ["SSLv2", "SSLv3", "TLSv1.0", "TLSv1.1"]
+    action: FAIL
+
+  # Strong cipher suites required
+  ciphers:
+    min_strength: "HIGH"
+    require_forward_secrecy: true
+    require_aead: false
+    prohibited_patterns:
+      - ".*_NULL_.*"
+      - ".*_EXPORT_.*"
+      - ".*_DES_.*"
+      - ".*_RC4_.*"
+      - ".*_MD5.*"
+      - ".*_anon_.*"
+    action: FAIL
+
+  # Certificate requirements (PCI-DSS 4.2.1)
+  certificates:
+    min_key_size: 2048  # Minimum 2048-bit RSA or 224-bit ECC
+    max_days_until_expiry: 30
+    prohibited_signature_algorithms: ["MD5", "SHA1"]
+    require_valid_trust_chain: true
+    require_san: true
+    require_hostname_match: true
+    action: FAIL
+
+  # Zero tolerance for known vulnerabilities
+  vulnerabilities:
+    max_critical: 0
+    max_high: 0
+    max_medium: 0
+    prohibited:
+      - "POODLE"
+      - "BEAST"
+      - "CRIME"
+      - "BREACH"
+      - "Heartbleed"
+      - "DROWN"
+      - "FREAK"
+      - "LOGJAM"
+      - "SWEET32"
+      - "LUCKY13"
+      - "ROBOT"
+    action: FAIL
+
+  # SSL Labs A rating required for PCI compliance
+  rating:
+    min_grade: "A"
+    min_score: 80
+    action: FAIL
+
+  # Compliance framework mapping
+  compliance:
+    frameworks:
+      - "pci-dss-v4"
+    require_all: true
+    action: FAIL
+
+  # Exceptions require documented business justification
+  exceptions: []

@@ -572,6 +572,61 @@ pub struct Args {
     /// Test alert channels (send test alert to all configured channels)
     #[arg(long = "test-alert")]
     pub test_alert: bool,
+
+    // ============ Policy-as-Code Engine ============
+    /// Policy file to enforce (YAML format)
+    #[arg(long = "policy", value_name = "FILE")]
+    pub policy: Option<PathBuf>,
+
+    /// Exit with non-zero code if policy violations found (for CI/CD)
+    #[arg(long = "enforce")]
+    pub enforce: bool,
+
+    /// Policy output format (terminal, json, csv)
+    #[arg(long = "policy-format", value_name = "FORMAT", default_value = "terminal")]
+    pub policy_format: String,
+
+    // ============ Compliance Framework Engine ============
+    /// Compliance framework to evaluate against (pci-dss-v4, nist-sp800-52r2, hipaa, soc2, mozilla-modern, mozilla-intermediate, gdpr)
+    #[arg(long = "compliance", value_name = "FRAMEWORK")]
+    pub compliance: Option<String>,
+
+    /// Compliance report output format (terminal, json, csv, html)
+    #[arg(long = "compliance-format", value_name = "FORMAT", default_value = "terminal")]
+    pub compliance_format: String,
+
+    /// List available compliance frameworks and exit
+    #[arg(long = "list-compliance")]
+    pub list_compliance: bool,
+
+    // ============ REST API Server ============
+    /// Start REST API server mode
+    #[arg(long = "serve")]
+    pub serve: bool,
+
+    /// API server host address
+    #[arg(long = "api-host", value_name = "HOST", default_value = "0.0.0.0")]
+    pub api_host: String,
+
+    /// API server port
+    #[arg(long = "api-port", value_name = "PORT", default_value = "8080")]
+    pub api_port: u16,
+
+    /// API configuration file (TOML format)
+    #[arg(long = "api-config", value_name = "FILE")]
+    pub api_config: Option<PathBuf>,
+
+    /// Maximum concurrent scans
+    #[arg(long = "api-max-concurrent", value_name = "NUM", default_value = "10")]
+    pub api_max_concurrent: usize,
+
+    /// Enable Swagger UI documentation
+    #[arg(long = "api-swagger")]
+    pub api_swagger: bool,
+
+    /// Generate example API configuration file
+    #[arg(long = "api-config-example", value_name = "FILE")]
+    pub api_config_example: Option<PathBuf>,
 }
 
 impl Args {

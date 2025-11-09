@@ -1624,7 +1624,7 @@ pub struct CertificateAnalysisResult {
 }
 
 /// Scan results
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ScanResults {
     pub target: String,
     pub protocols: Vec<ProtocolTestResult>,

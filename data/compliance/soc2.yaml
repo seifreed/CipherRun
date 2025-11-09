@@ -1,0 +1,148 @@
+id: soc2
+name: SOC 2 Type II
+version: 2017
+description: Service Organization Control 2 - Trust Services Criteria for Security, Availability, and Confidentiality
+organization: American Institute of Certified Public Accountants (AICPA)
+effective_date: 2017-01-01
+
+requirements:
+  - id: SOC2-CC6.1
+    name: Logical and Physical Access Controls - Encryption in Transit
+    description: The entity implements logical access security measures to protect against threats from sources outside its system boundaries
+    category: Protocol Security
+    severity: high
+    remediation: |
+      Implement strong encryption for data in transit:
+      - Use TLS 1.2 or TLS 1.3 for all network communications
+      - Disable legacy protocols (SSLv2, SSLv3, TLS 1.0, TLS 1.1)
+      - Document encryption standards in security policies
+    rules:
+      - type: ProtocolVersion
+        allowed:
+          - TLS 1.2
+          - TLS 1.3
+        denied:
+          - SSLv2
+          - SSLv3
+          - TLS 1.0
+          - TLS 1.1
+
+  - id: SOC2-CC6.6
+    name: Encryption Key Management
+    description: The entity implements controls to protect cryptographic keys during generation, storage, use, and destruction
+    category: Certificate Security
+    severity: high
+    remediation: |
+      Implement robust key management practices:
+      - Use minimum RSA 2048-bit keys (4096-bit for high sensitivity)
+      - Use minimum ECC 256-bit keys (384-bit for high sensitivity)
+      - Document key lifecycle management procedures
+      - Implement key rotation schedules
+    rules:
+      - type: CertificateKeySize
+        min_rsa_bits: 2048
+        min_ecc_bits: 256
+
+  - id: SOC2-CC6.7
+    name: Transmission Encryption Standards
+    description: The entity restricts the transmission of sensitive data to authorized internal and external users and processes
+    category: Cipher Security
+    severity: critical
+    remediation: |
+      Enforce strong cipher standards:
+      - Disable NULL, EXPORT, DES, 3DES, RC4, and other weak ciphers
+      - Use AES-256 or AES-128 with GCM mode
+      - Implement ChaCha20-Poly1305 as an alternative to AES
+      - Document approved cipher suites in policies
+    rules:
+      - type: CipherSuite
+        denied_patterns:
+          - ".*_NULL_.*"
+          - ".*_EXPORT_.*"
+          - ".*_DES_.*"
+          - ".*_3DES_.*"
+          - ".*_RC4_.*"
+          - ".*_MD5.*"
+
+  - id: SOC2-CC6.8
+    name: Data Integrity During Transmission
+    description: The entity protects information during transmission to prevent unauthorized modification
+    category: Cipher Security
+    severity: high
+    remediation: |
+      Use authenticated encryption (AEAD) to ensure data integrity:
+      - Prioritize AES-GCM cipher suites
+      - Enable ChaCha20-Poly1305 support
+      - These provide both confidentiality and message authentication
+    rules:
+      - type: CipherSuite
+        preferred_patterns:
+          - ".*_GCM.*"
+          - ".*_CHACHA20_POLY1305.*"
+
+  - id: SOC2-CC7.2
+    name: System Monitoring - Certificate Management
+    description: The entity monitors systems and takes action to maintain the continued effectiveness of security policies
+    category: Certificate Security
+    severity: medium
+    remediation: |
+      Implement certificate lifecycle monitoring:
+      - Monitor certificate expiration (90-day advance warning)
+      - Automate certificate renewal processes
+      - Maintain certificate inventory
+      - Document certificate management procedures
+      - Alert on certificate validation failures
+    rules:
+      - type: CertificateExpiration
+        max_days_until_expiration: 90
+      - type: CertificateValidation
+        require_valid_chain: true
+        require_unexpired: true
+
+  - id: SOC2-CC7.3
+    name: Change Management - Security Updates
+    description: The entity implements change management processes for security infrastructure
+    category: Vulnerability
+    severity: high
+    remediation: |
+      Maintain up-to-date security posture:
+      - Apply security patches promptly for known vulnerabilities
+      - Address Heartbleed, POODLE, BEAST, CRIME, FREAK, Logjam, etc.
+      - Document vulnerability remediation procedures
+      - Perform regular vulnerability scanning
+    rules:
+      - type: Vulnerability
+
+  - id: SOC2-CC6.2
+    name: Strong Cryptographic Hash Functions
+    description: The entity uses industry-standard cryptographic algorithms for certificates
+    category: Certificate Security
+    severity: high
+    remediation: |
+      Use strong hash functions for certificate signatures:
+      - SHA-256, SHA-384, or SHA-512
+      - Avoid MD5 and SHA-1 (deprecated and weak)
+      - Update certificate issuance processes
+    rules:
+      - type: SignatureAlgorithm
+        allowed:
+          - sha256
+          - sha384
+          - sha512
+        denied:
+          - md5
+          - sha1
+
+  - id: SOC2-CC6.3
+    name: Perfect Forward Secrecy
+    description: The entity protects session keys to prevent decryption of captured traffic
+    category: Cipher Security
+    severity: medium
+    remediation: |
+      Enable Perfect Forward Secrecy (PFS):
+      - Use ephemeral Diffie-Hellman (DHE/ECDHE) key exchange
+      - Ensures past sessions cannot be decrypted if private keys are compromised
+      - Disable static RSA key exchange
+    rules:
+      - type: ForwardSecrecy
+        required: true

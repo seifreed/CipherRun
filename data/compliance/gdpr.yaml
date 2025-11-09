@@ -1,0 +1,178 @@
+id: gdpr
+name: GDPR Encryption Requirements
+version: 1.0
+description: General Data Protection Regulation - Technical and Organizational Measures for Data Protection (Article 32)
+organization: European Union
+effective_date: 2018-05-25
+
+requirements:
+  - id: GDPR-32-1-a
+    name: Pseudonymization and Encryption of Personal Data
+    description: Implement state-of-the-art encryption to protect personal data in transit
+    category: Protocol Security
+    severity: high
+    remediation: |
+      Implement encryption appropriate to the risk:
+      - Use modern TLS protocols (TLS 1.2, TLS 1.3)
+      - Disable obsolete and insecure protocols (SSLv2, SSLv3, TLS 1.0, TLS 1.1)
+      - Document encryption measures in your Data Protection Impact Assessment (DPIA)
+
+      GDPR requires "state of the art" security measures appropriate to the risk.
+    rules:
+      - type: ProtocolVersion
+        allowed:
+          - TLS 1.2
+          - TLS 1.3
+        denied:
+          - SSLv2
+          - SSLv3
+          - TLS 1.0
+          - TLS 1.1
+
+  - id: GDPR-32-1-b
+    name: Confidentiality and Integrity of Personal Data
+    description: Ensure ongoing confidentiality and integrity of processing systems and services
+    category: Cipher Security
+    severity: high
+    remediation: |
+      Use strong encryption algorithms to protect data confidentiality:
+      - Disable NULL, EXPORT, DES, 3DES, RC4, and other weak ciphers
+      - Use AES-256 or AES-128 with authenticated encryption (GCM mode)
+      - Implement ChaCha20-Poly1305 as alternative to AES
+
+      Weak encryption may not satisfy GDPR's "appropriate technical measures" requirement.
+    rules:
+      - type: CipherSuite
+        denied_patterns:
+          - ".*_NULL_.*"
+          - ".*_EXPORT_.*"
+          - ".*_DES_.*"
+          - ".*_3DES_.*"
+          - ".*_RC4_.*"
+          - ".*_MD5.*"
+
+  - id: GDPR-32-1-integrity
+    name: Data Integrity Measures
+    description: Implement measures to ensure data is not altered during transmission
+    category: Cipher Security
+    severity: high
+    remediation: |
+      Use authenticated encryption (AEAD) to ensure data integrity:
+      - Prefer AES-GCM cipher suites
+      - Enable ChaCha20-Poly1305 support
+      - These provide both confidentiality and authentication
+
+      Data integrity is crucial for GDPR compliance - altered personal data could lead to violations.
+    rules:
+      - type: CipherSuite
+        preferred_patterns:
+          - ".*_GCM.*"
+          - ".*_CHACHA20_POLY1305.*"
+
+  - id: GDPR-32-cryptography
+    name: Cryptographic Key Strength
+    description: Use appropriately strong cryptographic keys
+    category: Certificate Security
+    severity: high
+    remediation: |
+      Implement strong cryptographic key management:
+      - RSA: Minimum 2048 bits (3072+ bits for high-risk data)
+      - ECC: Minimum 256 bits (384+ bits for high-risk data)
+      - Document key management procedures
+      - Implement key rotation policies
+
+      Key strength should be proportionate to the risk to individuals' rights and freedoms.
+    rules:
+      - type: CertificateKeySize
+        min_rsa_bits: 2048
+        min_ecc_bits: 256
+
+  - id: GDPR-32-validation
+    name: Identity Verification and Authentication
+    description: Ensure proper authentication of communication endpoints
+    category: Certificate Security
+    severity: high
+    remediation: |
+      Implement proper certificate validation:
+      - Verify certificate chains to trusted root CAs
+      - Ensure certificates are not expired
+      - Validate hostname matches certificate
+      - Implement certificate revocation checking (OCSP/CRL)
+
+      Proper authentication prevents man-in-the-middle attacks that could lead to data breaches.
+    rules:
+      - type: CertificateValidation
+        require_valid_chain: true
+        require_unexpired: true
+        require_hostname_match: true
+
+  - id: GDPR-32-hash
+    name: Secure Hash Functions
+    description: Use cryptographically secure hash functions
+    category: Certificate Security
+    severity: high
+    remediation: |
+      Use strong hash functions for certificate signatures:
+      - SHA-256, SHA-384, or SHA-512
+      - Avoid MD5 and SHA-1 (both are broken)
+
+      Weak hash functions could allow certificate forgery, leading to data breaches.
+    rules:
+      - type: SignatureAlgorithm
+        allowed:
+          - sha256
+          - sha384
+          - sha512
+        denied:
+          - md5
+          - sha1
+
+  - id: GDPR-32-forward-secrecy
+    name: Forward Secrecy for Long-Term Protection
+    description: Implement forward secrecy to protect past communications
+    category: Cipher Security
+    severity: medium
+    remediation: |
+      Enable Perfect Forward Secrecy (PFS):
+      - Use ECDHE or DHE key exchange
+      - Ensures that compromise of long-term keys does not compromise past sessions
+      - This is particularly important for protecting historical personal data
+
+      Forward secrecy helps maintain confidentiality even after a breach (GDPR breach notification requirements).
+    rules:
+      - type: ForwardSecrecy
+        required: true
+
+  - id: GDPR-32-resilience
+    name: Resilience of Processing Systems
+    description: Ensure systems are resilient against technical vulnerabilities
+    category: Vulnerability
+    severity: critical
+    remediation: |
+      Maintain security posture to prevent data breaches:
+      - Patch all known TLS/SSL vulnerabilities
+      - Address Heartbleed, POODLE, BEAST, CRIME, FREAK, Logjam, DROWN
+      - Implement vulnerability scanning and remediation processes
+      - Document security measures in your Records of Processing Activities (ROPA)
+
+      Data breaches must be reported to supervisory authorities within 72 hours (Article 33).
+      Proactive security measures demonstrate accountability (Article 5(2)).
+    rules:
+      - type: Vulnerability
+
+  - id: GDPR-32-testing
+    name: Regular Security Testing and Evaluation
+    description: Regularly test and evaluate effectiveness of technical measures
+    category: Certificate Security
+    severity: medium
+    remediation: |
+      Implement ongoing monitoring and evaluation:
+      - Monitor certificate expiration dates (90-day advance warning)
+      - Perform regular security assessments
+      - Conduct periodic TLS/SSL configuration audits
+      - Document testing activities for accountability
+
+      Article 32 requires "regular testing" of security measures.
+    rules:
+      - type: CertificateExpiration
+        max_days_until_expiration: 90

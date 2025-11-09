@@ -1,0 +1,184 @@
+id: mozilla-intermediate
+name: Mozilla Intermediate TLS Configuration
+version: 5.7
+description: Mozilla Server Side TLS Configuration - Intermediate Profile (recommended for most websites, balances security and compatibility)
+organization: Mozilla Foundation
+effective_date: 2023-01-01
+
+requirements:
+  - id: MOZ-INT-1
+    name: TLS 1.2 and TLS 1.3
+    description: Support TLS 1.2 and TLS 1.3 for broad compatibility
+    category: Protocol Security
+    severity: high
+    remediation: |
+      Configure servers to support both TLS 1.2 and TLS 1.3:
+      - Disable SSLv2, SSLv3, TLS 1.0, TLS 1.1
+      - Enable TLS 1.2 with secure cipher suites only
+      - Enable TLS 1.3 for modern clients
+
+      This configuration supports ~99% of browsers and clients.
+    rules:
+      - type: ProtocolVersion
+        allowed:
+          - TLS 1.2
+          - TLS 1.3
+        denied:
+          - SSLv2
+          - SSLv3
+          - TLS 1.0
+          - TLS 1.1
+
+  - id: MOZ-INT-2
+    name: Recommended Cipher Suites
+    description: Use recommended cipher suites for TLS 1.2 and TLS 1.3
+    category: Cipher Security
+    severity: high
+    remediation: |
+      TLS 1.3 cipher suites (preferred):
+      - TLS_AES_128_GCM_SHA256
+      - TLS_AES_256_GCM_SHA384
+      - TLS_CHACHA20_POLY1305_SHA256
+
+      TLS 1.2 cipher suites (in order of preference):
+      - TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256
+      - TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+      - TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384
+      - TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+      - TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256
+      - TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256
+
+      Disable weak ciphers: NULL, EXPORT, DES, 3DES, RC4, MD5
+    rules:
+      - type: CipherSuite
+        denied_patterns:
+          - ".*_NULL_.*"
+          - ".*_EXPORT_.*"
+          - ".*_DES_CBC_.*"
+          - ".*_3DES_EDE_CBC_.*"
+          - ".*_RC4_.*"
+          - ".*_MD5$"
+
+  - id: MOZ-INT-3
+    name: Forward Secrecy Required
+    description: All cipher suites must provide forward secrecy
+    category: Cipher Security
+    severity: high
+    remediation: |
+      Enable only cipher suites with ephemeral key exchange:
+      - ECDHE (Elliptic Curve Diffie-Hellman Ephemeral)
+      - DHE (Diffie-Hellman Ephemeral) - less preferred
+
+      Disable static RSA key exchange cipher suites.
+      This ensures past communications cannot be decrypted if the private key is compromised.
+    rules:
+      - type: ForwardSecrecy
+        required: true
+
+  - id: MOZ-INT-4
+    name: AEAD Ciphers Preferred
+    description: Prefer authenticated encryption (AEAD) cipher suites
+    category: Cipher Security
+    severity: medium
+    remediation: |
+      Prioritize AEAD cipher suites:
+      - AES-GCM (Galois/Counter Mode)
+      - ChaCha20-Poly1305
+
+      These provide both confidentiality and message authentication.
+      While CBC mode ciphers are still permitted, GCM should be preferred.
+    rules:
+      - type: CipherSuite
+        preferred_patterns:
+          - ".*_GCM.*"
+          - ".*_CHACHA20_POLY1305.*"
+
+  - id: MOZ-INT-5
+    name: Strong Certificate Keys
+    description: Minimum 2048-bit RSA or 256-bit ECC keys
+    category: Certificate Security
+    severity: high
+    remediation: |
+      Use strong cryptographic keys:
+      - RSA: 2048 bits minimum (2048 bits is sufficient for most use cases)
+      - ECC: 256 bits minimum (P-256 curve)
+
+      4096-bit RSA keys provide marginal security benefit but increase computation cost.
+    rules:
+      - type: CertificateKeySize
+        min_rsa_bits: 2048
+        min_ecc_bits: 256
+
+  - id: MOZ-INT-6
+    name: SHA-2 Signatures
+    description: Use SHA-2 family signature algorithms
+    category: Certificate Security
+    severity: high
+    remediation: |
+      Use strong signature algorithms:
+      - SHA-256 (most common)
+      - SHA-384
+      - SHA-512
+
+      Avoid MD5 and SHA-1 (both are cryptographically broken).
+    rules:
+      - type: SignatureAlgorithm
+        allowed:
+          - sha256
+          - sha384
+          - sha512
+        denied:
+          - md5
+          - sha1
+
+  - id: MOZ-INT-7
+    name: Valid Certificate Chain
+    description: Complete and valid certificate chain required
+    category: Certificate Security
+    severity: critical
+    remediation: |
+      Ensure proper certificate configuration:
+      - Valid chain to trusted root CA
+      - Include all intermediate certificates
+      - No expired certificates
+      - Hostname matches certificate subject/SAN
+      - Consider enabling OCSP stapling
+    rules:
+      - type: CertificateValidation
+        require_valid_chain: true
+        require_unexpired: true
+        require_hostname_match: true
+
+  - id: MOZ-INT-8
+    name: Certificate Lifecycle Management
+    description: Monitor and manage certificate lifecycle
+    category: Certificate Security
+    severity: medium
+    remediation: |
+      Implement certificate management:
+      - Monitor expiration (90-day advance notice)
+      - Automate renewal where possible
+      - Test renewals in staging before production
+      - Maintain certificate inventory
+    rules:
+      - type: CertificateExpiration
+        max_days_until_expiration: 90
+
+  - id: MOZ-INT-9
+    name: No Known Vulnerabilities
+    description: Server must be free of known TLS/SSL vulnerabilities
+    category: Vulnerability
+    severity: critical
+    remediation: |
+      Ensure server is not vulnerable to known attacks:
+      - Heartbleed (CVE-2014-0160)
+      - POODLE (CVE-2014-3566)
+      - BEAST (CVE-2011-3389)
+      - CRIME (CVE-2012-4929)
+      - FREAK (CVE-2015-0204)
+      - Logjam (CVE-2015-4000)
+      - DROWN (CVE-2016-0800)
+
+      Keep TLS libraries and server software updated.
+    rules:
+      - type: Vulnerability

@@ -14,6 +14,7 @@
 use anyhow::Result;
 use cipherrun::{Args, Scanner};
 use clap::Parser;
+use colored::Colorize;
 use tracing::{Level, info};
 use tracing_subscriber::FmtSubscriber;
 
@@ -42,6 +43,64 @@ async fn main() -> Result<()> {
         println!("Fast, Modular TLS/SSL Security Scanner");
         println!("Copyright (C) 2025 Marc Rivero (@seifreed)");
         println!("Licensed under GPL-3.0");
+        return Ok(());
+    }
+
+    // Handle --api-config-example (generate API config example and exit)
+    if let Some(config_path) = &args.api_config_example {
+        use cipherrun::api::ApiConfig;
+        ApiConfig::create_example(
+            config_path
+                .to_str()
+                .ok_or_else(|| anyhow::anyhow!("Invalid file path"))?,
+        )?;
+        println!("✓ Example API configuration saved to: {}", config_path.display());
+        return Ok(());
+    }
+
+    // Handle --serve (start API server mode)
+    if args.serve {
+        use cipherrun::api::{ApiConfig, ApiServer};
+
+        info!("Starting CipherRun in API server mode");
+
+        // Load configuration from file or use CLI args
+        let mut config = if let Some(config_path) = &args.api_config {
+            ApiConfig::from_file(
+                config_path
+                    .to_str()
+                    .ok_or_else(|| anyhow::anyhow!("Invalid config file path"))?,
+            )?
+        } else {
+            ApiConfig::default()
+        };
+
+        // Override with CLI arguments
+        config.host = args.api_host.clone();
+        config.port = args.api_port;
+        config.max_concurrent_scans = args.api_max_concurrent;
+        config.enable_swagger = args.api_swagger || config.enable_swagger;
+
+        // Create and run server
+        let server = ApiServer::new(config)?;
+        server.run().await?;
+
+        return Ok(());
+    }
+
+    // Handle --list-compliance (list available frameworks and exit)
+    if args.list_compliance {
+        use cipherrun::compliance::FrameworkLoader;
+
+        println!("Available Compliance Frameworks:\n");
+        let frameworks = FrameworkLoader::list_builtin_frameworks();
+
+        for (id, description) in frameworks {
+            println!("  {} - {}", id, description);
+        }
+
+        println!("\nUsage: cipherrun --compliance <FRAMEWORK_ID> <TARGET>");
+        println!("Example: cipherrun --compliance pci-dss-v4 example.com:443");
         return Ok(());
     }
 
@@ -311,6 +370,74 @@ async fn main() -> Result<()> {
 
         // Output results
         results.display()?;
+
+        // Evaluate compliance if requested
+        if let Some(framework_id) = &args.compliance {
+            use cipherrun::compliance::{ComplianceEngine, FrameworkLoader, Reporter};
+
+            println!("\n{}", "Evaluating Compliance...".cyan().bold());
+
+            // Load the framework
+            let framework = FrameworkLoader::load_builtin(framework_id)?;
+
+            // Create engine and evaluate
+            let engine = ComplianceEngine::new(framework);
+            let report = engine.evaluate(&results)?;
+
+            // Display report based on format
+            match args.compliance_format.to_lowercase().as_str() {
+                "json" => {
+                    let json = Reporter::to_json(&report, args.json_pretty)?;
+                    println!("{}", json);
+                }
+                "csv" => {
+                    let csv = Reporter::to_csv(&report)?;
+                    println!("{}", csv);
+                }
+                "html" => {
+                    let html = Reporter::to_html(&report)?;
+                    println!("{}", html);
+                }
+                _ => {
+                    // Terminal output (default)
+                    let terminal_output = Reporter::to_terminal(&report);
+                    println!("{}", terminal_output);
+                }
+            }
+
+            // Exit with error code if compliance failed
+            if report.overall_status == cipherrun::compliance::ComplianceStatus::Fail {
+                std::process::exit(1);
+            }
+        }
+
+        // Evaluate policy if requested
+        if let Some(policy_path) = &args.policy {
+            use cipherrun::policy::evaluator::PolicyEvaluator;
+            use cipherrun::policy::parser::PolicyLoader;
+
+            println!("\n{}", "Evaluating Policy...".to_string());
+
+            let loader = PolicyLoader::new(
+                policy_path
+                    .parent()
+                    .unwrap_or_else(|| std::path::Path::new(".")),
+            );
+            let policy = loader.load(policy_path)?;
+
+            let evaluator = PolicyEvaluator::new(policy);
+            let policy_result = evaluator.evaluate(&results)?;
+
+            // Display policy result
+            let formatted_result = policy_result.format(&args.policy_format)?;
+            println!("{}", formatted_result);
+
+            // Exit with error code if --enforce is set and violations found
+            if args.enforce && policy_result.has_violations() {
+                eprintln!("\n{}", "Policy evaluation failed - exiting with error code 1".to_string());
+                std::process::exit(1);
+            }
+        }
 
         // Store results in database if requested
         if args.store_results && args.db_config.is_some() {

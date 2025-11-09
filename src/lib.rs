@@ -6,10 +6,12 @@
 //! It provides extensive testing capabilities for TLS/SSL protocols, ciphers,
 //! vulnerabilities, and certificate validation.
 
+pub mod api;
 pub mod certificates;
 pub mod ciphers;
 pub mod cli;
 pub mod client_sim;
+pub mod compliance;
 pub mod data;
 pub mod db;
 pub mod error;
@@ -17,6 +19,7 @@ pub mod external;
 pub mod http;
 pub mod monitor;
 pub mod output;
+pub mod policy;
 pub mod protocols;
 pub mod rating;
 pub mod scanner;

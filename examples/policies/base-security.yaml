@@ -1,0 +1,48 @@
+policy:
+  name: "Base Security Policy"
+  version: "1.0"
+  description: "Foundation security policy for TLS/SSL configurations"
+  organization: "CipherRun"
+  effective_date: "2025-01-01"
+
+  # Protocol requirements
+  protocols:
+    required: ["TLSv1.2", "TLSv1.3"]
+    prohibited: ["SSLv2", "SSLv3", "TLSv1.0", "TLSv1.1"]
+    action: FAIL
+
+  # Cipher suite requirements
+  ciphers:
+    min_strength: "MEDIUM"
+    require_forward_secrecy: false
+    require_aead: false
+    prohibited_patterns:
+      - ".*_NULL_.*"
+      - ".*_EXPORT_.*"
+      - ".*_DES_.*"
+      - ".*_MD5.*"
+    action: FAIL
+
+  # Certificate requirements
+  certificates:
+    min_key_size: 2048
+    max_days_until_expiry: 30
+    prohibited_signature_algorithms: ["MD5", "SHA1"]
+    require_valid_trust_chain: true
+    require_san: true
+    require_hostname_match: true
+    action: FAIL
+
+  # Vulnerability thresholds
+  vulnerabilities:
+    max_critical: 0
+    max_high: 0
+    max_medium: 5
+    prohibited:
+      - "Heartbleed"
+      - "POODLE"
+      - "DROWN"
+    action: FAIL
+
+  # No exceptions in base policy
+  exceptions: []

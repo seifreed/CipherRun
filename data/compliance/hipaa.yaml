@@ -1,0 +1,145 @@
+id: hipaa
+name: HIPAA Security Rule
+version: 1.0
+description: Health Insurance Portability and Accountability Act - Technical Safeguards for ePHI Transmission Security
+organization: U.S. Department of Health and Human Services (HHS)
+effective_date: 2003-04-21
+
+requirements:
+  - id: HIPAA-164.312-e-1
+    name: Transmission Security - Encryption
+    description: Implement technical security measures to guard against unauthorized access to ePHI transmitted over electronic networks
+    category: Protocol Security
+    severity: high
+    remediation: |
+      Enable strong encryption for all ePHI transmission:
+      - Use TLS 1.2 or TLS 1.3 for network communications
+      - Disable obsolete protocols (SSLv2, SSLv3, TLS 1.0, TLS 1.1)
+      - Implement end-to-end encryption where required
+    rules:
+      - type: ProtocolVersion
+        allowed:
+          - TLS 1.2
+          - TLS 1.3
+        denied:
+          - SSLv2
+          - SSLv3
+          - TLS 1.0
+          - TLS 1.1
+
+  - id: HIPAA-164.312-e-2
+    name: Integrity Controls
+    description: Implement security measures to ensure ePHI is not improperly altered or destroyed during transmission
+    category: Cipher Security
+    severity: high
+    remediation: |
+      Use authenticated encryption to ensure data integrity:
+      - Enable AEAD cipher suites (AES-GCM, ChaCha20-Poly1305)
+      - These provide both confidentiality and message authentication
+      - Disable cipher suites without proper integrity protection
+    rules:
+      - type: CipherSuite
+        preferred_patterns:
+          - ".*_GCM.*"
+          - ".*_CHACHA20_POLY1305.*"
+
+  - id: HIPAA-164.312-a-1
+    name: Access Control - Encryption Strength
+    description: Strong encryption algorithms must be used to protect ePHI
+    category: Cipher Security
+    severity: critical
+    remediation: |
+      Disable weak and broken encryption algorithms:
+      - NULL ciphers (no encryption)
+      - EXPORT ciphers (deliberately weakened)
+      - DES, 3DES (obsolete)
+      - RC4 (broken stream cipher)
+
+      Use only strong, modern cipher suites with AES-256 or AES-128.
+    rules:
+      - type: CipherSuite
+        denied_patterns:
+          - ".*_NULL_.*"
+          - ".*_EXPORT_.*"
+          - ".*_DES_.*"
+          - ".*_3DES_.*"
+          - ".*_RC4_.*"
+
+  - id: HIPAA-164.312-a-2-iv
+    name: Encryption Key Management
+    description: Implement procedures for creating, changing, and safeguarding encryption keys
+    category: Certificate Security
+    severity: high
+    remediation: |
+      Ensure proper cryptographic key management:
+      - Use RSA keys of at least 2048 bits
+      - Use ECC keys of at least 256 bits
+      - Implement key rotation policies
+      - Protect private keys with access controls
+    rules:
+      - type: CertificateKeySize
+        min_rsa_bits: 2048
+        min_ecc_bits: 256
+
+  - id: HIPAA-164.312-b
+    name: Audit Controls - Certificate Validation
+    description: Implement procedures to record and examine activity in systems containing ePHI
+    category: Certificate Security
+    severity: high
+    remediation: |
+      Ensure proper certificate validation and monitoring:
+      - Verify certificate chains to trusted CAs
+      - Monitor certificate expiration dates
+      - Maintain audit logs of certificate validation failures
+      - Implement certificate revocation checking (OCSP/CRL)
+    rules:
+      - type: CertificateValidation
+        require_valid_chain: true
+        require_unexpired: true
+
+  - id: HIPAA-164.308-a-8
+    name: Evaluation - No Known Vulnerabilities
+    description: Perform periodic technical evaluations to ensure security measures are appropriate
+    category: Vulnerability
+    severity: critical
+    remediation: |
+      Regularly assess and remediate TLS/SSL vulnerabilities:
+      - Patch Heartbleed, POODLE, BEAST, CRIME, etc.
+      - Keep TLS libraries and server software updated
+      - Perform quarterly vulnerability assessments
+      - Document and track remediation efforts
+    rules:
+      - type: Vulnerability
+
+  - id: HIPAA-164.312-c-1
+    name: Integrity - Strong Hash Functions
+    description: Implement policies to ensure data integrity using approved hash functions
+    category: Certificate Security
+    severity: high
+    remediation: |
+      Use strong cryptographic hash functions:
+      - SHA-256, SHA-384, or SHA-512 for certificate signatures
+      - Avoid MD5 and SHA-1 (both cryptographically broken)
+    rules:
+      - type: SignatureAlgorithm
+        allowed:
+          - sha256
+          - sha384
+          - sha512
+        denied:
+          - md5
+          - sha1
+
+  - id: HIPAA-164.312-e-2-i
+    name: Forward Secrecy
+    description: Implement mechanisms to protect session keys from compromise
+    category: Cipher Security
+    severity: medium
+    remediation: |
+      Enable Perfect Forward Secrecy (PFS):
+      - Use ECDHE or DHE key exchange
+      - Ensures session keys cannot be decrypted even if long-term keys are compromised
+      - Disable static RSA key exchange
+    rules:
+      - type: ForwardSecrecy
+        required: true
