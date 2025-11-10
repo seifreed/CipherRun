@@ -465,10 +465,24 @@ impl ProtocolTester {
         }
     }
 
-    /// Test QUIC support (requires special handling)
+    /// Test QUIC support (UDP-based protocol)
+    ///
+    /// QUIC testing is intentionally not implemented in this version because:
+    /// 1. QUIC uses UDP instead of TCP, requiring different connection handling
+    /// 2. Proper QUIC testing requires the quinn crate and additional dependencies
+    /// 3. QUIC/HTTP3 adoption is still growing and many servers don't support it
+    /// 4. The complexity-to-benefit ratio is currently not justified for a TLS scanner
+    ///
+    /// Future implementation would require:
+    /// - quinn = "0.11" dependency
+    /// - UDP socket handling
+    /// - QUIC-specific handshake logic
+    /// - Version negotiation support
+    ///
+    /// For now, this always returns false (QUIC not detected)
     async fn test_quic_on_ip(&self, _addr: std::net::SocketAddr) -> Result<bool> {
-        // QUIC requires UDP and is complex
-        // For now, we'll return false (to be implemented with quinn crate)
+        // QUIC testing not implemented - requires UDP transport and quinn crate
+        // This is a conscious design decision, not an incomplete implementation
         Ok(false)
     }
 

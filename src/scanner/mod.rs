@@ -715,8 +715,8 @@ impl Scanner {
             println!("{}", "-".repeat(50));
 
             for result in results {
-                if result.supported {
-                    if let Some(heartbeat_enabled) = result.heartbeat_enabled {
+                if result.supported
+                    && let Some(heartbeat_enabled) = result.heartbeat_enabled {
                         let heartbeat_status = if heartbeat_enabled {
                             "Yes".yellow()
                         } else {
@@ -728,7 +728,6 @@ impl Scanner {
                             result.protocol, heartbeat_status
                         );
                     }
-                }
             }
         }
     }
@@ -1297,13 +1296,12 @@ impl Scanner {
         }
 
         // HPKP Analysis (informational)
-        if let Some(hpkp) = &result.hpkp_analysis {
-            if hpkp.enabled {
+        if let Some(hpkp) = &result.hpkp_analysis
+            && hpkp.enabled {
                 println!("\n{}", "HPKP Analysis:".cyan());
                 println!("  {} {}", "⚠".yellow(), hpkp.details.yellow());
                 println!("  Pins: {}", hpkp.pins.len());
             }
-        }
 
         // Cookie Analysis
         if let Some(cookies) = &result.cookie_analysis {
@@ -1346,8 +1344,8 @@ impl Scanner {
         }
 
         // Date/Time Check
-        if let Some(datetime) = &result.datetime_check {
-            if let Some(server_date) = &datetime.server_date {
+        if let Some(datetime) = &result.datetime_check
+            && let Some(server_date) = &datetime.server_date {
                 println!("\n{}", "Server Time:".cyan());
                 let sync_status = if datetime.synchronized {
                     "✓ Synchronized".green()
@@ -1360,7 +1358,6 @@ impl Scanner {
                     println!("  Time Skew:   {} seconds", skew);
                 }
             }
-        }
 
         // Banner Detection
         if let Some(banners) = &result.banner_detection {
@@ -1392,8 +1389,8 @@ impl Scanner {
         }
 
         // Reverse Proxy Detection
-        if let Some(proxy) = &result.reverse_proxy_detection {
-            if proxy.detected {
+        if let Some(proxy) = &result.reverse_proxy_detection
+            && proxy.detected {
                 println!("\n{}", "Reverse Proxy:".cyan());
                 println!("  {}", proxy.details);
                 if let Some(proxy_type) = &proxy.proxy_type {
@@ -1416,7 +1413,6 @@ impl Scanner {
                     println!("  Headers: {}", headers_found.join(", "));
                 }
             }
-        }
     }
 
     /// Display client simulation results

@@ -236,7 +236,7 @@ impl ClientSimulator {
         use x509_parser::prelude::*;
 
         // Parse X.509 certificate
-        let parsed = X509Certificate::from_der(&cert.as_ref());
+        let parsed = X509Certificate::from_der(cert.as_ref());
         if let Ok((_, cert)) = parsed {
             // Get public key algorithm
             let key_algo = cert.public_key().algorithm.algorithm.to_id_string();

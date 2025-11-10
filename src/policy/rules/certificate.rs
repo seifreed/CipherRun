@@ -1,6 +1,5 @@
 // Certificate policy rules
 
-use crate::certificates::validator::ValidationResult;
 use crate::policy::violation::PolicyViolation;
 use crate::policy::{CertificatePolicy, PolicyAction};
 use crate::scanner::CertificateAnalysisResult;
@@ -46,10 +45,10 @@ impl<'a> CertificateRule<'a> {
         let leaf_cert = cert_result.chain.leaf();
 
         // Check minimum key size
-        if let Some(min_key_size) = self.policy.min_key_size {
-            if let Some(cert) = leaf_cert {
-                if let Some(key_size) = cert.public_key_size {
-                    if (key_size as u32) < min_key_size {
+        if let Some(min_key_size) = self.policy.min_key_size
+            && let Some(cert) = leaf_cert
+                && let Some(key_size) = cert.public_key_size
+                    && (key_size as u32) < min_key_size {
                         violations.push(
                             PolicyViolation::new(
                                 "certificates.min_key_size",
@@ -70,13 +69,10 @@ impl<'a> CertificateRule<'a> {
                             )),
                         );
                     }
-                }
-            }
-        }
 
         // Check days until expiry
-        if let Some(max_days) = self.policy.max_days_until_expiry {
-            if let Some(cert) = leaf_cert {
+        if let Some(max_days) = self.policy.max_days_until_expiry
+            && let Some(cert) = leaf_cert {
                 // Parse not_after date and calculate days remaining
                 if let Ok(not_after) =
                     chrono::NaiveDateTime::parse_from_str(&cert.not_after, "%Y-%m-%d %H:%M:%S %Z")
@@ -101,11 +97,10 @@ impl<'a> CertificateRule<'a> {
                     }
                 }
             }
-        }
 
         // Check prohibited signature algorithms
-        if let Some(ref prohibited_sigs) = self.policy.prohibited_signature_algorithms {
-            if let Some(cert) = leaf_cert {
+        if let Some(ref prohibited_sigs) = self.policy.prohibited_signature_algorithms
+            && let Some(cert) = leaf_cert {
                 for prohibited in prohibited_sigs {
                     if cert
                         .signature_algorithm
@@ -134,11 +129,10 @@ impl<'a> CertificateRule<'a> {
                     }
                 }
             }
-        }
 
         // Check valid trust chain
-        if let Some(true) = self.policy.require_valid_trust_chain {
-            if !cert_result.validation.trust_chain_valid {
+        if let Some(true) = self.policy.require_valid_trust_chain
+            && !cert_result.validation.trust_chain_valid {
                 violations.push(
                     PolicyViolation::new(
                         "certificates.require_valid_trust_chain",
@@ -150,12 +144,11 @@ impl<'a> CertificateRule<'a> {
                     .with_remediation("Install valid certificate chain from trusted CA"),
                 );
             }
-        }
 
         // Check SAN requirement
-        if let Some(true) = self.policy.require_san {
-            if let Some(cert) = leaf_cert {
-                if cert.san.is_empty() {
+        if let Some(true) = self.policy.require_san
+            && let Some(cert) = leaf_cert
+                && cert.san.is_empty() {
                     violations.push(
                         PolicyViolation::new(
                             "certificates.require_san",
@@ -167,12 +160,10 @@ impl<'a> CertificateRule<'a> {
                         .with_remediation("Replace certificate with SAN extension"),
                     );
                 }
-            }
-        }
 
         // Check hostname match
-        if let Some(true) = self.policy.require_hostname_match {
-            if !cert_result.validation.hostname_match {
+        if let Some(true) = self.policy.require_hostname_match
+            && !cert_result.validation.hostname_match {
                 violations.push(
                     PolicyViolation::new(
                         "certificates.require_hostname_match",
@@ -187,7 +178,6 @@ impl<'a> CertificateRule<'a> {
                     .with_remediation("Replace certificate with correct hostname in CN or SAN"),
                 );
             }
-        }
 
         Ok(violations)
     }
@@ -197,6 +187,7 @@ impl<'a> CertificateRule<'a> {
 mod tests {
     use super::*;
     use crate::certificates::parser::{CertificateChain, CertificateInfo};
+    use crate::certificates::validator::ValidationResult;
 
     fn create_test_cert_result() -> CertificateAnalysisResult {
         let cert = CertificateInfo {

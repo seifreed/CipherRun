@@ -1,7 +1,7 @@
 // Protocol policy rules
 
 use crate::policy::violation::PolicyViolation;
-use crate::policy::{PolicyAction, ProtocolPolicy};
+use crate::policy::ProtocolPolicy;
 use crate::protocols::{Protocol, ProtocolTestResult};
 use crate::Result;
 use std::str::FromStr;
@@ -104,6 +104,7 @@ impl<'a> ProtocolRule<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::policy::PolicyAction;
     use crate::protocols::Protocol;
 
     #[test]

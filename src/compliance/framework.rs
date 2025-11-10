@@ -81,7 +81,6 @@ impl ComplianceFramework {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compliance::RuleType;
 
     #[test]
     fn test_framework_get_requirement() {

@@ -171,8 +171,8 @@ impl JarmFingerprinter {
         // Connect with timeout
         let stream = match timeout(self.timeout, TcpStream::connect(addr)).await {
             Ok(Ok(s)) => s,
-            Ok(Err(e)) => return Ok(format!("|||")), // Connection failed
-            Err(_) => return Ok(format!("|||")), // Timeout
+            Ok(Err(e)) => return Ok("|||".to_string()), // Connection failed
+            Err(_) => return Ok("|||".to_string()), // Timeout
         };
 
         // Build Client Hello packet
@@ -181,15 +181,15 @@ impl JarmFingerprinter {
         // Send Client Hello
         let mut stream = stream;
         if let Err(_) = timeout(self.timeout, stream.write_all(&client_hello)).await {
-            return Ok(format!("|||"));
+            return Ok("|||".to_string());
         }
 
         // Read ServerHello response (max 1484 bytes)
         let mut buffer = vec![0u8; 1484];
         let n = match timeout(self.timeout, stream.read(&mut buffer)).await {
             Ok(Ok(n)) => n,
-            Ok(Err(_)) => return Ok(format!("|||")),
-            Err(_) => return Ok(format!("|||")),
+            Ok(Err(_)) => return Ok("|||".to_string()),
+            Err(_) => return Ok("|||".to_string()),
         };
 
         buffer.truncate(n);
@@ -258,8 +258,8 @@ fn extract_extension_info(data: &[u8], offset: usize, server_hello_length: usize
     }
 
     // Check for malformed responses
-    if (offset + 53 <= data.len() && &data[offset + 50..offset + 53] == &[0x0e, 0xac, 0x0b])
-        || (85 <= data.len() && &data[82..85] == &[0x0f, 0xf0, 0x0b])
+    if (offset + 53 <= data.len() && data[offset + 50..offset + 53] == [0x0e, 0xac, 0x0b])
+        || (85 <= data.len() && data[82..85] == [0x0f, 0xf0, 0x0b])
     {
         return "|".to_string();
     }
@@ -298,7 +298,7 @@ fn extract_extension_info(data: &[u8], offset: usize, server_hello_length: usize
 
     // Build extension type list
     let etype_list: Vec<String> = etypes.iter()
-        .map(|t| hex::encode(t))
+        .map(hex::encode)
         .collect();
 
     format!("{}|{}", alpn, etype_list.join("-"))
@@ -311,7 +311,7 @@ fn extract_extension_type(ext: &[u8], etypes: &[[u8; 2]], evals: &[Vec<u8>]) -> 
             let eval = &evals[i];
 
             // ALPN extension (0x0010)
-            if ext == &[0x00, 0x10] && eval.len() >= 4 {
+            if ext == [0x00, 0x10] && eval.len() >= 4 {
                 // ALPN format: 2-byte length, then protocols
                 // Return the actual protocol string
                 return String::from_utf8_lossy(&eval[3..]).to_string();

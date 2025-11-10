@@ -61,7 +61,7 @@ impl HelloExporter {
             output.push_str(" |");
             for i in offset..end {
                 let c = data[i];
-                if c >= 32 && c <= 126 {
+                if (32..=126).contains(&c) {
                     output.push(c as char);
                 } else {
                     output.push('.');

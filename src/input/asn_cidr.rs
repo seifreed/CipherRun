@@ -73,17 +73,15 @@ impl AsnCidrParser {
         // Parse prefixes from JSON response
         let mut prefixes = Vec::new();
 
-        if let Some(data) = json.get("data") {
-            if let Some(prefixes_array) = data.get("prefixes").and_then(|p| p.as_array()) {
+        if let Some(data) = json.get("data")
+            && let Some(prefixes_array) = data.get("prefixes").and_then(|p| p.as_array()) {
                 for prefix_obj in prefixes_array {
-                    if let Some(prefix_str) = prefix_obj.get("prefix").and_then(|p| p.as_str()) {
-                        if let Ok(network) = prefix_str.parse::<IpNetwork>() {
+                    if let Some(prefix_str) = prefix_obj.get("prefix").and_then(|p| p.as_str())
+                        && let Ok(network) = prefix_str.parse::<IpNetwork>() {
                             prefixes.push(network);
                         }
-                    }
                 }
             }
-        }
 
         if prefixes.is_empty() {
             return Err(TlsError::InvalidInput {
@@ -142,7 +140,7 @@ impl AsnCidrParser {
                     // For large IPv6 networks, return a large number
                     u64::MAX
                 } else {
-                    2u64.pow(128 - prefix_len as u32).min(u64::MAX)
+                    2u64.pow(128 - prefix_len as u32)
                 }
             }
         }
@@ -155,19 +153,17 @@ impl AsnCidrParser {
         // Check for ASN format
         if input.to_uppercase().starts_with("AS") || input.parse::<u32>().is_ok() {
             // Verify it's a valid ASN number
-            if let Ok(asn_num) = Self::parse_asn_number(input) {
-                if asn_num > 0 && asn_num < 4_294_967_295 {
+            if let Ok(asn_num) = Self::parse_asn_number(input)
+                && asn_num > 0 && asn_num < 4_294_967_295 {
                     return InputType::Asn(input.to_string());
                 }
-            }
         }
 
         // Check for CIDR notation
-        if input.contains('/') {
-            if input.parse::<IpNetwork>().is_ok() {
+        if input.contains('/')
+            && input.parse::<IpNetwork>().is_ok() {
                 return InputType::Cidr(input.to_string());
             }
-        }
 
         // Check for IP address
         if let Ok(ip) = input.parse::<IpAddr>() {
@@ -286,7 +282,7 @@ impl ExpandedInput {
     pub fn target_count(&self) -> u64 {
         match self {
             ExpandedInput::Asn { networks, .. } => {
-                networks.iter().map(|n| Self::network_size(n)).sum()
+                networks.iter().map(Self::network_size).sum()
             }
             ExpandedInput::Cidr { expansion, .. } => expansion.total_ips(),
             ExpandedInput::Ip { .. } => 1,
@@ -312,7 +308,7 @@ impl ExpandedInput {
                 } else if prefix <= 64 {
                     u64::MAX
                 } else {
-                    2u64.pow(128 - prefix as u32).min(u64::MAX)
+                    2u64.pow(128 - prefix as u32)
                 }
             }
         }

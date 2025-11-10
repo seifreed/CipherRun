@@ -145,8 +145,8 @@ impl PolicyLoader {
 
         // Validate cipher policy
         if let Some(ref cipher_policy) = policy.ciphers {
-            if let Some(ref min_strength) = cipher_policy.min_strength {
-                if !["LOW", "MEDIUM", "HIGH"].contains(&min_strength.as_str()) {
+            if let Some(ref min_strength) = cipher_policy.min_strength
+                && !["LOW", "MEDIUM", "HIGH"].contains(&min_strength.as_str()) {
                     return Err(crate::TlsError::ConfigError {
                         message: format!(
                             "Invalid min_strength: {}. Must be LOW, MEDIUM, or HIGH",
@@ -154,7 +154,6 @@ impl PolicyLoader {
                         ),
                     });
                 }
-            }
 
             // Validate regex patterns
             if let Some(ref patterns) = cipher_policy.prohibited_patterns {
@@ -181,15 +180,13 @@ impl PolicyLoader {
         }
 
         // Validate certificate policy
-        if let Some(ref cert_policy) = policy.certificates {
-            if let Some(min_key_size) = cert_policy.min_key_size {
-                if min_key_size < 1024 {
+        if let Some(ref cert_policy) = policy.certificates
+            && let Some(min_key_size) = cert_policy.min_key_size
+                && min_key_size < 1024 {
                     return Err(crate::TlsError::ConfigError {
                         message: "min_key_size must be at least 1024".to_string(),
                     });
                 }
-            }
-        }
 
         // Validate rating policy
         if let Some(ref rating_policy) = policy.rating {
@@ -208,13 +205,12 @@ impl PolicyLoader {
                 }
             }
 
-            if let Some(min_score) = rating_policy.min_score {
-                if min_score > 100 {
+            if let Some(min_score) = rating_policy.min_score
+                && min_score > 100 {
                     return Err(crate::TlsError::ConfigError {
                         message: "min_score must be between 0 and 100".to_string(),
                     });
                 }
-            }
         }
 
         // Validate exceptions
@@ -252,7 +248,6 @@ impl PolicyLoader {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::policy::*;
 
     #[test]
     fn test_parse_basic_policy() {

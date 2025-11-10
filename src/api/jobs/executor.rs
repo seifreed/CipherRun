@@ -2,7 +2,7 @@
 
 use crate::api::jobs::{JobQueue, ScanJob};
 use crate::api::models::request::ScanOptions;
-use crate::api::models::response::{ProgressMessage, ScanStatus};
+use crate::api::models::response::ProgressMessage;
 use crate::cli::Args;
 use crate::scanner::{Scanner, ScanResults};
 use anyhow::Result;
@@ -52,7 +52,7 @@ impl ScanExecutor {
     pub async fn start(self: Arc<Self>) -> Result<()> {
         info!("Starting scan executor with {} concurrent slots", self.max_concurrent);
 
-        let mut shutdown_rx = self.shutdown_rx.clone();
+        let shutdown_rx = self.shutdown_rx.clone();
 
         loop {
             // Check for shutdown signal
@@ -138,11 +138,10 @@ impl ScanExecutor {
         }
 
         // Call webhook if configured
-        if let Some(webhook_url) = &job.webhook_url {
-            if let Err(e) = Self::send_webhook(webhook_url, &job).await {
+        if let Some(webhook_url) = &job.webhook_url
+            && let Err(e) = Self::send_webhook(webhook_url, &job).await {
                 warn!("Failed to send webhook for job {}: {}", job.id, e);
             }
-        }
     }
 
     /// Run the actual scan

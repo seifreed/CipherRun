@@ -212,7 +212,7 @@ fn extract_rsa_exponent(der_bytes: &[u8]) -> Result<Option<String>> {
             let exponent_str = exponent.to_dec_str()
                 .map_err(|e| anyhow::anyhow!("Failed to convert exponent to string: {}", e))?;
             // Format as "e {number}" to match SSL Labs format
-            Ok(Some(format!("e {}", exponent_str.to_string())))
+            Ok(Some(format!("e {}", exponent_str)))
         }
         Err(_) => {
             // Not an RSA key (could be ECDSA, EdDSA, etc.)
@@ -347,12 +347,10 @@ fn format_expiry_countdown(not_after_str: &str) -> Option<String> {
                 } else {
                     return Some(format!("expired {} months ago", months));
                 }
+            } else if months == 1 {
+                return Some(format!("expired 1 month and {} days ago", remaining_days));
             } else {
-                if months == 1 {
-                    return Some(format!("expired 1 month and {} days ago", remaining_days));
-                } else {
-                    return Some(format!("expired {} months and {} days ago", months, remaining_days));
-                }
+                return Some(format!("expired {} months and {} days ago", months, remaining_days));
             }
         } else {
             let years = days / 365;
@@ -363,12 +361,10 @@ fn format_expiry_countdown(not_after_str: &str) -> Option<String> {
                 } else {
                     return Some(format!("expired {} years ago", years));
                 }
+            } else if years == 1 {
+                return Some(format!("expired 1 year and {} months ago", remaining_months));
             } else {
-                if years == 1 {
-                    return Some(format!("expired 1 year and {} months ago", remaining_months));
-                } else {
-                    return Some(format!("expired {} years and {} months ago", years, remaining_months));
-                }
+                return Some(format!("expired {} years and {} months ago", years, remaining_months));
             }
         }
     }
@@ -377,42 +373,38 @@ fn format_expiry_countdown(not_after_str: &str) -> Option<String> {
     let days = duration.num_days();
 
     if days == 0 {
-        return Some("expires today".to_string());
+        Some("expires today".to_string())
     } else if days == 1 {
-        return Some("expires in 1 day".to_string());
+        Some("expires in 1 day".to_string())
     } else if days < 30 {
-        return Some(format!("expires in {} days", days));
+        Some(format!("expires in {} days", days))
     } else if days < 365 {
         let months = days / 30;
         let remaining_days = days % 30;
         if remaining_days == 0 {
             if months == 1 {
-                return Some("expires in 1 month".to_string());
+                Some("expires in 1 month".to_string())
             } else {
-                return Some(format!("expires in {} months", months));
+                Some(format!("expires in {} months", months))
             }
+        } else if months == 1 {
+            Some(format!("expires in 1 month and {} days", remaining_days))
         } else {
-            if months == 1 {
-                return Some(format!("expires in 1 month and {} days", remaining_days));
-            } else {
-                return Some(format!("expires in {} months and {} days", months, remaining_days));
-            }
+            Some(format!("expires in {} months and {} days", months, remaining_days))
         }
     } else {
         let years = days / 365;
         let remaining_months = (days % 365) / 30;
         if remaining_months == 0 {
             if years == 1 {
-                return Some("expires in 1 year".to_string());
+                Some("expires in 1 year".to_string())
             } else {
-                return Some(format!("expires in {} years", years));
+                Some(format!("expires in {} years", years))
             }
+        } else if years == 1 {
+            Some(format!("expires in 1 year and {} months", remaining_months))
         } else {
-            if years == 1 {
-                return Some(format!("expires in 1 year and {} months", remaining_months));
-            } else {
-                return Some(format!("expires in {} years and {} months", years, remaining_months));
-            }
+            Some(format!("expires in {} years and {} months", years, remaining_months))
         }
     }
 }
@@ -430,10 +422,7 @@ fn format_expiry_countdown(not_after_str: &str) -> Option<String> {
 /// * `None` - Unable to check (parsing error)
 fn check_debian_weak_key(der_bytes: &[u8]) -> Option<bool> {
     match OpensslX509::from_der(der_bytes) {
-        Ok(cert) => match crate::vulnerabilities::debian_keys::is_debian_weak_key(&cert) {
-            Ok(is_weak) => Some(is_weak),
-            Err(_) => None,
-        },
+        Ok(cert) => crate::vulnerabilities::debian_keys::is_debian_weak_key(&cert).ok(),
         Err(_) => None,
     }
 }

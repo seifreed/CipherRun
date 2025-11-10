@@ -177,18 +177,16 @@ impl AnycastScanner {
 
         // Compare certificate fingerprints
         for result in &successful_results {
-            if let Some(cert) = &result.results.certificate_chain {
-                if let Some(fingerprint) = &cert.chain.leaf().and_then(|c| c.fingerprint_sha256.clone()) {
+            if let Some(cert) = &result.results.certificate_chain
+                && let Some(fingerprint) = &cert.chain.leaf().and_then(|c| c.fingerprint_sha256.clone()) {
                     certificate_fingerprints.insert(fingerprint.clone());
                 }
-            }
 
             // Extract cipher preferences
-            if let Some(first_protocol) = result.results.ciphers.values().next() {
-                if let Some(preferred_cipher) = &first_protocol.preferred_cipher {
+            if let Some(first_protocol) = result.results.ciphers.values().next()
+                && let Some(preferred_cipher) = &first_protocol.preferred_cipher {
                     cipher_preferences.insert(result.ip, preferred_cipher.openssl_name.clone());
                 }
-            }
 
             // Extract protocol support
             let protocols: Vec<String> = result
@@ -254,15 +252,13 @@ impl AnycastScanner {
             }
 
             score.min(1.0)
+        } else if certificate_fingerprints.len() == 1
+            && unique_ciphers.len() == 1
+            && protocol_sets.iter().all(|s| s == &protocol_sets[0])
+        {
+            0.0 // Not Anycast
         } else {
-            if certificate_fingerprints.len() == 1
-                && unique_ciphers.len() == 1
-                && protocol_sets.iter().all(|s| s == &protocol_sets[0])
-            {
-                0.0 // Not Anycast
-            } else {
-                0.5 // Uncertain
-            }
+            0.5 // Uncertain
         };
 
         if !is_anycast && certificate_fingerprints.len() == 1 {
@@ -398,7 +394,7 @@ mod tests {
 
     #[test]
     fn test_anycast_detection_different_certs() {
-        let mut results = vec![
+        let results = vec![
             IpScanResult {
                 ip: "1.1.1.1".parse().unwrap(),
                 results: ScanResults::default(),

@@ -214,8 +214,7 @@ impl<S: std::fmt::Debug> From<openssl::ssl::HandshakeError<S>> for TlsError {
 impl From<tokio::task::JoinError> for TlsError {
     fn from(err: tokio::task::JoinError) -> Self {
         TlsError::IoError {
-            source: std::io::Error::new(
-                std::io::ErrorKind::Other,
+            source: std::io::Error::other(
                 format!("Task join error: {}", err),
             ),
         }
@@ -231,8 +230,7 @@ impl From<csv::Error> for TlsError {
 impl<W> From<csv::IntoInnerError<W>> for TlsError {
     fn from(err: csv::IntoInnerError<W>) -> Self {
         TlsError::IoError {
-            source: std::io::Error::new(
-                std::io::ErrorKind::Other,
+            source: std::io::Error::other(
                 format!("CSV writer error: {}", err),
             ),
         }

@@ -84,15 +84,14 @@ impl ScanJob {
         self.current_stage = Some(stage);
 
         // Estimate completion time based on progress
-        if let Some(started) = self.started_at {
-            if progress > 0 {
+        if let Some(started) = self.started_at
+            && progress > 0 {
                 let elapsed = (Utc::now() - started).num_seconds() as u64;
                 let total_estimated = (elapsed * 100) / progress as u64;
                 let remaining = total_estimated.saturating_sub(elapsed);
                 self.eta_seconds = Some(remaining);
                 self.estimated_completion = Some(Utc::now() + chrono::Duration::seconds(remaining as i64));
             }
-        }
     }
 
     /// Mark as started

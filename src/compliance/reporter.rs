@@ -15,7 +15,7 @@ impl Reporter {
         // Header
         output.push_str(&format!(
             "\n{}\n",
-            "=".repeat(70).cyan().to_string()
+            "=".repeat(70).cyan()
         ));
         output.push_str(&format!(
             "Compliance Report: {}\n",
@@ -23,7 +23,7 @@ impl Reporter {
         ));
         output.push_str(&format!(
             "{}\n",
-            "=".repeat(70).cyan().to_string()
+            "=".repeat(70).cyan()
         ));
 
         // Metadata
@@ -76,7 +76,7 @@ impl Reporter {
                 }
 
                 if !req.remediation.is_empty() {
-                    output.push_str(&format!("\n  Remediation:\n"));
+                    output.push_str("\n  Remediation:\n");
                     for line in req.remediation.lines() {
                         output.push_str(&format!("    {}\n", line.green()));
                     }

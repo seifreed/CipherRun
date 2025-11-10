@@ -115,7 +115,7 @@ pub async fn list_certificates(
                 where_clause, order_by
             );
 
-            let mut stmt = sqlx::query(&list_query)
+            let stmt = sqlx::query(&list_query)
                 .bind(query.limit as i64)
                 .bind(query.offset as i64);
 
@@ -152,7 +152,7 @@ pub async fn list_certificates(
                         valid_until: not_after,
                         days_until_expiry,
                         is_expired: not_after < now,
-                        is_expiring_soon: days_until_expiry < 30 && days_until_expiry >= 0,
+                        is_expiring_soon: (0..30).contains(&days_until_expiry),
                         hostnames: hostnames.unwrap_or_default(),
                     }
                 })
@@ -198,7 +198,7 @@ pub async fn list_certificates(
                 where_clause, order_by
             );
 
-            let mut stmt = sqlx::query(&list_query)
+            let stmt = sqlx::query(&list_query)
                 .bind(query.limit as i64)
                 .bind(query.offset as i64);
 
@@ -239,7 +239,7 @@ pub async fn list_certificates(
                         valid_until: not_after,
                         days_until_expiry,
                         is_expired: not_after < now,
-                        is_expiring_soon: days_until_expiry < 30 && days_until_expiry >= 0,
+                        is_expiring_soon: (0..30).contains(&days_until_expiry),
                         hostnames,
                     }
                 })
@@ -335,7 +335,7 @@ pub async fn get_certificate(
                 valid_until: not_after,
                 days_until_expiry,
                 is_expired: not_after < now,
-                is_expiring_soon: days_until_expiry < 30 && days_until_expiry >= 0,
+                is_expiring_soon: (0..30).contains(&days_until_expiry),
                 hostnames: hostnames.unwrap_or_default(),
             }
         }
@@ -391,7 +391,7 @@ pub async fn get_certificate(
                 valid_until: not_after,
                 days_until_expiry,
                 is_expired: not_after < now,
-                is_expiring_soon: days_until_expiry < 30 && days_until_expiry >= 0,
+                is_expiring_soon: (0..30).contains(&days_until_expiry),
                 hostnames,
             }
         }

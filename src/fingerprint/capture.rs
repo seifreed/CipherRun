@@ -5,8 +5,6 @@ use crate::fingerprint::client_hello_capture::ClientHelloCapture;
 use crate::fingerprint::Ja3Fingerprint;
 use crate::utils::network::Target;
 use crate::Result;
-use std::io::{Read, Write};
-use std::net::TcpStream;
 use std::time::Duration;
 
 /// Capture ClientHello by performing a TLS handshake

@@ -2,7 +2,7 @@
 
 use crate::ciphers::tester::ProtocolCipherSummary;
 use crate::policy::violation::PolicyViolation;
-use crate::policy::{CipherPolicy, PolicyAction};
+use crate::policy::CipherPolicy;
 use crate::protocols::Protocol;
 use crate::Result;
 use regex::Regex;
@@ -191,6 +191,7 @@ mod tests {
     use super::*;
     use crate::ciphers::CipherSuite;
     use crate::ciphers::tester::CipherCounts;
+    use crate::policy::PolicyAction;
 
     fn create_test_cipher(name: &str) -> CipherSuite {
         CipherSuite {

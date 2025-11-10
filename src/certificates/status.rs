@@ -119,11 +119,10 @@ impl CertificateStatus {
         }
 
         // Fallback: parse certificate dates directly
-        if let Ok(not_after) = parse_certificate_date(&cert.not_after) {
-            if Utc::now() > not_after {
+        if let Ok(not_after) = parse_certificate_date(&cert.not_after)
+            && Utc::now() > not_after {
                 return true;
             }
-        }
 
         false
     }
@@ -274,7 +273,7 @@ mod tests {
 
     #[test]
     fn test_detect_expired() {
-        let mut validation = ValidationResult {
+        let validation = ValidationResult {
             valid: false,
             issues: vec![ValidationIssue {
                 severity: IssueSeverity::Critical,

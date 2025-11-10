@@ -18,18 +18,16 @@ impl ExceptionMatcher {
     pub fn is_exception(&self, target: &str, rule_path: &str) -> Option<&PolicyException> {
         for exception in &self.exceptions {
             // Check if exception is expired
-            if let Some(ref expires) = exception.expires {
-                if self.is_expired(expires) {
+            if let Some(ref expires) = exception.expires
+                && self.is_expired(expires) {
                     continue;
                 }
-            }
 
             // Check if target matches (with wildcard support)
-            if let Some(ref domain_pattern) = exception.domain {
-                if !self.matches_domain(target, domain_pattern) {
+            if let Some(ref domain_pattern) = exception.domain
+                && !self.matches_domain(target, domain_pattern) {
                     continue;
                 }
-            }
 
             // Check if rule matches
             if exception.rules.contains(&rule_path.to_string()) {
@@ -79,11 +77,10 @@ impl ExceptionMatcher {
 
         for exception in &self.exceptions {
             // Skip expired exceptions
-            if let Some(ref expires) = exception.expires {
-                if self.is_expired(expires) {
+            if let Some(ref expires) = exception.expires
+                && self.is_expired(expires) {
                     continue;
                 }
-            }
 
             // Check if target matches
             if let Some(ref domain_pattern) = exception.domain {

@@ -120,7 +120,7 @@ impl Parser {
             (timestamp_ms / 1000) as i64,
             ((timestamp_ms % 1000) * 1_000_000) as u32,
         )
-        .unwrap_or_else(|| Utc::now());
+        .unwrap_or_else(Utc::now);
 
         // Parse log entry type
         let entry_type = u16::from_be_bytes([leaf_bytes[10], leaf_bytes[11]]);
@@ -205,10 +205,10 @@ impl Parser {
 
         // Extract validity period
         let not_before = DateTime::<Utc>::from_timestamp(cert.validity().not_before.timestamp(), 0)
-            .unwrap_or_else(|| Utc::now());
+            .unwrap_or_else(Utc::now);
 
         let not_after = DateTime::<Utc>::from_timestamp(cert.validity().not_after.timestamp(), 0)
-            .unwrap_or_else(|| Utc::now());
+            .unwrap_or_else(Utc::now);
 
         // Extract serial number
         let serial = cert

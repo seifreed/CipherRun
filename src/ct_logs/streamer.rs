@@ -216,11 +216,10 @@ impl CtStreamer {
         }
 
         // Wait for stats reporter
-        if let Some(handle) = stats_handle {
-            if let Err(e) = handle.await {
+        if let Some(handle) = stats_handle
+            && let Err(e) = handle.await {
                 error!("Stats reporter failed: {}", e);
             }
-        }
 
         // Print final statistics
         if !self.config.silent {

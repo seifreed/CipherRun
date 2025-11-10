@@ -91,8 +91,8 @@ impl ComplianceChecker {
                 }
 
                 // Check allowed patterns (if specified)
-                if !rule.allowed_patterns.is_empty() {
-                    if !rule.matches_allowed_pattern(cipher_name)
+                if !rule.allowed_patterns.is_empty()
+                    && !rule.matches_allowed_pattern(cipher_name)
                         && !rule.matches_allowed_pattern(openssl_name)
                     {
                         violations.push(Violation {
@@ -102,7 +102,6 @@ impl ComplianceChecker {
                             severity: Severity::High,
                         });
                     }
-                }
             }
         }
 
@@ -113,15 +112,15 @@ impl ComplianceChecker {
     pub fn check_key_size(rule: &Rule, results: &ScanResults) -> Result<Vec<Violation>> {
         let mut violations = Vec::new();
 
-        if let Some(cert_analysis) = &results.certificate_chain {
-            if let Some(leaf_cert) = cert_analysis.chain.leaf() {
-                if let Some(key_size) = leaf_cert.public_key_size {
+        if let Some(cert_analysis) = &results.certificate_chain
+            && let Some(leaf_cert) = cert_analysis.chain.leaf()
+                && let Some(key_size) = leaf_cert.public_key_size {
                     let key_algo = &leaf_cert.public_key_algorithm;
 
                     // Check RSA key size
-                    if key_algo.contains("RSA") || key_algo.contains("rsa") {
-                        if let Some(min_rsa_bits) = rule.min_rsa_bits {
-                            if (key_size as u32) < min_rsa_bits {
+                    if (key_algo.contains("RSA") || key_algo.contains("rsa"))
+                        && let Some(min_rsa_bits) = rule.min_rsa_bits
+                            && (key_size as u32) < min_rsa_bits {
                                 violations.push(Violation {
                                     violation_type: "Insufficient Key Size".to_string(),
                                     description: format!(
@@ -135,13 +134,11 @@ impl ComplianceChecker {
                                     severity: Severity::High,
                                 });
                             }
-                        }
-                    }
 
                     // Check ECC key size
-                    if key_algo.contains("EC") || key_algo.contains("ECDSA") {
-                        if let Some(min_ecc_bits) = rule.min_ecc_bits {
-                            if (key_size as u32) < min_ecc_bits {
+                    if (key_algo.contains("EC") || key_algo.contains("ECDSA"))
+                        && let Some(min_ecc_bits) = rule.min_ecc_bits
+                            && (key_size as u32) < min_ecc_bits {
                                 violations.push(Violation {
                                     violation_type: "Insufficient Key Size".to_string(),
                                     description: format!(
@@ -155,11 +152,7 @@ impl ComplianceChecker {
                                     severity: Severity::High,
                                 });
                             }
-                        }
-                    }
                 }
-            }
-        }
 
         Ok(violations)
     }
@@ -168,8 +161,8 @@ impl ComplianceChecker {
     pub fn check_signature(rule: &Rule, results: &ScanResults) -> Result<Vec<Violation>> {
         let mut violations = Vec::new();
 
-        if let Some(cert_analysis) = &results.certificate_chain {
-            if let Some(leaf_cert) = cert_analysis.chain.leaf() {
+        if let Some(cert_analysis) = &results.certificate_chain
+            && let Some(leaf_cert) = cert_analysis.chain.leaf() {
                 let sig_algo = leaf_cert.signature_algorithm.to_lowercase();
 
                 // Check if signature algorithm is denied
@@ -210,7 +203,6 @@ impl ComplianceChecker {
                     }
                 }
             }
-        }
 
         Ok(violations)
     }
@@ -305,18 +297,18 @@ impl ComplianceChecker {
     pub fn check_cert_expiration(rule: &Rule, results: &ScanResults) -> Result<Vec<Violation>> {
         let mut violations = Vec::new();
 
-        if let Some(max_days) = rule.max_days_until_expiration {
-            if let Some(cert_analysis) = &results.certificate_chain {
-                if let Some(leaf_cert) = cert_analysis.chain.leaf() {
+        if let Some(max_days) = rule.max_days_until_expiration
+            && let Some(cert_analysis) = &results.certificate_chain
+                && let Some(leaf_cert) = cert_analysis.chain.leaf() {
                     // Parse expiration date and calculate days remaining
                     // This is a simplified check - in production, parse the actual date
                     if let Some(ref countdown) = leaf_cert.expiry_countdown {
                         // Extract days from countdown string (e.g., "30 days")
                         if countdown.contains("day") {
                             let parts: Vec<&str> = countdown.split_whitespace().collect();
-                            if let Some(days_str) = parts.first() {
-                                if let Ok(days) = days_str.parse::<i64>() {
-                                    if days <= max_days {
+                            if let Some(days_str) = parts.first()
+                                && let Ok(days) = days_str.parse::<i64>()
+                                    && days <= max_days {
                                         violations.push(Violation {
                                             violation_type: "Certificate Expiring Soon".to_string(),
                                             description: format!(
@@ -327,13 +319,9 @@ impl ComplianceChecker {
                                             severity: Severity::Medium,
                                         });
                                     }
-                                }
-                            }
                         }
                     }
                 }
-            }
-        }
 
         Ok(violations)
     }

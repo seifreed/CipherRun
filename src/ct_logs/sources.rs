@@ -111,8 +111,8 @@ impl SourceManager {
         for operator in &log_list.operators {
             for log in &operator.logs {
                 // Only use usable logs
-                if let Some(state) = &log.state {
-                    if state.usable.is_some() {
+                if let Some(state) = &log.state
+                    && state.usable.is_some() {
                         let log_id = log.log_id.clone();
                         let source = LogSource {
                             id: log_id.clone(),
@@ -131,7 +131,6 @@ impl SourceManager {
 
                         self.sources.insert(log_id, source);
                     }
-                }
             }
         }
 

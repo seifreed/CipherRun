@@ -6,7 +6,7 @@ use crate::db::models::ScanRecord;
 use crate::db::traits::ScanRepository;
 use async_trait::async_trait;
 use chrono::{Duration, Utc};
-use sqlx::{Row, FromRow};
+use sqlx::Row;
 
 pub struct ScanRepositoryImpl {
     pool: DatabasePool,

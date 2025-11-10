@@ -69,7 +69,7 @@ async fn run_sqlite_migrations_manual(pool: &sqlx::SqlitePool, migrations_path: 
         .filter_map(|entry| {
             let entry = entry.ok()?;
             let path = entry.path();
-            if path.extension().map_or(false, |ext| ext == "sql") {
+            if path.extension().is_some_and(|ext| ext == "sql") {
                 Some(path)
             } else {
                 None

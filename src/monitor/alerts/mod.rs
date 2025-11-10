@@ -10,7 +10,6 @@ pub mod webhook;
 use crate::monitor::detector::{ChangeEvent, ChangeSeverity};
 use crate::monitor::config::MonitorConfig;
 use crate::Result;
-use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -189,44 +188,39 @@ impl AlertManager {
         let mut manager = Self::new(config.monitor.deduplication.window_hours);
 
         // Initialize email channel if configured
-        if let Some(ref email_config) = config.monitor.alerts.email {
-            if email_config.enabled {
+        if let Some(ref email_config) = config.monitor.alerts.email
+            && email_config.enabled {
                 let channel = email::EmailChannel::new(email_config.clone())?;
                 manager.add_channel(Box::new(channel));
             }
-        }
 
         // Initialize Slack channel if configured
-        if let Some(ref slack_config) = config.monitor.alerts.slack {
-            if slack_config.enabled {
+        if let Some(ref slack_config) = config.monitor.alerts.slack
+            && slack_config.enabled {
                 let channel = slack::SlackChannel::new(slack_config.clone());
                 manager.add_channel(Box::new(channel));
             }
-        }
 
         // Initialize Teams channel if configured
-        if let Some(ref teams_config) = config.monitor.alerts.teams {
-            if teams_config.enabled {
+        if let Some(ref teams_config) = config.monitor.alerts.teams
+            && teams_config.enabled {
                 let channel = teams::TeamsChannel::new(teams_config.clone());
                 manager.add_channel(Box::new(channel));
             }
-        }
 
         // Initialize PagerDuty channel if configured
-        if let Some(ref pd_config) = config.monitor.alerts.pagerduty {
-            if pd_config.enabled {
+        if let Some(ref pd_config) = config.monitor.alerts.pagerduty
+            && pd_config.enabled {
                 let channel = pagerduty::PagerDutyChannel::new(pd_config.clone());
                 manager.add_channel(Box::new(channel));
             }
-        }
 
         // Initialize Webhook channel if configured
-        if let Some(ref webhook_config) = config.monitor.alerts.webhook {
-            if webhook_config.enabled {
+        if let Some(ref webhook_config) = config.monitor.alerts.webhook
+            && webhook_config.enabled {
                 let channel = webhook::WebhookChannel::new(webhook_config.clone());
                 manager.add_channel(Box::new(channel));
             }
-        }
 
         Ok(manager)
     }
@@ -285,7 +279,7 @@ impl AlertManager {
 
     /// Check if alert is a duplicate
     async fn is_duplicate(&self, alert: &Alert) -> bool {
-        let mut recent = self.recent_alerts.lock().await;
+        let recent = self.recent_alerts.lock().await;
         let key = alert.dedup_key();
 
         if let Some(last_sent) = recent.get(&key) {

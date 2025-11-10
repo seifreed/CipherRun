@@ -15,7 +15,6 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
-use chrono::Utc;
 use std::sync::Arc;
 use tracing::info;
 

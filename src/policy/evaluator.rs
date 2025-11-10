@@ -151,8 +151,8 @@ impl PolicyEvaluator {
             }
 
             // Check minimum score
-            if let Some(min_score) = policy.min_score {
-                if u32::from(rating.score) < min_score {
+            if let Some(min_score) = policy.min_score
+                && u32::from(rating.score) < min_score {
                     violations.push(
                         PolicyViolation::new(
                             "rating.min_score",
@@ -173,7 +173,6 @@ impl PolicyEvaluator {
                         )),
                     );
                 }
-            }
         }
 
         Ok(violations)

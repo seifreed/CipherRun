@@ -115,7 +115,7 @@ impl ChangeTracker {
         let mut by_type: HashMap<String, Vec<&ChangeEvent>> = HashMap::new();
         for change in changes {
             let type_key = format!("{:?}", change.change_type);
-            by_type.entry(type_key).or_insert_with(Vec::new).push(change);
+            by_type.entry(type_key).or_default().push(change);
         }
 
         for (change_type, events) in by_type.iter() {
@@ -231,8 +231,8 @@ impl ChangeTracker {
                 change_type: ChangeType::Protocol,
                 severity: ChangeSeverity::Low,
                 description: "Preferred protocol changed".to_string(),
-                previous_value: pref1.map(|s| s.clone()),
-                current_value: pref2.map(|s| s.clone()),
+                previous_value: pref1.cloned(),
+                current_value: pref2.cloned(),
                 timestamp,
             });
         }

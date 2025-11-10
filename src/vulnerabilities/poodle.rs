@@ -502,7 +502,6 @@ impl PoodleTester {
                 if bytes_read == 0 {
                     return Ok(ServerResponse {
                         connection_accepted: false,
-                        alert_received: false,
                         alert_type: None,
                         response_time_ms: start_time.elapsed().as_secs_f64() * 1000.0,
                         shows_differential_behavior: false,
@@ -515,7 +514,7 @@ impl PoodleTester {
 
                 // Try to read response
                 let mut response = vec![0u8; 1024];
-                let alert_received = match timeout(
+                let alert_type = match timeout(
                     Duration::from_secs(2),
                     stream.read(&mut response),
                 )
@@ -523,27 +522,24 @@ impl PoodleTester {
                 {
                     Ok(Ok(n)) if n > 0 => {
                         // Parse TLS alert if present
-                        let alert_type = if response[0] == 0x15 && n >= 7 {
+                        if response[0] == 0x15 && n >= 7 {
                             Some(response[6]) // Alert description
                         } else {
                             None
-                        };
-                        (true, alert_type)
+                        }
                     }
-                    _ => (false, None),
+                    _ => None,
                 };
 
                 Ok(ServerResponse {
                     connection_accepted: true,
-                    alert_received: alert_received.0,
-                    alert_type: alert_received.1,
+                    alert_type,
                     response_time_ms: start_time.elapsed().as_secs_f64() * 1000.0,
-                    shows_differential_behavior: alert_received.1.is_some(),
+                    shows_differential_behavior: alert_type.is_some(),
                 })
             }
             _ => Ok(ServerResponse {
                 connection_accepted: false,
-                alert_received: false,
                 alert_type: None,
                 response_time_ms: start_time.elapsed().as_secs_f64() * 1000.0,
                 shows_differential_behavior: false,
@@ -745,7 +741,6 @@ enum MalformedRecordType {
 #[derive(Debug, Clone)]
 struct ServerResponse {
     connection_accepted: bool,
-    alert_received: bool,
     alert_type: Option<u8>,
     response_time_ms: f64,
     shows_differential_behavior: bool,

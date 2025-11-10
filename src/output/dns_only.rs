@@ -30,11 +30,10 @@ impl DnsOnlyMode {
 
         // Extract the Common Name (CN) from the subject
         // Format is typically "CN=example.com" or similar
-        if !cert.subject.is_empty() {
-            if let Some(cn) = Self::extract_cn(&cert.subject) {
+        if !cert.subject.is_empty()
+            && let Some(cn) = Self::extract_cn(&cert.subject) {
                 domains.insert(Self::normalize_domain(&cn));
             }
-        }
 
         // Add all Subject Alternative Names (SANs)
         for san in &cert.san {

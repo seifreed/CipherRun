@@ -102,7 +102,7 @@ impl SniGenerator {
             if !label
                 .chars()
                 .next()
-                .map_or(false, |c| c.is_ascii_alphanumeric())
+                .is_some_and(|c| c.is_ascii_alphanumeric())
             {
                 return false;
             }
@@ -110,7 +110,7 @@ impl SniGenerator {
             if !label
                 .chars()
                 .last()
-                .map_or(false, |c| c.is_ascii_alphanumeric())
+                .is_some_and(|c| c.is_ascii_alphanumeric())
             {
                 return false;
             }

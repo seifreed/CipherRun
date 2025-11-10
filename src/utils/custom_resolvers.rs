@@ -210,6 +210,11 @@ impl CustomResolver {
     pub fn count(&self) -> usize {
         self.resolvers.len()
     }
+
+    /// Get the query timeout
+    pub fn delay(&self) -> Duration {
+        self.query_timeout
+    }
 }
 
 #[cfg(test)]

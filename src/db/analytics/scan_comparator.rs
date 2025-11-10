@@ -300,14 +300,14 @@ impl ScanComparator {
             output.push_str("CERTIFICATE CHANGES\n");
             output.push_str("───────────────────────────────────────────────────────────────────\n");
             if let Some(cert1) = &comp.certificate_diff.scan_1_cert {
-                output.push_str(&format!("Old Certificate:\n"));
+                output.push_str("Old Certificate:\n");
                 output.push_str(&format!("  Subject:  {}\n", cert1.subject));
                 output.push_str(&format!("  Issuer:   {}\n", cert1.issuer));
                 output.push_str(&format!("  Expires:  {}\n", cert1.not_after.format("%Y-%m-%d")));
                 output.push_str(&format!("  Key Size: {} bits\n", cert1.key_size.unwrap_or(0)));
             }
             if let Some(cert2) = &comp.certificate_diff.scan_2_cert {
-                output.push_str(&format!("New Certificate:\n"));
+                output.push_str("New Certificate:\n");
                 output.push_str(&format!("  Subject:  {}\n", cert2.subject));
                 output.push_str(&format!("  Issuer:   {}\n", cert2.issuer));
                 output.push_str(&format!("  Expires:  {}\n", cert2.not_after.format("%Y-%m-%d")));

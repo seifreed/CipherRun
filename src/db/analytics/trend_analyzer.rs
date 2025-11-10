@@ -332,7 +332,7 @@ impl TrendAnalyzer {
                 report.push_str(&format!("Strong ciphers:   {:?}\n", cipher_trend.strong_count_trend));
 
                 if let Some((_, latest)) = cipher_trend.data_points.last() {
-                    report.push_str(&format!("\nLatest distribution:\n"));
+                    report.push_str("\nLatest distribution:\n");
                     report.push_str(&format!("  Weak:   {}\n", latest.weak));
                     report.push_str(&format!("  Medium: {}\n", latest.medium));
                     report.push_str(&format!("  Strong: {}\n", latest.strong));

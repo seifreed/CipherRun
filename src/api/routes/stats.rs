@@ -5,7 +5,6 @@ use crate::api::{
     state::AppState,
 };
 use axum::{extract::State, Json};
-use chrono::Utc;
 use std::sync::Arc;
 
 /// Get API statistics

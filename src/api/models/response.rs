@@ -2,7 +2,6 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 use utoipa::ToSchema;
 
 /// Scan response (returned when creating a scan)

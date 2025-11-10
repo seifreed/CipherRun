@@ -190,13 +190,12 @@ impl HstsPreloadChecker {
     fn get_from_cache(&self, domain: &str) -> Option<PreloadStatus> {
         let cache = self.cache.lock().ok()?;
 
-        if let Some(entry) = cache.get(domain) {
-            if entry.timestamp.elapsed() < self.cache_duration {
+        if let Some(entry) = cache.get(domain)
+            && entry.timestamp.elapsed() < self.cache_duration {
                 let mut status = entry.status.clone();
                 status.source = PreloadSource::Cache;
                 return Some(status);
             }
-        }
 
         None
     }
@@ -364,9 +363,7 @@ const KNOWN_PRELOADED_DOMAINS: &[&str] = &[
 /// Check if domain is in the static preloaded list
 pub fn is_in_static_list(domain: &str) -> bool {
     let normalized = HstsPreloadChecker::normalize_domain(domain);
-    KNOWN_PRELOADED_DOMAINS
-        .iter()
-        .any(|&d| d == normalized.as_str())
+    KNOWN_PRELOADED_DOMAINS.contains(&normalized.as_str())
 }
 
 #[cfg(test)]

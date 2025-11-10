@@ -152,8 +152,8 @@ impl DashboardGenerator {
         let total: usize = severity_counts.values().sum();
         let mut distribution = Vec::new();
 
-        let severity_order = vec!["critical", "high", "medium", "low", "info"];
-        let severity_colors = vec!["#dc3545", "#fd7e14", "#ffc107", "#28a745", "#17a2b8"];
+        let severity_order = ["critical", "high", "medium", "low", "info"];
+        let severity_colors = ["#dc3545", "#fd7e14", "#ffc107", "#28a745", "#17a2b8"];
 
         for (severity, color) in severity_order.iter().zip(severity_colors.iter()) {
             if let Some(&count) = severity_counts.get(*severity) {
@@ -244,8 +244,8 @@ impl DashboardGenerator {
         let total: usize = strength_counts.values().sum();
         let mut distribution = Vec::new();
 
-        let strength_order = vec!["strong", "medium", "weak"];
-        let strength_colors = vec!["#28a745", "#ffc107", "#dc3545"];
+        let strength_order = ["strong", "medium", "weak"];
+        let strength_colors = ["#28a745", "#ffc107", "#dc3545"];
 
         for (strength, color) in strength_order.iter().zip(strength_colors.iter()) {
             if let Some(&count) = strength_counts.get(*strength) {

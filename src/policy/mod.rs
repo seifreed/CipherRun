@@ -11,7 +11,6 @@ pub mod violation;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 /// Policy action to take when a rule is violated
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -251,7 +250,7 @@ impl PolicyResult {
 
         output.push_str(&format!(
             "{}\n",
-            "=".repeat(60).cyan().to_string()
+            "=".repeat(60).cyan()
         ));
         output.push_str(&format!(
             "Policy Evaluation: {} v{}\n",
@@ -260,7 +259,7 @@ impl PolicyResult {
         ));
         output.push_str(&format!(
             "{}\n",
-            "=".repeat(60).cyan().to_string()
+            "=".repeat(60).cyan()
         ));
         output.push_str(&format!("Target: {}\n", self.target.green()));
         output.push_str(&format!(
@@ -290,7 +289,7 @@ impl PolicyResult {
         if !self.violations.is_empty() {
             output.push_str(&format!(
                 "\n{}\n",
-                "Violations:".yellow().bold().to_string()
+                "Violations:".yellow().bold()
             ));
             output.push_str(&format!("{}\n", "-".repeat(60)));
 
@@ -316,7 +315,7 @@ impl PolicyResult {
         if !self.exceptions_applied.is_empty() {
             output.push_str(&format!(
                 "\n{}\n",
-                "Exceptions Applied:".cyan().to_string()
+                "Exceptions Applied:".cyan()
             ));
             output.push_str(&format!("{}\n", "-".repeat(60)));
             for exception in &self.exceptions_applied {
@@ -325,13 +324,13 @@ impl PolicyResult {
         } else {
             output.push_str(&format!(
                 "\n{}\n",
-                "Exceptions Applied:".cyan().to_string()
+                "Exceptions Applied:".cyan()
             ));
             output.push_str(&format!("{}\n", "-".repeat(60)));
             output.push_str("None\n");
         }
 
-        output.push_str(&format!("\n{}\n", "Summary:".cyan().to_string()));
+        output.push_str(&format!("\n{}\n", "Summary:".cyan()));
         output.push_str(&format!("  Total Checks: {}\n", self.summary.total_checks));
         output.push_str(&format!(
             "  {} Passed: {}\n",

@@ -180,24 +180,22 @@ impl TrustStoreValidator {
                 // Index by subject DN
                 self.subject_index
                     .entry(ca_cert.subject.clone())
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(global_idx);
 
                 // Try to extract Subject Key Identifier for more accurate matching
-                if let Ok((_, cert)) = X509Certificate::from_der(&ca_cert.der) {
-                    if let Ok(Some(ext)) = cert.get_extension_unique(
+                if let Ok((_, cert)) = X509Certificate::from_der(&ca_cert.der)
+                    && let Ok(Some(ext)) = cert.get_extension_unique(
                         &oid_registry::OID_X509_EXT_SUBJECT_KEY_IDENTIFIER,
-                    ) {
-                        if let ParsedExtension::SubjectKeyIdentifier(skid) = ext.parsed_extension()
+                    )
+                        && let ParsedExtension::SubjectKeyIdentifier(skid) = ext.parsed_extension()
                         {
                             let skid_hex = hex::encode(skid.0);
                             self.skid_index
                                 .entry(skid_hex)
-                                .or_insert_with(Vec::new)
+                                .or_default()
                                 .push(global_idx);
                         }
-                    }
-                }
             }
         }
 

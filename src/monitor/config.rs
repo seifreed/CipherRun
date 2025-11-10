@@ -25,6 +25,7 @@ pub struct MonitorSettings {
 
 /// Alerts configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct AlertsConfig {
     pub email: Option<EmailConfig>,
     pub slack: Option<SlackConfig>,
@@ -124,17 +125,6 @@ impl Default for MonitorSettings {
     }
 }
 
-impl Default for AlertsConfig {
-    fn default() -> Self {
-        Self {
-            email: None,
-            slack: None,
-            teams: None,
-            pagerduty: None,
-            webhook: None,
-        }
-    }
-}
 
 impl MonitorConfig {
     /// Load configuration from TOML file
@@ -172,35 +162,30 @@ impl MonitorConfig {
     pub fn enabled_channels(&self) -> Vec<String> {
         let mut channels = Vec::new();
 
-        if let Some(ref email) = self.monitor.alerts.email {
-            if email.enabled {
+        if let Some(ref email) = self.monitor.alerts.email
+            && email.enabled {
                 channels.push("email".to_string());
             }
-        }
 
-        if let Some(ref slack) = self.monitor.alerts.slack {
-            if slack.enabled {
+        if let Some(ref slack) = self.monitor.alerts.slack
+            && slack.enabled {
                 channels.push("slack".to_string());
             }
-        }
 
-        if let Some(ref teams) = self.monitor.alerts.teams {
-            if teams.enabled {
+        if let Some(ref teams) = self.monitor.alerts.teams
+            && teams.enabled {
                 channels.push("teams".to_string());
             }
-        }
 
-        if let Some(ref pagerduty) = self.monitor.alerts.pagerduty {
-            if pagerduty.enabled {
+        if let Some(ref pagerduty) = self.monitor.alerts.pagerduty
+            && pagerduty.enabled {
                 channels.push("pagerduty".to_string());
             }
-        }
 
-        if let Some(ref webhook) = self.monitor.alerts.webhook {
-            if webhook.enabled {
+        if let Some(ref webhook) = self.monitor.alerts.webhook
+            && webhook.enabled {
                 channels.push("webhook".to_string());
             }
-        }
 
         channels
     }

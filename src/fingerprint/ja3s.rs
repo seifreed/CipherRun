@@ -201,14 +201,13 @@ impl CdnDetection {
         let mut indicators = Vec::new();
 
         // Check JA3S signature match
-        if let Some(sig) = ja3s_match {
-            if sig.server_type == ServerType::CDN {
+        if let Some(sig) = ja3s_match
+            && sig.server_type == ServerType::CDN {
                 is_cdn = true;
                 cdn_provider = Some(sig.name.clone());
                 confidence += 0.7;
                 indicators.push(format!("JA3S signature matches {}", sig.name));
             }
-        }
 
         // Check HTTP headers for CDN indicators
         for (header_name, header_value) in http_headers {
@@ -301,13 +300,12 @@ impl LoadBalancerInfo {
         let mut indicators = Vec::new();
 
         // Check JA3S signature
-        if let Some(sig) = ja3s_match {
-            if sig.server_type == ServerType::LoadBalancer {
+        if let Some(sig) = ja3s_match
+            && sig.server_type == ServerType::LoadBalancer {
                 detected = true;
                 lb_type = Some(sig.name.clone());
                 indicators.push(format!("JA3S signature matches {}", sig.name));
             }
-        }
 
         // Check HTTP headers
         for (header_name, header_value) in http_headers {

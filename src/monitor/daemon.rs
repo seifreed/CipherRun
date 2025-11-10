@@ -6,15 +6,14 @@ use crate::monitor::config::MonitorConfig;
 use crate::monitor::detector::ChangeDetector;
 use crate::monitor::inventory::{CertificateInventory, MonitoredDomain};
 use crate::monitor::scheduler::SchedulingEngine;
-use crate::monitor::types::ScanStatus;
 use crate::utils::network::Target;
 use crate::Result;
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration as StdDuration;
 use tokio::sync::{Mutex, Semaphore};
-use tokio::time::{sleep, interval};
+use tokio::time::interval;
 
 /// Main monitoring daemon
 pub struct MonitorDaemon {

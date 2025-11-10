@@ -63,7 +63,9 @@ impl ApiServer {
             .route("/health", get(routes::health::health_check));
 
         // Build main router with versioning
-        let app = Router::new()
+        
+
+        Router::new()
             .nest("/api/v1", api_routes)
             // Also support /health at root level
             .route("/health", get(routes::health::health_check))
@@ -81,9 +83,7 @@ impl ApiServer {
             // Add logging
             .layer(middleware::logging_layer())
             // Add shared state
-            .with_state(self.state.clone());
-
-        app
+            .with_state(self.state.clone())
     }
 
     /// Build Swagger UI routes

@@ -129,11 +129,10 @@ impl ServerHelloCapture {
 
                             // Parse extension data
                             let mut ext_data = vec![0u8; ext_data_len];
-                            if ext_data_len > 0 {
-                                if cursor.read_exact(&mut ext_data).is_err() {
+                            if ext_data_len > 0
+                                && cursor.read_exact(&mut ext_data).is_err() {
                                     break;
                                 }
-                            }
 
                             extensions.push(Extension {
                                 extension_type: ext_type,

@@ -162,9 +162,9 @@ pub async fn get_policy(
     let updated_at = metadata
         .modified()
         .ok()
-        .and_then(|t| {
+        .map(|t| {
             let dt: chrono::DateTime<Utc> = t.into();
-            Some(dt)
+            dt
         })
         .unwrap_or(created_at);
 

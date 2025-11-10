@@ -19,6 +19,7 @@ use tokio::time::timeout;
 
 /// Result of intolerance testing
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct IntoleranceTestResult {
     pub extension_intolerance: bool,
     pub version_intolerance: bool,
@@ -28,18 +29,6 @@ pub struct IntoleranceTestResult {
     pub details: HashMap<String, String>,
 }
 
-impl Default for IntoleranceTestResult {
-    fn default() -> Self {
-        Self {
-            extension_intolerance: false,
-            version_intolerance: false,
-            long_handshake_intolerance: false,
-            incorrect_sni_alerts: false,
-            uses_common_dh_primes: false,
-            details: HashMap::new(),
-        }
-    }
-}
 
 /// TLS Intolerance Tester
 pub struct IntoleranceTester {

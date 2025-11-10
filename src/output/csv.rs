@@ -147,8 +147,8 @@ pub fn generate_csv(results: &ScanResults) -> Result<String> {
             output.push('\n');
         }
 
-        if let Some(proxy) = &headers.reverse_proxy_detection {
-            if proxy.detected {
+        if let Some(proxy) = &headers.reverse_proxy_detection
+            && proxy.detected {
                 output.push_str("=== REVERSE PROXY DETECTION ===\n");
                 output.push_str("Detected,Type,Via Header,X-Forwarded-For,X-Real-IP,X-Forwarded-Proto\n");
                 output.push_str(&format!(
@@ -162,7 +162,6 @@ pub fn generate_csv(results: &ScanResults) -> Result<String> {
                 ));
                 output.push('\n');
             }
-        }
     }
 
     // Rating (if available)

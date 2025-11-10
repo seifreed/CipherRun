@@ -167,14 +167,13 @@ impl StatsTracker {
 
     /// Get processing rate (certificates per second)
     pub fn get_processing_rate(&self) -> f64 {
-        if let Ok(stats) = self.stats.lock() {
-            if let Some(start_time) = stats.start_time {
+        if let Ok(stats) = self.stats.lock()
+            && let Some(start_time) = stats.start_time {
                 let elapsed_secs = start_time.elapsed().as_secs_f64();
                 if elapsed_secs > 0.0 {
                     return stats.total_processed as f64 / elapsed_secs;
                 }
             }
-        }
         0.0
     }
 
