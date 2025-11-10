@@ -2,8 +2,9 @@
 
 use crate::policy::violation::PolicyViolation;
 use crate::policy::{PolicyAction, ProtocolPolicy};
-use crate::protocols::ProtocolTestResult;
+use crate::protocols::{Protocol, ProtocolTestResult};
 use crate::Result;
+use std::str::FromStr;
 
 pub struct ProtocolRule<'a> {
     policy: &'a ProtocolPolicy,
@@ -21,10 +22,20 @@ impl<'a> ProtocolRule<'a> {
         // Check for required protocols
         if let Some(ref required) = self.policy.required {
             for protocol_name in required {
+                // Parse the protocol name to handle different string formats
+                let protocol_match = Protocol::from_str(protocol_name).ok();
+
                 let is_supported = self
                     .results
                     .iter()
-                    .any(|r| r.protocol.to_string() == *protocol_name && r.supported);
+                    .any(|r| {
+                        if let Some(ref expected_protocol) = protocol_match {
+                            r.protocol == *expected_protocol && r.supported
+                        } else {
+                            // Fallback to string comparison if parsing fails
+                            r.protocol.to_string() == *protocol_name && r.supported
+                        }
+                    });
 
                 if !is_supported {
                     violations.push(
@@ -50,10 +61,20 @@ impl<'a> ProtocolRule<'a> {
         // Check for prohibited protocols
         if let Some(ref prohibited) = self.policy.prohibited {
             for protocol_name in prohibited {
+                // Parse the protocol name to handle different string formats
+                let protocol_match = Protocol::from_str(protocol_name).ok();
+
                 let is_supported = self
                     .results
                     .iter()
-                    .any(|r| r.protocol.to_string() == *protocol_name && r.supported);
+                    .any(|r| {
+                        if let Some(ref expected_protocol) = protocol_match {
+                            r.protocol == *expected_protocol && r.supported
+                        } else {
+                            // Fallback to string comparison if parsing fails
+                            r.protocol.to_string() == *protocol_name && r.supported
+                        }
+                    });
 
                 if is_supported {
                     violations.push(
@@ -98,6 +119,8 @@ mod tests {
             supported: true,
             heartbeat_enabled: None,
             handshake_time_ms: None,
+            ciphers_count: 0,
+            preferred: false,
         }];
 
         let rule = ProtocolRule::new(&policy, &results);
@@ -120,6 +143,8 @@ mod tests {
             supported: true,
             heartbeat_enabled: None,
             handshake_time_ms: None,
+            ciphers_count: 0,
+            preferred: false,
         }];
 
         let rule = ProtocolRule::new(&policy, &results);

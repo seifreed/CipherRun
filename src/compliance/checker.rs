@@ -369,7 +369,7 @@ impl ComplianceChecker {
 mod tests {
     use super::*;
     use crate::compliance::Rule;
-    use crate::protocols::ProtocolTestResult;
+    use crate::protocols::{Protocol, ProtocolTestResult};
     use std::collections::HashMap;
 
     #[test]
@@ -396,12 +396,16 @@ mod tests {
             ProtocolTestResult {
                 protocol: Protocol::SSLv2,
                 supported: true,
+                preferred: false,
+                ciphers_count: 0,
                 heartbeat_enabled: None,
                 handshake_time_ms: None,
             },
             ProtocolTestResult {
                 protocol: Protocol::TLS12,
                 supported: true,
+                preferred: false,
+                ciphers_count: 0,
                 heartbeat_enabled: None,
                 handshake_time_ms: None,
             },
@@ -436,12 +440,16 @@ mod tests {
             ProtocolTestResult {
                 protocol: Protocol::TLS10,
                 supported: true,
+                preferred: false,
+                ciphers_count: 0,
                 heartbeat_enabled: None,
                 handshake_time_ms: None,
             },
             ProtocolTestResult {
                 protocol: Protocol::TLS12,
                 supported: true,
+                preferred: false,
+                ciphers_count: 0,
                 heartbeat_enabled: None,
                 handshake_time_ms: None,
             },

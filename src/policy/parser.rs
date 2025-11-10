@@ -39,7 +39,22 @@ impl PolicyLoader {
 
     /// Load policy from YAML string
     pub fn load_from_string(yaml_content: &str) -> Result<Policy> {
-        let policy: Policy = serde_yaml::from_str(yaml_content)
+        // Parse the YAML into a generic value first
+        let yaml_value: serde_yaml::Value = serde_yaml::from_str(yaml_content)
+            .map_err(|e| crate::TlsError::ParseError {
+                message: format!("Failed to parse YAML: {}", e),
+            })?;
+
+        // Check if the policy is wrapped under a "policy" key
+        let policy_value = if let Some(policy_obj) = yaml_value.get("policy") {
+            policy_obj.clone()
+        } else {
+            // If no "policy" key, assume the entire content is the policy
+            yaml_value
+        };
+
+        // Deserialize the policy
+        let policy: Policy = serde_yaml::from_value(policy_value)
             .map_err(|e| crate::TlsError::ParseError {
                 message: format!("Failed to parse policy YAML: {}", e),
             })?;
@@ -55,7 +70,22 @@ impl PolicyLoader {
     fn load_yaml(&self, path: &Path) -> Result<Policy> {
         let content = fs::read_to_string(path).map_err(|e| crate::TlsError::IoError { source: e })?;
 
-        serde_yaml::from_str(&content).map_err(|e| crate::TlsError::ParseError {
+        // Parse the YAML into a generic value first
+        let yaml_value: serde_yaml::Value = serde_yaml::from_str(&content)
+            .map_err(|e| crate::TlsError::ParseError {
+                message: format!("Failed to parse YAML: {}", e),
+            })?;
+
+        // Check if the policy is wrapped under a "policy" key
+        let policy_value = if let Some(policy_obj) = yaml_value.get("policy") {
+            policy_obj.clone()
+        } else {
+            // If no "policy" key, assume the entire content is the policy
+            yaml_value
+        };
+
+        // Deserialize the policy
+        serde_yaml::from_value(policy_value).map_err(|e| crate::TlsError::ParseError {
             message: format!("Failed to parse policy YAML: {}", e),
         })
     }
@@ -306,5 +336,52 @@ policy:
 
         let result = PolicyLoader::load_from_string(yaml);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_without_policy_wrapper() {
+        // Test that parsing without the "policy:" wrapper also works
+        let yaml = r#"
+name: "Test Policy"
+version: "1.0"
+description: "Test policy without wrapper"
+protocols:
+  required: ["TLSv1.2", "TLSv1.3"]
+  prohibited: ["SSLv2", "SSLv3"]
+  action: FAIL
+"#;
+
+        let result = PolicyLoader::load_from_string(yaml);
+        assert!(result.is_ok());
+
+        let policy = result.unwrap();
+        assert_eq!(policy.name, "Test Policy");
+        assert_eq!(policy.version, "1.0");
+        assert!(policy.protocols.is_some());
+    }
+
+    #[test]
+    fn test_load_example_policy_file() {
+        // Test loading an actual example policy file
+        use std::path::PathBuf;
+
+        let policy_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("examples/policies/base-security.yaml");
+
+        if policy_path.exists() {
+            let loader = PolicyLoader::new(".");
+            let result = loader.load(&policy_path);
+
+            match &result {
+                Ok(policy) => {
+                    assert_eq!(policy.name, "Base Security Policy");
+                    assert_eq!(policy.version, "1.0");
+                    assert!(policy.protocols.is_some());
+                    assert!(policy.ciphers.is_some());
+                    assert!(policy.certificates.is_some());
+                }
+                Err(e) => panic!("Failed to load example policy: {:?}", e),
+            }
+        }
     }
 }

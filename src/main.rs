@@ -173,6 +173,206 @@ async fn main() -> Result<()> {
         }
     }
 
+    // Handle analytics operations
+    if args.compare.is_some() || args.changes.is_some() || args.trends.is_some() || args.dashboard.is_some() {
+        use cipherrun::db::CipherRunDatabase;
+        use cipherrun::db::analytics::{ChangeTracker, ScanComparator, TrendAnalyzer, DashboardGenerator};
+        use std::sync::Arc;
+
+        let db_config_path = args
+            .db_config
+            .as_ref()
+            .map(|p| p.to_str().unwrap_or("database.toml"))
+            .unwrap_or("database.toml");
+
+        let db = Arc::new(CipherRunDatabase::from_config_file(db_config_path).await?);
+
+        // Handle --compare
+        if let Some(compare_str) = &args.compare {
+            let parts: Vec<&str> = compare_str.split(':').collect();
+            if parts.len() != 2 {
+                eprintln!("Error: --compare requires format SCAN_ID_1:SCAN_ID_2");
+                return Ok(());
+            }
+
+            let scan_id_1: i64 = parts[0].parse()
+                .map_err(|_| anyhow::anyhow!("Invalid scan ID: {}", parts[0]))?;
+            let scan_id_2: i64 = parts[1].parse()
+                .map_err(|_| anyhow::anyhow!("Invalid scan ID: {}", parts[1]))?;
+
+            let comparator = ScanComparator::new(db.clone());
+            let comparison = comparator.compare_scans(scan_id_1, scan_id_2).await?;
+
+            // Output format: JSON if --json flag is set, otherwise terminal
+            let format = if args.json.is_some() || args.json_pretty {
+                "json"
+            } else {
+                "terminal"
+            };
+
+            let output = comparator.format_comparison(&comparison, format)?;
+
+            if let Some(json_path) = &args.json {
+                std::fs::write(json_path, &output)?;
+                println!("✓ Comparison saved to: {}", json_path.display());
+            } else {
+                println!("{}", output);
+            }
+        }
+
+        // Handle --changes
+        if let Some(changes_str) = &args.changes {
+            let parts: Vec<&str> = changes_str.split(':').collect();
+            if parts.len() != 3 {
+                eprintln!("Error: --changes requires format HOSTNAME:PORT:DAYS");
+                return Ok(());
+            }
+
+            let hostname = parts[0].to_string();
+            let port: u16 = parts[1].parse()
+                .map_err(|_| anyhow::anyhow!("Invalid port: {}", parts[1]))?;
+            let days: i64 = parts[2].parse()
+                .map_err(|_| anyhow::anyhow!("Invalid days: {}", parts[2]))?;
+
+            let tracker = ChangeTracker::new(db.clone());
+            let changes = tracker.detect_changes(&hostname, port, days).await?;
+
+            if args.json.is_some() || args.json_pretty {
+                let json = if args.json_pretty {
+                    serde_json::to_string_pretty(&changes)?
+                } else {
+                    serde_json::to_string(&changes)?
+                };
+
+                if let Some(json_path) = &args.json {
+                    std::fs::write(json_path, &json)?;
+                    println!("✓ Changes saved to: {}", json_path.display());
+                } else {
+                    println!("{}", json);
+                }
+            } else {
+                let report = tracker.generate_change_report(&changes);
+                println!("{}", report);
+            }
+        }
+
+        // Handle --trends
+        if let Some(trends_str) = &args.trends {
+            let parts: Vec<&str> = trends_str.split(':').collect();
+            if parts.len() != 3 {
+                eprintln!("Error: --trends requires format HOSTNAME:PORT:DAYS");
+                return Ok(());
+            }
+
+            let hostname = parts[0].to_string();
+            let port: u16 = parts[1].parse()
+                .map_err(|_| anyhow::anyhow!("Invalid port: {}", parts[1]))?;
+            let days: i64 = parts[2].parse()
+                .map_err(|_| anyhow::anyhow!("Invalid days: {}", parts[2]))?;
+
+            let analyzer = TrendAnalyzer::new(db.clone());
+
+            if args.json.is_some() || args.json_pretty {
+                // Generate all trends and output as JSON
+                let rating_trend = analyzer.analyze_rating_trend(&hostname, port, days).await?;
+                let vuln_trend = analyzer.analyze_vulnerability_trend(&hostname, port, days).await?;
+                let protocol_trend = analyzer.analyze_protocol_trend(&hostname, port, days).await?;
+
+                let trends = serde_json::json!({
+                    "rating_trend": rating_trend,
+                    "vulnerability_trend": vuln_trend,
+                    "protocol_trend": protocol_trend,
+                });
+
+                let json = if args.json_pretty {
+                    serde_json::to_string_pretty(&trends)?
+                } else {
+                    serde_json::to_string(&trends)?
+                };
+
+                if let Some(json_path) = &args.json {
+                    std::fs::write(json_path, &json)?;
+                    println!("✓ Trends saved to: {}", json_path.display());
+                } else {
+                    println!("{}", json);
+                }
+            } else {
+                let report = analyzer.generate_trend_report(&hostname, port, days).await?;
+                println!("{}", report);
+            }
+        }
+
+        // Handle --dashboard
+        if let Some(dashboard_str) = &args.dashboard {
+            let parts: Vec<&str> = dashboard_str.split(':').collect();
+            if parts.len() != 3 {
+                eprintln!("Error: --dashboard requires format HOSTNAME:PORT:DAYS");
+                return Ok(());
+            }
+
+            let hostname = parts[0].to_string();
+            let port: u16 = parts[1].parse()
+                .map_err(|_| anyhow::anyhow!("Invalid port: {}", parts[1]))?;
+            let days: i64 = parts[2].parse()
+                .map_err(|_| anyhow::anyhow!("Invalid days: {}", parts[2]))?;
+
+            let generator = DashboardGenerator::new(db.clone());
+            let dashboard = generator.generate_dashboard(&hostname, port, days).await?;
+
+            let json = generator.to_json(&dashboard, args.json_pretty)?;
+
+            if let Some(json_path) = &args.json {
+                std::fs::write(json_path, &json)?;
+                println!("✓ Dashboard data saved to: {}", json_path.display());
+            } else {
+                println!("{}", json);
+            }
+        }
+
+        return Ok(());
+    }
+
+    // Handle CT logs streaming mode
+    if args.ct_logs {
+        use cipherrun::ct_logs::{CtStreamer, CtConfig};
+        use std::collections::HashMap;
+
+        info!("Starting CT logs streaming mode");
+
+        // Parse custom indices from CLI arguments
+        let mut custom_indices = HashMap::new();
+        for index_str in &args.ct_index {
+            let parts: Vec<&str> = index_str.split('=').collect();
+            if parts.len() == 2 {
+                if let Ok(index) = parts[1].parse::<u64>() {
+                    custom_indices.insert(parts[0].to_string(), index);
+                } else {
+                    eprintln!("Warning: Invalid index value for source {}: {}", parts[0], parts[1]);
+                }
+            } else {
+                eprintln!("Warning: Invalid --ct-index format: {}. Expected SOURCE=INDEX", index_str);
+            }
+        }
+
+        // Build configuration
+        let config = CtConfig {
+            start_from_beginning: args.ct_beginning,
+            custom_indices,
+            poll_interval: std::time::Duration::from_secs(args.ct_poll_interval),
+            batch_size: args.ct_batch_size,
+            expected_unique_certs: args.ct_expected_certs,
+            bloom_fp_rate: 0.0001,
+            json_output: args.ct_json,
+            silent: args.ct_silent,
+        };
+
+        // Create and start streamer
+        let mut streamer = CtStreamer::new(config).await?;
+        streamer.start().await?;
+
+        return Ok(());
+    }
+
     // Handle monitoring operations
     if args.test_alert || args.monitor {
         use cipherrun::monitor::{MonitorDaemon, MonitorConfig, MonitoredDomain};

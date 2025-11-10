@@ -14,7 +14,7 @@ use tokio::time::timeout;
 use x509_parser::prelude::*;
 
 /// Certificate information
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CertificateInfo {
     pub subject: String,
     pub issuer: String,

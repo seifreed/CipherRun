@@ -259,6 +259,8 @@ mod tests {
             protocols: vec![ProtocolTestResult {
                 protocol: Protocol::TLS12,
                 supported: true,
+                preferred: false,
+                ciphers_count: 0,
                 heartbeat_enabled: None,
                 handshake_time_ms: None,
             }],
@@ -273,6 +275,21 @@ mod tests {
             key_exchange_groups: None,
             client_cas: None,
             intolerance: None,
+            ja3_fingerprint: None,
+            ja3_match: None,
+            ct_log_source: None,
+            ct_log_index: None,
+            client_hello_raw: None,
+            ja3s_fingerprint: None,
+            ja3s_match: None,
+            cdn_detection: None,
+            load_balancer_info: None,
+            server_hello_raw: None,
+            pre_handshake_used: false,
+            scanned_ips: Vec::new(),
+            sni_used: None,
+            sni_generation_method: None,
+            probe_status: crate::output::probe_status::ProbeStatus::default(),
         };
 
         let evaluator = PolicyEvaluator::new(policy);
@@ -316,6 +333,8 @@ mod tests {
             protocols: vec![ProtocolTestResult {
                 protocol: Protocol::TLS12,
                 supported: true,
+                preferred: false,
+                ciphers_count: 0,
                 heartbeat_enabled: None,
                 handshake_time_ms: None,
             }],
@@ -330,6 +349,21 @@ mod tests {
             key_exchange_groups: None,
             client_cas: None,
             intolerance: None,
+            ja3_fingerprint: None,
+            ja3_match: None,
+            ct_log_source: None,
+            ct_log_index: None,
+            client_hello_raw: None,
+            ja3s_fingerprint: None,
+            ja3s_match: None,
+            cdn_detection: None,
+            load_balancer_info: None,
+            server_hello_raw: None,
+            pre_handshake_used: false,
+            scanned_ips: Vec::new(),
+            sni_used: None,
+            sni_generation_method: None,
+            probe_status: crate::output::probe_status::ProbeStatus::default(),
         };
 
         let evaluator = PolicyEvaluator::new(policy);

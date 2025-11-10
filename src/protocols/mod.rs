@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::str::FromStr;
 
 /// TLS/SSL protocol versions
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
@@ -66,6 +67,24 @@ impl Protocol {
 impl fmt::Display for Protocol {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.name())
+    }
+}
+
+impl FromStr for Protocol {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            // Standard display format with spaces
+            "SSLv2" | "SSL 2.0" => Ok(Protocol::SSLv2),
+            "SSLv3" | "SSL 3.0" => Ok(Protocol::SSLv3),
+            "TLS 1.0" | "TLSv1.0" | "TLSv1" => Ok(Protocol::TLS10),
+            "TLS 1.1" | "TLSv1.1" => Ok(Protocol::TLS11),
+            "TLS 1.2" | "TLSv1.2" => Ok(Protocol::TLS12),
+            "TLS 1.3" | "TLSv1.3" => Ok(Protocol::TLS13),
+            "QUIC" => Ok(Protocol::QUIC),
+            _ => Err(format!("Unknown protocol: {}", s)),
+        }
     }
 }
 
@@ -146,9 +165,11 @@ pub mod extensions_complete;
 pub mod fallback_scsv;
 pub mod groups;
 pub mod handshake;
+pub mod hello_export;
 pub mod intolerance;
 pub mod legacy_compat;
 pub mod npn;
+pub mod pre_handshake;
 pub mod rc4;
 pub mod rdp;
 pub mod renegotiation;

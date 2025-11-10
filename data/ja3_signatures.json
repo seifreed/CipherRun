@@ -1,0 +1,218 @@
+{
+  "773906b0efdefa24a7f2b8eb6985bf37": {
+    "name": "Chrome 120",
+    "category": "Browser",
+    "description": "Google Chrome 120.x on Windows",
+    "threat_level": "none"
+  },
+  "51c64c77e60f3980eea90869b68c58a8": {
+    "name": "Firefox 121",
+    "category": "Browser",
+    "description": "Mozilla Firefox 121.x",
+    "threat_level": "none"
+  },
+  "ada70206e40642a3e4461f35503241d5": {
+    "name": "Safari 17",
+    "category": "Browser",
+    "description": "Apple Safari 17.x on macOS",
+    "threat_level": "none"
+  },
+  "4e2ac93584b1f2a6bb14e0a6f2e0d9f8": {
+    "name": "Edge 120",
+    "category": "Browser",
+    "description": "Microsoft Edge 120.x on Windows",
+    "threat_level": "none"
+  },
+  "6734f37431670b3ab4292b8f60f29984": {
+    "name": "curl",
+    "category": "Tool",
+    "description": "curl command-line tool",
+    "threat_level": "none"
+  },
+  "b32309a26951912be7dba376398abc3b": {
+    "name": "OpenSSL",
+    "category": "Library",
+    "description": "OpenSSL s_client",
+    "threat_level": "none"
+  },
+  "e35df3e00ca4ef31d42b34bebaa2f86e": {
+    "name": "Python Requests",
+    "category": "Library",
+    "description": "Python requests library",
+    "threat_level": "none"
+  },
+  "4d7a28d6f2263ed61de88ca66eb011e3": {
+    "name": "Python urllib3",
+    "category": "Library",
+    "description": "Python urllib3 library",
+    "threat_level": "none"
+  },
+  "a0e9f5d64349fb13191bc781f81f42e1": {
+    "name": "Cobalt Strike",
+    "category": "Malware",
+    "description": "Cobalt Strike C2 beacon",
+    "threat_level": "high"
+  },
+  "e7d705a3286e19ea42f587b344ee6865": {
+    "name": "Metasploit",
+    "category": "Tool",
+    "description": "Metasploit Framework",
+    "threat_level": "medium"
+  },
+  "6fa3244afc6bb104595d5f939e9473a3": {
+    "name": "Tor Browser",
+    "category": "Browser",
+    "description": "Tor Browser (privacy-focused)",
+    "threat_level": "none"
+  },
+  "bc6c386f480ee97b9d9e52d472b772d8": {
+    "name": "Trickbot",
+    "category": "Malware",
+    "description": "Trickbot banking trojan",
+    "threat_level": "critical"
+  },
+  "72a589da586844d7f0818ce684948eea": {
+    "name": "Dridex",
+    "category": "Malware",
+    "description": "Dridex banking trojan",
+    "threat_level": "critical"
+  },
+  "7dd50e112cd23734a310b90fa9439954": {
+    "name": "Emotet",
+    "category": "Malware",
+    "description": "Emotet malware loader",
+    "threat_level": "critical"
+  },
+  "24f33b8d85fd3d2e6b891b3d3f3b3d2e": {
+    "name": "Sliver C2",
+    "category": "Tool",
+    "description": "Sliver Command & Control framework",
+    "threat_level": "medium"
+  },
+  "3b5074b1b5d032e5620f69f9f700ff0e": {
+    "name": "Go HTTP Client",
+    "category": "Library",
+    "description": "Go standard library HTTP client",
+    "threat_level": "none"
+  },
+  "19ea10b8eea91cae95f8b5d7c1e3ac8a": {
+    "name": "Java 11",
+    "category": "Library",
+    "description": "Oracle Java 11 TLS client",
+    "threat_level": "none"
+  },
+  "8daaa1580e87bbe595b83eb2d251ef6f": {
+    "name": "Java 17",
+    "category": "Library",
+    "description": "Oracle Java 17 TLS client",
+    "threat_level": "none"
+  },
+  "c4e2ab0c7c9f7f9e5d8f7e3d2b1a0c9d": {
+    "name": "Node.js",
+    "category": "Library",
+    "description": "Node.js TLS/HTTPS client",
+    "threat_level": "none"
+  },
+  "058b6bc93f3e3f8e9d8e7d6c5b4a3c2b": {
+    "name": "Wget",
+    "category": "Tool",
+    "description": "GNU Wget download utility",
+    "threat_level": "none"
+  },
+  "239baab6c70d3e2e6c6e5d5c4b3a2d1c": {
+    "name": "Nmap NSE",
+    "category": "Tool",
+    "description": "Nmap Scripting Engine ssl-enum-ciphers",
+    "threat_level": "none"
+  },
+  "f4febc55ea12b31ae17cfb7e614afda8": {
+    "name": "Android 13",
+    "category": "Mobile",
+    "description": "Android 13 TLS client",
+    "threat_level": "none"
+  },
+  "579ccef312d18482fc42e2b822ca2430": {
+    "name": "iOS 17",
+    "category": "Mobile",
+    "description": "iOS 17 TLS client",
+    "threat_level": "none"
+  },
+  "9e5a6f8e7d6c5b4a3c2b1d0e9f8e7d6c": {
+    "name": "QakBot",
+    "category": "Malware",
+    "description": "QakBot banking trojan",
+    "threat_level": "critical"
+  },
+  "3e5f6f7e8d9c0b1a2c3d4e5f6f7e8d9c": {
+    "name": "IcedID",
+    "category": "Malware",
+    "description": "IcedID banking trojan",
+    "threat_level": "critical"
+  },
+  "5d6e7f8e9d0c1b2a3c4d5e6f7f8e9d0c": {
+    "name": "Ursnif",
+    "category": "Malware",
+    "description": "Ursnif/Gozi banking trojan",
+    "threat_level": "critical"
+  },
+  "6d7e8f9e0d1c2b3a4c5d6e7f8f9e0d1c": {
+    "name": "ZLoader",
+    "category": "Malware",
+    "description": "ZLoader banking trojan",
+    "threat_level": "critical"
+  },
+  "7d8e9f0e1d2c3b4a5c6d7e8f9f0e1d2c": {
+    "name": "BazarLoader",
+    "category": "Malware",
+    "description": "BazarLoader/BazarBackdoor",
+    "threat_level": "critical"
+  },
+  "8d9e0f1e2d3c4b5a6c7d8e9f0f1e2d3c": {
+    "name": "RedLine Stealer",
+    "category": "Malware",
+    "description": "RedLine information stealer",
+    "threat_level": "high"
+  },
+  "9d0e1f2e3d4c5b6a7c8d9e0f1f2e3d4c": {
+    "name": "Raccoon Stealer",
+    "category": "Malware",
+    "description": "Raccoon information stealer",
+    "threat_level": "high"
+  },
+  "0d1e2f3e4d5c6b7a8c9d0e1f2f3e4d5c": {
+    "name": "Vidar Stealer",
+    "category": "Malware",
+    "description": "Vidar information stealer",
+    "threat_level": "high"
+  },
+  "1d2e3f4e5d6c7b8a9c0d1e2f3f4e5d6c": {
+    "name": "AgentTesla",
+    "category": "Malware",
+    "description": "AgentTesla keylogger and information stealer",
+    "threat_level": "high"
+  },
+  "2d3e4f5e6d7c8b9a0c1d2e3f4f5e6d7c": {
+    "name": "Remcos RAT",
+    "category": "Malware",
+    "description": "Remcos Remote Access Trojan",
+    "threat_level": "high"
+  },
+  "3d4e5f6e7d8c9b0a1c2d3e4f5f6e7d8c": {
+    "name": "NanoCore RAT",
+    "category": "Malware",
+    "description": "NanoCore Remote Access Trojan",
+    "threat_level": "high"
+  },
+  "4d5e6f7e8d9c0b1a2c3d4e5f6f7e8d9c": {
+    "name": "njRAT",
+    "category": "Malware",
+    "description": "njRAT Remote Access Trojan",
+    "threat_level": "high"
+  },
+  "5d6e7f8e9d0c1b2a3c4d5e6f7f8e9d0c": {
+    "name": "AsyncRAT",
+    "category": "Malware",
+    "description": "AsyncRAT Remote Access Trojan",
+    "threat_level": "high"
+  }
+}

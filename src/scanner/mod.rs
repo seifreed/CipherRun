@@ -203,6 +203,79 @@ impl Scanner {
             }
         }
 
+        // Phase 11: JA3 TLS Client Fingerprinting
+        if self.args.ja3 {
+            println!("\n{}", "Generating JA3 Fingerprint...".yellow().bold());
+            if let Ok((client_hello, ja3)) = self.capture_ja3().await {
+                results.ja3_fingerprint = Some(ja3.clone());
+
+                // Match against database
+                let db = if let Some(ref db_path) = self.args.ja3_database {
+                    crate::fingerprint::Ja3Database::from_file(db_path).unwrap_or_default()
+                } else {
+                    crate::fingerprint::Ja3Database::default()
+                };
+
+                if let Some(signature) = db.match_fingerprint(&ja3.ja3_hash) {
+                    results.ja3_match = Some(signature.clone());
+                }
+
+                // Store raw ClientHello if requested
+                if self.args.client_hello {
+                    results.client_hello_raw = Some(client_hello.to_bytes());
+                }
+
+                self.display_ja3_results(&ja3, results.ja3_match.as_ref());
+            } else {
+                println!("  {}", "Failed to generate JA3 fingerprint".red());
+            }
+        }
+
+        // Phase 12: JA3S TLS Server Fingerprinting
+        if self.args.ja3s {
+            println!("\n{}", "Generating JA3S Server Fingerprint...".yellow().bold());
+            let ja3s_result = self.capture_ja3s().await.ok();
+            if let Some((ja3s, server_hello_raw)) = ja3s_result {
+                results.ja3s_fingerprint = Some(ja3s.clone());
+
+                // Match against database
+                let ja3s_db = crate::fingerprint::Ja3sDatabase::load_default()
+                    .unwrap_or_else(|e| {
+                        eprintln!("Warning: Failed to load JA3S database: {}", e);
+                        panic!("Cannot continue without JA3S database");
+                    });
+
+                results.ja3s_match = ja3s_db.match_fingerprint(&ja3s.ja3s_hash).cloned();
+
+                // CDN detection
+                if let Some(ref http_headers) = results.http_headers {
+                    let header_map: std::collections::HashMap<String, String> = http_headers.headers.iter()
+                        .map(|(k, v)| (k.clone(), v.clone()))
+                        .collect();
+
+                    results.cdn_detection = Some(crate::fingerprint::CdnDetection::from_ja3s_and_headers(
+                        &ja3s,
+                        results.ja3s_match.as_ref(),
+                        &header_map,
+                    ));
+
+                    results.load_balancer_info = Some(crate::fingerprint::LoadBalancerInfo::from_ja3s_and_headers(
+                        results.ja3s_match.as_ref(),
+                        &header_map,
+                    ));
+                }
+
+                // Store raw ServerHello if requested
+                if self.args.server_hello {
+                    results.server_hello_raw = Some(server_hello_raw);
+                }
+
+                self.display_ja3s_results(&ja3s, results.ja3s_match.as_ref());
+            } else {
+                println!("  {}", "Failed to generate JA3S fingerprint".red());
+            }
+        }
+
         // Calculate overall SSL Labs rating
         if self.args.all || self.args.target.is_some() {
             results.rating = Some(self.calculate_rating(&results));
@@ -440,6 +513,149 @@ impl Scanner {
             cert_validation,
             &results.vulnerabilities,
         )
+    }
+
+    /// Capture JA3 fingerprint
+    async fn capture_ja3(
+        &self,
+    ) -> Result<(crate::fingerprint::ClientHelloCapture, crate::fingerprint::Ja3Fingerprint)> {
+        use crate::fingerprint::ClientHelloNetworkCapture;
+
+        let capture = ClientHelloNetworkCapture::new(self.target.clone());
+        capture.capture_and_fingerprint().await
+    }
+
+    /// Display JA3 fingerprint results
+    fn display_ja3_results(
+        &self,
+        ja3: &crate::fingerprint::Ja3Fingerprint,
+        signature: Option<&crate::fingerprint::Ja3Signature>,
+    ) {
+        println!("\n{}", "JA3 Fingerprint:".cyan().bold());
+        println!("{}", "=".repeat(50));
+
+        println!("  JA3 Hash:       {}", ja3.ja3_hash.green().bold());
+        println!(
+            "  SSL Version:    {} ({})",
+            ja3.ssl_version_name().cyan(),
+            ja3.ssl_version
+        );
+        println!("  Cipher Suites:  {} suites", ja3.ciphers.len());
+        println!("  Extensions:     {} extensions", ja3.extensions.len());
+        println!("  Curves:         {} curves", ja3.curves.len());
+        println!("  Point Formats:  {} formats", ja3.point_formats.len());
+
+        if !ja3.curves.is_empty() {
+            let curve_names = ja3.curve_names();
+            println!(
+                "  Named Curves:   {}",
+                curve_names.join(", ").cyan()
+            );
+        }
+
+        println!("\n  JA3 String:");
+        println!("  {}", ja3.ja3_string.dimmed());
+
+        // Display signature match if found
+        if let Some(sig) = signature {
+            println!("\n{}", "Database Match:".cyan().bold());
+            println!("{}", "-".repeat(50));
+
+            let threat_color = match sig.threat_level.as_str() {
+                "critical" => sig.threat_level.red().bold(),
+                "high" => sig.threat_level.red(),
+                "medium" => sig.threat_level.yellow(),
+                "low" => sig.threat_level.yellow().dimmed(),
+                _ => sig.threat_level.green(),
+            };
+
+            println!("  Name:         {}", sig.name.green().bold());
+            println!("  Category:     {}", sig.category.cyan());
+            println!("  Description:  {}", sig.description);
+            println!("  Threat Level: {}", threat_color);
+
+            if sig.threat_level != "none" {
+                println!(
+                    "\n  {} This fingerprint may indicate suspicious activity!",
+                    "⚠".yellow().bold()
+                );
+            }
+        } else {
+            println!("\n{}", "Database Match:".cyan().bold());
+            println!("{}", "-".repeat(50));
+            println!("  {} No match found in signature database", "ℹ".cyan());
+            println!("  This is a unique or unknown TLS client fingerprint");
+        }
+    }
+
+    /// Capture JA3S fingerprint
+    async fn capture_ja3s(&self) -> Result<(crate::fingerprint::Ja3sFingerprint, Vec<u8>)> {
+        use crate::fingerprint::{ServerHelloNetworkCapture, Ja3sFingerprint};
+
+        let capturer = ServerHelloNetworkCapture::new(self.target.clone());
+        let server_hello = capturer.capture()?;
+        let server_hello_raw = server_hello.to_bytes();
+        let ja3s = Ja3sFingerprint::from_server_hello(&server_hello);
+
+        Ok((ja3s, server_hello_raw))
+    }
+
+    /// Display JA3S fingerprint results
+    fn display_ja3s_results(
+        &self,
+        ja3s: &crate::fingerprint::Ja3sFingerprint,
+        signature: Option<&crate::fingerprint::Ja3sSignature>,
+    ) {
+        println!("\n{}", "JA3S Fingerprint:".cyan().bold());
+        println!("{}", "=".repeat(50));
+
+        println!("  JA3S Hash:      {}", ja3s.ja3s_hash.green().bold());
+        println!(
+            "  SSL Version:    {} ({})",
+            ja3s.version_name().cyan(),
+            ja3s.ssl_version
+        );
+        println!(
+            "  Cipher:         {} (0x{:04X})",
+            ja3s.cipher_name().cyan(),
+            ja3s.cipher
+        );
+        println!("  Extensions:     {} extensions", ja3s.extensions.len());
+
+        if !ja3s.extensions.is_empty() {
+            let ext_names = ja3s.extension_names();
+            println!("  Extension List: {}", ext_names.join(", ").cyan());
+        }
+
+        println!("\n  JA3S String:");
+        println!("  {}", ja3s.ja3s_string.dimmed());
+
+        // Display signature match if found
+        if let Some(sig) = signature {
+            println!("\n{}", "Database Match:".cyan().bold());
+            println!("{}", "-".repeat(50));
+
+            println!("  Name:         {}", sig.name.green().bold());
+            println!("  Type:         {}", format!("{}", sig.server_type).yellow());
+            println!("  Description:  {}", sig.description);
+
+            if !sig.common_ports.is_empty() {
+                let ports_str: Vec<String> = sig.common_ports.iter().map(|p| p.to_string()).collect();
+                println!("  Common Ports: {}", ports_str.join(", ").cyan());
+            }
+
+            if !sig.indicators.is_empty() {
+                println!("\n  Indicators:");
+                for indicator in &sig.indicators {
+                    println!("    - {}", indicator.dimmed());
+                }
+            }
+        } else {
+            println!("\n{}", "Database Match:".cyan().bold());
+            println!("{}", "-".repeat(50));
+            println!("  {} No match found in signature database", "ℹ".cyan());
+            println!("  This is a unique or unknown TLS server fingerprint");
+        }
     }
 
     /// Display protocol test results
@@ -1639,6 +1855,34 @@ pub struct ScanResults {
     pub key_exchange_groups: Option<crate::protocols::groups::GroupEnumerationResult>,
     pub client_cas: Option<crate::protocols::client_cas::ClientCAsResult>,
     pub intolerance: Option<crate::protocols::intolerance::IntoleranceTestResult>,
+    pub ja3_fingerprint: Option<crate::fingerprint::Ja3Fingerprint>,
+    pub ja3_match: Option<crate::fingerprint::Ja3Signature>,
+    /// CT log source (if certificate discovered via CT logs)
+    pub ct_log_source: Option<String>,
+    /// CT log index (if certificate discovered via CT logs)
+    pub ct_log_index: Option<u64>,
+    pub client_hello_raw: Option<Vec<u8>>,
+    pub ja3s_fingerprint: Option<crate::fingerprint::Ja3sFingerprint>,
+    pub ja3s_match: Option<crate::fingerprint::Ja3sSignature>,
+    pub cdn_detection: Option<crate::fingerprint::CdnDetection>,
+    pub load_balancer_info: Option<crate::fingerprint::LoadBalancerInfo>,
+    pub server_hello_raw: Option<Vec<u8>>,
+
+    // HIGH PRIORITY Features (4-10)
+    pub pre_handshake_used: bool,
+    pub scanned_ips: Vec<crate::utils::anycast::IpScanResult>,
+    pub sni_used: Option<String>,
+    pub sni_generation_method: Option<SniMethod>,
+    pub probe_status: crate::output::probe_status::ProbeStatus,
+}
+
+/// SNI generation method
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum SniMethod {
+    Hostname,
+    ReversePTR,
+    Random,
+    Custom(String),
 }
 
 impl ScanResults {
@@ -1710,6 +1954,20 @@ impl ScanResults {
                 Grade::T | Grade::M => grade_str.red().bold(),
             };
             println!("SSL Labs Rating: {} ({}/100)", grade_colored, rating.score);
+        }
+
+        if let Some(ja3) = &self.ja3_fingerprint {
+            let match_str = if let Some(sig) = &self.ja3_match {
+                let threat_indicator = match sig.threat_level.as_str() {
+                    "critical" | "high" => "⚠".red().to_string(),
+                    "medium" => "⚠".yellow().to_string(),
+                    _ => "✓".green().to_string(),
+                };
+                format!("{} {}", threat_indicator, sig.name).cyan().to_string()
+            } else {
+                "Unknown client".dimmed().to_string()
+            };
+            println!("JA3 Fingerprint: {} ({})", ja3.ja3_hash.green(), match_str);
         }
 
         println!("{}", "=".repeat(60).cyan());

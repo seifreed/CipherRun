@@ -189,7 +189,7 @@ impl<'a> CipherRule<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ciphers::parser::CipherSuite;
+    use crate::ciphers::CipherSuite;
     use crate::ciphers::tester::CipherCounts;
 
     fn create_test_cipher(name: &str) -> CipherSuite {
@@ -197,15 +197,13 @@ mod tests {
             hexcode: "0000".to_string(),
             openssl_name: name.to_string(),
             iana_name: name.to_string(),
-            protocol_version: "TLSv1.2".to_string(),
-            kex_algorithm: None,
-            auth_algorithm: None,
-            enc_algorithm: None,
-            enc_algorithm_bits: None,
-            aead: false,
-            mac_algorithm: None,
+            protocol: "TLSv1.2".to_string(),
+            key_exchange: "RSA".to_string(),
+            authentication: "RSA".to_string(),
+            encryption: "AES".to_string(),
+            mac: "SHA".to_string(),
+            bits: 128,
             export: false,
-            strength: "HIGH".to_string(),
         }
     }
 
@@ -224,9 +222,11 @@ mod tests {
         results.insert(
             Protocol::TLS12,
             ProtocolCipherSummary {
+                protocol: Protocol::TLS12,
                 supported_ciphers: vec![create_test_cipher("TLS_RSA_WITH_RC4_128_SHA")],
                 counts: CipherCounts::default(),
                 server_ordered: true,
+                server_preference: vec![],
                 preferred_cipher: None,
                 avg_handshake_time_ms: None,
             },
@@ -254,6 +254,7 @@ mod tests {
         results.insert(
             Protocol::TLS12,
             ProtocolCipherSummary {
+                protocol: Protocol::TLS12,
                 supported_ciphers: vec![],
                 counts: CipherCounts {
                     total: 10,
@@ -266,6 +267,7 @@ mod tests {
                     aead: 5,
                 },
                 server_ordered: true,
+                server_preference: vec![],
                 preferred_cipher: None,
                 avg_handshake_time_ms: None,
             },

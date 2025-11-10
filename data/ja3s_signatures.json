@@ -1,0 +1,366 @@
+{
+  "098e26e2609212ac1bfac552fbe04127": {
+    "name": "Cloudflare",
+    "type": "cdn",
+    "description": "Cloudflare edge server",
+    "common_ports": [443, 8443],
+    "indicators": ["CF-RAY header", "cloudflare-nginx Server header", "CF-Cache-Status"]
+  },
+  "ada70206e40642a3e4461f35503241d5": {
+    "name": "Akamai",
+    "type": "cdn",
+    "description": "Akamai edge server",
+    "common_ports": [443],
+    "indicators": ["X-Akamai-* headers", "AkamaiGHost"]
+  },
+  "b742b407517bac9536a77a7b0fee28e9": {
+    "name": "AWS ELB",
+    "type": "loadbalancer",
+    "description": "AWS Elastic Load Balancer",
+    "common_ports": [443, 8443],
+    "indicators": ["X-Amzn-Trace-Id header", "X-Amzn-RequestId"]
+  },
+  "7c02dbae662670040c7af9bd15fb7e2f": {
+    "name": "nginx",
+    "type": "webserver",
+    "description": "nginx web server (default TLS config)",
+    "common_ports": [443, 8443],
+    "indicators": ["Server: nginx", "X-Upstream-* headers"]
+  },
+  "73f4e03f59dc65a1e0c1c06875c2d2cb": {
+    "name": "Apache",
+    "type": "webserver",
+    "description": "Apache httpd with mod_ssl",
+    "common_ports": [443],
+    "indicators": ["Server: Apache"]
+  },
+  "6734f37431670b3ab4292b8f60f29984": {
+    "name": "Fastly",
+    "type": "cdn",
+    "description": "Fastly CDN edge server",
+    "common_ports": [443],
+    "indicators": ["X-Fastly-Request-ID", "Fastly-Debug-Digest"]
+  },
+  "e7d705a3286e19ea42f587b344ee6865": {
+    "name": "AWS CloudFront",
+    "type": "cdn",
+    "description": "Amazon CloudFront CDN",
+    "common_ports": [443],
+    "indicators": ["X-Amz-Cf-* headers", "X-Cache: Hit from cloudfront"]
+  },
+  "54e4acf23e0f075c44aa28b9bdd88456": {
+    "name": "HAProxy",
+    "type": "loadbalancer",
+    "description": "HAProxy load balancer",
+    "common_ports": [443, 80],
+    "indicators": ["X-HAProxy-* headers"]
+  },
+  "bc6c386f480ee97b9d9e52d472b772d8": {
+    "name": "F5 BIG-IP",
+    "type": "loadbalancer",
+    "description": "F5 BIG-IP load balancer",
+    "common_ports": [443],
+    "indicators": ["X-WA-Info", "BIGipServer* cookies"]
+  },
+  "e35df3e00ca4ef31d42b34bebaa2f86e": {
+    "name": "Varnish",
+    "type": "reverseproxy",
+    "description": "Varnish HTTP cache",
+    "common_ports": [80, 443],
+    "indicators": ["X-Varnish header", "Via: varnish"]
+  },
+  "579ccef312d18482fc42e2b822ca2430": {
+    "name": "Microsoft IIS 10",
+    "type": "webserver",
+    "description": "Microsoft IIS 10.0",
+    "common_ports": [443],
+    "indicators": ["Server: Microsoft-IIS/10.0"]
+  },
+  "19e29534fd28d9293a0f53c5970e3c4e": {
+    "name": "Microsoft IIS 8.5",
+    "type": "webserver",
+    "description": "Microsoft IIS 8.5",
+    "common_ports": [443],
+    "indicators": ["Server: Microsoft-IIS/8.5"]
+  },
+  "6fa3244afc6bb6f9fad207b6b52af26b": {
+    "name": "Sucuri Firewall",
+    "type": "firewall",
+    "description": "Sucuri WAF",
+    "common_ports": [443],
+    "indicators": ["X-Sucuri-ID", "X-Sucuri-Cache"]
+  },
+  "f8e6755b8fae28c4626b8eee3abb3a57": {
+    "name": "Incapsula",
+    "type": "firewall",
+    "description": "Imperva Incapsula WAF",
+    "common_ports": [443],
+    "indicators": ["X-Iinfo", "X-CDN: Incapsula"]
+  },
+  "2e36f48f9b8c4e0a1a54e8f6e3d7c2b9": {
+    "name": "Nginx/OpenResty",
+    "type": "webserver",
+    "description": "OpenResty (nginx + LuaJIT)",
+    "common_ports": [443, 8443],
+    "indicators": ["Server: openresty"]
+  },
+  "9def2c8b21081c92e018f3b0c1e8a3d7": {
+    "name": "Caddy",
+    "type": "webserver",
+    "description": "Caddy web server",
+    "common_ports": [443],
+    "indicators": ["Server: Caddy"]
+  },
+  "4a637bb5e3f1d5a8c2e9b0d7f8c3a1b6": {
+    "name": "LiteSpeed",
+    "type": "webserver",
+    "description": "LiteSpeed Web Server",
+    "common_ports": [443],
+    "indicators": ["Server: LiteSpeed"]
+  },
+  "8f5b3c9e7d2a1f6b4e8c0d9a7b5c3e1f": {
+    "name": "Envoy",
+    "type": "reverseproxy",
+    "description": "Envoy proxy",
+    "common_ports": [443, 10000],
+    "indicators": ["Server: envoy", "X-Envoy-* headers"]
+  },
+  "a1b2c3d4e5f6789012345678901234ab": {
+    "name": "Traefik",
+    "type": "reverseproxy",
+    "description": "Traefik reverse proxy",
+    "common_ports": [443, 80],
+    "indicators": ["Server: traefik"]
+  },
+  "7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d": {
+    "name": "Cloudflare Workers",
+    "type": "cdn",
+    "description": "Cloudflare Workers serverless",
+    "common_ports": [443],
+    "indicators": ["CF-Worker", "CF-RAY header"]
+  },
+  "3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b": {
+    "name": "Google Cloud Load Balancer",
+    "type": "loadbalancer",
+    "description": "Google Cloud Platform load balancer",
+    "common_ports": [443],
+    "indicators": ["Via: 1.1 google", "X-Goog-* headers"]
+  },
+  "9c8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f": {
+    "name": "Azure Application Gateway",
+    "type": "loadbalancer",
+    "description": "Microsoft Azure Application Gateway",
+    "common_ports": [443],
+    "indicators": ["X-Azure-* headers"]
+  },
+  "4b3c2d1e0f9a8b7c6d5e4f3a2b1c0d9e": {
+    "name": "KeyCDN",
+    "type": "cdn",
+    "description": "KeyCDN edge server",
+    "common_ports": [443],
+    "indicators": ["Server: keycdn-engine"]
+  },
+  "5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f": {
+    "name": "StackPath",
+    "type": "cdn",
+    "description": "StackPath CDN",
+    "common_ports": [443],
+    "indicators": ["Server: StackPath"]
+  },
+  "6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a": {
+    "name": "Netlify",
+    "type": "cdn",
+    "description": "Netlify edge network",
+    "common_ports": [443],
+    "indicators": ["Server: Netlify", "X-NF-Request-ID"]
+  },
+  "7e6f5a4b3c2d1e0f9a8b7c6d5e4f3a2b": {
+    "name": "Vercel",
+    "type": "cdn",
+    "description": "Vercel edge network",
+    "common_ports": [443],
+    "indicators": ["Server: Vercel", "X-Vercel-* headers"]
+  },
+  "8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c": {
+    "name": "Bunny CDN",
+    "type": "cdn",
+    "description": "Bunny.net CDN",
+    "common_ports": [443],
+    "indicators": ["Server: BunnyCDN", "CDN-Cache"]
+  },
+  "9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d": {
+    "name": "Imperva SecureSphere",
+    "type": "firewall",
+    "description": "Imperva WAF",
+    "common_ports": [443],
+    "indicators": ["X-Imperva-* headers"]
+  },
+  "0b9c8d7e6f5a4b3c2d1e0f9a8b7c6d5e": {
+    "name": "Barracuda WAF",
+    "type": "firewall",
+    "description": "Barracuda Web Application Firewall",
+    "common_ports": [443],
+    "indicators": ["barra_counter_session cookie"]
+  },
+  "1c0d9e8f7a6b5c4d3e2f1a0b9c8d7e6f": {
+    "name": "Palo Alto",
+    "type": "firewall",
+    "description": "Palo Alto Networks firewall",
+    "common_ports": [443],
+    "indicators": []
+  },
+  "2d1e0f9a8b7c6d5e4f3a2b1c0d9e8f7a": {
+    "name": "Citrix NetScaler",
+    "type": "loadbalancer",
+    "description": "Citrix ADC (NetScaler)",
+    "common_ports": [443],
+    "indicators": ["X-CitrixADC-* headers", "NSC_* cookies"]
+  },
+  "3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b": {
+    "name": "Fortinet FortiGate",
+    "type": "firewall",
+    "description": "Fortinet FortiGate firewall",
+    "common_ports": [443],
+    "indicators": []
+  },
+  "4f3a2b1c0d9e8f7a6b5c4d3e2f1a0b9c": {
+    "name": "Sophos UTM",
+    "type": "firewall",
+    "description": "Sophos Unified Threat Management",
+    "common_ports": [443],
+    "indicators": []
+  },
+  "5a4b3c2d1e0f9a8b7c6d5e4f3a2b1c0d": {
+    "name": "Tomcat",
+    "type": "applicationserver",
+    "description": "Apache Tomcat application server",
+    "common_ports": [8443, 443],
+    "indicators": ["Server: Apache-Coyote"]
+  },
+  "6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e": {
+    "name": "JBoss/WildFly",
+    "type": "applicationserver",
+    "description": "JBoss/WildFly application server",
+    "common_ports": [8443, 443],
+    "indicators": []
+  },
+  "7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f": {
+    "name": "WebSphere",
+    "type": "applicationserver",
+    "description": "IBM WebSphere Application Server",
+    "common_ports": [9443, 443],
+    "indicators": ["Server: WebSphere"]
+  },
+  "8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f3a": {
+    "name": "WebLogic",
+    "type": "applicationserver",
+    "description": "Oracle WebLogic Server",
+    "common_ports": [7002, 443],
+    "indicators": []
+  },
+  "9e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b": {
+    "name": "Amazon S3",
+    "type": "cdn",
+    "description": "Amazon S3 static hosting",
+    "common_ports": [443],
+    "indicators": ["Server: AmazonS3", "X-Amz-* headers"]
+  },
+  "0f9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c": {
+    "name": "DigitalOcean Spaces",
+    "type": "cdn",
+    "description": "DigitalOcean Spaces CDN",
+    "common_ports": [443],
+    "indicators": ["X-Amz-* headers", "Server: AmazonS3"]
+  },
+  "1a0b9c8d7e6f5a4b3c2d1e0f9a8b7c6d": {
+    "name": "Shopify",
+    "type": "cdn",
+    "description": "Shopify e-commerce platform",
+    "common_ports": [443],
+    "indicators": ["X-Shopify-* headers", "X-ShopId"]
+  },
+  "2b1c0d9e8f7a6b5c4d3e2f1a0b9c8d7e": {
+    "name": "WordPress.com",
+    "type": "cdn",
+    "description": "WordPress.com hosting",
+    "common_ports": [443],
+    "indicators": ["X-hacker header", "X-ac header"]
+  },
+  "3c2d1e0f9a8b7c6d5e4f3a2b1c0d9e8f": {
+    "name": "GitHub Pages",
+    "type": "cdn",
+    "description": "GitHub Pages hosting",
+    "common_ports": [443],
+    "indicators": ["Server: GitHub.com", "X-GitHub-Request-Id"]
+  },
+  "4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a": {
+    "name": "GitLab Pages",
+    "type": "cdn",
+    "description": "GitLab Pages hosting",
+    "common_ports": [443],
+    "indicators": ["X-GitLab-* headers"]
+  },
+  "5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a0b": {
+    "name": "Heroku",
+    "type": "cdn",
+    "description": "Heroku application platform",
+    "common_ports": [443],
+    "indicators": ["Via: vegur"]
+  },
+  "6f5a4b3c2d1e0f9a8b7c6d5e4f3a2b1c": {
+    "name": "DigitalOcean",
+    "type": "webserver",
+    "description": "DigitalOcean droplet with nginx",
+    "common_ports": [443],
+    "indicators": []
+  },
+  "7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d": {
+    "name": "Linode",
+    "type": "webserver",
+    "description": "Linode VPS with nginx",
+    "common_ports": [443],
+    "indicators": []
+  },
+  "8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e": {
+    "name": "Vultr",
+    "type": "webserver",
+    "description": "Vultr VPS",
+    "common_ports": [443],
+    "indicators": []
+  },
+  "9c8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f": {
+    "name": "OVH",
+    "type": "webserver",
+    "description": "OVH hosting",
+    "common_ports": [443],
+    "indicators": []
+  },
+  "0d9e8f7a6b5c4d3e2f1a0b9c8d7e6f5a": {
+    "name": "Hetzner",
+    "type": "webserver",
+    "description": "Hetzner hosting",
+    "common_ports": [443],
+    "indicators": []
+  },
+  "1e0f9a8b7c6d5e4f3a2b1c0d9e8f7a6b": {
+    "name": "UpCloud",
+    "type": "webserver",
+    "description": "UpCloud hosting",
+    "common_ports": [443],
+    "indicators": []
+  },
+  "2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b7c": {
+    "name": "Scaleway",
+    "type": "webserver",
+    "description": "Scaleway cloud hosting",
+    "common_ports": [443],
+    "indicators": []
+  },
+  "3a2b1c0d9e8f7a6b5c4d3e2f1a0b9c8d": {
+    "name": "Oracle Cloud",
+    "type": "loadbalancer",
+    "description": "Oracle Cloud Infrastructure load balancer",
+    "common_ports": [443],
+    "indicators": []
+  }
+}

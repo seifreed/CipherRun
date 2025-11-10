@@ -627,6 +627,137 @@ pub struct Args {
     /// Generate example API configuration file
     #[arg(long = "api-config-example", value_name = "FILE")]
     pub api_config_example: Option<PathBuf>,
+
+    // ============ Database Analytics ============
+    /// Compare two scans (format: SCAN_ID_1:SCAN_ID_2)
+    #[arg(long = "compare", value_name = "SCAN_ID_1:SCAN_ID_2")]
+    pub compare: Option<String>,
+
+    /// Detect changes for hostname in last N days (format: HOSTNAME:PORT:DAYS)
+    #[arg(long = "changes", value_name = "HOSTNAME:PORT:DAYS")]
+    pub changes: Option<String>,
+
+    /// Analyze trends for hostname in last N days (format: HOSTNAME:PORT:DAYS)
+    #[arg(long = "trends", value_name = "HOSTNAME:PORT:DAYS")]
+    pub trends: Option<String>,
+
+    /// Generate dashboard data for hostname (format: HOSTNAME:PORT:DAYS)
+    #[arg(long = "dashboard", value_name = "HOSTNAME:PORT:DAYS")]
+    pub dashboard: Option<String>,
+
+    // ============ HIGH PRIORITY Features (4-10) ============
+
+    /// Use pre-handshake mode for fast certificate retrieval (early termination)
+    /// Disconnects after ServerHello without completing full handshake (2-3x faster)
+    /// Only works with TLS 1.0-1.2
+    #[arg(long = "pre-handshake", alias = "ps")]
+    pub pre_handshake: bool,
+
+    /// Scan all resolved IP addresses for hostname (Anycast detection)
+    /// Tests each A and AAAA record individually to detect Anycast deployments
+    #[arg(long = "scan-all-ips", alias = "sa")]
+    pub scan_all_ips: bool,
+
+    /// Use random SNI when scanning IP addresses
+    /// Generates random valid-looking SNI hostnames
+    #[arg(long = "random-sni", alias = "rs")]
+    pub random_sni: bool,
+
+    /// Use reverse PTR lookup for SNI when scanning IPs
+    /// Performs reverse DNS to determine appropriate SNI
+    #[arg(long = "reverse-ptr-sni", alias = "rps")]
+    pub reverse_ptr_sni: bool,
+
+    /// Show probe status (success/failure) for each target
+    /// Displays connection status with timing information
+    #[arg(long = "probe-status", alias = "tps")]
+    pub probe_status: bool,
+
+    /// Export Client/Server Hello raw data in specified format
+    /// Valid formats: hex, base64, hexdump, binary
+    #[arg(long = "export-hello", value_name = "FORMAT")]
+    pub export_hello: Option<String>,
+
+    // ============ MEDIUM PRIORITY Features (11-15) ============
+
+    /// Output only unique domain names from certificates
+    #[arg(long = "dns", alias = "dns-only")]
+    pub dns_only: bool,
+
+    /// Output response data only (no host:port prefix)
+    #[arg(long = "response-only", alias = "ro")]
+    pub response_only: bool,
+
+    /// Custom DNS resolvers (comma-separated: 8.8.8.8,1.1.1.1)
+    #[arg(long = "resolvers", value_delimiter = ',')]
+    pub resolvers: Vec<String>,
+
+    /// Delay between connections (e.g "200ms", "1s")
+    #[arg(long = "delay")]
+    pub delay: Option<String>,
+
+    /// Hard fail on revocation check errors (requires --phone-out)
+    #[arg(long = "hardfail", alias = "hf")]
+    pub hardfail: bool,
+
+    // ============ Certificate Transparency Logs Streaming ============
+    /// Enable Certificate Transparency logs streaming mode
+    #[arg(long = "ct-logs", alias = "ctl")]
+    pub ct_logs: bool,
+
+    /// Start from beginning of CT logs (index 0)
+    #[arg(long = "ct-beginning", alias = "cb", requires = "ct_logs")]
+    pub ct_beginning: bool,
+
+    /// Start from custom index per log (format: sourceID=index)
+    #[arg(long = "ct-index", alias = "cti", requires = "ct_logs", value_name = "SOURCE=INDEX")]
+    pub ct_index: Vec<String>,
+
+    /// CT logs poll interval in seconds (default: 60)
+    #[arg(long = "ct-poll-interval", requires = "ct_logs", default_value = "60")]
+    pub ct_poll_interval: u64,
+
+    /// CT logs batch size (default: 1000, max: 1000)
+    #[arg(long = "ct-batch-size", requires = "ct_logs", default_value = "1000")]
+    pub ct_batch_size: u64,
+
+    /// Expected number of unique certificates for deduplication (default: 1000000)
+    #[arg(long = "ct-expected-certs", requires = "ct_logs", default_value = "1000000")]
+    pub ct_expected_certs: usize,
+
+    /// Output CT log entries as JSON (one per line)
+    #[arg(long = "ct-json", requires = "ct_logs")]
+    pub ct_json: bool,
+
+    /// Silent mode for CT logs (no stats output, only certificates)
+    #[arg(long = "ct-silent", requires = "ct_logs")]
+    pub ct_silent: bool,
+
+    // ============ JA3 TLS Client Fingerprinting ============
+    /// Calculate JA3 TLS client fingerprint
+    #[arg(long = "ja3")]
+    pub ja3: bool,
+
+    /// Include full ClientHello in JSON output
+    #[arg(long = "client-hello", alias = "ch")]
+    pub client_hello: bool,
+
+    /// Path to custom JA3 signature database (JSON format)
+    #[arg(long = "ja3-db", value_name = "FILE")]
+    pub ja3_database: Option<PathBuf>,
+
+    // ============ JA3S TLS Server Fingerprinting ============
+    /// Calculate JA3S TLS server fingerprint
+    #[arg(long = "ja3s")]
+    pub ja3s: bool,
+
+    /// Include full ServerHello in JSON output
+    #[arg(long = "server-hello", alias = "sh")]
+    pub server_hello: bool,
+
+    /// Path to custom JA3S signature database (JSON format)
+    #[arg(long = "ja3s-db", value_name = "FILE")]
+    pub ja3s_database: Option<PathBuf>,
 }
 
 impl Args {

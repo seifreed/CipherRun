@@ -25,6 +25,22 @@ pub struct ApiErrorResponse {
     pub details: Option<String>,
 }
 
+/// Rate Limit Error Response
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct RateLimitErrorResponse {
+    /// Error message
+    pub error: String,
+
+    /// Rate limit (requests per window)
+    pub limit: u32,
+
+    /// Window duration in seconds
+    pub window_seconds: u64,
+
+    /// Seconds until rate limit resets
+    pub retry_after: u64,
+}
+
 /// API Error Types
 #[derive(Debug, thiserror::Error)]
 pub enum ApiError {

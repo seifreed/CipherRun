@@ -1,0 +1,6 @@
+include README.md
+include LICENSE
+include requirements.txt
+include pyproject.toml
+recursive-include cipherrun *.py py.typed
+recursive-include examples *.py

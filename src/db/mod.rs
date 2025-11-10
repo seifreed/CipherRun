@@ -1,6 +1,7 @@
 // Database Module
 // Complete database abstraction layer for CipherRun
 
+pub mod analytics;
 pub mod config;
 pub mod connection;
 pub mod migrations;

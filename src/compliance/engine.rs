@@ -143,12 +143,16 @@ mod tests {
             ProtocolTestResult {
                 protocol: Protocol::SSLv2,
                 supported: true,
+                preferred: false,
+                ciphers_count: 0,
                 heartbeat_enabled: None,
                 handshake_time_ms: None,
             },
             ProtocolTestResult {
                 protocol: Protocol::TLS12,
                 supported: true,
+                preferred: false,
+                ciphers_count: 0,
                 heartbeat_enabled: None,
                 handshake_time_ms: None,
             },
@@ -203,6 +207,8 @@ mod tests {
         results.protocols = vec![ProtocolTestResult {
             protocol: Protocol::TLS12,
             supported: true,
+            preferred: false,
+            ciphers_count: 0,
             heartbeat_enabled: None,
             handshake_time_ms: None,
         }];

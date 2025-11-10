@@ -3,9 +3,12 @@
 use crate::api::{
     config::ApiConfig,
     jobs::{InMemoryJobQueue, JobQueue, ScanExecutor},
+    middleware::rate_limit::PerKeyRateLimiter,
     models::response::ProgressMessage,
 };
+use crate::db::DatabasePool;
 use anyhow::Result;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::broadcast;
@@ -29,6 +32,15 @@ pub struct AppState {
 
     /// Statistics
     pub stats: Arc<tokio::sync::RwLock<ApiStats>>,
+
+    /// Rate limiter for per-key rate limiting
+    pub rate_limiter: Arc<PerKeyRateLimiter>,
+
+    /// Database pool (optional)
+    pub db_pool: Option<Arc<DatabasePool>>,
+
+    /// Policy directory (optional)
+    pub policy_dir: Option<PathBuf>,
 }
 
 /// API statistics
@@ -51,6 +63,18 @@ pub struct ApiStats {
 
     /// Requests in last hour (timestamp, count)
     pub requests_last_hour: Vec<(Instant, u64)>,
+
+    /// Total response time for averaging
+    pub total_response_time_ms: u64,
+
+    /// Total responses counted for averaging
+    pub total_responses: u64,
+
+    /// Scans in last 24 hours
+    pub scans_24h: u64,
+
+    /// Scans in last 7 days
+    pub scans_7d: u64,
 }
 
 impl ApiStats {
@@ -96,6 +120,25 @@ impl ApiStats {
     pub fn requests_in_last_hour(&self) -> u64 {
         self.requests_last_hour.iter().map(|(_, c)| c).sum()
     }
+
+    /// Get average response time in milliseconds
+    pub fn avg_response_time_ms(&self) -> f64 {
+        if self.total_responses > 0 {
+            self.total_response_time_ms as f64 / self.total_responses as f64
+        } else {
+            0.0
+        }
+    }
+
+    /// Get scans in last 24 hours
+    pub fn scans_last_24h(&self) -> u64 {
+        self.scans_24h
+    }
+
+    /// Get scans in last 7 days
+    pub fn scans_last_7d(&self) -> u64 {
+        self.scans_7d
+    }
 }
 
 impl AppState {
@@ -116,6 +159,9 @@ impl AppState {
         // Get progress broadcaster
         let progress_tx = executor.progress_broadcaster();
 
+        // Create rate limiter
+        let rate_limiter = Arc::new(PerKeyRateLimiter::new(config.rate_limit_per_minute));
+
         Ok(Self {
             config,
             job_queue,
@@ -123,6 +169,9 @@ impl AppState {
             progress_tx,
             start_time: Instant::now(),
             stats: Arc::new(tokio::sync::RwLock::new(ApiStats::default())),
+            rate_limiter,
+            db_pool: None,
+            policy_dir: None,
         })
     }
 
@@ -185,5 +234,17 @@ impl AppState {
     /// Get statistics snapshot
     pub async fn get_stats(&self) -> ApiStats {
         self.stats.read().await.clone()
+    }
+
+    /// Set database pool
+    pub fn with_db_pool(mut self, pool: Arc<DatabasePool>) -> Self {
+        self.db_pool = Some(pool);
+        self
+    }
+
+    /// Set policy directory
+    pub fn with_policy_dir(mut self, dir: PathBuf) -> Self {
+        self.policy_dir = Some(dir);
+        self
     }
 }

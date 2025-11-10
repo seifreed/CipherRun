@@ -235,7 +235,6 @@ impl HstsPreloadChecker {
     }
 
     /// Clear the cache (useful for testing or forced refresh)
-    #[allow(dead_code)]
     pub fn clear_cache(&self) {
         if let Ok(mut cache) = self.cache.lock() {
             cache.clear();
@@ -243,7 +242,6 @@ impl HstsPreloadChecker {
     }
 
     /// Get cache statistics
-    #[allow(dead_code)]
     pub fn cache_stats(&self) -> (usize, usize) {
         if let Ok(cache) = self.cache.lock() {
             let now = Instant::now();
@@ -260,7 +258,6 @@ impl HstsPreloadChecker {
 
 /// Top 100 preloaded domains (fallback list for offline mode)
 /// This is a subset of the full list maintained by browsers
-#[allow(dead_code)]
 const KNOWN_PRELOADED_DOMAINS: &[&str] = &[
     "google.com",
     "google.co.uk",
@@ -365,7 +362,6 @@ const KNOWN_PRELOADED_DOMAINS: &[&str] = &[
 ];
 
 /// Check if domain is in the static preloaded list
-#[allow(dead_code)]
 pub fn is_in_static_list(domain: &str) -> bool {
     let normalized = HstsPreloadChecker::normalize_domain(domain);
     KNOWN_PRELOADED_DOMAINS

@@ -6,17 +6,16 @@ use crate::api::{
 };
 use axum::{
     extract::{Request, State},
-    http::StatusCode,
     middleware::Next,
     response::Response,
 };
 use std::sync::Arc;
 
 /// Authentication extension inserted into request
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct AuthExtension {
     pub permission: Permission,
-    pub api_key: &'static str,
+    pub api_key: String,
 }
 
 /// Authentication middleware
@@ -48,8 +47,12 @@ pub async fn authenticate(
         .validate_key(api_key)
         .ok_or_else(|| ApiError::Unauthorized("Invalid API key".to_string()))?;
 
-    // Store permission in request extensions for later use
-    req.extensions_mut().insert(permission);
+    // Store both permission and API key in request extensions for later use
+    let auth_ext = AuthExtension {
+        permission,
+        api_key: api_key.to_string(),
+    };
+    req.extensions_mut().insert(auth_ext);
 
     Ok(next.run(req).await)
 }
@@ -76,5 +79,10 @@ pub fn check_permission(
 
 /// Extract permission from request extensions
 pub fn get_permission(req: &Request) -> Option<Permission> {
-    req.extensions().get::<Permission>().copied()
+    req.extensions().get::<AuthExtension>().map(|ext| ext.permission)
+}
+
+/// Extract auth extension from request extensions
+pub fn get_auth_extension(req: &Request) -> Option<AuthExtension> {
+    req.extensions().get::<AuthExtension>().cloned()
 }

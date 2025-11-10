@@ -43,6 +43,7 @@ native-tls = "0.2"
 socket2 = "0.5"
 trust-dns-resolver = "0.23"
 hickory-resolver = "0.24"
+ipnetwork = "0.20"
 
 # HTTP client
 reqwest = { version = "0.12", features = ["blocking", "json", "rustls-tls"] }
@@ -73,6 +74,7 @@ uuid = { version = "1.11", features = ["v4", "serde"] }
 
 # Rate limiting
 governor = "0.6"
+dashmap = "6.1"
 
 # CLI
 clap = { version = "4.5", features = ["derive", "cargo", "env"] }
@@ -129,6 +131,9 @@ signal-hook-tokio = { version = "0.3", features = ["futures-v0_3"] }
 
 # Async utilities
 futures = "0.3"
+
+# Certificate Transparency
+bloomfilter = "1.0"
 
 [dev-dependencies]
 criterion = "0.5"

@@ -7,3 +7,6 @@ pub mod parser;
 pub mod revocation;
 pub mod trust_stores;
 pub mod validator;
+
+// MEDIUM PRIORITY Features (11-15)
+pub mod revocation_strict;

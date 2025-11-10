@@ -302,7 +302,29 @@ pub struct ScanHistoryResponse {
     pub total_scans: usize,
 
     /// Historical scan records
-    pub scans: Vec<HistoricalScan>,
+    pub scans: Vec<ScanHistoryItem>,
+}
+
+/// Individual scan history item
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ScanHistoryItem {
+    /// Scan ID
+    pub scan_id: u64,
+
+    /// Scan timestamp
+    pub timestamp: DateTime<Utc>,
+
+    /// Overall grade
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub grade: Option<String>,
+
+    /// Overall score
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub score: Option<u8>,
+
+    /// Scan duration in milliseconds
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
 }
 
 /// Historical scan record
