@@ -58,6 +58,12 @@ CipherRun is a comprehensive TLS/SSL security scanner written in Rust, designed 
 - **Certificate Details**: Subject, SAN, validity, key strength, signature algorithms
 - **Trust Chain Verification**: Complete chain analysis
 - **Extended Validation (EV)**: EV certificate detection
+- **Certificate Filters**: Filter scan results by validation status (expired, self-signed, mismatched, revoked, untrusted)
+  - `--expired` / `-x`: Show only expired certificates
+  - `--self-signed` / `-s`: Show only self-signed certificates
+  - `--mismatched` / `-m`: Show only hostname mismatches
+  - `--revoked` / `-r`: Show only revoked certificates
+  - `--untrusted` / `-u`: Show only untrusted certificates
 
 ### HTTP Security Headers
 - **HSTS** (HTTP Strict Transport Security)
@@ -270,6 +276,50 @@ if grep -q '"vulnerable": true' "$REPORT_DIR/scan_results.json"; then
   echo "ALERT: Vulnerabilities found!" | mail -s "Security Alert" admin@example.com
 fi
 ```
+
+### Certificate Validation Filtering (NEW!)
+
+#### Find All Expired Certificates
+```bash
+# Scan all domains and show only expired certificates
+cipherrun -f production-domains.txt --expired --json expired-certs.json
+```
+
+#### Identify Self-Signed Certificates
+```bash
+# Find self-signed certificates in internal infrastructure
+cipherrun -f internal-services.txt --self-signed
+```
+
+#### Detect Hostname Mismatches
+```bash
+# Useful after CDN migrations or multi-domain certificate updates
+cipherrun -f cdn-endpoints.txt --mismatched
+```
+
+#### Find Any Certificate Issues
+```bash
+# Combine multiple filters (OR logic - shows certificates matching ANY filter)
+cipherrun -f all-domains.txt \
+  --expired \
+  --self-signed \
+  --untrusted \
+  --revoked \
+  --phone-out \
+  --json certificate-issues.json
+```
+
+#### Security Audit with Filters
+```bash
+# Find problematic certificates and generate compliance report
+cipherrun -f payment-gateways.txt \
+  --expired \
+  --untrusted \
+  --compliance pci-dss-v4 \
+  --compliance-format html
+```
+
+See [CERTIFICATE_FILTERS.md](CERTIFICATE_FILTERS.md) for detailed filter documentation.
 
 ## 🏗Architecture
 

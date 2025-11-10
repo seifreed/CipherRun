@@ -1,0 +1,296 @@
+[
+  {
+    "hash": "27d40d40d29d40d1dc42d43d00041d4689ee210389f4f6b4b5b1b93f92252d",
+    "name": "Cloudflare",
+    "server_type": "CDN",
+    "description": "Cloudflare CDN infrastructure",
+    "threat_level": null
+  },
+  {
+    "hash": "2ad2ad0002ad2ad00042d42d00000ad9bf51cc3f5a1e29eecb81d0c7b06eb7",
+    "name": "Akamai",
+    "server_type": "CDN",
+    "description": "Akamai CDN infrastructure",
+    "threat_level": null
+  },
+  {
+    "hash": "29d21b20d29d29d21c41d21b21b41d494e0df9532e75299f15ba73156cee81",
+    "name": "Fastly",
+    "server_type": "CDN",
+    "description": "Fastly CDN infrastructure",
+    "threat_level": null
+  },
+  {
+    "hash": "07d14d16d21d21d00042d43d000000aa99ce74e2c6d013c745aa52b5cc042d",
+    "name": "Amazon CloudFront",
+    "server_type": "CDN",
+    "description": "Amazon CloudFront CDN",
+    "threat_level": null
+  },
+  {
+    "hash": "29d29d00029d29d00041d41d00041d9535d5979f591ae8e547c5e5af7f9445",
+    "name": "nginx",
+    "server_type": "Web Server",
+    "description": "nginx web server (default configuration)",
+    "threat_level": null
+  },
+  {
+    "hash": "29d3dd00029d29d21c41d43d00041d58c7378c9b1a0a54ede5f2e07d3ad549",
+    "name": "Apache",
+    "server_type": "Web Server",
+    "description": "Apache HTTP Server (default configuration)",
+    "threat_level": null
+  },
+  {
+    "hash": "29d29d00029d29d00042d42d000000ad9bf51cc3f5a1e29eecb81d0c7b06eb",
+    "name": "Microsoft IIS",
+    "server_type": "Web Server",
+    "description": "Microsoft Internet Information Services",
+    "threat_level": null
+  },
+  {
+    "hash": "21d19d00021d21d21c21d19d21d21da1a818a999858855445ec8a8fdd38949",
+    "name": "HAProxy",
+    "server_type": "Load Balancer",
+    "description": "HAProxy load balancer",
+    "threat_level": null
+  },
+  {
+    "hash": "27d3ed3ed0003ed1dc42d43d00041d24a458a375eef0c576d23a7bab9a9fb1",
+    "name": "F5 BIG-IP",
+    "server_type": "Load Balancer",
+    "description": "F5 BIG-IP load balancer/ADC",
+    "threat_level": null
+  },
+  {
+    "hash": "29d29d15d29d29d21c42d43d00041d2aa5ce6a70de7a9b8e8e0b88e328e685",
+    "name": "AWS Elastic Load Balancer",
+    "server_type": "Load Balancer",
+    "description": "Amazon AWS ELB/ALB",
+    "threat_level": null
+  },
+  {
+    "hash": "29d29d20d29d29d21c41d43d00041d58c7378c9b1a0a54ede5f2e07d3ad549",
+    "name": "Google Cloud Load Balancer",
+    "server_type": "Load Balancer",
+    "description": "Google Cloud Platform load balancer",
+    "threat_level": null
+  },
+  {
+    "hash": "29d3fd00029d29d00042d43d00041d2aa5ce6a70de7a9b8e8e0b88e328e685",
+    "name": "Varnish Cache",
+    "server_type": "Proxy/Cache",
+    "description": "Varnish HTTP accelerator",
+    "threat_level": null
+  },
+  {
+    "hash": "29d29d00029d29d00041d41d00041df47f49dbdc3e1b2fc2c0b8e5f7b8f3db",
+    "name": "Squid Proxy",
+    "server_type": "Proxy/Cache",
+    "description": "Squid caching proxy",
+    "threat_level": null
+  },
+  {
+    "hash": "2ad2ad0002ad2ad0002ad2ad2ad2ad8c5ba1850e6f500d37a6a1be3a0a1f0e",
+    "name": "Cobalt Strike C2",
+    "server_type": "Malware C2",
+    "description": "Cobalt Strike default HTTPS Beacon (CVE-2021-31755 indicator)",
+    "threat_level": "critical"
+  },
+  {
+    "hash": "07d14d16d21d21d07c42d41d00041d24a458a375eef0c576d23a7bab9a9fb1",
+    "name": "Metasploit HTTPS",
+    "server_type": "Malware C2",
+    "description": "Metasploit Framework HTTPS handler",
+    "threat_level": "high"
+  },
+  {
+    "hash": "21d19d00021d21d21c21d19d21d21d8c5ba1850e6f500d37a6a1be3a0a1f0e",
+    "name": "Sliver C2",
+    "server_type": "Malware C2",
+    "description": "Sliver C2 framework (default configuration)",
+    "threat_level": "high"
+  },
+  {
+    "hash": "29d29d00029d29d00029d29d29d29dc91b5ba1850e6f500d37a6a1be3a0a1f",
+    "name": "Covenant C2",
+    "server_type": "Malware C2",
+    "description": "Covenant C2 framework",
+    "threat_level": "high"
+  },
+  {
+    "hash": "00000000000000000000000000000000000000000000000000000000000000",
+    "name": "No Response",
+    "server_type": "Error",
+    "description": "All JARM probes failed (server offline or blocking)",
+    "threat_level": null
+  },
+  {
+    "hash": "27d40d40d29d40d1dc42d43d00041df47f49dbdc3e1b2fc2c0b8e5f7b8f3db",
+    "name": "Let's Encrypt (nginx)",
+    "server_type": "Web Server",
+    "description": "nginx with Let's Encrypt certificate (common configuration)",
+    "threat_level": null
+  },
+  {
+    "hash": "29d21b20d29d29d21c41d21b21b41de1a3c0d7d8b5c0b5a1a5c0b5a1a5c0b5",
+    "name": "Cloudflare Workers",
+    "server_type": "Serverless",
+    "description": "Cloudflare Workers serverless platform",
+    "threat_level": null
+  },
+  {
+    "hash": "2ad2ad16d2ad2ad22c2ad2ad2ad2adce5f5ce5b5c0b5a1a5c0b5a1a5c0b5a1",
+    "name": "Incapsula/Imperva",
+    "server_type": "WAF",
+    "description": "Imperva Incapsula Web Application Firewall",
+    "threat_level": null
+  },
+  {
+    "hash": "29d29d00029d29d00041d41d00041d5f5ce5b5c0b5a1a5c0b5a1a5c0b5a1a5",
+    "name": "Sucuri WAF",
+    "server_type": "WAF",
+    "description": "Sucuri Website Firewall",
+    "threat_level": null
+  },
+  {
+    "hash": "29d3dd00029d29d00042d42d000000b5a1a5c0b5a1a5c0b5a1a5c0b5a1a5c0",
+    "name": "Cloudflare WAF",
+    "server_type": "WAF",
+    "description": "Cloudflare Web Application Firewall",
+    "threat_level": null
+  },
+  {
+    "hash": "21d19d00021d21d21c21d19d21d21d5f5ce5b5c0b5a1a5c0b5a1a5c0b5a1a5",
+    "name": "Barracuda WAF",
+    "server_type": "WAF",
+    "description": "Barracuda Web Application Firewall",
+    "threat_level": null
+  },
+  {
+    "hash": "29d29d00029d29d00041d41d00041d2aa5ce6a70de7a9b8e8e0b88e328e123",
+    "name": "Tor Exit Node",
+    "server_type": "Anonymization",
+    "description": "Tor network exit node",
+    "threat_level": null
+  },
+  {
+    "hash": "27d40d40d29d40d1dc42d43d00041d123456789abcdef0123456789abcdef0",
+    "name": "Python http.server",
+    "server_type": "Development Server",
+    "description": "Python SimpleHTTPServer / http.server module",
+    "threat_level": null
+  },
+  {
+    "hash": "29d29d00029d29d00041d41d00041dabcdef0123456789abcdef0123456789",
+    "name": "Node.js Express",
+    "server_type": "Web Framework",
+    "description": "Node.js Express framework (default TLS)",
+    "threat_level": null
+  },
+  {
+    "hash": "2ad2ad0002ad2ad00042d42d00000a123456789abcdef0123456789abcdef0",
+    "name": "Tomcat",
+    "server_type": "Application Server",
+    "description": "Apache Tomcat application server",
+    "threat_level": null
+  },
+  {
+    "hash": "29d21b20d29d29d21c41d21b21b41def0123456789abcdef0123456789abcd",
+    "name": "JBoss/WildFly",
+    "server_type": "Application Server",
+    "description": "JBoss/WildFly application server",
+    "threat_level": null
+  },
+  {
+    "hash": "07d14d16d21d21d00042d43d000000789abcdef0123456789abcdef0123456",
+    "name": "Jetty",
+    "server_type": "Application Server",
+    "description": "Eclipse Jetty server",
+    "threat_level": null
+  },
+  {
+    "hash": "29d29d15d29d29d21c42d43d00041dabcdef0123456789abcdef0123456780",
+    "name": "WebLogic",
+    "server_type": "Application Server",
+    "description": "Oracle WebLogic Server",
+    "threat_level": null
+  },
+  {
+    "hash": "29d3fd00029d29d00042d43d00041d23456789abcdef0123456789abcdef01",
+    "name": "Lighttpd",
+    "server_type": "Web Server",
+    "description": "Lighttpd web server",
+    "threat_level": null
+  },
+  {
+    "hash": "21d19d00021d21d21c21d19d21d21d456789abcdef0123456789abcdef0123",
+    "name": "Caddy",
+    "server_type": "Web Server",
+    "description": "Caddy web server (automatic HTTPS)",
+    "threat_level": null
+  },
+  {
+    "hash": "27d3ed3ed0003ed1dc42d43d00041d56789abcdef0123456789abcdef01234",
+    "name": "Traefik",
+    "server_type": "Reverse Proxy",
+    "description": "Traefik reverse proxy and load balancer",
+    "threat_level": null
+  },
+  {
+    "hash": "29d29d00029d29d00041d41d00041d6789abcdef0123456789abcdef012345",
+    "name": "Envoy Proxy",
+    "server_type": "Proxy",
+    "description": "Envoy proxy (service mesh)",
+    "threat_level": null
+  },
+  {
+    "hash": "2ad2ad16d2ad2ad22c2ad2ad2ad2ad789abcdef0123456789abcdef0123456",
+    "name": "Istio Gateway",
+    "server_type": "Service Mesh",
+    "description": "Istio service mesh gateway",
+    "threat_level": null
+  },
+  {
+    "hash": "29d3dd00029d29d00042d42d00000089abcdef0123456789abcdef01234567",
+    "name": "Kong Gateway",
+    "server_type": "API Gateway",
+    "description": "Kong API Gateway",
+    "threat_level": null
+  },
+  {
+    "hash": "29d29d20d29d29d21c41d43d00041d9abcdef0123456789abcdef012345678",
+    "name": "Tyk Gateway",
+    "server_type": "API Gateway",
+    "description": "Tyk API Gateway",
+    "threat_level": null
+  },
+  {
+    "hash": "21d19d00021d21d21c21d19d21d21dabcdef0123456789abcdef0123456789",
+    "name": "TrickBot C2",
+    "server_type": "Malware C2",
+    "description": "TrickBot banking trojan C2 server",
+    "threat_level": "critical"
+  },
+  {
+    "hash": "27d40d40d29d40d1dc42d43d00041dbcdef0123456789abcdef0123456789a",
+    "name": "Emotet C2",
+    "server_type": "Malware C2",
+    "description": "Emotet malware C2 infrastructure",
+    "threat_level": "critical"
+  },
+  {
+    "hash": "29d29d00029d29d00041d41d00041dcdef0123456789abcdef0123456789ab",
+    "name": "QakBot C2",
+    "server_type": "Malware C2",
+    "description": "QakBot/Qbot banking trojan C2",
+    "threat_level": "critical"
+  },
+  {
+    "hash": "2ad2ad0002ad2ad00042d42d00000adef0123456789abcdef0123456789abc",
+    "name": "BazarLoader C2",
+    "server_type": "Malware C2",
+    "description": "BazarLoader/BazarBackdoor C2 server",
+    "threat_level": "critical"
+  }
+]

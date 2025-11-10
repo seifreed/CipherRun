@@ -5,6 +5,7 @@ pub mod caa;
 pub mod ct;
 pub mod parser;
 pub mod revocation;
+pub mod status;
 pub mod trust_stores;
 pub mod validator;
 

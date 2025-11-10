@@ -276,6 +276,18 @@ impl Scanner {
             }
         }
 
+        // Phase 13: JARM TLS Server Active Fingerprinting
+        if self.args.jarm {
+            println!("\n{}", "Generating JARM Server Fingerprint...".yellow().bold());
+            let jarm_result = self.fingerprint_jarm().await.ok();
+            if let Some(jarm) = jarm_result {
+                results.jarm_fingerprint = Some(jarm.clone());
+                self.display_jarm_results(&jarm);
+            } else {
+                println!("  {}", "Failed to generate JARM fingerprint".red());
+            }
+        }
+
         // Calculate overall SSL Labs rating
         if self.args.all || self.args.target.is_some() {
             results.rating = Some(self.calculate_rating(&results));
@@ -1829,6 +1841,92 @@ impl Scanner {
             println!("  These issues may cause connectivity problems with some clients");
         }
     }
+
+    /// Generate JARM fingerprint
+    async fn fingerprint_jarm(&self) -> Result<crate::fingerprint::JarmFingerprint> {
+        use crate::fingerprint::JarmFingerprinter;
+        use std::time::Duration;
+
+        // Load custom database if specified, otherwise use builtin
+        let database = if let Some(ref db_path) = self.args.jarm_database {
+            crate::fingerprint::JarmDatabase::from_file(
+                db_path.to_str().ok_or_else(|| anyhow::anyhow!("Invalid JARM database path"))?
+            ).unwrap_or_else(|e| {
+                eprintln!("Warning: Failed to load custom JARM database: {}", e);
+                eprintln!("Falling back to builtin database");
+                crate::fingerprint::JarmDatabase::builtin()
+            })
+        } else {
+            crate::fingerprint::JarmDatabase::builtin()
+        };
+
+        // Use socket timeout if specified, otherwise default to 5 seconds
+        let timeout = Duration::from_secs(self.args.socket_timeout.unwrap_or(5));
+
+        let fingerprinter = JarmFingerprinter::with_database(timeout, database);
+
+        // Get first IP address
+        let ip = self.target.ip_addresses.first()
+            .ok_or_else(|| anyhow::anyhow!("No IP address resolved for target"))?;
+
+        let addr = std::net::SocketAddr::new(*ip, self.target.port);
+
+        fingerprinter.fingerprint(addr, &self.target.hostname)
+            .await
+            .map_err(|e| e.into())
+    }
+
+    /// Display JARM fingerprint results
+    fn display_jarm_results(&self, jarm: &crate::fingerprint::JarmFingerprint) {
+        println!("\n{}", "JARM Fingerprint:".cyan().bold());
+        println!("{}", "=".repeat(80));
+
+        println!("  JARM Hash:      {}", jarm.hash.green().bold());
+
+        if let Some(ref sig) = jarm.signature {
+            println!("\n{}", "Database Match:".green().bold());
+            println!("{}", "-".repeat(80));
+            println!("  Name:           {}", sig.name.green().bold());
+            println!("  Server Type:    {}", sig.server_type.yellow());
+
+            if let Some(ref desc) = sig.description {
+                println!("  Description:    {}", desc.cyan());
+            }
+
+            if let Some(ref threat_level) = sig.threat_level {
+                let threat_display = match threat_level.to_lowercase().as_str() {
+                    "critical" => threat_level.red().bold(),
+                    "high" => threat_level.red(),
+                    "medium" => threat_level.yellow(),
+                    "low" => threat_level.green(),
+                    _ => threat_level.normal(),
+                };
+                println!("  Threat Level:   {}", threat_display);
+
+                if threat_level.to_lowercase() == "critical" || threat_level.to_lowercase() == "high" {
+                    println!("\n  {} This fingerprint is associated with known malicious infrastructure!",
+                        "WARNING:".red().bold());
+                }
+            }
+        } else {
+            println!("\n{}", "Database Match:".cyan().bold());
+            println!("{}", "-".repeat(80));
+            println!("  {} No match found in signature database", "ℹ".cyan());
+            println!("  This is a unique or unknown JARM fingerprint");
+        }
+
+        // Show number of successful probes
+        let successful_probes = jarm.raw_responses.iter()
+            .filter(|r| *r != "|||")
+            .count();
+        println!("\n  Successful Probes: {}/10", successful_probes);
+
+        if successful_probes == 0 {
+            println!("  {} All JARM probes failed (server may be offline or blocking)", "⚠".yellow());
+        } else if successful_probes < 10 {
+            println!("  {} Some JARM probes failed (partial fingerprint)", "ℹ".cyan());
+        }
+    }
 }
 
 /// Certificate analysis result
@@ -1867,6 +1965,9 @@ pub struct ScanResults {
     pub cdn_detection: Option<crate::fingerprint::CdnDetection>,
     pub load_balancer_info: Option<crate::fingerprint::LoadBalancerInfo>,
     pub server_hello_raw: Option<Vec<u8>>,
+
+    // JARM TLS Server Fingerprinting
+    pub jarm_fingerprint: Option<crate::fingerprint::JarmFingerprint>,
 
     // HIGH PRIORITY Features (4-10)
     pub pre_handshake_used: bool,

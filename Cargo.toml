@@ -24,6 +24,15 @@ exclude = [
     "/tmp/*",
 ]
 
+include = [
+    "src/**/*",
+    "data/*.json",
+    "data/*.txt",
+    "Cargo.toml",
+    "LICENSE",
+    "README.md",
+]
+
 [dependencies]
 # Async runtime
 tokio = { version = "1.40", features = ["full"] }

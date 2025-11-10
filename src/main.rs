@@ -541,13 +541,48 @@ async fn main() -> Result<()> {
             mass_scanner.scan_serial().await?
         };
 
-        // Display summary
-        println!("{}", MassScanner::generate_summary(&results));
+        // Apply certificate filters if active
+        let filtered_results = MassScanner::filter_results(&args, results);
 
-        // Export if requested
+        // Display filter status if filters were applied
+        if args.has_certificate_filters() {
+            let mut filter_names = Vec::new();
+            if args.filter_expired {
+                filter_names.push("expired");
+            }
+            if args.filter_self_signed {
+                filter_names.push("self-signed");
+            }
+            if args.filter_mismatched {
+                filter_names.push("mismatched");
+            }
+            if args.filter_revoked {
+                filter_names.push("revoked");
+            }
+            if args.filter_untrusted {
+                filter_names.push("untrusted");
+            }
+
+            println!(
+                "\n{} Applied certificate filters: {}",
+                "".cyan(),
+                filter_names.join(", ")
+            );
+            println!(
+                "{} Showing {} of {} targets that match filter criteria\n",
+                "".cyan(),
+                filtered_results.len(),
+                mass_scanner.targets.len()
+            );
+        }
+
+        // Display summary
+        println!("{}", MassScanner::generate_summary(&filtered_results));
+
+        // Export if requested (use filtered results)
         if let Some(json_file) = &args.json {
             MassScanner::export_all_json(
-                &results,
+                &filtered_results,
                 json_file
                     .to_str()
                     .ok_or_else(|| anyhow::anyhow!("Invalid file path"))?,

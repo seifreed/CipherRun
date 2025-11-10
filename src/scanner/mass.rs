@@ -2,6 +2,7 @@
 
 use crate::Args;
 use crate::Result;
+use crate::certificates::status::CertificateStatus;
 use crate::scanner::{ScanResults, Scanner};
 use colored::*;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
@@ -173,6 +174,69 @@ impl MassScanner {
         modified_args.target = Some(target.to_string());
         modified_args.quiet = true; // Suppress banner in mass scan
         Scanner::new(modified_args)
+    }
+
+    /// Filter results based on certificate validation filters
+    ///
+    /// Returns true if the scan result should be included in output.
+    /// If no certificate filters are active, all results pass.
+    /// If filters are active, only results matching the filter criteria pass.
+    fn should_include_result(args: &Args, scan_result: &ScanResults) -> bool {
+        // If no certificate filters are active, include everything
+        if !args.has_certificate_filters() {
+            return true;
+        }
+
+        // Check if certificate analysis exists
+        let cert_analysis = match &scan_result.certificate_chain {
+            Some(analysis) => analysis,
+            None => return false, // No certificate data, filter out
+        };
+
+        // Get certificate info and validation result
+        let cert = match cert_analysis.chain.leaf() {
+            Some(c) => c,
+            None => return false, // No leaf certificate, filter out
+        };
+
+        // Extract hostname from target (format: "hostname:port")
+        let hostname = scan_result.target.split(':').next().unwrap_or(&scan_result.target);
+
+        // Create certificate status
+        let cert_status = CertificateStatus::from_validation_result(
+            &cert_analysis.validation,
+            hostname,
+            cert,
+            cert_analysis.revocation.as_ref(),
+        );
+
+        // Check if status matches any active filters
+        cert_status.matches_filter(args)
+    }
+
+    /// Filter a collection of scan results based on certificate filters
+    ///
+    /// Returns only the results that match the active certificate filters.
+    /// If no filters are active, returns all results.
+    pub fn filter_results(
+        args: &Args,
+        results: Vec<(String, Result<ScanResults>)>,
+    ) -> Vec<(String, Result<ScanResults>)> {
+        // If no certificate filters are active, return all results
+        if !args.has_certificate_filters() {
+            return results;
+        }
+
+        // Filter results based on certificate status
+        results
+            .into_iter()
+            .filter(|(_, result)| {
+                match result {
+                    Ok(scan_result) => Self::should_include_result(args, scan_result),
+                    Err(_) => false, // Filter out failed scans when filters are active
+                }
+            })
+            .collect()
     }
 
     /// Generate summary report

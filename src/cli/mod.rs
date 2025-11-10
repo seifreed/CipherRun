@@ -758,6 +758,36 @@ pub struct Args {
     /// Path to custom JA3S signature database (JSON format)
     #[arg(long = "ja3s-db", value_name = "FILE")]
     pub ja3s_database: Option<PathBuf>,
+
+    // ============ Certificate Validation Filters ============
+    /// Filter: Show only expired certificates
+    #[arg(long = "expired", short = 'x')]
+    pub filter_expired: bool,
+
+    /// Filter: Show only self-signed certificates
+    #[arg(long = "self-signed", short = 's')]
+    pub filter_self_signed: bool,
+
+    /// Filter: Show only hostname mismatched certificates
+    #[arg(long = "mismatched", short = 'm')]
+    pub filter_mismatched: bool,
+
+    /// Filter: Show only revoked certificates
+    #[arg(long = "revoked", short = 'r')]
+    pub filter_revoked: bool,
+
+    /// Filter: Show only untrusted certificates
+    #[arg(long = "untrusted", short = 'u')]
+    pub filter_untrusted: bool,
+
+    // ============ JARM TLS Server Fingerprinting ============
+    /// Calculate JARM TLS server fingerprint
+    #[arg(long = "jarm")]
+    pub jarm: bool,
+
+    /// Path to custom JARM signature database (JSON format)
+    #[arg(long = "jarm-db", value_name = "FILE")]
+    pub jarm_database: Option<PathBuf>,
 }
 
 impl Args {
@@ -889,5 +919,17 @@ impl Args {
             std::time::Duration::from_millis(self.retry_backoff_ms),
             std::time::Duration::from_millis(self.max_backoff_ms),
         ))
+    }
+
+    /// Check if any certificate validation filters are active
+    ///
+    /// Returns true if at least one certificate filter flag is set,
+    /// indicating that scan results should be filtered based on certificate validation status
+    pub fn has_certificate_filters(&self) -> bool {
+        self.filter_expired
+            || self.filter_self_signed
+            || self.filter_mismatched
+            || self.filter_revoked
+            || self.filter_untrusted
     }
 }
