@@ -32,8 +32,6 @@ pub enum PreloadSource {
 struct ApiResponse {
     status: String,
     #[serde(default)]
-    include_subdomains: bool,
-    #[serde(default)]
     chrome: Option<ChromeStatus>,
 }
 
@@ -221,14 +219,27 @@ impl HstsPreloadChecker {
 
     /// Wait for rate limit before making request
     async fn wait_for_rate_limit(&self) {
-        if let Ok(mut last_request) = self.last_request.lock() {
+        let wait_time = if let Ok(last_request) = self.last_request.lock() {
             if let Some(last) = *last_request {
                 let elapsed = last.elapsed();
                 if elapsed < self.rate_limit_duration {
-                    let wait_time = self.rate_limit_duration - elapsed;
-                    tokio::time::sleep(wait_time).await;
+                    Some(self.rate_limit_duration - elapsed)
+                } else {
+                    None
                 }
+            } else {
+                None
             }
+        } else {
+            None
+        };
+
+        if let Some(duration) = wait_time {
+            tokio::time::sleep(duration).await;
+        }
+
+        // Update last request time after waiting
+        if let Ok(mut last_request) = self.last_request.lock() {
             *last_request = Some(Instant::now());
         }
     }
@@ -425,7 +436,6 @@ mod tests {
     async fn test_api_conversion() {
         let api_response = ApiResponse {
             status: "preloaded".to_string(),
-            include_subdomains: true,
             chrome: Some(ChromeStatus {
                 status: "preloaded".to_string(),
             }),

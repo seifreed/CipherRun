@@ -134,7 +134,7 @@ impl AnycastScanner {
     /// Scan a single IP address with SNI=hostname
     async fn scan_single_ip(&self, ip: &IpAddr) -> Result<ScanResults> {
         // Create target with specific IP
-        let target = Target {
+        let _target = Target {
             hostname: self.hostname.clone(),
             port: self.port,
             ip_addresses: vec![*ip],

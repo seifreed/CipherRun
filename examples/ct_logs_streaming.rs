@@ -6,7 +6,9 @@
 // Run with:
 // cargo run --example ct_logs_streaming
 
-use cipherrun::ct_logs::{CtConfig, CtStreamer};
+#![allow(clippy::field_reassign_with_default)]
+
+use cipherrun::ct_logs::CtConfig;
 use std::time::Duration;
 
 #[tokio::main]
@@ -20,13 +22,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Example 1: Streaming from current position");
     println!("This will start streaming new certificates as they are added to CT logs.\n");
 
-    let config = CtConfig {
+    let _config = CtConfig {
         start_from_beginning: false, // Start from current tree size
         custom_indices: Default::default(),
         poll_interval: Duration::from_secs(60),
         batch_size: 1000,
-        expected_unique_certs: 100_000,
-        bloom_fp_rate: 0.0001,
         json_output: false,
         silent: false,
     };
@@ -40,13 +40,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\nExample 2: Streaming from beginning with JSON output");
     println!("This will replay all certificates from the beginning of the logs.\n");
 
-    let config_beginning = CtConfig {
+    let _config_beginning = CtConfig {
         start_from_beginning: true, // Start from index 0
         custom_indices: Default::default(),
         poll_interval: Duration::from_secs(60),
         batch_size: 1000,
-        expected_unique_certs: 1_000_000,
-        bloom_fp_rate: 0.0001,
         json_output: true, // Output as JSON (one entry per line)
         silent: true,      // No stats output
     };

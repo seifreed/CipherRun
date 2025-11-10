@@ -259,6 +259,7 @@ pub struct ProbeStatistics {
 
 impl ProbeStatistics {
     /// Create statistics from probe results
+    #[allow(clippy::field_reassign_with_default)]
     pub fn from_results(results: &[(String, ProbeStatus)]) -> Self {
         let mut stats = ProbeStatistics::default();
         stats.total_targets = results.len();

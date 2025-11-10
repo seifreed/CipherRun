@@ -387,8 +387,10 @@ mod tests {
             is_untrusted: false,
         };
 
-        let mut args = Args::default();
-        args.filter_expired = true;
+        let args = Args {
+            filter_expired: true,
+            ..Default::default()
+        };
 
         assert!(
             status.matches_filter(&args),
@@ -417,9 +419,11 @@ mod tests {
             is_untrusted: false,
         };
 
-        let mut args = Args::default();
-        args.filter_expired = true;
-        args.filter_self_signed = true;
+        let args = Args {
+            filter_expired: true,
+            filter_self_signed: true,
+            ..Default::default()
+        };
 
         assert!(
             status.matches_filter(&args),

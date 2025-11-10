@@ -54,8 +54,10 @@ pub struct StatsTracker {
 impl StatsTracker {
     /// Create a new statistics tracker
     pub fn new() -> Self {
-        let mut stats = Stats::default();
-        stats.start_time = Some(Instant::now());
+        let stats = Stats {
+            start_time: Some(Instant::now()),
+            ..Default::default()
+        };
 
         Self {
             stats: Arc::new(Mutex::new(stats)),

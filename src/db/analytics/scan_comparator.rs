@@ -591,6 +591,7 @@ impl ScanComparator {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn generate_summary(
         &self,
         scan_1: &ScanRecord,

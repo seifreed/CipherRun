@@ -324,17 +324,14 @@ mod tests {
 
     #[test]
     fn test_score_calculation() {
-        let mut issues = Vec::new();
-
-        // Add a high severity issue
-        issues.push(HeaderIssue {
+        let issues = vec![HeaderIssue {
             header_name: "HSTS".to_string(),
             severity: crate::http::headers::IssueSeverity::High,
             issue_type: IssueType::Missing,
             description: "Missing HSTS".to_string(),
             recommendation: "Add HSTS".to_string(),
             preload_status: None,
-        });
+        }];
 
         let score = HeaderAnalyzer::calculate_score(&issues);
         assert_eq!(score, 85); // 100 - 15

@@ -6,7 +6,6 @@
 /// - DNS enumeration and reconnaissance
 /// - Testing behind corporate proxies with custom DNS
 /// - Avoiding DNS spoofing or poisoning from ISP DNS
-
 use crate::Result;
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::str::FromStr;

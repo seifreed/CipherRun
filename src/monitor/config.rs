@@ -140,6 +140,7 @@ impl MonitorConfig {
     }
 
     /// Create default configuration
+    #[allow(clippy::should_implement_trait)]
     pub fn default() -> Self {
         Self {
             monitor: MonitorSettings::default(),

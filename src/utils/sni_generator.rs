@@ -29,7 +29,7 @@ impl SniGenerator {
         label.push(Self::random_alphanum_char());
 
         // Middle characters can include hyphens
-        for i in 1..length - 1 {
+        for _i in 1..length - 1 {
             if rng.gen_bool(0.1) {
                 // 10% chance of hyphen
                 label.push('-');

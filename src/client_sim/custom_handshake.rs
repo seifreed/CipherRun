@@ -395,12 +395,6 @@ pub async fn perform_custom_handshake(
     parse_server_hello_extended(&buffer[..n])
 }
 
-/// Parse ServerHello to extract protocol and cipher
-fn parse_server_hello(data: &[u8]) -> Result<(Protocol, String)> {
-    let info = parse_server_hello_extended(data)?;
-    Ok((info.protocol, info.cipher))
-}
-
 /// Parse ServerHello with extended information (ALPN, key exchange)
 fn parse_server_hello_extended(data: &[u8]) -> Result<ServerHelloInfo> {
     // Look for ServerHello (0x02)

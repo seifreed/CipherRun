@@ -63,7 +63,7 @@ async fn websocket_handler(socket: WebSocket, state: Arc<WsState>) {
                     debug!("Client sent close message");
                     break;
                 }
-                Ok(Message::Ping(data)) => {
+                Ok(Message::Ping(_data)) => {
                     debug!("Received ping, sending pong");
                     // Axum automatically handles pong responses
                 }

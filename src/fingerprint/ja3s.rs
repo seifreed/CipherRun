@@ -191,7 +191,7 @@ pub struct CdnDetection {
 impl CdnDetection {
     /// Detect CDN from JA3S fingerprint and HTTP headers
     pub fn from_ja3s_and_headers(
-        ja3s: &Ja3sFingerprint,
+        _ja3s: &Ja3sFingerprint,
         ja3s_match: Option<&Ja3sSignature>,
         http_headers: &HashMap<String, String>,
     ) -> Self {

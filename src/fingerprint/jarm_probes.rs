@@ -361,11 +361,11 @@ fn reorder_ciphers(mut ciphers: Vec<[u8; 2]>, order: CipherOrder) -> Vec<[u8; 2]
                 }
             } else {
                 // Reverse left half, keep right half in order
-                for i in (0..middle).rev() {
-                    result.push(ciphers[i]);
+                for cipher in ciphers.iter().take(middle).rev() {
+                    result.push(*cipher);
                 }
-                for i in middle..len {
-                    result.push(ciphers[i]);
+                for cipher in ciphers.iter().skip(middle).take(len - middle) {
+                    result.push(*cipher);
                 }
             }
 
@@ -588,12 +588,12 @@ mod tests {
         // Verify probe 1
         assert_eq!(probes[0].options.version, TlsVersion::TLS12);
         assert_eq!(probes[0].options.cipher_order, CipherOrder::Forward);
-        assert_eq!(probes[0].options.grease, false);
+        assert!(!probes[0].options.grease);
 
         // Verify probe 10
         assert_eq!(probes[9].options.version, TlsVersion::TLS13);
         assert_eq!(probes[9].options.cipher_order, CipherOrder::MiddleOut);
-        assert_eq!(probes[9].options.grease, true);
+        assert!(probes[9].options.grease);
     }
 
     #[test]

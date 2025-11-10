@@ -83,7 +83,7 @@ impl TrendAnalyzer {
 
         for scan in &filtered_scans {
             if let Some(score) = scan.overall_score {
-                let score_u8 = score.max(0).min(100) as u8;
+                let score_u8 = score.clamp(0, 100) as u8;
                 data_points.push((scan.scan_timestamp, score_u8));
                 scores.push(score_u8);
             }
@@ -475,7 +475,7 @@ impl TrendAnalyzer {
         let next_x = data_points.len() as f64;
         let forecast = slope * next_x + intercept;
 
-        Some(forecast.max(0.0).min(100.0).round() as u8)
+        Some(forecast.clamp(0.0, 100.0).round() as u8)
     }
 
     fn generate_protocol_summary(

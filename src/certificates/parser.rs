@@ -642,6 +642,7 @@ impl CertificateParser {
     /// Check if certificate uses a Debian weak key (CVE-2008-0166)
     ///
     /// Wrapper around the debian_keys module detector
+    #[allow(dead_code)]
     fn check_debian_weak_key_cert(&self, cert_info: &CertificateInfo) -> Result<Option<bool>> {
         if cert_info.der_bytes.is_empty() {
             return Ok(None);
@@ -742,7 +743,10 @@ mod tests {
         // Note: This is a unit test that would require a real certificate with
         // EV policy OIDs to fully validate. For now, we just ensure the function
         // signature is correct and the OID list is populated.
-        assert!(!EV_POLICY_OIDS.is_empty());
+        #[allow(clippy::absurd_extreme_comparisons)]
+        {
+            assert!(!EV_POLICY_OIDS.is_empty());
+        }
         assert!(EV_POLICY_OIDS.len() > 20); // Should have many known EV OIDs
     }
 

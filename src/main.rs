@@ -360,8 +360,6 @@ async fn main() -> Result<()> {
             custom_indices,
             poll_interval: std::time::Duration::from_secs(args.ct_poll_interval),
             batch_size: args.ct_batch_size,
-            expected_unique_certs: args.ct_expected_certs,
-            bloom_fp_rate: 0.0001,
             json_output: args.ct_json,
             silent: args.ct_silent,
         };
@@ -651,7 +649,7 @@ async fn main() -> Result<()> {
             use cipherrun::policy::evaluator::PolicyEvaluator;
             use cipherrun::policy::parser::PolicyLoader;
 
-            println!("\n{}", "Evaluating Policy...".to_string());
+            println!("\n{}", "Evaluating Policy...");
 
             let loader = PolicyLoader::new(
                 policy_path
@@ -669,7 +667,7 @@ async fn main() -> Result<()> {
 
             // Exit with error code if --enforce is set and violations found
             if args.enforce && policy_result.has_violations() {
-                eprintln!("\n{}", "Policy evaluation failed - exiting with error code 1".to_string());
+                eprintln!("\n{}", "Policy evaluation failed - exiting with error code 1");
                 std::process::exit(1);
             }
         }

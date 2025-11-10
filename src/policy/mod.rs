@@ -239,7 +239,8 @@ impl PolicyResult {
         match format {
             "json" => Ok(serde_json::to_string_pretty(self)?),
             "csv" => self.to_csv(),
-            "terminal" | _ => self.to_terminal(),
+            "terminal" => self.to_terminal(),
+            _ => self.to_terminal(),
         }
     }
 

@@ -23,7 +23,6 @@ use tokio::time::{timeout, Instant};
 pub struct PaddingOracle2016Tester {
     target: Target,
     connect_timeout: Duration,
-    read_timeout: Duration,
 }
 
 impl PaddingOracle2016Tester {
@@ -32,7 +31,6 @@ impl PaddingOracle2016Tester {
         Self {
             target,
             connect_timeout: Duration::from_secs(10),
-            read_timeout: Duration::from_secs(5),
         }
     }
 

@@ -272,6 +272,6 @@ mod tests {
         // Verify fields are present
         let fields = &message["attachments"][0]["fields"];
         assert!(fields.is_array());
-        assert!(fields.as_array().unwrap().len() > 0);
+        assert!(!fields.as_array().unwrap().is_empty());
     }
 }

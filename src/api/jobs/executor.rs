@@ -195,6 +195,7 @@ impl ScanExecutor {
     }
 
     /// Convert ScanOptions to Args
+    #[allow(clippy::field_reassign_with_default)]
     fn options_to_args(target: &str, options: &ScanOptions) -> Result<Args> {
         let mut args = Args::default();
 

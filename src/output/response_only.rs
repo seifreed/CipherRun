@@ -17,7 +17,6 @@
 /// TLS 1.3
 /// TLS_AES_128_GCM_SHA256
 /// ```
-
 /// Response-only output formatter
 pub struct ResponseOnlyFormatter;
 

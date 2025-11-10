@@ -6,7 +6,6 @@
 /// - Reducing load on target systems
 /// - Respecting rate limits of target services
 /// - Preventing connection throttling or blocking
-
 use anyhow::Result;
 use std::sync::Arc;
 use std::time::{Duration, Instant};

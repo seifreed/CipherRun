@@ -249,6 +249,7 @@ impl Ja3Database {
     }
 
     /// Load default embedded database
+    #[allow(clippy::should_implement_trait)]
     pub fn default() -> Self {
         let mut signatures = HashMap::new();
 

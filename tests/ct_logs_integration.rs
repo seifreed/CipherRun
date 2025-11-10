@@ -61,8 +61,6 @@ fn test_ct_config_defaults() {
 
     assert!(!config.start_from_beginning);
     assert_eq!(config.batch_size, 1000);
-    assert_eq!(config.expected_unique_certs, 1_000_000);
-    assert!((config.bloom_fp_rate - 0.0001).abs() < f64::EPSILON);
 }
 
 #[test]

@@ -1,6 +1,7 @@
 // Client/Server Hello Raw Data Export Module
 // Exports raw handshake data in various formats for analysis
 
+use base64::{Engine as _, engine::general_purpose};
 use serde::{Deserialize, Serialize};
 
 /// Hello exporter for raw handshake data
@@ -21,7 +22,7 @@ impl HelloExporter {
     fn export_bytes(data: &[u8], format: ExportFormat) -> String {
         match format {
             ExportFormat::Hex => hex::encode(data),
-            ExportFormat::Base64 => base64::encode(data),
+            ExportFormat::Base64 => general_purpose::STANDARD.encode(data),
             ExportFormat::HexDump => Self::hex_dump(data),
             ExportFormat::Binary => {
                 // Return as-is (for writing to file)
@@ -41,8 +42,8 @@ impl HelloExporter {
 
             // Hex bytes (16 per line)
             let end = (offset + 16).min(data.len());
-            for i in offset..end {
-                output.push_str(&format!("{:02x} ", data[i]));
+            for (i, byte) in data.iter().enumerate().take(end).skip(offset) {
+                output.push_str(&format!("{:02x} ", byte));
                 if i == offset + 7 {
                     output.push(' '); // Extra space at midpoint
                 }
@@ -59,8 +60,8 @@ impl HelloExporter {
 
             // ASCII representation
             output.push_str(" |");
-            for i in offset..end {
-                let c = data[i];
+            for byte in data.iter().take(end).skip(offset) {
+                let c = *byte;
                 if (32..=126).contains(&c) {
                     output.push(c as char);
                 } else {
@@ -84,13 +85,13 @@ impl HelloExporter {
         HandshakeExport {
             client_hello: ClientHelloExport {
                 hex: hex::encode(client_hello),
-                base64: base64::encode(client_hello),
+                base64: general_purpose::STANDARD.encode(client_hello),
                 length: client_hello.len(),
                 format: format.clone(),
             },
             server_hello: ServerHelloExport {
                 hex: hex::encode(server_hello),
-                base64: base64::encode(server_hello),
+                base64: general_purpose::STANDARD.encode(server_hello),
                 length: server_hello.len(),
                 format: format.clone(),
             },
@@ -265,7 +266,7 @@ mod tests {
     fn test_export_base64() {
         let data = vec![0x16, 0x03, 0x01, 0x00, 0x05];
         let base64 = HelloExporter::export_client_hello(&data, ExportFormat::Base64);
-        assert!(base64.len() > 0);
+        assert!(!base64.is_empty());
     }
 
     #[test]

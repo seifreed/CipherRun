@@ -721,10 +721,6 @@ pub struct Args {
     #[arg(long = "ct-batch-size", requires = "ct_logs", default_value = "1000")]
     pub ct_batch_size: u64,
 
-    /// Expected number of unique certificates for deduplication (default: 1000000)
-    #[arg(long = "ct-expected-certs", requires = "ct_logs", default_value = "1000000")]
-    pub ct_expected_certs: usize,
-
     /// Output CT log entries as JSON (one per line)
     #[arg(long = "ct-json", requires = "ct_logs")]
     pub ct_json: bool,

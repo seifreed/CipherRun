@@ -228,7 +228,7 @@ struct LogState {
 
 #[derive(Debug, Deserialize)]
 struct UsableState {
-    timestamp: Option<String>,
+    // Empty struct used as marker - presence indicates log is usable
 }
 
 #[cfg(test)]

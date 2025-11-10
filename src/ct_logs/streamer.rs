@@ -1,9 +1,9 @@
 // CT Logs Streamer - Real-time certificate streaming engine
 //
-// Implements continuous streaming of CT logs with deduplication and statistics
+// Implements continuous streaming of CT logs with statistics
 
 use super::{
-    client::CtClient, deduplicator::Deduplicator, parser::Parser, sources::SourceManager,
+    client::CtClient, parser::Parser, sources::SourceManager,
     stats::StatsTracker, CtLogEntry, Result,
 };
 use crate::error::TlsError;
@@ -36,10 +36,6 @@ pub struct CtConfig {
     pub poll_interval: Duration,
     /// Batch size for fetching entries
     pub batch_size: u64,
-    /// Expected number of unique certificates (for bloom filter sizing)
-    pub expected_unique_certs: usize,
-    /// False positive rate for bloom filter
-    pub bloom_fp_rate: f64,
     /// Enable JSON output (one entry per line)
     pub json_output: bool,
     /// Silent mode (no stats output)
@@ -53,8 +49,6 @@ impl Default for CtConfig {
             custom_indices: HashMap::new(),
             poll_interval: DEFAULT_POLL_INTERVAL,
             batch_size: DEFAULT_BATCH_SIZE,
-            expected_unique_certs: 1_000_000,
-            bloom_fp_rate: 0.0001,
             json_output: false,
             silent: false,
         }
@@ -65,8 +59,6 @@ impl Default for CtConfig {
 pub struct CtStreamer {
     config: CtConfig,
     source_manager: SourceManager,
-    client: CtClient,
-    deduplicator: Deduplicator,
     stats: StatsTracker,
     shutdown: Arc<AtomicBool>,
 }
@@ -75,7 +67,7 @@ impl CtStreamer {
     /// Create a new CT log streamer
     pub async fn new(config: CtConfig) -> Result<Self> {
         // Validate batch size
-        let batch_size = config.batch_size.min(MAX_BATCH_SIZE).max(1);
+        let batch_size = config.batch_size.clamp(1, MAX_BATCH_SIZE);
         let mut config = config;
         config.batch_size = batch_size;
 
@@ -94,14 +86,8 @@ impl CtStreamer {
             source_manager.total_sources()
         );
 
-        // Initialize deduplicator
-        let deduplicator = Deduplicator::new(config.expected_unique_certs, config.bloom_fp_rate);
-
         // Initialize stats tracker
         let stats = StatsTracker::new();
-
-        // Initialize client
-        let client = CtClient::new();
 
         // Setup shutdown signal
         let shutdown = Arc::new(AtomicBool::new(false));
@@ -109,8 +95,6 @@ impl CtStreamer {
         Ok(Self {
             config,
             source_manager,
-            client,
-            deduplicator,
             stats,
             shutdown,
         })
@@ -231,6 +215,7 @@ impl CtStreamer {
     }
 
     /// Stream entries from a single source
+    #[allow(clippy::too_many_arguments)]
     async fn stream_source(
         source_id: String,
         source_url: String,

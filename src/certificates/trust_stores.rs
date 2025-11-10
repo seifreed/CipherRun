@@ -49,6 +49,7 @@ impl TrustStore {
     }
 
     /// Get store identifier for internal lookups
+    #[allow(dead_code)]
     fn store_id(&self) -> &'static str {
         match self {
             TrustStore::Mozilla => "mozilla",

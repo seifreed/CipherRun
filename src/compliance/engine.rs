@@ -137,6 +137,7 @@ mod tests {
 
         let engine = ComplianceEngine::new(framework);
 
+        #[allow(clippy::field_reassign_with_default)]
         let mut results = ScanResults::default();
         results.target = "test.com:443".to_string();
         results.protocols = vec![
@@ -202,6 +203,7 @@ mod tests {
 
         let engine = ComplianceEngine::new(framework);
 
+        #[allow(clippy::field_reassign_with_default)]
         let mut results = ScanResults::default();
         results.target = "test.com:443".to_string();
         results.protocols = vec![ProtocolTestResult {

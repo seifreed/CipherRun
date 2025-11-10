@@ -282,8 +282,8 @@ impl PreHandshakeScanner {
 
             // Parse TLS record header
             let content_type = data[offset];
-            let version_major = data[offset + 1];
-            let version_minor = data[offset + 2];
+            let _version_major = data[offset + 1];
+            let _version_minor = data[offset + 2];
             let record_length = u16::from_be_bytes([data[offset + 3], data[offset + 4]]) as usize;
 
             offset += 5;

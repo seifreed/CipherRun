@@ -691,9 +691,7 @@ impl PoodleTester {
         record.extend_from_slice(&[0xff; 16]);
 
         // Valid padding: PKCS#7 - 7 bytes of 0x06
-        for _ in 0..7 {
-            record.push(0x06);
-        }
+        record.extend(std::iter::repeat_n(0x06, 7));
 
         record
     }

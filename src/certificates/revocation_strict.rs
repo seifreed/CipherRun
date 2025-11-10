@@ -7,7 +7,6 @@
 /// - Ensuring revocation information is always available
 /// - Failing fast on connectivity or infrastructure issues
 /// - Meeting security standards that require successful revocation verification
-
 use super::revocation::{RevocationChecker, RevocationResult, RevocationStatus};
 use crate::certificates::parser::CertificateInfo;
 use crate::Result;

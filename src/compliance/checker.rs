@@ -379,6 +379,7 @@ mod tests {
             custom_params: HashMap::new(),
         };
 
+        #[allow(clippy::field_reassign_with_default)]
         let mut results = ScanResults::default();
         results.protocols = vec![
             ProtocolTestResult {
@@ -423,6 +424,7 @@ mod tests {
             custom_params: HashMap::new(),
         };
 
+        #[allow(clippy::field_reassign_with_default)]
         let mut results = ScanResults::default();
         results.protocols = vec![
             ProtocolTestResult {

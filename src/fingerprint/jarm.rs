@@ -171,7 +171,7 @@ impl JarmFingerprinter {
         // Connect with timeout
         let stream = match timeout(self.timeout, TcpStream::connect(addr)).await {
             Ok(Ok(s)) => s,
-            Ok(Err(e)) => return Ok("|||".to_string()), // Connection failed
+            Ok(Err(_e)) => return Ok("|||".to_string()), // Connection failed
             Err(_) => return Ok("|||".to_string()), // Timeout
         };
 
@@ -180,7 +180,7 @@ impl JarmFingerprinter {
 
         // Send Client Hello
         let mut stream = stream;
-        if let Err(_) = timeout(self.timeout, stream.write_all(&client_hello)).await {
+        if timeout(self.timeout, stream.write_all(&client_hello)).await.is_err() {
             return Ok("|||".to_string());
         }
 
@@ -200,7 +200,7 @@ impl JarmFingerprinter {
 }
 
 /// Parse ServerHello response
-fn parse_server_hello(data: &[u8], probe: &JarmProbe) -> Result<String> {
+fn parse_server_hello(data: &[u8], _probe: &JarmProbe) -> Result<String> {
     if data.is_empty() {
         return Ok("|||".to_string());
     }

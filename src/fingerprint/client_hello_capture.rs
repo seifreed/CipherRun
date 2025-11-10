@@ -355,7 +355,7 @@ impl ClientHelloCapture {
 
         // Extensions
         if !self.extensions.is_empty() {
-            let extensions_start = bytes.len() + 2;
+            let _extensions_start = bytes.len() + 2;
             let mut extensions_bytes = Vec::new();
 
             for ext in &self.extensions {

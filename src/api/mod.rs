@@ -25,7 +25,10 @@ mod tests {
 
     #[test]
     fn test_api_version() {
-        assert!(!API_VERSION.is_empty());
+        #[allow(clippy::absurd_extreme_comparisons)]
+        {
+            assert!(!API_VERSION.is_empty());
+        }
     }
 
     #[test]

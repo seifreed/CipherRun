@@ -30,10 +30,7 @@ pub async fn get_stats(State(state): State<Arc<AppState>>) -> Json<StatsResponse
     // Get top domains from database if available
     let top_domains = if let Some(db) = &state.db_pool {
         // Query top 10 domains from database
-        match get_top_domains_from_db(db, 10).await {
-            Ok(domains) => domains,
-            Err(_) => vec![], // Return empty on error
-        }
+        get_top_domains_from_db(db, 10).await.unwrap_or_default()
     } else {
         vec![] // No database configured
     };

@@ -22,10 +22,13 @@ use governor::{
 use std::num::NonZeroU32;
 use std::sync::Arc;
 
+/// Type alias for the governor rate limiter
+type Limiter = Arc<GovernorRateLimiter<NotKeyed, InMemoryState, DefaultClock>>;
+
 /// Per-key rate limiter storage
 pub struct PerKeyRateLimiter {
     /// Storage for per-key rate limiters
-    limiters: Arc<DashMap<String, Arc<GovernorRateLimiter<NotKeyed, InMemoryState, DefaultClock>>>>,
+    limiters: Arc<DashMap<String, Limiter>>,
     /// Default quota configuration
     default_quota: Quota,
     /// Requests per minute limit
