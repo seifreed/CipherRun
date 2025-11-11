@@ -2,7 +2,6 @@
 ///
 /// This test file verifies the rate limiting functionality,
 /// which adds configurable delays between connections.
-
 #[cfg(test)]
 mod rate_limiter_tests {
     use cipherrun::utils::rate_limiter::{RateLimiter, parse_delay};
@@ -76,14 +75,8 @@ mod rate_limiter_tests {
 
     #[test]
     fn test_parse_delay_milliseconds() {
-        assert_eq!(
-            parse_delay("500ms").unwrap(),
-            Duration::from_millis(500)
-        );
-        assert_eq!(
-            parse_delay("1000ms").unwrap(),
-            Duration::from_secs(1)
-        );
+        assert_eq!(parse_delay("500ms").unwrap(), Duration::from_millis(500));
+        assert_eq!(parse_delay("1000ms").unwrap(), Duration::from_secs(1));
         assert_eq!(parse_delay("0ms").unwrap(), Duration::ZERO);
     }
 
@@ -91,27 +84,15 @@ mod rate_limiter_tests {
     fn test_parse_delay_seconds() {
         assert_eq!(parse_delay("1s").unwrap(), Duration::from_secs(1));
         assert_eq!(parse_delay("2s").unwrap(), Duration::from_secs(2));
-        assert_eq!(
-            parse_delay("0.5s").unwrap(),
-            Duration::from_millis(500)
-        );
-        assert_eq!(
-            parse_delay("1.5s").unwrap(),
-            Duration::from_millis(1500)
-        );
+        assert_eq!(parse_delay("0.5s").unwrap(), Duration::from_millis(500));
+        assert_eq!(parse_delay("1.5s").unwrap(), Duration::from_millis(1500));
     }
 
     #[test]
     fn test_parse_delay_plain_number() {
         // Plain numbers default to milliseconds
-        assert_eq!(
-            parse_delay("500").unwrap(),
-            Duration::from_millis(500)
-        );
-        assert_eq!(
-            parse_delay("1000").unwrap(),
-            Duration::from_secs(1)
-        );
+        assert_eq!(parse_delay("500").unwrap(), Duration::from_millis(500));
+        assert_eq!(parse_delay("1000").unwrap(), Duration::from_secs(1));
     }
 
     #[test]
@@ -120,10 +101,7 @@ mod rate_limiter_tests {
             parse_delay("  500ms  ").unwrap(),
             Duration::from_millis(500)
         );
-        assert_eq!(
-            parse_delay("  2s  ").unwrap(),
-            Duration::from_secs(2)
-        );
+        assert_eq!(parse_delay("  2s  ").unwrap(), Duration::from_secs(2));
     }
 
     #[test]
@@ -135,14 +113,8 @@ mod rate_limiter_tests {
 
     #[test]
     fn test_parse_delay_floating_point() {
-        assert_eq!(
-            parse_delay("2.5s").unwrap(),
-            Duration::from_millis(2500)
-        );
-        assert_eq!(
-            parse_delay("0.1s").unwrap(),
-            Duration::from_millis(100)
-        );
+        assert_eq!(parse_delay("2.5s").unwrap(), Duration::from_millis(2500));
+        assert_eq!(parse_delay("0.1s").unwrap(), Duration::from_millis(100));
     }
 
     #[test]
@@ -189,14 +161,8 @@ mod rate_limiter_tests {
         assert_eq!(parse_delay("0.1s").unwrap(), Duration::from_millis(100));
 
         // Large delays
-        assert_eq!(
-            parse_delay("60s").unwrap(),
-            Duration::from_secs(60)
-        );
-        assert_eq!(
-            parse_delay("5000ms").unwrap(),
-            Duration::from_secs(5)
-        );
+        assert_eq!(parse_delay("60s").unwrap(), Duration::from_secs(60));
+        assert_eq!(parse_delay("5000ms").unwrap(), Duration::from_secs(5));
     }
 
     #[tokio::test]

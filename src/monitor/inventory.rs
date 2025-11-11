@@ -1,7 +1,7 @@
 // Certificate Inventory - Domain management
 
-use crate::certificates::parser::CertificateInfo;
 use crate::Result;
+use crate::certificates::parser::CertificateInfo;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -125,10 +125,7 @@ impl CertificateInventory {
 
     /// Get all enabled domains
     pub fn enabled_domains(&self) -> Vec<&MonitoredDomain> {
-        self.domains
-            .values()
-            .filter(|d| d.enabled)
-            .collect()
+        self.domains.values().filter(|d| d.enabled).collect()
     }
 
     /// Get all domains
@@ -175,9 +172,9 @@ impl CertificateInventory {
                     tracing::warn!("Invalid host:port format: {}", host_port);
                     continue;
                 }
-                let port = hp[1].parse::<u16>().map_err(|e| {
-                    anyhow::anyhow!("Invalid port number in {}: {}", host_port, e)
-                })?;
+                let port = hp[1]
+                    .parse::<u16>()
+                    .map_err(|e| anyhow::anyhow!("Invalid port number in {}: {}", host_port, e))?;
                 (hp[0].to_string(), port)
             } else {
                 (host_port.to_string(), 443)
@@ -190,8 +187,7 @@ impl CertificateInventory {
                 3600 // Default 1 hour
             };
 
-            let domain = MonitoredDomain::new(hostname, port)
-                .with_interval(interval_seconds);
+            let domain = MonitoredDomain::new(hostname, port).with_interval(interval_seconds);
 
             self.add_domain(domain)?;
         }
@@ -279,7 +275,7 @@ fn parse_interval(interval_str: &str) -> Result<u64> {
         _ => {
             return Err(
                 anyhow::anyhow!("Invalid interval unit: {} (use s, m, h, or d)", unit).into(),
-            )
+            );
         }
     };
 
@@ -289,8 +285,8 @@ fn parse_interval(interval_str: &str) -> Result<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::NamedTempFile;
     use std::io::Write;
+    use tempfile::NamedTempFile;
 
     #[test]
     fn test_monitored_domain_new() {

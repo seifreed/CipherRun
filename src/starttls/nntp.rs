@@ -25,11 +25,12 @@ impl NntpNegotiator {
         let mut response = String::new();
         reader.read_line(&mut response).await?;
 
-        let code = response[0..3].parse::<u16>().map_err(|_| {
-            crate::error::TlsError::ParseError {
-                message: "Invalid NNTP response code".to_string(),
-            }
-        })?;
+        let code =
+            response[0..3]
+                .parse::<u16>()
+                .map_err(|_| crate::error::TlsError::ParseError {
+                    message: "Invalid NNTP response code".to_string(),
+                })?;
 
         Ok((code, response))
     }

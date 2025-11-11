@@ -31,6 +31,37 @@ pub fn generate_xml_report(results: &ScanResults) -> Result<String> {
             "      <supported>{}</supported>\n",
             protocol.supported
         ));
+
+        // Secure renegotiation
+        if let Some(secure_reneg) = protocol.secure_renegotiation {
+            xml.push_str(&format!(
+                "      <secure_renegotiation>{}</secure_renegotiation>\n",
+                secure_reneg
+            ));
+        }
+
+        // Session resumption details
+        if let Some(caching) = protocol.session_resumption_caching {
+            xml.push_str(&format!(
+                "      <session_resumption_caching>{}</session_resumption_caching>\n",
+                caching
+            ));
+        }
+        if let Some(tickets) = protocol.session_resumption_tickets {
+            xml.push_str(&format!(
+                "      <session_resumption_tickets>{}</session_resumption_tickets>\n",
+                tickets
+            ));
+        }
+
+        // Heartbeat extension
+        if let Some(heartbeat) = protocol.heartbeat_enabled {
+            xml.push_str(&format!(
+                "      <heartbeat_enabled>{}</heartbeat_enabled>\n",
+                heartbeat
+            ));
+        }
+
         xml.push_str("    </protocol>\n");
     }
     xml.push_str("  </protocols>\n");
@@ -79,6 +110,10 @@ pub fn generate_xml_report(results: &ScanResults) -> Result<String> {
             xml.push_str(&format!(
                 "    <valid_to>{}</valid_to>\n",
                 escape_xml(&leaf.not_after)
+            ));
+            xml.push_str(&format!(
+                "    <extended_validation>{}</extended_validation>\n",
+                leaf.extended_validation
             ));
         }
         xml.push_str(&format!(

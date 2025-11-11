@@ -4,9 +4,9 @@
 // transient network failures. It distinguishes between retriable errors (e.g., connection
 // timeouts, connection resets) and non-retriable errors (e.g., connection refused, DNS failures).
 
+use anyhow::Result;
 use std::future::Future;
 use std::time::Duration;
-use anyhow::Result;
 
 /// Configuration for retry behavior with exponential backoff.
 ///
@@ -138,10 +138,7 @@ impl RetryConfig {
 /// # Ok(())
 /// # }
 /// ```
-pub async fn retry_with_backoff<F, Fut, T>(
-    config: &RetryConfig,
-    operation: F,
-) -> Result<T>
+pub async fn retry_with_backoff<F, Fut, T>(config: &RetryConfig, operation: F) -> Result<T>
 where
     F: Fn() -> Fut,
     Fut: Future<Output = Result<T>>,
@@ -153,20 +150,14 @@ where
         match operation().await {
             Ok(result) => {
                 if retries > 0 {
-                    tracing::debug!(
-                        "Operation succeeded after {} retry(ies)",
-                        retries
-                    );
+                    tracing::debug!("Operation succeeded after {} retry(ies)", retries);
                 }
                 return Ok(result);
             }
             Err(e) => {
                 // Check if we should retry this error
                 if !is_retriable(&e) {
-                    tracing::debug!(
-                        "Non-retriable error encountered: {}",
-                        e
-                    );
+                    tracing::debug!("Non-retriable error encountered: {}", e);
                     return Err(e);
                 }
 

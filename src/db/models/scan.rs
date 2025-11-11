@@ -62,8 +62,7 @@ mod tests {
 
     #[test]
     fn test_scan_record_with_rating() {
-        let scan = ScanRecord::new("example.com".to_string(), 443)
-            .with_rating("A".to_string(), 90);
+        let scan = ScanRecord::new("example.com".to_string(), 443).with_rating("A".to_string(), 90);
 
         assert_eq!(scan.overall_grade, Some("A".to_string()));
         assert_eq!(scan.overall_score, Some(90));

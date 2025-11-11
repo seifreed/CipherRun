@@ -42,8 +42,8 @@ impl CtClient {
             .retry_request(|| async { self.client.get(&url).send().await })
             .await?;
 
-        let sth: SignedTreeHead = response.json().await.map_err(|e| {
-            TlsError::ParseError { message: format!("Failed to parse STH response: {}", e) }
+        let sth: SignedTreeHead = response.json().await.map_err(|e| TlsError::ParseError {
+            message: format!("Failed to parse STH response: {}", e),
         })?;
 
         Ok(sth.tree_size)
@@ -69,9 +69,10 @@ impl CtClient {
             .retry_request(|| async { self.client.get(&url).send().await })
             .await?;
 
-        let entries_response: EntriesResponse = response.json().await.map_err(|e| {
-            TlsError::ParseError { message: format!("Failed to parse entries response: {}", e) }
-        })?;
+        let entries_response: EntriesResponse =
+            response.json().await.map_err(|e| TlsError::ParseError {
+                message: format!("Failed to parse entries response: {}", e),
+            })?;
 
         Ok(entries_response.entries)
     }
@@ -119,7 +120,7 @@ impl CtClient {
                         // Client error - don't retry
                         return Err(TlsError::HttpError {
                             status: response.status().as_u16(),
-                            details: format!("Request failed with status: {}", response.status())
+                            details: format!("Request failed with status: {}", response.status()),
                         });
                     }
                 }

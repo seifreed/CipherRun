@@ -1,8 +1,8 @@
 // Generic Webhook Alert Channel
 
+use crate::Result;
 use crate::monitor::alerts::{Alert, AlertChannel};
 use crate::monitor::config::WebhookConfig;
-use crate::Result;
 use async_trait::async_trait;
 use serde_json::json;
 
@@ -61,12 +61,7 @@ impl AlertChannel for WebhookChannel {
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            return Err(anyhow::anyhow!(
-                "Webhook returned status {}: {}",
-                status,
-                body
-            )
-            .into());
+            return Err(anyhow::anyhow!("Webhook returned status {}: {}", status, body).into());
         }
 
         Ok(())
@@ -93,9 +88,7 @@ impl AlertChannel for WebhookChannel {
         let response = request.send().await?;
 
         if !response.status().is_success() {
-            return Err(
-                anyhow::anyhow!("Webhook test failed: {}", response.status()).into(),
-            );
+            return Err(anyhow::anyhow!("Webhook test failed: {}", response.status()).into());
         }
 
         Ok(())
@@ -130,10 +123,8 @@ mod tests {
         let config = create_test_config();
         let channel = WebhookChannel::new(config);
 
-        let alert = Alert::scan_failure(
-            "example.com".to_string(),
-            "Connection refused".to_string(),
-        );
+        let alert =
+            Alert::scan_failure("example.com".to_string(), "Connection refused".to_string());
 
         let payload = channel.format_payload(&alert);
 

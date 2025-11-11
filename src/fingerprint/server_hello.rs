@@ -37,63 +37,113 @@ impl ServerHelloCapture {
 
         // Skip TLS record layer (5 bytes: ContentType + Version + Length)
         let mut record_header = [0u8; 5];
-        cursor.read_exact(&mut record_header)
-            .map_err(|e| TlsError::ParseError { message: format!("Failed to read record header: {}", e) })?;
+        cursor
+            .read_exact(&mut record_header)
+            .map_err(|e| TlsError::ParseError {
+                message: format!("Failed to read record header: {}", e),
+            })?;
 
         let content_type = record_header[0];
+
+        // Check for TLS Alert (0x15) before expecting handshake
+        if content_type == 0x15 {
+            // Try to parse the alert to provide better error message
+            if data.len() >= 7 {
+                let alert_level = data[5];
+                let alert_description = data[6];
+                return Err(TlsError::ParseError {
+                    message: format!(
+                        "TLS Alert received (level: {}, description: {}): {}",
+                        alert_level,
+                        alert_description,
+                        Self::get_alert_description(alert_description)
+                    ),
+                });
+            } else {
+                return Err(TlsError::ParseError {
+                    message: "TLS Alert received from server".to_string(),
+                });
+            }
+        }
+
         if content_type != 0x16 {
-            return Err(TlsError::ParseError { message: format!(
-                "Invalid content type: expected 0x16 (handshake), got 0x{:02x}",
-                content_type
-            ) });
+            return Err(TlsError::ParseError {
+                message: format!(
+                    "Invalid content type: expected 0x16 (handshake), got 0x{:02x}",
+                    content_type
+                ),
+            });
         }
 
         // Parse handshake header (4 bytes: HandshakeType + Length)
         let mut handshake_header = [0u8; 4];
-        cursor.read_exact(&mut handshake_header)
-            .map_err(|e| TlsError::ParseError { message: format!("Failed to read handshake header: {}", e) })?;
+        cursor
+            .read_exact(&mut handshake_header)
+            .map_err(|e| TlsError::ParseError {
+                message: format!("Failed to read handshake header: {}", e),
+            })?;
 
         let handshake_type = handshake_header[0];
         if handshake_type != 0x02 {
-            return Err(TlsError::ParseError { message: format!(
-                "Invalid handshake type: expected 0x02 (ServerHello), got 0x{:02x}",
-                handshake_type
-            ) });
+            return Err(TlsError::ParseError {
+                message: format!(
+                    "Invalid handshake type: expected 0x02 (ServerHello), got 0x{:02x}",
+                    handshake_type
+                ),
+            });
         }
 
         // Parse ServerHello version (2 bytes)
         let mut version_bytes = [0u8; 2];
-        cursor.read_exact(&mut version_bytes)
-            .map_err(|e| TlsError::ParseError { message: format!("Failed to read version: {}", e) })?;
+        cursor
+            .read_exact(&mut version_bytes)
+            .map_err(|e| TlsError::ParseError {
+                message: format!("Failed to read version: {}", e),
+            })?;
         let version = u16::from_be_bytes(version_bytes);
 
         // Parse random (32 bytes)
         let mut random = [0u8; 32];
-        cursor.read_exact(&mut random)
-            .map_err(|e| TlsError::ParseError { message: format!("Failed to read random: {}", e) })?;
+        cursor
+            .read_exact(&mut random)
+            .map_err(|e| TlsError::ParseError {
+                message: format!("Failed to read random: {}", e),
+            })?;
 
         // Parse session ID (1 byte length + N bytes data)
         let mut session_id_len = [0u8; 1];
-        cursor.read_exact(&mut session_id_len)
-            .map_err(|e| TlsError::ParseError { message: format!("Failed to read session ID length: {}", e) })?;
+        cursor
+            .read_exact(&mut session_id_len)
+            .map_err(|e| TlsError::ParseError {
+                message: format!("Failed to read session ID length: {}", e),
+            })?;
         let session_id_len = session_id_len[0] as usize;
 
         let mut session_id = vec![0u8; session_id_len];
         if session_id_len > 0 {
-            cursor.read_exact(&mut session_id)
-                .map_err(|e| TlsError::ParseError { message: format!("Failed to read session ID: {}", e) })?;
+            cursor
+                .read_exact(&mut session_id)
+                .map_err(|e| TlsError::ParseError {
+                    message: format!("Failed to read session ID: {}", e),
+                })?;
         }
 
         // Parse cipher suite (2 bytes)
         let mut cipher_bytes = [0u8; 2];
-        cursor.read_exact(&mut cipher_bytes)
-            .map_err(|e| TlsError::ParseError { message: format!("Failed to read cipher suite: {}", e) })?;
+        cursor
+            .read_exact(&mut cipher_bytes)
+            .map_err(|e| TlsError::ParseError {
+                message: format!("Failed to read cipher suite: {}", e),
+            })?;
         let cipher_suite = u16::from_be_bytes(cipher_bytes);
 
         // Parse compression method (1 byte)
         let mut compression = [0u8; 1];
-        cursor.read_exact(&mut compression)
-            .map_err(|e| TlsError::ParseError { message: format!("Failed to read compression: {}", e) })?;
+        cursor
+            .read_exact(&mut compression)
+            .map_err(|e| TlsError::ParseError {
+                message: format!("Failed to read compression: {}", e),
+            })?;
         let compression_method = compression[0];
 
         // Parse extensions (optional)
@@ -129,10 +179,9 @@ impl ServerHelloCapture {
 
                             // Parse extension data
                             let mut ext_data = vec![0u8; ext_data_len];
-                            if ext_data_len > 0
-                                && cursor.read_exact(&mut ext_data).is_err() {
-                                    break;
-                                }
+                            if ext_data_len > 0 && cursor.read_exact(&mut ext_data).is_err() {
+                                break;
+                            }
 
                             extensions.push(Extension {
                                 extension_type: ext_type,
@@ -156,7 +205,8 @@ impl ServerHelloCapture {
 
     /// Get extension IDs in order (for JA3S)
     pub fn get_extension_ids(&self) -> Vec<u16> {
-        self.extensions.iter()
+        self.extensions
+            .iter()
             .map(|ext| ext.extension_type)
             .collect()
     }
@@ -183,7 +233,9 @@ impl ServerHelloCapture {
 
         // Extensions
         if !self.extensions.is_empty() {
-            let ext_total_len: u16 = self.extensions.iter()
+            let ext_total_len: u16 = self
+                .extensions
+                .iter()
                 .map(|e| 4 + e.data.len() as u16)
                 .sum();
             bytes.extend_from_slice(&ext_total_len.to_be_bytes());
@@ -196,6 +248,47 @@ impl ServerHelloCapture {
         }
 
         bytes
+    }
+
+    /// Get human-readable TLS alert description
+    fn get_alert_description(alert_code: u8) -> &'static str {
+        match alert_code {
+            0 => "close_notify",
+            10 => "unexpected_message",
+            20 => "bad_record_mac",
+            21 => "decryption_failed",
+            22 => "record_overflow",
+            30 => "decompression_failure",
+            40 => "handshake_failure",
+            41 => "no_certificate",
+            42 => "bad_certificate",
+            43 => "unsupported_certificate",
+            44 => "certificate_revoked",
+            45 => "certificate_expired",
+            46 => "certificate_unknown",
+            47 => "illegal_parameter",
+            48 => "unknown_ca",
+            49 => "access_denied",
+            50 => "decode_error",
+            51 => "decrypt_error",
+            60 => "export_restriction",
+            70 => "protocol_version",
+            71 => "insufficient_security",
+            80 => "internal_error",
+            86 => "inappropriate_fallback",
+            90 => "user_canceled",
+            100 => "no_renegotiation",
+            109 => "missing_extension",
+            110 => "unsupported_extension",
+            111 => "certificate_unobtainable",
+            112 => "unrecognized_name",
+            113 => "bad_certificate_status_response",
+            114 => "bad_certificate_hash_value",
+            115 => "unknown_psk_identity",
+            116 => "certificate_required",
+            120 => "no_application_protocol",
+            _ => "unknown_alert",
+        }
     }
 }
 
@@ -214,11 +307,9 @@ mod tests {
             // ServerHello
             0x03, 0x03, // TLS 1.2 (0x0303)
             // Random (32 bytes of zeros for simplicity)
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            // Session ID
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, // Session ID
             0x00, // Length 0
             // Cipher suite
             0x00, 0x2F, // TLS_RSA_WITH_AES_128_CBC_SHA (47)
@@ -247,22 +338,18 @@ mod tests {
             // ServerHello
             0x03, 0x03, // TLS 1.2
             // Random
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            // Session ID
-            0x00,
-            // Cipher suite
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, // Session ID
+            0x00, // Cipher suite
             0xC0, 0x2F, // TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
             // Compression
-            0x00,
-            // Extensions
+            0x00, // Extensions
             0x00, 0x08, // Extensions length: 8 bytes
             // Extension 1: renegotiation_info (0xFF01)
             0xFF, 0x01, // Type
             0x00, 0x01, // Length: 1
-            0x00,       // Data
+            0x00, // Data
             // Extension 2: server_name (0x0000)
             0x00, 0x00, // Type
             0x00, 0x00, // Length: 0

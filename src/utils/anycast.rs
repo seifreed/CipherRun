@@ -2,16 +2,16 @@
 // Resolves all A/AAAA records and scans each IP individually
 // Detects Anycast deployments by comparing certificates and behaviors
 
+use crate::Args;
+use crate::Result;
 use crate::error::TlsError;
 use crate::scanner::ScanResults;
 use crate::utils::network::Target;
-use crate::Args;
-use crate::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::net::IpAddr;
-use trust_dns_resolver::config::*;
 use trust_dns_resolver::TokioAsyncResolver;
+use trust_dns_resolver::config::*;
 
 /// Anycast scanner for testing all IPs of a hostname
 pub struct AnycastScanner {
@@ -150,7 +150,7 @@ impl AnycastScanner {
         }
 
         // Create and run scanner
-        let mut scanner = crate::scanner::Scanner::new(scanner_args)?;
+        let scanner = crate::scanner::Scanner::new(scanner_args)?;
         scanner.run().await
     }
 
@@ -178,15 +178,18 @@ impl AnycastScanner {
         // Compare certificate fingerprints
         for result in &successful_results {
             if let Some(cert) = &result.results.certificate_chain
-                && let Some(fingerprint) = &cert.chain.leaf().and_then(|c| c.fingerprint_sha256.clone()) {
-                    certificate_fingerprints.insert(fingerprint.clone());
-                }
+                && let Some(fingerprint) =
+                    &cert.chain.leaf().and_then(|c| c.fingerprint_sha256.clone())
+            {
+                certificate_fingerprints.insert(fingerprint.clone());
+            }
 
             // Extract cipher preferences
             if let Some(first_protocol) = result.results.ciphers.values().next()
-                && let Some(preferred_cipher) = &first_protocol.preferred_cipher {
-                    cipher_preferences.insert(result.ip, preferred_cipher.openssl_name.clone());
-                }
+                && let Some(preferred_cipher) = &first_protocol.preferred_cipher
+            {
+                cipher_preferences.insert(result.ip, preferred_cipher.openssl_name.clone());
+            }
 
             // Extract protocol support
             let protocols: Vec<String> = result

@@ -24,8 +24,7 @@ pub struct MonitorSettings {
 }
 
 /// Alerts configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AlertsConfig {
     pub email: Option<EmailConfig>,
     pub slack: Option<SlackConfig>,
@@ -125,7 +124,6 @@ impl Default for MonitorSettings {
     }
 }
 
-
 impl MonitorConfig {
     /// Load configuration from TOML file
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
@@ -164,29 +162,34 @@ impl MonitorConfig {
         let mut channels = Vec::new();
 
         if let Some(ref email) = self.monitor.alerts.email
-            && email.enabled {
-                channels.push("email".to_string());
-            }
+            && email.enabled
+        {
+            channels.push("email".to_string());
+        }
 
         if let Some(ref slack) = self.monitor.alerts.slack
-            && slack.enabled {
-                channels.push("slack".to_string());
-            }
+            && slack.enabled
+        {
+            channels.push("slack".to_string());
+        }
 
         if let Some(ref teams) = self.monitor.alerts.teams
-            && teams.enabled {
-                channels.push("teams".to_string());
-            }
+            && teams.enabled
+        {
+            channels.push("teams".to_string());
+        }
 
         if let Some(ref pagerduty) = self.monitor.alerts.pagerduty
-            && pagerduty.enabled {
-                channels.push("pagerduty".to_string());
-            }
+            && pagerduty.enabled
+        {
+            channels.push("pagerduty".to_string());
+        }
 
         if let Some(ref webhook) = self.monitor.alerts.webhook
-            && webhook.enabled {
-                channels.push("webhook".to_string());
-            }
+            && webhook.enabled
+        {
+            channels.push("webhook".to_string());
+        }
 
         channels
     }

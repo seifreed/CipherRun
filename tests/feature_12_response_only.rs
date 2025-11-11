@@ -2,7 +2,6 @@
 ///
 /// This test file verifies the response-only output mode functionality,
 /// which removes host:port prefixes from output for cleaner pipeline integration.
-
 #[cfg(test)]
 mod response_only_tests {
     use cipherrun::output::response_only::ResponseOnlyFormatter;

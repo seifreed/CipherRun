@@ -1,12 +1,12 @@
 // Policy evaluator - Main policy enforcement engine
 
+use crate::Result;
 use crate::policy::exceptions::ExceptionMatcher;
 use crate::policy::rules::{certificate::*, cipher::*, protocol::*, vulnerability::*};
 use crate::policy::violation::PolicyViolation;
 use crate::policy::{Policy, PolicyResult};
 use crate::rating::Grade;
 use crate::scanner::ScanResults;
-use crate::Result;
 use chrono::Utc;
 
 /// Policy evaluator
@@ -34,31 +34,51 @@ impl PolicyEvaluator {
         // Check protocols
         if let Some(ref protocol_policy) = self.policy.protocols {
             let proto_violations = self.check_protocols(protocol_policy, results, target)?;
-            violations.extend(self.apply_exceptions(proto_violations, target, &mut exceptions_applied));
+            violations.extend(self.apply_exceptions(
+                proto_violations,
+                target,
+                &mut exceptions_applied,
+            ));
         }
 
         // Check ciphers
         if let Some(ref cipher_policy) = self.policy.ciphers {
             let cipher_violations = self.check_ciphers(cipher_policy, results, target)?;
-            violations.extend(self.apply_exceptions(cipher_violations, target, &mut exceptions_applied));
+            violations.extend(self.apply_exceptions(
+                cipher_violations,
+                target,
+                &mut exceptions_applied,
+            ));
         }
 
         // Check certificates
         if let Some(ref cert_policy) = self.policy.certificates {
             let cert_violations = self.check_certificates(cert_policy, results, target)?;
-            violations.extend(self.apply_exceptions(cert_violations, target, &mut exceptions_applied));
+            violations.extend(self.apply_exceptions(
+                cert_violations,
+                target,
+                &mut exceptions_applied,
+            ));
         }
 
         // Check vulnerabilities
         if let Some(ref vuln_policy) = self.policy.vulnerabilities {
             let vuln_violations = self.check_vulnerabilities(vuln_policy, results, target)?;
-            violations.extend(self.apply_exceptions(vuln_violations, target, &mut exceptions_applied));
+            violations.extend(self.apply_exceptions(
+                vuln_violations,
+                target,
+                &mut exceptions_applied,
+            ));
         }
 
         // Check rating
         if let Some(ref rating_policy) = self.policy.rating {
             let rating_violations = self.check_rating(rating_policy, results, target)?;
-            violations.extend(self.apply_exceptions(rating_violations, target, &mut exceptions_applied));
+            violations.extend(self.apply_exceptions(
+                rating_violations,
+                target,
+                &mut exceptions_applied,
+            ));
         }
 
         // Build result
@@ -152,27 +172,28 @@ impl PolicyEvaluator {
 
             // Check minimum score
             if let Some(min_score) = policy.min_score
-                && u32::from(rating.score) < min_score {
-                    violations.push(
-                        PolicyViolation::new(
-                            "rating.min_score",
-                            "Minimum SSL Labs Score",
-                            policy.action,
-                            format!(
-                                "SSL Labs score {} is below minimum {}",
-                                rating.score, min_score
-                            ),
-                        )
-                        .with_evidence(format!(
-                            "Current score: {} (grade: {})",
-                            rating.score, rating.grade
-                        ))
-                        .with_remediation(format!(
-                            "Improve TLS configuration to achieve score {}",
-                            min_score
-                        )),
-                    );
-                }
+                && u32::from(rating.score) < min_score
+            {
+                violations.push(
+                    PolicyViolation::new(
+                        "rating.min_score",
+                        "Minimum SSL Labs Score",
+                        policy.action,
+                        format!(
+                            "SSL Labs score {} is below minimum {}",
+                            rating.score, min_score
+                        ),
+                    )
+                    .with_evidence(format!(
+                        "Current score: {} (grade: {})",
+                        rating.score, rating.grade
+                    ))
+                    .with_remediation(format!(
+                        "Improve TLS configuration to achieve score {}",
+                        min_score
+                    )),
+                );
+            }
         }
 
         Ok(violations)
@@ -207,13 +228,13 @@ impl PolicyEvaluator {
         violations
             .into_iter()
             .filter(|violation| {
-                if let Some(exception) = self.exception_matcher.is_exception(target, &violation.rule_path) {
+                if let Some(exception) = self
+                    .exception_matcher
+                    .is_exception(target, &violation.rule_path)
+                {
                     // Exception applies - filter out this violation
                     let exception_msg = ExceptionMatcher::format_exception(exception);
-                    exceptions_applied.push(format!(
-                        "{}: {}",
-                        violation.rule_path, exception_msg
-                    ));
+                    exceptions_applied.push(format!("{}: {}", violation.rule_path, exception_msg));
                     false
                 } else {
                     // No exception - keep the violation
@@ -262,6 +283,9 @@ mod tests {
                 ciphers_count: 0,
                 heartbeat_enabled: None,
                 handshake_time_ms: None,
+                session_resumption_caching: None,
+                session_resumption_tickets: None,
+                secure_renegotiation: None,
             }],
             ciphers: HashMap::new(),
             certificate_chain: None,
@@ -290,6 +314,7 @@ mod tests {
             sni_used: None,
             sni_generation_method: None,
             probe_status: crate::output::probe_status::ProbeStatus::default(),
+            alpn_result: None,
         };
 
         let evaluator = PolicyEvaluator::new(policy);
@@ -337,6 +362,9 @@ mod tests {
                 ciphers_count: 0,
                 heartbeat_enabled: None,
                 handshake_time_ms: None,
+                session_resumption_caching: None,
+                session_resumption_tickets: None,
+                secure_renegotiation: None,
             }],
             ciphers: HashMap::new(),
             certificate_chain: None,
@@ -365,6 +393,7 @@ mod tests {
             sni_used: None,
             sni_generation_method: None,
             probe_status: crate::output::probe_status::ProbeStatus::default(),
+            alpn_result: None,
         };
 
         let evaluator = PolicyEvaluator::new(policy);

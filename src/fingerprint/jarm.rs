@@ -73,8 +73,8 @@ impl JarmDatabase {
         let content = std::fs::read_to_string(path)
             .with_context(|| format!("Failed to read JARM database from {}", path))?;
 
-        let signatures: Vec<JarmSignature> = serde_json::from_str(&content)
-            .with_context(|| "Failed to parse JARM database JSON")?;
+        let signatures: Vec<JarmSignature> =
+            serde_json::from_str(&content).with_context(|| "Failed to parse JARM database JSON")?;
 
         let mut db = Self::new();
         for sig in signatures {
@@ -87,8 +87,8 @@ impl JarmDatabase {
     /// Load builtin database
     pub fn builtin() -> Self {
         let builtin_json = include_str!("../../data/jarm_signatures.json");
-        let signatures: Vec<JarmSignature> = serde_json::from_str(builtin_json)
-            .expect("Failed to parse builtin JARM database");
+        let signatures: Vec<JarmSignature> =
+            serde_json::from_str(builtin_json).expect("Failed to parse builtin JARM database");
 
         let mut db = Self::new();
         for sig in signatures {
@@ -140,10 +140,7 @@ impl JarmFingerprinter {
 
     /// Create with custom database
     pub fn with_database(timeout: Duration, database: JarmDatabase) -> Self {
-        Self {
-            timeout,
-            database,
-        }
+        Self { timeout, database }
     }
 
     /// Fingerprint a target
@@ -172,7 +169,7 @@ impl JarmFingerprinter {
         let stream = match timeout(self.timeout, TcpStream::connect(addr)).await {
             Ok(Ok(s)) => s,
             Ok(Err(_e)) => return Ok("|||".to_string()), // Connection failed
-            Err(_) => return Ok("|||".to_string()), // Timeout
+            Err(_) => return Ok("|||".to_string()),      // Timeout
         };
 
         // Build Client Hello packet
@@ -180,7 +177,10 @@ impl JarmFingerprinter {
 
         // Send Client Hello
         let mut stream = stream;
-        if timeout(self.timeout, stream.write_all(&client_hello)).await.is_err() {
+        if timeout(self.timeout, stream.write_all(&client_hello))
+            .await
+            .is_err()
+        {
             return Ok("|||".to_string());
         }
 
@@ -240,7 +240,10 @@ fn parse_server_hello(data: &[u8], _probe: &JarmProbe) -> Result<String> {
     // Extract extensions
     let server_ext = extract_extension_info(data, counter, server_hello_length);
 
-    Ok(format!("{}|{}|{}", server_cipher, server_version, server_ext))
+    Ok(format!(
+        "{}|{}|{}",
+        server_cipher, server_version, server_ext
+    ))
 }
 
 /// Extract extension information from ServerHello
@@ -297,9 +300,7 @@ fn extract_extension_info(data: &[u8], offset: usize, server_hello_length: usize
     let alpn = extract_extension_type(&[0x00, 0x10], &etypes, &evals);
 
     // Build extension type list
-    let etype_list: Vec<String> = etypes.iter()
-        .map(hex::encode)
-        .collect();
+    let etype_list: Vec<String> = etypes.iter().map(hex::encode).collect();
 
     format!("{}|{}", alpn, etype_list.join("-"))
 }
@@ -363,15 +364,75 @@ fn raw_hash_to_fuzzy_hash(raw: &str) -> String {
 
 /// Cipher list order for JARM (used for index-based encoding)
 const CIPHER_LIST_ORDER: &[[u8; 2]] = &[
-    [0x00, 0x04], [0x00, 0x05], [0x00, 0x07], [0x00, 0x0a], [0x00, 0x16], [0x00, 0x2f], [0x00, 0x33], [0x00, 0x35],
-    [0x00, 0x39], [0x00, 0x3c], [0x00, 0x3d], [0x00, 0x41], [0x00, 0x45], [0x00, 0x67], [0x00, 0x6b], [0x00, 0x84],
-    [0x00, 0x88], [0x00, 0x9a], [0x00, 0x9c], [0x00, 0x9d], [0x00, 0x9e], [0x00, 0x9f], [0x00, 0xba], [0x00, 0xbe],
-    [0x00, 0xc0], [0x00, 0xc4], [0xc0, 0x07], [0xc0, 0x08], [0xc0, 0x09], [0xc0, 0x0a], [0xc0, 0x11], [0xc0, 0x12],
-    [0xc0, 0x13], [0xc0, 0x14], [0xc0, 0x23], [0xc0, 0x24], [0xc0, 0x27], [0xc0, 0x28], [0xc0, 0x2b], [0xc0, 0x2c],
-    [0xc0, 0x2f], [0xc0, 0x30], [0xc0, 0x60], [0xc0, 0x61], [0xc0, 0x72], [0xc0, 0x73], [0xc0, 0x76], [0xc0, 0x77],
-    [0xc0, 0x9c], [0xc0, 0x9d], [0xc0, 0x9e], [0xc0, 0x9f], [0xc0, 0xa0], [0xc0, 0xa1], [0xc0, 0xa2], [0xc0, 0xa3],
-    [0xc0, 0xac], [0xc0, 0xad], [0xc0, 0xae], [0xc0, 0xaf], [0xcc, 0x13], [0xcc, 0x14], [0xcc, 0xa8], [0xcc, 0xa9],
-    [0x13, 0x01], [0x13, 0x02], [0x13, 0x03], [0x13, 0x04], [0x13, 0x05],
+    [0x00, 0x04],
+    [0x00, 0x05],
+    [0x00, 0x07],
+    [0x00, 0x0a],
+    [0x00, 0x16],
+    [0x00, 0x2f],
+    [0x00, 0x33],
+    [0x00, 0x35],
+    [0x00, 0x39],
+    [0x00, 0x3c],
+    [0x00, 0x3d],
+    [0x00, 0x41],
+    [0x00, 0x45],
+    [0x00, 0x67],
+    [0x00, 0x6b],
+    [0x00, 0x84],
+    [0x00, 0x88],
+    [0x00, 0x9a],
+    [0x00, 0x9c],
+    [0x00, 0x9d],
+    [0x00, 0x9e],
+    [0x00, 0x9f],
+    [0x00, 0xba],
+    [0x00, 0xbe],
+    [0x00, 0xc0],
+    [0x00, 0xc4],
+    [0xc0, 0x07],
+    [0xc0, 0x08],
+    [0xc0, 0x09],
+    [0xc0, 0x0a],
+    [0xc0, 0x11],
+    [0xc0, 0x12],
+    [0xc0, 0x13],
+    [0xc0, 0x14],
+    [0xc0, 0x23],
+    [0xc0, 0x24],
+    [0xc0, 0x27],
+    [0xc0, 0x28],
+    [0xc0, 0x2b],
+    [0xc0, 0x2c],
+    [0xc0, 0x2f],
+    [0xc0, 0x30],
+    [0xc0, 0x60],
+    [0xc0, 0x61],
+    [0xc0, 0x72],
+    [0xc0, 0x73],
+    [0xc0, 0x76],
+    [0xc0, 0x77],
+    [0xc0, 0x9c],
+    [0xc0, 0x9d],
+    [0xc0, 0x9e],
+    [0xc0, 0x9f],
+    [0xc0, 0xa0],
+    [0xc0, 0xa1],
+    [0xc0, 0xa2],
+    [0xc0, 0xa3],
+    [0xc0, 0xac],
+    [0xc0, 0xad],
+    [0xc0, 0xae],
+    [0xc0, 0xaf],
+    [0xcc, 0x13],
+    [0xcc, 0x14],
+    [0xcc, 0xa8],
+    [0xcc, 0xa9],
+    [0x13, 0x01],
+    [0x13, 0x02],
+    [0x13, 0x03],
+    [0x13, 0x04],
+    [0x13, 0x05],
 ];
 
 /// Convert cipher hex to index-based encoding

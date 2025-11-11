@@ -4,8 +4,7 @@
 // and CDN/load balancer detection
 
 use cipherrun::fingerprint::{
-    ServerHelloCapture, Ja3sFingerprint, Ja3sDatabase,
-    CdnDetection, LoadBalancerInfo, ServerType
+    CdnDetection, Ja3sDatabase, Ja3sFingerprint, LoadBalancerInfo, ServerHelloCapture, ServerType,
 };
 use std::collections::HashMap;
 
@@ -66,7 +65,10 @@ fn test_ja3s_database_load() {
     assert!(db_result.is_ok(), "Failed to load JA3S database");
 
     let db = db_result.unwrap();
-    assert!(db.signature_count() >= 50, "Database should have at least 50 signatures");
+    assert!(
+        db.signature_count() >= 50,
+        "Database should have at least 50 signatures"
+    );
 }
 
 #[test]
@@ -118,8 +120,14 @@ fn test_cdn_detection_akamai_by_headers() {
     let ja3s = Ja3sFingerprint::from_server_hello(&server_hello);
 
     let mut headers = HashMap::new();
-    headers.insert("X-Akamai-Transformed".to_string(), "9 - 0 pmb=mRUM,3".to_string());
-    headers.insert("X-Akamai-Session-Info".to_string(), "name=value".to_string());
+    headers.insert(
+        "X-Akamai-Transformed".to_string(),
+        "9 - 0 pmb=mRUM,3".to_string(),
+    );
+    headers.insert(
+        "X-Akamai-Session-Info".to_string(),
+        "name=value".to_string(),
+    );
 
     let detection = CdnDetection::from_ja3s_and_headers(&ja3s, None, &headers);
 
@@ -145,7 +153,10 @@ fn test_cdn_detection_no_cdn() {
 #[test]
 fn test_load_balancer_detection_aws_elb() {
     let mut headers = HashMap::new();
-    headers.insert("X-Amzn-Trace-Id".to_string(), "Root=1-67891234-56789abcdef".to_string());
+    headers.insert(
+        "X-Amzn-Trace-Id".to_string(),
+        "Root=1-67891234-56789abcdef".to_string(),
+    );
     headers.insert("X-Amzn-RequestId".to_string(), "abc123".to_string());
 
     let lb_info = LoadBalancerInfo::from_ja3s_and_headers(None, &headers);
@@ -169,7 +180,10 @@ fn test_load_balancer_detection_haproxy() {
 #[test]
 fn test_load_balancer_sticky_sessions() {
     let mut headers = HashMap::new();
-    headers.insert("Set-Cookie".to_string(), "route=server1; Path=/".to_string());
+    headers.insert(
+        "Set-Cookie".to_string(),
+        "route=server1; Path=/".to_string(),
+    );
 
     let lb_info = LoadBalancerInfo::from_ja3s_and_headers(None, &headers);
 
@@ -178,11 +192,8 @@ fn test_load_balancer_sticky_sessions() {
 
 #[test]
 fn test_extension_names() {
-    let server_hello = create_test_server_hello(
-        771,
-        49199,
-        vec![0, 5, 10, 11, 13, 16, 23, 35, 65281],
-    );
+    let server_hello =
+        create_test_server_hello(771, 49199, vec![0, 5, 10, 11, 13, 16, 23, 35, 65281]);
     let ja3s = Ja3sFingerprint::from_server_hello(&server_hello);
 
     let ext_names = ja3s.extension_names();
@@ -230,15 +241,26 @@ fn test_multiple_cdn_indicators() {
     assert!(detection.is_cdn);
     assert_eq!(detection.cdn_provider, Some("Cloudflare".to_string()));
     // Should have high confidence with multiple indicators
-    assert!(detection.confidence > 0.7, "Multiple indicators should increase confidence");
-    assert!(detection.indicators.len() >= 2, "Should have multiple indicators");
+    assert!(
+        detection.confidence > 0.7,
+        "Multiple indicators should increase confidence"
+    );
+    assert!(
+        detection.indicators.len() >= 2,
+        "Should have multiple indicators"
+    );
 }
 
 /// Helper function to create test ServerHello
-fn create_test_server_hello(version: u16, cipher: u16, extension_ids: Vec<u16>) -> ServerHelloCapture {
+fn create_test_server_hello(
+    version: u16,
+    cipher: u16,
+    extension_ids: Vec<u16>,
+) -> ServerHelloCapture {
     use cipherrun::fingerprint::server_hello::Extension;
 
-    let extensions = extension_ids.into_iter()
+    let extensions = extension_ids
+        .into_iter()
         .map(|id| Extension {
             extension_type: id,
             data: vec![],
@@ -281,5 +303,8 @@ fn test_combined_ja3s_and_signature_cdn_detection() {
 
     // Should detect CDN from JA3S signature match
     assert!(detection.is_cdn, "Should detect CDN from signature match");
-    assert!(detection.confidence >= 0.7, "Signature match should give high confidence");
+    assert!(
+        detection.confidence >= 0.7,
+        "Signature match should give high confidence"
+    );
 }

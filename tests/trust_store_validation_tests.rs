@@ -3,7 +3,7 @@
 // Copyright (C) 2025 Marc Rivero López
 // Licensed under the GNU General Public License v3.0
 
-use cipherrun::certificates::parser::{CertificateParser, CertificateChain, CertificateInfo};
+use cipherrun::certificates::parser::{CertificateChain, CertificateParser};
 use cipherrun::certificates::trust_stores::{TrustStore, TrustStoreValidator};
 use cipherrun::certificates::validator::CertificateValidator;
 use cipherrun::utils::network::Target;
@@ -21,15 +21,32 @@ async fn test_google_certificate_multi_platform_trust() {
 
     // Google should be trusted by major platforms
     assert!(result.overall_trusted, "Google should be trusted");
-    assert!(result.trusted_count > 0, "Should be trusted by at least one platform");
+    assert!(
+        result.trusted_count > 0,
+        "Should be trusted by at least one platform"
+    );
 
     // Check specific platforms
     println!("Google certificate trust status:");
     for platform in TrustStore::all() {
         let status = result.platform_status.get(&platform).unwrap();
-        println!("  {}: {}", platform.name(), if status.trusted { "TRUSTED" } else { "NOT TRUSTED" });
+        println!(
+            "  {}: {}",
+            platform.name(),
+            if status.trusted {
+                "TRUSTED"
+            } else {
+                "NOT TRUSTED"
+            }
+        );
         if status.trusted {
-            println!("    Root: {}", status.trusted_root.as_ref().unwrap_or(&"Unknown".to_string()));
+            println!(
+                "    Root: {}",
+                status
+                    .trusted_root
+                    .as_ref()
+                    .unwrap_or(&"Unknown".to_string())
+            );
         } else {
             println!("    Message: {}", status.message);
         }
@@ -53,15 +70,21 @@ async fn test_github_certificate_multi_platform_trust() {
     let result = validator.validate_chain(&chain).unwrap();
 
     assert!(result.overall_trusted, "GitHub should be trusted");
-    println!("GitHub certificate trusted by {} platforms", result.trusted_count);
+    println!(
+        "GitHub certificate trusted by {} platforms",
+        result.trusted_count
+    );
 }
 
 #[test]
 fn test_trust_store_validator_initialization() {
     let validator = TrustStoreValidator::new();
-    assert!(validator.is_ok(), "Validator should initialize successfully");
+    assert!(
+        validator.is_ok(),
+        "Validator should initialize successfully"
+    );
 
-    let validator = validator.unwrap();
+    let _validator = validator.unwrap();
     // Indexes should be built
     println!("Trust store validator initialized with indexes");
 }
@@ -69,7 +92,10 @@ fn test_trust_store_validator_initialization() {
 #[test]
 fn test_certificate_validator_with_platform_trust() {
     let validator = CertificateValidator::with_platform_trust("example.com".to_string());
-    assert!(validator.is_ok(), "Should create validator with platform trust enabled");
+    assert!(
+        validator.is_ok(),
+        "Should create validator with platform trust enabled"
+    );
 }
 
 #[tokio::test]
@@ -103,11 +129,15 @@ async fn test_integrated_validation_with_platform_trust() {
     let chain = parser.get_certificate_chain().await.unwrap();
 
     // Use the integrated validator with platform trust enabled
-    let validator = CertificateValidator::with_platform_trust("www.mozilla.org".to_string()).unwrap();
+    let validator =
+        CertificateValidator::with_platform_trust("www.mozilla.org".to_string()).unwrap();
     let result = validator.validate_chain(&chain).unwrap();
 
     // Check that platform trust validation was performed
-    assert!(result.platform_trust.is_some(), "Platform trust should be validated");
+    assert!(
+        result.platform_trust.is_some(),
+        "Platform trust should be validated"
+    );
 
     let platform_trust = result.platform_trust.as_ref().unwrap();
     println!("Mozilla.org validation:");
@@ -153,12 +183,19 @@ fn test_empty_chain_validation() {
     let result = validator.validate_chain(&empty_chain).unwrap();
 
     assert!(!result.overall_trusted, "Empty chain should not be trusted");
-    assert_eq!(result.trusted_count, 0, "Empty chain should have 0 trusted platforms");
+    assert_eq!(
+        result.trusted_count, 0,
+        "Empty chain should have 0 trusted platforms"
+    );
 
     // All platforms should reject empty chain
     for platform in TrustStore::all() {
         let status = result.platform_status.get(&platform).unwrap();
-        assert!(!status.trusted, "Platform {} should not trust empty chain", platform.name());
+        assert!(
+            !status.trusted,
+            "Platform {} should not trust empty chain",
+            platform.name()
+        );
     }
 }
 

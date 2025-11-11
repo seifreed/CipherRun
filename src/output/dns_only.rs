@@ -30,9 +30,10 @@ impl DnsOnlyMode {
         // Extract the Common Name (CN) from the subject
         // Format is typically "CN=example.com" or similar
         if !cert.subject.is_empty()
-            && let Some(cn) = Self::extract_cn(&cert.subject) {
-                domains.insert(Self::normalize_domain(&cn));
-            }
+            && let Some(cn) = Self::extract_cn(&cert.subject)
+        {
+            domains.insert(Self::normalize_domain(&cn));
+        }
 
         // Add all Subject Alternative Names (SANs)
         for san in &cert.san {
@@ -118,7 +119,10 @@ mod tests {
         assert_eq!(DnsOnlyMode::normalize_domain("Example.COM"), "example.com");
 
         // With whitespace
-        assert_eq!(DnsOnlyMode::normalize_domain("  example.com  "), "example.com");
+        assert_eq!(
+            DnsOnlyMode::normalize_domain("  example.com  "),
+            "example.com"
+        );
 
         // Wildcard removal
         assert_eq!(

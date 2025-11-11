@@ -1,8 +1,8 @@
 // ASN and CIDR Input Support Module
 // Supports ASN (Autonomous System Number) and CIDR notation as input
 
-use crate::error::TlsError;
 use crate::Result;
+use crate::error::TlsError;
 use ipnetwork::IpNetwork;
 use std::net::IpAddr;
 
@@ -52,12 +52,14 @@ impl AsnCidrParser {
                 message: format!("Failed to create HTTP client: {}", e),
             })?;
 
-        let response = client.get(&url).send().await.map_err(|e| {
-            TlsError::HttpError {
+        let response = client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| TlsError::HttpError {
                 status: 0,
                 details: format!("RIPEstat API request failed: {}", e),
-            }
-        })?;
+            })?;
 
         if !response.status().is_success() {
             return Err(TlsError::HttpError {
@@ -74,14 +76,16 @@ impl AsnCidrParser {
         let mut prefixes = Vec::new();
 
         if let Some(data) = json.get("data")
-            && let Some(prefixes_array) = data.get("prefixes").and_then(|p| p.as_array()) {
-                for prefix_obj in prefixes_array {
-                    if let Some(prefix_str) = prefix_obj.get("prefix").and_then(|p| p.as_str())
-                        && let Ok(network) = prefix_str.parse::<IpNetwork>() {
-                            prefixes.push(network);
-                        }
+            && let Some(prefixes_array) = data.get("prefixes").and_then(|p| p.as_array())
+        {
+            for prefix_obj in prefixes_array {
+                if let Some(prefix_str) = prefix_obj.get("prefix").and_then(|p| p.as_str())
+                    && let Ok(network) = prefix_str.parse::<IpNetwork>()
+                {
+                    prefixes.push(network);
                 }
             }
+        }
 
         if prefixes.is_empty() {
             return Err(TlsError::InvalidInput {
@@ -95,9 +99,11 @@ impl AsnCidrParser {
     /// Expand CIDR notation to individual IPs
     /// For large ranges, returns the network object instead of all IPs
     pub fn expand_cidr(cidr: &str) -> Result<CidrExpansion> {
-        let network = cidr.parse::<IpNetwork>().map_err(|e| TlsError::InvalidInput {
-            message: format!("Invalid CIDR format '{}': {}", cidr, e),
-        })?;
+        let network = cidr
+            .parse::<IpNetwork>()
+            .map_err(|e| TlsError::InvalidInput {
+                message: format!("Invalid CIDR format '{}': {}", cidr, e),
+            })?;
 
         let total_ips = Self::calculate_ip_count(&network);
 
@@ -154,16 +160,17 @@ impl AsnCidrParser {
         if input.to_uppercase().starts_with("AS") || input.parse::<u32>().is_ok() {
             // Verify it's a valid ASN number
             if let Ok(asn_num) = Self::parse_asn_number(input)
-                && asn_num > 0 && asn_num < 4_294_967_295 {
-                    return InputType::Asn(input.to_string());
-                }
+                && asn_num > 0
+                && asn_num < 4_294_967_295
+            {
+                return InputType::Asn(input.to_string());
+            }
         }
 
         // Check for CIDR notation
-        if input.contains('/')
-            && input.parse::<IpNetwork>().is_ok() {
-                return InputType::Cidr(input.to_string());
-            }
+        if input.contains('/') && input.parse::<IpNetwork>().is_ok() {
+            return InputType::Cidr(input.to_string());
+        }
 
         // Check for IP address
         if let Ok(ip) = input.parse::<IpAddr>() {
@@ -281,9 +288,7 @@ impl ExpandedInput {
     /// Get total target count
     pub fn target_count(&self) -> u64 {
         match self {
-            ExpandedInput::Asn { networks, .. } => {
-                networks.iter().map(Self::network_size).sum()
-            }
+            ExpandedInput::Asn { networks, .. } => networks.iter().map(Self::network_size).sum(),
             ExpandedInput::Cidr { expansion, .. } => expansion.total_ips(),
             ExpandedInput::Ip { .. } => 1,
             ExpandedInput::Hostname { .. } => 1,

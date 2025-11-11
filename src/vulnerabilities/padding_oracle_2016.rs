@@ -17,7 +17,7 @@ use crate::utils::network::Target;
 use std::io::{Read, Write};
 use std::time::Duration;
 use tokio::net::TcpStream;
-use tokio::time::{timeout, Instant};
+use tokio::time::{Instant, timeout};
 
 /// OpenSSL Padding Oracle 2016 vulnerability tester (CVE-2016-2107)
 pub struct PaddingOracle2016Tester {
@@ -50,7 +50,8 @@ impl PaddingOracle2016Tester {
                 vulnerable: false,
                 cbc_supported: false,
                 timing_oracle_detected: false,
-                details: "Server does not support AES-CBC cipher suites (only GCM/other AEAD)".to_string(),
+                details: "Server does not support AES-CBC cipher suites (only GCM/other AEAD)"
+                    .to_string(),
                 average_valid_timing_ms: 0.0,
                 average_invalid_timing_ms: 0.0,
             });
@@ -340,7 +341,10 @@ mod tests {
         // Verify padding is NOT uniform (invalid)
         let first_byte = last_7_bytes[0];
         let has_different_bytes = last_7_bytes.iter().any(|&b| b != first_byte);
-        assert!(has_different_bytes, "Invalid padding should have varying bytes");
+        assert!(
+            has_different_bytes,
+            "Invalid padding should have varying bytes"
+        );
     }
 
     #[tokio::test]

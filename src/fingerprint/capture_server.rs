@@ -3,10 +3,10 @@
 // This module captures ServerHello messages from live TLS connections
 // for JA3S fingerprinting
 
-use crate::fingerprint::server_hello::ServerHelloCapture;
-use crate::utils::network::Target;
 use crate::Result;
 use crate::error::TlsError;
+use crate::fingerprint::server_hello::ServerHelloCapture;
+use crate::utils::network::Target;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::time::Duration;
@@ -35,27 +35,39 @@ impl ServerHelloNetworkCapture {
     /// Capture ServerHello by performing a TLS handshake
     pub fn capture(&self) -> Result<ServerHelloCapture> {
         // Connect to target
-        let addr = format!("{}:{}", self.target.hostname, self.target.port);
-        let mut stream = TcpStream::connect_timeout(
-            &addr.parse().map_err(|e| TlsError::IoError {
-                source: std::io::Error::new(std::io::ErrorKind::InvalidInput, format!("Invalid address: {}", e))
-            })?,
-            self.timeout
-        ).map_err(|e| TlsError::IoError { source: e })?;
+        // Use the first resolved IP address from the target
+        let ip = self
+            .target
+            .ip_addresses
+            .first()
+            .ok_or_else(|| TlsError::ParseError {
+                message: format!(
+                    "No IP addresses resolved for target {}",
+                    self.target.hostname
+                ),
+            })?;
 
-        stream.set_read_timeout(Some(self.timeout))
+        let socket_addr = std::net::SocketAddr::new(*ip, self.target.port);
+        let mut stream = TcpStream::connect_timeout(&socket_addr, self.timeout)
             .map_err(|e| TlsError::IoError { source: e })?;
-        stream.set_write_timeout(Some(self.timeout))
+
+        stream
+            .set_read_timeout(Some(self.timeout))
+            .map_err(|e| TlsError::IoError { source: e })?;
+        stream
+            .set_write_timeout(Some(self.timeout))
             .map_err(|e| TlsError::IoError { source: e })?;
 
         // Send ClientHello
         let client_hello = self.build_client_hello();
-        stream.write_all(&client_hello)
+        stream
+            .write_all(&client_hello)
             .map_err(|e| TlsError::IoError { source: e })?;
 
         // Read ServerHello response
         let mut buffer = vec![0u8; 16384]; // 16KB buffer
-        let bytes_read = stream.read(&mut buffer)
+        let bytes_read = stream
+            .read(&mut buffer)
             .map_err(|e| TlsError::IoError { source: e })?;
 
         buffer.truncate(bytes_read);
@@ -64,13 +76,13 @@ impl ServerHelloNetworkCapture {
         ServerHelloCapture::parse(&buffer)
     }
 
-    /// Build a minimal ClientHello for TLS 1.2
+    /// Build a ClientHello supporting TLS 1.2 and TLS 1.3
     fn build_client_hello(&self) -> Vec<u8> {
         let mut client_hello = Vec::new();
 
         // TLS Record Layer
         client_hello.push(0x16); // ContentType: Handshake
-        client_hello.extend_from_slice(&[0x03, 0x03]); // Version: TLS 1.2
+        client_hello.extend_from_slice(&[0x03, 0x01]); // Legacy version: TLS 1.0 for compatibility
 
         // We'll calculate and update the length later
         let length_pos = client_hello.len();
@@ -84,25 +96,40 @@ impl ServerHelloNetworkCapture {
         client_hello.extend_from_slice(&[0x00, 0x00, 0x00]);
 
         // ClientHello
-        client_hello.extend_from_slice(&[0x03, 0x03]); // Version: TLS 1.2
+        client_hello.extend_from_slice(&[0x03, 0x03]); // Legacy version: TLS 1.2
 
-        // Random (32 bytes)
-        let random: [u8; 32] = [0x00; 32]; // Simple random for now
+        // Random (32 bytes) - use proper random
+        use std::time::SystemTime;
+        let now = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as u32;
+        let mut random = [0u8; 32];
+        random[0..4].copy_from_slice(&now.to_be_bytes());
+        // Fill rest with some pseudo-random data
+        for (i, byte) in random.iter_mut().enumerate().skip(4) {
+            *byte = ((i * 7 + now as usize) % 256) as u8;
+        }
         client_hello.extend_from_slice(&random);
 
-        // Session ID (empty)
+        // Session ID (empty for initial handshake)
         client_hello.push(0x00);
 
-        // Cipher Suites
+        // Cipher Suites - include TLS 1.3 and TLS 1.2 ciphers
         let cipher_suites = vec![
+            // TLS 1.3 ciphers
+            0x13, 0x01, // TLS_AES_128_GCM_SHA256
+            0x13, 0x02, // TLS_AES_256_GCM_SHA384
+            0x13, 0x03, // TLS_CHACHA20_POLY1305_SHA256
+            // TLS 1.2 ciphers
             0xC0, 0x2F, // TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
             0xC0, 0x30, // TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
             0xC0, 0x2B, // TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256
             0xC0, 0x2C, // TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384
-            0x00, 0x9E, // TLS_DHE_RSA_WITH_AES_128_GCM_SHA256
-            0x00, 0x9F, // TLS_DHE_RSA_WITH_AES_256_GCM_SHA384
-            0x00, 0x2F, // TLS_RSA_WITH_AES_128_CBC_SHA
-            0x00, 0x35, // TLS_RSA_WITH_AES_256_CBC_SHA
+            0xCC, 0xA9, // TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256
+            0xCC, 0xA8, // TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256
+            0xC0, 0x2D, // TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256
+            0xC0, 0x2E, // TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA384
         ];
         client_hello.extend_from_slice(&((cipher_suites.len() as u16).to_be_bytes()));
         client_hello.extend_from_slice(&cipher_suites);
@@ -123,21 +150,75 @@ impl ServerHelloNetworkCapture {
         // Extension: supported_groups
         client_hello.extend_from_slice(&[
             0x00, 0x0A, // Extension type: supported_groups
-            0x00, 0x08, // Extension length: 8
-            0x00, 0x06, // Groups length: 6
+            0x00, 0x0C, // Extension length: 12
+            0x00, 0x0A, // Groups length: 10
             0x00, 0x1D, // x25519
             0x00, 0x17, // secp256r1
             0x00, 0x18, // secp384r1
+            0x00, 0x19, // secp521r1
+            0x00, 0x1E, // x448
         ]);
 
         // Extension: signature_algorithms
         client_hello.extend_from_slice(&[
             0x00, 0x0D, // Extension type: signature_algorithms
-            0x00, 0x08, // Extension length: 8
-            0x00, 0x06, // Algorithms length: 6
-            0x04, 0x03, // rsa_pkcs1_sha256
-            0x05, 0x03, // rsa_pkcs1_sha384
-            0x06, 0x03, // rsa_pkcs1_sha512
+            0x00, 0x14, // Extension length: 20
+            0x00, 0x12, // Algorithms length: 18
+            0x04, 0x03, // ecdsa_secp256r1_sha256
+            0x05, 0x03, // ecdsa_secp384r1_sha384
+            0x06, 0x03, // ecdsa_secp521r1_sha512
+            0x08, 0x04, // rsa_pss_rsae_sha256
+            0x08, 0x05, // rsa_pss_rsae_sha384
+            0x08, 0x06, // rsa_pss_rsae_sha512
+            0x04, 0x01, // rsa_pkcs1_sha256
+            0x05, 0x01, // rsa_pkcs1_sha384
+            0x06, 0x01, // rsa_pkcs1_sha512
+        ]);
+
+        // Extension: ec_point_formats
+        client_hello.extend_from_slice(&[
+            0x00, 0x0B, // Extension type: ec_point_formats
+            0x00, 0x02, // Extension length: 2
+            0x01, // Formats length: 1
+            0x00, // uncompressed
+        ]);
+
+        // Extension: supported_versions (TLS 1.3)
+        client_hello.extend_from_slice(&[
+            0x00, 0x2B, // Extension type: supported_versions
+            0x00, 0x05, // Extension length: 5
+            0x04, // Versions length: 4
+            0x03, 0x04, // TLS 1.3
+            0x03, 0x03, // TLS 1.2
+        ]);
+
+        // Extension: key_share (TLS 1.3)
+        client_hello.extend_from_slice(&[
+            0x00, 0x33, // Extension type: key_share
+            0x00, 0x26, // Extension length: 38
+            0x00, 0x24, // Client shares length: 36
+            // Key share entry: x25519
+            0x00, 0x1D, // Group: x25519
+            0x00,
+            0x20, // Key exchange length: 32
+                  // Public key (32 bytes of pseudo-random data)
+        ]);
+        for i in 0..32 {
+            client_hello.push(((i * 13 + now as usize) % 256) as u8);
+        }
+
+        // Extension: psk_key_exchange_modes (TLS 1.3)
+        client_hello.extend_from_slice(&[
+            0x00, 0x2D, // Extension type: psk_key_exchange_modes
+            0x00, 0x02, // Extension length: 2
+            0x01, // Modes length: 1
+            0x01, // psk_dhe_ke
+        ]);
+
+        // Extension: extended_master_secret
+        client_hello.extend_from_slice(&[
+            0x00, 0x17, // Extension type: extended_master_secret
+            0x00, 0x00, // Extension length: 0
         ]);
 
         // Update extensions length
@@ -153,8 +234,7 @@ impl ServerHelloNetworkCapture {
 
         // Update record length
         let record_len = (client_hello.len() - length_pos - 2) as u16;
-        client_hello[length_pos..length_pos + 2]
-            .copy_from_slice(&record_len.to_be_bytes());
+        client_hello[length_pos..length_pos + 2].copy_from_slice(&record_len.to_be_bytes());
 
         client_hello
     }
@@ -185,13 +265,11 @@ impl ServerHelloNetworkCapture {
 
         // Update Server Name List Length
         let list_len = (extension.len() - list_len_pos - 2) as u16;
-        extension[list_len_pos..list_len_pos + 2]
-            .copy_from_slice(&list_len.to_be_bytes());
+        extension[list_len_pos..list_len_pos + 2].copy_from_slice(&list_len.to_be_bytes());
 
         // Update Extension Length
         let ext_len = (extension.len() - ext_len_pos - 2) as u16;
-        extension[ext_len_pos..ext_len_pos + 2]
-            .copy_from_slice(&ext_len.to_be_bytes());
+        extension[ext_len_pos..ext_len_pos + 2].copy_from_slice(&ext_len.to_be_bytes());
 
         extension
     }
@@ -232,7 +310,10 @@ mod tests {
         assert_eq!(extension[1], 0x00);
 
         // Should contain the server name
-        assert!(extension.windows(server_name.len())
-            .any(|window| window == server_name));
+        assert!(
+            extension
+                .windows(server_name.len())
+                .any(|window| window == server_name)
+        );
     }
 }

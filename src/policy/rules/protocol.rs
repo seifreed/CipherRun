@@ -1,9 +1,9 @@
 // Protocol policy rules
 
-use crate::policy::violation::PolicyViolation;
-use crate::policy::ProtocolPolicy;
-use crate::protocols::{Protocol, ProtocolTestResult};
 use crate::Result;
+use crate::policy::ProtocolPolicy;
+use crate::policy::violation::PolicyViolation;
+use crate::protocols::{Protocol, ProtocolTestResult};
 use std::str::FromStr;
 
 pub struct ProtocolRule<'a> {
@@ -25,17 +25,14 @@ impl<'a> ProtocolRule<'a> {
                 // Parse the protocol name to handle different string formats
                 let protocol_match = Protocol::from_str(protocol_name).ok();
 
-                let is_supported = self
-                    .results
-                    .iter()
-                    .any(|r| {
-                        if let Some(ref expected_protocol) = protocol_match {
-                            r.protocol == *expected_protocol && r.supported
-                        } else {
-                            // Fallback to string comparison if parsing fails
-                            r.protocol.to_string() == *protocol_name && r.supported
-                        }
-                    });
+                let is_supported = self.results.iter().any(|r| {
+                    if let Some(ref expected_protocol) = protocol_match {
+                        r.protocol == *expected_protocol && r.supported
+                    } else {
+                        // Fallback to string comparison if parsing fails
+                        r.protocol.to_string() == *protocol_name && r.supported
+                    }
+                });
 
                 if !is_supported {
                     violations.push(
@@ -64,17 +61,14 @@ impl<'a> ProtocolRule<'a> {
                 // Parse the protocol name to handle different string formats
                 let protocol_match = Protocol::from_str(protocol_name).ok();
 
-                let is_supported = self
-                    .results
-                    .iter()
-                    .any(|r| {
-                        if let Some(ref expected_protocol) = protocol_match {
-                            r.protocol == *expected_protocol && r.supported
-                        } else {
-                            // Fallback to string comparison if parsing fails
-                            r.protocol.to_string() == *protocol_name && r.supported
-                        }
-                    });
+                let is_supported = self.results.iter().any(|r| {
+                    if let Some(ref expected_protocol) = protocol_match {
+                        r.protocol == *expected_protocol && r.supported
+                    } else {
+                        // Fallback to string comparison if parsing fails
+                        r.protocol.to_string() == *protocol_name && r.supported
+                    }
+                });
 
                 if is_supported {
                     violations.push(
@@ -84,10 +78,7 @@ impl<'a> ProtocolRule<'a> {
                             self.policy.action,
                             format!("{} is prohibited but enabled", protocol_name),
                         )
-                        .with_evidence(format!(
-                            "Server accepts {} connections",
-                            protocol_name
-                        ))
+                        .with_evidence(format!("Server accepts {} connections", protocol_name))
                         .with_remediation(format!(
                             "Disable {} in server configuration",
                             protocol_name
@@ -122,6 +113,9 @@ mod tests {
             handshake_time_ms: None,
             ciphers_count: 0,
             preferred: false,
+            session_resumption_caching: None,
+            session_resumption_tickets: None,
+            secure_renegotiation: None,
         }];
 
         let rule = ProtocolRule::new(&policy, &results);
@@ -146,6 +140,9 @@ mod tests {
             handshake_time_ms: None,
             ciphers_count: 0,
             preferred: false,
+            session_resumption_caching: None,
+            session_resumption_tickets: None,
+            secure_renegotiation: None,
         }];
 
         let rule = ProtocolRule::new(&policy, &results);

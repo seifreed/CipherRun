@@ -8,8 +8,8 @@
 /// - Failing fast on connectivity or infrastructure issues
 /// - Meeting security standards that require successful revocation verification
 use super::revocation::{RevocationChecker, RevocationResult, RevocationStatus};
-use crate::certificates::parser::CertificateInfo;
 use crate::Result;
+use crate::certificates::parser::CertificateInfo;
 use serde::{Deserialize, Serialize};
 
 /// Strict revocation checker that can hard-fail on errors
@@ -54,7 +54,11 @@ impl StrictRevocationChecker {
         cert: &CertificateInfo,
         issuer: Option<&CertificateInfo>,
     ) -> Result<StrictRevocationResult> {
-        match self.base_checker.check_revocation_status(cert, issuer).await {
+        match self
+            .base_checker
+            .check_revocation_status(cert, issuer)
+            .await
+        {
             Ok(result) => {
                 // Check if the result indicates an error
                 if self.hard_fail_mode && result.status == RevocationStatus::Error {

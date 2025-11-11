@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 /// Represents a policy violation
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PolicyViolation {
-    pub rule_path: String,        // e.g., "protocols.prohibited"
-    pub rule_name: String,         // e.g., "Prohibited Protocol Check"
+    pub rule_path: String, // e.g., "protocols.prohibited"
+    pub rule_name: String, // e.g., "Prohibited Protocol Check"
     pub action: PolicyAction,
     pub description: String,
     pub evidence: Option<String>,

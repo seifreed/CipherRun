@@ -11,9 +11,9 @@
 //
 // Reference: https://github.com/salesforce/ja3
 
-use crate::fingerprint::server_hello::ServerHelloCapture;
 use crate::Result;
 use crate::error::TlsError;
+use crate::fingerprint::server_hello::ServerHelloCapture;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -58,7 +58,8 @@ impl Ja3sFingerprint {
         let ext_str = if extensions.is_empty() {
             String::new()
         } else {
-            extensions.iter()
+            extensions
+                .iter()
                 .map(|e| e.to_string())
                 .collect::<Vec<_>>()
                 .join("-")
@@ -103,9 +104,10 @@ impl Ja3sFingerprint {
 
     /// Get extension names
     pub fn extension_names(&self) -> Vec<String> {
-        self.extensions.iter().map(|&ext_id| {
-            get_extension_name(ext_id)
-        }).collect()
+        self.extensions
+            .iter()
+            .map(|&ext_id| get_extension_name(ext_id))
+            .collect()
     }
 }
 
@@ -154,11 +156,20 @@ pub struct Ja3sDatabase {
 }
 
 impl Ja3sDatabase {
+    /// Create an empty database
+    pub fn empty() -> Self {
+        Ja3sDatabase {
+            signatures: HashMap::new(),
+        }
+    }
+
     /// Load default database from embedded JSON
     pub fn load_default() -> Result<Self> {
         let json = include_str!("../../data/ja3s_signatures.json");
-        let signatures: HashMap<String, Ja3sSignature> = serde_json::from_str(json)
-            .map_err(|e| TlsError::ParseError { message: format!("Failed to parse JA3S database: {}", e) })?;
+        let signatures: HashMap<String, Ja3sSignature> =
+            serde_json::from_str(json).map_err(|e| TlsError::ParseError {
+                message: format!("Failed to parse JA3S database: {}", e),
+            })?;
 
         Ok(Ja3sDatabase { signatures })
     }
@@ -202,12 +213,13 @@ impl CdnDetection {
 
         // Check JA3S signature match
         if let Some(sig) = ja3s_match
-            && sig.server_type == ServerType::CDN {
-                is_cdn = true;
-                cdn_provider = Some(sig.name.clone());
-                confidence += 0.7;
-                indicators.push(format!("JA3S signature matches {}", sig.name));
-            }
+            && sig.server_type == ServerType::CDN
+        {
+            is_cdn = true;
+            cdn_provider = Some(sig.name.clone());
+            confidence += 0.7;
+            indicators.push(format!("JA3S signature matches {}", sig.name));
+        }
 
         // Check HTTP headers for CDN indicators
         for (header_name, header_value) in http_headers {
@@ -251,7 +263,9 @@ impl CdnDetection {
             }
 
             // AWS CloudFront indicators
-            if header_lower.starts_with("x-amz-cf-") || header_lower == "x-cache" && value_lower.contains("cloudfront") {
+            if header_lower.starts_with("x-amz-cf-")
+                || header_lower == "x-cache" && value_lower.contains("cloudfront")
+            {
                 is_cdn = true;
                 if cdn_provider.is_none() {
                     cdn_provider = Some("AWS CloudFront".to_string());
@@ -301,11 +315,12 @@ impl LoadBalancerInfo {
 
         // Check JA3S signature
         if let Some(sig) = ja3s_match
-            && sig.server_type == ServerType::LoadBalancer {
-                detected = true;
-                lb_type = Some(sig.name.clone());
-                indicators.push(format!("JA3S signature matches {}", sig.name));
-            }
+            && sig.server_type == ServerType::LoadBalancer
+        {
+            detected = true;
+            lb_type = Some(sig.name.clone());
+            indicators.push(format!("JA3S signature matches {}", sig.name));
+        }
 
         // Check HTTP headers
         for (header_name, header_value) in http_headers {
@@ -340,7 +355,10 @@ impl LoadBalancerInfo {
             }
 
             // Sticky session indicators
-            if value_lower.contains("route") || value_lower.contains("sticky") || value_lower.contains("persist") {
+            if value_lower.contains("route")
+                || value_lower.contains("sticky")
+                || value_lower.contains("persist")
+            {
                 sticky_sessions = true;
                 indicators.push("Sticky session cookie detected".to_string());
             }

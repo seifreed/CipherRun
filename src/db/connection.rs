@@ -3,8 +3,8 @@
 
 use crate::db::config::{DatabaseConfig, DatabaseType};
 use sqlx::{Pool, Postgres, Sqlite};
-use std::time::Duration;
 use std::str::FromStr;
+use std::time::Duration;
 
 /// Database pool enum supporting both PostgreSQL and SQLite
 #[derive(Clone)]
@@ -26,7 +26,12 @@ impl DatabasePool {
                     .acquire_timeout(Duration::from_secs(30))
                     .connect(&connection_string)
                     .await
-                    .map_err(|e| crate::TlsError::DatabaseError(format!("PostgreSQL connection failed: {}", e)))?;
+                    .map_err(|e| {
+                        crate::TlsError::DatabaseError(format!(
+                            "PostgreSQL connection failed: {}",
+                            e
+                        ))
+                    })?;
 
                 DatabasePool::Postgres(pool)
             }
@@ -35,16 +40,24 @@ impl DatabasePool {
 
                 // Use sqlx's built-in URI parsing for SQLite connections
                 // This properly handles both file paths and special SQLite URIs
-                let connect_options = sqlx::sqlite::SqliteConnectOptions::from_str(&connection_string)
-                    .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to parse SQLite connection string: {}", e)))?
-                    .create_if_missing(true);
+                let connect_options =
+                    sqlx::sqlite::SqliteConnectOptions::from_str(&connection_string)
+                        .map_err(|e| {
+                            crate::TlsError::DatabaseError(format!(
+                                "Failed to parse SQLite connection string: {}",
+                                e
+                            ))
+                        })?
+                        .create_if_missing(true);
 
                 let pool = sqlx::sqlite::SqlitePoolOptions::new()
                     .max_connections(1) // SQLite is single-writer
                     .acquire_timeout(Duration::from_secs(30))
                     .connect_with(connect_options)
                     .await
-                    .map_err(|e| crate::TlsError::DatabaseError(format!("SQLite connection failed: {}", e)))?;
+                    .map_err(|e| {
+                        crate::TlsError::DatabaseError(format!("SQLite connection failed: {}", e))
+                    })?;
 
                 DatabasePool::Sqlite(pool)
             }

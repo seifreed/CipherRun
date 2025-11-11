@@ -189,11 +189,12 @@ impl HstsPreloadChecker {
         let cache = self.cache.lock().ok()?;
 
         if let Some(entry) = cache.get(domain)
-            && entry.timestamp.elapsed() < self.cache_duration {
-                let mut status = entry.status.clone();
-                status.source = PreloadSource::Cache;
-                return Some(status);
-            }
+            && entry.timestamp.elapsed() < self.cache_duration
+        {
+            let mut status = entry.status.clone();
+            status.source = PreloadSource::Cache;
+            return Some(status);
+        }
 
         None
     }

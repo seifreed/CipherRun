@@ -99,10 +99,7 @@ impl ChangeDetector {
                 change_type: ChangeType::KeySizeChange,
                 severity: ChangeSeverity::High,
                 description: "Public key size changed".to_string(),
-                previous_value: Some(format!(
-                    "{} bits",
-                    previous.public_key_size.unwrap_or(0)
-                )),
+                previous_value: Some(format!("{} bits", previous.public_key_size.unwrap_or(0))),
                 current_value: Some(format!("{} bits", current.public_key_size.unwrap_or(0))),
                 detected_at: now,
             });
@@ -241,6 +238,7 @@ mod tests {
             fingerprint_sha256: None,
             debian_weak_key: None,
             aia_url: None,
+            certificate_transparency: None,
             der_bytes: vec![],
         }
     }

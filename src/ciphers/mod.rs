@@ -44,6 +44,13 @@ impl CipherSuite {
     }
 
     pub fn has_forward_secrecy(&self) -> bool {
+        // TLS 1.3 always provides Forward Secrecy by design (RFC 8446)
+        // All TLS 1.3 cipher suites use ephemeral key exchange (ECDHE or DHE)
+        if self.protocol.contains("TLSv1.3") || self.protocol.contains("TLS13") {
+            return true;
+        }
+
+        // For TLS 1.2 and earlier, check for ephemeral key exchange
         self.key_exchange.contains("ECDHE")
             || self.key_exchange.contains("DHE")
             || self.openssl_name.contains("ECDHE")

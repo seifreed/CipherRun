@@ -118,7 +118,8 @@ impl SchedulingEngine {
 
     /// Reschedule a domain for immediate scan
     pub fn schedule_immediate(&mut self, identifier: &str) {
-        self.next_scan_times.insert(identifier.to_string(), Utc::now());
+        self.next_scan_times
+            .insert(identifier.to_string(), Utc::now());
     }
 
     /// Get domains scheduled in the next N seconds

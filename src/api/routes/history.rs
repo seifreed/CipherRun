@@ -1,12 +1,15 @@
 // Scan History Routes
 
 use crate::api::{
-    models::{error::{ApiError, ApiErrorResponse}, response::ScanHistoryResponse},
+    models::{
+        error::{ApiError, ApiErrorResponse},
+        response::ScanHistoryResponse,
+    },
     state::AppState,
 };
 use axum::{
-    extract::{Path, Query, State},
     Json,
+    extract::{Path, Query, State},
 };
 use serde::Deserialize;
 use std::sync::Arc;
@@ -102,7 +105,9 @@ async fn query_scan_history(
             .bind(limit)
             .fetch_all(pool)
             .await
-            .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to query scan history: {}", e)))?;
+            .map_err(|e| {
+                crate::TlsError::DatabaseError(format!("Failed to query scan history: {}", e))
+            })?;
 
             Ok(rows
                 .into_iter()
@@ -111,7 +116,9 @@ async fn query_scan_history(
                     timestamp: row.get("scan_timestamp"),
                     grade: row.get("overall_grade"),
                     score: row.get::<Option<i32>, _>("overall_score").map(|s| s as u8),
-                    duration_ms: row.get::<Option<i64>, _>("scan_duration_ms").map(|d| d as u64),
+                    duration_ms: row
+                        .get::<Option<i64>, _>("scan_duration_ms")
+                        .map(|d| d as u64),
                 })
                 .collect())
         }
@@ -131,7 +138,9 @@ async fn query_scan_history(
             .bind(limit)
             .fetch_all(pool)
             .await
-            .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to query scan history: {}", e)))?;
+            .map_err(|e| {
+                crate::TlsError::DatabaseError(format!("Failed to query scan history: {}", e))
+            })?;
 
             Ok(rows
                 .into_iter()
@@ -140,7 +149,9 @@ async fn query_scan_history(
                     timestamp: row.get("scan_timestamp"),
                     grade: row.get("overall_grade"),
                     score: row.get::<Option<i32>, _>("overall_score").map(|s| s as u8),
-                    duration_ms: row.get::<Option<i64>, _>("scan_duration_ms").map(|d| d as u64),
+                    duration_ms: row
+                        .get::<Option<i64>, _>("scan_duration_ms")
+                        .map(|d| d as u64),
                 })
                 .collect())
         }

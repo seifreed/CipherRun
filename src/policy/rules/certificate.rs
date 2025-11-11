@@ -1,9 +1,9 @@
 // Certificate policy rules
 
+use crate::Result;
 use crate::policy::violation::PolicyViolation;
 use crate::policy::{CertificatePolicy, PolicyAction};
 use crate::scanner::CertificateAnalysisResult;
-use crate::Result;
 use chrono::Utc;
 
 pub struct CertificateRule<'a> {
@@ -47,137 +47,137 @@ impl<'a> CertificateRule<'a> {
         // Check minimum key size
         if let Some(min_key_size) = self.policy.min_key_size
             && let Some(cert) = leaf_cert
-                && let Some(key_size) = cert.public_key_size
-                    && (key_size as u32) < min_key_size {
-                        violations.push(
-                            PolicyViolation::new(
-                                "certificates.min_key_size",
-                                "Minimum Key Size Check",
-                                self.policy.action,
-                                format!(
-                                    "Certificate key size {} is below minimum {}",
-                                    key_size, min_key_size
-                                ),
-                            )
-                            .with_evidence(format!(
-                                "Certificate has {}-bit {} key",
-                                key_size, cert.public_key_algorithm
-                            ))
-                            .with_remediation(format!(
-                                "Replace certificate with at least {}-bit key",
-                                min_key_size
-                            )),
-                        );
-                    }
+            && let Some(key_size) = cert.public_key_size
+            && (key_size as u32) < min_key_size
+        {
+            violations.push(
+                PolicyViolation::new(
+                    "certificates.min_key_size",
+                    "Minimum Key Size Check",
+                    self.policy.action,
+                    format!(
+                        "Certificate key size {} is below minimum {}",
+                        key_size, min_key_size
+                    ),
+                )
+                .with_evidence(format!(
+                    "Certificate has {}-bit {} key",
+                    key_size, cert.public_key_algorithm
+                ))
+                .with_remediation(format!(
+                    "Replace certificate with at least {}-bit key",
+                    min_key_size
+                )),
+            );
+        }
 
         // Check days until expiry
         if let Some(max_days) = self.policy.max_days_until_expiry
-            && let Some(cert) = leaf_cert {
-                // Parse not_after date and calculate days remaining
-                if let Ok(not_after) =
-                    chrono::NaiveDateTime::parse_from_str(&cert.not_after, "%Y-%m-%d %H:%M:%S %Z")
-                {
-                    let now = Utc::now().naive_utc();
-                    let days_remaining = (not_after - now).num_days();
+            && let Some(cert) = leaf_cert
+        {
+            // Parse not_after date and calculate days remaining
+            if let Ok(not_after) =
+                chrono::NaiveDateTime::parse_from_str(&cert.not_after, "%Y-%m-%d %H:%M:%S %Z")
+            {
+                let now = Utc::now().naive_utc();
+                let days_remaining = (not_after - now).num_days();
 
-                    if days_remaining < max_days {
-                        violations.push(
-                            PolicyViolation::new(
-                                "certificates.max_days_until_expiry",
-                                "Certificate Expiry Check",
-                                self.policy.action,
-                                format!(
-                                    "Certificate expires in {} days (threshold: {} days)",
-                                    days_remaining, max_days
-                                ),
-                            )
-                            .with_evidence(format!("Valid until: {}", cert.not_after))
-                            .with_remediation("Renew certificate before expiration"),
-                        );
-                    }
+                if days_remaining < max_days {
+                    violations.push(
+                        PolicyViolation::new(
+                            "certificates.max_days_until_expiry",
+                            "Certificate Expiry Check",
+                            self.policy.action,
+                            format!(
+                                "Certificate expires in {} days (threshold: {} days)",
+                                days_remaining, max_days
+                            ),
+                        )
+                        .with_evidence(format!("Valid until: {}", cert.not_after))
+                        .with_remediation("Renew certificate before expiration"),
+                    );
                 }
             }
+        }
 
         // Check prohibited signature algorithms
         if let Some(ref prohibited_sigs) = self.policy.prohibited_signature_algorithms
-            && let Some(cert) = leaf_cert {
-                for prohibited in prohibited_sigs {
-                    if cert
-                        .signature_algorithm
-                        .to_uppercase()
-                        .contains(&prohibited.to_uppercase())
-                    {
-                        violations.push(
-                            PolicyViolation::new(
-                                "certificates.prohibited_signature_algorithms",
-                                "Prohibited Signature Algorithm",
-                                self.policy.action,
-                                format!(
-                                    "Certificate uses prohibited signature algorithm: {}",
-                                    cert.signature_algorithm
-                                ),
-                            )
-                            .with_evidence(format!(
-                                "Signature algorithm: {}",
+            && let Some(cert) = leaf_cert
+        {
+            for prohibited in prohibited_sigs {
+                if cert
+                    .signature_algorithm
+                    .to_uppercase()
+                    .contains(&prohibited.to_uppercase())
+                {
+                    violations.push(
+                        PolicyViolation::new(
+                            "certificates.prohibited_signature_algorithms",
+                            "Prohibited Signature Algorithm",
+                            self.policy.action,
+                            format!(
+                                "Certificate uses prohibited signature algorithm: {}",
                                 cert.signature_algorithm
-                            ))
-                            .with_remediation(format!(
-                                "Replace certificate with signature algorithm other than {}",
-                                prohibited
-                            )),
-                        );
-                    }
+                            ),
+                        )
+                        .with_evidence(format!("Signature algorithm: {}", cert.signature_algorithm))
+                        .with_remediation(format!(
+                            "Replace certificate with signature algorithm other than {}",
+                            prohibited
+                        )),
+                    );
                 }
             }
+        }
 
         // Check valid trust chain
         if let Some(true) = self.policy.require_valid_trust_chain
-            && !cert_result.validation.trust_chain_valid {
-                violations.push(
-                    PolicyViolation::new(
-                        "certificates.require_valid_trust_chain",
-                        "Trust Chain Validation",
-                        self.policy.action,
-                        "Certificate trust chain is invalid",
-                    )
-                    .with_evidence("Trust chain validation failed")
-                    .with_remediation("Install valid certificate chain from trusted CA"),
-                );
-            }
+            && !cert_result.validation.trust_chain_valid
+        {
+            violations.push(
+                PolicyViolation::new(
+                    "certificates.require_valid_trust_chain",
+                    "Trust Chain Validation",
+                    self.policy.action,
+                    "Certificate trust chain is invalid",
+                )
+                .with_evidence("Trust chain validation failed")
+                .with_remediation("Install valid certificate chain from trusted CA"),
+            );
+        }
 
         // Check SAN requirement
         if let Some(true) = self.policy.require_san
             && let Some(cert) = leaf_cert
-                && cert.san.is_empty() {
-                    violations.push(
-                        PolicyViolation::new(
-                            "certificates.require_san",
-                            "Subject Alternative Name Check",
-                            self.policy.action,
-                            "Certificate missing Subject Alternative Names (SAN)",
-                        )
-                        .with_evidence("No SAN extension found in certificate")
-                        .with_remediation("Replace certificate with SAN extension"),
-                    );
-                }
+            && cert.san.is_empty()
+        {
+            violations.push(
+                PolicyViolation::new(
+                    "certificates.require_san",
+                    "Subject Alternative Name Check",
+                    self.policy.action,
+                    "Certificate missing Subject Alternative Names (SAN)",
+                )
+                .with_evidence("No SAN extension found in certificate")
+                .with_remediation("Replace certificate with SAN extension"),
+            );
+        }
 
         // Check hostname match
         if let Some(true) = self.policy.require_hostname_match
-            && !cert_result.validation.hostname_match {
-                violations.push(
-                    PolicyViolation::new(
-                        "certificates.require_hostname_match",
-                        "Hostname Match Check",
-                        self.policy.action,
-                        "Certificate hostname does not match target",
-                    )
-                    .with_evidence(format!(
-                        "Certificate does not match hostname: {}",
-                        target
-                    ))
-                    .with_remediation("Replace certificate with correct hostname in CN or SAN"),
-                );
-            }
+            && !cert_result.validation.hostname_match
+        {
+            violations.push(
+                PolicyViolation::new(
+                    "certificates.require_hostname_match",
+                    "Hostname Match Check",
+                    self.policy.action,
+                    "Certificate hostname does not match target",
+                )
+                .with_evidence(format!("Certificate does not match hostname: {}", target))
+                .with_remediation("Replace certificate with correct hostname in CN or SAN"),
+            );
+        }
 
         Ok(violations)
     }
@@ -211,6 +211,7 @@ mod tests {
             fingerprint_sha256: None,
             debian_weak_key: None,
             aia_url: None,
+            certificate_transparency: Some("Yes (certificate)".to_string()),
             der_bytes: vec![],
         };
 

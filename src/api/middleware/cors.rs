@@ -16,10 +16,7 @@ pub fn cors_layer_with_origins(origins: Vec<String>) -> CorsLayer {
     use axum::http::Method;
     use tower_http::cors::AllowOrigin;
 
-    let allow_origins: Vec<_> = origins
-        .iter()
-        .filter_map(|o| o.parse().ok())
-        .collect();
+    let allow_origins: Vec<_> = origins.iter().filter_map(|o| o.parse().ok()).collect();
 
     CorsLayer::new()
         .allow_origin(AllowOrigin::list(allow_origins))

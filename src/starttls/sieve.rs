@@ -48,7 +48,10 @@ impl StarttlsNegotiator for SieveNegotiator {
         }
 
         if !starttls_supported {
-            return Err(crate::error::TlsError::StarttlsError { protocol: "Sieve".to_string(), details: "Server does not support STARTTLS".to_string() });
+            return Err(crate::error::TlsError::StarttlsError {
+                protocol: "Sieve".to_string(),
+                details: "Server does not support STARTTLS".to_string(),
+            });
         }
 
         // Send STARTTLS command

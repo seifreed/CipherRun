@@ -112,9 +112,10 @@ impl Rule {
 
         for pattern in &self.allowed_patterns {
             if let Ok(re) = regex::Regex::new(pattern)
-                && re.is_match(value) {
-                    return true;
-                }
+                && re.is_match(value)
+            {
+                return true;
+            }
         }
         false
     }
@@ -123,9 +124,10 @@ impl Rule {
     pub fn matches_denied_pattern(&self, value: &str) -> bool {
         for pattern in &self.denied_patterns {
             if let Ok(re) = regex::Regex::new(pattern)
-                && re.is_match(value) {
-                    return true;
-                }
+                && re.is_match(value)
+            {
+                return true;
+            }
         }
         false
     }
@@ -134,9 +136,10 @@ impl Rule {
     pub fn matches_preferred_pattern(&self, value: &str) -> bool {
         for pattern in &self.preferred_patterns {
             if let Ok(re) = regex::Regex::new(pattern)
-                && re.is_match(value) {
-                    return true;
-                }
+                && re.is_match(value)
+            {
+                return true;
+            }
         }
         false
     }

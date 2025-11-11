@@ -1,6 +1,6 @@
 [package]
 name = "cipherrun"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 authors = ["Marc Rivero <@seifreed>"]
 description = "A fast, modular, and scalable TLS/SSL security scanner written in Rust"
@@ -26,8 +26,13 @@ exclude = [
 
 include = [
     "src/**/*",
-    "data/*.json",
-    "data/*.txt",
+    "data/**/*.json",
+    "data/**/*.yaml",
+    "data/**/*.yml",
+    "data/**/*.txt",
+    "data/**/*.pem",
+    "data/**/*.css",
+    "migrations/**/*.sql",
     "Cargo.toml",
     "LICENSE",
     "README.md",
@@ -119,6 +124,7 @@ log = "0.4"
 # Parallel processing
 rayon = "1.10"
 crossbeam-channel = "0.5"
+parking_lot = "0.12"
 
 # Template engine for HTML output
 handlebars = "6.1"

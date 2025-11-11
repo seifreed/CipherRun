@@ -45,7 +45,10 @@ impl StarttlsNegotiator for PostgresNegotiator {
             // Server supports SSL, can proceed with TLS handshake
             Ok(())
         } else {
-            Err(crate::error::TlsError::StarttlsError { protocol: "PostgreSQL".to_string(), details: "Server does not support SSL".to_string() })
+            Err(crate::error::TlsError::StarttlsError {
+                protocol: "PostgreSQL".to_string(),
+                details: "Server does not support SSL".to_string(),
+            })
         }
     }
 

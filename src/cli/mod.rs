@@ -1,6 +1,6 @@
 // CLI module - Command line interface and argument parsing
 
-use clap::Parser;
+use clap::{ArgAction, Parser};
 use std::path::PathBuf;
 
 #[derive(Parser, Debug, Clone, Default)]
@@ -160,8 +160,8 @@ pub struct Args {
     #[arg(long = "html", value_name = "FILE")]
     pub html: Option<PathBuf>,
 
-    /// Run all tests
-    #[arg(short = 'a', long = "all")]
+    /// Run all tests (default: enabled, use --all=false to disable)
+    #[arg(short = 'a', long = "all", default_value_t = true, action = ArgAction::Set)]
     pub all: bool,
 
     /// Port to test
@@ -495,11 +495,18 @@ pub struct Args {
     #[arg(long = "no-check-certificate")]
     pub no_check_certificate: bool,
 
-    /// Test all IP addresses resolved for hostname (Anycast pools support)
-    /// By default only the first IP is tested. This flag enables testing
-    /// all IPs and reporting the minimum capability across them.
+    /// Test all IP addresses resolved for hostname (default behavior when multiple IPs found)
+    /// When a hostname resolves to multiple IPs (load balancers, Anycast), all IPs are tested
+    /// by default and results are aggregated using worst-case approach. Use --first-ip-only
+    /// to scan only the first IP for faster results.
     #[arg(long = "test-all-ips")]
     pub test_all_ips: bool,
+
+    /// Scan only the first resolved IP address (faster, single IP mode)
+    /// Use this flag to explicitly scan only the first IP when you want faster results,
+    /// especially for hosts with multiple load balancer IPs. By default, all IPs are scanned.
+    #[arg(long = "first-ip-only")]
+    pub first_ip_only: bool,
 
     // ============ Retry Configuration ============
     /// Maximum number of retries for transient network failures (0 = no retries)
@@ -583,7 +590,11 @@ pub struct Args {
     pub enforce: bool,
 
     /// Policy output format (terminal, json, csv)
-    #[arg(long = "policy-format", value_name = "FORMAT", default_value = "terminal")]
+    #[arg(
+        long = "policy-format",
+        value_name = "FORMAT",
+        default_value = "terminal"
+    )]
     pub policy_format: String,
 
     // ============ Compliance Framework Engine ============
@@ -592,7 +603,11 @@ pub struct Args {
     pub compliance: Option<String>,
 
     /// Compliance report output format (terminal, json, csv, html)
-    #[arg(long = "compliance-format", value_name = "FORMAT", default_value = "terminal")]
+    #[arg(
+        long = "compliance-format",
+        value_name = "FORMAT",
+        default_value = "terminal"
+    )]
     pub compliance_format: String,
 
     /// List available compliance frameworks and exit
@@ -646,7 +661,6 @@ pub struct Args {
     pub dashboard: Option<String>,
 
     // ============ HIGH PRIORITY Features (4-10) ============
-
     /// Use pre-handshake mode for fast certificate retrieval (early termination)
     /// Disconnects after ServerHello without completing full handshake (2-3x faster)
     /// Only works with TLS 1.0-1.2
@@ -679,7 +693,6 @@ pub struct Args {
     pub export_hello: Option<String>,
 
     // ============ MEDIUM PRIORITY Features (11-15) ============
-
     /// Output only unique domain names from certificates
     #[arg(long = "dns", alias = "dns-only")]
     pub dns_only: bool,
@@ -710,7 +723,12 @@ pub struct Args {
     pub ct_beginning: bool,
 
     /// Start from custom index per log (format: sourceID=index)
-    #[arg(long = "ct-index", alias = "cti", requires = "ct_logs", value_name = "SOURCE=INDEX")]
+    #[arg(
+        long = "ct-index",
+        alias = "cti",
+        requires = "ct_logs",
+        value_name = "SOURCE=INDEX"
+    )]
     pub ct_index: Vec<String>,
 
     /// CT logs poll interval in seconds (default: 60)
@@ -730,8 +748,8 @@ pub struct Args {
     pub ct_silent: bool,
 
     // ============ JA3 TLS Client Fingerprinting ============
-    /// Calculate JA3 TLS client fingerprint
-    #[arg(long = "ja3")]
+    /// Calculate JA3 TLS client fingerprint (default: enabled, use --ja3=false to disable)
+    #[arg(long = "ja3", default_value_t = true, action = ArgAction::Set)]
     pub ja3: bool,
 
     /// Include full ClientHello in JSON output
@@ -743,8 +761,8 @@ pub struct Args {
     pub ja3_database: Option<PathBuf>,
 
     // ============ JA3S TLS Server Fingerprinting ============
-    /// Calculate JA3S TLS server fingerprint
-    #[arg(long = "ja3s")]
+    /// Calculate JA3S TLS server fingerprint (default: enabled, use --ja3s=false to disable)
+    #[arg(long = "ja3s", default_value_t = true, action = ArgAction::Set)]
     pub ja3s: bool,
 
     /// Include full ServerHello in JSON output
@@ -777,8 +795,8 @@ pub struct Args {
     pub filter_untrusted: bool,
 
     // ============ JARM TLS Server Fingerprinting ============
-    /// Calculate JARM TLS server fingerprint
-    #[arg(long = "jarm")]
+    /// Calculate JARM TLS server fingerprint (default: enabled, use --jarm=false to disable)
+    #[arg(long = "jarm", default_value_t = true, action = ArgAction::Set)]
     pub jarm: bool,
 
     /// Path to custom JARM signature database (JSON format)
@@ -787,6 +805,32 @@ pub struct Args {
 }
 
 impl Args {
+    /// Validate CLI arguments for mutual exclusivity and logical consistency
+    ///
+    /// Returns an error if conflicting flags are used together
+    pub fn validate(&self) -> anyhow::Result<()> {
+        // Check for conflicting IP scanning flags
+        if self.test_all_ips && self.first_ip_only {
+            anyhow::bail!(
+                "Cannot use --test-all-ips and --first-ip-only together. Choose one scanning mode."
+            );
+        }
+
+        if self.ip.is_some() && self.test_all_ips {
+            anyhow::bail!(
+                "Cannot use --ip with --test-all-ips. The --ip flag specifies a single IP to scan."
+            );
+        }
+
+        if self.ip.is_some() && self.first_ip_only {
+            anyhow::bail!(
+                "Cannot use --ip with --first-ip-only. The --ip flag already specifies a single IP to scan."
+            );
+        }
+
+        Ok(())
+    }
+
     /// Detect which STARTTLS protocol is requested
     pub fn starttls_protocol(&self) -> Option<crate::starttls::StarttlsProtocol> {
         use crate::starttls::StarttlsProtocol;

@@ -10,7 +10,7 @@ pub struct ProtocolRecord {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub protocol_id: Option<i64>,
     pub scan_id: i64,
-    pub protocol_name: String,  // "TLS 1.2", "TLS 1.3", etc.
+    pub protocol_name: String, // "TLS 1.2", "TLS 1.3", etc.
     pub enabled: bool,
     pub preferred: bool,
 }

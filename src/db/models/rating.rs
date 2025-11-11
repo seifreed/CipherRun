@@ -10,9 +10,9 @@ pub struct RatingRecord {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rating_id: Option<i64>,
     pub scan_id: i64,
-    pub category: String,  // "protocol", "key_exchange", "cipher", "certificate"
-    pub score: i32,  // 0-100
-    pub grade: Option<String>,  // "A+", "A", "B", etc.
+    pub category: String, // "protocol", "key_exchange", "cipher", "certificate"
+    pub score: i32,       // 0-100
+    pub grade: Option<String>, // "A+", "A", "B", etc.
     pub rationale: Option<String>,
 }
 

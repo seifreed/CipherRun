@@ -7,10 +7,8 @@
 // - Signature database matching
 // - Live server fingerprinting
 
-use cipherrun::fingerprint::{
-    JarmFingerprinter, JarmDatabase, JarmSignature, get_probes,
-};
-use std::net::{SocketAddr, IpAddr, Ipv4Addr};
+use cipherrun::fingerprint::{JarmDatabase, JarmFingerprinter, JarmSignature, get_probes};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::Duration;
 
 #[test]
@@ -93,8 +91,7 @@ fn test_jarm_signature_serialization() {
     assert!(json.contains("Test"));
 
     // Should deserialize from JSON
-    let deserialized: JarmSignature = serde_json::from_str(&json)
-        .expect("Failed to deserialize");
+    let deserialized: JarmSignature = serde_json::from_str(&json).expect("Failed to deserialize");
     assert_eq!(deserialized.hash, sig.hash);
     assert_eq!(deserialized.name, sig.name);
 }
@@ -141,7 +138,10 @@ async fn test_jarm_fingerprint_google() {
     assert_eq!(fp.hash.len(), 62);
 
     // Hash should not be all zeros (Google is responsive)
-    assert_ne!(fp.hash, "00000000000000000000000000000000000000000000000000000000000000");
+    assert_ne!(
+        fp.hash,
+        "00000000000000000000000000000000000000000000000000000000000000"
+    );
 
     // Should have 10 raw responses
     assert_eq!(fp.raw_responses.len(), 10);
@@ -169,7 +169,10 @@ async fn test_jarm_fingerprint_cloudflare() {
     assert_eq!(fp.hash.len(), 62);
 
     // Cloudflare should be responsive
-    assert_ne!(fp.hash, "00000000000000000000000000000000000000000000000000000000000000");
+    assert_ne!(
+        fp.hash,
+        "00000000000000000000000000000000000000000000000000000000000000"
+    );
 
     println!("Cloudflare JARM: {}", fp.hash);
     if let Some(sig) = fp.signature {
@@ -196,8 +199,10 @@ fn test_jarm_threat_detection() {
     // Check specific malware signatures exist
     for sig in malware_sigs {
         assert!(sig.server_type.contains("Malware") || sig.server_type.contains("C2"));
-        assert!(sig.threat_level.as_ref().unwrap() == "high"
-            || sig.threat_level.as_ref().unwrap() == "critical");
+        assert!(
+            sig.threat_level.as_ref().unwrap() == "high"
+                || sig.threat_level.as_ref().unwrap() == "critical"
+        );
     }
 }
 
@@ -265,7 +270,9 @@ fn test_jarm_hash_format() {
 
         // Should be valid hex characters
         assert!(
-            sig.hash.chars().all(|c| c.is_ascii_hexdigit() || c.is_ascii_digit()),
+            sig.hash
+                .chars()
+                .all(|c| c.is_ascii_hexdigit() || c.is_ascii_digit()),
             "JARM hash for {} contains invalid characters",
             sig.name
         );
@@ -284,10 +291,8 @@ async fn test_jarm_custom_database() {
         threat_level: None,
     });
 
-    let fingerprinter = JarmFingerprinter::with_database(
-        Duration::from_secs(5),
-        custom_db.clone(),
-    );
+    let _fingerprinter =
+        JarmFingerprinter::with_database(Duration::from_secs(5), custom_db.clone());
 
     // Database should contain our custom signature
     let found = custom_db.lookup("custom_hash_123");
@@ -333,10 +338,8 @@ fn test_jarm_signature_coverage() {
     let signatures = db.all_signatures();
 
     // Should have reasonable coverage of different server types
-    let server_types: std::collections::HashSet<String> = signatures
-        .iter()
-        .map(|s| s.server_type.clone())
-        .collect();
+    let server_types: std::collections::HashSet<String> =
+        signatures.iter().map(|s| s.server_type.clone()).collect();
 
     assert!(server_types.contains("CDN"));
     assert!(server_types.contains("Web Server"));

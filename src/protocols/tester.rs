@@ -118,17 +118,22 @@ impl ProtocolTester {
         self
     }
 
-    /// Test all protocols
+    /// Test all protocols (parallelized for concurrent execution)
     pub async fn test_all_protocols(&self) -> Result<Vec<ProtocolTestResult>> {
-        let mut results = Vec::new();
+        use futures::stream::{self, StreamExt};
 
         // Determine which protocols to test
         let protocols_to_test = self.protocol_filter.clone().unwrap_or_else(Protocol::all);
 
-        for protocol in protocols_to_test {
-            let result = self.test_protocol(protocol).await?;
-            results.push(result);
-        }
+        // Test all protocols concurrently using buffer_unordered
+        // This parallelizes the testing of all 6 protocols simultaneously
+        let results: Vec<ProtocolTestResult> = stream::iter(protocols_to_test)
+            .map(|protocol| async move { self.test_protocol(protocol).await })
+            .buffer_unordered(6) // Test up to 6 protocols concurrently
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .collect::<Result<Vec<_>>>()?;
 
         Ok(results)
     }
@@ -154,11 +159,31 @@ impl ProtocolTester {
         };
 
         // Detect heartbeat extension support for supported protocols (TLS 1.0-1.3)
-        let heartbeat_enabled = if supported && !matches!(protocol, Protocol::SSLv2 | Protocol::QUIC) {
-            self.detect_heartbeat_extension(protocol).await.ok()
-        } else {
-            None
-        };
+        let heartbeat_enabled =
+            if supported && !matches!(protocol, Protocol::SSLv2 | Protocol::QUIC) {
+                self.detect_heartbeat_extension(protocol).await.ok()
+            } else {
+                None
+            };
+
+        // Detect session resumption support for supported protocols (TLS 1.0-1.3)
+        let (session_resumption_caching, session_resumption_tickets) =
+            if supported && !matches!(protocol, Protocol::SSLv2 | Protocol::QUIC) {
+                match self.detect_session_resumption(protocol).await {
+                    Ok((caching, tickets)) => (Some(caching), Some(tickets)),
+                    Err(_) => (None, None),
+                }
+            } else {
+                (None, None)
+            };
+
+        // Detect secure renegotiation support for supported protocols (TLS 1.0-1.3)
+        let secure_renegotiation =
+            if supported && !matches!(protocol, Protocol::SSLv2 | Protocol::QUIC) {
+                self.detect_secure_renegotiation(protocol).await.ok()
+            } else {
+                None
+            };
 
         Ok(ProtocolTestResult {
             protocol,
@@ -167,6 +192,9 @@ impl ProtocolTester {
             ciphers_count: 0, // Will be filled by cipher testing
             handshake_time_ms,
             heartbeat_enabled,
+            session_resumption_caching,
+            session_resumption_tickets,
+            secure_renegotiation,
         })
     }
 
@@ -199,7 +227,11 @@ impl ProtocolTester {
                 idx + 1,
                 addrs.len(),
                 protocol,
-                if ip_supports { "supported" } else { "NOT supported" },
+                if ip_supports {
+                    "supported"
+                } else {
+                    "NOT supported"
+                },
                 if ip_supports { "✓" } else { "✗" }
             );
 
@@ -211,8 +243,8 @@ impl ProtocolTester {
         }
 
         // Check for inconsistencies
-        let inconsistent = per_ip_results.iter().any(|(_, s)| *s)
-            && per_ip_results.iter().any(|(_, s)| !*s);
+        let inconsistent =
+            per_ip_results.iter().any(|(_, s)| *s) && per_ip_results.iter().any(|(_, s)| !*s);
 
         if inconsistent {
             tracing::warn!(
@@ -225,7 +257,11 @@ impl ProtocolTester {
                     "  {} {} - {}",
                     ip,
                     protocol,
-                    if *supported { "SUPPORTED" } else { "NOT SUPPORTED" }
+                    if *supported {
+                        "SUPPORTED"
+                    } else {
+                        "NOT SUPPORTED"
+                    }
                 );
             }
         }
@@ -235,7 +271,11 @@ impl ProtocolTester {
     }
 
     /// Test protocol on specific IP address
-    async fn test_protocol_on_ip(&self, protocol: Protocol, addr: std::net::SocketAddr) -> Result<bool> {
+    async fn test_protocol_on_ip(
+        &self,
+        protocol: Protocol,
+        addr: std::net::SocketAddr,
+    ) -> Result<bool> {
         match protocol {
             Protocol::SSLv2 => self.test_sslv2_on_ip(addr).await,
             Protocol::SSLv3 | Protocol::TLS10 | Protocol::TLS11 | Protocol::TLS12 => {
@@ -338,7 +378,11 @@ impl ProtocolTester {
     }
 
     /// Test TLS protocols using OpenSSL
-    async fn test_tls_with_openssl_on_ip(&self, protocol: Protocol, addr: std::net::SocketAddr) -> Result<bool> {
+    async fn test_tls_with_openssl_on_ip(
+        &self,
+        protocol: Protocol,
+        addr: std::net::SocketAddr,
+    ) -> Result<bool> {
         use openssl::ssl::{SslConnector, SslMethod, SslVersion};
 
         // Connect TCP with retry logic
@@ -586,6 +630,178 @@ impl ProtocolTester {
             Ok(server_hello) => {
                 // Check if heartbeat extension is present
                 Ok(server_hello.supports_heartbeat().unwrap_or(false))
+            }
+            Err(_) => Ok(false),
+        }
+    }
+
+    /// Detect session resumption support (caching and tickets) for a specific protocol
+    /// Returns (session_id_caching_supported, session_tickets_supported)
+    /// This performs a manual TLS handshake to check ServerHello for:
+    /// - Session ID: Non-empty session_id field indicates session ID caching support
+    /// - Session Tickets: Extension type 0x0023 (35) indicates RFC 5077 session tickets support
+    async fn detect_session_resumption(&self, protocol: Protocol) -> Result<(bool, bool)> {
+        use super::handshake::{ClientHelloBuilder, ServerHelloParser};
+
+        let addr = self.target.socket_addrs()[0];
+
+        // Connect TCP
+        let mut stream = match timeout(
+            self.read_timeout,
+            crate::utils::network::connect_with_timeout(
+                addr,
+                self.connect_timeout,
+                self.retry_config.as_ref(),
+            ),
+        )
+        .await
+        {
+            Ok(Ok(s)) => s,
+            _ => return Ok((false, false)),
+        };
+
+        // Send RDP preamble if needed
+        if self.use_rdp
+            && crate::protocols::rdp::RdpPreamble::send(&mut stream)
+                .await
+                .is_err()
+        {
+            return Ok((false, false));
+        }
+
+        // Perform STARTTLS negotiation if needed
+        if let Some(starttls_proto) = self.starttls_protocol {
+            let negotiator = crate::starttls::protocols::get_negotiator(
+                starttls_proto,
+                self.target.hostname.clone(),
+            );
+            if negotiator.negotiate_starttls(&mut stream).await.is_err() {
+                return Ok((false, false));
+            }
+        }
+
+        // Build ClientHello with minimal ciphers
+        let mut builder = ClientHelloBuilder::new(protocol);
+        builder.add_ciphers(&[0xc030, 0xc02f, 0x009e, 0x0035]);
+
+        // Use custom SNI if set, otherwise use target hostname
+        let sni_hostname = self
+            .sni_hostname
+            .as_deref()
+            .unwrap_or(&self.target.hostname);
+
+        let client_hello = builder.build_with_defaults(Some(sni_hostname))?;
+
+        // Send ClientHello and receive ServerHello
+        let response = match timeout(self.read_timeout, async {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            stream.write_all(&client_hello).await?;
+
+            // Read ServerHello (up to 16KB)
+            let mut resp = vec![0u8; 16384];
+            let n = stream.read(&mut resp).await?;
+            resp.truncate(n);
+            Ok::<Vec<u8>, anyhow::Error>(resp)
+        })
+        .await
+        {
+            Ok(Ok(resp)) if !resp.is_empty() => resp,
+            _ => return Ok((false, false)),
+        };
+
+        // Parse ServerHello to check for session resumption support
+        match ServerHelloParser::parse(&response) {
+            Ok(server_hello) => {
+                // Session ID caching: Check if session ID is present and non-empty
+                let session_id_caching = !server_hello.session_id.is_empty();
+
+                // Session tickets: Check for SessionTicket extension (type 0x0023)
+                let session_tickets = server_hello.has_extension(0x0023);
+
+                Ok((session_id_caching, session_tickets))
+            }
+            Err(_) => Ok((false, false)),
+        }
+    }
+
+    /// Detect secure renegotiation support (RFC 5746) for a specific protocol
+    /// This performs a manual TLS handshake to check if ServerHello contains extension 0xff01
+    async fn detect_secure_renegotiation(&self, protocol: Protocol) -> Result<bool> {
+        use super::handshake::{ClientHelloBuilder, ServerHelloParser};
+
+        let addr = self.target.socket_addrs()[0];
+
+        // Connect TCP
+        let mut stream = match timeout(
+            self.read_timeout,
+            crate::utils::network::connect_with_timeout(
+                addr,
+                self.connect_timeout,
+                self.retry_config.as_ref(),
+            ),
+        )
+        .await
+        {
+            Ok(Ok(s)) => s,
+            _ => return Ok(false),
+        };
+
+        // Send RDP preamble if needed
+        if self.use_rdp
+            && crate::protocols::rdp::RdpPreamble::send(&mut stream)
+                .await
+                .is_err()
+        {
+            return Ok(false);
+        }
+
+        // Perform STARTTLS negotiation if needed
+        if let Some(starttls_proto) = self.starttls_protocol {
+            let negotiator = crate::starttls::protocols::get_negotiator(
+                starttls_proto,
+                self.target.hostname.clone(),
+            );
+            if negotiator.negotiate_starttls(&mut stream).await.is_err() {
+                return Ok(false);
+            }
+        }
+
+        // Build ClientHello with minimal ciphers
+        let mut builder = ClientHelloBuilder::new(protocol);
+        builder.add_ciphers(&[0xc030, 0xc02f, 0x009e, 0x0035]);
+
+        // Use custom SNI if set, otherwise use target hostname
+        let sni_hostname = self
+            .sni_hostname
+            .as_deref()
+            .unwrap_or(&self.target.hostname);
+
+        let client_hello = builder.build_with_defaults(Some(sni_hostname))?;
+
+        // Send ClientHello and receive ServerHello
+        let response = match timeout(self.read_timeout, async {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            stream.write_all(&client_hello).await?;
+
+            // Read ServerHello (up to 16KB)
+            let mut resp = vec![0u8; 16384];
+            let n = stream.read(&mut resp).await?;
+            resp.truncate(n);
+            Ok::<Vec<u8>, anyhow::Error>(resp)
+        })
+        .await
+        {
+            Ok(Ok(resp)) if !resp.is_empty() => resp,
+            _ => return Ok(false),
+        };
+
+        // Parse ServerHello to check for secure renegotiation extension
+        match ServerHelloParser::parse(&response) {
+            Ok(server_hello) => {
+                // Check if renegotiation_info extension is present
+                Ok(server_hello
+                    .supports_secure_renegotiation()
+                    .unwrap_or(false))
             }
             Err(_) => Ok(false),
         }

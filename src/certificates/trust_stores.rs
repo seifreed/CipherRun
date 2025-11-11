@@ -4,8 +4,8 @@
 // Licensed under the GNU General Public License v3.0
 
 use super::parser::{CertificateChain, CertificateInfo};
-use crate::data::CA_STORES;
 use crate::Result;
+use crate::data::CA_STORES;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use x509_parser::prelude::*;
@@ -186,17 +186,16 @@ impl TrustStoreValidator {
 
                 // Try to extract Subject Key Identifier for more accurate matching
                 if let Ok((_, cert)) = X509Certificate::from_der(&ca_cert.der)
-                    && let Ok(Some(ext)) = cert.get_extension_unique(
-                        &oid_registry::OID_X509_EXT_SUBJECT_KEY_IDENTIFIER,
-                    )
-                        && let ParsedExtension::SubjectKeyIdentifier(skid) = ext.parsed_extension()
-                        {
-                            let skid_hex = hex::encode(skid.0);
-                            self.skid_index
-                                .entry(skid_hex)
-                                .or_default()
-                                .push(global_idx);
-                        }
+                    && let Ok(Some(ext)) = cert
+                        .get_extension_unique(&oid_registry::OID_X509_EXT_SUBJECT_KEY_IDENTIFIER)
+                    && let ParsedExtension::SubjectKeyIdentifier(skid) = ext.parsed_extension()
+                {
+                    let skid_hex = hex::encode(skid.0);
+                    self.skid_index
+                        .entry(skid_hex)
+                        .or_default()
+                        .push(global_idx);
+                }
             }
         }
 

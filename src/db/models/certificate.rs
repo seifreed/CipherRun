@@ -10,7 +10,7 @@ use sqlx::FromRow;
 pub struct CertificateRecord {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cert_id: Option<i64>,
-    pub fingerprint_sha256: String,  // Unique identifier
+    pub fingerprint_sha256: String, // Unique identifier
     pub subject: String,
     pub issuer: String,
     pub serial_number: Option<String>,
@@ -20,13 +20,13 @@ pub struct CertificateRecord {
     pub public_key_algorithm: Option<String>,
     pub public_key_size: Option<i32>,
     #[sqlx(default)]
-    pub san_domains: Vec<String>,  // Array of SAN domains
+    pub san_domains: Vec<String>, // Array of SAN domains
     pub is_ca: bool,
     #[sqlx(default)]
     pub key_usage: Vec<String>,
     #[sqlx(default)]
     pub extended_key_usage: Vec<String>,
-    pub der_bytes: Option<Vec<u8>>,  // Full DER encoding
+    pub der_bytes: Option<Vec<u8>>, // Full DER encoding
     pub created_at: DateTime<Utc>,
 }
 
@@ -37,7 +37,7 @@ pub struct ScanCertificateRecord {
     pub id: Option<i64>,
     pub scan_id: i64,
     pub cert_id: i64,
-    pub chain_position: i32,  // 0 = leaf, 1 = intermediate, etc.
+    pub chain_position: i32, // 0 = leaf, 1 = intermediate, etc.
 }
 
 impl CertificateRecord {

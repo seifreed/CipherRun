@@ -39,7 +39,9 @@ impl XmppNegotiator {
             }
 
             if accumulated.len() > 65536 {
-                return Err(crate::error::TlsError::Other("Response too large".to_string()));
+                return Err(crate::error::TlsError::Other(
+                    "Response too large".to_string(),
+                ));
             }
         }
     }

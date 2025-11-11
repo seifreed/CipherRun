@@ -23,7 +23,10 @@ impl ComplianceChecker {
             if rule.is_denied(&protocol_name) {
                 violations.push(Violation {
                     violation_type: "Prohibited Protocol".to_string(),
-                    description: format!("{} is prohibited by this compliance framework", protocol_name),
+                    description: format!(
+                        "{} is prohibited by this compliance framework",
+                        protocol_name
+                    ),
                     evidence: format!("Server accepts {} connections", protocol_name),
                     severity: Severity::Critical,
                 });
@@ -93,15 +96,18 @@ impl ComplianceChecker {
                 // Check allowed patterns (if specified)
                 if !rule.allowed_patterns.is_empty()
                     && !rule.matches_allowed_pattern(cipher_name)
-                        && !rule.matches_allowed_pattern(openssl_name)
-                    {
-                        violations.push(Violation {
-                            violation_type: "Non-Compliant Cipher Suite".to_string(),
-                            description: format!("Cipher does not match allowed patterns for {}", protocol),
-                            evidence: format!("{} ({})", cipher_name, openssl_name),
-                            severity: Severity::High,
-                        });
-                    }
+                    && !rule.matches_allowed_pattern(openssl_name)
+                {
+                    violations.push(Violation {
+                        violation_type: "Non-Compliant Cipher Suite".to_string(),
+                        description: format!(
+                            "Cipher does not match allowed patterns for {}",
+                            protocol
+                        ),
+                        evidence: format!("{} ({})", cipher_name, openssl_name),
+                        severity: Severity::High,
+                    });
+                }
             }
         }
 
@@ -114,45 +120,42 @@ impl ComplianceChecker {
 
         if let Some(cert_analysis) = &results.certificate_chain
             && let Some(leaf_cert) = cert_analysis.chain.leaf()
-                && let Some(key_size) = leaf_cert.public_key_size {
-                    let key_algo = &leaf_cert.public_key_algorithm;
+            && let Some(key_size) = leaf_cert.public_key_size
+        {
+            let key_algo = &leaf_cert.public_key_algorithm;
 
-                    // Check RSA key size
-                    if (key_algo.contains("RSA") || key_algo.contains("rsa"))
-                        && let Some(min_rsa_bits) = rule.min_rsa_bits
-                            && (key_size as u32) < min_rsa_bits {
-                                violations.push(Violation {
-                                    violation_type: "Insufficient Key Size".to_string(),
-                                    description: format!(
-                                        "RSA key size {} bits is below minimum required {} bits",
-                                        key_size, min_rsa_bits
-                                    ),
-                                    evidence: format!(
-                                        "Certificate uses {}-bit RSA key",
-                                        key_size
-                                    ),
-                                    severity: Severity::High,
-                                });
-                            }
+            // Check RSA key size
+            if (key_algo.contains("RSA") || key_algo.contains("rsa"))
+                && let Some(min_rsa_bits) = rule.min_rsa_bits
+                && (key_size as u32) < min_rsa_bits
+            {
+                violations.push(Violation {
+                    violation_type: "Insufficient Key Size".to_string(),
+                    description: format!(
+                        "RSA key size {} bits is below minimum required {} bits",
+                        key_size, min_rsa_bits
+                    ),
+                    evidence: format!("Certificate uses {}-bit RSA key", key_size),
+                    severity: Severity::High,
+                });
+            }
 
-                    // Check ECC key size
-                    if (key_algo.contains("EC") || key_algo.contains("ECDSA"))
-                        && let Some(min_ecc_bits) = rule.min_ecc_bits
-                            && (key_size as u32) < min_ecc_bits {
-                                violations.push(Violation {
-                                    violation_type: "Insufficient Key Size".to_string(),
-                                    description: format!(
-                                        "ECC key size {} bits is below minimum required {} bits",
-                                        key_size, min_ecc_bits
-                                    ),
-                                    evidence: format!(
-                                        "Certificate uses {}-bit ECC key",
-                                        key_size
-                                    ),
-                                    severity: Severity::High,
-                                });
-                            }
-                }
+            // Check ECC key size
+            if (key_algo.contains("EC") || key_algo.contains("ECDSA"))
+                && let Some(min_ecc_bits) = rule.min_ecc_bits
+                && (key_size as u32) < min_ecc_bits
+            {
+                violations.push(Violation {
+                    violation_type: "Insufficient Key Size".to_string(),
+                    description: format!(
+                        "ECC key size {} bits is below minimum required {} bits",
+                        key_size, min_ecc_bits
+                    ),
+                    evidence: format!("Certificate uses {}-bit ECC key", key_size),
+                    severity: Severity::High,
+                });
+            }
+        }
 
         Ok(violations)
     }
@@ -162,47 +165,48 @@ impl ComplianceChecker {
         let mut violations = Vec::new();
 
         if let Some(cert_analysis) = &results.certificate_chain
-            && let Some(leaf_cert) = cert_analysis.chain.leaf() {
-                let sig_algo = leaf_cert.signature_algorithm.to_lowercase();
+            && let Some(leaf_cert) = cert_analysis.chain.leaf()
+        {
+            let sig_algo = leaf_cert.signature_algorithm.to_lowercase();
 
-                // Check if signature algorithm is denied
-                for denied in &rule.denied {
-                    if sig_algo.contains(&denied.to_lowercase()) {
-                        violations.push(Violation {
-                            violation_type: "Prohibited Signature Algorithm".to_string(),
-                            description: format!(
-                                "Certificate uses prohibited signature algorithm: {}",
-                                leaf_cert.signature_algorithm
-                            ),
-                            evidence: format!("Signature algorithm: {}", leaf_cert.signature_algorithm),
-                            severity: Severity::High,
-                        });
-                    }
-                }
-
-                // Check if signature algorithm is in allowed list
-                if !rule.allowed.is_empty() {
-                    let mut is_allowed = false;
-                    for allowed in &rule.allowed {
-                        if sig_algo.contains(&allowed.to_lowercase()) {
-                            is_allowed = true;
-                            break;
-                        }
-                    }
-
-                    if !is_allowed {
-                        violations.push(Violation {
-                            violation_type: "Non-Compliant Signature Algorithm".to_string(),
-                            description: format!(
-                                "Certificate signature algorithm not in allowed list: {}",
-                                leaf_cert.signature_algorithm
-                            ),
-                            evidence: format!("Signature algorithm: {}", leaf_cert.signature_algorithm),
-                            severity: Severity::Medium,
-                        });
-                    }
+            // Check if signature algorithm is denied
+            for denied in &rule.denied {
+                if sig_algo.contains(&denied.to_lowercase()) {
+                    violations.push(Violation {
+                        violation_type: "Prohibited Signature Algorithm".to_string(),
+                        description: format!(
+                            "Certificate uses prohibited signature algorithm: {}",
+                            leaf_cert.signature_algorithm
+                        ),
+                        evidence: format!("Signature algorithm: {}", leaf_cert.signature_algorithm),
+                        severity: Severity::High,
+                    });
                 }
             }
+
+            // Check if signature algorithm is in allowed list
+            if !rule.allowed.is_empty() {
+                let mut is_allowed = false;
+                for allowed in &rule.allowed {
+                    if sig_algo.contains(&allowed.to_lowercase()) {
+                        is_allowed = true;
+                        break;
+                    }
+                }
+
+                if !is_allowed {
+                    violations.push(Violation {
+                        violation_type: "Non-Compliant Signature Algorithm".to_string(),
+                        description: format!(
+                            "Certificate signature algorithm not in allowed list: {}",
+                            leaf_cert.signature_algorithm
+                        ),
+                        evidence: format!("Signature algorithm: {}", leaf_cert.signature_algorithm),
+                        severity: Severity::Medium,
+                    });
+                }
+            }
+        }
 
         Ok(violations)
     }
@@ -220,10 +224,10 @@ impl ComplianceChecker {
             // Check if ANY cipher without forward secrecy is supported
             for cipher in &cipher_summary.supported_ciphers {
                 // Check cipher name for forward secrecy indicators (ECDHE, DHE)
-                let has_fs = cipher.iana_name.contains("ECDHE") ||
-                             cipher.iana_name.contains("DHE") ||
-                             cipher.openssl_name.contains("ECDHE") ||
-                             cipher.openssl_name.contains("DHE");
+                let has_fs = cipher.iana_name.contains("ECDHE")
+                    || cipher.iana_name.contains("DHE")
+                    || cipher.openssl_name.contains("ECDHE")
+                    || cipher.openssl_name.contains("DHE");
 
                 if !has_fs {
                     violations.push(Violation {
@@ -299,29 +303,31 @@ impl ComplianceChecker {
 
         if let Some(max_days) = rule.max_days_until_expiration
             && let Some(cert_analysis) = &results.certificate_chain
-                && let Some(leaf_cert) = cert_analysis.chain.leaf() {
-                    // Parse expiration date and calculate days remaining
-                    // This is a simplified check - in production, parse the actual date
-                    if let Some(ref countdown) = leaf_cert.expiry_countdown {
-                        // Extract days from countdown string (e.g., "30 days")
-                        if countdown.contains("day") {
-                            let parts: Vec<&str> = countdown.split_whitespace().collect();
-                            if let Some(days_str) = parts.first()
-                                && let Ok(days) = days_str.parse::<i64>()
-                                    && days <= max_days {
-                                        violations.push(Violation {
-                                            violation_type: "Certificate Expiring Soon".to_string(),
-                                            description: format!(
-                                                "Certificate expires in {} days (threshold: {} days)",
-                                                days, max_days
-                                            ),
-                                            evidence: format!("Certificate expires: {}", leaf_cert.not_after),
-                                            severity: Severity::Medium,
-                                        });
-                                    }
-                        }
+            && let Some(leaf_cert) = cert_analysis.chain.leaf()
+        {
+            // Parse expiration date and calculate days remaining
+            // This is a simplified check - in production, parse the actual date
+            if let Some(ref countdown) = leaf_cert.expiry_countdown {
+                // Extract days from countdown string (e.g., "30 days")
+                if countdown.contains("day") {
+                    let parts: Vec<&str> = countdown.split_whitespace().collect();
+                    if let Some(days_str) = parts.first()
+                        && let Ok(days) = days_str.parse::<i64>()
+                        && days <= max_days
+                    {
+                        violations.push(Violation {
+                            violation_type: "Certificate Expiring Soon".to_string(),
+                            description: format!(
+                                "Certificate expires in {} days (threshold: {} days)",
+                                days, max_days
+                            ),
+                            evidence: format!("Certificate expires: {}", leaf_cert.not_after),
+                            severity: Severity::Medium,
+                        });
                     }
                 }
+            }
+        }
 
         Ok(violations)
     }
@@ -343,7 +349,10 @@ impl ComplianceChecker {
                 violations.push(Violation {
                     violation_type: format!("Vulnerability: {:?}", vuln.vuln_type),
                     description: vuln.details.clone(),
-                    evidence: vuln.cve.clone().unwrap_or_else(|| format!("{:?}", vuln.vuln_type)),
+                    evidence: vuln
+                        .cve
+                        .clone()
+                        .unwrap_or_else(|| format!("{:?}", vuln.vuln_type)),
                     severity,
                 });
             }
@@ -389,6 +398,9 @@ mod tests {
                 ciphers_count: 0,
                 heartbeat_enabled: None,
                 handshake_time_ms: None,
+                session_resumption_caching: None,
+                session_resumption_tickets: None,
+                secure_renegotiation: None,
             },
             ProtocolTestResult {
                 protocol: Protocol::TLS12,
@@ -397,6 +409,9 @@ mod tests {
                 ciphers_count: 0,
                 heartbeat_enabled: None,
                 handshake_time_ms: None,
+                session_resumption_caching: None,
+                session_resumption_tickets: None,
+                secure_renegotiation: None,
             },
         ];
 
@@ -434,6 +449,9 @@ mod tests {
                 ciphers_count: 0,
                 heartbeat_enabled: None,
                 handshake_time_ms: None,
+                session_resumption_caching: None,
+                session_resumption_tickets: None,
+                secure_renegotiation: None,
             },
             ProtocolTestResult {
                 protocol: Protocol::TLS12,
@@ -442,6 +460,9 @@ mod tests {
                 ciphers_count: 0,
                 heartbeat_enabled: None,
                 handshake_time_ms: None,
+                session_resumption_caching: None,
+                session_resumption_tickets: None,
+                secure_renegotiation: None,
             },
         ];
 

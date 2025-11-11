@@ -170,12 +170,13 @@ impl StatsTracker {
     /// Get processing rate (certificates per second)
     pub fn get_processing_rate(&self) -> f64 {
         if let Ok(stats) = self.stats.lock()
-            && let Some(start_time) = stats.start_time {
-                let elapsed_secs = start_time.elapsed().as_secs_f64();
-                if elapsed_secs > 0.0 {
-                    return stats.total_processed as f64 / elapsed_secs;
-                }
+            && let Some(start_time) = stats.start_time
+        {
+            let elapsed_secs = start_time.elapsed().as_secs_f64();
+            if elapsed_secs > 0.0 {
+                return stats.total_processed as f64 / elapsed_secs;
             }
+        }
         0.0
     }
 
@@ -198,13 +199,19 @@ impl StatsTracker {
         );
         println!("Processing Rate:      {:.2} certs/sec", rate);
         println!("Retry Attempts:       {}", snapshot.retry_attempts);
-        println!("Processing Time:      {} seconds", snapshot.processing_time_secs);
+        println!(
+            "Processing Time:      {} seconds",
+            snapshot.processing_time_secs
+        );
 
         if !snapshot.per_source.is_empty() {
             println!("\n=== Per-Source Statistics ===");
             for (source_id, source_stats) in &snapshot.per_source {
                 println!("\nSource: {}", source_id);
-                println!("  Processed:        {}", source_stats.certificates_processed);
+                println!(
+                    "  Processed:        {}",
+                    source_stats.certificates_processed
+                );
                 println!("  Current Index:    {}", source_stats.current_index);
                 println!("  Tree Size:        {}", source_stats.tree_size);
                 println!(

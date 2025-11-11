@@ -5,9 +5,12 @@ use crate::Result;
 use crate::data::CIPHER_DB;
 use crate::protocols::{Protocol, handshake::ClientHelloBuilder};
 use crate::utils::network::Target;
+use futures::stream::{self, StreamExt};
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::sync::Semaphore;
 use tokio::time::timeout;
 
 use serde::{Deserialize, Serialize};
@@ -57,6 +60,7 @@ pub struct CipherTester {
     starttls_protocol: Option<crate::starttls::StarttlsProtocol>,
     test_all_ips: bool,
     retry_config: Option<crate::utils::retry::RetryConfig>,
+    max_concurrent_tests: usize,
 }
 
 impl CipherTester {
@@ -68,13 +72,14 @@ impl CipherTester {
         Self {
             target,
             connect_timeout: Duration::from_secs(10),
-            read_timeout: Duration::from_secs(5),
+            read_timeout: Duration::from_secs(3), // Reduced from 5s to 3s for faster failure detection
             test_all_ciphers: false,
             sleep_duration: None,
             use_rdp,
             starttls_protocol: None,
             test_all_ips: false,
             retry_config: None,
+            max_concurrent_tests: 10, // Default to 10 concurrent cipher tests
         }
     }
 
@@ -126,6 +131,12 @@ impl CipherTester {
         self
     }
 
+    /// Set maximum concurrent cipher tests
+    pub fn with_max_concurrent_tests(mut self, max: usize) -> Self {
+        self.max_concurrent_tests = max.max(1); // Ensure at least 1
+        self
+    }
+
     /// Test all cipher suites for a specific protocol
     pub async fn test_protocol_ciphers(&self, protocol: Protocol) -> Result<ProtocolCipherSummary> {
         let ciphers = if self.test_all_ciphers {
@@ -135,30 +146,64 @@ impl CipherTester {
             CIPHER_DB.get_recommended_ciphers()
         };
 
-        let mut supported = Vec::new();
-        let mut results = Vec::new();
-
-        // Count compatible ciphers for this protocol
-        let _compatible_count = ciphers
-            .iter()
+        // Filter compatible ciphers for this protocol
+        let compatible_ciphers: Vec<CipherSuite> = ciphers
+            .into_iter()
             .filter(|c| self.is_cipher_compatible_with_protocol(c, protocol))
-            .count();
+            .collect();
 
-        // Test each cipher
-        for cipher in ciphers {
-            if self.is_cipher_compatible_with_protocol(&cipher, protocol) {
-                let result = self.test_single_cipher(&cipher, protocol).await?;
-                if result.supported {
-                    supported.push(cipher.clone());
-                }
-                results.push(result);
+        tracing::debug!(
+            "Testing {} compatible ciphers for {:?} with max {} concurrent connections",
+            compatible_ciphers.len(),
+            protocol,
+            self.max_concurrent_tests
+        );
 
-                // Sleep between requests if configured
-                if let Some(sleep_dur) = self.sleep_duration {
-                    tokio::time::sleep(sleep_dur).await;
+        // Create semaphore for concurrency control
+        let semaphore = Arc::new(Semaphore::new(self.max_concurrent_tests));
+
+        // Create arc for self to share across tasks
+        let tester = Arc::new(self);
+
+        // Test ciphers concurrently using futures stream
+        let results: Vec<CipherTestResult> = stream::iter(compatible_ciphers)
+            .map(|cipher| {
+                let sem = semaphore.clone();
+                let tester_clone = tester.clone();
+                async move {
+                    // Acquire semaphore permit
+                    let _permit = sem.acquire().await.expect("semaphore closed");
+
+                    // Test the cipher
+                    let result = tester_clone.test_single_cipher(&cipher, protocol).await;
+
+                    // Sleep between requests if configured
+                    if let Some(sleep_dur) = tester_clone.sleep_duration {
+                        tokio::time::sleep(sleep_dur).await;
+                    }
+
+                    result
                 }
-            }
-        }
+            })
+            .buffer_unordered(self.max_concurrent_tests)
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .collect::<Result<Vec<_>>>()?;
+
+        // Extract supported ciphers
+        let supported: Vec<CipherSuite> = results
+            .iter()
+            .filter(|r| r.supported)
+            .map(|r| r.cipher.clone())
+            .collect();
+
+        tracing::debug!(
+            "Found {} supported ciphers out of {} tested for {:?}",
+            supported.len(),
+            results.len(),
+            protocol
+        );
 
         // Determine server cipher preference order
         let server_preference = self
@@ -238,16 +283,22 @@ impl CipherTester {
     async fn try_cipher_handshake(&self, protocol: Protocol, cipher_hexcode: u16) -> Result<bool> {
         if self.test_all_ips {
             // Test all IPs and return true only if ALL support the cipher
-            self.try_cipher_handshake_all_ips(protocol, cipher_hexcode).await
+            self.try_cipher_handshake_all_ips(protocol, cipher_hexcode)
+                .await
         } else {
             // Test only first IP (default behavior)
             let addr = self.target.socket_addrs()[0];
-            self.try_cipher_handshake_on_ip(protocol, cipher_hexcode, addr).await
+            self.try_cipher_handshake_on_ip(protocol, cipher_hexcode, addr)
+                .await
         }
     }
 
     /// Test cipher on all IPs
-    async fn try_cipher_handshake_all_ips(&self, protocol: Protocol, cipher_hexcode: u16) -> Result<bool> {
+    async fn try_cipher_handshake_all_ips(
+        &self,
+        protocol: Protocol,
+        cipher_hexcode: u16,
+    ) -> Result<bool> {
         let addrs = self.target.socket_addrs();
 
         if addrs.is_empty() {
@@ -257,7 +308,9 @@ impl CipherTester {
         let mut all_support = true;
 
         for addr in &addrs {
-            let ip_supports = self.try_cipher_handshake_on_ip(protocol, cipher_hexcode, *addr).await?;
+            let ip_supports = self
+                .try_cipher_handshake_on_ip(protocol, cipher_hexcode, *addr)
+                .await?;
             if !ip_supports {
                 all_support = false;
                 break; // Early exit for performance
@@ -268,7 +321,12 @@ impl CipherTester {
     }
 
     /// Attempt TLS handshake with specific cipher on specific IP
-    async fn try_cipher_handshake_on_ip(&self, protocol: Protocol, cipher_hexcode: u16, addr: std::net::SocketAddr) -> Result<bool> {
+    async fn try_cipher_handshake_on_ip(
+        &self,
+        protocol: Protocol,
+        cipher_hexcode: u16,
+        addr: std::net::SocketAddr,
+    ) -> Result<bool> {
         // Connect TCP with retry logic
         let mut stream = match crate::utils::network::connect_with_timeout(
             addr,
@@ -375,7 +433,8 @@ impl CipherTester {
             .await?;
 
         tracing::debug!(
-            "Cipher preference test 1 (original order): {:04x?}",
+            "Cipher preference test 1 (original order): client offered {:04x?}, server chose {:04x?}",
+            cipher_hexcodes,
             first_choice
         );
 
@@ -385,13 +444,112 @@ impl CipherTester {
         let second_choice = self.get_server_chosen_cipher(protocol, &reversed).await?;
 
         tracing::debug!(
-            "Cipher preference test 2 (reversed order): {:04x?}",
+            "Cipher preference test 2 (reversed order): client offered {:04x?}, server chose {:04x?}",
+            reversed,
             second_choice
         );
 
-        if first_choice == second_choice {
+        // Perform additional test if we have 3 or more ciphers for better accuracy
+        let (third_choice, third_offered) = if cipher_hexcodes.len() >= 3 {
+            // Test 3: Send ciphers in a different order (move last to first)
+            let mut rotated = cipher_hexcodes.clone();
+            if let Some(last) = rotated.pop() {
+                rotated.insert(0, last);
+            }
+            let choice = self.get_server_chosen_cipher(protocol, &rotated).await?;
+            tracing::debug!(
+                "Cipher preference test 3 (rotated order): client offered {:04x?}, server chose {:04x?}",
+                rotated,
+                choice
+            );
+            (choice, Some(rotated))
+        } else {
+            (None, None)
+        };
+
+        // Analyze results
+        // Check if server is following client's first choice (client preference)
+        // or always picking the same cipher regardless of order (server preference)
+        let client_follows_first = if let Some(first) = first_choice {
+            cipher_hexcodes.first() == Some(&first)
+        } else {
+            false
+        };
+
+        let client_follows_first_reversed = if let Some(second) = second_choice {
+            reversed.first() == Some(&second)
+        } else {
+            false
+        };
+
+        let client_follows_first_rotated = match (&third_choice, &third_offered) {
+            (Some(third), Some(offered)) => offered.first() == Some(third),
+            _ => false,
+        };
+
+        // If server is consistently picking the first cipher from client's list, it's client preference
+        let is_client_preference = client_follows_first
+            && client_follows_first_reversed
+            && (third_choice.is_none() || client_follows_first_rotated);
+
+        // Check if server always picks the same cipher (strongest evidence of server preference)
+        let all_same = if let Some(third) = third_choice {
+            // With 3 tests, check if all choices are the same
+            first_choice == second_choice && second_choice == Some(third)
+        } else {
+            // With 2 tests, check if both choices are the same
+            first_choice == second_choice
+        };
+
+        // Check if server picks the same cipher in at least 2 out of 3 tests
+        // AND that cipher appears in different positions in the client lists
+        // This indicates server preference even if one test resulted in a different choice
+        let mostly_same = if let (Some(second), Some(third)) = (second_choice, third_choice) {
+            if second == third {
+                // Tests 2 and 3 chose the same cipher
+                // Check if this cipher was in different positions in client lists
+                let pos_in_test2 = reversed.iter().position(|&c| c == second);
+                let pos_in_test3 = third_offered
+                    .as_ref()
+                    .and_then(|offered| offered.iter().position(|&c| c == second));
+
+                // If the cipher was in different positions but still chosen, it's server preference
+                if let (Some(pos2), Some(pos3)) = (pos_in_test2, pos_in_test3) {
+                    pos2 != pos3
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
+        // Determine final result
+        let final_server_has_preference = if is_client_preference {
+            tracing::debug!(
+                "Server respects client cipher preference (consistently picks client's first choice)"
+            );
+            false
+        } else if all_same {
+            tracing::debug!("Server enforces cipher preference (chose same cipher in all tests)");
+            true
+        } else if mostly_same {
+            tracing::debug!(
+                "Server enforces cipher preference (chose same cipher in multiple tests from different positions)"
+            );
+            true
+        } else {
+            // Mixed behavior - default to assuming server preference for security
+            tracing::debug!(
+                "Server cipher preference unclear (mixed behavior detected, assuming server preference)"
+            );
+            true
+        };
+
+        if final_server_has_preference {
             // Server has preference (always picks the same cipher)
-            tracing::debug!("Server has cipher preference (chose same cipher both times)");
             if let Some(chosen) = first_choice {
                 preference_order.push(format!("{:04x}", chosen));
 
@@ -404,8 +562,7 @@ impl CipherTester {
                 }
             }
         } else {
-            // Client preference (server picks our first offered cipher)
-            tracing::debug!("Client has cipher preference (server chose different ciphers)");
+            // Client preference (server picks different ciphers based on client order)
             // Return empty to indicate client preference
             return Ok(Vec::new());
         }

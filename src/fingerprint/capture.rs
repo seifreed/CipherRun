@@ -1,10 +1,10 @@
 // ClientHello network capture
 // Captures ClientHello during actual TLS handshake
 
-use crate::fingerprint::client_hello_capture::ClientHelloCapture;
-use crate::fingerprint::Ja3Fingerprint;
-use crate::utils::network::Target;
 use crate::Result;
+use crate::fingerprint::Ja3Fingerprint;
+use crate::fingerprint::client_hello_capture::ClientHelloCapture;
+use crate::utils::network::Target;
 use std::time::Duration;
 
 /// Capture ClientHello by performing a TLS handshake

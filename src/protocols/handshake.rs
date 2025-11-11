@@ -452,6 +452,9 @@ impl ClientHelloBuilder {
                 (0x06, 0x01), // SHA512-RSA
             ]);
 
+            // Session tickets (RFC 5077) - supported in TLS 1.0+
+            self.add_session_ticket();
+
             // TLS 1.2 specific extensions
             self.add_extended_master_secret();
             self.add_renegotiation_info();
@@ -516,6 +519,7 @@ impl ServerHelloParser {
         let mut extensions = Vec::new();
         let mut ocsp_stapling_detected = None;
         let mut heartbeat_enabled = None;
+        let mut secure_renegotiation = None;
 
         if offset < data.len() {
             let ext_len = u16::from_be_bytes([data[offset], data[offset + 1]]) as usize;
@@ -544,6 +548,12 @@ impl ServerHelloParser {
                         heartbeat_enabled = Some(true);
                     }
 
+                    // RFC 5746: Secure Renegotiation extension detection
+                    // Extension type 0xff01 (65281 decimal) in ServerHello indicates server support
+                    if ext_type == 0xff01 {
+                        secure_renegotiation = Some(true);
+                    }
+
                     extensions.push(Extension::new(ext_type, ext_data));
                     offset += ext_data_len;
                 }
@@ -560,6 +570,11 @@ impl ServerHelloParser {
             heartbeat_enabled = Some(false);
         }
 
+        // If extensions were present but renegotiation_info was not found, explicitly mark as false
+        if !extensions.is_empty() && secure_renegotiation.is_none() {
+            secure_renegotiation = Some(false);
+        }
+
         Ok(ServerHello {
             version: Protocol::from(version),
             random,
@@ -569,6 +584,7 @@ impl ServerHelloParser {
             extensions,
             ocsp_stapling_detected,
             heartbeat_enabled,
+            secure_renegotiation,
         })
     }
 }
@@ -589,6 +605,9 @@ pub struct ServerHello {
     /// This indicates the server supports TLS Heartbeat extension (keepalive mechanism)
     /// Note: This is separate from Heartbleed (CVE-2014-0160) vulnerability detection
     pub heartbeat_enabled: Option<bool>,
+    /// Direct detection of Secure Renegotiation extension (type 0xff01, RFC 5746)
+    /// This indicates the server supports secure renegotiation to prevent MITM attacks
+    pub secure_renegotiation: Option<bool>,
 }
 
 impl ServerHello {
@@ -625,6 +644,15 @@ impl ServerHello {
     /// None if no extensions were parsed (legacy TLS or parsing error)
     pub fn supports_heartbeat(&self) -> Option<bool> {
         self.heartbeat_enabled
+    }
+
+    /// Check if Secure Renegotiation extension is enabled
+    /// RFC 5746: Transport Layer Security (TLS) Renegotiation Indication Extension
+    /// Returns Some(true) if renegotiation_info extension (type 0xff01) was found in ServerHello,
+    /// Some(false) if extensions were present but renegotiation_info was not,
+    /// None if no extensions were parsed (legacy TLS or parsing error)
+    pub fn supports_secure_renegotiation(&self) -> Option<bool> {
+        self.secure_renegotiation
     }
 }
 
@@ -675,10 +703,11 @@ mod tests {
         // Verify status_request extension is present (type 0x0005)
         // Extension should have 5 bytes: type(1) + responder_id_list(2) + request_extensions(2)
         let hello_bytes = &hello;
-        let status_request_present = hello_bytes
-            .windows(2)
-            .any(|w| w == [0x00, 0x05]);
-        assert!(status_request_present, "status_request extension should be present");
+        let status_request_present = hello_bytes.windows(2).any(|w| w == [0x00, 0x05]);
+        assert!(
+            status_request_present,
+            "status_request extension should be present"
+        );
     }
 
     #[test]

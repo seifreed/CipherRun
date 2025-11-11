@@ -2,8 +2,8 @@
 // Implements the JA3 algorithm for generating MD5 fingerprints of TLS ClientHello messages
 // Reference: https://github.com/salesforce/ja3
 
-use crate::fingerprint::client_hello_capture::ClientHelloCapture;
 use crate::Result;
+use crate::fingerprint::client_hello_capture::ClientHelloCapture;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -98,7 +98,9 @@ impl Ja3Fingerprint {
         // Check: low nibble of each byte is 0xa, and high nibbles match across bytes
         let low_byte = (value & 0xff) as u8;
         let high_byte = ((value >> 8) & 0xff) as u8;
-        (low_byte & 0x0f) == 0x0a && (high_byte & 0x0f) == 0x0a && (low_byte >> 4) == (high_byte >> 4)
+        (low_byte & 0x0f) == 0x0a
+            && (high_byte & 0x0f) == 0x0a
+            && (low_byte >> 4) == (high_byte >> 4)
     }
 
     /// Build JA3 string from components
@@ -382,7 +384,7 @@ mod tests {
     #[test]
     fn test_ja3_string_building() {
         let ja3_string = Ja3Fingerprint::build_ja3_string(
-            771,  // TLS 1.2
+            771, // TLS 1.2
             &[49195, 49199, 52393, 52392],
             &[0, 10, 11, 13, 35],
             &[29, 23, 24],
@@ -448,7 +450,7 @@ mod tests {
             ssl_version: 0x0303,
             ciphers: vec![],
             extensions: vec![],
-            curves: vec![29, 23, 24],  // X25519, secp256r1, secp384r1
+            curves: vec![29, 23, 24], // X25519, secp256r1, secp384r1
             point_formats: vec![],
         };
 

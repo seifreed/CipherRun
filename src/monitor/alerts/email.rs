@@ -1,10 +1,10 @@
 // Email Alert Channel - Using lettre
 
+use crate::Result;
 use crate::monitor::alerts::{Alert, AlertChannel, AlertType};
 use crate::monitor::config::EmailConfig;
-use crate::Result;
 use async_trait::async_trait;
-use lettre::message::{header, MultiPart, SinglePart};
+use lettre::message::{MultiPart, SinglePart, header};
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{Message, SmtpTransport, Transport};
 
@@ -79,10 +79,7 @@ impl EmailChannel {
                     .collect::<Vec<_>>()
                     .join("");
 
-                format!(
-                    "<h3>Certificate Changes</h3><ul>{}</ul>",
-                    changes_html
-                )
+                format!("<h3>Certificate Changes</h3><ul>{}</ul>", changes_html)
             }
             AlertType::ExpiryWarning { days_remaining } => {
                 format!(
@@ -91,10 +88,7 @@ impl EmailChannel {
                 )
             }
             AlertType::ValidationFailure { reason } => {
-                format!(
-                    "<h3>Certificate Validation Failed</h3><p>{}</p>",
-                    reason
-                )
+                format!("<h3>Certificate Validation Failed</h3><p>{}</p>", reason)
             }
             AlertType::ScanFailure { error } => {
                 format!("<h3>Scan Failed</h3><p>{}</p>", error)
@@ -186,7 +180,10 @@ impl EmailChannel {
             AlertType::CertificateChange { changes } => {
                 body.push_str("Certificate Changes:\n");
                 for change in changes {
-                    body.push_str(&format!("  - {:?}: {}\n", change.change_type, change.description));
+                    body.push_str(&format!(
+                        "  - {:?}: {}\n",
+                        change.change_type, change.description
+                    ));
                 }
             }
             AlertType::ExpiryWarning { days_remaining } => {
@@ -210,8 +207,16 @@ impl EmailChannel {
                 Issuer: {}\n\
                 Expiry: {}\n",
                 serial,
-                alert.details.certificate_issuer.as_deref().unwrap_or("Unknown"),
-                alert.details.certificate_expiry.as_deref().unwrap_or("Unknown")
+                alert
+                    .details
+                    .certificate_issuer
+                    .as_deref()
+                    .unwrap_or("Unknown"),
+                alert
+                    .details
+                    .certificate_expiry
+                    .as_deref()
+                    .unwrap_or("Unknown")
             ));
         }
 
@@ -222,10 +227,7 @@ impl EmailChannel {
 
     /// Get SMTP transport
     fn get_transport(&self) -> Result<SmtpTransport> {
-        let creds = Credentials::new(
-            self.config.username.clone(),
-            self.config.password.clone(),
-        );
+        let creds = Credentials::new(self.config.username.clone(), self.config.password.clone());
 
         let transport = if self.config.use_tls {
             SmtpTransport::starttls_relay(&self.config.smtp_server)?
@@ -250,7 +252,8 @@ impl AlertChannel for EmailChannel {
 
         // Send email (blocking operation, run in blocking task)
         tokio::task::spawn_blocking(move || {
-            transport.send(&message)
+            transport
+                .send(&message)
                 .map_err(|e| anyhow::anyhow!("Failed to send email: {}", e))
         })
         .await??;
@@ -266,7 +269,8 @@ impl AlertChannel for EmailChannel {
         let transport = self.get_transport()?;
 
         tokio::task::spawn_blocking(move || {
-            transport.test_connection()
+            transport
+                .test_connection()
                 .map_err(|e| anyhow::anyhow!("SMTP connection test failed: {}", e))
         })
         .await??;
@@ -306,10 +310,8 @@ mod tests {
         let config = create_test_config();
         let channel = EmailChannel::new(config).unwrap();
 
-        let alert = Alert::scan_failure(
-            "example.com".to_string(),
-            "Connection refused".to_string(),
-        );
+        let alert =
+            Alert::scan_failure("example.com".to_string(), "Connection refused".to_string());
 
         let body = channel.format_text_body(&alert);
 

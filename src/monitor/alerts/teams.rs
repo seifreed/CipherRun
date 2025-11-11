@@ -1,9 +1,9 @@
 // Microsoft Teams Alert Channel - Webhook integration
 
+use crate::Result;
 use crate::monitor::alerts::{Alert, AlertChannel, AlertType};
 use crate::monitor::config::TeamsConfig;
 use crate::monitor::detector::ChangeSeverity;
-use crate::Result;
 use async_trait::async_trait;
 use serde_json::json;
 
@@ -52,7 +52,9 @@ impl TeamsChannel {
                 facts.push(json!({"title": "Details", "value": changes_text}));
             }
             AlertType::ExpiryWarning { days_remaining } => {
-                facts.push(json!({"title": "Days Remaining", "value": format!("{} days", days_remaining)}));
+                facts.push(
+                    json!({"title": "Days Remaining", "value": format!("{} days", days_remaining)}),
+                );
             }
             AlertType::ValidationFailure { reason } => {
                 facts.push(json!({"title": "Reason", "value": reason}));
@@ -107,12 +109,9 @@ impl AlertChannel for TeamsChannel {
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await?;
-            return Err(anyhow::anyhow!(
-                "Teams webhook returned status {}: {}",
-                status,
-                body
-            )
-            .into());
+            return Err(
+                anyhow::anyhow!("Teams webhook returned status {}: {}", status, body).into(),
+            );
         }
 
         Ok(())
@@ -139,9 +138,7 @@ impl AlertChannel for TeamsChannel {
             .await?;
 
         if !response.status().is_success() {
-            return Err(
-                anyhow::anyhow!("Teams webhook test failed: {}", response.status()).into(),
-            );
+            return Err(anyhow::anyhow!("Teams webhook test failed: {}", response.status()).into());
         }
 
         Ok(())
@@ -171,10 +168,8 @@ mod tests {
         let config = create_test_config();
         let channel = TeamsChannel::new(config);
 
-        let alert = Alert::scan_failure(
-            "example.com".to_string(),
-            "Connection refused".to_string(),
-        );
+        let alert =
+            Alert::scan_failure("example.com".to_string(), "Connection refused".to_string());
 
         let message = channel.format_message(&alert);
 

@@ -11,10 +11,10 @@ pub mod mx;
 pub mod network;
 pub mod nmap;
 pub mod proxy;
-pub mod reverse_ptr;
 pub mod retry;
-pub mod sni_generator;
+pub mod reverse_ptr;
 pub mod sneaky;
+pub mod sni_generator;
 pub mod timing;
 
 // MEDIUM PRIORITY Features (11-15)

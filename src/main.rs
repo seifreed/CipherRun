@@ -37,6 +37,12 @@ async fn main() -> Result<()> {
     // Parse command line arguments
     let mut args = Args::parse();
 
+    // Validate CLI arguments for conflicting flags
+    if let Err(e) = args.validate() {
+        eprintln!("Error: {}", e);
+        std::process::exit(1);
+    }
+
     // Handle --version (display version and exit)
     if args.version {
         println!("CipherRun v{}", env!("CARGO_PKG_VERSION"));
@@ -54,7 +60,10 @@ async fn main() -> Result<()> {
                 .to_str()
                 .ok_or_else(|| anyhow::anyhow!("Invalid file path"))?,
         )?;
-        println!("✓ Example API configuration saved to: {}", config_path.display());
+        println!(
+            "✓ Example API configuration saved to: {}",
+            config_path.display()
+        );
         return Ok(());
     }
 
@@ -112,7 +121,10 @@ async fn main() -> Result<()> {
                 .to_str()
                 .ok_or_else(|| anyhow::anyhow!("Invalid file path"))?,
         )?;
-        println!("✓ Example database configuration saved to: {}", config_path.display());
+        println!(
+            "✓ Example database configuration saved to: {}",
+            config_path.display()
+        );
         return Ok(());
     }
 
@@ -136,7 +148,10 @@ async fn main() -> Result<()> {
         // Cleanup old scans
         if let Some(days) = args.cleanup_days {
             let deleted = db.cleanup_old_scans(days).await?;
-            println!("✓ Deleted {} old scan(s) (older than {} days)", deleted, days);
+            println!(
+                "✓ Deleted {} old scan(s) (older than {} days)",
+                deleted, days
+            );
         }
 
         // Query scan history
@@ -145,7 +160,9 @@ async fn main() -> Result<()> {
             let hostname = parts.first().unwrap_or(&"").to_string();
             let port: u16 = parts.get(1).and_then(|p| p.parse().ok()).unwrap_or(443);
 
-            let scans = db.get_scan_history(&hostname, port, args.history_limit).await?;
+            let scans = db
+                .get_scan_history(&hostname, port, args.history_limit)
+                .await?;
 
             println!("\nScan History for {}:{}", hostname, port);
             println!("{}", "=".repeat(80));
@@ -174,9 +191,15 @@ async fn main() -> Result<()> {
     }
 
     // Handle analytics operations
-    if args.compare.is_some() || args.changes.is_some() || args.trends.is_some() || args.dashboard.is_some() {
+    if args.compare.is_some()
+        || args.changes.is_some()
+        || args.trends.is_some()
+        || args.dashboard.is_some()
+    {
         use cipherrun::db::CipherRunDatabase;
-        use cipherrun::db::analytics::{ChangeTracker, ScanComparator, TrendAnalyzer, DashboardGenerator};
+        use cipherrun::db::analytics::{
+            ChangeTracker, DashboardGenerator, ScanComparator, TrendAnalyzer,
+        };
         use std::sync::Arc;
 
         let db_config_path = args
@@ -195,9 +218,11 @@ async fn main() -> Result<()> {
                 return Ok(());
             }
 
-            let scan_id_1: i64 = parts[0].parse()
+            let scan_id_1: i64 = parts[0]
+                .parse()
                 .map_err(|_| anyhow::anyhow!("Invalid scan ID: {}", parts[0]))?;
-            let scan_id_2: i64 = parts[1].parse()
+            let scan_id_2: i64 = parts[1]
+                .parse()
                 .map_err(|_| anyhow::anyhow!("Invalid scan ID: {}", parts[1]))?;
 
             let comparator = ScanComparator::new(db.clone());
@@ -229,9 +254,11 @@ async fn main() -> Result<()> {
             }
 
             let hostname = parts[0].to_string();
-            let port: u16 = parts[1].parse()
+            let port: u16 = parts[1]
+                .parse()
                 .map_err(|_| anyhow::anyhow!("Invalid port: {}", parts[1]))?;
-            let days: i64 = parts[2].parse()
+            let days: i64 = parts[2]
+                .parse()
                 .map_err(|_| anyhow::anyhow!("Invalid days: {}", parts[2]))?;
 
             let tracker = ChangeTracker::new(db.clone());
@@ -265,9 +292,11 @@ async fn main() -> Result<()> {
             }
 
             let hostname = parts[0].to_string();
-            let port: u16 = parts[1].parse()
+            let port: u16 = parts[1]
+                .parse()
                 .map_err(|_| anyhow::anyhow!("Invalid port: {}", parts[1]))?;
-            let days: i64 = parts[2].parse()
+            let days: i64 = parts[2]
+                .parse()
                 .map_err(|_| anyhow::anyhow!("Invalid days: {}", parts[2]))?;
 
             let analyzer = TrendAnalyzer::new(db.clone());
@@ -275,8 +304,12 @@ async fn main() -> Result<()> {
             if args.json.is_some() || args.json_pretty {
                 // Generate all trends and output as JSON
                 let rating_trend = analyzer.analyze_rating_trend(&hostname, port, days).await?;
-                let vuln_trend = analyzer.analyze_vulnerability_trend(&hostname, port, days).await?;
-                let protocol_trend = analyzer.analyze_protocol_trend(&hostname, port, days).await?;
+                let vuln_trend = analyzer
+                    .analyze_vulnerability_trend(&hostname, port, days)
+                    .await?;
+                let protocol_trend = analyzer
+                    .analyze_protocol_trend(&hostname, port, days)
+                    .await?;
 
                 let trends = serde_json::json!({
                     "rating_trend": rating_trend,
@@ -297,7 +330,9 @@ async fn main() -> Result<()> {
                     println!("{}", json);
                 }
             } else {
-                let report = analyzer.generate_trend_report(&hostname, port, days).await?;
+                let report = analyzer
+                    .generate_trend_report(&hostname, port, days)
+                    .await?;
                 println!("{}", report);
             }
         }
@@ -311,9 +346,11 @@ async fn main() -> Result<()> {
             }
 
             let hostname = parts[0].to_string();
-            let port: u16 = parts[1].parse()
+            let port: u16 = parts[1]
+                .parse()
                 .map_err(|_| anyhow::anyhow!("Invalid port: {}", parts[1]))?;
-            let days: i64 = parts[2].parse()
+            let days: i64 = parts[2]
+                .parse()
                 .map_err(|_| anyhow::anyhow!("Invalid days: {}", parts[2]))?;
 
             let generator = DashboardGenerator::new(db.clone());
@@ -334,7 +371,7 @@ async fn main() -> Result<()> {
 
     // Handle CT logs streaming mode
     if args.ct_logs {
-        use cipherrun::ct_logs::{CtStreamer, CtConfig};
+        use cipherrun::ct_logs::{CtConfig, CtStreamer};
         use std::collections::HashMap;
 
         info!("Starting CT logs streaming mode");
@@ -347,10 +384,16 @@ async fn main() -> Result<()> {
                 if let Ok(index) = parts[1].parse::<u64>() {
                     custom_indices.insert(parts[0].to_string(), index);
                 } else {
-                    eprintln!("Warning: Invalid index value for source {}: {}", parts[0], parts[1]);
+                    eprintln!(
+                        "Warning: Invalid index value for source {}: {}",
+                        parts[0], parts[1]
+                    );
                 }
             } else {
-                eprintln!("Warning: Invalid --ct-index format: {}. Expected SOURCE=INDEX", index_str);
+                eprintln!(
+                    "Warning: Invalid --ct-index format: {}. Expected SOURCE=INDEX",
+                    index_str
+                );
             }
         }
 
@@ -373,7 +416,7 @@ async fn main() -> Result<()> {
 
     // Handle monitoring operations
     if args.test_alert || args.monitor {
-        use cipherrun::monitor::{MonitorDaemon, MonitorConfig, MonitoredDomain};
+        use cipherrun::monitor::{MonitorConfig, MonitorDaemon, MonitoredDomain};
 
         // Load or create monitoring configuration
         let monitor_config = if let Some(config_path) = &args.monitor_config {
@@ -430,10 +473,7 @@ async fn main() -> Result<()> {
                 let hostname = parts.first().copied().unwrap_or("localhost");
                 let port: u16 = parts.get(1).and_then(|p| p.parse().ok()).unwrap_or(443);
 
-                let domain = MonitoredDomain::new(
-                    hostname.to_string(),
-                    port,
-                );
+                let domain = MonitoredDomain::new(hostname.to_string(), port);
 
                 daemon.add_domain(domain).await?;
             }
@@ -596,7 +636,7 @@ async fn main() -> Result<()> {
         }
     } else {
         // Single target scanning mode
-        let mut scanner = Scanner::new(args.clone())?;
+        let scanner = Scanner::new(args.clone())?;
 
         // Run the scan
         let results = scanner.run().await?;
@@ -649,7 +689,7 @@ async fn main() -> Result<()> {
             use cipherrun::policy::evaluator::PolicyEvaluator;
             use cipherrun::policy::parser::PolicyLoader;
 
-            println!("\n{}", "Evaluating Policy...");
+            println!("\nEvaluating Policy...");
 
             let loader = PolicyLoader::new(
                 policy_path
@@ -667,7 +707,7 @@ async fn main() -> Result<()> {
 
             // Exit with error code if --enforce is set and violations found
             if args.enforce && policy_result.has_violations() {
-                eprintln!("\n{}", "Policy evaluation failed - exiting with error code 1");
+                eprintln!("\nPolicy evaluation failed - exiting with error code 1");
                 std::process::exit(1);
             }
         }
@@ -725,7 +765,7 @@ fn display_banner(args: &Args) {
         println!(
             r#"
     ╔═══════════════════════════════════════════════════════════╗
-    ║                     CipherRun v0.1.0                      ║
+    ║                     CipherRun v0.2.0                      ║
     ║      Fast, Modular TLS/SSL Security Scanner (Rust)       ║
     ║                                                           ║
     ║              Author: Marc Rivero | @seifreed              ║

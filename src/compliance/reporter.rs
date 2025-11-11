@@ -13,24 +13,27 @@ impl Reporter {
         let mut output = String::new();
 
         // Header
-        output.push_str(&format!(
-            "\n{}\n",
-            "=".repeat(70).cyan()
-        ));
+        output.push_str(&format!("\n{}\n", "=".repeat(70).cyan()));
         output.push_str(&format!(
             "Compliance Report: {}\n",
             report.framework.name.cyan().bold()
         ));
-        output.push_str(&format!(
-            "{}\n",
-            "=".repeat(70).cyan()
-        ));
+        output.push_str(&format!("{}\n", "=".repeat(70).cyan()));
 
         // Metadata
-        output.push_str(&format!("Framework:    {} v{}\n", report.framework.name, report.framework.version));
-        output.push_str(&format!("Organization: {}\n", report.framework.organization));
+        output.push_str(&format!(
+            "Framework:    {} v{}\n",
+            report.framework.name, report.framework.version
+        ));
+        output.push_str(&format!(
+            "Organization: {}\n",
+            report.framework.organization
+        ));
         output.push_str(&format!("Target:       {}\n", report.target.green()));
-        output.push_str(&format!("Scan Time:    {}\n", report.scan_timestamp.format("%Y-%m-%d %H:%M:%S UTC")));
+        output.push_str(&format!(
+            "Scan Time:    {}\n",
+            report.scan_timestamp.format("%Y-%m-%d %H:%M:%S UTC")
+        ));
 
         // Overall status
         let status_str = match report.overall_status {
@@ -43,11 +46,26 @@ impl Reporter {
         // Summary
         output.push_str(&format!("\n{}\n", "Summary:".cyan().bold()));
         output.push_str(&format!("  Total Requirements: {}\n", report.summary.total));
-        output.push_str(&format!("  {} Passed:  {}\n", "✓".green(), report.summary.passed));
-        output.push_str(&format!("  {} Failed:  {}\n", "✗".red(), report.summary.failed));
-        output.push_str(&format!("  {} Warnings: {}\n", "⚠".yellow(), report.summary.warnings));
+        output.push_str(&format!(
+            "  {} Passed:  {}\n",
+            "✓".green(),
+            report.summary.passed
+        ));
+        output.push_str(&format!(
+            "  {} Failed:  {}\n",
+            "✗".red(),
+            report.summary.failed
+        ));
+        output.push_str(&format!(
+            "  {} Warnings: {}\n",
+            "⚠".yellow(),
+            report.summary.warnings
+        ));
         if report.summary.not_applicable > 0 {
-            output.push_str(&format!("  - N/A:      {}\n", report.summary.not_applicable));
+            output.push_str(&format!(
+                "  - N/A:      {}\n",
+                report.summary.not_applicable
+            ));
         }
 
         // Failed requirements
@@ -65,12 +83,20 @@ impl Reporter {
                     Severity::Info => "INFO".cyan(),
                 };
 
-                output.push_str(&format!("\n[{}] {} - {}\n", severity_str, req.requirement_id.yellow(), req.name));
+                output.push_str(&format!(
+                    "\n[{}] {} - {}\n",
+                    severity_str,
+                    req.requirement_id.yellow(),
+                    req.name
+                ));
                 output.push_str(&format!("  Category:    {}\n", req.category));
                 output.push_str(&format!("  Status:      {}\n", "FAIL".red()));
 
                 for violation in &req.violations {
-                    output.push_str(&format!("\n  Violation:   {}\n", violation.violation_type.red()));
+                    output.push_str(&format!(
+                        "\n  Violation:   {}\n",
+                        violation.violation_type.red()
+                    ));
                     output.push_str(&format!("  Description: {}\n", violation.description));
                     output.push_str(&format!("  Evidence:    {}\n", violation.evidence));
                 }
@@ -87,11 +113,19 @@ impl Reporter {
         // Warning requirements
         let warning_reqs = report.warning_requirements();
         if !warning_reqs.is_empty() {
-            output.push_str(&format!("\n{}\n", "Requirements with Warnings:".yellow().bold()));
+            output.push_str(&format!(
+                "\n{}\n",
+                "Requirements with Warnings:".yellow().bold()
+            ));
             output.push_str(&format!("{}\n", "-".repeat(70)));
 
             for req in warning_reqs {
-                output.push_str(&format!("\n[{}] {} - {}\n", "WARNING".yellow(), req.requirement_id.yellow(), req.name));
+                output.push_str(&format!(
+                    "\n[{}] {} - {}\n",
+                    "WARNING".yellow(),
+                    req.requirement_id.yellow(),
+                    req.name
+                ));
                 output.push_str(&format!("  Category: {}\n", req.category));
 
                 for violation in &req.violations {
@@ -111,7 +145,12 @@ impl Reporter {
                 .collect();
 
             for req in passed_reqs.iter().take(5) {
-                output.push_str(&format!("  {} {} - {}\n", "✓".green(), req.requirement_id, req.name));
+                output.push_str(&format!(
+                    "  {} {} - {}\n",
+                    "✓".green(),
+                    req.requirement_id,
+                    req.name
+                ));
             }
 
             if passed_reqs.len() > 5 {
@@ -199,10 +238,22 @@ impl Reporter {
 
         // Metadata
         html.push_str("<div class=\"metadata\">\n");
-        html.push_str(&format!("<p><strong>Framework:</strong> {} v{}</p>\n", report.framework.name, report.framework.version));
-        html.push_str(&format!("<p><strong>Organization:</strong> {}</p>\n", report.framework.organization));
-        html.push_str(&format!("<p><strong>Target:</strong> {}</p>\n", report.target));
-        html.push_str(&format!("<p><strong>Scan Time:</strong> {}</p>\n", report.scan_timestamp.format("%Y-%m-%d %H:%M:%S UTC")));
+        html.push_str(&format!(
+            "<p><strong>Framework:</strong> {} v{}</p>\n",
+            report.framework.name, report.framework.version
+        ));
+        html.push_str(&format!(
+            "<p><strong>Organization:</strong> {}</p>\n",
+            report.framework.organization
+        ));
+        html.push_str(&format!(
+            "<p><strong>Target:</strong> {}</p>\n",
+            report.target
+        ));
+        html.push_str(&format!(
+            "<p><strong>Scan Time:</strong> {}</p>\n",
+            report.scan_timestamp.format("%Y-%m-%d %H:%M:%S UTC")
+        ));
 
         let status_class = match report.overall_status {
             ComplianceStatus::Pass => "status-pass",
@@ -219,10 +270,22 @@ impl Reporter {
         html.push_str("<div class=\"summary\">\n");
         html.push_str("<h2>Summary</h2>\n");
         html.push_str("<table>\n");
-        html.push_str(&format!("<tr><th>Total Requirements</th><td>{}</td></tr>\n", report.summary.total));
-        html.push_str(&format!("<tr><th>Passed</th><td class=\"status-pass\">{}</td></tr>\n", report.summary.passed));
-        html.push_str(&format!("<tr><th>Failed</th><td class=\"status-fail\">{}</td></tr>\n", report.summary.failed));
-        html.push_str(&format!("<tr><th>Warnings</th><td class=\"status-warning\">{}</td></tr>\n", report.summary.warnings));
+        html.push_str(&format!(
+            "<tr><th>Total Requirements</th><td>{}</td></tr>\n",
+            report.summary.total
+        ));
+        html.push_str(&format!(
+            "<tr><th>Passed</th><td class=\"status-pass\">{}</td></tr>\n",
+            report.summary.passed
+        ));
+        html.push_str(&format!(
+            "<tr><th>Failed</th><td class=\"status-fail\">{}</td></tr>\n",
+            report.summary.failed
+        ));
+        html.push_str(&format!(
+            "<tr><th>Warnings</th><td class=\"status-warning\">{}</td></tr>\n",
+            report.summary.warnings
+        ));
         html.push_str("</table>\n");
         html.push_str("</div>\n");
 
@@ -247,7 +310,10 @@ impl Reporter {
             html.push_str(&format!("<td>{}</td>\n", req.name));
             html.push_str(&format!("<td>{}</td>\n", req.category));
             html.push_str(&format!("<td>{:?}</td>\n", req.severity));
-            html.push_str(&format!("<td class=\"{}\">{}</td>\n", status_class, req.status));
+            html.push_str(&format!(
+                "<td class=\"{}\">{}</td>\n",
+                status_class, req.status
+            ));
             html.push_str("<td>\n");
 
             if req.violations.is_empty() {

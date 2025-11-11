@@ -120,9 +120,10 @@ impl CertificateStatus {
 
         // Fallback: parse certificate dates directly
         if let Ok(not_after) = parse_certificate_date(&cert.not_after)
-            && Utc::now() > not_after {
-                return true;
-            }
+            && Utc::now() > not_after
+        {
+            return true;
+        }
 
         false
     }

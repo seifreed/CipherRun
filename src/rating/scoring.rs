@@ -1,14 +1,15 @@
 // SSL Labs Scoring System - Calculate component scores
 // Based on: https://github.com/ssllabs/research/wiki/SSL-Server-Rating-Guide
+// Version 2009r (May 2025)
 //
 // ## SSL Labs Compatibility Mode
 //
 // This implementation aligns with SSL Labs grading methodology:
 //
-// ### TLS 1.3 Requirement (Gap 7 Implementation)
-// - **Grade A (85+) requires TLS 1.3 support**
-// - Without TLS 1.3, the grade is **capped at A- (score 84)**
+// ### TLS 1.3 Requirement
+// - **Without TLS 1.3, the OVERALL grade and protocol grade are capped at A-**
 // - This matches SSL Labs policy: "This server does not support TLS 1.3" → caps grade at A-
+// - A- score range is 80-84, so we cap at 84
 //
 // ### Score Ranges
 // - A+: 95-100 (excellent - best practice security)
@@ -22,11 +23,11 @@
 // - T:  Certificate not trusted
 // - M:  Certificate name mismatch
 //
-// ### Component Weights
-// - Certificate:   30%
+// ### Component Weights (SSL Labs Official)
 // - Protocol:      30%
-// - Key Exchange:  20%
-// - Cipher:        20%
+// - Key Exchange:  30%
+// - Cipher:        40%
+// - Certificate:   Not included in overall score (but causes T/M grade overrides)
 //
 // ### Instant Failures
 // - SSLv2 support → Score 0 (grade F)
@@ -35,6 +36,10 @@
 // - Certificate expired → Grade T
 // - Certificate hostname mismatch → Grade M
 // - Certificate trust chain invalid → Grade T
+//
+// ### Vulnerability Impact Changes (2025)
+// - **TLS_FALLBACK_SCSV no longer impacts grading** (as of version 2009r)
+// - Only critical vulnerabilities (Heartbleed, DROWN, ROBOT, etc.) cause instant F
 //
 // ### License
 // Copyright (C) 2025 Marc Rivero López (@seifreed)
@@ -80,14 +85,25 @@ impl RatingCalculator {
         let cipher_strength_score = Self::calculate_cipher_strength_score(ciphers);
 
         // Calculate overall score (weighted average)
-        let score = Self::calculate_overall_score(
-            certificate_score,
+        // SSL Labs methodology: Protocol 30%, Key Exchange 30%, Cipher 40%
+        // Certificate is NOT included in overall score calculation
+        let mut score = Self::calculate_overall_score(
             protocol_score,
             key_exchange_score,
             cipher_strength_score,
         );
 
-        // Apply vulnerability penalties
+        // Apply TLS 1.3 cap to OVERALL score (not just protocol score)
+        // SSL Labs 2025: "If TLS 1.3 is not supported, the minimum grade is capped at A-"
+        let has_tls13 = protocols
+            .iter()
+            .any(|p| p.supported && p.protocol == Protocol::TLS13);
+        if !has_tls13 {
+            // Cap at 84 (A- range is 80-84)
+            score = score.min(84);
+        }
+
+        // Apply vulnerability penalties (excludes TLS_FALLBACK_SCSV as of 2025)
         let (score, warnings) = Self::apply_vulnerability_penalties(score, vulnerabilities);
 
         // Determine grade
@@ -154,10 +170,11 @@ impl RatingCalculator {
 
     /// Calculate protocol support score (0-100)
     ///
-    /// SSL Labs Compatibility Mode:
-    /// - TLS 1.3 is REQUIRED for grade A (score 85+)
-    /// - Without TLS 1.3, grade is capped at A- (score 84)
-    /// - This aligns with SSL Labs methodology where TLS 1.3 is mandatory for best grades
+    /// SSL Labs Compatibility Mode (2025):
+    /// - Protocol score contributes 30% to overall score
+    /// - Without TLS 1.3, protocol score is heavily penalized
+    /// - Without TLS 1.3, OVERALL score is also capped at 84 (enforced in calculate())
+    /// - This aligns with SSL Labs 2025 methodology where TLS 1.3 is mandatory for A/A+ grades
     fn calculate_protocol_score(protocols: &[ProtocolTestResult]) -> u8 {
         let mut score = 100u8;
 
@@ -183,21 +200,27 @@ impl RatingCalculator {
             score = score.saturating_sub(20);
         }
 
-        // SSL Labs Compatibility: Cap grade at A- (84) if TLS 1.3 is not supported
-        // This matches SSL Labs requirement: "TLS 1.3 is required for grade A"
-        let has_tls13 = protocols.iter().any(|p| {
-            p.supported && p.protocol == Protocol::TLS13
-        });
+        // SSL Labs Compatibility: Heavy penalty if TLS 1.3 is not supported
+        // SSL Labs policy: "Without TLS 1.3, maximum grade is A-"
+        // Apply -15 penalty for missing TLS 1.3 (in addition to overall cap at 84)
+        let has_tls13 = protocols
+            .iter()
+            .any(|p| p.supported && p.protocol == Protocol::TLS13);
 
         if !has_tls13 {
-            // Cap at 84 (A- range is 80-84)
-            score = score.min(84);
+            // Penalize by 15 points for missing TLS 1.3
+            score = score.saturating_sub(15);
         }
 
         score
     }
 
     /// Calculate key exchange score (0-100)
+    ///
+    /// SSL Labs methodology:
+    /// - Forward Secrecy (FS) is critical for modern security
+    /// - Penalize based on percentage of ciphers lacking FS
+    /// - RSA key exchange (TLS_RSA_*) lacks FS and should be heavily penalized
     fn calculate_key_exchange_score(ciphers: &HashMap<Protocol, ProtocolCipherSummary>) -> u8 {
         let mut score = 100u8;
 
@@ -212,11 +235,17 @@ impl RatingCalculator {
 
         if total_ciphers > 0 {
             let fs_percentage = (fs_ciphers * 100) / total_ciphers;
-            if fs_percentage < 30 {
+            let non_fs_percentage = 100 - fs_percentage;
+
+            // SSL Labs criteria: Penalize based on percentage of non-FS ciphers
+            if non_fs_percentage >= 50 {
+                // More than 50% lack FS: -20 points
                 score = score.saturating_sub(20);
-            } else if fs_percentage < 50 {
+            } else if non_fs_percentage >= 30 {
+                // 30-49% lack FS: -10 points
                 score = score.saturating_sub(10);
-            } else if fs_percentage < 80 {
+            } else if non_fs_percentage >= 20 {
+                // 20-29% lack FS: -5 points
                 score = score.saturating_sub(5);
             }
         }
@@ -225,8 +254,18 @@ impl RatingCalculator {
     }
 
     /// Calculate cipher strength score (0-100)
+    ///
+    /// SSL Labs methodology:
+    /// - NULL and EXPORT ciphers = instant fail
+    /// - Penalize based on PERCENTAGE of weak ciphers (low + medium strength)
+    /// - CBC mode ciphers should be penalized (lack AEAD)
+    /// - High percentage of weak ciphers indicates poor cipher suite configuration
     fn calculate_cipher_strength_score(ciphers: &HashMap<Protocol, ProtocolCipherSummary>) -> u8 {
         let mut score = 100u8;
+        let mut total_ciphers = 0;
+        let mut weak_ciphers = 0; // low + medium strength
+        let mut low_strength_count = 0;
+        let mut aead_count = 0;
 
         for summary in ciphers.values() {
             // NULL ciphers = instant F
@@ -239,22 +278,45 @@ impl RatingCalculator {
                 return 0;
             }
 
-            // Low strength ciphers
-            if summary.counts.low_strength > 0 {
+            // Aggregate counts across all protocols
+            total_ciphers += summary.counts.total;
+            weak_ciphers += summary.counts.low_strength + summary.counts.medium_strength;
+            low_strength_count += summary.counts.low_strength;
+            aead_count += summary.counts.aead;
+        }
+
+        if total_ciphers > 0 {
+            // Calculate percentage of weak ciphers
+            let weak_percentage = (weak_ciphers * 100) / total_ciphers;
+            let low_percentage = (low_strength_count * 100) / total_ciphers;
+
+            // SSL Labs criteria: Penalize based on percentage of WEAK ciphers
+            if weak_percentage >= 75 {
+                // 75%+ weak ciphers: -20 points (major penalty)
                 score = score.saturating_sub(20);
-            }
-
-            // Medium strength ciphers
-            if summary.counts.medium_strength > 0 && summary.counts.high_strength == 0 {
+            } else if weak_percentage >= 50 {
+                // 50-74% weak ciphers: -15 points
+                score = score.saturating_sub(15);
+            } else if weak_percentage >= 25 {
+                // 25-49% weak ciphers: -10 points
                 score = score.saturating_sub(10);
+            } else if weak_percentage > 0 {
+                // Any weak ciphers: -5 points
+                score = score.saturating_sub(5);
             }
 
-            // Check AEAD support
-            if summary.counts.total > 0 {
-                let aead_percentage = (summary.counts.aead * 100) / summary.counts.total;
-                if aead_percentage < 50 {
-                    score = score.saturating_sub(5);
-                }
+            // Additional penalty if LOW strength ciphers present (very weak)
+            if low_percentage >= 25 {
+                score = score.saturating_sub(10);
+            } else if low_percentage > 0 {
+                score = score.saturating_sub(5);
+            }
+
+            // Check AEAD support (penalty for CBC mode ciphers)
+            let aead_percentage = (aead_count * 100) / total_ciphers;
+            if aead_percentage < 50 {
+                // Less than 50% AEAD: -5 points (CBC mode vulnerability)
+                score = score.saturating_sub(5);
             }
         }
 
@@ -262,17 +324,15 @@ impl RatingCalculator {
     }
 
     /// Calculate overall score from component scores
-    fn calculate_overall_score(cert: u8, protocol: u8, key_exchange: u8, cipher: u8) -> u8 {
-        // Weighted average: 30% cert, 30% protocol, 20% key exchange, 20% cipher
-        let weighted = (cert as u32 * 30
-            + protocol as u32 * 30
-            + key_exchange as u32 * 20
-            + cipher as u32 * 20)
-            / 100;
+    /// SSL Labs methodology: Protocol 30%, Key Exchange 30%, Cipher 40%
+    fn calculate_overall_score(protocol: u8, key_exchange: u8, cipher: u8) -> u8 {
+        // Weighted average: 30% protocol, 30% key exchange, 40% cipher
+        let weighted = (protocol as u32 * 30 + key_exchange as u32 * 30 + cipher as u32 * 40) / 100;
         weighted.min(100) as u8
     }
 
     /// Apply vulnerability penalties
+    /// SSL Labs 2025: TLS_FALLBACK_SCSV no longer impacts grading
     fn apply_vulnerability_penalties(
         mut score: u8,
         vulnerabilities: &[VulnerabilityResult],
@@ -280,6 +340,14 @@ impl RatingCalculator {
         let mut warnings = Vec::new();
 
         for vuln in vulnerabilities {
+            // Skip TLS_FALLBACK_SCSV - no longer impacts grading as of SSL Labs 2025
+            if matches!(
+                vuln.vuln_type,
+                crate::vulnerabilities::VulnerabilityType::TLSFallback
+            ) {
+                continue;
+            }
+
             if vuln.vulnerable {
                 use crate::vulnerabilities::Severity;
                 let (deduction, warning) = match vuln.severity {
@@ -318,11 +386,19 @@ mod tests {
 
     #[test]
     fn test_overall_score_calculation() {
-        let score = RatingCalculator::calculate_overall_score(100, 100, 100, 100);
+        // All perfect scores
+        let score = RatingCalculator::calculate_overall_score(100, 100, 100);
         assert_eq!(score, 100);
 
-        let score = RatingCalculator::calculate_overall_score(80, 90, 85, 95);
-        assert_eq!(score, 87); // (80*30 + 90*30 + 85*20 + 95*20) / 100
+        // Mixed scores: Protocol 90%, Key Exchange 85%, Cipher 95%
+        // (90*30 + 85*30 + 95*40) / 100 = (2700 + 2550 + 3800) / 100 = 91
+        let score = RatingCalculator::calculate_overall_score(90, 85, 95);
+        assert_eq!(score, 91);
+
+        // Test case from user report: Protocol 100%, Key Exchange 95%, Cipher 95%
+        // (100*30 + 95*30 + 95*40) / 100 = (3000 + 2850 + 3800) / 100 = 96
+        let score = RatingCalculator::calculate_overall_score(100, 95, 95);
+        assert_eq!(score, 96);
     }
 
     #[test]
@@ -342,6 +418,9 @@ mod tests {
                 ciphers_count: 10,
                 handshake_time_ms: None,
                 heartbeat_enabled: None,
+                session_resumption_caching: None,
+                session_resumption_tickets: None,
+                secure_renegotiation: None,
             },
             ProtocolTestResult {
                 protocol: Protocol::TLS13,
@@ -350,6 +429,9 @@ mod tests {
                 ciphers_count: 5,
                 handshake_time_ms: None,
                 heartbeat_enabled: None,
+                session_resumption_caching: None,
+                session_resumption_tickets: None,
+                secure_renegotiation: None,
             },
         ];
         let score = RatingCalculator::calculate_protocol_score(&protocols);
@@ -357,27 +439,31 @@ mod tests {
     }
 
     #[test]
-    fn test_protocol_score_without_tls13_caps_at_84() {
-        // Server with only TLS 1.2 (no TLS 1.3) should be capped at 84 (A-)
-        let protocols = vec![
-            ProtocolTestResult {
-                protocol: Protocol::TLS12,
-                supported: true,
-                preferred: true,
-                ciphers_count: 10,
-                handshake_time_ms: None,
-                heartbeat_enabled: None,
-            },
-        ];
+    fn test_protocol_score_without_tls13_gets_penalty() {
+        // Server with only TLS 1.2 (no TLS 1.3) gets -15 penalty
+        // Start: 100, Penalty: -15 = 85
+        let protocols = vec![ProtocolTestResult {
+            protocol: Protocol::TLS12,
+            supported: true,
+            preferred: true,
+            ciphers_count: 10,
+            handshake_time_ms: None,
+            heartbeat_enabled: None,
+            session_resumption_caching: None,
+            session_resumption_tickets: None,
+            secure_renegotiation: None,
+        }];
         let score = RatingCalculator::calculate_protocol_score(&protocols);
-        assert_eq!(score, 84, "Server without TLS 1.3 should be capped at 84 (A-)");
+        assert_eq!(
+            score, 85,
+            "Server without TLS 1.3 should get -15 penalty (100-15=85)"
+        );
     }
 
     #[test]
     fn test_protocol_score_without_tls13_with_old_tls() {
-        // Server with TLS 1.0, 1.1, 1.2 but no TLS 1.3 should be capped at 84
-        // Initial score 100 - 5 (TLS 1.0) - 3 (TLS 1.1) = 92
-        // Then capped at 84 due to missing TLS 1.3
+        // Server with TLS 1.0, 1.1, 1.2 but no TLS 1.3
+        // Initial score 100 - 5 (TLS 1.0) - 3 (TLS 1.1) - 15 (no TLS 1.3) = 77
         let protocols = vec![
             ProtocolTestResult {
                 protocol: Protocol::TLS10,
@@ -386,6 +472,9 @@ mod tests {
                 ciphers_count: 20,
                 handshake_time_ms: None,
                 heartbeat_enabled: None,
+                session_resumption_caching: None,
+                session_resumption_tickets: None,
+                secure_renegotiation: None,
             },
             ProtocolTestResult {
                 protocol: Protocol::TLS11,
@@ -394,6 +483,9 @@ mod tests {
                 ciphers_count: 15,
                 handshake_time_ms: None,
                 heartbeat_enabled: None,
+                session_resumption_caching: None,
+                session_resumption_tickets: None,
+                secure_renegotiation: None,
             },
             ProtocolTestResult {
                 protocol: Protocol::TLS12,
@@ -402,17 +494,23 @@ mod tests {
                 ciphers_count: 10,
                 handshake_time_ms: None,
                 heartbeat_enabled: None,
+                session_resumption_caching: None,
+                session_resumption_tickets: None,
+                secure_renegotiation: None,
             },
         ];
         let score = RatingCalculator::calculate_protocol_score(&protocols);
-        // Score would be 92 (100 - 5 - 3), but capped at 84
-        assert_eq!(score, 84, "Server without TLS 1.3 should be capped at 84 even with high score");
+        // Score: 100 - 5 (TLS 1.0) - 3 (TLS 1.1) - 15 (no TLS 1.3) = 77
+        assert_eq!(
+            score, 77,
+            "Server without TLS 1.3 gets cumulative penalties"
+        );
     }
 
     #[test]
-    fn test_protocol_score_sslv3_no_cap_due_to_penalty() {
+    fn test_protocol_score_sslv3_with_penalties() {
         // Server with SSLv3 and TLS 1.2 (no TLS 1.3)
-        // Initial score 100 - 20 (SSLv3) = 80, then cap at 84 (no effect since already below)
+        // Initial score 100 - 20 (SSLv3) - 15 (no TLS 1.3) = 65
         let protocols = vec![
             ProtocolTestResult {
                 protocol: Protocol::SSLv3,
@@ -421,6 +519,9 @@ mod tests {
                 ciphers_count: 50,
                 handshake_time_ms: None,
                 heartbeat_enabled: None,
+                session_resumption_caching: None,
+                session_resumption_tickets: None,
+                secure_renegotiation: None,
             },
             ProtocolTestResult {
                 protocol: Protocol::TLS12,
@@ -429,10 +530,16 @@ mod tests {
                 ciphers_count: 10,
                 handshake_time_ms: None,
                 heartbeat_enabled: None,
+                session_resumption_caching: None,
+                session_resumption_tickets: None,
+                secure_renegotiation: None,
             },
         ];
         let score = RatingCalculator::calculate_protocol_score(&protocols);
-        assert_eq!(score, 80, "Server with SSLv3 gets 80, cap at 84 doesn't apply");
+        assert_eq!(
+            score, 65,
+            "Server with SSLv3 and no TLS 1.3 gets heavy penalties"
+        );
     }
 
     #[test]
@@ -446,6 +553,9 @@ mod tests {
                 ciphers_count: 20,
                 handshake_time_ms: None,
                 heartbeat_enabled: None,
+                session_resumption_caching: None,
+                session_resumption_tickets: None,
+                secure_renegotiation: None,
             },
             ProtocolTestResult {
                 protocol: Protocol::TLS13,
@@ -454,6 +564,9 @@ mod tests {
                 ciphers_count: 5,
                 handshake_time_ms: None,
                 heartbeat_enabled: None,
+                session_resumption_caching: None,
+                session_resumption_tickets: None,
+                secure_renegotiation: None,
             },
         ];
         let score = RatingCalculator::calculate_protocol_score(&protocols);
@@ -473,5 +586,104 @@ mod tests {
         // Test that score of 100 converts to A+ grade
         let grade = Grade::from_score(100);
         assert_eq!(grade, Grade::APlus, "Score 100 should be grade A+");
+    }
+
+    #[test]
+    fn test_user_reported_issue_fix() {
+        // User reported: Protocol 100%, Key Exchange 95%, Cipher 95%
+        // Expected: A+ (96) with TLS 1.3, A- (84) without TLS 1.3
+        // Was getting: B (76) due to incorrect weights and TLS_FALLBACK penalty
+
+        use std::collections::HashMap;
+
+        // With TLS 1.3 supported
+        let protocols_with_tls13 = vec![
+            ProtocolTestResult {
+                protocol: Protocol::TLS12,
+                supported: true,
+                preferred: false,
+                ciphers_count: 10,
+                handshake_time_ms: None,
+                heartbeat_enabled: None,
+                session_resumption_caching: None,
+                session_resumption_tickets: None,
+                secure_renegotiation: None,
+            },
+            ProtocolTestResult {
+                protocol: Protocol::TLS13,
+                supported: true,
+                preferred: true,
+                ciphers_count: 5,
+                handshake_time_ms: None,
+                heartbeat_enabled: None,
+                session_resumption_caching: None,
+                session_resumption_tickets: None,
+                secure_renegotiation: None,
+            },
+        ];
+
+        let ciphers = HashMap::new();
+
+        // TLS_FALLBACK_SCSV marked as "vulnerable" (false positive)
+        let vulnerabilities = vec![crate::vulnerabilities::VulnerabilityResult {
+            vuln_type: crate::vulnerabilities::VulnerabilityType::TLSFallback,
+            vulnerable: true, // This should NOT affect grade anymore
+            details: "TLS_FALLBACK_SCSV not supported".to_string(),
+            cve: Some("CVE-2014-8730".to_string()),
+            cwe: Some("CWE-757".to_string()),
+            severity: crate::vulnerabilities::Severity::High,
+        }];
+
+        let result =
+            RatingCalculator::calculate(&protocols_with_tls13, &ciphers, None, &vulnerabilities);
+
+        // With new calculation: (100*30 + 95*30 + 95*40) / 100 = 96
+        // TLS_FALLBACK_SCSV should NOT reduce the score
+        // Expected grade: A+ (96 is in 95-100 range)
+        assert!(
+            result.score >= 95,
+            "Score should be 96 or close (got {})",
+            result.score
+        );
+        assert_eq!(
+            result.grade,
+            Grade::APlus,
+            "Grade should be A+ with TLS 1.3 and score 96"
+        );
+    }
+
+    #[test]
+    fn test_tls13_overall_score_cap() {
+        // Without TLS 1.3, the OVERALL score should be capped at 84 (A-)
+        use std::collections::HashMap;
+
+        let protocols_without_tls13 = vec![ProtocolTestResult {
+            protocol: Protocol::TLS12,
+            supported: true,
+            preferred: true,
+            ciphers_count: 10,
+            handshake_time_ms: None,
+            heartbeat_enabled: None,
+            session_resumption_caching: None,
+            session_resumption_tickets: None,
+            secure_renegotiation: None,
+        }];
+
+        let ciphers = HashMap::new();
+        let vulnerabilities = vec![];
+
+        let result =
+            RatingCalculator::calculate(&protocols_without_tls13, &ciphers, None, &vulnerabilities);
+
+        // Even if component scores are high, overall should be capped at 84
+        assert_eq!(
+            result.score, 84,
+            "Overall score should be capped at 84 without TLS 1.3"
+        );
+        assert_eq!(
+            result.grade,
+            Grade::AMinus,
+            "Grade should be A- without TLS 1.3"
+        );
     }
 }

@@ -65,7 +65,7 @@ impl Default for ApiConfig {
             api_keys,
             enable_cors: true,
             rate_limit_per_minute: 100,
-            max_body_size: 1024 * 1024, // 1MB
+            max_body_size: 1024 * 1024,   // 1MB
             request_timeout_seconds: 300, // 5 minutes
             ws_ping_interval_seconds: 30,
             job_queue_capacity: 1000,

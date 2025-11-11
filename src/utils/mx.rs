@@ -149,7 +149,7 @@ impl MxTester {
 
             // Create scanner and run
             let result = match Scanner::new(mx_args.clone()) {
-                Ok(mut scanner) => scanner.run().await,
+                Ok(scanner) => scanner.run().await,
                 Err(e) => Err(e),
             };
 

@@ -1,8 +1,8 @@
 // Integration tests for CT logs streaming
 
 use cipherrun::ct_logs::{
-    client::CtClient, deduplicator::Deduplicator, parser::Parser, sources::SourceManager,
-    stats::StatsTracker, CtConfig,
+    CtConfig, client::CtClient, deduplicator::Deduplicator, parser::Parser, sources::SourceManager,
+    stats::StatsTracker,
 };
 
 #[tokio::test]
@@ -128,12 +128,7 @@ fn test_source_stats_tracking() {
     let tracker = StatsTracker::new();
 
     // Update source stats
-    tracker.update_source_stats(
-        "test-log",
-        100,
-        1000,
-        std::time::Duration::from_millis(500),
-    );
+    tracker.update_source_stats("test-log", 100, 1000, std::time::Duration::from_millis(500));
 
     tracker.increment_source_processed("test-log", 10);
 
@@ -151,7 +146,9 @@ async fn test_ct_client_error_handling() {
     let client = CtClient::new();
 
     // Try to fetch from invalid URL
-    let result = client.get_tree_size("https://invalid.example.com/ct/v1").await;
+    let result = client
+        .get_tree_size("https://invalid.example.com/ct/v1")
+        .await;
 
     // Should handle error gracefully
     assert!(result.is_err());

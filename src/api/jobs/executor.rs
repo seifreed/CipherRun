@@ -4,11 +4,11 @@ use crate::api::jobs::{JobQueue, ScanJob};
 use crate::api::models::request::ScanOptions;
 use crate::api::models::response::ProgressMessage;
 use crate::cli::Args;
-use crate::scanner::{Scanner, ScanResults};
+use crate::scanner::{ScanResults, Scanner};
 use anyhow::Result;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{broadcast, Semaphore};
+use tokio::sync::{Semaphore, broadcast};
 use tracing::{error, info, warn};
 
 /// Scan executor for processing background jobs
@@ -50,7 +50,10 @@ impl ScanExecutor {
 
     /// Start the executor
     pub async fn start(self: Arc<Self>) -> Result<()> {
-        info!("Starting scan executor with {} concurrent slots", self.max_concurrent);
+        info!(
+            "Starting scan executor with {} concurrent slots",
+            self.max_concurrent
+        );
 
         let shutdown_rx = self.shutdown_rx.clone();
 
@@ -139,9 +142,10 @@ impl ScanExecutor {
 
         // Call webhook if configured
         if let Some(webhook_url) = &job.webhook_url
-            && let Err(e) = Self::send_webhook(webhook_url, &job).await {
-                warn!("Failed to send webhook for job {}: {}", job.id, e);
-            }
+            && let Err(e) = Self::send_webhook(webhook_url, &job).await
+        {
+            warn!("Failed to send webhook for job {}: {}", job.id, e);
+        }
     }
 
     /// Run the actual scan
@@ -160,7 +164,7 @@ impl ScanExecutor {
         ));
 
         // Create scanner
-        let mut scanner = Scanner::new(args)?;
+        let scanner = Scanner::new(args)?;
 
         // Send progress: Resolving DNS
         let _ = progress_tx.send(ProgressMessage::new(

@@ -22,22 +22,14 @@ pub trait ScanRepository: Send + Sync {
     ) -> crate::Result<Vec<ScanRecord>>;
 
     /// Get the latest scan for a hostname and port
-    async fn get_latest_scan(
-        &self,
-        hostname: &str,
-        port: u16,
-    ) -> crate::Result<Option<ScanRecord>>;
+    async fn get_latest_scan(&self, hostname: &str, port: u16)
+    -> crate::Result<Option<ScanRecord>>;
 
     /// Delete scans older than the specified number of days
     async fn delete_old_scans(&self, days: i64) -> crate::Result<u64>;
 
     /// Update scan with rating information
-    async fn update_scan_rating(
-        &self,
-        scan_id: i64,
-        grade: &str,
-        score: u8,
-    ) -> crate::Result<()>;
+    async fn update_scan_rating(&self, scan_id: i64, grade: &str, score: u8) -> crate::Result<()>;
 }
 
 /// Protocol repository trait
@@ -77,13 +69,11 @@ pub trait CipherRepository: Send + Sync {
 #[async_trait]
 pub trait CertificateRepository: Send + Sync {
     /// Create or get existing certificate by fingerprint (deduplication)
-    async fn create_or_get_certificate(
-        &self,
-        cert: &CertificateRecord,
-    ) -> crate::Result<i64>;
+    async fn create_or_get_certificate(&self, cert: &CertificateRecord) -> crate::Result<i64>;
 
     /// Get certificate by ID
-    async fn get_certificate_by_id(&self, cert_id: i64) -> crate::Result<Option<CertificateRecord>>;
+    async fn get_certificate_by_id(&self, cert_id: i64)
+    -> crate::Result<Option<CertificateRecord>>;
 
     /// Get certificate by fingerprint
     async fn get_certificate_by_fingerprint(
@@ -126,7 +116,8 @@ pub trait VulnerabilityRepository: Send + Sync {
     ) -> crate::Result<Vec<VulnerabilityRecord>>;
 
     /// Bulk insert vulnerabilities
-    async fn create_vulnerabilities_bulk(&self, vulns: &[VulnerabilityRecord]) -> crate::Result<()>;
+    async fn create_vulnerabilities_bulk(&self, vulns: &[VulnerabilityRecord])
+    -> crate::Result<()>;
 }
 
 /// Rating repository trait

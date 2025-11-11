@@ -1,7 +1,7 @@
 // Alert Channel Trait
 
-use crate::monitor::alerts::Alert;
 use crate::Result;
+use crate::monitor::alerts::Alert;
 use async_trait::async_trait;
 
 /// Alert channel trait - implement this for custom alert channels

@@ -233,7 +233,9 @@ impl RevocationChecker {
         .await??;
 
         if !response.status().is_success() {
-            return Err(anyhow::anyhow!("OCSP responder returned error: {}", response.status()).into());
+            return Err(
+                anyhow::anyhow!("OCSP responder returned error: {}", response.status()).into(),
+            );
         }
 
         let response_bytes = response.bytes().await?;
@@ -249,9 +251,8 @@ impl RevocationChecker {
         issuer: Option<&CertificateInfo>,
     ) -> Result<Vec<u8>> {
         // Issuer certificate is required for building OCSP requests
-        let issuer_info = issuer.ok_or_else(|| {
-            anyhow::anyhow!("Issuer certificate required for OCSP request")
-        })?;
+        let issuer_info = issuer
+            .ok_or_else(|| anyhow::anyhow!("Issuer certificate required for OCSP request"))?;
 
         // Parse certificates from DER bytes using OpenSSL
         let cert_x509 = X509::from_der(&cert.der_bytes)
@@ -270,7 +271,8 @@ impl RevocationChecker {
             .map_err(|e| anyhow::anyhow!("Failed to create OCSP request: {}", e))?;
 
         // Add the certificate ID to the request
-        ocsp_req.add_id(cert_id)
+        ocsp_req
+            .add_id(cert_id)
             .map_err(|e| anyhow::anyhow!("Failed to add CertId to OCSP request: {}", e))?;
 
         // Optionally add a nonce for replay protection (recommended but not required)
@@ -279,7 +281,8 @@ impl RevocationChecker {
         //     .map_err(|e| anyhow::anyhow!("Failed to add nonce to OCSP request: {}", e))?;
 
         // Serialize the request to DER format
-        let request_der = ocsp_req.to_der()
+        let request_der = ocsp_req
+            .to_der()
             .map_err(|e| anyhow::anyhow!("Failed to serialize OCSP request to DER: {}", e))?;
 
         Ok(request_der)
@@ -319,12 +322,17 @@ impl RevocationChecker {
                 return Err(anyhow::anyhow!("OCSP responder reported unauthorized request").into());
             }
             _ => {
-                return Err(anyhow::anyhow!("OCSP responder returned unknown status: {:?}", response_status).into());
+                return Err(anyhow::anyhow!(
+                    "OCSP responder returned unknown status: {:?}",
+                    response_status
+                )
+                .into());
             }
         }
 
         // Get the basic response from the OCSP response
-        let basic_response = ocsp_response.basic()
+        let basic_response = ocsp_response
+            .basic()
             .map_err(|e| anyhow::anyhow!("Failed to get basic OCSP response: {}", e))?;
 
         // Recreate the certificate ID to look up the status
@@ -351,14 +359,14 @@ impl RevocationChecker {
                 }
                 openssl::ocsp::OcspCertStatus::REVOKED => {
                     tracing::warn!("OCSP response: Certificate status is REVOKED");
-                    
+
                     // Revocation reason is available
                     tracing::warn!("Revocation reason: {:?}", status.reason);
-                    
+
                     if let Some(revocation_time) = status.revocation_time {
                         tracing::warn!("Revocation time: {}", revocation_time);
                     }
-                    
+
                     return Ok(RevocationStatus::Revoked);
                 }
                 openssl::ocsp::OcspCertStatus::UNKNOWN => {
@@ -376,7 +384,6 @@ impl RevocationChecker {
         tracing::warn!("OCSP response contains no status for the requested certificate");
         Ok(RevocationStatus::Unknown)
     }
-
 
     /// Check CRL revocation status
     async fn check_crl(&self, cert: &CertificateInfo, crl_url: &str) -> Result<RevocationStatus> {
@@ -415,10 +422,17 @@ impl RevocationChecker {
     }
 
     /// Check OCSP stapling support (requires TLS connection analysis)
+    /// Check if OCSP stapling is enabled by analyzing TLS handshake
+    ///
+    /// Note: This is a stub implementation. Full OCSP stapling detection
+    /// would require parsing the ServerHello and Certificate Status messages
+    /// from the TLS handshake to determine if the server provided a stapled
+    /// OCSP response (RFC 6066 Section 8).
     pub fn check_ocsp_stapling(&self, _tls_connection: &[u8]) -> bool {
-        // This would require analyzing the TLS handshake to see if
-        // the server sent a Certificate Status message (type 22)
-        // For now, return false as placeholder
+        // TODO: Implement full OCSP stapling detection by:
+        // 1. Parsing TLS ServerHello for status_request extension
+        // 2. Looking for Certificate Status message (type 22) in handshake
+        // 3. Validating the stapled OCSP response
         false
     }
 }
@@ -478,6 +492,7 @@ mod tests {
             fingerprint_sha256: None,
             debian_weak_key: None,
             aia_url: None,
+            certificate_transparency: None,
             der_bytes: vec![],
         };
 

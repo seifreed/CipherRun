@@ -74,15 +74,18 @@ fn test_ja3_grease_filtering() {
             0xc030, // Real cipher
         ],
         vec![
-            (0x0a0a, vec![]),      // GREASE extension (should be filtered)
-            (0, vec![]),           // server_name
-            (10, build_groups(&[
-                0x0a0a, // GREASE curve
-                0x001d, // X25519
-                0x1a1a, // GREASE curve
-                0x0017, // secp256r1
-            ])),
-            (11, vec![1, 0]),      // ec_point_formats
+            (0x0a0a, vec![]), // GREASE extension (should be filtered)
+            (0, vec![]),      // server_name
+            (
+                10,
+                build_groups(&[
+                    0x0a0a, // GREASE curve
+                    0x001d, // X25519
+                    0x1a1a, // GREASE curve
+                    0x0017, // secp256r1
+                ]),
+            ),
+            (11, vec![1, 0]), // ec_point_formats
         ],
     );
 
@@ -108,11 +111,11 @@ fn test_ja3_padding_extension_filtering() {
         0x0303,
         vec![0xc02f, 0xc030],
         vec![
-            (0, vec![]),                      // server_name
-            (10, build_groups(&[0x001d])),    // supported_groups
-            (11, vec![1, 0]),                 // ec_point_formats
-            (21, vec![0; 100]),               // padding (should be filtered)
-            (13, vec![]),                     // signature_algorithms
+            (0, vec![]),                   // server_name
+            (10, build_groups(&[0x001d])), // supported_groups
+            (11, vec![1, 0]),              // ec_point_formats
+            (21, vec![0; 100]),            // padding (should be filtered)
+            (13, vec![]),                  // signature_algorithms
         ],
     );
 
@@ -128,11 +131,7 @@ fn test_ja3_string_format() {
     let client_hello = ClientHelloCapture::synthetic(
         771, // TLS 1.2
         vec![49195, 49199],
-        vec![
-            (0, vec![]),
-            (10, build_groups(&[29, 23])),
-            (11, vec![1, 0]),
-        ],
+        vec![(0, vec![]), (10, build_groups(&[29, 23])), (11, vec![1, 0])],
     );
 
     let ja3 = Ja3Fingerprint::from_client_hello(&client_hello);
@@ -243,21 +242,13 @@ fn test_ja3_deterministic() {
     let client_hello1 = ClientHelloCapture::synthetic(
         0x0303,
         vec![0xc02f, 0xc030],
-        vec![
-            (0, vec![]),
-            (10, build_groups(&[29, 23])),
-            (11, vec![1, 0]),
-        ],
+        vec![(0, vec![]), (10, build_groups(&[29, 23])), (11, vec![1, 0])],
     );
 
     let client_hello2 = ClientHelloCapture::synthetic(
         0x0303,
         vec![0xc02f, 0xc030],
-        vec![
-            (0, vec![]),
-            (10, build_groups(&[29, 23])),
-            (11, vec![1, 0]),
-        ],
+        vec![(0, vec![]), (10, build_groups(&[29, 23])), (11, vec![1, 0])],
     );
 
     let ja3_1 = Ja3Fingerprint::from_client_hello(&client_hello1);

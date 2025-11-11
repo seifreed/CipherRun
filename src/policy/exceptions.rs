@@ -19,15 +19,17 @@ impl ExceptionMatcher {
         for exception in &self.exceptions {
             // Check if exception is expired
             if let Some(ref expires) = exception.expires
-                && self.is_expired(expires) {
-                    continue;
-                }
+                && self.is_expired(expires)
+            {
+                continue;
+            }
 
             // Check if target matches (with wildcard support)
             if let Some(ref domain_pattern) = exception.domain
-                && !self.matches_domain(target, domain_pattern) {
-                    continue;
-                }
+                && !self.matches_domain(target, domain_pattern)
+            {
+                continue;
+            }
 
             // Check if rule matches
             if exception.rules.contains(&rule_path.to_string()) {
@@ -50,9 +52,7 @@ impl ExceptionMatcher {
         // Convert wildcard pattern to regex
         // *.example.com -> ^.*\.example\.com$
         // example.com -> ^example\.com$
-        let regex_pattern = pattern
-            .replace('.', r"\.")
-            .replace('*', ".*");
+        let regex_pattern = pattern.replace('.', r"\.").replace('*', ".*");
 
         if let Ok(re) = Regex::new(&format!("^{}$", regex_pattern)) {
             return re.is_match(hostname);
@@ -78,9 +78,10 @@ impl ExceptionMatcher {
         for exception in &self.exceptions {
             // Skip expired exceptions
             if let Some(ref expires) = exception.expires
-                && self.is_expired(expires) {
-                    continue;
-                }
+                && self.is_expired(expires)
+            {
+                continue;
+            }
 
             // Check if target matches
             if let Some(ref domain_pattern) = exception.domain {
@@ -187,10 +188,26 @@ mod tests {
 
         let matcher = ExceptionMatcher::new(vec![exception]);
 
-        assert!(matcher.is_exception("test.example.com", "protocols.prohibited").is_some());
-        assert!(matcher.is_exception("test.example.com:443", "protocols.prohibited").is_some());
-        assert!(matcher.is_exception("test.example.com", "ciphers.prohibited").is_none());
-        assert!(matcher.is_exception("other.example.com", "protocols.prohibited").is_none());
+        assert!(
+            matcher
+                .is_exception("test.example.com", "protocols.prohibited")
+                .is_some()
+        );
+        assert!(
+            matcher
+                .is_exception("test.example.com:443", "protocols.prohibited")
+                .is_some()
+        );
+        assert!(
+            matcher
+                .is_exception("test.example.com", "ciphers.prohibited")
+                .is_none()
+        );
+        assert!(
+            matcher
+                .is_exception("other.example.com", "protocols.prohibited")
+                .is_none()
+        );
     }
 
     #[test]
@@ -207,7 +224,15 @@ mod tests {
         let matcher = ExceptionMatcher::new(vec![exception]);
 
         // Should match even when target includes port
-        assert!(matcher.is_exception("example.com:443", "certificates.max_days_until_expiry").is_some());
-        assert!(matcher.is_exception("example.com:8443", "certificates.max_days_until_expiry").is_some());
+        assert!(
+            matcher
+                .is_exception("example.com:443", "certificates.max_days_until_expiry")
+                .is_some()
+        );
+        assert!(
+            matcher
+                .is_exception("example.com:8443", "certificates.max_days_until_expiry")
+                .is_some()
+        );
     }
 }

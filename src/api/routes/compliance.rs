@@ -4,15 +4,11 @@ use crate::api::{
     models::error::{ApiError, ApiErrorResponse},
     state::AppState,
 };
-use crate::compliance::{
-    engine::ComplianceEngine,
-    loader::FrameworkLoader,
-    ComplianceStatus,
-};
+use crate::compliance::{ComplianceStatus, engine::ComplianceEngine, loader::FrameworkLoader};
 use crate::scanner::Scanner;
 use axum::{
-    extract::{Path, Query, State},
     Json,
+    extract::{Path, Query, State},
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -162,14 +158,13 @@ pub async fn check_compliance(
         .ok_or_else(|| ApiError::BadRequest("Target parameter is required".to_string()))?;
 
     // Load compliance framework
-    let framework = FrameworkLoader::load_builtin(&framework_id)
-        .map_err(|e| {
-            if e.to_string().contains("Unknown framework") {
-                ApiError::NotFound(format!("Unknown compliance framework: {}", framework_id))
-            } else {
-                ApiError::Internal(format!("Failed to load framework: {}", e))
-            }
-        })?;
+    let framework = FrameworkLoader::load_builtin(&framework_id).map_err(|e| {
+        if e.to_string().contains("Unknown framework") {
+            ApiError::NotFound(format!("Unknown compliance framework: {}", framework_id))
+        } else {
+            ApiError::Internal(format!("Failed to load framework: {}", e))
+        }
+    })?;
 
     // Parse target (hostname:port)
     let parts: Vec<&str> = target.split(':').collect();
@@ -188,7 +183,7 @@ pub async fn check_compliance(
         ..Default::default()
     };
 
-    let mut scanner = Scanner::new(args)
+    let scanner = Scanner::new(args)
         .map_err(|e| ApiError::Internal(format!("Failed to create scanner: {}", e)))?;
 
     let scan_results = scanner

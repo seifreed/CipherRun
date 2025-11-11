@@ -61,10 +61,7 @@ impl CipherRunDatabase {
         // Parse target
         let parts: Vec<&str> = results.target.split(':').collect();
         let hostname = parts.first().unwrap_or(&"unknown").to_string();
-        let port: u16 = parts
-            .get(1)
-            .and_then(|p| p.parse().ok())
-            .unwrap_or(443);
+        let port: u16 = parts.get(1).and_then(|p| p.parse().ok()).unwrap_or(443);
 
         // Create scan record
         let mut scan = ScanRecord::new(hostname, port);
@@ -119,7 +116,7 @@ impl CipherRunDatabase {
                         r#"
                         INSERT INTO protocols (scan_id, protocol_name, enabled, preferred)
                         VALUES ($1, $2, $3, $4)
-                        "#
+                        "#,
                     )
                     .bind(protocol.scan_id)
                     .bind(&protocol.protocol_name)
@@ -127,14 +124,16 @@ impl CipherRunDatabase {
                     .bind(protocol.preferred)
                     .execute(pool)
                     .await
-                    .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to insert protocol: {}", e)))?;
+                    .map_err(|e| {
+                        crate::TlsError::DatabaseError(format!("Failed to insert protocol: {}", e))
+                    })?;
                 }
                 DatabasePool::Sqlite(pool) => {
                     sqlx::query(
                         r#"
                         INSERT INTO protocols (scan_id, protocol_name, enabled, preferred)
                         VALUES (?, ?, ?, ?)
-                        "#
+                        "#,
                     )
                     .bind(protocol.scan_id)
                     .bind(&protocol.protocol_name)
@@ -142,7 +141,9 @@ impl CipherRunDatabase {
                     .bind(protocol.preferred)
                     .execute(pool)
                     .await
-                    .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to insert protocol: {}", e)))?;
+                    .map_err(|e| {
+                        crate::TlsError::DatabaseError(format!("Failed to insert protocol: {}", e))
+                    })?;
                 }
             }
         }
@@ -231,7 +232,11 @@ impl CipherRunDatabase {
     }
 
     /// Store vulnerabilities for a scan
-    async fn store_vulnerabilities(&self, scan_id: i64, results: &ScanResults) -> crate::Result<()> {
+    async fn store_vulnerabilities(
+        &self,
+        scan_id: i64,
+        results: &ScanResults,
+    ) -> crate::Result<()> {
         use crate::db::models::VulnerabilityRecord;
 
         for vuln_result in &results.vulnerabilities {
@@ -311,7 +316,11 @@ impl CipherRunDatabase {
         let ratings = vec![
             RatingRecord::new(scan_id, "certificate".to_string(), rating.certificate_score),
             RatingRecord::new(scan_id, "protocol".to_string(), rating.protocol_score),
-            RatingRecord::new(scan_id, "key_exchange".to_string(), rating.key_exchange_score),
+            RatingRecord::new(
+                scan_id,
+                "key_exchange".to_string(),
+                rating.key_exchange_score,
+            ),
             RatingRecord::new(scan_id, "cipher".to_string(), rating.cipher_strength_score),
         ];
 
@@ -322,7 +331,7 @@ impl CipherRunDatabase {
                         r#"
                         INSERT INTO ratings (scan_id, category, score, grade, rationale)
                         VALUES ($1, $2, $3, $4, $5)
-                        "#
+                        "#,
                     )
                     .bind(rating_record.scan_id)
                     .bind(&rating_record.category)
@@ -331,14 +340,16 @@ impl CipherRunDatabase {
                     .bind(&rating_record.rationale)
                     .execute(pool)
                     .await
-                    .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to insert rating: {}", e)))?;
+                    .map_err(|e| {
+                        crate::TlsError::DatabaseError(format!("Failed to insert rating: {}", e))
+                    })?;
                 }
                 DatabasePool::Sqlite(pool) => {
                     sqlx::query(
                         r#"
                         INSERT INTO ratings (scan_id, category, score, grade, rationale)
                         VALUES (?, ?, ?, ?, ?)
-                        "#
+                        "#,
                     )
                     .bind(rating_record.scan_id)
                     .bind(&rating_record.category)
@@ -347,7 +358,9 @@ impl CipherRunDatabase {
                     .bind(&rating_record.rationale)
                     .execute(pool)
                     .await
-                    .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to insert rating: {}", e)))?;
+                    .map_err(|e| {
+                        crate::TlsError::DatabaseError(format!("Failed to insert rating: {}", e))
+                    })?;
                 }
             }
         }
@@ -366,7 +379,9 @@ impl CipherRunDatabase {
 
         for (position, cert_info) in cert_data.chain.certificates.iter().enumerate() {
             // Create certificate record
-            let fingerprint = cert_info.fingerprint_sha256.clone()
+            let fingerprint = cert_info
+                .fingerprint_sha256
+                .clone()
                 .unwrap_or_else(|| format!("unknown_{}", position));
 
             let not_before = DateTime::parse_from_rfc3339(&cert_info.not_before)
@@ -399,14 +414,18 @@ impl CipherRunDatabase {
             }
 
             cert = cert.with_san_domains(cert_info.san.clone());
-            cert = cert.with_key_usage(cert_info.key_usage.clone(), cert_info.extended_key_usage.clone());
+            cert = cert.with_key_usage(
+                cert_info.key_usage.clone(),
+                cert_info.extended_key_usage.clone(),
+            );
             cert = cert.with_der_bytes(cert_info.der_bytes.clone());
 
             // Insert or get certificate ID (deduplication by fingerprint)
             let cert_id = self.insert_or_get_certificate(&cert).await?;
 
             // Link certificate to scan
-            self.link_certificate(scan_id, cert_id, position as i32).await?;
+            self.link_certificate(scan_id, cert_id, position as i32)
+                .await?;
         }
 
         Ok(())
@@ -423,12 +442,17 @@ impl CipherRunDatabase {
                     SELECT cert_id
                     FROM certificates
                     WHERE fingerprint_sha256 = $1
-                    "#
+                    "#,
                 )
                 .bind(&cert.fingerprint_sha256)
                 .fetch_optional(pool)
                 .await
-                .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to check existing certificate: {}", e)))?;
+                .map_err(|e| {
+                    crate::TlsError::DatabaseError(format!(
+                        "Failed to check existing certificate: {}",
+                        e
+                    ))
+                })?;
 
                 if let Some(existing) = existing {
                     return Ok(existing.get("cert_id"));
@@ -437,7 +461,8 @@ impl CipherRunDatabase {
                 // Insert new certificate
                 let san_json = serde_json::to_string(&cert.san_domains).unwrap_or_default();
                 let key_usage_json = serde_json::to_string(&cert.key_usage).unwrap_or_default();
-                let extended_key_usage_json = serde_json::to_string(&cert.extended_key_usage).unwrap_or_default();
+                let extended_key_usage_json =
+                    serde_json::to_string(&cert.extended_key_usage).unwrap_or_default();
 
                 let result = sqlx::query(
                     r#"
@@ -474,12 +499,17 @@ impl CipherRunDatabase {
                     SELECT cert_id
                     FROM certificates
                     WHERE fingerprint_sha256 = ?
-                    "#
+                    "#,
                 )
                 .bind(&cert.fingerprint_sha256)
                 .fetch_optional(pool)
                 .await
-                .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to check existing certificate: {}", e)))?;
+                .map_err(|e| {
+                    crate::TlsError::DatabaseError(format!(
+                        "Failed to check existing certificate: {}",
+                        e
+                    ))
+                })?;
 
                 if let Some(existing) = existing {
                     return Ok(existing.get("cert_id"));
@@ -488,7 +518,8 @@ impl CipherRunDatabase {
                 // Insert new certificate
                 let san_json = serde_json::to_string(&cert.san_domains).unwrap_or_default();
                 let key_usage_json = serde_json::to_string(&cert.key_usage).unwrap_or_default();
-                let extended_key_usage_json = serde_json::to_string(&cert.extended_key_usage).unwrap_or_default();
+                let extended_key_usage_json =
+                    serde_json::to_string(&cert.extended_key_usage).unwrap_or_default();
 
                 let result = sqlx::query(
                     r#"
@@ -520,35 +551,44 @@ impl CipherRunDatabase {
     }
 
     /// Link certificate to scan
-    async fn link_certificate(&self, scan_id: i64, cert_id: i64, position: i32) -> crate::Result<()> {
+    async fn link_certificate(
+        &self,
+        scan_id: i64,
+        cert_id: i64,
+        position: i32,
+    ) -> crate::Result<()> {
         match &self.pool {
             DatabasePool::Postgres(pool) => {
                 sqlx::query(
                     r#"
                     INSERT INTO scan_certificates (scan_id, cert_id, chain_position)
                     VALUES ($1, $2, $3)
-                    "#
+                    "#,
                 )
                 .bind(scan_id)
                 .bind(cert_id)
                 .bind(position)
                 .execute(pool)
                 .await
-                .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to link certificate: {}", e)))?;
+                .map_err(|e| {
+                    crate::TlsError::DatabaseError(format!("Failed to link certificate: {}", e))
+                })?;
             }
             DatabasePool::Sqlite(pool) => {
                 sqlx::query(
                     r#"
                     INSERT INTO scan_certificates (scan_id, cert_id, chain_position)
                     VALUES (?, ?, ?)
-                    "#
+                    "#,
                 )
                 .bind(scan_id)
                 .bind(cert_id)
                 .bind(position)
                 .execute(pool)
                 .await
-                .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to link certificate: {}", e)))?;
+                .map_err(|e| {
+                    crate::TlsError::DatabaseError(format!("Failed to link certificate: {}", e))
+                })?;
             }
         }
 
@@ -562,7 +602,9 @@ impl CipherRunDatabase {
         port: u16,
         limit: i64,
     ) -> crate::Result<Vec<ScanRecord>> {
-        self.scan_repo.get_scans_by_hostname(hostname, port, limit).await
+        self.scan_repo
+            .get_scans_by_hostname(hostname, port, limit)
+            .await
     }
 
     /// Get latest scan for a hostname

@@ -1,8 +1,8 @@
 // Advanced Server Defaults Analysis
 // Cipher order preference, DH parameter analysis, ECDH curves, Key exchange details
 
-use crate::{Result, tls_bail};
 use crate::utils::network::Target;
+use crate::{Result, tls_bail};
 use openssl::ssl::{SslConnector, SslMethod};
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpStream;
@@ -178,7 +178,9 @@ impl ServerDefaultsAdvancedTester {
 
         let stream = timeout(connect_timeout, TcpStream::connect(&addr))
             .await
-            .map_err(|_| crate::error::TlsError::Timeout { duration: connect_timeout })??;
+            .map_err(|_| crate::error::TlsError::Timeout {
+                duration: connect_timeout,
+            })??;
 
         let std_stream = stream.into_std()?;
 
@@ -203,7 +205,9 @@ impl ServerDefaultsAdvancedTester {
 
         let stream = timeout(connect_timeout, TcpStream::connect(&addr))
             .await
-            .map_err(|_| crate::error::TlsError::Timeout { duration: connect_timeout })??;
+            .map_err(|_| crate::error::TlsError::Timeout {
+                duration: connect_timeout,
+            })??;
 
         let std_stream = stream.into_std()?;
 
@@ -336,7 +340,9 @@ impl ServerDefaultsAdvancedTester {
 
         let stream = timeout(connect_timeout, TcpStream::connect(&addr))
             .await
-            .map_err(|_| crate::error::TlsError::Timeout { duration: connect_timeout })??;
+            .map_err(|_| crate::error::TlsError::Timeout {
+                duration: connect_timeout,
+            })??;
 
         let std_stream = stream.into_std()?;
 
@@ -376,7 +382,9 @@ impl ServerDefaultsAdvancedTester {
 
         let stream = timeout(connect_timeout, TcpStream::connect(&addr))
             .await
-            .map_err(|_| crate::error::TlsError::Timeout { duration: connect_timeout })??;
+            .map_err(|_| crate::error::TlsError::Timeout {
+                duration: connect_timeout,
+            })??;
 
         let std_stream = stream.into_std()?;
 

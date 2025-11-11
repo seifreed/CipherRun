@@ -1,9 +1,9 @@
 // API Error Models
 
 use axum::{
+    Json,
     http::StatusCode,
     response::{IntoResponse, Response},
-    Json,
 };
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -138,7 +138,11 @@ impl ApiErrorResponse {
 
     /// Unauthorized error
     pub fn unauthorized(message: &str) -> Self {
-        Self::new(StatusCode::UNAUTHORIZED, "UNAUTHORIZED", message.to_string())
+        Self::new(
+            StatusCode::UNAUTHORIZED,
+            "UNAUTHORIZED",
+            message.to_string(),
+        )
     }
 
     /// Bad request error

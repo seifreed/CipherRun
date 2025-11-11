@@ -29,11 +29,11 @@ impl SmtpNegotiator {
             });
         }
 
-        let code: u16 = line[0..3].parse().map_err(|_| {
-            crate::error::TlsError::ParseError {
+        let code: u16 = line[0..3]
+            .parse()
+            .map_err(|_| crate::error::TlsError::ParseError {
                 message: "Invalid SMTP status code".to_string(),
-            }
-        })?;
+            })?;
 
         Ok((code, line))
     }

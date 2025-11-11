@@ -90,7 +90,9 @@ pub fn generate_csv(results: &ScanResults) -> Result<String> {
 
         if let Some(cookies) = &headers.cookie_analysis {
             output.push_str("=== COOKIE SECURITY ===\n");
-            output.push_str("Total Cookies,Secure Count,HttpOnly Count,SameSite Count,Insecure Count,Grade\n");
+            output.push_str(
+                "Total Cookies,Secure Count,HttpOnly Count,SameSite Count,Insecure Count,Grade\n",
+            );
             output.push_str(&format!(
                 "{},{},{},{},{},{:?}\n",
                 cookies.cookies.len(),
@@ -148,20 +150,22 @@ pub fn generate_csv(results: &ScanResults) -> Result<String> {
         }
 
         if let Some(proxy) = &headers.reverse_proxy_detection
-            && proxy.detected {
-                output.push_str("=== REVERSE PROXY DETECTION ===\n");
-                output.push_str("Detected,Type,Via Header,X-Forwarded-For,X-Real-IP,X-Forwarded-Proto\n");
-                output.push_str(&format!(
-                    "{},{},{},{},{},{}\n",
-                    proxy.detected,
-                    proxy.proxy_type.as_deref().unwrap_or("N/A"),
-                    proxy.via_header.as_deref().unwrap_or("N/A"),
-                    proxy.x_forwarded_for,
-                    proxy.x_real_ip,
-                    proxy.x_forwarded_proto
-                ));
-                output.push('\n');
-            }
+            && proxy.detected
+        {
+            output.push_str("=== REVERSE PROXY DETECTION ===\n");
+            output
+                .push_str("Detected,Type,Via Header,X-Forwarded-For,X-Real-IP,X-Forwarded-Proto\n");
+            output.push_str(&format!(
+                "{},{},{},{},{},{}\n",
+                proxy.detected,
+                proxy.proxy_type.as_deref().unwrap_or("N/A"),
+                proxy.via_header.as_deref().unwrap_or("N/A"),
+                proxy.x_forwarded_for,
+                proxy.x_real_ip,
+                proxy.x_forwarded_proto
+            ));
+            output.push('\n');
+        }
     }
 
     // Rating (if available)

@@ -18,8 +18,7 @@ use tokio::net::TcpStream;
 use tokio::time::timeout;
 
 /// Result of intolerance testing
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct IntoleranceTestResult {
     pub extension_intolerance: bool,
     pub version_intolerance: bool,
@@ -28,7 +27,6 @@ pub struct IntoleranceTestResult {
     pub uses_common_dh_primes: bool,
     pub details: HashMap<String, String>,
 }
-
 
 /// TLS Intolerance Tester
 pub struct IntoleranceTester {
@@ -54,9 +52,10 @@ impl IntoleranceTester {
         // Test 1: Extension intolerance
         result.extension_intolerance = self.test_extension_intolerance().await?;
         if result.extension_intolerance {
-            result
-                .details
-                .insert("extension_intolerance".to_string(), "Server rejects ClientHellos with certain extensions (bad)".to_string());
+            result.details.insert(
+                "extension_intolerance".to_string(),
+                "Server rejects ClientHellos with certain extensions (bad)".to_string(),
+            );
         }
 
         // Test 2: Version intolerance
@@ -212,13 +211,13 @@ impl IntoleranceTester {
         // TLS Record Layer
         buf.put_u8(0x16); // Content Type: Handshake
         buf.put_u16(0x0301); // Version: TLS 1.0
-                             // Length placeholder (will be filled later)
+        // Length placeholder (will be filled later)
         let length_pos = buf.len();
         buf.put_u16(0);
 
         // Handshake Header
         buf.put_u8(0x01); // Handshake Type: ClientHello
-                          // Length placeholder
+        // Length placeholder
         let hs_length_pos = buf.len();
         buf.put_u8(0);
         buf.put_u16(0);
@@ -451,7 +450,11 @@ impl IntoleranceTester {
         // Add padding extension (type 0x0015) to make total > 256 bytes
         // Calculate how much padding needed
         let current_size = buf.len() + 2 + extensions.len(); // +2 for extensions length
-        let padding_needed = if current_size < 300 { 300 - current_size } else { 100 };
+        let padding_needed = if current_size < 300 {
+            300 - current_size
+        } else {
+            100
+        };
 
         extensions.put_u16(0x0015); // Padding extension type
         extensions.put_u16(padding_needed as u16); // Padding length
@@ -609,11 +612,9 @@ impl IntoleranceTester {
 
         let stream = timeout(self.connect_timeout, TcpStream::connect(addr))
             .await
-            .map_err(|_| {
-                TlsError::ConnectionTimeout {
-                    duration: self.connect_timeout,
-                    addr,
-                }
+            .map_err(|_| TlsError::ConnectionTimeout {
+                duration: self.connect_timeout,
+                addr,
             })??;
 
         let (mut reader, mut writer) = tokio::io::split(stream);
@@ -640,10 +641,7 @@ impl IntoleranceTester {
         match self.send_client_hello(client_hello).await {
             Ok(response) => {
                 // Check if response is a TLS Alert
-                if response.len() >= 7
-                    && response[0] == 0x15
-                    && response[5] == 0x02
-                {
+                if response.len() >= 7 && response[0] == 0x15 && response[5] == 0x02 {
                     // Alert record, fatal alert
                     let alert_code = response[6];
                     Ok(Some(alert_code))

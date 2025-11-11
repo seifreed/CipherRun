@@ -9,8 +9,8 @@
 use crate::Result;
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::str::FromStr;
-use tokio::net::TcpStream;
 use std::time::Duration;
+use tokio::net::TcpStream;
 
 /// Custom DNS resolver configuration
 pub struct CustomResolver {
@@ -46,13 +46,17 @@ impl CustomResolver {
 
             let socket_addr = if resolver_str.contains(':') {
                 // Already has port
-                SocketAddr::from_str(resolver_str).map_err(|e| crate::TlsError::InvalidHandshake {
-                    details: format!("Invalid resolver address '{}': {}", resolver_str, e),
+                SocketAddr::from_str(resolver_str).map_err(|e| {
+                    crate::TlsError::InvalidHandshake {
+                        details: format!("Invalid resolver address '{}': {}", resolver_str, e),
+                    }
                 })?
             } else {
                 // No port, use default DNS port 53
-                let ip = IpAddr::from_str(resolver_str).map_err(|e| crate::TlsError::InvalidHandshake {
-                    details: format!("Invalid IP address '{}': {}", resolver_str, e),
+                let ip = IpAddr::from_str(resolver_str).map_err(|e| {
+                    crate::TlsError::InvalidHandshake {
+                        details: format!("Invalid IP address '{}': {}", resolver_str, e),
+                    }
                 })?;
                 SocketAddr::new(ip, 53)
             };
@@ -134,7 +138,11 @@ impl CustomResolver {
     }
 
     /// Query a DNS resolver via TCP with a simple approach
-    async fn query_resolver_tcp(&self, hostname: &str, resolver: SocketAddr) -> Result<Vec<IpAddr>> {
+    async fn query_resolver_tcp(
+        &self,
+        hostname: &str,
+        resolver: SocketAddr,
+    ) -> Result<Vec<IpAddr>> {
         // Simplified: Try to establish TCP connection to resolver
         // In a full implementation, this would construct DNS packets and parse responses
         // For now, use system resolver as fallback for the specified address
@@ -189,7 +197,7 @@ impl CustomResolver {
             )
             .await
             {
-                Ok(Ok(_)) => true,  // Connection successful
+                Ok(Ok(_)) => true,   // Connection successful
                 Ok(Err(_)) => false, // Connection failed
                 Err(_) => false,     // Timeout
             };

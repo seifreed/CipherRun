@@ -387,7 +387,7 @@ pub async fn perform_custom_handshake(
 
     if n == 0 {
         return Err(crate::error::TlsError::ConnectionClosed {
-            details: "Server closed connection".to_string()
+            details: "Server closed connection".to_string(),
         });
     }
 
@@ -433,14 +433,18 @@ fn parse_server_hello_extended(data: &[u8]) -> Result<ServerHelloInfo> {
                         // Parse extensions (after cipher suite + compression method)
                         let ext_start = cipher_pos + 2 + 1; // +2 for cipher, +1 for compression
                         if ext_start + 2 < data.len() {
-                            let ext_len = u16::from_be_bytes([data[ext_start], data[ext_start + 1]]) as usize;
+                            let ext_len =
+                                u16::from_be_bytes([data[ext_start], data[ext_start + 1]]) as usize;
                             let mut ext_pos = ext_start + 2;
                             let ext_end = ext_pos + ext_len;
 
                             // Parse each extension
                             while ext_pos + 4 <= ext_end && ext_pos + 4 <= data.len() {
-                                let ext_type = u16::from_be_bytes([data[ext_pos], data[ext_pos + 1]]);
-                                let ext_data_len = u16::from_be_bytes([data[ext_pos + 2], data[ext_pos + 3]]) as usize;
+                                let ext_type =
+                                    u16::from_be_bytes([data[ext_pos], data[ext_pos + 1]]);
+                                let ext_data_len =
+                                    u16::from_be_bytes([data[ext_pos + 2], data[ext_pos + 3]])
+                                        as usize;
                                 ext_pos += 4;
 
                                 if ext_pos + ext_data_len > data.len() {
@@ -451,11 +455,19 @@ fn parse_server_hello_extended(data: &[u8]) -> Result<ServerHelloInfo> {
                                     0x0010 => {
                                         // ALPN extension
                                         if ext_data_len >= 3 {
-                                            let list_len = u16::from_be_bytes([data[ext_pos], data[ext_pos + 1]]) as usize;
+                                            let list_len = u16::from_be_bytes([
+                                                data[ext_pos],
+                                                data[ext_pos + 1],
+                                            ])
+                                                as usize;
                                             if ext_pos + 2 + list_len <= data.len() {
                                                 let proto_len = data[ext_pos + 2] as usize;
                                                 if ext_pos + 3 + proto_len <= data.len() {
-                                                    alpn = String::from_utf8(data[ext_pos + 3..ext_pos + 3 + proto_len].to_vec()).ok();
+                                                    alpn = String::from_utf8(
+                                                        data[ext_pos + 3..ext_pos + 3 + proto_len]
+                                                            .to_vec(),
+                                                    )
+                                                    .ok();
                                                 }
                                             }
                                         }
@@ -463,7 +475,10 @@ fn parse_server_hello_extended(data: &[u8]) -> Result<ServerHelloInfo> {
                                     0x002b => {
                                         // Supported versions (TLS 1.3)
                                         if ext_data_len >= 2 {
-                                            let selected_version = u16::from_be_bytes([data[ext_pos], data[ext_pos + 1]]);
+                                            let selected_version = u16::from_be_bytes([
+                                                data[ext_pos],
+                                                data[ext_pos + 1],
+                                            ]);
                                             protocol = match selected_version {
                                                 0x0304 => Protocol::TLS13,
                                                 0x0303 => Protocol::TLS12,
@@ -474,7 +489,10 @@ fn parse_server_hello_extended(data: &[u8]) -> Result<ServerHelloInfo> {
                                     0x0033 => {
                                         // Key share (TLS 1.3)
                                         if ext_data_len >= 2 {
-                                            key_exchange_group = Some(u16::from_be_bytes([data[ext_pos], data[ext_pos + 1]]));
+                                            key_exchange_group = Some(u16::from_be_bytes([
+                                                data[ext_pos],
+                                                data[ext_pos + 1],
+                                            ]));
                                         }
                                     }
                                     _ => {}
@@ -497,7 +515,7 @@ fn parse_server_hello_extended(data: &[u8]) -> Result<ServerHelloInfo> {
     }
 
     Err(crate::error::TlsError::InvalidHandshake {
-        details: "Could not parse ServerHello".to_string()
+        details: "Could not parse ServerHello".to_string(),
     })
 }
 

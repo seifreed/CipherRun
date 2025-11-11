@@ -1,9 +1,7 @@
 // Rate Limiting Middleware
 
 use crate::api::{
-    config::Permission,
-    middleware::auth::AuthExtension,
-    models::error::RateLimitErrorResponse,
+    config::Permission, middleware::auth::AuthExtension, models::error::RateLimitErrorResponse,
     state::AppState,
 };
 use axum::{
@@ -15,9 +13,9 @@ use axum::{
 };
 use dashmap::DashMap;
 use governor::{
+    Quota, RateLimiter as GovernorRateLimiter,
     clock::{Clock, DefaultClock},
     state::{InMemoryState, NotKeyed},
-    Quota, RateLimiter as GovernorRateLimiter,
 };
 use std::num::NonZeroU32;
 use std::sync::Arc;
@@ -53,7 +51,10 @@ impl PerKeyRateLimiter {
     }
 
     /// Get or create a rate limiter for a specific API key
-    fn get_or_create_limiter(&self, key: &str) -> Arc<GovernorRateLimiter<NotKeyed, InMemoryState, DefaultClock>> {
+    fn get_or_create_limiter(
+        &self,
+        key: &str,
+    ) -> Arc<GovernorRateLimiter<NotKeyed, InMemoryState, DefaultClock>> {
         if let Some(limiter) = self.limiters.get(key) {
             return limiter.clone();
         }
@@ -106,7 +107,8 @@ impl PerKeyRateLimiter {
                 let reset_at = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()
-                    .as_secs() + retry_after;
+                    .as_secs()
+                    + retry_after;
 
                 RateLimitResult::Limited {
                     limit: self.requests_per_minute,
@@ -123,7 +125,8 @@ impl PerKeyRateLimiter {
         // Remove entries if map grows too large
         if self.limiters.len() > 10000 {
             // Clear oldest half
-            let keys_to_remove: Vec<String> = self.limiters
+            let keys_to_remove: Vec<String> = self
+                .limiters
                 .iter()
                 .take(self.limiters.len() / 2)
                 .map(|entry| entry.key().clone())
@@ -133,7 +136,10 @@ impl PerKeyRateLimiter {
                 self.limiters.remove(&key);
             }
 
-            tracing::info!("Rate limiter cleanup: removed {} entries", self.limiters.len() / 2);
+            tracing::info!(
+                "Rate limiter cleanup: removed {} entries",
+                self.limiters.len() / 2
+            );
         }
     }
 }
@@ -163,7 +169,11 @@ pub async fn rate_limit(
 ) -> Result<Response, Response> {
     // Skip rate limiting for health and docs endpoints
     let path = req.uri().path();
-    if path == "/api/v1/health" || path == "/health" || path.starts_with("/api/docs") || path.starts_with("/swagger") {
+    if path == "/api/v1/health"
+        || path == "/health"
+        || path.starts_with("/api/docs")
+        || path.starts_with("/swagger")
+    {
         return Ok(next.run(req).await);
     }
 
@@ -179,7 +189,11 @@ pub async fn rate_limit(
 
         // Check rate limit for this API key
         match state.rate_limiter.check(&auth.api_key) {
-            RateLimitResult::Allowed { limit, remaining, reset_at } => {
+            RateLimitResult::Allowed {
+                limit,
+                remaining,
+                reset_at,
+            } => {
                 tracing::debug!(
                     "Rate limit check passed for key {}: {}/{} remaining",
                     auth.api_key,
@@ -206,7 +220,12 @@ pub async fn rate_limit(
 
                 Ok(response)
             }
-            RateLimitResult::Limited { limit, window_seconds, retry_after, reset_at } => {
+            RateLimitResult::Limited {
+                limit,
+                window_seconds,
+                retry_after,
+                reset_at,
+            } => {
                 tracing::warn!(
                     "Rate limit exceeded for key {}: limit={}, retry_after={}s",
                     auth.api_key,

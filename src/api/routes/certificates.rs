@@ -10,8 +10,8 @@ use crate::api::{
 };
 use crate::db::DatabasePool;
 use axum::{
-    extract::{Path, Query, State},
     Json,
+    extract::{Path, Query, State},
 };
 use chrono::Utc;
 use sqlx::Row;

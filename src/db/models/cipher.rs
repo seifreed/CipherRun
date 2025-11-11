@@ -10,15 +10,15 @@ pub struct CipherRecord {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cipher_id: Option<i64>,
     pub scan_id: i64,
-    pub protocol_name: String,  // "TLS 1.2", "TLS 1.3", etc.
-    pub cipher_name: String,    // Full cipher suite name
+    pub protocol_name: String, // "TLS 1.2", "TLS 1.3", etc.
+    pub cipher_name: String,   // Full cipher suite name
     pub key_exchange: Option<String>,
     pub authentication: Option<String>,
     pub encryption: Option<String>,
     pub mac: Option<String>,
     pub bits: Option<i32>,
     pub forward_secrecy: bool,
-    pub strength: String,  // "weak", "medium", "strong"
+    pub strength: String, // "weak", "medium", "strong"
 }
 
 impl CipherRecord {

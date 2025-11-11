@@ -53,14 +53,16 @@ async fn test_scan_storage_and_retrieval() {
     };
 
     // Add a protocol
-    results.protocols.push(cipherrun::protocols::ProtocolTestResult {
-        protocol: Protocol::TLS13,
-        supported: true,
-        preferred: true,
-        ciphers_count: 5,
-        handshake_time_ms: Some(120),
-        heartbeat_enabled: Some(false),
-    });
+    results
+        .protocols
+        .push(cipherrun::protocols::ProtocolTestResult {
+            protocol: Protocol::TLS13,
+            supported: true,
+            preferred: true,
+            ciphers_count: 5,
+            handshake_time_ms: Some(120),
+            heartbeat_enabled: Some(false),
+        });
 
     // Store scan
     let scan_id = db.store_scan(&results).await.unwrap();
@@ -208,23 +210,27 @@ async fn test_protocol_storage() {
         ..Default::default()
     };
 
-    results.protocols.push(cipherrun::protocols::ProtocolTestResult {
-        protocol: Protocol::TLS12,
-        supported: true,
-        preferred: false,
-        ciphers_count: 30,
-        handshake_time_ms: Some(150),
-        heartbeat_enabled: None,
-    });
+    results
+        .protocols
+        .push(cipherrun::protocols::ProtocolTestResult {
+            protocol: Protocol::TLS12,
+            supported: true,
+            preferred: false,
+            ciphers_count: 30,
+            handshake_time_ms: Some(150),
+            heartbeat_enabled: None,
+        });
 
-    results.protocols.push(cipherrun::protocols::ProtocolTestResult {
-        protocol: Protocol::TLS13,
-        supported: true,
-        preferred: true,
-        ciphers_count: 5,
-        handshake_time_ms: Some(100),
-        heartbeat_enabled: Some(false),
-    });
+    results
+        .protocols
+        .push(cipherrun::protocols::ProtocolTestResult {
+            protocol: Protocol::TLS13,
+            supported: true,
+            preferred: true,
+            ciphers_count: 5,
+            handshake_time_ms: Some(100),
+            heartbeat_enabled: Some(false),
+        });
 
     // Store scan
     db.store_scan(&results).await.unwrap();
@@ -244,23 +250,27 @@ async fn test_vulnerability_storage() {
         ..Default::default()
     };
 
-    results.vulnerabilities.push(cipherrun::vulnerabilities::VulnerabilityResult {
-        vuln_type: cipherrun::vulnerabilities::VulnerabilityType::Heartbleed,
-        vulnerable: true,
-        details: "Server vulnerable to Heartbleed".to_string(),
-        cve: Some("CVE-2014-0160".to_string()),
-        cwe: None,
-        severity: cipherrun::vulnerabilities::Severity::Critical,
-    });
+    results
+        .vulnerabilities
+        .push(cipherrun::vulnerabilities::VulnerabilityResult {
+            vuln_type: cipherrun::vulnerabilities::VulnerabilityType::Heartbleed,
+            vulnerable: true,
+            details: "Server vulnerable to Heartbleed".to_string(),
+            cve: Some("CVE-2014-0160".to_string()),
+            cwe: None,
+            severity: cipherrun::vulnerabilities::Severity::Critical,
+        });
 
-    results.vulnerabilities.push(cipherrun::vulnerabilities::VulnerabilityResult {
-        vuln_type: cipherrun::vulnerabilities::VulnerabilityType::POODLE,
-        vulnerable: false,
-        details: "Not vulnerable to POODLE".to_string(),
-        cve: Some("CVE-2014-3566".to_string()),
-        cwe: None,
-        severity: cipherrun::vulnerabilities::Severity::Info,
-    });
+    results
+        .vulnerabilities
+        .push(cipherrun::vulnerabilities::VulnerabilityResult {
+            vuln_type: cipherrun::vulnerabilities::VulnerabilityType::POODLE,
+            vulnerable: false,
+            details: "Not vulnerable to POODLE".to_string(),
+            cve: Some("CVE-2014-3566".to_string()),
+            cwe: None,
+            severity: cipherrun::vulnerabilities::Severity::Info,
+        });
 
     // Store scan (only vulnerable items should be stored)
     db.store_scan(&results).await.unwrap();

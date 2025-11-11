@@ -40,7 +40,7 @@
 // - Weak Keys Database: https://github.com/g0tmi1k/debian-ssh
 // - SSL Labs: https://github.com/ssllabs/ssllabs-scan/blob/master/ssllabs-api-docs.md
 
-use openssl::hash::{hash, MessageDigest};
+use openssl::hash::{MessageDigest, hash};
 use openssl::pkey::PKey;
 use openssl::x509::X509;
 
@@ -107,7 +107,10 @@ impl DebianKeyDetector {
     /// * `Ok(true)` - Public key is a known Debian weak key
     /// * `Ok(false)` - Public key is not a known weak key (or not in sample)
     /// * `Err(_)` - Error processing public key
-    pub fn is_weak_public_key(&self, public_key: &PKey<impl openssl::pkey::HasPublic>) -> Result<bool, String> {
+    pub fn is_weak_public_key(
+        &self,
+        public_key: &PKey<impl openssl::pkey::HasPublic>,
+    ) -> Result<bool, String> {
         // Get public key in DER format
         let der_bytes = public_key
             .public_key_to_der()
@@ -149,14 +152,14 @@ impl DebianKeyDetector {
             "d7a8fbb307d7809469ca9abcb0082e4f8d5651e46d3cdb762d02d0bf37c9e592".to_string(), // Example hash 2
             "e7f6c011776e8db7cd330b54174fd76f7d0216b612387a5ffcfb81e6f0919683".to_string(), // Example hash 3
 
-            // Additional sample entries would go here
-            // Each representing a different PID-generated key
+                                                                                            // Additional sample entries would go here
+                                                                                            // Each representing a different PID-generated key
 
-            // NOTE: To enable full detection, replace this with:
-            // - Load from embedded resource file
-            // - Load from external database file
-            // - Query from remote API
-            // - Use debian-ssh toolkit integration
+                                                                                            // NOTE: To enable full detection, replace this with:
+                                                                                            // - Load from embedded resource file
+                                                                                            // - Load from external database file
+                                                                                            // - Query from remote API
+                                                                                            // - Use debian-ssh toolkit integration
         ]
     }
 
@@ -238,13 +241,16 @@ pub fn is_debian_weak_key(cert: &X509) -> Result<bool, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use openssl::rsa::Rsa;
     use openssl::pkey::PKey;
+    use openssl::rsa::Rsa;
 
     #[test]
     fn test_detector_creation() {
         let detector = DebianKeyDetector::new();
-        assert!(detector.blacklist_size() > 0, "Detector should have sample weak keys");
+        assert!(
+            detector.blacklist_size() > 0,
+            "Detector should have sample weak keys"
+        );
     }
 
     #[test]
@@ -262,7 +268,8 @@ mod tests {
         let mut detector = DebianKeyDetector::new();
         let initial_size = detector.blacklist_size();
 
-        let new_hash = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc".to_string();
+        let new_hash =
+            "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc".to_string();
         detector.add_weak_key(new_hash.clone());
 
         assert_eq!(detector.blacklist_size(), initial_size + 1);
@@ -304,7 +311,10 @@ mod tests {
         let is_weak = detector.is_weak_public_key(&pkey).unwrap();
 
         // A freshly generated key should not match the weak key sample
-        assert!(!is_weak, "Normal generated key should not be detected as weak");
+        assert!(
+            !is_weak,
+            "Normal generated key should not be detected as weak"
+        );
     }
 
     #[test]

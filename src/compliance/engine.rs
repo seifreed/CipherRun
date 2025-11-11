@@ -148,6 +148,9 @@ mod tests {
                 ciphers_count: 0,
                 heartbeat_enabled: None,
                 handshake_time_ms: None,
+                session_resumption_caching: None,
+                session_resumption_tickets: None,
+                secure_renegotiation: None,
             },
             ProtocolTestResult {
                 protocol: Protocol::TLS12,
@@ -156,6 +159,9 @@ mod tests {
                 ciphers_count: 0,
                 heartbeat_enabled: None,
                 handshake_time_ms: None,
+                session_resumption_caching: None,
+                session_resumption_tickets: None,
+                secure_renegotiation: None,
             },
         ];
 
@@ -163,7 +169,10 @@ mod tests {
 
         assert_eq!(report.summary.total, 1);
         assert_eq!(report.summary.failed, 1);
-        assert_eq!(report.overall_status, crate::compliance::ComplianceStatus::Fail);
+        assert_eq!(
+            report.overall_status,
+            crate::compliance::ComplianceStatus::Fail
+        );
     }
 
     #[test]
@@ -213,12 +222,18 @@ mod tests {
             ciphers_count: 0,
             heartbeat_enabled: None,
             handshake_time_ms: None,
+            session_resumption_caching: None,
+            session_resumption_tickets: None,
+            secure_renegotiation: None,
         }];
 
         let report = engine.evaluate(&results).unwrap();
 
         assert_eq!(report.summary.total, 1);
         assert_eq!(report.summary.passed, 1);
-        assert_eq!(report.overall_status, crate::compliance::ComplianceStatus::Pass);
+        assert_eq!(
+            report.overall_status,
+            crate::compliance::ComplianceStatus::Pass
+        );
     }
 }

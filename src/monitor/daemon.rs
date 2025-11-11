@@ -1,5 +1,6 @@
 // Monitoring Daemon - Main orchestration
 
+use crate::Result;
 use crate::certificates::parser::{CertificateInfo, CertificateParser};
 use crate::monitor::alerts::{Alert, AlertDetails, AlertManager};
 use crate::monitor::config::MonitorConfig;
@@ -7,10 +8,9 @@ use crate::monitor::detector::ChangeDetector;
 use crate::monitor::inventory::{CertificateInventory, MonitoredDomain};
 use crate::monitor::scheduler::SchedulingEngine;
 use crate::utils::network::Target;
-use crate::Result;
 use chrono::Utc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration as StdDuration;
 use tokio::sync::{Mutex, Semaphore};
 use tokio::time::interval;
@@ -72,10 +72,7 @@ impl MonitorDaemon {
         let enabled_count = inventory.enabled_domains().len();
         drop(inventory);
 
-        tracing::info!(
-            "Monitoring {} enabled domains",
-            enabled_count
-        );
+        tracing::info!("Monitoring {} enabled domains", enabled_count);
         tracing::info!(
             "Alert channels: {}",
             self.config.enabled_channels().join(", ")
@@ -116,7 +113,8 @@ impl MonitorDaemon {
         }
 
         // Clone domains that need scanning
-        let domains_to_check: Vec<MonitoredDomain> = enabled_domains.iter().map(|d| (*d).clone()).collect();
+        let domains_to_check: Vec<MonitoredDomain> =
+            enabled_domains.iter().map(|d| (*d).clone()).collect();
         drop(inventory);
 
         // Get domains due for scanning
@@ -232,11 +230,7 @@ impl MonitorDaemon {
             let changes = detector.detect_changes(&prev, &current_cert);
 
             if !changes.is_empty() {
-                tracing::info!(
-                    "Detected {} changes for {}",
-                    changes.len(),
-                    identifier
-                );
+                tracing::info!("Detected {} changes for {}", changes.len(), identifier);
 
                 // Send change alert if configured
                 if domain.alert_thresholds.on_change {
@@ -248,11 +242,7 @@ impl MonitorDaemon {
                         scan_time: Utc::now(),
                     };
 
-                    let alert = Alert::certificate_change(
-                        identifier.clone(),
-                        changes,
-                        details,
-                    );
+                    let alert = Alert::certificate_change(identifier.clone(), changes, details);
 
                     if let Err(e) = alert_manager.send_alert(&alert).await {
                         tracing::error!("Failed to send change alert: {}", e);
@@ -317,11 +307,7 @@ impl MonitorDaemon {
                 scan_time: Utc::now(),
             };
 
-            let alert = Alert::expiry_warning(
-                identifier.to_string(),
-                days_remaining,
-                details,
-            );
+            let alert = Alert::expiry_warning(identifier.to_string(), days_remaining, details);
 
             alert_manager.send_alert(&alert).await?;
         }
@@ -336,12 +322,12 @@ impl MonitorDaemon {
         tokio::spawn(async move {
             #[cfg(unix)]
             {
-                use tokio::signal::unix::{signal, SignalKind};
+                use tokio::signal::unix::{SignalKind, signal};
 
-                let mut sigterm = signal(SignalKind::terminate())
-                    .expect("Failed to setup SIGTERM handler");
-                let mut sigint = signal(SignalKind::interrupt())
-                    .expect("Failed to setup SIGINT handler");
+                let mut sigterm =
+                    signal(SignalKind::terminate()).expect("Failed to setup SIGTERM handler");
+                let mut sigint =
+                    signal(SignalKind::interrupt()).expect("Failed to setup SIGINT handler");
 
                 tokio::select! {
                     _ = sigterm.recv() => {

@@ -2,10 +2,10 @@
 // Implements fast certificate retrieval by disconnecting after ServerHello
 // Benefits: 2-3x faster than full handshake, works with TLS 1.0-1.2
 
+use crate::Result;
 use crate::certificates::parser::CertificateInfo;
 use crate::error::TlsError;
 use crate::utils::network::Target;
-use crate::Result;
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -307,12 +307,9 @@ impl PreHandshakeScanner {
                 }
 
                 let handshake_type = data[offset];
-                let handshake_length = u32::from_be_bytes([
-                    0,
-                    data[offset + 1],
-                    data[offset + 2],
-                    data[offset + 3],
-                ]) as usize;
+                let handshake_length =
+                    u32::from_be_bytes([0, data[offset + 1], data[offset + 2], data[offset + 3]])
+                        as usize;
 
                 offset += 4;
 
@@ -326,8 +323,7 @@ impl PreHandshakeScanner {
                         if handshake_length >= 38 {
                             let version_maj = data[offset];
                             let version_min = data[offset + 1];
-                            protocol_version =
-                                Some(format!("{}.{}", version_maj - 2, version_min));
+                            protocol_version = Some(format!("{}.{}", version_maj - 2, version_min));
 
                             // Skip random (32 bytes)
                             let cipher_offset = offset + 34;
@@ -343,7 +339,8 @@ impl PreHandshakeScanner {
                                 }
                             }
 
-                            server_hello_data = Some(data[offset..offset + handshake_length].to_vec());
+                            server_hello_data =
+                                Some(data[offset..offset + handshake_length].to_vec());
                         }
                     }
                     0x0b => {
@@ -405,7 +402,11 @@ impl PreHandshakeScanner {
         // Extract basic certificate information
         let subject = cert.subject().to_string();
         let issuer = cert.issuer().to_string();
-        let not_before = cert.validity().not_before.to_rfc2822().unwrap_or_else(|e| e);
+        let not_before = cert
+            .validity()
+            .not_before
+            .to_rfc2822()
+            .unwrap_or_else(|e| e);
         let not_after = cert.validity().not_after.to_rfc2822().unwrap_or_else(|e| e);
         let serial_number = cert.serial.to_string();
 
@@ -424,10 +425,15 @@ impl PreHandshakeScanner {
 
         // Get public key info
         let public_key_algorithm = format!("{}", cert.public_key().algorithm.algorithm);
-        let public_key_size = cert.public_key().parsed().map(|pk| match pk {
-            x509_parser::public_key::PublicKey::RSA(rsa) => Some(rsa.key_size()),
-            _ => None,
-        }).ok().flatten();
+        let public_key_size = cert
+            .public_key()
+            .parsed()
+            .map(|pk| match pk {
+                x509_parser::public_key::PublicKey::RSA(rsa) => Some(rsa.key_size()),
+                _ => None,
+            })
+            .ok()
+            .flatten();
 
         Ok(CertificateInfo {
             subject,

@@ -142,7 +142,9 @@ impl Lucky13Tester {
                 let elapsed = start.elapsed().as_micros();
                 Ok(elapsed)
             }
-            _ => Err(crate::error::TlsError::Other("Connection failed".to_string())),
+            _ => Err(crate::error::TlsError::Other(
+                "Connection failed".to_string(),
+            )),
         }
     }
 

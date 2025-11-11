@@ -1,12 +1,15 @@
 // Scan Comparator
 // Generates detailed side-by-side comparison of two scans
 
-use crate::db::{CipherRunDatabase, ScanRecord, ProtocolRecord, CipherRecord, VulnerabilityRecord, CertificateRecord, RatingRecord};
 use crate::db::connection::DatabasePool;
+use crate::db::{
+    CertificateRecord, CipherRecord, CipherRunDatabase, ProtocolRecord, RatingRecord, ScanRecord,
+    VulnerabilityRecord,
+};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::collections::{HashSet, HashMap};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScanComparison {
@@ -104,7 +107,7 @@ pub struct ComparisonSummary {
     pub certificate_changes: usize,
     pub vulnerability_changes: usize,
     pub rating_changes: usize,
-    pub time_between_scans: i64,  // seconds
+    pub time_between_scans: i64, // seconds
 }
 
 pub struct ScanComparator {
@@ -117,12 +120,18 @@ impl ScanComparator {
     }
 
     /// Compare two specific scans
-    pub async fn compare_scans(&self, scan_id_1: i64, scan_id_2: i64) -> crate::Result<ScanComparison> {
+    pub async fn compare_scans(
+        &self,
+        scan_id_1: i64,
+        scan_id_2: i64,
+    ) -> crate::Result<ScanComparison> {
         // Get scan records
-        let scan_1 = self.get_scan_by_id(scan_id_1).await?
-            .ok_or_else(|| crate::TlsError::DatabaseError(format!("Scan {} not found", scan_id_1)))?;
-        let scan_2 = self.get_scan_by_id(scan_id_2).await?
-            .ok_or_else(|| crate::TlsError::DatabaseError(format!("Scan {} not found", scan_id_2)))?;
+        let scan_1 = self.get_scan_by_id(scan_id_1).await?.ok_or_else(|| {
+            crate::TlsError::DatabaseError(format!("Scan {} not found", scan_id_1))
+        })?;
+        let scan_2 = self.get_scan_by_id(scan_id_2).await?.ok_or_else(|| {
+            crate::TlsError::DatabaseError(format!("Scan {} not found", scan_id_2))
+        })?;
 
         // Compare protocols
         let protocol_diff = self.compare_protocols(scan_id_1, scan_id_2).await?;
@@ -137,7 +146,9 @@ impl ScanComparator {
         let vulnerability_diff = self.compare_vulnerabilities(scan_id_1, scan_id_2).await?;
 
         // Compare ratings
-        let rating_diff = self.compare_ratings(&scan_1, &scan_2, scan_id_1, scan_id_2).await?;
+        let rating_diff = self
+            .compare_ratings(&scan_1, &scan_2, scan_id_1, scan_id_2)
+            .await?;
 
         // Generate summary
         let summary = self.generate_summary(
@@ -168,29 +179,35 @@ impl ScanComparator {
 
         if scans.len() < 2 {
             return Err(crate::TlsError::DatabaseError(
-                "Not enough scans found for comparison".to_string()
+                "Not enough scans found for comparison".to_string(),
             ));
         }
 
-        let scan_id_1 = scans[1].scan_id.ok_or_else(||
-            crate::TlsError::DatabaseError("Scan ID missing".to_string())
-        )?;
-        let scan_id_2 = scans[0].scan_id.ok_or_else(||
-            crate::TlsError::DatabaseError("Scan ID missing".to_string())
-        )?;
+        let scan_id_1 = scans[1]
+            .scan_id
+            .ok_or_else(|| crate::TlsError::DatabaseError("Scan ID missing".to_string()))?;
+        let scan_id_2 = scans[0]
+            .scan_id
+            .ok_or_else(|| crate::TlsError::DatabaseError("Scan ID missing".to_string()))?;
 
         self.compare_scans(scan_id_1, scan_id_2).await
     }
 
     /// Format comparison as string
-    pub fn format_comparison(&self, comparison: &ScanComparison, format: &str) -> crate::Result<String> {
+    pub fn format_comparison(
+        &self,
+        comparison: &ScanComparison,
+        format: &str,
+    ) -> crate::Result<String> {
         match format.to_lowercase().as_str() {
-            "json" => {
-                serde_json::to_string_pretty(comparison)
-                    .map_err(|e| crate::TlsError::DatabaseError(format!("JSON serialization failed: {}", e)))
-            }
+            "json" => serde_json::to_string_pretty(comparison).map_err(|e| {
+                crate::TlsError::DatabaseError(format!("JSON serialization failed: {}", e))
+            }),
             "terminal" | "text" => Ok(self.format_terminal(comparison)),
-            _ => Err(crate::TlsError::DatabaseError(format!("Unknown format: {}", format))),
+            _ => Err(crate::TlsError::DatabaseError(format!(
+                "Unknown format: {}",
+                format
+            ))),
         }
     }
 
@@ -201,47 +218,89 @@ impl ScanComparator {
 
         output.push_str("╔════════════════════════════════════════════════════════════════════╗\n");
         output.push_str("║                        SCAN COMPARISON                             ║\n");
-        output.push_str("╚════════════════════════════════════════════════════════════════════╝\n\n");
+        output
+            .push_str("╚════════════════════════════════════════════════════════════════════╝\n\n");
 
         // Scan info
-        output.push_str(&format!("Scan 1: {} (ID: {})\n",
+        output.push_str(&format!(
+            "Scan 1: {} (ID: {})\n",
             comp.scan_1.scan_timestamp.format("%Y-%m-%d %H:%M:%S UTC"),
             comp.scan_1.scan_id.unwrap_or(0)
         ));
-        output.push_str(&format!("Scan 2: {} (ID: {})\n",
+        output.push_str(&format!(
+            "Scan 2: {} (ID: {})\n",
             comp.scan_2.scan_timestamp.format("%Y-%m-%d %H:%M:%S UTC"),
             comp.scan_2.scan_id.unwrap_or(0)
         ));
-        output.push_str(&format!("Target: {}:{}\n\n", comp.scan_1.target_hostname, comp.scan_1.target_port));
+        output.push_str(&format!(
+            "Target: {}:{}\n\n",
+            comp.scan_1.target_hostname, comp.scan_1.target_port
+        ));
 
         // Summary
         output.push_str("SUMMARY\n");
         output.push_str("───────────────────────────────────────────────────────────────────\n");
-        output.push_str(&format!("Total changes:        {}\n", comp.summary.total_changes));
-        output.push_str(&format!("Protocol changes:     {}\n", comp.summary.protocol_changes));
-        output.push_str(&format!("Cipher changes:       {}\n", comp.summary.cipher_changes));
-        output.push_str(&format!("Certificate changes:  {}\n", comp.summary.certificate_changes));
-        output.push_str(&format!("Vulnerability changes:{}\n", comp.summary.vulnerability_changes));
-        output.push_str(&format!("Rating changes:       {}\n", comp.summary.rating_changes));
-        output.push_str(&format!("Time between scans:   {} seconds\n\n", comp.summary.time_between_scans));
+        output.push_str(&format!(
+            "Total changes:        {}\n",
+            comp.summary.total_changes
+        ));
+        output.push_str(&format!(
+            "Protocol changes:     {}\n",
+            comp.summary.protocol_changes
+        ));
+        output.push_str(&format!(
+            "Cipher changes:       {}\n",
+            comp.summary.cipher_changes
+        ));
+        output.push_str(&format!(
+            "Certificate changes:  {}\n",
+            comp.summary.certificate_changes
+        ));
+        output.push_str(&format!(
+            "Vulnerability changes:{}\n",
+            comp.summary.vulnerability_changes
+        ));
+        output.push_str(&format!(
+            "Rating changes:       {}\n",
+            comp.summary.rating_changes
+        ));
+        output.push_str(&format!(
+            "Time between scans:   {} seconds\n\n",
+            comp.summary.time_between_scans
+        ));
 
         // Rating comparison
         if comp.rating_diff.overall_changed {
             output.push_str("RATING CHANGES\n");
-            output.push_str("───────────────────────────────────────────────────────────────────\n");
-            output.push_str(&format!("Overall: {} ({}) → {} ({})\n\n",
-                comp.rating_diff.scan_1_grade.as_ref().unwrap_or(&"N/A".to_string()),
+            output
+                .push_str("───────────────────────────────────────────────────────────────────\n");
+            output.push_str(&format!(
+                "Overall: {} ({}) → {} ({})\n\n",
+                comp.rating_diff
+                    .scan_1_grade
+                    .as_ref()
+                    .unwrap_or(&"N/A".to_string()),
                 comp.rating_diff.scan_1_score.unwrap_or(0),
-                comp.rating_diff.scan_2_grade.as_ref().unwrap_or(&"N/A".to_string()),
+                comp.rating_diff
+                    .scan_2_grade
+                    .as_ref()
+                    .unwrap_or(&"N/A".to_string()),
                 comp.rating_diff.scan_2_score.unwrap_or(0)
             ));
 
             for component in &comp.rating_diff.component_diffs {
                 if component.changed {
-                    output.push_str(&format!("  {}: {} → {}\n",
+                    output.push_str(&format!(
+                        "  {}: {} → {}\n",
                         component.category,
-                        component.scan_1_score.map(|s| s.to_string()).unwrap_or_else(|| "N/A".to_string()),
-                        component.scan_2_score.map(|s| s.to_string()).unwrap_or_else(|| "N/A".to_string())
+                        component
+                            .scan_1_score
+                            .map(|s| s.to_string())
+                            .unwrap_or_else(|| "N/A".to_string()),
+                        component
+                            .scan_2_score
+                            .map(|s| s.to_string())
+                            .unwrap_or_else(|| "N/A".to_string())
                     ));
                 }
             }
@@ -251,7 +310,8 @@ impl ScanComparator {
         // Protocol changes
         if !comp.protocol_diff.added.is_empty() || !comp.protocol_diff.removed.is_empty() {
             output.push_str("PROTOCOL CHANGES\n");
-            output.push_str("───────────────────────────────────────────────────────────────────\n");
+            output
+                .push_str("───────────────────────────────────────────────────────────────────\n");
             if !comp.protocol_diff.added.is_empty() {
                 output.push_str("Added:\n");
                 for proto in &comp.protocol_diff.added {
@@ -273,23 +333,36 @@ impl ScanComparator {
         // Cipher changes
         if !comp.cipher_diff.added.is_empty() || !comp.cipher_diff.removed.is_empty() {
             output.push_str("CIPHER SUITE CHANGES\n");
-            output.push_str("───────────────────────────────────────────────────────────────────\n");
+            output
+                .push_str("───────────────────────────────────────────────────────────────────\n");
             if !comp.cipher_diff.added.is_empty() {
                 output.push_str(&format!("Added ({}):\n", comp.cipher_diff.added.len()));
                 for cipher in comp.cipher_diff.added.iter().take(5) {
-                    output.push_str(&format!("  + {} [{}] ({})\n", cipher.name, cipher.protocol, cipher.strength));
+                    output.push_str(&format!(
+                        "  + {} [{}] ({})\n",
+                        cipher.name, cipher.protocol, cipher.strength
+                    ));
                 }
                 if comp.cipher_diff.added.len() > 5 {
-                    output.push_str(&format!("  ... and {} more\n", comp.cipher_diff.added.len() - 5));
+                    output.push_str(&format!(
+                        "  ... and {} more\n",
+                        comp.cipher_diff.added.len() - 5
+                    ));
                 }
             }
             if !comp.cipher_diff.removed.is_empty() {
                 output.push_str(&format!("Removed ({}):\n", comp.cipher_diff.removed.len()));
                 for cipher in comp.cipher_diff.removed.iter().take(5) {
-                    output.push_str(&format!("  - {} [{}] ({})\n", cipher.name, cipher.protocol, cipher.strength));
+                    output.push_str(&format!(
+                        "  - {} [{}] ({})\n",
+                        cipher.name, cipher.protocol, cipher.strength
+                    ));
                 }
                 if comp.cipher_diff.removed.len() > 5 {
-                    output.push_str(&format!("  ... and {} more\n", comp.cipher_diff.removed.len() - 5));
+                    output.push_str(&format!(
+                        "  ... and {} more\n",
+                        comp.cipher_diff.removed.len() - 5
+                    ));
                 }
             }
             output.push('\n');
@@ -298,20 +371,33 @@ impl ScanComparator {
         // Certificate changes
         if comp.certificate_diff.fingerprint_changed {
             output.push_str("CERTIFICATE CHANGES\n");
-            output.push_str("───────────────────────────────────────────────────────────────────\n");
+            output
+                .push_str("───────────────────────────────────────────────────────────────────\n");
             if let Some(cert1) = &comp.certificate_diff.scan_1_cert {
                 output.push_str("Old Certificate:\n");
                 output.push_str(&format!("  Subject:  {}\n", cert1.subject));
                 output.push_str(&format!("  Issuer:   {}\n", cert1.issuer));
-                output.push_str(&format!("  Expires:  {}\n", cert1.not_after.format("%Y-%m-%d")));
-                output.push_str(&format!("  Key Size: {} bits\n", cert1.key_size.unwrap_or(0)));
+                output.push_str(&format!(
+                    "  Expires:  {}\n",
+                    cert1.not_after.format("%Y-%m-%d")
+                ));
+                output.push_str(&format!(
+                    "  Key Size: {} bits\n",
+                    cert1.key_size.unwrap_or(0)
+                ));
             }
             if let Some(cert2) = &comp.certificate_diff.scan_2_cert {
                 output.push_str("New Certificate:\n");
                 output.push_str(&format!("  Subject:  {}\n", cert2.subject));
                 output.push_str(&format!("  Issuer:   {}\n", cert2.issuer));
-                output.push_str(&format!("  Expires:  {}\n", cert2.not_after.format("%Y-%m-%d")));
-                output.push_str(&format!("  Key Size: {} bits\n", cert2.key_size.unwrap_or(0)));
+                output.push_str(&format!(
+                    "  Expires:  {}\n",
+                    cert2.not_after.format("%Y-%m-%d")
+                ));
+                output.push_str(&format!(
+                    "  Key Size: {} bits\n",
+                    cert2.key_size.unwrap_or(0)
+                ));
             }
             output.push('\n');
         }
@@ -319,7 +405,8 @@ impl ScanComparator {
         // Vulnerability changes
         if !comp.vulnerability_diff.new.is_empty() || !comp.vulnerability_diff.resolved.is_empty() {
             output.push_str("VULNERABILITY CHANGES\n");
-            output.push_str("───────────────────────────────────────────────────────────────────\n");
+            output
+                .push_str("───────────────────────────────────────────────────────────────────\n");
             if !comp.vulnerability_diff.new.is_empty() {
                 output.push_str("New Vulnerabilities:\n");
                 for vuln in &comp.vulnerability_diff.new {
@@ -363,15 +450,21 @@ impl ScanComparator {
         }
     }
 
-    async fn compare_protocols(&self, scan_id_1: i64, scan_id_2: i64) -> crate::Result<ProtocolDiff> {
+    async fn compare_protocols(
+        &self,
+        scan_id_1: i64,
+        scan_id_2: i64,
+    ) -> crate::Result<ProtocolDiff> {
         let protocols1 = self.get_protocols(scan_id_1).await?;
         let protocols2 = self.get_protocols(scan_id_2).await?;
 
-        let set1: HashSet<String> = protocols1.iter()
+        let set1: HashSet<String> = protocols1
+            .iter()
             .filter(|p| p.enabled)
             .map(|p| p.protocol_name.clone())
             .collect();
-        let set2: HashSet<String> = protocols2.iter()
+        let set2: HashSet<String> = protocols2
+            .iter()
             .filter(|p| p.enabled)
             .map(|p| p.protocol_name.clone())
             .collect();
@@ -380,8 +473,14 @@ impl ScanComparator {
         let removed: Vec<String> = set1.difference(&set2).cloned().collect();
         let unchanged: Vec<String> = set1.intersection(&set2).cloned().collect();
 
-        let pref1 = protocols1.iter().find(|p| p.preferred).map(|p| p.protocol_name.clone());
-        let pref2 = protocols2.iter().find(|p| p.preferred).map(|p| p.protocol_name.clone());
+        let pref1 = protocols1
+            .iter()
+            .find(|p| p.preferred)
+            .map(|p| p.protocol_name.clone());
+        let pref2 = protocols2
+            .iter()
+            .find(|p| p.preferred)
+            .map(|p| p.protocol_name.clone());
 
         let preferred_change = if pref1 != pref2 {
             Some((pref1, pref2))
@@ -401,10 +500,12 @@ impl ScanComparator {
         let ciphers1 = self.get_ciphers(scan_id_1).await?;
         let ciphers2 = self.get_ciphers(scan_id_2).await?;
 
-        let set1: HashMap<String, &CipherRecord> = ciphers1.iter()
+        let set1: HashMap<String, &CipherRecord> = ciphers1
+            .iter()
             .map(|c| (c.cipher_name.clone(), c))
             .collect();
-        let set2: HashMap<String, &CipherRecord> = ciphers2.iter()
+        let set2: HashMap<String, &CipherRecord> = ciphers2
+            .iter()
             .map(|c| (c.cipher_name.clone(), c))
             .collect();
 
@@ -448,7 +549,11 @@ impl ScanComparator {
         })
     }
 
-    async fn compare_certificates(&self, scan_id_1: i64, scan_id_2: i64) -> crate::Result<CertificateDiff> {
+    async fn compare_certificates(
+        &self,
+        scan_id_1: i64,
+        scan_id_2: i64,
+    ) -> crate::Result<CertificateDiff> {
         let cert1 = self.get_leaf_certificate(scan_id_1).await?;
         let cert2 = self.get_leaf_certificate(scan_id_2).await?;
 
@@ -507,14 +612,20 @@ impl ScanComparator {
         })
     }
 
-    async fn compare_vulnerabilities(&self, scan_id_1: i64, scan_id_2: i64) -> crate::Result<VulnerabilityDiff> {
+    async fn compare_vulnerabilities(
+        &self,
+        scan_id_1: i64,
+        scan_id_2: i64,
+    ) -> crate::Result<VulnerabilityDiff> {
         let vulns1 = self.get_vulnerabilities(scan_id_1).await?;
         let vulns2 = self.get_vulnerabilities(scan_id_2).await?;
 
-        let set1: HashMap<String, &VulnerabilityRecord> = vulns1.iter()
+        let set1: HashMap<String, &VulnerabilityRecord> = vulns1
+            .iter()
             .map(|v| (v.vulnerability_type.clone(), v))
             .collect();
-        let set2: HashMap<String, &VulnerabilityRecord> = vulns2.iter()
+        let set2: HashMap<String, &VulnerabilityRecord> = vulns2
+            .iter()
             .map(|v| (v.vulnerability_type.clone(), v))
             .collect();
 
@@ -555,9 +666,15 @@ impl ScanComparator {
         })
     }
 
-    async fn compare_ratings(&self, scan_1: &ScanRecord, scan_2: &ScanRecord, scan_id_1: i64, scan_id_2: i64) -> crate::Result<RatingDiff> {
-        let overall_changed = scan_1.overall_grade != scan_2.overall_grade ||
-                             scan_1.overall_score != scan_2.overall_score;
+    async fn compare_ratings(
+        &self,
+        scan_1: &ScanRecord,
+        scan_2: &ScanRecord,
+        scan_id_1: i64,
+        scan_id_2: i64,
+    ) -> crate::Result<RatingDiff> {
+        let overall_changed = scan_1.overall_grade != scan_2.overall_grade
+            || scan_1.overall_score != scan_2.overall_score;
 
         let ratings1 = self.get_ratings(scan_id_1).await?;
         let ratings2 = self.get_ratings(scan_id_2).await?;
@@ -566,10 +683,12 @@ impl ScanComparator {
 
         let categories = vec!["certificate", "protocol", "key_exchange", "cipher"];
         for category in categories {
-            let score1 = ratings1.iter()
+            let score1 = ratings1
+                .iter()
                 .find(|r| r.category == category)
                 .map(|r| r.score);
-            let score2 = ratings2.iter()
+            let score2 = ratings2
+                .iter()
                 .find(|r| r.category == category)
                 .map(|r| r.score);
 
@@ -602,16 +721,33 @@ impl ScanComparator {
         vulnerability_diff: &VulnerabilityDiff,
         rating_diff: &RatingDiff,
     ) -> ComparisonSummary {
-        let protocol_changes = protocol_diff.added.len() + protocol_diff.removed.len() +
-            if protocol_diff.preferred_change.is_some() { 1 } else { 0 };
+        let protocol_changes = protocol_diff.added.len()
+            + protocol_diff.removed.len()
+            + if protocol_diff.preferred_change.is_some() {
+                1
+            } else {
+                0
+            };
         let cipher_changes = cipher_diff.added.len() + cipher_diff.removed.len();
-        let certificate_changes = if certificate_diff.fingerprint_changed { 1 } else { 0 };
-        let vulnerability_changes = vulnerability_diff.new.len() + vulnerability_diff.resolved.len();
-        let rating_changes = if rating_diff.overall_changed { 1 } else { 0 } +
-            rating_diff.component_diffs.iter().filter(|d| d.changed).count();
+        let certificate_changes = if certificate_diff.fingerprint_changed {
+            1
+        } else {
+            0
+        };
+        let vulnerability_changes =
+            vulnerability_diff.new.len() + vulnerability_diff.resolved.len();
+        let rating_changes = if rating_diff.overall_changed { 1 } else { 0 }
+            + rating_diff
+                .component_diffs
+                .iter()
+                .filter(|d| d.changed)
+                .count();
 
-        let total_changes = protocol_changes + cipher_changes + certificate_changes +
-                           vulnerability_changes + rating_changes;
+        let total_changes = protocol_changes
+            + cipher_changes
+            + certificate_changes
+            + vulnerability_changes
+            + rating_changes;
 
         let time_between_scans = (scan_2.scan_timestamp - scan_1.scan_timestamp).num_seconds();
 
@@ -767,13 +903,17 @@ impl ScanComparator {
 
                 if let Some(row) = row {
                     let san_json: String = row.try_get("san_domains").unwrap_or_default();
-                    let san_domains: Vec<String> = serde_json::from_str(&san_json).unwrap_or_default();
+                    let san_domains: Vec<String> =
+                        serde_json::from_str(&san_json).unwrap_or_default();
 
                     let key_usage_json: String = row.try_get("key_usage").unwrap_or_default();
-                    let key_usage: Vec<String> = serde_json::from_str(&key_usage_json).unwrap_or_default();
+                    let key_usage: Vec<String> =
+                        serde_json::from_str(&key_usage_json).unwrap_or_default();
 
-                    let extended_key_usage_json: String = row.try_get("extended_key_usage").unwrap_or_default();
-                    let extended_key_usage: Vec<String> = serde_json::from_str(&extended_key_usage_json).unwrap_or_default();
+                    let extended_key_usage_json: String =
+                        row.try_get("extended_key_usage").unwrap_or_default();
+                    let extended_key_usage: Vec<String> =
+                        serde_json::from_str(&extended_key_usage_json).unwrap_or_default();
 
                     Ok(Some(CertificateRecord {
                         cert_id: row.try_get("cert_id").ok(),
@@ -781,8 +921,12 @@ impl ScanComparator {
                         subject: row.try_get("subject").unwrap_or_default(),
                         issuer: row.try_get("issuer").unwrap_or_default(),
                         serial_number: row.try_get("serial_number").ok(),
-                        not_before: row.try_get("not_before").unwrap_or_else(|_| chrono::Utc::now()),
-                        not_after: row.try_get("not_after").unwrap_or_else(|_| chrono::Utc::now()),
+                        not_before: row
+                            .try_get("not_before")
+                            .unwrap_or_else(|_| chrono::Utc::now()),
+                        not_after: row
+                            .try_get("not_after")
+                            .unwrap_or_else(|_| chrono::Utc::now()),
                         signature_algorithm: row.try_get("signature_algorithm").ok(),
                         public_key_algorithm: row.try_get("public_key_algorithm").ok(),
                         public_key_size: row.try_get("public_key_size").ok(),
@@ -791,7 +935,9 @@ impl ScanComparator {
                         key_usage,
                         extended_key_usage,
                         der_bytes: row.try_get("der_bytes").ok(),
-                        created_at: row.try_get("created_at").unwrap_or_else(|_| chrono::Utc::now()),
+                        created_at: row
+                            .try_get("created_at")
+                            .unwrap_or_else(|_| chrono::Utc::now()),
                     }))
                 } else {
                     Ok(None)

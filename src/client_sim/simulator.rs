@@ -86,9 +86,16 @@ impl ClientSimulator {
         match self.try_connect_as_client(client).await {
             Ok(handshake_info) => {
                 // Determine forward secrecy from cipher name
-                let has_fs = handshake_info.cipher.as_ref().map(|c| {
-                    c.contains("ECDHE") || c.contains("DHE") || c.starts_with("TLS_AES") || c.starts_with("TLS_CHACHA20")
-                }).unwrap_or(false);
+                let has_fs = handshake_info
+                    .cipher
+                    .as_ref()
+                    .map(|c| {
+                        c.contains("ECDHE")
+                            || c.contains("DHE")
+                            || c.starts_with("TLS_AES")
+                            || c.starts_with("TLS_CHACHA20")
+                    })
+                    .unwrap_or(false);
 
                 ClientSimulationResult {
                     client_name: client.name.clone(),
@@ -103,7 +110,7 @@ impl ClientSimulator {
                     forward_secrecy: has_fs,
                     certificate_type: handshake_info.certificate_type,
                 }
-            },
+            }
             Err(e) => ClientSimulationResult {
                 client_name: client.name.clone(),
                 client_id: client.short_id.clone(),
@@ -156,12 +163,10 @@ impl ClientSimulator {
         };
 
         // Extract negotiated cipher suite
-        let cipher_suite = connection
-            .negotiated_cipher_suite()
-            .map(|cs| {
-                // Convert rustls cipher suite to human-readable name
-                Self::format_cipher_suite(cs.suite())
-            });
+        let cipher_suite = connection.negotiated_cipher_suite().map(|cs| {
+            // Convert rustls cipher suite to human-readable name
+            Self::format_cipher_suite(cs.suite())
+        });
 
         // Extract ALPN protocol
         let alpn = connection
@@ -194,13 +199,18 @@ impl ClientSimulator {
         match suite {
             rustls::CipherSuite::TLS13_AES_128_GCM_SHA256 => "TLS_AES_128_GCM_SHA256".to_string(),
             rustls::CipherSuite::TLS13_AES_256_GCM_SHA384 => "TLS_AES_256_GCM_SHA384".to_string(),
-            rustls::CipherSuite::TLS13_CHACHA20_POLY1305_SHA256 => "TLS_CHACHA20_POLY1305_SHA256".to_string(),
+            rustls::CipherSuite::TLS13_CHACHA20_POLY1305_SHA256 => {
+                "TLS_CHACHA20_POLY1305_SHA256".to_string()
+            }
             _ => format!("{:?}", suite),
         }
     }
 
     /// Extract key exchange algorithm from cipher suite and client curves
-    fn extract_key_exchange(cipher_suite: &rustls::SupportedCipherSuite, curves: &[String]) -> Option<String> {
+    fn extract_key_exchange(
+        cipher_suite: &rustls::SupportedCipherSuite,
+        curves: &[String],
+    ) -> Option<String> {
         // For TLS 1.3, key exchange is always ECDHE with the first supported curve
         if matches!(
             cipher_suite.suite(),
@@ -209,18 +219,14 @@ impl ClientSimulator {
                 | rustls::CipherSuite::TLS13_CHACHA20_POLY1305_SHA256
         ) {
             // Use first curve from client profile, or default to x25519
-            let curve = curves.first()
-                .map(|c| c.as_str())
-                .unwrap_or("x25519");
+            let curve = curves.first().map(|c| c.as_str()).unwrap_or("x25519");
             return Some(format!("ECDH {}", curve));
         }
 
         // For TLS 1.2 and earlier, extract from cipher suite name
         let suite_name = format!("{:?}", cipher_suite.suite());
         if suite_name.contains("ECDHE") {
-            let curve = curves.first()
-                .map(|c| c.as_str())
-                .unwrap_or("secp256r1");
+            let curve = curves.first().map(|c| c.as_str()).unwrap_or("secp256r1");
             Some(format!("ECDH {}", curve))
         } else if suite_name.contains("DHE") {
             Some("DH 2048".to_string())

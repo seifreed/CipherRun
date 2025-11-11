@@ -2,8 +2,8 @@
 //
 // Parses CT log entries (Merkle Tree Leaf format) and extracts certificates
 
-use super::client::CtLogEntryResponse;
 use super::Result;
+use super::client::CtLogEntryResponse;
 use crate::error::TlsError;
 use base64::Engine;
 use chrono::{DateTime, Utc};
@@ -65,21 +65,17 @@ impl Parser {
     }
 
     /// Parse a CT log entry response
-    pub fn parse_entry(
-        &self,
-        entry: &CtLogEntryResponse,
-        index: u64,
-    ) -> Result<CtLogEntry> {
+    pub fn parse_entry(&self, entry: &CtLogEntryResponse, index: u64) -> Result<CtLogEntry> {
         // Decode base64 leaf_input
         let leaf_bytes = base64::engine::general_purpose::STANDARD
             .decode(&entry.leaf_input)
-            .map_err(|e| {
-                TlsError::ParseError { message: format!("Failed to decode leaf_input: {}", e) }
+            .map_err(|e| TlsError::ParseError {
+                message: format!("Failed to decode leaf_input: {}", e),
             })?;
 
         if leaf_bytes.len() < 43 {
             return Err(TlsError::ParseError {
-                message: format!("Leaf input too short: {} bytes", leaf_bytes.len())
+                message: format!("Leaf input too short: {} bytes", leaf_bytes.len()),
             });
         }
 
@@ -93,14 +89,14 @@ impl Parser {
         let version = leaf_bytes[0];
         if version != 0 {
             return Err(TlsError::ParseError {
-                message: format!("Unsupported CT version: {}", version)
+                message: format!("Unsupported CT version: {}", version),
             });
         }
 
         let leaf_type = leaf_bytes[1];
         if leaf_type != 0 {
             return Err(TlsError::ParseError {
-                message: format!("Unsupported leaf type: {}", leaf_type)
+                message: format!("Unsupported leaf type: {}", leaf_type),
             });
         }
 
@@ -129,8 +125,8 @@ impl Parser {
             1 => CertType::PreCertificate,
             _ => {
                 return Err(TlsError::ParseError {
-                    message: format!("Unknown entry type: {}", entry_type)
-                })
+                    message: format!("Unknown entry type: {}", entry_type),
+                });
             }
         };
 
@@ -139,7 +135,7 @@ impl Parser {
         // For PreCert: similar structure
         if leaf_bytes.len() < 15 {
             return Err(TlsError::ParseError {
-                message: "Leaf too short for certificate".to_string()
+                message: "Leaf too short for certificate".to_string(),
             });
         }
 
@@ -153,7 +149,7 @@ impl Parser {
                     "Certificate length {} exceeds leaf size {}",
                     cert_len,
                     leaf_bytes.len()
-                )
+                ),
             });
         }
 
@@ -173,8 +169,8 @@ impl Parser {
 
     /// Parse DER-encoded certificate
     fn parse_certificate(&self, der: &[u8]) -> Result<Certificate> {
-        let (_, cert) = X509Certificate::from_der(der).map_err(|e| {
-            TlsError::ParseError { message: format!("Failed to parse X.509 certificate: {}", e) }
+        let (_, cert) = X509Certificate::from_der(der).map_err(|e| TlsError::ParseError {
+            message: format!("Failed to parse X.509 certificate: {}", e),
         })?;
 
         // Extract subject CN
@@ -211,10 +207,7 @@ impl Parser {
             .unwrap_or_else(Utc::now);
 
         // Extract serial number
-        let serial = cert
-            .serial
-            .to_str_radix(16)
-            .to_uppercase();
+        let serial = cert.serial.to_str_radix(16).to_uppercase();
 
         Ok(Certificate {
             der: der.to_vec(),

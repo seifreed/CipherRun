@@ -115,6 +115,21 @@ pub struct ProtocolTestResult {
     /// Some(false) if server does not support it
     /// None if not tested or handshake failed
     pub heartbeat_enabled: Option<bool>,
+    /// Session resumption via session ID caching
+    /// Some(true) if ServerHello contains a non-empty session ID
+    /// Some(false) if session ID is empty (IDs empty)
+    /// None if not tested or handshake failed
+    pub session_resumption_caching: Option<bool>,
+    /// Session resumption via session tickets (RFC 5077)
+    /// Some(true) if ServerHello contains SessionTicket extension (type 0x0023)
+    /// Some(false) if extension is not present
+    /// None if not tested or handshake failed
+    pub session_resumption_tickets: Option<bool>,
+    /// Secure Renegotiation (RFC 5746) support detection
+    /// Some(true) if server supports secure renegotiation (extension 0xff01)
+    /// Some(false) if extension is not present
+    /// None if not tested or handshake failed
+    pub secure_renegotiation: Option<bool>,
 }
 
 /// TLS extension

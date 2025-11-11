@@ -1,16 +1,10 @@
 // API Server Implementation
 
-use crate::api::{
-    config::ApiConfig,
-    middleware,
-    routes,
-    state::AppState,
-};
+use crate::api::{config::ApiConfig, middleware, routes, state::AppState};
 use anyhow::Result;
 use axum::{
-    middleware as axum_middleware,
+    Router, middleware as axum_middleware,
     routing::{delete, get, post},
-    Router,
 };
 use std::sync::Arc;
 use tower_http::compression::CompressionLayer;
@@ -41,7 +35,10 @@ impl ApiServer {
             .route("/scan/:id/results", get(routes::scans::get_scan_results))
             .route("/scan/:id/stream", get(routes::scans::websocket_handler))
             // Certificate routes
-            .route("/certificates", get(routes::certificates::list_certificates))
+            .route(
+                "/certificates",
+                get(routes::certificates::list_certificates),
+            )
             .route(
                 "/certificates/:fingerprint",
                 get(routes::certificates::get_certificate),
@@ -54,7 +51,10 @@ impl ApiServer {
             // Policy routes
             .route("/policies", post(routes::policies::create_policy))
             .route("/policies/:id", get(routes::policies::get_policy))
-            .route("/policies/:id/evaluate", post(routes::policies::evaluate_policy))
+            .route(
+                "/policies/:id/evaluate",
+                post(routes::policies::evaluate_policy),
+            )
             // History routes
             .route("/history/:domain", get(routes::history::get_history))
             // Stats routes
@@ -63,7 +63,6 @@ impl ApiServer {
             .route("/health", get(routes::health::health_check));
 
         // Build main router with versioning
-        
 
         Router::new()
             .nest("/api/v1", api_routes)
@@ -114,7 +113,10 @@ impl ApiServer {
         let listener = tokio::net::TcpListener::bind(&addr).await?;
 
         info!("CipherRun API server listening on {}", addr);
-        info!("OpenAPI documentation available at: http://{}/api/docs", addr);
+        info!(
+            "OpenAPI documentation available at: http://{}/api/docs",
+            addr
+        );
         info!("Health check endpoint: http://{}/health", addr);
 
         // Serve

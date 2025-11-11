@@ -6,6 +6,4 @@ pub mod response;
 
 pub use error::{ApiError, ApiErrorResponse};
 pub use request::{PolicyRequest, ScanOptions, ScanRequest};
-pub use response::{
-    HealthResponse, ScanResponse, ScanStatusResponse, StatsResponse,
-};
+pub use response::{HealthResponse, ScanResponse, ScanStatusResponse, StatsResponse};

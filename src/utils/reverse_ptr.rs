@@ -1,12 +1,12 @@
 // Reverse PTR Lookup Module
 // Performs reverse DNS lookups to determine SNI from IP addresses
 
+use crate::Result;
 use crate::error::TlsError;
 use crate::utils::sni_generator::SniGenerator;
-use crate::Result;
 use std::net::IpAddr;
-use trust_dns_resolver::config::*;
 use trust_dns_resolver::TokioAsyncResolver;
+use trust_dns_resolver::config::*;
 
 /// Reverse PTR lookup utilities
 pub struct ReversePtrLookup;
@@ -17,13 +17,14 @@ impl ReversePtrLookup {
         let resolver =
             TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default());
 
-        let lookup = resolver
-            .reverse_lookup(*ip)
-            .await
-            .map_err(|e| TlsError::DnsResolutionFailed {
-                hostname: ip.to_string(),
-                source: std::io::Error::new(std::io::ErrorKind::NotFound, e.to_string()),
-            })?;
+        let lookup =
+            resolver
+                .reverse_lookup(*ip)
+                .await
+                .map_err(|e| TlsError::DnsResolutionFailed {
+                    hostname: ip.to_string(),
+                    source: std::io::Error::new(std::io::ErrorKind::NotFound, e.to_string()),
+                })?;
 
         // Get first PTR record
         let ptr_name = lookup
@@ -31,10 +32,7 @@ impl ReversePtrLookup {
             .next()
             .ok_or_else(|| TlsError::DnsResolutionFailed {
                 hostname: ip.to_string(),
-                source: std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    "No PTR records found",
-                ),
+                source: std::io::Error::new(std::io::ErrorKind::NotFound, "No PTR records found"),
             })?;
 
         let hostname = ptr_name.to_string();
@@ -80,9 +78,7 @@ impl ReversePtrLookup {
 
                 // Check for common cloud provider patterns
                 // AWS pattern: ec2-x-x-x-x.compute-1.amazonaws.com
-                if (octets[0] == 3 || octets[0] == 52 || octets[0] == 54)
-                    && octets[1] < 255
-                {
+                if (octets[0] == 3 || octets[0] == 52 || octets[0] == 54) && octets[1] < 255 {
                     return Some(format!(
                         "ec2-{}-{}-{}-{}.compute-1.amazonaws.com",
                         octets[0], octets[1], octets[2], octets[3]

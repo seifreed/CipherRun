@@ -7,9 +7,9 @@ pub mod slack;
 pub mod teams;
 pub mod webhook;
 
-use crate::monitor::detector::{ChangeEvent, ChangeSeverity};
-use crate::monitor::config::MonitorConfig;
 use crate::Result;
+use crate::monitor::config::MonitorConfig;
+use crate::monitor::detector::{ChangeEvent, ChangeSeverity};
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -79,11 +79,7 @@ impl Alert {
     }
 
     /// Create expiry warning alert
-    pub fn expiry_warning(
-        hostname: String,
-        days_remaining: i64,
-        details: AlertDetails,
-    ) -> Self {
+    pub fn expiry_warning(hostname: String, days_remaining: i64, details: AlertDetails) -> Self {
         let severity = if days_remaining <= 1 {
             ChangeSeverity::Critical
         } else if days_remaining <= 7 {
@@ -110,11 +106,7 @@ impl Alert {
     }
 
     /// Create validation failure alert
-    pub fn validation_failure(
-        hostname: String,
-        reason: String,
-        details: AlertDetails,
-    ) -> Self {
+    pub fn validation_failure(hostname: String, reason: String, details: AlertDetails) -> Self {
         Self {
             hostname: hostname.clone(),
             alert_type: AlertType::ValidationFailure {
@@ -189,38 +181,43 @@ impl AlertManager {
 
         // Initialize email channel if configured
         if let Some(ref email_config) = config.monitor.alerts.email
-            && email_config.enabled {
-                let channel = email::EmailChannel::new(email_config.clone())?;
-                manager.add_channel(Box::new(channel));
-            }
+            && email_config.enabled
+        {
+            let channel = email::EmailChannel::new(email_config.clone())?;
+            manager.add_channel(Box::new(channel));
+        }
 
         // Initialize Slack channel if configured
         if let Some(ref slack_config) = config.monitor.alerts.slack
-            && slack_config.enabled {
-                let channel = slack::SlackChannel::new(slack_config.clone());
-                manager.add_channel(Box::new(channel));
-            }
+            && slack_config.enabled
+        {
+            let channel = slack::SlackChannel::new(slack_config.clone());
+            manager.add_channel(Box::new(channel));
+        }
 
         // Initialize Teams channel if configured
         if let Some(ref teams_config) = config.monitor.alerts.teams
-            && teams_config.enabled {
-                let channel = teams::TeamsChannel::new(teams_config.clone());
-                manager.add_channel(Box::new(channel));
-            }
+            && teams_config.enabled
+        {
+            let channel = teams::TeamsChannel::new(teams_config.clone());
+            manager.add_channel(Box::new(channel));
+        }
 
         // Initialize PagerDuty channel if configured
         if let Some(ref pd_config) = config.monitor.alerts.pagerduty
-            && pd_config.enabled {
-                let channel = pagerduty::PagerDutyChannel::new(pd_config.clone());
-                manager.add_channel(Box::new(channel));
-            }
+            && pd_config.enabled
+        {
+            let channel = pagerduty::PagerDutyChannel::new(pd_config.clone());
+            manager.add_channel(Box::new(channel));
+        }
 
         // Initialize Webhook channel if configured
         if let Some(ref webhook_config) = config.monitor.alerts.webhook
-            && webhook_config.enabled {
-                let channel = webhook::WebhookChannel::new(webhook_config.clone());
-                manager.add_channel(Box::new(channel));
-            }
+            && webhook_config.enabled
+        {
+            let channel = webhook::WebhookChannel::new(webhook_config.clone());
+            manager.add_channel(Box::new(channel));
+        }
 
         Ok(manager)
     }
@@ -341,10 +338,8 @@ mod tests {
 
     #[test]
     fn test_alert_dedup_key() {
-        let alert = Alert::scan_failure(
-            "example.com".to_string(),
-            "Connection refused".to_string(),
-        );
+        let alert =
+            Alert::scan_failure("example.com".to_string(), "Connection refused".to_string());
 
         assert_eq!(alert.dedup_key(), "scan:example.com");
     }
@@ -376,10 +371,8 @@ mod tests {
     async fn test_alert_manager_deduplication() {
         let manager = AlertManager::new(24);
 
-        let alert = Alert::scan_failure(
-            "example.com".to_string(),
-            "Connection refused".to_string(),
-        );
+        let alert =
+            Alert::scan_failure("example.com".to_string(), "Connection refused".to_string());
 
         // First alert should not be duplicate
         assert!(!manager.is_duplicate(&alert).await);

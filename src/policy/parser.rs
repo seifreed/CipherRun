@@ -1,7 +1,7 @@
 // YAML policy parser and validator
 
-use crate::policy::Policy;
 use crate::Result;
+use crate::policy::Policy;
 use regex::Regex;
 use serde_yaml;
 use std::fs;
@@ -40,8 +40,8 @@ impl PolicyLoader {
     /// Load policy from YAML string
     pub fn load_from_string(yaml_content: &str) -> Result<Policy> {
         // Parse the YAML into a generic value first
-        let yaml_value: serde_yaml::Value = serde_yaml::from_str(yaml_content)
-            .map_err(|e| crate::TlsError::ParseError {
+        let yaml_value: serde_yaml::Value =
+            serde_yaml::from_str(yaml_content).map_err(|e| crate::TlsError::ParseError {
                 message: format!("Failed to parse YAML: {}", e),
             })?;
 
@@ -54,8 +54,8 @@ impl PolicyLoader {
         };
 
         // Deserialize the policy
-        let policy: Policy = serde_yaml::from_value(policy_value)
-            .map_err(|e| crate::TlsError::ParseError {
+        let policy: Policy =
+            serde_yaml::from_value(policy_value).map_err(|e| crate::TlsError::ParseError {
                 message: format!("Failed to parse policy YAML: {}", e),
             })?;
 
@@ -68,11 +68,12 @@ impl PolicyLoader {
 
     /// Load YAML file
     fn load_yaml(&self, path: &Path) -> Result<Policy> {
-        let content = fs::read_to_string(path).map_err(|e| crate::TlsError::IoError { source: e })?;
+        let content =
+            fs::read_to_string(path).map_err(|e| crate::TlsError::IoError { source: e })?;
 
         // Parse the YAML into a generic value first
-        let yaml_value: serde_yaml::Value = serde_yaml::from_str(&content)
-            .map_err(|e| crate::TlsError::ParseError {
+        let yaml_value: serde_yaml::Value =
+            serde_yaml::from_str(&content).map_err(|e| crate::TlsError::ParseError {
                 message: format!("Failed to parse YAML: {}", e),
             })?;
 
@@ -146,23 +147,21 @@ impl PolicyLoader {
         // Validate cipher policy
         if let Some(ref cipher_policy) = policy.ciphers {
             if let Some(ref min_strength) = cipher_policy.min_strength
-                && !["LOW", "MEDIUM", "HIGH"].contains(&min_strength.as_str()) {
-                    return Err(crate::TlsError::ConfigError {
-                        message: format!(
-                            "Invalid min_strength: {}. Must be LOW, MEDIUM, or HIGH",
-                            min_strength
-                        ),
-                    });
-                }
+                && !["LOW", "MEDIUM", "HIGH"].contains(&min_strength.as_str())
+            {
+                return Err(crate::TlsError::ConfigError {
+                    message: format!(
+                        "Invalid min_strength: {}. Must be LOW, MEDIUM, or HIGH",
+                        min_strength
+                    ),
+                });
+            }
 
             // Validate regex patterns
             if let Some(ref patterns) = cipher_policy.prohibited_patterns {
                 for pattern in patterns {
                     Regex::new(pattern).map_err(|e| crate::TlsError::ConfigError {
-                        message: format!(
-                            "Invalid prohibited cipher pattern '{}': {}",
-                            pattern, e
-                        ),
+                        message: format!("Invalid prohibited cipher pattern '{}': {}", pattern, e),
                     })?;
                 }
             }
@@ -170,10 +169,7 @@ impl PolicyLoader {
             if let Some(ref patterns) = cipher_policy.required_patterns {
                 for pattern in patterns {
                     Regex::new(pattern).map_err(|e| crate::TlsError::ConfigError {
-                        message: format!(
-                            "Invalid required cipher pattern '{}': {}",
-                            pattern, e
-                        ),
+                        message: format!("Invalid required cipher pattern '{}': {}", pattern, e),
                     })?;
                 }
             }
@@ -182,11 +178,12 @@ impl PolicyLoader {
         // Validate certificate policy
         if let Some(ref cert_policy) = policy.certificates
             && let Some(min_key_size) = cert_policy.min_key_size
-                && min_key_size < 1024 {
-                    return Err(crate::TlsError::ConfigError {
-                        message: "min_key_size must be at least 1024".to_string(),
-                    });
-                }
+            && min_key_size < 1024
+        {
+            return Err(crate::TlsError::ConfigError {
+                message: "min_key_size must be at least 1024".to_string(),
+            });
+        }
 
         // Validate rating policy
         if let Some(ref rating_policy) = policy.rating {
@@ -206,11 +203,12 @@ impl PolicyLoader {
             }
 
             if let Some(min_score) = rating_policy.min_score
-                && min_score > 100 {
-                    return Err(crate::TlsError::ConfigError {
-                        message: "min_score must be between 0 and 100".to_string(),
-                    });
-                }
+                && min_score > 100
+            {
+                return Err(crate::TlsError::ConfigError {
+                    message: "min_score must be between 0 and 100".to_string(),
+                });
+            }
         }
 
         // Validate exceptions
@@ -360,8 +358,8 @@ protocols:
         // Test loading an actual example policy file
         use std::path::PathBuf;
 
-        let policy_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("examples/policies/base-security.yaml");
+        let policy_path =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/policies/base-security.yaml");
 
         if policy_path.exists() {
             let loader = PolicyLoader::new(".");

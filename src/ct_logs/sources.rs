@@ -93,14 +93,17 @@ impl SourceManager {
         if !response.status().is_success() {
             return Err(TlsError::HttpError {
                 status: response.status().as_u16(),
-                details: format!("CT log list request failed with status: {}", response.status())
+                details: format!(
+                    "CT log list request failed with status: {}",
+                    response.status()
+                ),
             });
         }
 
-        let log_list: GoogleCtLogList = response
-            .json()
-            .await
-            .map_err(|e| TlsError::ParseError { message: format!("Failed to parse CT log list: {}", e) })?;
+        let log_list: GoogleCtLogList =
+            response.json().await.map_err(|e| TlsError::ParseError {
+                message: format!("Failed to parse CT log list: {}", e),
+            })?;
 
         debug!(
             "Fetched {} operators from CT log list",
@@ -112,25 +115,27 @@ impl SourceManager {
             for log in &operator.logs {
                 // Only use usable logs
                 if let Some(state) = &log.state
-                    && state.usable.is_some() {
-                        let log_id = log.log_id.clone();
-                        let source = LogSource {
-                            id: log_id.clone(),
-                            description: log.description.clone().unwrap_or_else(|| {
-                                format!("{} CT Log", operator.name)
-                            }),
-                            operator: operator.name.clone(),
-                            url: log.url.clone(),
-                            key: log.key.clone(),
-                            mmd: log.mmd,
-                            tree_size: 0,
-                            usable: true,
-                            last_error: None,
-                            failure_count: 0,
-                        };
+                    && state.usable.is_some()
+                {
+                    let log_id = log.log_id.clone();
+                    let source = LogSource {
+                        id: log_id.clone(),
+                        description: log
+                            .description
+                            .clone()
+                            .unwrap_or_else(|| format!("{} CT Log", operator.name)),
+                        operator: operator.name.clone(),
+                        url: log.url.clone(),
+                        key: log.key.clone(),
+                        mmd: log.mmd,
+                        tree_size: 0,
+                        usable: true,
+                        last_error: None,
+                        failure_count: 0,
+                    };
 
-                        self.sources.insert(log_id, source);
-                    }
+                    self.sources.insert(log_id, source);
+                }
             }
         }
 
@@ -140,10 +145,7 @@ impl SourceManager {
 
     /// Get all healthy sources
     pub fn get_healthy_sources(&self) -> Vec<&LogSource> {
-        self.sources
-            .values()
-            .filter(|s| s.is_healthy())
-            .collect()
+        self.sources.values().filter(|s| s.is_healthy()).collect()
     }
 
     /// Get a specific source by ID

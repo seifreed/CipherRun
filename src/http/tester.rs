@@ -81,7 +81,7 @@ impl HeaderAnalyzer {
             target,
             timeout: Duration::from_secs(10),
             custom_headers: Vec::new(),
-            user_agent: "CipherRun/0.1.0 (TLS/SSL Security Scanner)".to_string(),
+            user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36".to_string(),
         }
     }
 
@@ -91,7 +91,7 @@ impl HeaderAnalyzer {
             target,
             timeout: Duration::from_secs(10),
             custom_headers,
-            user_agent: "CipherRun/0.1.0 (TLS/SSL Security Scanner)".to_string(),
+            user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36".to_string(),
         }
     }
 
@@ -142,7 +142,8 @@ impl HeaderAnalyzer {
         let banner_detection = Some(headers_advanced::detect_banners(&metadata.headers));
 
         // Detect reverse proxy
-        let reverse_proxy_detection = Some(headers_advanced::detect_reverse_proxy(&metadata.headers));
+        let reverse_proxy_detection =
+            Some(headers_advanced::detect_reverse_proxy(&metadata.headers));
 
         Ok(HeaderAnalysisResult {
             headers: metadata.headers,

@@ -4,7 +4,7 @@ use crate::api::{
     models::response::{ApiUsageStats, DomainStats, StatsResponse},
     state::AppState,
 };
-use axum::{extract::State, Json};
+use axum::{Json, extract::State};
 use std::sync::Arc;
 
 /// Get API statistics
@@ -81,7 +81,9 @@ async fn get_top_domains_from_db(
             .bind(limit)
             .fetch_all(pool)
             .await
-            .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to query top domains: {}", e)))?;
+            .map_err(|e| {
+                crate::TlsError::DatabaseError(format!("Failed to query top domains: {}", e))
+            })?;
 
             Ok(rows
                 .into_iter()
@@ -107,7 +109,9 @@ async fn get_top_domains_from_db(
             .bind(limit)
             .fetch_all(pool)
             .await
-            .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to query top domains: {}", e)))?;
+            .map_err(|e| {
+                crate::TlsError::DatabaseError(format!("Failed to query top domains: {}", e))
+            })?;
 
             Ok(rows
                 .into_iter()

@@ -2,13 +2,14 @@
 ///
 /// This test file verifies the strict revocation checking functionality,
 /// which can hard-fail when revocation checks encounter errors.
-
 #[cfg(test)]
 mod revocation_strict_tests {
+    use cipherrun::certificates::revocation::{
+        RevocationMethod, RevocationResult, RevocationStatus,
+    };
     use cipherrun::certificates::revocation_strict::{
         StrictRevocationChecker, StrictRevocationCheckerBuilder, StrictRevocationResult,
     };
-    use cipherrun::certificates::revocation::{RevocationStatus, RevocationMethod, RevocationResult};
 
     #[test]
     fn test_builder_defaults() {

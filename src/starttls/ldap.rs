@@ -52,7 +52,9 @@ impl StarttlsNegotiator for LdapNegotiator {
         let n = stream.read(&mut response).await?;
 
         if n == 0 {
-            return Err(crate::error::TlsError::ConnectionClosed { details: "LDAP server closed connection".to_string() });
+            return Err(crate::error::TlsError::ConnectionClosed {
+                details: "LDAP server closed connection".to_string(),
+            });
         }
 
         // Check for successful response
@@ -66,7 +68,10 @@ impl StarttlsNegotiator for LdapNegotiator {
             }
         }
 
-        Err(crate::error::TlsError::StarttlsError { protocol: "LDAP".to_string(), details: "STARTTLS negotiation failed".to_string() })
+        Err(crate::error::TlsError::StarttlsError {
+            protocol: "LDAP".to_string(),
+            details: "STARTTLS negotiation failed".to_string(),
+        })
     }
 
     fn protocol(&self) -> StarttlsProtocol {

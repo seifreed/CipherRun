@@ -56,7 +56,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Example 3: Extract unique domains from certificates
     println!("\nExample 3: Extract unique domains");
     println!("Use this with command-line piping:");
-    println!("  cipherrun --ct-logs --ct-json --ct-silent | jq -r '.certificate.subject_an[]' | sort -u");
+    println!(
+        "  cipherrun --ct-logs --ct-json --ct-silent | jq -r '.certificate.subject_an[]' | sort -u"
+    );
 
     // Example 4: Start from custom index for specific log
     println!("\nExample 4: Start from custom index");
@@ -66,7 +68,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Example 5: Monitor specific domains in CT logs
     println!("\nExample 5: Monitor for specific domains");
     println!("Use grep to filter for specific domains:");
-    println!("  cipherrun --ct-logs --ct-json --ct-silent | jq -r '.certificate.subject_an[]' | grep 'example.com'");
+    println!(
+        "  cipherrun --ct-logs --ct-json --ct-silent | jq -r '.certificate.subject_an[]' | grep 'example.com'"
+    );
 
     // Example 6: Performance tuning
     println!("\nExample 6: Performance tuning");
@@ -76,7 +80,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n=== Common Use Cases ===\n");
 
     println!("1. Subdomain Discovery:");
-    println!("   cipherrun --ct-logs --ct-json --ct-silent | jq -r '.certificate.subject_an[]' | grep '\\.example\\.com$' | sort -u\n");
+    println!(
+        "   cipherrun --ct-logs --ct-json --ct-silent | jq -r '.certificate.subject_an[]' | grep '\\.example\\.com$' | sort -u\n"
+    );
 
     println!("2. New Certificate Monitoring:");
     println!("   cipherrun --ct-logs | grep 'example.com'\n");
@@ -86,7 +92,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("4. Real-time Security Monitoring:");
     println!("   cipherrun --ct-logs --ct-json --ct-silent | while read line; do");
-    println!("     echo \"$line\" | jq -r '.certificate.subject_an[]' | grep -i 'malicious' && alert");
+    println!(
+        "     echo \"$line\" | jq -r '.certificate.subject_an[]' | grep -i 'malicious' && alert"
+    );
     println!("   done\n");
 
     println!("=== Statistics Output ===\n");

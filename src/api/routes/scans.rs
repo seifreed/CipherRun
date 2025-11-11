@@ -11,9 +11,9 @@ use crate::api::{
     ws::progress::scan_websocket_handler,
 };
 use axum::{
+    Json,
     extract::{Path, State, WebSocketUpgrade},
     response::{IntoResponse, Response},
-    Json,
 };
 use std::sync::Arc;
 use tracing::info;

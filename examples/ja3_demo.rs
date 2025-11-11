@@ -46,7 +46,11 @@ fn demo_chrome_fingerprint() {
     let ja3 = Ja3Fingerprint::from_client_hello(&client_hello);
 
     println!("  JA3 Hash:       {}", ja3.ja3_hash);
-    println!("  SSL Version:    {} ({})", ja3.ssl_version_name(), ja3.ssl_version);
+    println!(
+        "  SSL Version:    {} ({})",
+        ja3.ssl_version_name(),
+        ja3.ssl_version
+    );
     println!("  Cipher Suites:  {} suites", ja3.ciphers.len());
     println!("  Extensions:     {} extensions", ja3.extensions.len());
     println!("  Curves:         {} curves", ja3.curves.len());
@@ -75,7 +79,11 @@ fn demo_firefox_fingerprint() {
     let ja3 = Ja3Fingerprint::from_client_hello(&client_hello);
 
     println!("  JA3 Hash:       {}", ja3.ja3_hash);
-    println!("  SSL Version:    {} ({})", ja3.ssl_version_name(), ja3.ssl_version);
+    println!(
+        "  SSL Version:    {} ({})",
+        ja3.ssl_version_name(),
+        ja3.ssl_version
+    );
     println!("  Curve Names:    {}", ja3.curve_names().join(", "));
     println!("\n  JA3 String:");
     println!("  {}", ja3.ja3_string);
@@ -99,12 +107,15 @@ fn demo_grease_filtering() {
         vec![
             (0x0a0a, vec![]), // GREASE extension
             (0, vec![]),
-            (10, build_groups(&[
-                0x0a0a, // GREASE curve
-                0x001d, // X25519
-                0x1a1a, // GREASE curve
-                0x0017, // secp256r1
-            ])),
+            (
+                10,
+                build_groups(&[
+                    0x0a0a, // GREASE curve
+                    0x001d, // X25519
+                    0x1a1a, // GREASE curve
+                    0x0017, // secp256r1
+                ]),
+            ),
             (11, vec![1, 0]),
         ],
     );
@@ -117,9 +128,21 @@ fn demo_grease_filtering() {
     let ja3 = Ja3Fingerprint::from_client_hello(&client_hello);
 
     println!("\n  After GREASE filtering:");
-    println!("    Ciphers:    {} values -> {:?}", ja3.ciphers.len(), ja3.ciphers);
-    println!("    Extensions: {} values -> {:?}", ja3.extensions.len(), ja3.extensions);
-    println!("    Curves:     {} values -> {:?}", ja3.curves.len(), ja3.curves);
+    println!(
+        "    Ciphers:    {} values -> {:?}",
+        ja3.ciphers.len(),
+        ja3.ciphers
+    );
+    println!(
+        "    Extensions: {} values -> {:?}",
+        ja3.extensions.len(),
+        ja3.extensions
+    );
+    println!(
+        "    Curves:     {} values -> {:?}",
+        ja3.curves.len(),
+        ja3.curves
+    );
 
     println!("\n  JA3 Hash: {}", ja3.ja3_hash);
 }
@@ -129,7 +152,10 @@ fn demo_database_matching() {
 
     let db = Ja3Database::default();
 
-    println!("  Built-in database contains {} signatures\n", db.signatures().len());
+    println!(
+        "  Built-in database contains {} signatures\n",
+        db.signatures().len()
+    );
 
     // Test known signatures
     let test_hashes = vec![

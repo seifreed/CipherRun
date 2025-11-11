@@ -70,12 +70,33 @@ const HTML_TEMPLATE: &str = r#"<!DOCTYPE html>
         <section>
             <h2>Supported Protocols</h2>
             <table>
-                <thead><tr><th>Protocol</th><th>Status</th></tr></thead>
+                <thead><tr><th>Protocol</th><th>Status</th><th>Secure Renegotiation</th><th>Session Resumption (Caching)</th><th>Session Resumption (Tickets)</th></tr></thead>
                 <tbody>
                 {{#each protocols}}
                     <tr>
                         <td>{{protocol}}</td>
                         <td>{{#if supported}}<span class="status-success">Supported</span>{{else}}<span class="status-fail">Not Supported</span>{{/if}}</td>
+                        <td>
+                            {{#if secure_renegotiation}}
+                                <span class="status-success">Supported</span>
+                            {{else}}
+                                {{#if supported}}<span class="status-fail">Not supported</span>{{else}}-{{/if}}
+                            {{/if}}
+                        </td>
+                        <td>
+                            {{#if session_resumption_caching}}
+                                <span class="status-success">Yes</span>
+                            {{else}}
+                                {{#if supported}}<span class="status-fail">No (IDs empty)</span>{{else}}-{{/if}}
+                            {{/if}}
+                        </td>
+                        <td>
+                            {{#if session_resumption_tickets}}
+                                <span class="status-success">Yes</span>
+                            {{else}}
+                                {{#if supported}}<span class="status-fail">No</span>{{else}}-{{/if}}
+                            {{/if}}
+                        </td>
                     </tr>
                 {{/each}}
                 </tbody>

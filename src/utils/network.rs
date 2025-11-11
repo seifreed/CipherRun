@@ -9,7 +9,7 @@ use tokio::net::TcpStream;
 use tokio::time::timeout;
 
 /// Target information
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Target {
     pub hostname: String,
     pub port: u16,

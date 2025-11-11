@@ -2,11 +2,10 @@
 ///
 /// This test file verifies the DNS-only output mode functionality,
 /// which extracts unique domain names from certificates.
-
 #[cfg(test)]
 mod dns_only_tests {
-    use cipherrun::output::dns_only::DnsOnlyMode;
     use cipherrun::certificates::parser::CertificateInfo;
+    use cipherrun::output::dns_only::DnsOnlyMode;
 
     /// Helper to create a test certificate
     fn create_test_cert(subject: &str, san: Vec<String>) -> CertificateInfo {
@@ -48,10 +47,7 @@ mod dns_only_tests {
     fn test_extract_with_san_entries() {
         let cert = create_test_cert(
             "CN=example.com,O=Test",
-            vec![
-                "www.example.com".to_string(),
-                "api.example.com".to_string(),
-            ],
+            vec!["www.example.com".to_string(), "api.example.com".to_string()],
         );
         let domains = DnsOnlyMode::extract_domains(&cert);
 
@@ -63,10 +59,7 @@ mod dns_only_tests {
 
     #[test]
     fn test_wildcard_removal() {
-        let cert = create_test_cert(
-            "CN=*.example.com,O=Test",
-            vec!["*.example.com".to_string()],
-        );
+        let cert = create_test_cert("CN=*.example.com,O=Test", vec!["*.example.com".to_string()]);
         let domains = DnsOnlyMode::extract_domains(&cert);
 
         // Wildcards should be removed
@@ -93,10 +86,7 @@ mod dns_only_tests {
 
     #[test]
     fn test_case_insensitivity() {
-        let cert = create_test_cert(
-            "CN=EXAMPLE.COM,O=Test",
-            vec!["WWW.EXAMPLE.COM".to_string()],
-        );
+        let cert = create_test_cert("CN=EXAMPLE.COM,O=Test", vec!["WWW.EXAMPLE.COM".to_string()]);
         let domains = DnsOnlyMode::extract_domains(&cert);
 
         // All domains should be lowercase
@@ -107,10 +97,7 @@ mod dns_only_tests {
 
     #[test]
     fn test_format_output() {
-        let cert = create_test_cert(
-            "CN=example.com,O=Test",
-            vec!["www.example.com".to_string()],
-        );
+        let cert = create_test_cert("CN=example.com,O=Test", vec!["www.example.com".to_string()]);
         let output = DnsOnlyMode::format_output(&cert);
 
         let lines: Vec<&str> = output.lines().collect();
@@ -130,10 +117,7 @@ mod dns_only_tests {
 
     #[test]
     fn test_no_cn() {
-        let cert = create_test_cert(
-            "O=Test Org,C=US",
-            vec!["example.com".to_string()],
-        );
+        let cert = create_test_cert("O=Test Org,C=US", vec!["example.com".to_string()]);
         let domains = DnsOnlyMode::extract_domains(&cert);
 
         // Should only have the SAN entry

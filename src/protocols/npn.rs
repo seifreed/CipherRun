@@ -190,7 +190,7 @@ impl NpnTester {
 }
 
 /// NPN test result
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct NpnTestResult {
     pub supported: bool,
     pub protocols: Vec<String>,

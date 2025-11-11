@@ -32,8 +32,8 @@ impl MtlsConfig {
         _key_password: Option<&str>,
     ) -> Result<Self> {
         // Load certificates
-        let cert_file = File::open(cert_path.as_ref())
-            .map_err(|e| crate::error::TlsError::MtlsError {
+        let cert_file =
+            File::open(cert_path.as_ref()).map_err(|e| crate::error::TlsError::MtlsError {
                 message: format!("Failed to open certificate file: {}", e),
             })?;
         let mut cert_reader = BufReader::new(cert_file);
@@ -49,8 +49,8 @@ impl MtlsConfig {
         }
 
         // Load private key
-        let key_file = File::open(key_path.as_ref())
-            .map_err(|e| crate::error::TlsError::MtlsError {
+        let key_file =
+            File::open(key_path.as_ref()).map_err(|e| crate::error::TlsError::MtlsError {
                 message: format!("Failed to open private key file: {}", e),
             })?;
         let mut key_reader = BufReader::new(key_file);
@@ -87,10 +87,9 @@ impl MtlsConfig {
     /// Load mTLS configuration from a PEM file
     /// The PEM file should contain both the certificate chain and the private key
     pub fn from_pem_file<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let file = File::open(path.as_ref())
-            .map_err(|e| crate::error::TlsError::MtlsError {
-                message: format!("Failed to open mTLS PEM file: {}", e),
-            })?;
+        let file = File::open(path.as_ref()).map_err(|e| crate::error::TlsError::MtlsError {
+            message: format!("Failed to open mTLS PEM file: {}", e),
+        })?;
         let mut reader = BufReader::new(file);
 
         // Read all certificates from the PEM file
@@ -154,10 +153,8 @@ impl MtlsConfig {
                 })?
                 .with_root_certificates(root_store)
                 .with_client_auth_cert(self.cert_chain.clone(), self.private_key.clone_key())
-                .map_err(|e| {
-                    crate::error::TlsError::MtlsError {
-                        message: format!("Failed to build TLS config with client auth: {}", e),
-                    }
+                .map_err(|e| crate::error::TlsError::MtlsError {
+                    message: format!("Failed to build TLS config with client auth: {}", e),
                 })?;
 
         Ok(TlsConnector::from(Arc::new(config)))
@@ -176,10 +173,8 @@ impl MtlsConfig {
                 })?
                 .with_root_certificates(root_store)
                 .with_client_auth_cert(self.cert_chain.clone(), self.private_key.clone_key())
-                .map_err(|e| {
-                    crate::error::TlsError::MtlsError {
-                        message: format!("Failed to build TLS config with client auth: {}", e),
-                    }
+                .map_err(|e| crate::error::TlsError::MtlsError {
+                    message: format!("Failed to build TLS config with client auth: {}", e),
                 })?;
 
         Ok(TlsConnector::from(Arc::new(config)))

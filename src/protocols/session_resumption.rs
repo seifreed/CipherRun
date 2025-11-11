@@ -1,8 +1,8 @@
 // Session Resumption Testing - Complete Session Resume Analysis
 // Tests session IDs, session tickets (RFC 5077), and resumption behavior
 
-use crate::{Result, tls_bail};
 use crate::utils::network::Target;
+use crate::{Result, tls_bail};
 use openssl::ssl::{SslConnector, SslMethod, SslSessionCacheMode};
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpStream;

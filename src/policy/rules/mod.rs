@@ -5,8 +5,8 @@ pub mod cipher;
 pub mod protocol;
 pub mod vulnerability;
 
-use crate::policy::violation::PolicyViolation;
 use crate::Result;
+use crate::policy::violation::PolicyViolation;
 
 /// Trait for policy rules
 pub trait PolicyRule {

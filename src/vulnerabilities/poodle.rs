@@ -23,7 +23,7 @@ use crate::utils::network::Target;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
-use tokio::time::{timeout, Instant};
+use tokio::time::{Instant, timeout};
 
 /// POODLE vulnerability tester
 pub struct PoodleTester {
@@ -234,10 +234,8 @@ impl PoodleTester {
         }
 
         // Analyze responses for observable differences
-        let oracle_detected = self.detect_response_oracle(
-            &valid_mac_responses,
-            &invalid_mac_responses,
-        );
+        let oracle_detected =
+            self.detect_response_oracle(&valid_mac_responses, &invalid_mac_responses);
 
         Ok(PoodleVariantResult {
             variant: PoodleVariant::ZombiePoodle,
@@ -296,10 +294,8 @@ impl PoodleTester {
         }
 
         // Analyze responses for padding oracle
-        let oracle_detected = self.detect_response_oracle(
-            &valid_pad_responses,
-            &invalid_pad_responses,
-        );
+        let oracle_detected =
+            self.detect_response_oracle(&valid_pad_responses, &invalid_pad_responses);
 
         Ok(PoodleVariantResult {
             variant: PoodleVariant::GoldenDoodle,
@@ -497,7 +493,8 @@ impl PoodleTester {
 
                 // Read ServerHello and handshake messages
                 let mut buffer = vec![0u8; 8192];
-                let bytes_read = timeout(Duration::from_secs(3), stream.read(&mut buffer)).await??;
+                let bytes_read =
+                    timeout(Duration::from_secs(3), stream.read(&mut buffer)).await??;
 
                 if bytes_read == 0 {
                     return Ok(ServerResponse {
@@ -514,22 +511,18 @@ impl PoodleTester {
 
                 // Try to read response
                 let mut response = vec![0u8; 1024];
-                let alert_type = match timeout(
-                    Duration::from_secs(2),
-                    stream.read(&mut response),
-                )
-                .await
-                {
-                    Ok(Ok(n)) if n > 0 => {
-                        // Parse TLS alert if present
-                        if response[0] == 0x15 && n >= 7 {
-                            Some(response[6]) // Alert description
-                        } else {
-                            None
+                let alert_type =
+                    match timeout(Duration::from_secs(2), stream.read(&mut response)).await {
+                        Ok(Ok(n)) if n > 0 => {
+                            // Parse TLS alert if present
+                            if response[0] == 0x15 && n >= 7 {
+                                Some(response[6]) // Alert description
+                            } else {
+                                None
+                            }
                         }
-                    }
-                    _ => None,
-                };
+                        _ => None,
+                    };
 
                 Ok(ServerResponse {
                     connection_accepted: true,
@@ -910,7 +903,10 @@ mod tests {
         // Verify padding is invalid (inconsistent bytes)
         let padding = &record[record.len() - 7..];
         let first = padding[0];
-        assert!(padding.iter().any(|&b| b != first), "Padding should be inconsistent");
+        assert!(
+            padding.iter().any(|&b| b != first),
+            "Padding should be inconsistent"
+        );
 
         // Test valid padding invalid MAC record
         let record = tester.build_record_valid_padding_invalid_mac();

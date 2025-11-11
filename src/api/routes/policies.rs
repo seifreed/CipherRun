@@ -8,12 +8,12 @@ use crate::api::{
     },
     state::AppState,
 };
-use crate::policy::parser::PolicyLoader;
 use crate::policy::evaluator::PolicyEvaluator;
+use crate::policy::parser::PolicyLoader;
 use crate::scanner::Scanner;
 use axum::{
-    extract::{Path, State},
     Json,
+    extract::{Path, State},
 };
 use chrono::Utc;
 use std::fs;
@@ -64,7 +64,10 @@ pub async fn create_policy(
     let policy_content = format!(
         "# Policy: {}\n# Description: {}\n# Created: {}\n# Enabled: {}\n\n{}",
         request.name,
-        request.description.as_ref().unwrap_or(&"No description".to_string()),
+        request
+            .description
+            .as_ref()
+            .unwrap_or(&"No description".to_string()),
         Utc::now().to_rfc3339(),
         request.enabled,
         request.rules
@@ -222,8 +225,11 @@ pub async fn evaluate_policy(
 
     // Parse target (hostname:port)
     let parts: Vec<&str> = request.target.split(':').collect();
-    let hostname = parts.first().ok_or_else(|| ApiError::BadRequest("Invalid target format. Expected hostname:port".to_string()))?;
-    let port = parts.get(1)
+    let hostname = parts.first().ok_or_else(|| {
+        ApiError::BadRequest("Invalid target format. Expected hostname:port".to_string())
+    })?;
+    let port = parts
+        .get(1)
         .and_then(|p| p.parse::<u16>().ok())
         .unwrap_or(443);
 
@@ -234,7 +240,7 @@ pub async fn evaluate_policy(
         ..Default::default()
     };
 
-    let mut scanner = Scanner::new(args)
+    let scanner = Scanner::new(args)
         .map_err(|e| ApiError::Internal(format!("Failed to create scanner: {}", e)))?;
 
     let scan_results = scanner

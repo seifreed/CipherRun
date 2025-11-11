@@ -43,7 +43,10 @@ impl StarttlsNegotiator for TelnetNegotiator {
             // Server agrees to START_TLS
             Ok(())
         } else {
-            Err(crate::error::TlsError::StarttlsError { protocol: "Telnet".to_string(), details: "STARTTLS negotiation failed".to_string() })
+            Err(crate::error::TlsError::StarttlsError {
+                protocol: "Telnet".to_string(),
+                details: "STARTTLS negotiation failed".to_string(),
+            })
         }
     }
 

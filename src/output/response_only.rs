@@ -61,10 +61,10 @@ impl ResponseOnlyFormatter {
         // - "hostname:port"
         // - "[hostname:443]" (with port)
         let prefix_patterns = [
-            format!("[{}:{}]", hostname, port),    // [hostname:port]
-            format!("{}:{}", hostname, port),      // hostname:port
-            format!("[{}]", hostname),             // [hostname] (no port)
-            hostname.to_string(),                   // just hostname
+            format!("[{}:{}]", hostname, port), // [hostname:port]
+            format!("{}:{}", hostname, port),   // hostname:port
+            format!("[{}]", hostname),          // [hostname] (no port)
+            hostname.to_string(),               // just hostname
         ];
 
         for line in output.lines() {
@@ -88,7 +88,10 @@ impl ResponseOnlyFormatter {
             if line.starts_with(pattern) {
                 let remainder = line[pattern.len()..].trim();
                 // Also handle cases where there might be extra separators
-                let cleaned = remainder.trim_start_matches('-').trim_start_matches(':').trim();
+                let cleaned = remainder
+                    .trim_start_matches('-')
+                    .trim_start_matches(':')
+                    .trim();
                 if !cleaned.is_empty() {
                     return cleaned.to_string();
                 }
@@ -114,27 +117,21 @@ mod tests {
         ];
 
         // Test with bracket format
-        let result = ResponseOnlyFormatter::strip_line_prefix(
-            "[example.com:443] TLS 1.3",
-            &patterns,
-        );
+        let result =
+            ResponseOnlyFormatter::strip_line_prefix("[example.com:443] TLS 1.3", &patterns);
         assert_eq!(result, "TLS 1.3");
 
         // Test with simple format
-        let result =
-            ResponseOnlyFormatter::strip_line_prefix("example.com:443 TLS 1.3", &patterns);
+        let result = ResponseOnlyFormatter::strip_line_prefix("example.com:443 TLS 1.3", &patterns);
         assert_eq!(result, "TLS 1.3");
 
         // Test with colon separator
-        let result = ResponseOnlyFormatter::strip_line_prefix(
-            "example.com:443 - TLS 1.3",
-            &patterns,
-        );
+        let result =
+            ResponseOnlyFormatter::strip_line_prefix("example.com:443 - TLS 1.3", &patterns);
         assert_eq!(result, "TLS 1.3");
 
         // Test without prefix (should return as-is)
-        let result =
-            ResponseOnlyFormatter::strip_line_prefix("TLS 1.3", &patterns);
+        let result = ResponseOnlyFormatter::strip_line_prefix("TLS 1.3", &patterns);
         assert_eq!(result, "TLS 1.3");
     }
 

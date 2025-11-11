@@ -1,12 +1,12 @@
 // Dashboard Generator
 // Generate visualization-ready data (JSON for frontend charting)
 
-use crate::db::{CipherRunDatabase, ScanRecord};
 use crate::db::connection::DatabasePool;
-use chrono::{DateTime, Utc, Duration};
+use crate::db::{CipherRunDatabase, ScanRecord};
+use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DashboardData {
@@ -66,35 +66,49 @@ impl DashboardGenerator {
     }
 
     /// Generate complete dashboard data
-    pub async fn generate_dashboard(&self, hostname: &str, port: u16, days: i64) -> crate::Result<DashboardData> {
+    pub async fn generate_dashboard(
+        &self,
+        hostname: &str,
+        port: u16,
+        days: i64,
+    ) -> crate::Result<DashboardData> {
         let scans = self.db.get_scan_history(hostname, port, 100).await?;
 
         let cutoff = Utc::now() - Duration::days(days);
-        let filtered_scans: Vec<&ScanRecord> = scans.iter()
+        let filtered_scans: Vec<&ScanRecord> = scans
+            .iter()
             .filter(|s| s.scan_timestamp >= cutoff)
             .collect();
 
         if filtered_scans.is_empty() {
-            return Err(crate::TlsError::DatabaseError("No scans found in the specified time range".to_string()));
+            return Err(crate::TlsError::DatabaseError(
+                "No scans found in the specified time range".to_string(),
+            ));
         }
 
         // Generate rating timeseries
         let rating_timeseries = self.generate_rating_timeseries(&filtered_scans).await?;
 
         // Generate vulnerability distribution
-        let vulnerability_distribution = self.generate_vulnerability_distribution(&filtered_scans).await?;
+        let vulnerability_distribution = self
+            .generate_vulnerability_distribution(&filtered_scans)
+            .await?;
 
         // Generate protocol distribution
         let protocol_distribution = self.generate_protocol_distribution(&filtered_scans).await?;
 
         // Generate cipher strength distribution
-        let cipher_strength = self.generate_cipher_strength_distribution(&filtered_scans).await?;
+        let cipher_strength = self
+            .generate_cipher_strength_distribution(&filtered_scans)
+            .await?;
 
         // Generate top issues
         let top_issues = self.generate_top_issues(&filtered_scans).await?;
 
         // Generate summary
-        let summary = self.generate_summary(hostname, port, days, &filtered_scans, &top_issues).await?;
+        let summary = self
+            .generate_summary(hostname, port, days, &filtered_scans, &top_issues)
+            .await?;
 
         Ok(DashboardData {
             rating_timeseries,
@@ -118,7 +132,10 @@ impl DashboardGenerator {
 
     // Helper methods
 
-    async fn generate_rating_timeseries(&self, scans: &[&ScanRecord]) -> crate::Result<Vec<TimeSeriesPoint>> {
+    async fn generate_rating_timeseries(
+        &self,
+        scans: &[&ScanRecord],
+    ) -> crate::Result<Vec<TimeSeriesPoint>> {
         let mut timeseries = Vec::new();
 
         for scan in scans {
@@ -126,7 +143,10 @@ impl DashboardGenerator {
                 timeseries.push(TimeSeriesPoint {
                     timestamp: scan.scan_timestamp,
                     value: score as f64,
-                    label: scan.overall_grade.clone().unwrap_or_else(|| "N/A".to_string()),
+                    label: scan
+                        .overall_grade
+                        .clone()
+                        .unwrap_or_else(|| "N/A".to_string()),
                 });
             }
         }
@@ -137,7 +157,10 @@ impl DashboardGenerator {
         Ok(timeseries)
     }
 
-    async fn generate_vulnerability_distribution(&self, scans: &[&ScanRecord]) -> crate::Result<Vec<DistributionPoint>> {
+    async fn generate_vulnerability_distribution(
+        &self,
+        scans: &[&ScanRecord],
+    ) -> crate::Result<Vec<DistributionPoint>> {
         let mut severity_counts: HashMap<String, usize> = HashMap::new();
 
         for scan in scans {
@@ -175,7 +198,10 @@ impl DashboardGenerator {
         Ok(distribution)
     }
 
-    async fn generate_protocol_distribution(&self, scans: &[&ScanRecord]) -> crate::Result<Vec<DistributionPoint>> {
+    async fn generate_protocol_distribution(
+        &self,
+        scans: &[&ScanRecord],
+    ) -> crate::Result<Vec<DistributionPoint>> {
         let mut protocol_counts: HashMap<String, usize> = HashMap::new();
 
         for scan in scans {
@@ -183,14 +209,17 @@ impl DashboardGenerator {
                 let protocols = self.get_protocols(scan_id).await?;
                 for protocol in protocols {
                     if protocol.enabled {
-                        *protocol_counts.entry(protocol.protocol_name.clone()).or_insert(0) += 1;
+                        *protocol_counts
+                            .entry(protocol.protocol_name.clone())
+                            .or_insert(0) += 1;
                     }
                 }
             }
         }
 
         let total: usize = protocol_counts.values().sum();
-        let mut distribution: Vec<DistributionPoint> = protocol_counts.into_iter()
+        let mut distribution: Vec<DistributionPoint> = protocol_counts
+            .into_iter()
             .map(|(label, value)| {
                 let percentage = if total > 0 {
                     (value as f64 / total as f64) * 100.0
@@ -223,7 +252,10 @@ impl DashboardGenerator {
         Ok(distribution)
     }
 
-    async fn generate_cipher_strength_distribution(&self, scans: &[&ScanRecord]) -> crate::Result<Vec<DistributionPoint>> {
+    async fn generate_cipher_strength_distribution(
+        &self,
+        scans: &[&ScanRecord],
+    ) -> crate::Result<Vec<DistributionPoint>> {
         let mut strength_counts: HashMap<String, usize> = HashMap::new();
 
         for scan in scans {
@@ -236,7 +268,9 @@ impl DashboardGenerator {
                         "strong" | "high" => "strong",
                         _ => "unknown",
                     };
-                    *strength_counts.entry(strength_category.to_string()).or_insert(0) += 1;
+                    *strength_counts
+                        .entry(strength_category.to_string())
+                        .or_insert(0) += 1;
                 }
             }
         }
@@ -282,7 +316,8 @@ impl DashboardGenerator {
             }
         }
 
-        let mut issues: Vec<IssueItem> = issue_tracker.into_iter()
+        let mut issues: Vec<IssueItem> = issue_tracker
+            .into_iter()
             .map(|(title, (severity, timestamps))| {
                 let first_seen = timestamps.iter().min().copied().unwrap_or_else(Utc::now);
                 let last_seen = timestamps.iter().max().copied().unwrap_or_else(Utc::now);
@@ -309,7 +344,9 @@ impl DashboardGenerator {
             let a_severity = severity_order(&a.severity);
             let b_severity = severity_order(&b.severity);
 
-            a_severity.cmp(&b_severity).then_with(|| b.count.cmp(&a.count))
+            a_severity
+                .cmp(&b_severity)
+                .then_with(|| b.count.cmp(&a.count))
         });
 
         // Take top 10
@@ -331,9 +368,7 @@ impl DashboardGenerator {
         let latest_grade = latest.and_then(|s| s.overall_grade.clone());
         let latest_score = latest.and_then(|s| s.overall_score);
 
-        let scores: Vec<i32> = scans.iter()
-            .filter_map(|s| s.overall_score)
-            .collect();
+        let scores: Vec<i32> = scans.iter().filter_map(|s| s.overall_score).collect();
 
         let avg_score = if scores.is_empty() {
             0.0
@@ -342,7 +377,8 @@ impl DashboardGenerator {
         };
 
         let total_vulnerabilities = top_issues.iter().map(|i| i.count).sum();
-        let critical_vulnerabilities = top_issues.iter()
+        let critical_vulnerabilities = top_issues
+            .iter()
             .filter(|i| i.severity == "critical")
             .map(|i| i.count)
             .sum();
@@ -363,7 +399,10 @@ impl DashboardGenerator {
 
     // Database helper methods
 
-    async fn get_vulnerabilities(&self, scan_id: i64) -> crate::Result<Vec<crate::db::VulnerabilityRecord>> {
+    async fn get_vulnerabilities(
+        &self,
+        scan_id: i64,
+    ) -> crate::Result<Vec<crate::db::VulnerabilityRecord>> {
         use crate::db::VulnerabilityRecord;
 
         match self.db.pool() {

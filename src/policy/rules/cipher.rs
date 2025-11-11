@@ -1,10 +1,10 @@
 // Cipher policy rules
 
-use crate::ciphers::tester::ProtocolCipherSummary;
-use crate::policy::violation::PolicyViolation;
-use crate::policy::CipherPolicy;
-use crate::protocols::Protocol;
 use crate::Result;
+use crate::ciphers::tester::ProtocolCipherSummary;
+use crate::policy::CipherPolicy;
+use crate::policy::violation::PolicyViolation;
+use crate::protocols::Protocol;
 use regex::Regex;
 use std::collections::HashMap;
 
@@ -121,15 +121,16 @@ impl<'a> CipherRule<'a> {
                     for pattern in patterns {
                         if let Ok(re) = Regex::new(pattern) {
                             // Check both OpenSSL and IANA names
-                            if re.is_match(&cipher.openssl_name)
-                                || re.is_match(&cipher.iana_name)
-                            {
+                            if re.is_match(&cipher.openssl_name) || re.is_match(&cipher.iana_name) {
                                 violations.push(
                                     PolicyViolation::new(
                                         "ciphers.prohibited_patterns",
                                         "Prohibited Cipher Pattern",
                                         self.policy.action,
-                                        format!("Prohibited cipher detected: {}", cipher.openssl_name),
+                                        format!(
+                                            "Prohibited cipher detected: {}",
+                                            cipher.openssl_name
+                                        ),
                                     )
                                     .with_evidence(format!(
                                         "Protocol: {}, Cipher: {} (matches pattern: {})",

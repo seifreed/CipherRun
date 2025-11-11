@@ -3,8 +3,8 @@
 use crate::api::models::response::ProgressMessage;
 use axum::{
     extract::{
-        ws::{Message, WebSocket},
         State, WebSocketUpgrade,
+        ws::{Message, WebSocket},
     },
     response::Response,
 };
@@ -19,10 +19,7 @@ pub struct WsState {
 }
 
 /// Handle WebSocket upgrade
-pub async fn handle_websocket(
-    ws: WebSocketUpgrade,
-    State(state): State<Arc<WsState>>,
-) -> Response {
+pub async fn handle_websocket(ws: WebSocketUpgrade, State(state): State<Arc<WsState>>) -> Response {
     ws.on_upgrade(move |socket| websocket_handler(socket, state))
 }
 

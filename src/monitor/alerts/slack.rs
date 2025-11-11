@@ -1,9 +1,9 @@
 // Slack Alert Channel - Webhook integration
 
+use crate::Result;
 use crate::monitor::alerts::{Alert, AlertChannel, AlertType};
 use crate::monitor::config::SlackConfig;
 use crate::monitor::detector::ChangeSeverity;
-use crate::Result;
 use async_trait::async_trait;
 use serde_json::json;
 
@@ -159,12 +159,9 @@ impl AlertChannel for SlackChannel {
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await?;
-            return Err(anyhow::anyhow!(
-                "Slack webhook returned status {}: {}",
-                status,
-                body
-            )
-            .into());
+            return Err(
+                anyhow::anyhow!("Slack webhook returned status {}: {}", status, body).into(),
+            );
         }
 
         Ok(())
@@ -187,9 +184,7 @@ impl AlertChannel for SlackChannel {
             .await?;
 
         if !response.status().is_success() {
-            return Err(
-                anyhow::anyhow!("Slack webhook test failed: {}", response.status()).into(),
-            );
+            return Err(anyhow::anyhow!("Slack webhook test failed: {}", response.status()).into());
         }
 
         Ok(())
@@ -219,28 +214,30 @@ mod tests {
         let config = create_test_config();
         let channel = SlackChannel::new(config);
 
-        let alert = Alert::scan_failure(
-            "example.com".to_string(),
-            "Connection refused".to_string(),
-        );
+        let alert =
+            Alert::scan_failure("example.com".to_string(), "Connection refused".to_string());
 
         let message = channel.format_message(&alert);
 
         assert!(message["attachments"].is_array());
-        assert!(message["attachments"][0]["title"]
-            .as_str()
-            .unwrap()
-            .contains("Alert"));
-        assert!(message["attachments"][0]["text"]
-            .as_str()
-            .unwrap()
-            .contains("example.com"));
+        assert!(
+            message["attachments"][0]["title"]
+                .as_str()
+                .unwrap()
+                .contains("Alert")
+        );
+        assert!(
+            message["attachments"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("example.com")
+        );
     }
 
     #[test]
     fn test_format_message_with_changes() {
-        use crate::monitor::detector::{ChangeEvent, ChangeType};
         use crate::monitor::alerts::AlertDetails;
+        use crate::monitor::detector::{ChangeEvent, ChangeType};
         use chrono::Utc;
 
         let config = create_test_config();

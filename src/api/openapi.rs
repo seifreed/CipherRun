@@ -12,8 +12,8 @@ use crate::api::{
     routes,
 };
 use utoipa::{
-    openapi::security::{ApiKey, ApiKeyValue, SecurityScheme},
     Modify, OpenApi,
+    openapi::security::{ApiKey, ApiKeyValue, SecurityScheme},
 };
 
 /// OpenAPI documentation structure

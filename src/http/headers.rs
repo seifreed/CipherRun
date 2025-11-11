@@ -1,8 +1,8 @@
 // HTTP Security Headers Checker - Validate security headers
 
+use super::hsts_preload::PreloadStatus;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use super::hsts_preload::PreloadStatus;
 
 /// Security header issue severity
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -71,7 +71,9 @@ impl SecurityHeaderChecker {
         let checker = HstsPreloadChecker::new();
 
         // Check if HSTS has preload directive
-        let has_preload = if let Some((_, value)) = Self::find_header_case_insensitive(headers, "strict-transport-security") {
+        let has_preload = if let Some((_, value)) =
+            Self::find_header_case_insensitive(headers, "strict-transport-security")
+        {
             value.to_lowercase().contains("preload")
         } else {
             false

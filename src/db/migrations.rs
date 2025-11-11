@@ -3,8 +3,8 @@
 
 use crate::db::connection::DatabasePool;
 use sqlx::migrate::Migrator;
-use std::path::Path;
 use std::fs;
+use std::path::Path;
 use std::path::PathBuf;
 
 /// Run database migrations
@@ -13,23 +13,22 @@ pub async fn run_migrations(pool: &DatabasePool) -> crate::Result<()> {
 
     if !migrations_path.exists() {
         return Err(crate::TlsError::DatabaseError(
-            "Migrations directory not found".to_string()
+            "Migrations directory not found".to_string(),
         ));
     }
 
     match pool {
         DatabasePool::Postgres(pg_pool) => {
-            let mut migrator = Migrator::new(migrations_path)
-                .await
-                .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to create migrator: {}", e)))?;
+            let mut migrator = Migrator::new(migrations_path).await.map_err(|e| {
+                crate::TlsError::DatabaseError(format!("Failed to create migrator: {}", e))
+            })?;
 
             // Disable locking for PostgreSQL
             migrator.set_locking(false);
 
-            migrator
-                .run(pg_pool)
-                .await
-                .map_err(|e| crate::TlsError::DatabaseError(format!("PostgreSQL migration failed: {}", e)))?;
+            migrator.run(pg_pool).await.map_err(|e| {
+                crate::TlsError::DatabaseError(format!("PostgreSQL migration failed: {}", e))
+            })?;
         }
         DatabasePool::Sqlite(sqlite_pool) => {
             // For SQLite, use a manual migration approach to avoid sqlx's migration tracking issues
@@ -42,7 +41,10 @@ pub async fn run_migrations(pool: &DatabasePool) -> crate::Result<()> {
 }
 
 /// Manually run SQLite migrations by executing SQL files directly
-async fn run_sqlite_migrations_manual(pool: &sqlx::SqlitePool, migrations_path: &Path) -> crate::Result<()> {
+async fn run_sqlite_migrations_manual(
+    pool: &sqlx::SqlitePool,
+    migrations_path: &Path,
+) -> crate::Result<()> {
     // Note: Foreign keys are disabled by default in SQLite and are not enforced in these tests
     // In production, they would need to be explicitly enabled if desired
 
@@ -57,15 +59,19 @@ async fn run_sqlite_migrations_manual(pool: &sqlx::SqlitePool, migrations_path: 
             execution_time BIGINT NOT NULL,
             checksum BLOB NOT NULL
         )
-        "#
+        "#,
     )
     .execute(pool)
     .await
-    .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to create migrations table: {}", e)))?;
+    .map_err(|e| {
+        crate::TlsError::DatabaseError(format!("Failed to create migrations table: {}", e))
+    })?;
 
     // Find all .sql migration files in migrations directory
     let mut migration_files: Vec<PathBuf> = fs::read_dir(migrations_path)
-        .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to read migrations directory: {}", e)))?
+        .map_err(|e| {
+            crate::TlsError::DatabaseError(format!("Failed to read migrations directory: {}", e))
+        })?
         .filter_map(|entry| {
             let entry = entry.ok()?;
             let path = entry.path();
@@ -81,9 +87,12 @@ async fn run_sqlite_migrations_manual(pool: &sqlx::SqlitePool, migrations_path: 
     migration_files.sort();
 
     for migration_file in migration_files {
-        let filename = migration_file.file_name()
+        let filename = migration_file
+            .file_name()
             .and_then(|name| name.to_str())
-            .ok_or_else(|| crate::TlsError::DatabaseError("Invalid migration filename".to_string()))?
+            .ok_or_else(|| {
+                crate::TlsError::DatabaseError("Invalid migration filename".to_string())
+            })?
             .to_string();
 
         // Extract version from filename (e.g., "20250109_001_create_scans_table.sql" -> 20250109001)
@@ -93,32 +102,46 @@ async fn run_sqlite_migrations_manual(pool: &sqlx::SqlitePool, migrations_path: 
             .filter(|c| c.is_numeric())
             .collect::<String>();
 
-        let version: i64 = version_str.parse()
-            .map_err(|_| crate::TlsError::DatabaseError(format!("Failed to parse migration version from {}", filename)))?;
+        let version: i64 = version_str.parse().map_err(|_| {
+            crate::TlsError::DatabaseError(format!(
+                "Failed to parse migration version from {}",
+                filename
+            ))
+        })?;
 
         // Check if migration has already been run
-        let already_run: bool = sqlx::query_scalar(
-            "SELECT COUNT(*) > 0 FROM _sqlx_migrations WHERE version = ?"
-        )
-        .bind(version)
-        .fetch_one(pool)
-        .await
-        .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to check migration status: {}", e)))?;
+        let already_run: bool =
+            sqlx::query_scalar("SELECT COUNT(*) > 0 FROM _sqlx_migrations WHERE version = ?")
+                .bind(version)
+                .fetch_one(pool)
+                .await
+                .map_err(|e| {
+                    crate::TlsError::DatabaseError(format!(
+                        "Failed to check migration status: {}",
+                        e
+                    ))
+                })?;
 
         if already_run {
             continue; // Migration already applied
         }
 
         // Read and execute migration SQL
-        let sql_content = fs::read_to_string(&migration_file)
-            .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to read migration file {}: {}", filename, e)))?;
+        let sql_content = fs::read_to_string(&migration_file).map_err(|e| {
+            crate::TlsError::DatabaseError(format!(
+                "Failed to read migration file {}: {}",
+                filename, e
+            ))
+        })?;
 
         // Execute the SQL (sqlx will handle multiple statements)
         for statement in sql_content.split(';').filter(|s| !s.trim().is_empty()) {
-            sqlx::query(statement)
-                .execute(pool)
-                .await
-                .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to execute migration {}: {}", filename, e)))?;
+            sqlx::query(statement).execute(pool).await.map_err(|e| {
+                crate::TlsError::DatabaseError(format!(
+                    "Failed to execute migration {}: {}",
+                    filename, e
+                ))
+            })?;
         }
 
         // Record migration as applied
@@ -149,16 +172,14 @@ pub async fn revert_migration(pool: &DatabasePool) -> crate::Result<()> {
 
     match pool {
         DatabasePool::Postgres(pg_pool) => {
-            migrator
-                .undo(pg_pool, 1)
-                .await
-                .map_err(|e| crate::TlsError::DatabaseError(format!("PostgreSQL migration revert failed: {}", e)))?;
+            migrator.undo(pg_pool, 1).await.map_err(|e| {
+                crate::TlsError::DatabaseError(format!("PostgreSQL migration revert failed: {}", e))
+            })?;
         }
         DatabasePool::Sqlite(sqlite_pool) => {
-            migrator
-                .undo(sqlite_pool, 1)
-                .await
-                .map_err(|e| crate::TlsError::DatabaseError(format!("SQLite migration revert failed: {}", e)))?;
+            migrator.undo(sqlite_pool, 1).await.map_err(|e| {
+                crate::TlsError::DatabaseError(format!("SQLite migration revert failed: {}", e))
+            })?;
         }
     }
 

@@ -68,13 +68,28 @@ impl FrameworkLoader {
     /// List all available built-in frameworks
     pub fn list_builtin_frameworks() -> Vec<(&'static str, &'static str)> {
         vec![
-            ("pci-dss-v4", "PCI-DSS v4.0.1 - Payment Card Industry Data Security Standard"),
-            ("nist-sp800-52r2", "NIST SP 800-52 Revision 2 - Guidelines for TLS"),
-            ("hipaa", "HIPAA - Health Insurance Portability and Accountability Act"),
+            (
+                "pci-dss-v4",
+                "PCI-DSS v4.0.1 - Payment Card Industry Data Security Standard",
+            ),
+            (
+                "nist-sp800-52r2",
+                "NIST SP 800-52 Revision 2 - Guidelines for TLS",
+            ),
+            (
+                "hipaa",
+                "HIPAA - Health Insurance Portability and Accountability Act",
+            ),
             ("soc2", "SOC 2 - Service Organization Control 2"),
             ("mozilla-modern", "Mozilla Modern TLS Configuration"),
-            ("mozilla-intermediate", "Mozilla Intermediate TLS Configuration"),
-            ("gdpr", "GDPR - General Data Protection Regulation (encryption requirements)"),
+            (
+                "mozilla-intermediate",
+                "Mozilla Intermediate TLS Configuration",
+            ),
+            (
+                "gdpr",
+                "GDPR - General Data Protection Regulation (encryption requirements)",
+            ),
         ]
     }
 }

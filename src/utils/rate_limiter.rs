@@ -234,7 +234,10 @@ mod tests {
 
     #[test]
     fn test_parse_delay_with_whitespace() {
-        assert_eq!(parse_delay("  500ms  ").unwrap(), Duration::from_millis(500));
+        assert_eq!(
+            parse_delay("  500ms  ").unwrap(),
+            Duration::from_millis(500)
+        );
         assert_eq!(parse_delay("  2s  ").unwrap(), Duration::from_secs(2));
     }
 

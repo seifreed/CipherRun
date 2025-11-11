@@ -2,11 +2,10 @@
 ///
 /// This test file verifies the custom DNS resolver functionality,
 /// allowing users to specify custom DNS servers for resolution.
-
 #[cfg(test)]
 mod custom_resolver_tests {
     use cipherrun::utils::custom_resolvers::CustomResolver;
-    use std::net::{IpAddr, SocketAddr};
+    use std::net::SocketAddr;
     use std::str::FromStr;
 
     #[test]

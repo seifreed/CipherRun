@@ -3,13 +3,13 @@
 // Implements continuous streaming of CT logs with statistics
 
 use super::{
-    client::CtClient, parser::Parser, sources::SourceManager,
-    stats::StatsTracker, CtLogEntry, Result,
+    CtLogEntry, Result, client::CtClient, parser::Parser, sources::SourceManager,
+    stats::StatsTracker,
 };
 use crate::error::TlsError;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tokio::signal;
 use tokio::sync::mpsc;
@@ -77,7 +77,7 @@ impl CtStreamer {
 
         if source_manager.total_sources() == 0 {
             return Err(TlsError::ConfigError {
-                message: "No CT log sources available".to_string()
+                message: "No CT log sources available".to_string(),
             });
         }
 
@@ -137,7 +137,7 @@ impl CtStreamer {
         let sources = self.source_manager.get_healthy_sources();
         if sources.is_empty() {
             return Err(TlsError::ConfigError {
-                message: "No healthy CT log sources".to_string()
+                message: "No healthy CT log sources".to_string(),
             });
         }
 
@@ -158,14 +158,7 @@ impl CtStreamer {
 
             let handle = tokio::spawn(async move {
                 Self::stream_source(
-                    source_id,
-                    source_url,
-                    client,
-                    parser,
-                    tx,
-                    stats,
-                    shutdown,
-                    config,
+                    source_id, source_url, client, parser, tx, stats, shutdown, config,
                 )
                 .await
             });
@@ -201,9 +194,10 @@ impl CtStreamer {
 
         // Wait for stats reporter
         if let Some(handle) = stats_handle
-            && let Err(e) = handle.await {
-                error!("Stats reporter failed: {}", e);
-            }
+            && let Err(e) = handle.await
+        {
+            error!("Stats reporter failed: {}", e);
+        }
 
         // Print final statistics
         if !self.config.silent {
@@ -230,7 +224,10 @@ impl CtStreamer {
 
         // Determine starting index
         let mut current_index = if let Some(&custom_index) = config.custom_indices.get(&source_id) {
-            info!("Starting from custom index {} for {}", custom_index, source_id);
+            info!(
+                "Starting from custom index {} for {}",
+                custom_index, source_id
+            );
             custom_index
         } else if config.start_from_beginning {
             info!("Starting from beginning (index 0) for {}", source_id);
@@ -239,7 +236,10 @@ impl CtStreamer {
             // Start from current tree size (now mode)
             match client.get_tree_size(&source_url).await {
                 Ok(tree_size) => {
-                    info!("Starting from current tree size {} for {}", tree_size, source_id);
+                    info!(
+                        "Starting from current tree size {} for {}",
+                        tree_size, source_id
+                    );
                     tree_size
                 }
                 Err(e) => {
@@ -264,7 +264,10 @@ impl CtStreamer {
 
             // Check if we're caught up
             if current_index >= tree_size {
-                debug!("Caught up with log {} (index: {}, tree size: {})", source_id, current_index, tree_size);
+                debug!(
+                    "Caught up with log {} (index: {}, tree size: {})",
+                    source_id, current_index, tree_size
+                );
                 sleep(config.poll_interval).await;
                 continue;
             }
@@ -279,7 +282,10 @@ impl CtStreamer {
 
             // Fetch batch
             let fetch_start = std::time::Instant::now();
-            let entries = match client.get_entries(&source_url, current_index, batch_end).await {
+            let entries = match client
+                .get_entries(&source_url, current_index, batch_end)
+                .await
+            {
                 Ok(entries) => entries,
                 Err(e) => {
                     error!("Failed to fetch entries for {}: {}", source_id, e);
@@ -313,7 +319,10 @@ impl CtStreamer {
                         }
                     }
                     Err(e) => {
-                        debug!("Failed to parse entry {} from {}: {}", entry_index, source_id, e);
+                        debug!(
+                            "Failed to parse entry {} from {}: {}",
+                            entry_index, source_id, e
+                        );
                     }
                 }
             }
@@ -342,7 +351,8 @@ impl CtStreamer {
 
     /// Print a certificate entry (human-readable)
     fn print_entry(entry: &CtLogEntry) {
-        println!("\n[{}] Certificate from {} (index {})",
+        println!(
+            "\n[{}] Certificate from {} (index {})",
             entry.timestamp.format("%Y-%m-%d %H:%M:%S"),
             entry.log_source,
             entry.index

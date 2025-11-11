@@ -88,7 +88,11 @@ impl CertificateValidator {
     }
 
     /// Create validator with full configuration
-    pub fn with_config(hostname: String, skip_warnings: bool, enable_platform_trust: bool) -> Result<Self> {
+    pub fn with_config(
+        hostname: String,
+        skip_warnings: bool,
+        enable_platform_trust: bool,
+    ) -> Result<Self> {
         Ok(Self {
             hostname,
             skip_warnings,
@@ -490,6 +494,7 @@ mod tests {
             fingerprint_sha256: None,
             debian_weak_key: None,
             aia_url: None,
+            certificate_transparency: None,
             der_bytes: vec![],
         };
 
@@ -523,6 +528,7 @@ mod tests {
             fingerprint_sha256: None,
             debian_weak_key: None,
             aia_url: None,
+            certificate_transparency: None,
             der_bytes: vec![],
         };
 

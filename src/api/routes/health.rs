@@ -1,7 +1,7 @@
 // Health Check Route
 
 use crate::api::{models::response::HealthResponse, state::AppState};
-use axum::{extract::State, Json};
+use axum::{Json, extract::State};
 use std::sync::Arc;
 
 /// Health check endpoint
@@ -45,17 +45,15 @@ async fn check_database_health(db: &crate::db::connection::DatabasePool) -> crat
 
     match db {
         DatabasePool::Postgres(pool) => {
-            sqlx::query("SELECT 1")
-                .fetch_one(pool)
-                .await
-                .map_err(|e| crate::TlsError::DatabaseError(format!("Database health check failed: {}", e)))?;
+            sqlx::query("SELECT 1").fetch_one(pool).await.map_err(|e| {
+                crate::TlsError::DatabaseError(format!("Database health check failed: {}", e))
+            })?;
             Ok(())
         }
         DatabasePool::Sqlite(pool) => {
-            sqlx::query("SELECT 1")
-                .fetch_one(pool)
-                .await
-                .map_err(|e| crate::TlsError::DatabaseError(format!("Database health check failed: {}", e)))?;
+            sqlx::query("SELECT 1").fetch_one(pool).await.map_err(|e| {
+                crate::TlsError::DatabaseError(format!("Database health check failed: {}", e))
+            })?;
             Ok(())
         }
     }

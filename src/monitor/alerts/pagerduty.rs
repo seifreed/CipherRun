@@ -1,9 +1,9 @@
 // PagerDuty Alert Channel - Events API v2
 
+use crate::Result;
 use crate::monitor::alerts::{Alert, AlertChannel, AlertType};
 use crate::monitor::config::PagerDutyConfig;
 use crate::monitor::detector::ChangeSeverity;
-use crate::Result;
 use async_trait::async_trait;
 use serde_json::json;
 
@@ -112,12 +112,9 @@ impl AlertChannel for PagerDutyChannel {
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await?;
-            return Err(anyhow::anyhow!(
-                "PagerDuty API returned status {}: {}",
-                status,
-                body
-            )
-            .into());
+            return Err(
+                anyhow::anyhow!("PagerDuty API returned status {}: {}", status, body).into(),
+            );
         }
 
         Ok(())
@@ -152,9 +149,7 @@ impl AlertChannel for PagerDutyChannel {
             .await?;
 
         if !response.status().is_success() {
-            return Err(
-                anyhow::anyhow!("PagerDuty test failed: {}", response.status()).into(),
-            );
+            return Err(anyhow::anyhow!("PagerDuty test failed: {}", response.status()).into());
         }
 
         Ok(())
@@ -184,7 +179,10 @@ mod tests {
         let config = create_test_config();
         let channel = PagerDutyChannel::new(config);
 
-        assert_eq!(channel.severity_to_pd(&ChangeSeverity::Critical), "critical");
+        assert_eq!(
+            channel.severity_to_pd(&ChangeSeverity::Critical),
+            "critical"
+        );
         assert_eq!(channel.severity_to_pd(&ChangeSeverity::High), "error");
         assert_eq!(channel.severity_to_pd(&ChangeSeverity::Medium), "warning");
         assert_eq!(channel.severity_to_pd(&ChangeSeverity::Low), "info");
@@ -196,18 +194,18 @@ mod tests {
         let config = create_test_config();
         let channel = PagerDutyChannel::new(config);
 
-        let alert = Alert::scan_failure(
-            "example.com".to_string(),
-            "Connection refused".to_string(),
-        );
+        let alert =
+            Alert::scan_failure("example.com".to_string(), "Connection refused".to_string());
 
         let event = channel.format_event(&alert);
 
         assert_eq!(event["routing_key"], "test_integration_key");
         assert_eq!(event["event_action"], "trigger");
-        assert!(event["payload"]["summary"]
-            .as_str()
-            .unwrap()
-            .contains("example.com"));
+        assert!(
+            event["payload"]["summary"]
+                .as_str()
+                .unwrap()
+                .contains("example.com")
+        );
     }
 }

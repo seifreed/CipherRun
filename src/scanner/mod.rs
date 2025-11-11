@@ -2,6 +2,11 @@
 
 pub mod mass;
 
+// Multi-IP modules - Scanner is now Send-compatible, enabling parallel IP scanning
+pub mod aggregation;
+pub mod inconsistency;
+pub mod multi_ip;
+
 use crate::certificates::{
     parser::{CertificateChain, CertificateParser},
     revocation::{RevocationChecker, RevocationResult},
@@ -17,14 +22,19 @@ use crate::utils::network::Target;
 use crate::vulnerabilities::{VulnerabilityResult, tester::VulnerabilityScanner};
 use crate::{Args, Result};
 use colored::*;
+use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Instant;
 
 /// Main scanner struct
+///
+/// Now Send + Sync compatible for parallel async execution via tokio::spawn.
+/// Uses Arc<RwLock<Target>> for interior mutability to allow &self methods.
 pub struct Scanner {
     pub args: Args,
-    target: Target,
+    target: Arc<RwLock<Target>>,
     mtls_config: Option<MtlsConfig>,
 }
 
@@ -62,37 +72,72 @@ impl Scanner {
 
         Ok(Self {
             args,
-            target,
+            target: Arc::new(RwLock::new(target)),
             mtls_config,
         })
     }
 
     /// Initialize target with DNS resolution
-    pub async fn initialize(&mut self) -> Result<()> {
+    pub async fn initialize(&self) -> Result<()> {
         let target_str = self
             .args
             .target
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("No target specified"))?;
 
-        self.target = Target::parse(target_str).await?;
+        let parsed_target = Target::parse(target_str).await?;
+        *self.target.write() = parsed_target;
         Ok(())
     }
 
+    /// Get a cloned copy of the target
+    fn get_target(&self) -> Target {
+        self.target.read().clone()
+    }
+
+    /// Set the target (used by multi-IP scanner to override target for single IP scans)
+    pub fn set_target(&self, target: Target) {
+        *self.target.write() = target;
+    }
+
+    /// Set the target (used by multi-IP scanner to override target for single IP scans)
     /// Run complete scan
-    pub async fn run(&mut self) -> Result<ScanResults> {
+    pub async fn run(&self) -> Result<ScanResults> {
         let start_time = Instant::now();
 
-        // Initialize target
-        self.initialize().await?;
+        // Initialize target only if it hasn't been initialized yet (no IPs)
+        // This prevents re-resolving DNS when scan_single_ip already set a specific IP
+        let needs_init = {
+            let target = self.target.read();
+            target.ip_addresses.is_empty()
+        };
+        if needs_init {
+            self.initialize().await?;
+        }
+
+        // Check if multi-IP scanning is enabled
+        // By default, scan all IPs unless --first-ip-only is specified
+        let should_run_multi_ip = {
+            let target = self.target.read();
+            target.ip_addresses.len() > 1 && !self.args.first_ip_only
+        };
+
+        if should_run_multi_ip {
+            return self.run_multi_ip_scan().await;
+        }
 
         // Check for STARTTLS mode
+        let (hostname, port) = {
+            let target = self.target.read();
+            (target.hostname.clone(), target.port)
+        };
+
         if let Some(starttls_proto) = self.args.starttls_protocol() {
             println!(
                 "\n{} {}:{} ({})\n",
                 "Starting scan of".cyan().bold(),
-                self.target.hostname.green().bold(),
-                self.target.port.to_string().green().bold(),
+                hostname.green().bold(),
+                port.to_string().green().bold(),
                 format!("STARTTLS {}", starttls_proto).yellow()
             );
             println!(
@@ -103,13 +148,13 @@ impl Scanner {
             println!(
                 "\n{} {}:{}\n",
                 "Starting scan of".cyan().bold(),
-                self.target.hostname.green().bold(),
-                self.target.port.to_string().green().bold()
+                hostname.green().bold(),
+                port.to_string().green().bold()
             );
         }
 
         let mut results = ScanResults {
-            target: format!("{}:{}", self.target.hostname, self.target.port),
+            target: format!("{}:{}", hostname, port),
             scan_time_ms: 0,
             ..Default::default()
         };
@@ -233,36 +278,46 @@ impl Scanner {
 
         // Phase 12: JA3S TLS Server Fingerprinting
         if self.args.ja3s {
-            println!("\n{}", "Generating JA3S Server Fingerprint...".yellow().bold());
+            println!(
+                "\n{}",
+                "Generating JA3S Server Fingerprint...".yellow().bold()
+            );
             let ja3s_result = self.capture_ja3s().await.ok();
             if let Some((ja3s, server_hello_raw)) = ja3s_result {
                 results.ja3s_fingerprint = Some(ja3s.clone());
 
                 // Match against database
-                let ja3s_db = crate::fingerprint::Ja3sDatabase::load_default()
-                    .unwrap_or_else(|e| {
+                let ja3s_db = match crate::fingerprint::Ja3sDatabase::load_default() {
+                    Ok(db) => db,
+                    Err(e) => {
                         eprintln!("Warning: Failed to load JA3S database: {}", e);
-                        panic!("Cannot continue without JA3S database");
-                    });
+                        eprintln!("Continuing without JA3S signature matching");
+                        crate::fingerprint::Ja3sDatabase::empty()
+                    }
+                };
 
                 results.ja3s_match = ja3s_db.match_fingerprint(&ja3s.ja3s_hash).cloned();
 
                 // CDN detection
                 if let Some(ref http_headers) = results.http_headers {
-                    let header_map: std::collections::HashMap<String, String> = http_headers.headers.iter()
+                    let header_map: std::collections::HashMap<String, String> = http_headers
+                        .headers
+                        .iter()
                         .map(|(k, v)| (k.clone(), v.clone()))
                         .collect();
 
-                    results.cdn_detection = Some(crate::fingerprint::CdnDetection::from_ja3s_and_headers(
-                        &ja3s,
-                        results.ja3s_match.as_ref(),
-                        &header_map,
-                    ));
+                    results.cdn_detection =
+                        Some(crate::fingerprint::CdnDetection::from_ja3s_and_headers(
+                            &ja3s,
+                            results.ja3s_match.as_ref(),
+                            &header_map,
+                        ));
 
-                    results.load_balancer_info = Some(crate::fingerprint::LoadBalancerInfo::from_ja3s_and_headers(
-                        results.ja3s_match.as_ref(),
-                        &header_map,
-                    ));
+                    results.load_balancer_info =
+                        Some(crate::fingerprint::LoadBalancerInfo::from_ja3s_and_headers(
+                            results.ja3s_match.as_ref(),
+                            &header_map,
+                        ));
                 }
 
                 // Store raw ServerHello if requested
@@ -278,13 +333,30 @@ impl Scanner {
 
         // Phase 13: JARM TLS Server Active Fingerprinting
         if self.args.jarm {
-            println!("\n{}", "Generating JARM Server Fingerprint...".yellow().bold());
+            println!(
+                "\n{}",
+                "Generating JARM Server Fingerprint...".yellow().bold()
+            );
             let jarm_result = self.fingerprint_jarm().await.ok();
             if let Some(jarm) = jarm_result {
                 results.jarm_fingerprint = Some(jarm.clone());
                 self.display_jarm_results(&jarm);
             } else {
                 println!("  {}", "Failed to generate JARM fingerprint".red());
+            }
+        }
+
+        // Phase 14: ALPN Protocol Negotiation
+        if self.args.all {
+            println!(
+                "\n{}",
+                "Testing ALPN Protocol Negotiation...".yellow().bold()
+            );
+            results.alpn_result = self.test_alpn().await.ok();
+            if let Some(ref alpn) = results.alpn_result {
+                self.display_alpn_results(alpn);
+            } else {
+                println!("  {}", "Failed to test ALPN".red());
             }
         }
 
@@ -303,10 +375,11 @@ impl Scanner {
 
     /// Test all protocols
     async fn test_protocols(&self) -> Result<Vec<ProtocolTestResult>> {
+        let target = self.get_target();
         let mut tester = if let Some(ref mtls_config) = self.mtls_config {
-            ProtocolTester::with_mtls(self.target.clone(), mtls_config.clone())
+            ProtocolTester::with_mtls(target.clone(), mtls_config.clone())
         } else {
-            ProtocolTester::new(self.target.clone())
+            ProtocolTester::new(target.clone())
         };
 
         // Enable RDP mode if specified
@@ -347,7 +420,7 @@ impl Scanner {
         &self,
         protocol_results: &[ProtocolTestResult],
     ) -> Result<HashMap<Protocol, ProtocolCipherSummary>> {
-        let mut tester = CipherTester::new(self.target.clone());
+        let mut tester = CipherTester::new(self.get_target());
 
         // Apply connect timeout if specified
         if let Some(timeout_secs) = self.args.connect_timeout {
@@ -392,25 +465,26 @@ impl Scanner {
 
     /// Test vulnerabilities
     async fn test_vulnerabilities(&self) -> Result<Vec<VulnerabilityResult>> {
-        let scanner = VulnerabilityScanner::with_args(self.target.clone(), &self.args);
+        let scanner = VulnerabilityScanner::with_args(self.get_target(), &self.args);
         scanner.test_all().await
     }
 
     /// Analyze certificate
     async fn analyze_certificate(&self) -> Result<CertificateAnalysisResult> {
+        let target = self.get_target();
         // Parse certificate chain
         let parser = if let Some(ref mtls_config) = self.mtls_config {
-            CertificateParser::with_mtls(self.target.clone(), mtls_config.clone())
+            CertificateParser::with_mtls(target.clone(), mtls_config.clone())
         } else {
-            CertificateParser::new(self.target.clone())
+            CertificateParser::new(target.clone())
         };
         let chain = parser.get_certificate_chain().await?;
 
         // Validate certificate with platform trust validation enabled
         let validator = if self.args.no_check_certificate {
-            CertificateValidator::with_config(self.target.hostname.clone(), true, true)?
+            CertificateValidator::with_config(target.hostname.clone(), true, true)?
         } else {
-            CertificateValidator::with_platform_trust(self.target.hostname.clone())?
+            CertificateValidator::with_platform_trust(target.hostname.clone())?
         };
         let validation = validator.validate_chain(&chain)?;
 
@@ -463,9 +537,9 @@ impl Scanner {
                     }
                 })
                 .collect();
-            HeaderAnalyzer::with_custom_headers(self.target.clone(), custom_headers)
+            HeaderAnalyzer::with_custom_headers(self.get_target(), custom_headers)
         } else {
-            HeaderAnalyzer::new(self.target.clone())
+            HeaderAnalyzer::new(self.get_target())
         };
 
         // Apply sneaky mode user agent if enabled
@@ -478,7 +552,7 @@ impl Scanner {
 
     /// Simulate client connections
     async fn simulate_clients(&self) -> Result<Vec<ClientSimulationResult>> {
-        let simulator = ClientSimulator::new(self.target.clone());
+        let simulator = ClientSimulator::new(self.get_target());
         // Simulate popular clients for faster scanning
         simulator.simulate_popular_clients().await
     }
@@ -488,21 +562,21 @@ impl Scanner {
         &self,
     ) -> Result<crate::protocols::signatures::SignatureEnumerationResult> {
         use crate::protocols::signatures::SignatureTester;
-        let tester = SignatureTester::new(self.target.clone());
+        let tester = SignatureTester::new(self.get_target());
         tester.enumerate_signatures().await
     }
 
     /// Enumerate key exchange groups
     async fn enumerate_groups(&self) -> Result<crate::protocols::groups::GroupEnumerationResult> {
         use crate::protocols::groups::GroupTester;
-        let tester = GroupTester::new(self.target.clone());
+        let tester = GroupTester::new(self.get_target());
         tester.enumerate_groups().await
     }
 
     /// Enumerate client CAs
     async fn enumerate_client_cas(&self) -> Result<crate::protocols::client_cas::ClientCAsResult> {
         use crate::protocols::client_cas::ClientCAsTester;
-        let tester = ClientCAsTester::new(self.target.clone());
+        let tester = ClientCAsTester::new(self.get_target());
         tester.enumerate_client_cas().await
     }
 
@@ -511,8 +585,56 @@ impl Scanner {
         &self,
     ) -> Result<crate::protocols::intolerance::IntoleranceTestResult> {
         use crate::protocols::intolerance::IntoleranceTester;
-        let tester = IntoleranceTester::new(self.target.clone());
+        let tester = IntoleranceTester::new(self.get_target());
         tester.test_all().await
+    }
+
+    /// Test ALPN protocol negotiation
+    async fn test_alpn(&self) -> Result<crate::protocols::alpn::AlpnReport> {
+        use crate::protocols::alpn::AlpnTester;
+        let tester = AlpnTester::new(self.get_target());
+        tester.get_comprehensive_report().await
+    }
+
+    /// Display ALPN results
+    fn display_alpn_results(&self, alpn_report: &crate::protocols::alpn::AlpnReport) {
+        println!("\n{}", "ALPN Protocol Negotiation:".cyan().bold());
+        println!("{}", "=".repeat(50));
+
+        if alpn_report.alpn_enabled {
+            println!("  {} ALPN is enabled", "✓".green().bold());
+
+            if !alpn_report.alpn_result.supported_protocols.is_empty() {
+                println!("\n  Supported Protocols:");
+                for proto in &alpn_report.alpn_result.supported_protocols {
+                    println!("    - {}", proto.green());
+                }
+
+                if let Some(ref negotiated) = alpn_report.alpn_result.negotiated_protocol {
+                    println!("\n  Server Preferred: {}", negotiated.cyan().bold());
+                }
+            }
+
+            if alpn_report.alpn_result.http2_supported {
+                println!("\n  {} HTTP/2 (h2) is supported", "✓".green().bold());
+            }
+
+            if alpn_report.alpn_result.http3_supported {
+                println!("\n  {} HTTP/3 (h3) is supported", "✓".green().bold());
+            }
+        } else {
+            println!(
+                "  {} ALPN is not enabled or no protocols supported",
+                "✗".red()
+            );
+        }
+
+        if !alpn_report.recommendations.is_empty() {
+            println!("\n  Recommendations:");
+            for rec in &alpn_report.recommendations {
+                println!("    - {}", rec.yellow());
+            }
+        }
     }
 
     /// Calculate SSL Labs rating
@@ -530,10 +652,13 @@ impl Scanner {
     /// Capture JA3 fingerprint
     async fn capture_ja3(
         &self,
-    ) -> Result<(crate::fingerprint::ClientHelloCapture, crate::fingerprint::Ja3Fingerprint)> {
+    ) -> Result<(
+        crate::fingerprint::ClientHelloCapture,
+        crate::fingerprint::Ja3Fingerprint,
+    )> {
         use crate::fingerprint::ClientHelloNetworkCapture;
 
-        let capture = ClientHelloNetworkCapture::new(self.target.clone());
+        let capture = ClientHelloNetworkCapture::new(self.get_target());
         capture.capture_and_fingerprint().await
     }
 
@@ -559,10 +684,7 @@ impl Scanner {
 
         if !ja3.curves.is_empty() {
             let curve_names = ja3.curve_names();
-            println!(
-                "  Named Curves:   {}",
-                curve_names.join(", ").cyan()
-            );
+            println!("  Named Curves:   {}", curve_names.join(", ").cyan());
         }
 
         println!("\n  JA3 String:");
@@ -602,9 +724,9 @@ impl Scanner {
 
     /// Capture JA3S fingerprint
     async fn capture_ja3s(&self) -> Result<(crate::fingerprint::Ja3sFingerprint, Vec<u8>)> {
-        use crate::fingerprint::{ServerHelloNetworkCapture, Ja3sFingerprint};
+        use crate::fingerprint::{Ja3sFingerprint, ServerHelloNetworkCapture};
 
-        let capturer = ServerHelloNetworkCapture::new(self.target.clone());
+        let capturer = ServerHelloNetworkCapture::new(self.get_target());
         let server_hello = capturer.capture()?;
         let server_hello_raw = server_hello.to_bytes();
         let ja3s = Ja3sFingerprint::from_server_hello(&server_hello);
@@ -648,11 +770,15 @@ impl Scanner {
             println!("{}", "-".repeat(50));
 
             println!("  Name:         {}", sig.name.green().bold());
-            println!("  Type:         {}", format!("{}", sig.server_type).yellow());
+            println!(
+                "  Type:         {}",
+                format!("{}", sig.server_type).yellow()
+            );
             println!("  Description:  {}", sig.description);
 
             if !sig.common_ports.is_empty() {
-                let ports_str: Vec<String> = sig.common_ports.iter().map(|p| p.to_string()).collect();
+                let ports_str: Vec<String> =
+                    sig.common_ports.iter().map(|p| p.to_string()).collect();
                 println!("  Common Ports: {}", ports_str.join(", ").cyan());
             }
 
@@ -716,18 +842,19 @@ impl Scanner {
 
             for result in results {
                 if result.supported
-                    && let Some(heartbeat_enabled) = result.heartbeat_enabled {
-                        let heartbeat_status = if heartbeat_enabled {
-                            "Yes".yellow()
-                        } else {
-                            "No".normal()
-                        };
+                    && let Some(heartbeat_enabled) = result.heartbeat_enabled
+                {
+                    let heartbeat_status = if heartbeat_enabled {
+                        "Yes".yellow()
+                    } else {
+                        "No".normal()
+                    };
 
-                        println!(
-                            "  {:<15} Heartbeat Extension: {}",
-                            result.protocol, heartbeat_status
-                        );
-                    }
+                    println!(
+                        "  {:<15} Heartbeat Extension: {}",
+                        result.protocol, heartbeat_status
+                    );
+                }
             }
         }
     }
@@ -860,7 +987,10 @@ impl Scanner {
                 } else {
                     key_size.to_string().red()
                 };
-                print!("  Key Size:   {} bits ({})", key_color, cert.public_key_algorithm);
+                print!(
+                    "  Key Size:   {} bits ({})",
+                    key_color, cert.public_key_algorithm
+                );
 
                 // Show RSA exponent if available
                 if let Some(ref exponent) = cert.rsa_exponent {
@@ -888,7 +1018,12 @@ impl Scanner {
 
             // Show Debian weak key warning if detected
             if let Some(true) = cert.debian_weak_key {
-                println!("  {}",  "⚠ WARNING: Debian Weak Key Detected (CVE-2008-0166)".red().bold());
+                println!(
+                    "  {}",
+                    "⚠ WARNING: Debian Weak Key Detected (CVE-2008-0166)"
+                        .red()
+                        .bold()
+                );
             }
 
             if !cert.san.is_empty() {
@@ -1101,7 +1236,8 @@ impl Scanner {
 
         if result.http_status_code.is_some()
             || result.redirect_location.is_some()
-            || result.server_hostname.is_some() {
+            || result.server_hostname.is_some()
+        {
             println!();
         }
 
@@ -1178,7 +1314,10 @@ impl Scanner {
     }
 
     /// Display per-platform trust store breakdown (Gap 2 - SSL Labs style)
-    fn display_platform_trust_breakdown(&self, platform_trust: &crate::certificates::trust_stores::TrustValidationResult) {
+    fn display_platform_trust_breakdown(
+        &self,
+        platform_trust: &crate::certificates::trust_stores::TrustValidationResult,
+    ) {
         use crate::certificates::trust_stores::TrustStore;
 
         println!("\n{}", "Platform Trust Status:".cyan());
@@ -1222,14 +1361,12 @@ impl Scanner {
         if !untrusted.is_empty() {
             let untrusted_names: Vec<String> = untrusted
                 .iter()
-                .map(|store| {
-                    match store {
-                        TrustStore::Mozilla => "Mozilla".to_string(),
-                        TrustStore::Apple => "Apple".to_string(),
-                        TrustStore::Android => "Android".to_string(),
-                        TrustStore::Java => "Java".to_string(),
-                        TrustStore::Windows => "Windows".to_string(),
-                    }
+                .map(|store| match store {
+                    TrustStore::Mozilla => "Mozilla".to_string(),
+                    TrustStore::Apple => "Apple".to_string(),
+                    TrustStore::Android => "Android".to_string(),
+                    TrustStore::Java => "Java".to_string(),
+                    TrustStore::Windows => "Windows".to_string(),
                 })
                 .collect();
 
@@ -1256,7 +1393,12 @@ impl Scanner {
                         } else {
                             root.clone()
                         };
-                        println!("    {} {} - {}", status_symbol, platform_name.cyan(), root_display.dimmed());
+                        println!(
+                            "    {} {} - {}",
+                            status_symbol,
+                            platform_name.cyan(),
+                            root_display.dimmed()
+                        );
                     } else {
                         println!("    {} {}", status_symbol, platform_name.cyan());
                     }
@@ -1266,7 +1408,12 @@ impl Scanner {
                     } else {
                         status.message.clone()
                     };
-                    println!("    {} {} - {}", status_symbol, platform_name.cyan(), message_display.dimmed());
+                    println!(
+                        "    {} {} - {}",
+                        status_symbol,
+                        platform_name.cyan(),
+                        message_display.dimmed()
+                    );
                 }
             }
         }
@@ -1288,7 +1435,11 @@ impl Scanner {
             println!("  Grade:  {:?}", hsts.grade);
             if hsts.enabled {
                 if let Some(max_age) = hsts.max_age {
-                    println!("    max-age:          {} ({} days)", max_age, max_age / 86400);
+                    println!(
+                        "    max-age:          {} ({} days)",
+                        max_age,
+                        max_age / 86400
+                    );
                 }
                 println!("    includeSubDomains: {}", hsts.include_subdomains);
                 println!("    preload:           {}", hsts.preload);
@@ -1297,11 +1448,12 @@ impl Scanner {
 
         // HPKP Analysis (informational)
         if let Some(hpkp) = &result.hpkp_analysis
-            && hpkp.enabled {
-                println!("\n{}", "HPKP Analysis:".cyan());
-                println!("  {} {}", "⚠".yellow(), hpkp.details.yellow());
-                println!("  Pins: {}", hpkp.pins.len());
-            }
+            && hpkp.enabled
+        {
+            println!("\n{}", "HPKP Analysis:".cyan());
+            println!("  {} {}", "⚠".yellow(), hpkp.details.yellow());
+            println!("  Pins: {}", hpkp.pins.len());
+        }
 
         // Cookie Analysis
         if let Some(cookies) = &result.cookie_analysis {
@@ -1345,19 +1497,20 @@ impl Scanner {
 
         // Date/Time Check
         if let Some(datetime) = &result.datetime_check
-            && let Some(server_date) = &datetime.server_date {
-                println!("\n{}", "Server Time:".cyan());
-                let sync_status = if datetime.synchronized {
-                    "✓ Synchronized".green()
-                } else {
-                    "⚠ Out of sync".yellow()
-                };
-                println!("  {}", sync_status);
-                println!("  Server Date: {}", server_date);
-                if let Some(skew) = datetime.skew_seconds {
-                    println!("  Time Skew:   {} seconds", skew);
-                }
+            && let Some(server_date) = &datetime.server_date
+        {
+            println!("\n{}", "Server Time:".cyan());
+            let sync_status = if datetime.synchronized {
+                "✓ Synchronized".green()
+            } else {
+                "⚠ Out of sync".yellow()
+            };
+            println!("  {}", sync_status);
+            println!("  Server Date: {}", server_date);
+            if let Some(skew) = datetime.skew_seconds {
+                println!("  Time Skew:   {} seconds", skew);
             }
+        }
 
         // Banner Detection
         if let Some(banners) = &result.banner_detection {
@@ -1390,29 +1543,30 @@ impl Scanner {
 
         // Reverse Proxy Detection
         if let Some(proxy) = &result.reverse_proxy_detection
-            && proxy.detected {
-                println!("\n{}", "Reverse Proxy:".cyan());
-                println!("  {}", proxy.details);
-                if let Some(proxy_type) = &proxy.proxy_type {
-                    println!("  Type: {}", proxy_type.cyan());
-                }
-                if let Some(via) = &proxy.via_header {
-                    println!("  Via: {}", via);
-                }
-                let mut headers_found = Vec::new();
-                if proxy.x_forwarded_for {
-                    headers_found.push("X-Forwarded-For");
-                }
-                if proxy.x_real_ip {
-                    headers_found.push("X-Real-IP");
-                }
-                if proxy.x_forwarded_proto {
-                    headers_found.push("X-Forwarded-Proto");
-                }
-                if !headers_found.is_empty() {
-                    println!("  Headers: {}", headers_found.join(", "));
-                }
+            && proxy.detected
+        {
+            println!("\n{}", "Reverse Proxy:".cyan());
+            println!("  {}", proxy.details);
+            if let Some(proxy_type) = &proxy.proxy_type {
+                println!("  Type: {}", proxy_type.cyan());
             }
+            if let Some(via) = &proxy.via_header {
+                println!("  Via: {}", via);
+            }
+            let mut headers_found = Vec::new();
+            if proxy.x_forwarded_for {
+                headers_found.push("X-Forwarded-For");
+            }
+            if proxy.x_real_ip {
+                headers_found.push("X-Real-IP");
+            }
+            if proxy.x_forwarded_proto {
+                headers_found.push("X-Forwarded-Proto");
+            }
+            if !headers_found.is_empty() {
+                println!("  Headers: {}", headers_found.join(", "));
+            }
+        }
     }
 
     /// Display client simulation results
@@ -1730,11 +1884,7 @@ impl Scanner {
                 println!("  {}", detail.dimmed());
             }
         } else {
-            println!(
-                "\n{} {}",
-                "✓".green(),
-                "Extension Intolerance".green()
-            );
+            println!("\n{} {}", "✓".green(), "Extension Intolerance".green());
             println!("  Server properly handles TLS extensions");
         }
 
@@ -1770,22 +1920,14 @@ impl Scanner {
                 println!("  {}", detail.dimmed());
             }
         } else {
-            println!(
-                "\n{} {}",
-                "✓".green(),
-                "Long Handshake Intolerance".green()
-            );
+            println!("\n{} {}", "✓".green(), "Long Handshake Intolerance".green());
             println!("  Server accepts long ClientHello messages");
         }
 
         // Incorrect SNI alerts
         if results.incorrect_sni_alerts {
             issues_found += 1;
-            println!(
-                "\n{} {}",
-                "✗".red().bold(),
-                "Incorrect SNI Alerts".red()
-            );
+            println!("\n{} {}", "✗".red().bold(), "Incorrect SNI Alerts".red());
             println!(
                 "  {}",
                 "Server sends wrong alert type for SNI failures".yellow()
@@ -1801,11 +1943,7 @@ impl Scanner {
         // Common DH primes
         if results.uses_common_dh_primes {
             issues_found += 1;
-            println!(
-                "\n{} {}",
-                "✗".red().bold(),
-                "Common DH Primes".red().bold()
-            );
+            println!("\n{} {}", "✗".red().bold(), "Common DH Primes".red().bold());
             println!(
                 "  {}",
                 "Server uses known weak DH primes (CRITICAL SECURITY ISSUE)"
@@ -1824,10 +1962,7 @@ impl Scanner {
         // Summary
         println!("\n{}", "=".repeat(50));
         if issues_found == 0 {
-            println!(
-                "{}",
-                "✓ No TLS intolerance issues detected!".green().bold()
-            );
+            println!("{}", "✓ No TLS intolerance issues detected!".green().bold());
         } else {
             println!(
                 "{} {} intolerance issue(s) detected",
@@ -1846,8 +1981,11 @@ impl Scanner {
         // Load custom database if specified, otherwise use builtin
         let database = if let Some(ref db_path) = self.args.jarm_database {
             crate::fingerprint::JarmDatabase::from_file(
-                db_path.to_str().ok_or_else(|| anyhow::anyhow!("Invalid JARM database path"))?
-            ).unwrap_or_else(|e| {
+                db_path
+                    .to_str()
+                    .ok_or_else(|| anyhow::anyhow!("Invalid JARM database path"))?,
+            )
+            .unwrap_or_else(|e| {
                 eprintln!("Warning: Failed to load custom JARM database: {}", e);
                 eprintln!("Falling back to builtin database");
                 crate::fingerprint::JarmDatabase::builtin()
@@ -1862,12 +2000,16 @@ impl Scanner {
         let fingerprinter = JarmFingerprinter::with_database(timeout, database);
 
         // Get first IP address
-        let ip = self.target.ip_addresses.first()
+        let target = self.get_target();
+        let ip = target
+            .ip_addresses
+            .first()
             .ok_or_else(|| anyhow::anyhow!("No IP address resolved for target"))?;
 
-        let addr = std::net::SocketAddr::new(*ip, self.target.port);
+        let addr = std::net::SocketAddr::new(*ip, target.port);
 
-        fingerprinter.fingerprint(addr, &self.target.hostname)
+        fingerprinter
+            .fingerprint(addr, &target.hostname)
             .await
             .map_err(|e| e.into())
     }
@@ -1899,9 +2041,13 @@ impl Scanner {
                 };
                 println!("  Threat Level:   {}", threat_display);
 
-                if threat_level.to_lowercase() == "critical" || threat_level.to_lowercase() == "high" {
-                    println!("\n  {} This fingerprint is associated with known malicious infrastructure!",
-                        "WARNING:".red().bold());
+                if threat_level.to_lowercase() == "critical"
+                    || threat_level.to_lowercase() == "high"
+                {
+                    println!(
+                        "\n  {} This fingerprint is associated with known malicious infrastructure!",
+                        "WARNING:".red().bold()
+                    );
                 }
             }
         } else {
@@ -1912,16 +2058,46 @@ impl Scanner {
         }
 
         // Show number of successful probes
-        let successful_probes = jarm.raw_responses.iter()
-            .filter(|r| *r != "|||")
-            .count();
+        let successful_probes = jarm.raw_responses.iter().filter(|r| *r != "|||").count();
         println!("\n  Successful Probes: {}/10", successful_probes);
 
         if successful_probes == 0 {
-            println!("  {} All JARM probes failed (server may be offline or blocking)", "⚠".yellow());
+            println!(
+                "  {} All JARM probes failed (server may be offline or blocking)",
+                "⚠".yellow()
+            );
         } else if successful_probes < 10 {
-            println!("  {} Some JARM probes failed (partial fingerprint)", "ℹ".cyan());
+            println!(
+                "  {} Some JARM probes failed (partial fingerprint)",
+                "ℹ".cyan()
+            );
         }
+    }
+
+    /// Run multi-IP scan (scan all IPs in parallel)
+    async fn run_multi_ip_scan(&self) -> Result<ScanResults> {
+        use crate::scanner::multi_ip::MultiIpScanner;
+
+        // Create multi-IP scanner
+        let target = self.get_target();
+        let scanner = MultiIpScanner::new(target.clone(), self.args.clone());
+
+        // Execute parallel scans
+        let report = scanner.scan_all_ips().await?;
+
+        // For now, return the first successful scan result
+        // In future, this will be replaced with proper aggregation and display
+        for result in report.per_ip_results.values() {
+            if result.is_successful() {
+                return Ok(result.scan_result.clone());
+            }
+        }
+
+        // If no successful scans, return error
+        Err(crate::TlsError::Other(format!(
+            "All {} IP address scans failed",
+            target.ip_addresses.len()
+        )))
     }
 }
 
@@ -1964,6 +2140,9 @@ pub struct ScanResults {
 
     // JARM TLS Server Fingerprinting
     pub jarm_fingerprint: Option<crate::fingerprint::JarmFingerprint>,
+
+    // ALPN/NPN Protocol Negotiation
+    pub alpn_result: Option<crate::protocols::alpn::AlpnReport>,
 
     // HIGH PRIORITY Features (4-10)
     pub pre_handshake_used: bool,
@@ -2060,7 +2239,9 @@ impl ScanResults {
                     "medium" => "⚠".yellow().to_string(),
                     _ => "✓".green().to_string(),
                 };
-                format!("{} {}", threat_indicator, sig.name).cyan().to_string()
+                format!("{} {}", threat_indicator, sig.name)
+                    .cyan()
+                    .to_string()
             } else {
                 "Unknown client".dimmed().to_string()
             };

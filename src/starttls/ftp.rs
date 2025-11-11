@@ -32,7 +32,7 @@ impl FtpNegotiator {
             let code: u16 = line[0..3]
                 .parse()
                 .map_err(|_| crate::error::TlsError::ParseError {
-                    message: "Invalid FTP status code".to_string()
+                    message: "Invalid FTP status code".to_string(),
                 })?;
 
             if first_code == 0 {
@@ -74,7 +74,11 @@ impl StarttlsNegotiator for FtpNegotiator {
             if code == 502 {
                 tls_bail!("FTP server does not support AUTH TLS");
             }
-            tls_bail!("FTP AUTH TLS failed: expected 234, got {}: {}", code, response);
+            tls_bail!(
+                "FTP AUTH TLS failed: expected 234, got {}: {}",
+                code,
+                response
+            );
         }
 
         // STARTTLS negotiation successful

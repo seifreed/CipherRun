@@ -70,11 +70,7 @@ impl ProbeStatus {
 
     /// Get status symbol for terminal output
     pub fn status_symbol(&self) -> &'static str {
-        if self.success {
-            "✓"
-        } else {
-            "✗"
-        }
+        if self.success { "✓" } else { "✗" }
     }
 
     /// Get status color for terminal output
@@ -124,12 +120,7 @@ impl ProbeStatus {
                 .map(|e| Self::simplify_error(e))
                 .unwrap_or_else(|| "unknown error".to_string());
 
-            format!(
-                "{} {} ({})",
-                symbol_colored,
-                target.cyan(),
-                error_msg.red()
-            )
+            format!("{} {} ({})", symbol_colored, target.cyan(), error_msg.red())
         }
     }
 
@@ -304,11 +295,13 @@ impl ProbeStatistics {
         println!("{}", "=".repeat(50));
 
         println!("  Total Targets:        {}", self.total_targets);
-        println!("  Successful:           {} ({}%)",
+        println!(
+            "  Successful:           {} ({}%)",
             self.successful.to_string().green(),
             self.success_rate()
         );
-        println!("  Failed:               {} ({}%)",
+        println!(
+            "  Failed:               {} ({}%)",
             self.failed.to_string().red(),
             self.failure_rate()
         );

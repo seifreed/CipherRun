@@ -137,7 +137,7 @@ impl MassScanner {
                 // Perform scan
                 let scanner = MassScanner::create_scanner(&args, &target);
                 let result = match scanner {
-                    Ok(mut s) => s.run().await,
+                    Ok(s) => s.run().await,
                     Err(e) => Err(e),
                 };
 
@@ -164,7 +164,7 @@ impl MassScanner {
 
     /// Scan a single target
     async fn scan_single_target(&self, target: &str) -> Result<ScanResults> {
-        let mut scanner = Self::create_scanner(&self.args, target)?;
+        let scanner = Self::create_scanner(&self.args, target)?;
         scanner.run().await
     }
 
@@ -200,7 +200,11 @@ impl MassScanner {
         };
 
         // Extract hostname from target (format: "hostname:port")
-        let hostname = scan_result.target.split(':').next().unwrap_or(&scan_result.target);
+        let hostname = scan_result
+            .target
+            .split(':')
+            .next()
+            .unwrap_or(&scan_result.target);
 
         // Create certificate status
         let cert_status = CertificateStatus::from_validation_result(

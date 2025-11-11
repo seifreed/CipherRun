@@ -26,7 +26,7 @@ pub struct CertificateInfo {
     pub public_key_algorithm: String,
     pub public_key_size: Option<usize>,
     pub rsa_exponent: Option<String>, // RSA public key exponent (e.g., "e 65537"), None for non-RSA keys
-    pub san: Vec<String>, // Subject Alternative Names
+    pub san: Vec<String>,             // Subject Alternative Names
     pub is_ca: bool,
     pub key_usage: Vec<String>,
     pub extended_key_usage: Vec<String>,
@@ -34,8 +34,9 @@ pub struct CertificateInfo {
     pub ev_oids: Vec<String>,
     pub pin_sha256: Option<String>, // Base64-encoded SHA256 hash of public key (HPKP per RFC 7469)
     pub fingerprint_sha256: Option<String>, // SHA256 hash of entire DER-encoded certificate (colon-separated hex)
-    pub debian_weak_key: Option<bool>, // CVE-2008-0166: Debian OpenSSL weak key (legacy check)
+    pub debian_weak_key: Option<bool>,      // CVE-2008-0166: Debian OpenSSL weak key (legacy check)
     pub aia_url: Option<String>, // Authority Information Access URL (CA Issuers URL for intermediate cert chain)
+    pub certificate_transparency: Option<String>, // Certificate Transparency status: "Yes (certificate)", "Yes (TLS extension)", "Yes (OCSP)", "No"
     pub der_bytes: Vec<u8>,
 }
 
@@ -60,49 +61,49 @@ pub struct CertificateParser {
 /// These OIDs identify EV certificates from major Certificate Authorities
 const EV_POLICY_OIDS: &[&str] = &[
     // DigiCert
-    "2.16.840.1.114412.2.1",         // DigiCert EV SSL/TLS
-    "2.16.840.1.114412.1.3.0.2",     // DigiCert EV Code Signing
+    "2.16.840.1.114412.2.1",     // DigiCert EV SSL/TLS
+    "2.16.840.1.114412.1.3.0.2", // DigiCert EV Code Signing
     // Entrust
-    "2.16.840.1.114028.10.1.2",      // Entrust EV SSL
+    "2.16.840.1.114028.10.1.2", // Entrust EV SSL
     // Comodo/Sectigo
-    "1.3.6.1.4.1.6449.1.2.1.5.1",    // Comodo/Sectigo EV SSL
+    "1.3.6.1.4.1.6449.1.2.1.5.1", // Comodo/Sectigo EV SSL
     // GlobalSign
-    "1.3.6.1.4.1.4146.1.1",          // GlobalSign EV SSL
+    "1.3.6.1.4.1.4146.1.1", // GlobalSign EV SSL
     // SwissSign
-    "2.16.756.1.89.1.2.1.1",         // SwissSign EV Gold CA
+    "2.16.756.1.89.1.2.1.1", // SwissSign EV Gold CA
     // Network Solutions
-    "1.3.6.1.4.1.782.1.2.1.8.1",     // Network Solutions EV SSL
+    "1.3.6.1.4.1.782.1.2.1.8.1", // Network Solutions EV SSL
     // QuoVadis
-    "1.3.6.1.4.1.8024.0.2.100.1.2",  // QuoVadis EV SSL
+    "1.3.6.1.4.1.8024.0.2.100.1.2", // QuoVadis EV SSL
     // GoDaddy
-    "2.16.840.1.114413.1.7.23.3",    // GoDaddy EV SSL
+    "2.16.840.1.114413.1.7.23.3", // GoDaddy EV SSL
     // Thawte
-    "2.16.840.1.113733.1.7.48.1",    // Thawte EV SSL
+    "2.16.840.1.113733.1.7.48.1", // Thawte EV SSL
     // VeriSign/Symantec
-    "2.16.840.1.113733.1.7.23.6",    // VeriSign/Symantec EV SSL
+    "2.16.840.1.113733.1.7.23.6", // VeriSign/Symantec EV SSL
     // Certum
-    "1.2.616.1.113527.2.5.1.1",      // Certum EV SSL
+    "1.2.616.1.113527.2.5.1.1", // Certum EV SSL
     // Let's Encrypt (for completeness, though they don't issue EV)
     // "2.23.140.1.1" is the CA/Browser Forum EV Guidelines OID
-    "2.23.140.1.1",                  // CA/Browser Forum EV Certificate
+    "2.23.140.1.1", // CA/Browser Forum EV Certificate
     // GlobalSign Extended Validation
-    "1.3.6.1.4.1.4146.1.10",         // GlobalSign EV Code Signing
+    "1.3.6.1.4.1.4146.1.10", // GlobalSign EV Code Signing
     // Buypass
-    "2.16.578.1.26.1.3.3",           // Buypass EV SSL
+    "2.16.578.1.26.1.3.3", // Buypass EV SSL
     // SECOM Trust Systems
-    "1.2.392.200091.100.721.1",      // SECOM Trust Systems EV SSL
+    "1.2.392.200091.100.721.1", // SECOM Trust Systems EV SSL
     // TÜRKTRUST
-    "2.16.792.3.0.4.1.1.4",          // TÜRKTRUST EV SSL
+    "2.16.792.3.0.4.1.1.4", // TÜRKTRUST EV SSL
     // E-Tugra
-    "2.16.792.1.2.1.1.5.7.1.9",      // E-Tugra EV SSL
+    "2.16.792.1.2.1.1.5.7.1.9", // E-Tugra EV SSL
     // Certinomis
-    "1.2.250.1.177.1.18.2.2",        // Certinomis EV SSL
+    "1.2.250.1.177.1.18.2.2", // Certinomis EV SSL
     // AC Camerfirma
     "1.3.6.1.4.1.17326.10.14.2.1.2", // AC Camerfirma EV SSL
     // Actalis
-    "1.3.159.1.17.1",                // Actalis EV SSL
+    "1.3.159.1.17.1", // Actalis EV SSL
     // China Internet Network Information Center (CNNIC)
-    "1.2.156.112570.1.1.3",          // CNNIC EV SSL
+    "1.2.156.112570.1.1.3", // CNNIC EV SSL
 ];
 
 /// Check if certificate contains Extended Validation (EV) policy OIDs
@@ -117,7 +118,9 @@ fn check_extended_validation(cert: &X509Certificate) -> Result<(bool, Vec<String
     let mut is_ev = false;
 
     // Try to get Certificate Policies extension (OID 2.5.29.32)
-    if let Ok(Some(ext)) = cert.get_extension_unique(&oid_registry::OID_X509_EXT_CERTIFICATE_POLICIES) {
+    if let Ok(Some(ext)) =
+        cert.get_extension_unique(&oid_registry::OID_X509_EXT_CERTIFICATE_POLICIES)
+    {
         // Parse the extension as Certificate Policies
         if let ParsedExtension::CertificatePolicies(policies) = ext.parsed_extension() {
             // policies is a &Vec<PolicyInformation>, iterate directly
@@ -162,14 +165,16 @@ fn calculate_pin_sha256(der_bytes: &[u8]) -> Result<Option<String>> {
         .map_err(|e| anyhow::anyhow!("Failed to parse certificate with OpenSSL: {}", e))?;
 
     // Extract public key
-    let public_key = cert.public_key()
+    let public_key = cert
+        .public_key()
         .map_err(|e| anyhow::anyhow!("Failed to extract public key: {}", e))?;
 
     // Get SubjectPublicKeyInfo in DER format
     // This is the SPKI (SubjectPublicKeyInfo) structure, which includes:
     // - Algorithm identifier
     // - Public key bit string
-    let spki_der = public_key.public_key_to_der()
+    let spki_der = public_key
+        .public_key_to_der()
         .map_err(|e| anyhow::anyhow!("Failed to encode public key to DER: {}", e))?;
 
     // Calculate SHA256 hash of SPKI
@@ -200,7 +205,8 @@ fn extract_rsa_exponent(der_bytes: &[u8]) -> Result<Option<String>> {
         .map_err(|e| anyhow::anyhow!("Failed to parse certificate with OpenSSL: {}", e))?;
 
     // Extract public key
-    let public_key = cert.public_key()
+    let public_key = cert
+        .public_key()
         .map_err(|e| anyhow::anyhow!("Failed to extract public key: {}", e))?;
 
     // Try to extract RSA key - returns None if not RSA
@@ -209,7 +215,8 @@ fn extract_rsa_exponent(der_bytes: &[u8]) -> Result<Option<String>> {
             // Get the public exponent
             let exponent = rsa.e();
             // Convert BigNum to decimal string
-            let exponent_str = exponent.to_dec_str()
+            let exponent_str = exponent
+                .to_dec_str()
                 .map_err(|e| anyhow::anyhow!("Failed to convert exponent to string: {}", e))?;
             // Format as "e {number}" to match SSL Labs format
             Ok(Some(format!("e {}", exponent_str)))
@@ -220,7 +227,6 @@ fn extract_rsa_exponent(der_bytes: &[u8]) -> Result<Option<String>> {
         }
     }
 }
-
 
 /// Calculate certificate fingerprint SHA256
 ///
@@ -270,8 +276,7 @@ fn calculate_fingerprint_sha256(der_bytes: &[u8]) -> Result<Option<String>> {
 /// * `Err` - On parsing errors
 fn extract_aia_url(cert: &X509Certificate) -> Result<Option<String>> {
     // Look for Authority Information Access extension (OID 1.3.6.1.5.5.7.1.1)
-    if let Ok(Some(ext)) =
-        cert.get_extension_unique(&oid_registry::OID_PKIX_AUTHORITY_INFO_ACCESS)
+    if let Ok(Some(ext)) = cert.get_extension_unique(&oid_registry::OID_PKIX_AUTHORITY_INFO_ACCESS)
         && let ParsedExtension::AuthorityInfoAccess(aia) = ext.parsed_extension()
     {
         for access_desc in &aia.accessdescs {
@@ -350,7 +355,10 @@ fn format_expiry_countdown(not_after_str: &str) -> Option<String> {
             } else if months == 1 {
                 return Some(format!("expired 1 month and {} days ago", remaining_days));
             } else {
-                return Some(format!("expired {} months and {} days ago", months, remaining_days));
+                return Some(format!(
+                    "expired {} months and {} days ago",
+                    months, remaining_days
+                ));
             }
         } else {
             let years = days / 365;
@@ -362,9 +370,15 @@ fn format_expiry_countdown(not_after_str: &str) -> Option<String> {
                     return Some(format!("expired {} years ago", years));
                 }
             } else if years == 1 {
-                return Some(format!("expired 1 year and {} months ago", remaining_months));
+                return Some(format!(
+                    "expired 1 year and {} months ago",
+                    remaining_months
+                ));
             } else {
-                return Some(format!("expired {} years and {} months ago", years, remaining_months));
+                return Some(format!(
+                    "expired {} years and {} months ago",
+                    years, remaining_months
+                ));
             }
         }
     }
@@ -390,7 +404,10 @@ fn format_expiry_countdown(not_after_str: &str) -> Option<String> {
         } else if months == 1 {
             Some(format!("expires in 1 month and {} days", remaining_days))
         } else {
-            Some(format!("expires in {} months and {} days", months, remaining_days))
+            Some(format!(
+                "expires in {} months and {} days",
+                months, remaining_days
+            ))
         }
     } else {
         let years = days / 365;
@@ -404,7 +421,10 @@ fn format_expiry_countdown(not_after_str: &str) -> Option<String> {
         } else if years == 1 {
             Some(format!("expires in 1 year and {} months", remaining_months))
         } else {
-            Some(format!("expires in {} years and {} months", years, remaining_months))
+            Some(format!(
+                "expires in {} years and {} months",
+                years, remaining_months
+            ))
         }
     }
 }
@@ -425,6 +445,35 @@ fn check_debian_weak_key(der_bytes: &[u8]) -> Option<bool> {
         Ok(cert) => crate::vulnerabilities::debian_keys::is_debian_weak_key(&cert).ok(),
         Err(_) => None,
     }
+}
+
+/// Check for Certificate Transparency (CT) SCT extension in certificate
+///
+/// This function checks if the certificate contains Signed Certificate Timestamps (SCTs)
+/// embedded in the X.509 extension with OID 1.3.6.1.4.1.11129.2.4.2.
+///
+/// # Arguments
+/// * `cert` - X.509 certificate to check
+///
+/// # Returns
+/// * `Some("Yes (certificate)")` - Certificate has SCT extension
+/// * `Some("No")` - Certificate does not have SCT extension
+/// * `None` - Unable to check (parsing error)
+fn check_certificate_transparency(cert: &X509Certificate) -> Option<String> {
+    // SCT extension OID: 1.3.6.1.4.1.11129.2.4.2
+    const SCT_EXTENSION_OID: &str = "1.3.6.1.4.1.11129.2.4.2";
+
+    // Look for SCT extension
+    for ext in cert.extensions() {
+        let oid_str = ext.oid.to_id_string();
+        if oid_str == SCT_EXTENSION_OID {
+            // SCT extension found - certificate contains embedded SCTs
+            return Some("Yes (certificate)".to_string());
+        }
+    }
+
+    // No SCT extension found
+    Some("No".to_string())
 }
 
 impl CertificateParser {
@@ -597,7 +646,6 @@ impl CertificateParser {
         // Extract RSA public key exponent if the key is RSA
         let rsa_exponent = extract_rsa_exponent(der_bytes).unwrap_or(None);
 
-
         // Calculate certificate fingerprint SHA256
         // This is the SHA256 hash of the entire DER-encoded certificate
         let fingerprint_sha256 = calculate_fingerprint_sha256(der_bytes).unwrap_or(None);
@@ -613,6 +661,9 @@ impl CertificateParser {
 
         // Extract AIA URL (CA Issuers URL for intermediate cert download)
         let aia_url = extract_aia_url(&cert).unwrap_or(None);
+
+        // Check for Certificate Transparency (SCT extension)
+        let certificate_transparency = check_certificate_transparency(&cert);
 
         Ok(CertificateInfo {
             subject: cert.subject().to_string(),
@@ -635,6 +686,7 @@ impl CertificateParser {
             fingerprint_sha256,
             debian_weak_key,
             aia_url,
+            certificate_transparency,
             der_bytes: der_bytes.to_vec(),
         })
     }
@@ -706,8 +758,14 @@ mod tests {
 
         // Verify chain_size_bytes is calculated correctly
         let expected_size: usize = chain.certificates.iter().map(|c| c.der_bytes.len()).sum();
-        assert_eq!(chain.chain_size_bytes, expected_size, "Chain size should match sum of DER bytes");
-        assert!(chain.chain_size_bytes > 0, "Chain size should be greater than 0");
+        assert_eq!(
+            chain.chain_size_bytes, expected_size,
+            "Chain size should match sum of DER bytes"
+        );
+        assert!(
+            chain.chain_size_bytes > 0,
+            "Chain size should be greater than 0"
+        );
 
         let leaf = chain.leaf().unwrap();
         assert!(!leaf.subject.is_empty());
@@ -765,11 +823,20 @@ mod tests {
 
         // Verify it's a valid Base64 string with expected length
         // SHA256 produces 32 bytes, Base64 encoding results in 44 characters (with padding)
-        assert_eq!(pin.len(), 44, "Pin SHA256 should be 44 characters (Base64-encoded SHA256)");
+        assert_eq!(
+            pin.len(),
+            44,
+            "Pin SHA256 should be 44 characters (Base64-encoded SHA256)"
+        );
 
         // Verify it ends with '=' padding (typical for Base64)
-        assert!(pin.ends_with('=') || pin.chars().all(|c| c.is_alphanumeric() || c == '+' || c == '/'),
-            "Pin should be valid Base64");
+        assert!(
+            pin.ends_with('=')
+                || pin
+                    .chars()
+                    .all(|c| c.is_alphanumeric() || c == '+' || c == '/'),
+            "Pin should be valid Base64"
+        );
 
         println!("Calculated Pin SHA256 for google.com: {}", pin);
     }
@@ -801,7 +868,9 @@ mod tests {
         let mut name_builder = X509NameBuilder::new().unwrap();
         name_builder.append_entry_by_text("C", "US").unwrap();
         name_builder.append_entry_by_text("O", "Test").unwrap();
-        name_builder.append_entry_by_text("CN", "test.example.com").unwrap();
+        name_builder
+            .append_entry_by_text("CN", "test.example.com")
+            .unwrap();
         let name = name_builder.build();
         builder.set_subject_name(&name).unwrap();
         builder.set_issuer_name(&name).unwrap();
@@ -825,8 +894,15 @@ mod tests {
         // Calculate pin
         let pin = calculate_pin_sha256(&der_bytes).unwrap();
 
-        assert!(pin.is_some(), "Pin should be calculated for self-signed cert");
-        assert_eq!(pin.as_ref().unwrap().len(), 44, "Pin should be 44 characters");
+        assert!(
+            pin.is_some(),
+            "Pin should be calculated for self-signed cert"
+        );
+        assert_eq!(
+            pin.as_ref().unwrap().len(),
+            44,
+            "Pin should be 44 characters"
+        );
 
         println!("Test certificate Pin SHA256: {}", pin.unwrap());
     }

@@ -92,16 +92,21 @@ impl DatabaseConfig {
     pub fn connection_string(&self) -> crate::Result<String> {
         match self.db_type {
             DatabaseType::Postgres => {
-                let host = self.host.as_ref()
-                    .ok_or_else(|| crate::TlsError::DatabaseError("Missing PostgreSQL host".to_string()))?;
-                let port = self.port
-                    .ok_or_else(|| crate::TlsError::DatabaseError("Missing PostgreSQL port".to_string()))?;
-                let database = self.database.as_ref()
-                    .ok_or_else(|| crate::TlsError::DatabaseError("Missing database name".to_string()))?;
-                let username = self.username.as_ref()
-                    .ok_or_else(|| crate::TlsError::DatabaseError("Missing username".to_string()))?;
-                let password = self.password.as_ref()
-                    .ok_or_else(|| crate::TlsError::DatabaseError("Missing password".to_string()))?;
+                let host = self.host.as_ref().ok_or_else(|| {
+                    crate::TlsError::DatabaseError("Missing PostgreSQL host".to_string())
+                })?;
+                let port = self.port.ok_or_else(|| {
+                    crate::TlsError::DatabaseError("Missing PostgreSQL port".to_string())
+                })?;
+                let database = self.database.as_ref().ok_or_else(|| {
+                    crate::TlsError::DatabaseError("Missing database name".to_string())
+                })?;
+                let username = self.username.as_ref().ok_or_else(|| {
+                    crate::TlsError::DatabaseError("Missing username".to_string())
+                })?;
+                let password = self.password.as_ref().ok_or_else(|| {
+                    crate::TlsError::DatabaseError("Missing password".to_string())
+                })?;
 
                 Ok(format!(
                     "postgres://{}:{}@{}:{}/{}",
@@ -109,8 +114,9 @@ impl DatabaseConfig {
                 ))
             }
             DatabaseType::Sqlite => {
-                let path = self.path.as_ref()
-                    .ok_or_else(|| crate::TlsError::DatabaseError("Missing SQLite path".to_string()))?;
+                let path = self.path.as_ref().ok_or_else(|| {
+                    crate::TlsError::DatabaseError("Missing SQLite path".to_string())
+                })?;
 
                 // SQLx expects a proper SQLite connection string
                 let path_str = path.to_string_lossy();
@@ -136,8 +142,9 @@ impl DatabaseConfig {
         let contents = std::fs::read_to_string(path)
             .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to read config: {}", e)))?;
 
-        let config: Config = toml::from_str(&contents)
-            .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to parse config: {}", e)))?;
+        let config: Config = toml::from_str(&contents).map_err(|e| {
+            crate::TlsError::DatabaseError(format!("Failed to parse config: {}", e))
+        })?;
 
         Ok(config)
     }
@@ -165,8 +172,9 @@ max_connections = 10
 max_age_days = 365
 "#;
 
-        std::fs::write(path, example)
-            .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to write config: {}", e)))?;
+        std::fs::write(path, example).map_err(|e| {
+            crate::TlsError::DatabaseError(format!("Failed to write config: {}", e))
+        })?;
 
         Ok(())
     }
@@ -180,9 +188,7 @@ impl Default for DatabaseConfig {
 
 impl Default for RetentionConfig {
     fn default() -> Self {
-        Self {
-            max_age_days: 365,
-        }
+        Self { max_age_days: 365 }
     }
 }
 

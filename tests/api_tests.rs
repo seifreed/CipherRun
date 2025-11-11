@@ -74,8 +74,8 @@ mod tests {
 
     #[test]
     fn test_api_error_status_codes() {
-        use cipherrun::api::models::error::ApiError;
         use axum::http::StatusCode;
+        use cipherrun::api::models::error::ApiError;
 
         assert_eq!(
             ApiError::BadRequest("test".to_string()).status_code(),

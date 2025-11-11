@@ -32,10 +32,38 @@ async fn main() {
 
     match checker.check_preload_status(domain).await {
         Ok(status) => {
-            println!("   Chrome:   {}", if status.in_chrome { "✓ In list" } else { "✗ Not in list" });
-            println!("   Firefox:  {}", if status.in_firefox { "✓ In list" } else { "✗ Not in list" });
-            println!("   Edge:     {}", if status.in_edge { "✓ In list" } else { "✗ Not in list" });
-            println!("   Safari:   {}", if status.in_safari { "✓ In list" } else { "✗ Not in list" });
+            println!(
+                "   Chrome:   {}",
+                if status.in_chrome {
+                    "✓ In list"
+                } else {
+                    "✗ Not in list"
+                }
+            );
+            println!(
+                "   Firefox:  {}",
+                if status.in_firefox {
+                    "✓ In list"
+                } else {
+                    "✗ Not in list"
+                }
+            );
+            println!(
+                "   Edge:     {}",
+                if status.in_edge {
+                    "✓ In list"
+                } else {
+                    "✗ Not in list"
+                }
+            );
+            println!(
+                "   Safari:   {}",
+                if status.in_safari {
+                    "✓ In list"
+                } else {
+                    "✗ Not in list"
+                }
+            );
             println!("   Status:   {:?}", status.chromium_status);
             println!("   Source:   {:?}", status.source);
         }

@@ -169,12 +169,14 @@ impl ScanRepository for ScanRepositoryImpl {
                     r#"
                     DELETE FROM scans
                     WHERE scan_timestamp < $1
-                    "#
+                    "#,
                 )
                 .bind(cutoff_date)
                 .execute(pool)
                 .await
-                .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to delete old scans: {}", e)))?;
+                .map_err(|e| {
+                    crate::TlsError::DatabaseError(format!("Failed to delete old scans: {}", e))
+                })?;
 
                 Ok(result.rows_affected())
             }
@@ -183,24 +185,21 @@ impl ScanRepository for ScanRepositoryImpl {
                     r#"
                     DELETE FROM scans
                     WHERE scan_timestamp < ?
-                    "#
+                    "#,
                 )
                 .bind(cutoff_date)
                 .execute(pool)
                 .await
-                .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to delete old scans: {}", e)))?;
+                .map_err(|e| {
+                    crate::TlsError::DatabaseError(format!("Failed to delete old scans: {}", e))
+                })?;
 
                 Ok(result.rows_affected())
             }
         }
     }
 
-    async fn update_scan_rating(
-        &self,
-        scan_id: i64,
-        grade: &str,
-        score: u8,
-    ) -> crate::Result<()> {
+    async fn update_scan_rating(&self, scan_id: i64, grade: &str, score: u8) -> crate::Result<()> {
         let score = score as i32;
 
         match &self.pool {
@@ -210,14 +209,16 @@ impl ScanRepository for ScanRepositoryImpl {
                     UPDATE scans
                     SET overall_grade = $1, overall_score = $2
                     WHERE scan_id = $3
-                    "#
+                    "#,
                 )
                 .bind(grade)
                 .bind(score)
                 .bind(scan_id)
                 .execute(pool)
                 .await
-                .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to update scan rating: {}", e)))?;
+                .map_err(|e| {
+                    crate::TlsError::DatabaseError(format!("Failed to update scan rating: {}", e))
+                })?;
             }
             DatabasePool::Sqlite(pool) => {
                 sqlx::query(
@@ -225,14 +226,16 @@ impl ScanRepository for ScanRepositoryImpl {
                     UPDATE scans
                     SET overall_grade = ?, overall_score = ?
                     WHERE scan_id = ?
-                    "#
+                    "#,
                 )
                 .bind(grade)
                 .bind(score)
                 .bind(scan_id)
                 .execute(pool)
                 .await
-                .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to update scan rating: {}", e)))?;
+                .map_err(|e| {
+                    crate::TlsError::DatabaseError(format!("Failed to update scan rating: {}", e))
+                })?;
             }
         }
 

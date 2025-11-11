@@ -5,8 +5,8 @@
 //!
 //! Run with: cargo run --example error_handling
 
-use cipherrun::error::{CertificateValidationError, TlsError};
 use cipherrun::Result;
+use cipherrun::error::{CertificateValidationError, TlsError};
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::Duration;
@@ -140,10 +140,7 @@ fn example_pattern_matching() {
                         expiry_date
                     )
                 }
-                CertificateValidationError::HostnameMismatch {
-                    hostname,
-                    expected,
-                } => {
+                CertificateValidationError::HostnameMismatch { hostname, expected } => {
                     format!(
                         "Certificate hostname mismatch: expected '{}' but got '{}'",
                         expected, hostname

@@ -237,11 +237,10 @@ pub fn hex_to_bytes(hex: &str) -> Result<Vec<u8>> {
     let mut bytes = Vec::new();
     for i in (0..hex.len()).step_by(2) {
         let byte_str = &hex[i..i + 2];
-        let byte = u8::from_str_radix(byte_str, 16).map_err(|e| {
-            crate::error::TlsError::ParseError {
+        let byte =
+            u8::from_str_radix(byte_str, 16).map_err(|e| crate::error::TlsError::ParseError {
                 message: format!("Invalid hex: {}", e),
-            }
-        })?;
+            })?;
         bytes.push(byte);
     }
 

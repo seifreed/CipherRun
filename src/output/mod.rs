@@ -13,6 +13,7 @@ pub enum OutputFormat {
 pub mod csv;
 pub mod html;
 pub mod json;
+pub mod multi_ip_terminal;
 pub mod probe_status;
 pub mod schema;
 pub mod terminal;

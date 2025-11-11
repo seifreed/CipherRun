@@ -2,8 +2,8 @@
 // RFC 7507 - TLS_FALLBACK_SCSV prevents protocol downgrade attacks
 // Protects against attacks like POODLE by preventing fallback to older protocols
 
-use crate::protocols::{Protocol, tester::ProtocolTester};
 use crate::Result;
+use crate::protocols::{Protocol, tester::ProtocolTester};
 use crate::utils::network::Target;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -41,17 +41,50 @@ impl FallbackScsvTester {
         match protocol_tester.get_preferred_protocol().await? {
             Some(max_protocol) => {
                 self.max_supported_protocol = Some(max_protocol);
-                tracing::debug!("Maximum supported protocol detected: {}", max_protocol.name());
+                tracing::debug!(
+                    "Maximum supported protocol detected: {}",
+                    max_protocol.name()
+                );
             }
             None => {
-                tracing::warn!("Could not detect any supported protocol - server may be unreachable");
+                tracing::warn!(
+                    "Could not detect any supported protocol - server may be unreachable"
+                );
                 return Ok(FallbackScsvTestResult {
                     supported: false,
                     accepts_downgrade: false,
                     vulnerable: false,
-                    details: "Unable to detect supported protocols - server may be unreachable".to_string(),
+                    details: "Unable to detect supported protocols - server may be unreachable"
+                        .to_string(),
+                    has_tls13_or_higher: false,
                 });
             }
+        }
+
+        // Count how many protocol versions are supported (excluding SSL 2 and QUIC)
+        // SCSV is only relevant when multiple protocols are supported
+        let supported_protocols = self.count_supported_protocols(&protocol_tester).await?;
+
+        tracing::debug!(
+            "Server supports {} TLS/SSL protocol version(s) (excluding SSL 2 and QUIC)",
+            supported_protocols.len()
+        );
+
+        // If only one protocol version is supported, downgrade attacks are not possible
+        // Match SSL Labs behavior: "Unknown (requires support for at least two protocols, excl. SSL2)"
+        if supported_protocols.len() <= 1 {
+            let protocol_name = self.max_supported_protocol.unwrap().name();
+            let has_tls13 = matches!(self.max_supported_protocol.unwrap(), Protocol::TLS13);
+            return Ok(FallbackScsvTestResult {
+                supported: false,
+                accepts_downgrade: false,
+                vulnerable: false,
+                details: format!(
+                    "Downgrade attack prevention: Unknown (Server only supports {} - requires at least two protocols excluding SSL 2)",
+                    protocol_name
+                ),
+                has_tls13_or_higher: has_tls13,
+            });
         }
 
         // Test if server properly rejects inappropriate fallback
@@ -61,12 +94,21 @@ impl FallbackScsvTester {
         let accepts_downgrade = !supported;
         let vulnerable = !supported;
 
+        // Check if TLS 1.3 or higher is supported (reduces severity)
+        let has_tls13 = supported_protocols
+            .iter()
+            .any(|p| matches!(p, Protocol::TLS13));
+
         let details = if supported {
-            format!("TLS_FALLBACK_SCSV supported - Protected against downgrade attacks (Max protocol: {})",
-                self.max_supported_protocol.unwrap().name())
+            format!(
+                "TLS_FALLBACK_SCSV supported - Protected against downgrade attacks (Protocols: {})",
+                self.format_protocol_list(&supported_protocols)
+            )
         } else {
-            format!("TLS_FALLBACK_SCSV NOT supported - Vulnerable to downgrade attacks (Max protocol: {})",
-                self.max_supported_protocol.unwrap().name())
+            format!(
+                "TLS_FALLBACK_SCSV NOT supported - Vulnerable to downgrade attacks (Protocols: {})",
+                self.format_protocol_list(&supported_protocols)
+            )
         };
 
         Ok(FallbackScsvTestResult {
@@ -74,13 +116,49 @@ impl FallbackScsvTester {
             accepts_downgrade,
             vulnerable,
             details,
+            has_tls13_or_higher: has_tls13,
         })
+    }
+
+    /// Count how many protocol versions the server supports
+    /// Excludes SSLv2 and QUIC from the count as they don't support TLS_FALLBACK_SCSV
+    async fn count_supported_protocols(
+        &self,
+        protocol_tester: &ProtocolTester,
+    ) -> Result<Vec<Protocol>> {
+        let mut supported = Vec::new();
+
+        // Test all standard TLS/SSL protocols (excluding SSL 2 and QUIC)
+        // SSL 2.0 doesn't support SCSV and shouldn't be counted (matching SSL Labs behavior)
+        for protocol in Protocol::all() {
+            if matches!(protocol, Protocol::SSLv2 | Protocol::QUIC) {
+                continue;
+            }
+
+            let result = protocol_tester.test_protocol(protocol).await?;
+            if result.supported {
+                supported.push(protocol);
+                tracing::debug!("Protocol {} is supported", protocol.name());
+            }
+        }
+
+        Ok(supported)
+    }
+
+    /// Format list of protocols for display
+    fn format_protocol_list(&self, protocols: &[Protocol]) -> String {
+        protocols
+            .iter()
+            .map(|p| p.name())
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 
     /// Test if server properly rejects inappropriate fallback
     async fn test_rejects_inappropriate_fallback(&self) -> Result<bool> {
         // Determine the test version based on the maximum supported protocol
-        let max_protocol = self.max_supported_protocol
+        let max_protocol = self
+            .max_supported_protocol
             .expect("max_supported_protocol must be set before calling this method");
 
         // Get the fallback version (one version lower than max)
@@ -91,7 +169,9 @@ impl FallbackScsvTester {
             Protocol::TLS10 => (0x0300, "SSLv3"),   // Test with SSLv3
             Protocol::SSLv3 => {
                 // SSLv3 is the lowest - cannot test SCSV with anything lower
-                tracing::warn!("Server only supports SSLv3 - cannot test SCSV (no lower version available)");
+                tracing::warn!(
+                    "Server only supports SSLv3 - cannot test SCSV (no lower version available)"
+                );
                 return Ok(false);
             }
             Protocol::SSLv2 => {
@@ -146,7 +226,11 @@ impl FallbackScsvTester {
                 addr.ip(),
                 idx + 1,
                 addrs.len(),
-                if ip_supports { "supported" } else { "NOT supported" },
+                if ip_supports {
+                    "supported"
+                } else {
+                    "NOT supported"
+                },
                 if ip_supports { "✓" } else { "✗" }
             );
 
@@ -234,14 +318,22 @@ impl FallbackScsvTester {
                         }
                     }
                     Ok(Ok(_)) => {
-                        tracing::debug!("SCSV test: Empty response - server may have rejected connection");
+                        tracing::debug!(
+                            "SCSV test: Empty response - server may have rejected connection"
+                        );
                         Ok(false)
                     }
                     Err(e) => {
-                        tracing::debug!("SCSV test: Timeout/error: {}", e);
+                        tracing::debug!("SCSV test: Timeout reading response: {}", e);
                         Ok(false)
                     }
-                    _ => Ok(false),
+                    Ok(Err(e)) => {
+                        tracing::debug!(
+                            "SCSV test: Error reading response: {} - Server may have closed connection",
+                            e
+                        );
+                        Ok(false)
+                    }
                 }
             }
             _ => {
@@ -362,6 +454,7 @@ pub struct FallbackScsvTestResult {
     pub accepts_downgrade: bool,
     pub vulnerable: bool,
     pub details: String,
+    pub has_tls13_or_higher: bool, // True if TLS 1.3+ supported (reduces risk)
 }
 
 #[cfg(test)]
@@ -375,6 +468,7 @@ mod tests {
             accepts_downgrade: false,
             vulnerable: false,
             details: "Test".to_string(),
+            has_tls13_or_higher: false,
         };
         assert!(result.supported);
         assert!(!result.vulnerable);

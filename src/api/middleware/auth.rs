@@ -58,10 +58,7 @@ pub async fn authenticate(
 }
 
 /// Check if user has required permission
-pub fn check_permission(
-    required: Permission,
-    user_permission: Permission,
-) -> Result<(), ApiError> {
+pub fn check_permission(required: Permission, user_permission: Permission) -> Result<(), ApiError> {
     let allowed = match required {
         Permission::ReadOnly => true, // All permissions can read
         Permission::User => matches!(user_permission, Permission::User | Permission::Admin),
@@ -71,15 +68,15 @@ pub fn check_permission(
     if allowed {
         Ok(())
     } else {
-        Err(ApiError::Forbidden(
-            "Insufficient permissions".to_string(),
-        ))
+        Err(ApiError::Forbidden("Insufficient permissions".to_string()))
     }
 }
 
 /// Extract permission from request extensions
 pub fn get_permission(req: &Request) -> Option<Permission> {
-    req.extensions().get::<AuthExtension>().map(|ext| ext.permission)
+    req.extensions()
+        .get::<AuthExtension>()
+        .map(|ext| ext.permission)
 }
 
 /// Extract auth extension from request extensions

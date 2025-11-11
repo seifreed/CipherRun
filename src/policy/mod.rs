@@ -146,7 +146,7 @@ pub struct CompliancePolicy {
 pub struct PolicyException {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub domain: Option<String>, // Supports wildcards: *.example.com
-    pub rules: Vec<String>,      // Rule paths: "protocols.prohibited"
+    pub rules: Vec<String>, // Rule paths: "protocols.prohibited"
     pub reason: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expires: Option<String>, // YYYY-MM-DD format
@@ -249,19 +249,13 @@ impl PolicyResult {
         use colored::*;
         let mut output = String::new();
 
-        output.push_str(&format!(
-            "{}\n",
-            "=".repeat(60).cyan()
-        ));
+        output.push_str(&format!("{}\n", "=".repeat(60).cyan()));
         output.push_str(&format!(
             "Policy Evaluation: {} v{}\n",
             self.policy_name.bold(),
             self.policy_version
         ));
-        output.push_str(&format!(
-            "{}\n",
-            "=".repeat(60).cyan()
-        ));
+        output.push_str(&format!("{}\n", "=".repeat(60).cyan()));
         output.push_str(&format!("Target: {}\n", self.target.green()));
         output.push_str(&format!(
             "Evaluation Time: {}\n",
@@ -288,10 +282,7 @@ impl PolicyResult {
         output.push_str(&format!("{}\n", result_str));
 
         if !self.violations.is_empty() {
-            output.push_str(&format!(
-                "\n{}\n",
-                "Violations:".yellow().bold()
-            ));
+            output.push_str(&format!("\n{}\n", "Violations:".yellow().bold()));
             output.push_str(&format!("{}\n", "-".repeat(60)));
 
             for violation in &self.violations {
@@ -301,7 +292,11 @@ impl PolicyResult {
                     PolicyAction::Info => "[INFO]".cyan(),
                 };
 
-                output.push_str(&format!("\n{} {}\n", action_str, violation.rule_path.bold()));
+                output.push_str(&format!(
+                    "\n{} {}\n",
+                    action_str,
+                    violation.rule_path.bold()
+                ));
                 output.push_str(&format!("  Rule: {}\n", violation.rule_name));
                 output.push_str(&format!("  Description: {}\n", violation.description));
                 if let Some(ref evidence) = violation.evidence {
@@ -314,19 +309,13 @@ impl PolicyResult {
         }
 
         if !self.exceptions_applied.is_empty() {
-            output.push_str(&format!(
-                "\n{}\n",
-                "Exceptions Applied:".cyan()
-            ));
+            output.push_str(&format!("\n{}\n", "Exceptions Applied:".cyan()));
             output.push_str(&format!("{}\n", "-".repeat(60)));
             for exception in &self.exceptions_applied {
                 output.push_str(&format!("  {}\n", exception));
             }
         } else {
-            output.push_str(&format!(
-                "\n{}\n",
-                "Exceptions Applied:".cyan()
-            ));
+            output.push_str(&format!("\n{}\n", "Exceptions Applied:".cyan()));
             output.push_str(&format!("{}\n", "-".repeat(60)));
             output.push_str("None\n");
         }

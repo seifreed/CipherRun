@@ -116,10 +116,7 @@ impl SniGenerator {
             }
 
             // Can only contain alphanumeric and hyphens
-            if !label
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '-')
-            {
+            if !label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
                 return false;
             }
         }

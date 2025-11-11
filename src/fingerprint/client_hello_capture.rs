@@ -481,9 +481,9 @@ mod tests {
             0x0303, // TLS 1.2
             vec![0xc02f, 0xc030, 0x009e, 0x009f],
             vec![
-                (0, vec![]), // server_name (empty for test)
+                (0, vec![]),                    // server_name (empty for test)
                 (10, vec![0, 4, 0, 23, 0, 24]), // supported_groups: secp256r1, secp384r1
-                (11, vec![1, 0]), // ec_point_formats: uncompressed
+                (11, vec![1, 0]),               // ec_point_formats: uncompressed
             ],
         );
 

@@ -1,14 +1,12 @@
 // Integration tests for compliance framework engine
 
-use cipherrun::certificates::parser::CertificateChain;
-use cipherrun::certificates::validator::ValidationResult;
-use cipherrun::ciphers::tester::ProtocolCipherSummary;
+#![allow(clippy::field_reassign_with_default)]
+
 use cipherrun::compliance::{
     ComplianceEngine, ComplianceStatus, FrameworkLoader, Reporter, RequirementStatus,
 };
 use cipherrun::protocols::{Protocol, ProtocolTestResult};
-use cipherrun::scanner::{CertificateAnalysisResult, ScanResults};
-use std::collections::HashMap;
+use cipherrun::scanner::ScanResults;
 
 #[test]
 fn test_load_all_builtin_frameworks() {
@@ -119,9 +117,7 @@ fn test_pci_dss_fail_scenario() {
     assert!(!failed_reqs.is_empty());
 
     // Check that we have protocol-related violations
-    let has_protocol_violation = failed_reqs
-        .iter()
-        .any(|r| r.category.contains("Protocol"));
+    let has_protocol_violation = failed_reqs.iter().any(|r| r.category.contains("Protocol"));
     assert!(has_protocol_violation);
 }
 
