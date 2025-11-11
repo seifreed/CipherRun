@@ -1,6 +1,5 @@
 # Rust
 /target/
-Cargo.lock
 **/*.rs.bk
 *.pdb
 
@@ -20,4 +19,35 @@ Thumbs.db
 *.profdata
 
 # Local tools/projects (excluded from git)
-tlsx/
+# (removed - tlsx directory deleted)
+
+# Temporary documentation files
+*_IMPLEMENTATION*.md
+*_ANALYSIS*.md
+*_REPORT*.md
+*_SUMMARY*.md
+*_STATUS*.md
+*_COMPLETE*.md
+*_CHANGES*.md
+PHASE*.md
+OPTIMIZATION*.md
+PARALLELIZATION*.md
+PERFORMANCE*.md
+VULNERABILITY*.md
+
+# Backup files
+*.bak
+*.bak2
+*.bak3
+*.bak4
+*.backup
+*.incomplete
+*.sedback
+*.disabled
+
+# Temporary test outputs
+*.pdf
+*.txt
+!requirements.txt
+!LICENSE.txt
+*.pcap
