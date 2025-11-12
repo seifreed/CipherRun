@@ -765,7 +765,7 @@ fn display_banner(args: &Args) {
         println!(
             r#"
     ╔═══════════════════════════════════════════════════════════╗
-    ║                     CipherRun v0.2.0                      ║
+    ║                     CipherRun v0.2.1                      ║
     ║      Fast, Modular TLS/SSL Security Scanner (Rust)       ║
     ║                                                           ║
     ║              Author: Marc Rivero | @seifreed              ║

@@ -432,6 +432,14 @@ impl Scanner {
             tester = tester.with_sleep(std::time::Duration::from_millis(sleep_ms));
         }
 
+        // Apply max concurrent cipher tests if specified
+        tester = tester.with_max_concurrent_tests(self.args.max_concurrent_ciphers);
+
+        // Apply retry configuration for handling network saturation (ENETDOWN, etc.)
+        if let Some(retry_config) = self.args.retry_config() {
+            tester = tester.with_retry_config(Some(retry_config));
+        }
+
         // Enable RDP mode if specified
         if self.args.rdp {
             tester = tester.with_rdp(true);

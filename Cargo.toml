@@ -1,6 +1,6 @@
 [package]
 name = "cipherrun"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 authors = ["Marc Rivero <@seifreed>"]
 description = "A fast, modular, and scalable TLS/SSL security scanner written in Rust"

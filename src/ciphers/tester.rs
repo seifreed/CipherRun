@@ -165,31 +165,131 @@ impl CipherTester {
         // Create arc for self to share across tasks
         let tester = Arc::new(self);
 
-        // Test ciphers concurrently using futures stream
-        let results: Vec<CipherTestResult> = stream::iter(compatible_ciphers)
-            .map(|cipher| {
-                let sem = semaphore.clone();
-                let tester_clone = tester.clone();
-                async move {
-                    // Acquire semaphore permit
-                    let _permit = sem.acquire().await.expect("semaphore closed");
-
-                    // Test the cipher
-                    let result = tester_clone.test_single_cipher(&cipher, protocol).await;
-
-                    // Sleep between requests if configured
-                    if let Some(sleep_dur) = tester_clone.sleep_duration {
-                        tokio::time::sleep(sleep_dur).await;
-                    }
-
-                    result
+        // Test ciphers concurrently using futures stream with adaptive backoff
+        let mut results: Vec<CipherTestResult> = Vec::new();
+        let mut enetdown_count = 0;
+        let mut current_batch_size = self.max_concurrent_tests;
+        let mut cipher_queue: Vec<CipherSuite> = compatible_ciphers;
+        let mut retry_queue: Vec<CipherSuite> = Vec::new();
+        let max_enetdown_retries = 3;
+        let mut retry_round = 0;
+        
+        // Process ciphers in batches with adaptive concurrency and retry
+        while !cipher_queue.is_empty() || !retry_queue.is_empty() {
+            // Switch to retry queue if main queue is empty
+            if cipher_queue.is_empty() && !retry_queue.is_empty() {
+                retry_round += 1;
+                if retry_round > max_enetdown_retries {
+                    tracing::warn!(
+                        "Max ENETDOWN retries ({}) reached, {} ciphers could not be tested",
+                        max_enetdown_retries,
+                        retry_queue.len()
+                    );
+                    break;
                 }
-            })
-            .buffer_unordered(self.max_concurrent_tests)
-            .collect::<Vec<_>>()
-            .await
-            .into_iter()
-            .collect::<Result<Vec<_>>>()?;
+                cipher_queue = retry_queue;
+                retry_queue = Vec::new();
+                tracing::info!(
+                    "Retrying {} ciphers that failed with ENETDOWN (attempt {}/{})",
+                    cipher_queue.len(),
+                    retry_round,
+                    max_enetdown_retries
+                );
+                // Longer backoff between retry rounds
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+            }
+            
+            // Get next batch of ciphers
+            let batch_size = current_batch_size * 5;
+            let batch: Vec<_> = cipher_queue.drain(..cipher_queue.len().min(batch_size)).collect();
+            
+            if batch.is_empty() {
+                break;
+            }
+            
+            // Test batch with current concurrency level
+            let batch_results: Vec<(CipherSuite, Result<CipherTestResult>)> = stream::iter(batch)
+                .map(|cipher| {
+                    let sem = semaphore.clone();
+                    let tester_clone = tester.clone();
+                    let cipher_clone = cipher.clone();
+                    async move {
+                        // Acquire semaphore permit
+                        let _permit = sem.acquire().await.expect("semaphore closed");
+
+                        // Test the cipher
+                        let result = tester_clone.test_single_cipher(&cipher, protocol).await;
+
+                        // Sleep between requests if configured
+                        if let Some(sleep_dur) = tester_clone.sleep_duration {
+                            tokio::time::sleep(sleep_dur).await;
+                        }
+
+                        (cipher_clone, result)
+                    }
+                })
+                .buffer_unordered(current_batch_size)
+                .collect::<Vec<_>>()
+                .await;
+            
+            // Check for ENETDOWN errors and adapt concurrency
+            let mut batch_enetdown = 0;
+            let mut batch_other_errors = 0;
+            
+            // Collect results, queueing ENETDOWN failures for retry
+            for (cipher, result) in batch_results {
+                match result {
+                    Ok(test_result) => {
+                        results.push(test_result);
+                    }
+                    Err(e) => {
+                        let err_msg = e.to_string().to_lowercase();
+                        if err_msg.contains("network is down") || err_msg.contains("os error 50") {
+                            // ENETDOWN error - queue for retry with reduced concurrency
+                            batch_enetdown += 1;
+                            retry_queue.push(cipher);
+                        } else {
+                            // Other error - log and continue (treat as unsupported)
+                            batch_other_errors += 1;
+                            tracing::debug!("Cipher test error (non-ENETDOWN): {}", e);
+                        }
+                    }
+                }
+            }
+            
+            enetdown_count += batch_enetdown;
+            
+            // Adaptive backoff: if we hit ENETDOWN errors, reduce concurrency aggressively
+            if batch_enetdown > 0 {
+                let old_size = current_batch_size;
+                // More aggressive reduction if many errors
+                if batch_enetdown > current_batch_size / 2 {
+                    current_batch_size = (current_batch_size / 3).max(1);
+                } else {
+                    current_batch_size = (current_batch_size / 2).max(1);
+                }
+                tracing::warn!(
+                    "Detected {} ENETDOWN error(s), reducing concurrency from {} to {} and adding backoff",
+                    batch_enetdown,
+                    old_size,
+                    current_batch_size
+                );
+                // Longer backoff delay to let the network stack recover
+                let backoff_secs = if batch_enetdown > 10 { 8 } else { 5 };
+                tokio::time::sleep(std::time::Duration::from_secs(backoff_secs)).await;
+            }
+            
+            if batch_other_errors > 0 {
+                tracing::debug!("Batch had {} other errors (ignored)", batch_other_errors);
+            }
+        }
+        
+        if enetdown_count > 0 {
+            tracing::info!(
+                "Completed cipher testing with {} ENETDOWN error(s) recovered via adaptive backoff",
+                enetdown_count
+            );
+        }
 
         // Extract supported ciphers
         let supported: Vec<CipherSuite> = results

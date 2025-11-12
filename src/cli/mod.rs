@@ -180,6 +180,11 @@ pub struct Args {
     #[arg(long = "max-parallel", value_name = "NUM", default_value = "20")]
     pub max_parallel: usize,
 
+    /// Maximum concurrent cipher tests per protocol (default: 10)
+    /// Lower values reduce network load and prevent "Network is down" errors
+    #[arg(long = "max-concurrent-ciphers", value_name = "NUM", default_value = "10")]
+    pub max_concurrent_ciphers: usize,
+
     /// Socket timeout in seconds
     #[arg(long = "socket-timeout", value_name = "SECONDS")]
     pub socket_timeout: Option<u64>,
