@@ -22,6 +22,7 @@ use crate::utils::adaptive::AdaptiveController;
 ///     max_retries: 3,
 ///     initial_backoff: Duration::from_millis(100),
 ///     max_backoff: Duration::from_secs(5),
+///     adaptive: None,
 /// };
 /// ```
 #[derive(Debug, Clone)]
