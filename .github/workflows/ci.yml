@@ -34,8 +34,18 @@ jobs:
       - name: Test
         run: cargo test --all --locked
 
+      - name: Install cargo-llvm-cov
+        if: matrix.os == 'ubuntu-latest'
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Generate coverage (lcov)
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo llvm-cov --all --locked --lcov --output-path lcov.info
+
       - name: Upload coverage reports to Codecov
+        if: matrix.os == 'ubuntu-latest'
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           slug: seifreed/CipherRun
+          files: lcov.info
