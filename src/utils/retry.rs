@@ -5,8 +5,10 @@
 // timeouts, connection resets) and non-retriable errors (e.g., connection refused, DNS failures).
 
 use anyhow::Result;
+use std::sync::Arc;
 use std::future::Future;
 use std::time::Duration;
+use crate::utils::adaptive::AdaptiveController;
 
 /// Configuration for retry behavior with exponential backoff.
 ///
@@ -36,6 +38,9 @@ pub struct RetryConfig {
     /// Maximum backoff duration to prevent excessive delays.
     /// Default: 5 seconds
     pub max_backoff: Duration,
+
+    /// Optional adaptive controller for dynamic backoff/timeouts.
+    pub adaptive: Option<Arc<AdaptiveController>>,
 }
 
 impl Default for RetryConfig {
@@ -44,6 +49,7 @@ impl Default for RetryConfig {
             max_retries: 3,
             initial_backoff: Duration::from_millis(100),
             max_backoff: Duration::from_secs(5),
+            adaptive: None,
         }
     }
 }
@@ -55,6 +61,7 @@ impl RetryConfig {
             max_retries,
             initial_backoff,
             max_backoff,
+            adaptive: None,
         }
     }
 
@@ -64,6 +71,7 @@ impl RetryConfig {
             max_retries: 0,
             initial_backoff: Duration::from_millis(0),
             max_backoff: Duration::from_millis(0),
+            adaptive: None,
         }
     }
 
@@ -73,6 +81,7 @@ impl RetryConfig {
             max_retries: 1,
             initial_backoff: Duration::from_millis(50),
             max_backoff: Duration::from_millis(500),
+            adaptive: None,
         }
     }
 
@@ -82,7 +91,14 @@ impl RetryConfig {
             max_retries: 5,
             initial_backoff: Duration::from_millis(200),
             max_backoff: Duration::from_secs(10),
+            adaptive: None,
         }
+    }
+
+    /// Attach an adaptive controller to this config.
+    pub fn with_adaptive(mut self, adaptive: Arc<AdaptiveController>) -> Self {
+        self.adaptive = Some(adaptive);
+        self
     }
 }
 
@@ -144,7 +160,11 @@ where
     Fut: Future<Output = Result<T>>,
 {
     let mut retries = 0;
-    let mut backoff = config.initial_backoff;
+    let mut backoff = config
+        .adaptive
+        .as_ref()
+        .map(|a| a.backoff())
+        .unwrap_or(config.initial_backoff);
 
     loop {
         match operation().await {
@@ -152,12 +172,18 @@ where
                 if retries > 0 {
                     tracing::debug!("Operation succeeded after {} retry(ies)", retries);
                 }
+                if let Some(adaptive) = &config.adaptive {
+                    adaptive.on_success();
+                }
                 return Ok(result);
             }
             Err(e) => {
                 // Check if we should retry this error
                 if !is_retriable(&e) {
                     tracing::debug!("Non-retriable error encountered: {}", e);
+                    if let Some(adaptive) = &config.adaptive {
+                        adaptive.on_non_retryable_error();
+                    }
                     return Err(e);
                 }
 
@@ -181,11 +207,24 @@ where
                     backoff
                 );
 
+                if let Some(adaptive) = &config.adaptive {
+                    if is_timeout_error(&e) {
+                        adaptive.on_timeout();
+                    } else {
+                        adaptive.on_retryable_error();
+                    }
+                }
+
                 // Wait with current backoff
                 tokio::time::sleep(backoff).await;
 
                 // Calculate next backoff (exponential with cap)
-                backoff = std::cmp::min(backoff * 2, config.max_backoff);
+                let max_backoff = config
+                    .adaptive
+                    .as_ref()
+                    .map(|a| a.max_backoff())
+                    .unwrap_or(config.max_backoff);
+                backoff = std::cmp::min(backoff * 2, max_backoff);
             }
         }
     }
@@ -270,6 +309,15 @@ fn is_retriable(error: &anyhow::Error) -> bool {
     // Default to non-retriable for unknown errors
     // This is a conservative choice to avoid excessive retries
     false
+}
+
+fn is_timeout_error(error: &anyhow::Error) -> bool {
+    if let Some(io_err) = error.downcast_ref::<std::io::Error>() {
+        return io_err.kind() == std::io::ErrorKind::TimedOut;
+    }
+
+    let msg = error.to_string().to_lowercase();
+    msg.contains("timeout") || msg.contains("timed out") || msg.contains("deadline")
 }
 
 /// Analyze IO error to determine if it's retriable.
@@ -461,6 +509,7 @@ mod tests {
             max_retries: 2,
             initial_backoff: Duration::from_millis(1),
             max_backoff: Duration::from_millis(10),
+            adaptive: None,
         };
         use std::sync::atomic::{AtomicUsize, Ordering};
         let attempts = AtomicUsize::new(0);
@@ -499,6 +548,7 @@ mod tests {
             max_retries: 3,
             initial_backoff: Duration::from_millis(10),
             max_backoff: Duration::from_millis(50),
+            adaptive: None,
         };
 
         let start = std::time::Instant::now();

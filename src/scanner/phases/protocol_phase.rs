@@ -56,6 +56,7 @@ impl ProtocolPhase {
     /// - Multi-IP: Test all resolved IP addresses
     fn configure_tester(&self, context: &ScanContext) -> ProtocolTester {
         let target = context.target();
+        let adaptive = context.adaptive.clone();
 
         // Base tester with optional mTLS
         let mut tester = if let Some(ref mtls_config) = context.mtls_config {
@@ -63,6 +64,14 @@ impl ProtocolPhase {
         } else {
             ProtocolTester::new(target.clone())
         };
+
+        // Apply adaptive timeouts and retry configuration
+        tester = tester
+            .with_connect_timeout(adaptive.connect_timeout())
+            .with_read_timeout(adaptive.socket_timeout());
+        if let Some(retry_config) = context.args.retry_config() {
+            tester = tester.with_retry_config(Some(retry_config.with_adaptive(adaptive.clone())));
+        }
 
         // Enable RDP mode if specified
         if context.args.starttls.rdp {

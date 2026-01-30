@@ -66,14 +66,13 @@ impl CipherPhase {
     /// rate limiting or transient failures (ENETDOWN, EAGAIN).
     fn configure_tester(&self, context: &ScanContext) -> CipherTester {
         let target = context.target();
+        let adaptive = context.adaptive.clone();
         let mut tester = CipherTester::new(target);
 
-        // Apply connect timeout if specified
-        // Default is typically 5 seconds, can be lowered for faster scans
-        // or increased for high-latency connections
-        if let Some(timeout_secs) = context.args.connection.connect_timeout {
-            tester = tester.with_connect_timeout(std::time::Duration::from_secs(timeout_secs));
-        }
+        // Apply adaptive timeouts
+        tester = tester
+            .with_connect_timeout(adaptive.connect_timeout())
+            .with_read_timeout(adaptive.socket_timeout());
 
         // Apply sleep duration if specified
         // Adds delay between cipher tests to avoid overwhelming the server
@@ -82,11 +81,10 @@ impl CipherPhase {
             tester = tester.with_sleep(std::time::Duration::from_millis(sleep_ms));
         }
 
-        // Apply max concurrent cipher tests if specified
-        // Lower values (5-10) reduce network load and prevent "Network is down" errors
-        // Higher values (20-50) speed up scanning but may trigger rate limiting
-        // Default: 10 (balanced between speed and reliability)
-        tester = tester.with_max_concurrent_tests(context.args.network.max_concurrent_ciphers);
+        // Apply max concurrent cipher tests (adaptive baseline)
+        tester = tester
+            .with_max_concurrent_tests(adaptive.max_concurrency())
+            .with_adaptive(Some(adaptive.clone()));
 
         // Apply retry configuration for handling network saturation
         // Retries help distinguish transient failures (timeout, reset) from
@@ -95,7 +93,7 @@ impl CipherPhase {
         // Retryable errors: ENETDOWN, EAGAIN, ETIMEDOUT, ECONNRESET
         // Non-retryable errors: ECONNREFUSED, EHOSTUNREACH, EINVAL
         if let Some(retry_config) = context.args.retry_config() {
-            tester = tester.with_retry_config(Some(retry_config));
+            tester = tester.with_retry_config(Some(retry_config.with_adaptive(adaptive.clone())));
         }
 
         // Enable RDP mode if specified

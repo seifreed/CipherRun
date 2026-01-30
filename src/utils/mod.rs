@@ -14,6 +14,7 @@ pub mod nmap;
 pub mod path_ext;
 pub mod proxy;
 pub mod retry;
+pub mod adaptive;
 pub mod reverse_ptr;
 pub mod sneaky;
 pub mod sni_generator;

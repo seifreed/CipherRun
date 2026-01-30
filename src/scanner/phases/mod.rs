@@ -40,6 +40,8 @@ pub use vulnerability_phase::VulnerabilityPhase;
 use crate::scanner::ScanResults;
 use crate::utils::mtls::MtlsConfig;
 use crate::utils::network::Target;
+use crate::utils::adaptive::AdaptiveController;
+use crate::constants::{DEFAULT_CONNECT_TIMEOUT, DEFAULT_SOCKET_TIMEOUT};
 use crate::{Args, Result};
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -178,6 +180,9 @@ pub struct ScanContext {
 
     /// Optional mTLS configuration for client authentication
     pub mtls_config: Option<MtlsConfig>,
+
+    /// Adaptive controller for timeouts, backoff, and concurrency
+    pub adaptive: Arc<AdaptiveController>,
 }
 
 impl ScanContext {
@@ -189,6 +194,37 @@ impl ScanContext {
     /// * `mtls_config` - Optional reference to mTLS configuration
     pub fn new(target: Target, args: Arc<Args>, mtls_config: Option<MtlsConfig>) -> Self {
         let target_str = format!("{}:{}", target.hostname, target.port);
+        let base_connect_timeout = std::time::Duration::from_secs(
+            args.connection
+                .connect_timeout
+                .unwrap_or(DEFAULT_CONNECT_TIMEOUT.as_secs()),
+        );
+        let base_socket_timeout = std::time::Duration::from_secs(
+            args.connection
+                .socket_timeout
+                .unwrap_or(DEFAULT_SOCKET_TIMEOUT.as_secs()),
+        );
+        let base_backoff = std::time::Duration::from_millis(args.connection.retry_backoff_ms);
+        let base_max_backoff = std::time::Duration::from_millis(args.connection.max_backoff_ms);
+        let base_max_concurrency = if args.network.max_concurrent_ciphers == 0 {
+            10
+        } else {
+            args.network.max_concurrent_ciphers
+        };
+        let max_retries = if args.connection.no_retry {
+            0
+        } else {
+            args.connection.max_retries
+        };
+
+        let adaptive = Arc::new(AdaptiveController::new(
+            base_connect_timeout,
+            base_socket_timeout,
+            base_backoff,
+            base_max_backoff,
+            max_retries,
+            base_max_concurrency,
+        ));
 
         Self {
             target,
@@ -199,6 +235,7 @@ impl ScanContext {
             },
             args,
             mtls_config,
+            adaptive,
         }
     }
 

@@ -44,6 +44,7 @@ use crate::constants::{
 use crate::data::CIPHER_DB;
 use crate::protocols::{Protocol, handshake::ClientHelloBuilder};
 use crate::utils::network::Target;
+use crate::utils::adaptive::AdaptiveController;
 
 /// Type alias for cipher test batch results: (cipher, Ok((supported, handshake_time_ms)))
 type CipherBatchResult = Vec<(CipherSuite, Result<(bool, Option<u64>)>)>;
@@ -400,6 +401,7 @@ pub struct CipherTester {
     retry_config: Option<crate::utils::retry::RetryConfig>,
     max_concurrent_tests: usize,
     connection_pool_size: usize,
+    adaptive: Option<Arc<AdaptiveController>>,
 }
 
 impl CipherTester {
@@ -420,6 +422,7 @@ impl CipherTester {
             retry_config: None,
             max_concurrent_tests: 10, // Default to 10 concurrent cipher tests
             connection_pool_size: 10, // Default pool size matches concurrency
+            adaptive: None,
         }
     }
 
@@ -471,6 +474,12 @@ impl CipherTester {
         self
     }
 
+    /// Attach adaptive controller for dynamic timeouts and concurrency.
+    pub fn with_adaptive(mut self, adaptive: Option<Arc<AdaptiveController>>) -> Self {
+        self.adaptive = adaptive;
+        self
+    }
+
     /// Set maximum concurrent cipher tests
     pub fn with_max_concurrent_tests(mut self, max: usize) -> Self {
         self.max_concurrent_tests = max.max(1); // Ensure at least 1
@@ -514,11 +523,16 @@ impl CipherTester {
             .filter(|c| self.is_cipher_compatible_with_protocol(c, protocol))
             .collect();
 
+        let mut max_concurrent_tests = self.max_concurrent_tests.max(1);
+        if let Some(adaptive) = &self.adaptive {
+            max_concurrent_tests = adaptive.max_concurrency().max(1);
+        }
+
         tracing::debug!(
             "Testing {} compatible ciphers for {:?} with max {} concurrent connections (pool size: {})",
             compatible_ciphers.len(),
             protocol,
-            self.max_concurrent_tests,
+            max_concurrent_tests,
             self.connection_pool_size
         );
 
@@ -527,7 +541,7 @@ impl CipherTester {
             let addr = self.target.socket_addrs()[0];
             Some(Arc::new(TlsConnectionPool::new(
                 addr,
-                self.connection_pool_size,
+                self.connection_pool_size.min(max_concurrent_tests),
                 self.connect_timeout,
                 self.retry_config.clone(),
             )))
@@ -544,7 +558,7 @@ impl CipherTester {
         // Test ciphers concurrently using futures stream with adaptive backoff
         let mut results: Vec<CipherTestResult> = Vec::new();
         let mut enetdown_count = 0;
-        let mut current_batch_size = self.max_concurrent_tests;
+        let mut current_batch_size = max_concurrent_tests;
         let mut cipher_queue: Vec<CipherSuite> = compatible_ciphers;
         let mut retry_queue: Vec<CipherSuite> = Vec::new();
         let max_enetdown_retries = 3;
@@ -573,6 +587,15 @@ impl CipherTester {
                 );
                 // Longer backoff between retry rounds
                 tokio::time::sleep(std::time::Duration::from_secs(RETRY_BACKOFF_SECS)).await;
+            }
+
+            // Adjust concurrency if adaptive controller changed
+            if let Some(adaptive) = &self.adaptive {
+                let adaptive_max = adaptive.max_concurrency().max(1);
+                if adaptive_max != max_concurrent_tests {
+                    max_concurrent_tests = adaptive_max;
+                    current_batch_size = current_batch_size.min(max_concurrent_tests);
+                }
             }
 
             // Get next batch of ciphers
@@ -684,10 +707,10 @@ impl CipherTester {
                 );
 
                 tokio::time::sleep(std::time::Duration::from_millis(total_delay_ms)).await;
-            } else if current_batch_size < self.max_concurrent_tests && batch_other_errors == 0 {
+            } else if current_batch_size < max_concurrent_tests && batch_other_errors == 0 {
                 // Gradual recovery: increase concurrency after successful batches
                 // Only recover if no errors occurred at all
-                current_batch_size = (current_batch_size + 1).min(self.max_concurrent_tests);
+                current_batch_size = (current_batch_size + 1).min(max_concurrent_tests);
                 tracing::debug!(
                     "Successful batch, increasing concurrency to {}",
                     current_batch_size

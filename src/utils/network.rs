@@ -142,7 +142,12 @@ pub async fn test_connection(
     retry_config: Option<&super::retry::RetryConfig>,
 ) -> Result<()> {
     let connect_op = || async {
-        timeout(connect_timeout, TcpStream::connect(addr))
+        let effective_timeout = retry_config
+            .and_then(|config| config.adaptive.as_ref())
+            .map(|adaptive| adaptive.connect_timeout())
+            .unwrap_or(connect_timeout);
+
+        timeout(effective_timeout, TcpStream::connect(addr))
             .await
             .context("Connection timeout")??;
         Ok(())
@@ -174,7 +179,12 @@ pub async fn connect_with_timeout(
     retry_config: Option<&super::retry::RetryConfig>,
 ) -> Result<TcpStream> {
     let connect_op = || async {
-        let stream = timeout(connect_timeout, TcpStream::connect(addr))
+        let effective_timeout = retry_config
+            .and_then(|config| config.adaptive.as_ref())
+            .map(|adaptive| adaptive.connect_timeout())
+            .unwrap_or(connect_timeout);
+
+        let stream = timeout(effective_timeout, TcpStream::connect(addr))
             .await
             .context("Connection timeout")??;
         Ok(stream)
