@@ -86,9 +86,10 @@ impl ApiStats {
         let now = Instant::now();
         self.requests_last_hour.push((now, 1));
 
-        // Clean up old entries (older than 1 hour)
-        let one_hour_ago = now - std::time::Duration::from_secs(3600);
-        self.requests_last_hour.retain(|(t, _)| *t > one_hour_ago);
+        // Clean up old entries (older than 1 hour). Guard against underflow on some platforms.
+        if let Some(one_hour_ago) = now.checked_sub(std::time::Duration::from_secs(3600)) {
+            self.requests_last_hour.retain(|(t, _)| *t > one_hour_ago);
+        }
     }
 
     /// Increment scan counter
