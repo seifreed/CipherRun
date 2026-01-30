@@ -54,6 +54,11 @@ impl RevocationChecker {
         }
     }
 
+    /// Check if phone-out is enabled
+    pub fn is_phone_out_enabled(&self) -> bool {
+        self.phone_out_enabled
+    }
+
     /// Check revocation status for a certificate
     pub async fn check_revocation_status(
         &self,

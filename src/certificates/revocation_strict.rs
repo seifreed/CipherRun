@@ -155,9 +155,7 @@ impl StrictRevocationChecker {
 
     /// Check if phone-out is enabled
     pub fn is_phone_out_enabled(&self) -> bool {
-        // This would need to be exposed from RevocationChecker
-        // For now, we'll assume it's based on the configuration
-        true
+        self.base_checker.is_phone_out_enabled()
     }
 }
 
