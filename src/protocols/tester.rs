@@ -2,11 +2,19 @@
 
 use super::{Protocol, ProtocolTestResult};
 use crate::Result;
+use crate::constants::{BUFFER_SIZE_MAX_TLS_RECORD, DEFAULT_CONNECT_TIMEOUT, DEFAULT_READ_TIMEOUT};
 use crate::utils::mtls::MtlsConfig;
 use crate::utils::network::Target;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::timeout;
+
+/// Trait for protocol testing abstraction (enables mocking in tests)
+#[async_trait::async_trait]
+pub trait ProtocolTestable: Send + Sync {
+    async fn test_all_protocols(&self) -> Result<Vec<ProtocolTestResult>>;
+    async fn test_protocol(&self, protocol: Protocol) -> Result<ProtocolTestResult>;
+}
 
 /// Protocol testing configuration
 pub struct ProtocolTester {
@@ -31,8 +39,8 @@ impl ProtocolTester {
 
         Self {
             target,
-            connect_timeout: Duration::from_secs(10),
-            read_timeout: Duration::from_secs(5),
+            connect_timeout: DEFAULT_CONNECT_TIMEOUT,
+            read_timeout: DEFAULT_READ_TIMEOUT,
             mtls_config: None,
             use_rdp,
             enable_bugs_mode: false,
@@ -51,8 +59,8 @@ impl ProtocolTester {
 
         Self {
             target,
-            connect_timeout: Duration::from_secs(10),
-            read_timeout: Duration::from_secs(5),
+            connect_timeout: DEFAULT_CONNECT_TIMEOUT,
+            read_timeout: DEFAULT_READ_TIMEOUT,
             mtls_config: Some(mtls_config),
             use_rdp,
             enable_bugs_mode: false,
@@ -613,8 +621,8 @@ impl ProtocolTester {
             use tokio::io::{AsyncReadExt, AsyncWriteExt};
             stream.write_all(&client_hello).await?;
 
-            // Read ServerHello (up to 16KB)
-            let mut resp = vec![0u8; 16384];
+            // Read ServerHello (up to max TLS record size)
+            let mut resp = vec![0u8; BUFFER_SIZE_MAX_TLS_RECORD];
             let n = stream.read(&mut resp).await?;
             resp.truncate(n);
             Ok::<Vec<u8>, anyhow::Error>(resp)
@@ -697,8 +705,8 @@ impl ProtocolTester {
             use tokio::io::{AsyncReadExt, AsyncWriteExt};
             stream.write_all(&client_hello).await?;
 
-            // Read ServerHello (up to 16KB)
-            let mut resp = vec![0u8; 16384];
+            // Read ServerHello (up to max TLS record size)
+            let mut resp = vec![0u8; BUFFER_SIZE_MAX_TLS_RECORD];
             let n = stream.read(&mut resp).await?;
             resp.truncate(n);
             Ok::<Vec<u8>, anyhow::Error>(resp)
@@ -783,8 +791,8 @@ impl ProtocolTester {
             use tokio::io::{AsyncReadExt, AsyncWriteExt};
             stream.write_all(&client_hello).await?;
 
-            // Read ServerHello (up to 16KB)
-            let mut resp = vec![0u8; 16384];
+            // Read ServerHello (up to max TLS record size)
+            let mut resp = vec![0u8; BUFFER_SIZE_MAX_TLS_RECORD];
             let n = stream.read(&mut resp).await?;
             resp.truncate(n);
             Ok::<Vec<u8>, anyhow::Error>(resp)
@@ -808,6 +816,17 @@ impl ProtocolTester {
     }
 }
 
+#[async_trait::async_trait]
+impl ProtocolTestable for ProtocolTester {
+    async fn test_all_protocols(&self) -> Result<Vec<ProtocolTestResult>> {
+        self.test_all_protocols().await
+    }
+
+    async fn test_protocol(&self, protocol: Protocol) -> Result<ProtocolTestResult> {
+        self.test_protocol(protocol).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -815,10 +834,15 @@ mod tests {
     #[tokio::test]
     #[ignore] // Requires network access
     async fn test_protocol_detection() {
-        let target = Target::parse("www.google.com:443").await.unwrap();
+        let target = Target::parse("www.google.com:443")
+            .await
+            .expect("test assertion should succeed");
         let tester = ProtocolTester::new(target);
 
-        let results = tester.test_all_protocols().await.unwrap();
+        let results = tester
+            .test_all_protocols()
+            .await
+            .expect("test assertion should succeed");
 
         // Google should support TLS 1.2 and 1.3
         assert!(
@@ -848,10 +872,15 @@ mod tests {
     #[tokio::test]
     #[ignore] // Requires network access
     async fn test_preferred_protocol() {
-        let target = Target::parse("www.google.com:443").await.unwrap();
+        let target = Target::parse("www.google.com:443")
+            .await
+            .expect("test assertion should succeed");
         let tester = ProtocolTester::new(target);
 
-        let preferred = tester.get_preferred_protocol().await.unwrap();
+        let preferred = tester
+            .get_preferred_protocol()
+            .await
+            .expect("test assertion should succeed");
 
         // Should prefer TLS 1.3
         assert_eq!(preferred, Some(Protocol::TLS13));
@@ -859,11 +888,12 @@ mod tests {
 
     #[test]
     fn test_sslv2_client_hello_build() {
-        let target = Target {
-            hostname: "example.com".to_string(),
-            port: 443,
-            ip_addresses: vec!["93.184.216.34".parse().unwrap()],
-        };
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["93.184.216.34".parse().unwrap()],
+        )
+        .unwrap();
 
         let tester = ProtocolTester::new(target);
         let hello = tester.build_sslv2_client_hello();

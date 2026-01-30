@@ -378,22 +378,22 @@ pub struct ProgressMessage {
 
 impl ProgressMessage {
     /// Create a new progress message
-    pub fn new(scan_id: String, progress: u8, stage: String) -> Self {
+    pub fn new(scan_id: impl Into<String>, progress: u8, stage: impl Into<String>) -> Self {
         Self {
             msg_type: "progress".to_string(),
-            scan_id,
+            scan_id: scan_id.into(),
             progress,
-            stage,
+            stage: stage.into(),
             details: None,
             timestamp: Utc::now(),
         }
     }
 
     /// Create a completion message
-    pub fn completed(scan_id: String) -> Self {
+    pub fn completed(scan_id: impl Into<String>) -> Self {
         Self {
             msg_type: "completed".to_string(),
-            scan_id,
+            scan_id: scan_id.into(),
             progress: 100,
             stage: "completed".to_string(),
             details: None,
@@ -402,13 +402,13 @@ impl ProgressMessage {
     }
 
     /// Create a failure message
-    pub fn failed(scan_id: String, error: String) -> Self {
+    pub fn failed(scan_id: impl Into<String>, error: impl Into<String>) -> Self {
         Self {
             msg_type: "failed".to_string(),
-            scan_id,
+            scan_id: scan_id.into(),
             progress: 0,
             stage: "failed".to_string(),
-            details: Some(error),
+            details: Some(error.into()),
             timestamp: Utc::now(),
         }
     }

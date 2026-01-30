@@ -3,6 +3,7 @@
 
 use crate::Result;
 use std::io::Write;
+use std::path::Path;
 use std::process::{Command, Stdio};
 
 /// aha (ANSI HTML Adapter) wrapper
@@ -110,6 +111,33 @@ impl Aha {
 
     /// Convert file to HTML
     pub fn convert_file(&self, input_path: &str, output_path: &str) -> Result<()> {
+        // SECURITY: Validate paths to prevent command injection via path arguments
+        // Check for null bytes and obvious shell metacharacters
+        if input_path.contains('\0') || output_path.contains('\0') {
+            return Err(crate::error::TlsError::Other(
+                "Path contains null byte".to_string(),
+            ));
+        }
+
+        // Verify paths don't contain shell metacharacters
+        let dangerous = ['|', '&', ';', '$', '`', '\n', '\r'];
+        for ch in dangerous.iter() {
+            if input_path.contains(*ch) || output_path.contains(*ch) {
+                return Err(crate::error::TlsError::Other(format!(
+                    "Path contains dangerous character: '{}'",
+                    ch
+                )));
+            }
+        }
+
+        // Verify paths exist or are creatable
+        if !Path::new(input_path).exists() {
+            return Err(crate::error::TlsError::Other(format!(
+                "Input file does not exist: {}",
+                input_path
+            )));
+        }
+
         let output = Command::new(&self.aha_path)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())

@@ -267,7 +267,7 @@ async fn test_heartbleed_not_vulnerable() {
         .await
         .expect("Failed to parse target");
 
-    let tester = HeartbleedTester::new(target);
+    let tester = HeartbleedTester::new(&target);
     let result = tester.test().await;
 
     match result {

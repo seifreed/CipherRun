@@ -199,7 +199,7 @@ mod tests {
 
     #[test]
     fn test_get_vulnerability_hint() {
-        let hint = get_vulnerability_hint("heartbleed").unwrap();
+        let hint = get_vulnerability_hint("heartbleed").expect("test assertion should succeed");
         assert!(hint.title.contains("Heartbleed"));
         assert!(!hint.references.is_empty());
     }

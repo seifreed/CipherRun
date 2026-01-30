@@ -34,9 +34,9 @@ fn test_case(args_str: &str, should_fail: bool) {
 }
 
 fn main() {
-    println!("=".repeat(80));
+    println!("{}", "=".repeat(80));
     println!("Phase 1 CLI Validation Tests");
-    println!("=".repeat(80));
+    println!("{}", "=".repeat(80));
 
     // Valid cases
     println!("\n Valid Cases (should pass):");
@@ -53,5 +53,5 @@ fn main() {
 
     println!("\n{}", "=".repeat(80));
     println!("All tests completed");
-    println!("=".repeat(80));
+    println!("{}", "=".repeat(80));
 }

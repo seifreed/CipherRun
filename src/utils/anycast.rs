@@ -10,8 +10,8 @@ use crate::utils::network::Target;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::net::IpAddr;
-use trust_dns_resolver::TokioAsyncResolver;
-use trust_dns_resolver::config::*;
+use hickory_resolver::TokioAsyncResolver;
+use hickory_resolver::config::*;
 
 /// Anycast scanner for testing all IPs of a hostname
 pub struct AnycastScanner {
@@ -101,7 +101,7 @@ impl AnycastScanner {
         let mut ips = Vec::new();
 
         // Query A records (IPv4)
-        if !self.args.ipv6_only {
+        if !self.args.network.ipv6_only {
             match resolver.ipv4_lookup(&self.hostname).await {
                 Ok(lookup) => {
                     for ipv4 in lookup.iter() {
@@ -115,7 +115,7 @@ impl AnycastScanner {
         }
 
         // Query AAAA records (IPv6)
-        if !self.args.ipv4_only {
+        if !self.args.network.ipv4_only {
             match resolver.ipv6_lookup(&self.hostname).await {
                 Ok(lookup) => {
                     for ipv6 in lookup.iter() {
@@ -133,20 +133,16 @@ impl AnycastScanner {
 
     /// Scan a single IP address with SNI=hostname
     async fn scan_single_ip(&self, ip: &IpAddr) -> Result<ScanResults> {
-        // Create target with specific IP
-        let _target = Target {
-            hostname: self.hostname.clone(),
-            port: self.port,
-            ip_addresses: vec![*ip],
-        };
+        // Create target with specific IP (unused but kept for potential future use)
+        let _target = Target::with_ips(self.hostname.clone(), self.port, vec![*ip])?;
 
         // Create scanner with modified args (use IP directly)
         let mut scanner_args = self.args.clone();
         scanner_args.target = Some(format!("{}:{}", ip, self.port));
 
         // Override SNI to use original hostname
-        if scanner_args.sni_name.is_none() {
-            scanner_args.sni_name = Some(self.hostname.clone());
+        if scanner_args.tls.sni_name.is_none() {
+            scanner_args.tls.sni_name = Some(self.hostname.clone());
         }
 
         // Create and run scanner

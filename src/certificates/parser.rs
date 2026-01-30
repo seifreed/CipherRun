@@ -292,141 +292,91 @@ fn extract_aia_url(cert: &X509Certificate) -> Result<Option<String>> {
     Ok(None)
 }
 
-/// Format certificate expiry countdown in human-readable format
-///
-/// This function calculates the time remaining until certificate expiry
-/// (or time since expiry) and formats it in a human-readable way matching SSL Labs format.
-///
-/// Examples:
-/// - "expires in 2 months and 28 days"
-/// - "expires in 15 days"
-/// - "expires in 3 years"
-/// - "expired 5 days ago"
-///
-/// # Arguments
-/// * `not_after_str` - Certificate expiry date string from X.509
-///
-/// # Returns
-/// * `Some(String)` - Human-readable countdown string
-/// * `None` - If date parsing fails
+/// Calculate years, months, and remaining days from a total number of days.
+fn calculate_duration_parts(days: i64) -> (i64, i64, i64) {
+    let years = days / 365;
+    let remaining_days = days % 365;
+    let months = remaining_days / 30;
+    let final_days = remaining_days % 30;
+    (years, months, final_days)
+}
+
+/// Format a time phrase for certificate expiry display.
+fn format_time_phrase(years: i64, months: i64, days: i64, is_expired: bool) -> String {
+    let (prefix, suffix) = if is_expired {
+        ("expired ", " ago")
+    } else {
+        ("expires in ", "")
+    };
+
+    fn pluralize(n: i64, singular: &str) -> String {
+        if n == 1 {
+            format!("1 {}", singular)
+        } else {
+            format!("{} {}s", n, singular)
+        }
+    }
+
+    let phrase = if years > 0 {
+        if months > 0 {
+            format!(
+                "{} and {}",
+                pluralize(years, "year"),
+                pluralize(months, "month")
+            )
+        } else {
+            pluralize(years, "year")
+        }
+    } else if months > 0 {
+        if days > 0 {
+            format!(
+                "{} and {}",
+                pluralize(months, "month"),
+                pluralize(days, "day")
+            )
+        } else {
+            pluralize(months, "month")
+        }
+    } else {
+        pluralize(days, "day")
+    };
+
+    format!("{}{}{}", prefix, phrase, suffix)
+}
+
 fn format_expiry_countdown(not_after_str: &str) -> Option<String> {
     use chrono::NaiveDateTime;
 
-    // Parse the not_after date - it's typically in ASN1_UTCTIME or ASN1_GENERALIZEDTIME format
-    // Try parsing various common formats
-    let not_after = if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(not_after_str) {
-        dt.with_timezone(&Utc)
-    } else if let Ok(dt) = NaiveDateTime::parse_from_str(not_after_str, "%Y-%m-%d %H:%M:%S UTC") {
-        DateTime::from_naive_utc_and_offset(dt, Utc)
-    } else {
-        // Try to parse x509-parser format (e.g., "2025-01-15 12:00:00 UTC")
-        let cleaned = not_after_str.replace(" UTC", "").replace(" GMT", "");
-        if let Ok(dt) = NaiveDateTime::parse_from_str(&cleaned, "%Y-%m-%d %H:%M:%S") {
-            DateTime::from_naive_utc_and_offset(dt, Utc)
-        } else {
-            return None;
-        }
-    };
+    let not_after = chrono::DateTime::parse_from_rfc3339(not_after_str)
+        .map(|dt| dt.with_timezone(&Utc))
+        .or_else(|_| {
+            NaiveDateTime::parse_from_str(not_after_str, "%Y-%m-%d %H:%M:%S UTC")
+                .map(|dt| DateTime::from_naive_utc_and_offset(dt, Utc))
+        })
+        .or_else(|_| {
+            let cleaned = not_after_str.replace(" UTC", "").replace(" GMT", "");
+            NaiveDateTime::parse_from_str(&cleaned, "%Y-%m-%d %H:%M:%S")
+                .map(|dt| DateTime::from_naive_utc_and_offset(dt, Utc))
+        })
+        .ok()?;
 
-    let now = Utc::now();
-    let duration = not_after.signed_duration_since(now);
+    let duration = not_after.signed_duration_since(Utc::now());
+    let is_expired = duration.num_seconds() < 0;
+    let total_days = duration.num_days().abs();
 
-    // Check if expired
-    if duration.num_seconds() < 0 {
-        // Certificate has expired
-        let abs_duration = -duration;
-        let days = abs_duration.num_days().abs();
-
-        if days == 0 {
-            return Some("expired today".to_string());
-        } else if days == 1 {
-            return Some("expired 1 day ago".to_string());
-        } else if days < 30 {
-            return Some(format!("expired {} days ago", days));
-        } else if days < 365 {
-            let months = days / 30;
-            let remaining_days = days % 30;
-            if remaining_days == 0 {
-                if months == 1 {
-                    return Some("expired 1 month ago".to_string());
-                } else {
-                    return Some(format!("expired {} months ago", months));
-                }
-            } else if months == 1 {
-                return Some(format!("expired 1 month and {} days ago", remaining_days));
+    if total_days == 0 {
+        return Some(
+            if is_expired {
+                "expired today"
             } else {
-                return Some(format!(
-                    "expired {} months and {} days ago",
-                    months, remaining_days
-                ));
+                "expires today"
             }
-        } else {
-            let years = days / 365;
-            let remaining_months = (days % 365) / 30;
-            if remaining_months == 0 {
-                if years == 1 {
-                    return Some("expired 1 year ago".to_string());
-                } else {
-                    return Some(format!("expired {} years ago", years));
-                }
-            } else if years == 1 {
-                return Some(format!(
-                    "expired 1 year and {} months ago",
-                    remaining_months
-                ));
-            } else {
-                return Some(format!(
-                    "expired {} years and {} months ago",
-                    years, remaining_months
-                ));
-            }
-        }
+            .to_string(),
+        );
     }
 
-    // Certificate is still valid
-    let days = duration.num_days();
-
-    if days == 0 {
-        Some("expires today".to_string())
-    } else if days == 1 {
-        Some("expires in 1 day".to_string())
-    } else if days < 30 {
-        Some(format!("expires in {} days", days))
-    } else if days < 365 {
-        let months = days / 30;
-        let remaining_days = days % 30;
-        if remaining_days == 0 {
-            if months == 1 {
-                Some("expires in 1 month".to_string())
-            } else {
-                Some(format!("expires in {} months", months))
-            }
-        } else if months == 1 {
-            Some(format!("expires in 1 month and {} days", remaining_days))
-        } else {
-            Some(format!(
-                "expires in {} months and {} days",
-                months, remaining_days
-            ))
-        }
-    } else {
-        let years = days / 365;
-        let remaining_months = (days % 365) / 30;
-        if remaining_months == 0 {
-            if years == 1 {
-                Some("expires in 1 year".to_string())
-            } else {
-                Some(format!("expires in {} years", years))
-            }
-        } else if years == 1 {
-            Some(format!("expires in 1 year and {} months", remaining_months))
-        } else {
-            Some(format!(
-                "expires in {} years and {} months",
-                years, remaining_months
-            ))
-        }
-    }
+    let (years, months, days) = calculate_duration_parts(total_days);
+    Some(format_time_phrase(years, months, days, is_expired))
 }
 
 /// Check if certificate uses a Debian weak key (CVE-2008-0166)
@@ -541,7 +491,8 @@ impl CertificateParser {
             return Err(anyhow::anyhow!("No certificates received from server").into());
         }
 
-        let certs = peer_certificates.unwrap();
+        let certs = peer_certificates
+            .ok_or_else(|| anyhow::anyhow!("No certificates received from server"))?;
         let mut parsed_certs = Vec::new();
 
         for cert_der in certs {
@@ -629,7 +580,9 @@ impl CertificateParser {
         // Check if CA certificate
         let is_ca = cert
             .basic_constraints()
-            .map(|bc| bc.map(|ext| ext.value.ca).unwrap_or(false))
+            .ok()
+            .flatten()
+            .map(|ext| ext.value.ca)
             .unwrap_or(false);
 
         // Get public key size (key_size() returns size in bits for RSA modulus)
@@ -644,13 +597,13 @@ impl CertificateParser {
 
         // Calculate Pin SHA256 (HPKP) for the certificate's public key
         // Extract RSA public key exponent if the key is RSA
-        let rsa_exponent = extract_rsa_exponent(der_bytes).unwrap_or(None);
+        let rsa_exponent = extract_rsa_exponent(der_bytes).ok().flatten();
 
         // Calculate certificate fingerprint SHA256
         // This is the SHA256 hash of the entire DER-encoded certificate
-        let fingerprint_sha256 = calculate_fingerprint_sha256(der_bytes).unwrap_or(None);
+        let fingerprint_sha256 = calculate_fingerprint_sha256(der_bytes).ok().flatten();
         // This is used for HTTP Public Key Pinning per RFC 7469
-        let pin_sha256 = calculate_pin_sha256(der_bytes).unwrap_or(None);
+        let pin_sha256 = calculate_pin_sha256(der_bytes).ok().flatten();
 
         // Calculate expiry countdown
         let not_after_str = cert.validity().not_after.to_string();
@@ -660,7 +613,7 @@ impl CertificateParser {
         let debian_weak_key = check_debian_weak_key(der_bytes);
 
         // Extract AIA URL (CA Issuers URL for intermediate cert download)
-        let aia_url = extract_aia_url(&cert).unwrap_or(None);
+        let aia_url = extract_aia_url(&cert).ok().flatten();
 
         // Check for Certificate Transparency (SCT extension)
         let certificate_transparency = check_certificate_transparency(&cert);
@@ -737,7 +690,7 @@ impl CertificateChain {
 
     /// Check if chain is complete (has root CA)
     pub fn is_complete(&self) -> bool {
-        self.certificates.last().map(|c| c.is_ca).unwrap_or(false)
+        self.certificates.last().is_some_and(|c| c.is_ca)
     }
 }
 
@@ -748,10 +701,15 @@ mod tests {
     #[tokio::test]
     #[ignore] // Requires network access
     async fn test_get_certificate_chain() {
-        let target = Target::parse("www.google.com:443").await.unwrap();
+        let target = Target::parse("www.google.com:443")
+            .await
+            .expect("Failed to parse target");
         let parser = CertificateParser::new(target);
 
-        let chain = parser.get_certificate_chain().await.unwrap();
+        let chain = parser
+            .get_certificate_chain()
+            .await
+            .expect("Failed to get certificate chain");
 
         assert!(chain.chain_length > 0);
         assert!(!chain.certificates.is_empty());
@@ -767,7 +725,7 @@ mod tests {
             "Chain size should be greater than 0"
         );
 
-        let leaf = chain.leaf().unwrap();
+        let leaf = chain.leaf().expect("Chain should have a leaf certificate");
         assert!(!leaf.subject.is_empty());
         assert!(!leaf.san.is_empty());
     }
@@ -775,10 +733,15 @@ mod tests {
     #[tokio::test]
     #[ignore] // Requires network access
     async fn test_get_leaf_certificate() {
-        let target = Target::parse("www.google.com:443").await.unwrap();
+        let target = Target::parse("www.google.com:443")
+            .await
+            .expect("Failed to parse target");
         let parser = CertificateParser::new(target);
 
-        let cert = parser.get_leaf_certificate().await.unwrap();
+        let cert = parser
+            .get_leaf_certificate()
+            .await
+            .expect("Failed to get leaf certificate");
 
         assert!(!cert.subject.is_empty());
         assert!(!cert.issuer.is_empty());
@@ -811,15 +774,20 @@ mod tests {
     #[tokio::test]
     #[ignore] // Requires network access
     async fn test_pin_sha256_calculation() {
-        let target = Target::parse("www.google.com:443").await.unwrap();
+        let target = Target::parse("www.google.com:443")
+            .await
+            .expect("Failed to parse target");
         let parser = CertificateParser::new(target);
 
-        let cert = parser.get_leaf_certificate().await.unwrap();
+        let cert = parser
+            .get_leaf_certificate()
+            .await
+            .expect("Failed to get leaf certificate");
 
         // Verify that pin_sha256 was calculated
         assert!(cert.pin_sha256.is_some(), "Pin SHA256 should be calculated");
 
-        let pin = cert.pin_sha256.unwrap();
+        let pin = cert.pin_sha256.expect("Pin SHA256 should be present");
 
         // Verify it's a valid Base64 string with expected length
         // SHA256 produces 32 bytes, Base64 encoding results in 44 characters (with padding)
@@ -852,58 +820,81 @@ mod tests {
         use openssl::x509::{X509Builder, X509NameBuilder};
 
         // Generate RSA key pair
-        let rsa = Rsa::generate(2048).unwrap();
-        let pkey = PKey::from_rsa(rsa).unwrap();
+        let rsa = Rsa::generate(2048).expect("Failed to generate RSA key");
+        let pkey = PKey::from_rsa(rsa).expect("Failed to create PKey from RSA");
 
         // Create certificate builder
-        let mut builder = X509Builder::new().unwrap();
-        builder.set_version(2).unwrap();
+        let mut builder = X509Builder::new().expect("Failed to create X509Builder");
+        builder.set_version(2).expect("Failed to set version");
 
-        let mut serial = BigNum::new().unwrap();
-        serial.rand(128, MsbOption::MAYBE_ZERO, false).unwrap();
-        let serial = serial.to_asn1_integer().unwrap();
-        builder.set_serial_number(&serial).unwrap();
+        let mut serial = BigNum::new().expect("Failed to create BigNum");
+        serial
+            .rand(128, MsbOption::MAYBE_ZERO, false)
+            .expect("Failed to generate random serial");
+        let serial = serial
+            .to_asn1_integer()
+            .expect("Failed to convert to ASN1 integer");
+        builder
+            .set_serial_number(&serial)
+            .expect("Failed to set serial number");
 
         // Set subject name
-        let mut name_builder = X509NameBuilder::new().unwrap();
-        name_builder.append_entry_by_text("C", "US").unwrap();
-        name_builder.append_entry_by_text("O", "Test").unwrap();
+        let mut name_builder = X509NameBuilder::new().expect("Failed to create X509NameBuilder");
+        name_builder
+            .append_entry_by_text("C", "US")
+            .expect("Failed to set country");
+        name_builder
+            .append_entry_by_text("O", "Test")
+            .expect("Failed to set organization");
         name_builder
             .append_entry_by_text("CN", "test.example.com")
-            .unwrap();
+            .expect("Failed to set common name");
         let name = name_builder.build();
-        builder.set_subject_name(&name).unwrap();
-        builder.set_issuer_name(&name).unwrap();
+        builder
+            .set_subject_name(&name)
+            .expect("Failed to set subject name");
+        builder
+            .set_issuer_name(&name)
+            .expect("Failed to set issuer name");
 
         // Set validity period
-        let not_before = Asn1Time::days_from_now(0).unwrap();
-        let not_after = Asn1Time::days_from_now(365).unwrap();
-        builder.set_not_before(&not_before).unwrap();
-        builder.set_not_after(&not_after).unwrap();
+        let not_before = Asn1Time::days_from_now(0).expect("Failed to create not_before time");
+        let not_after = Asn1Time::days_from_now(365).expect("Failed to create not_after time");
+        builder
+            .set_not_before(&not_before)
+            .expect("Failed to set not_before");
+        builder
+            .set_not_after(&not_after)
+            .expect("Failed to set not_after");
 
         // Set public key
-        builder.set_pubkey(&pkey).unwrap();
+        builder.set_pubkey(&pkey).expect("Failed to set public key");
 
         // Sign the certificate
-        builder.sign(&pkey, OpensslMessageDigest::sha256()).unwrap();
+        builder
+            .sign(&pkey, OpensslMessageDigest::sha256())
+            .expect("Failed to sign certificate");
         let cert = builder.build();
 
         // Get DER bytes
-        let der_bytes = cert.to_der().unwrap();
+        let der_bytes = cert.to_der().expect("Failed to convert certificate to DER");
 
         // Calculate pin
-        let pin = calculate_pin_sha256(&der_bytes).unwrap();
+        let pin = calculate_pin_sha256(&der_bytes).expect("Failed to calculate pin SHA256");
 
         assert!(
             pin.is_some(),
             "Pin should be calculated for self-signed cert"
         );
         assert_eq!(
-            pin.as_ref().unwrap().len(),
+            pin.as_ref().expect("Pin should be Some").len(),
             44,
             "Pin should be 44 characters"
         );
 
-        println!("Test certificate Pin SHA256: {}", pin.unwrap());
+        println!(
+            "Test certificate Pin SHA256: {}",
+            pin.expect("Pin should be present")
+        );
     }
 }

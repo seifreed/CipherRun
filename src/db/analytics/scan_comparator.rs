@@ -458,29 +458,31 @@ impl ScanComparator {
         let protocols1 = self.get_protocols(scan_id_1).await?;
         let protocols2 = self.get_protocols(scan_id_2).await?;
 
-        let set1: HashSet<String> = protocols1
+        // Use references in HashSet to avoid cloning
+        let set1: HashSet<&str> = protocols1
             .iter()
             .filter(|p| p.enabled)
-            .map(|p| p.protocol_name.clone())
+            .map(|p| p.protocol_name.as_str())
             .collect();
-        let set2: HashSet<String> = protocols2
+        let set2: HashSet<&str> = protocols2
             .iter()
             .filter(|p| p.enabled)
-            .map(|p| p.protocol_name.clone())
+            .map(|p| p.protocol_name.as_str())
             .collect();
 
-        let added: Vec<String> = set2.difference(&set1).cloned().collect();
-        let removed: Vec<String> = set1.difference(&set2).cloned().collect();
-        let unchanged: Vec<String> = set1.intersection(&set2).cloned().collect();
+        // Only clone when building final result vectors
+        let added: Vec<String> = set2.difference(&set1).map(|s| s.to_string()).collect();
+        let removed: Vec<String> = set1.difference(&set2).map(|s| s.to_string()).collect();
+        let unchanged: Vec<String> = set1.intersection(&set2).map(|s| s.to_string()).collect();
 
         let pref1 = protocols1
             .iter()
             .find(|p| p.preferred)
-            .map(|p| p.protocol_name.clone());
+            .map(|p| p.protocol_name.clone()); // Necessary: for return value
         let pref2 = protocols2
             .iter()
             .find(|p| p.preferred)
-            .map(|p| p.protocol_name.clone());
+            .map(|p| p.protocol_name.clone()); // Necessary: for return value
 
         let preferred_change = if pref1 != pref2 {
             Some((pref1, pref2))
@@ -500,45 +502,39 @@ impl ScanComparator {
         let ciphers1 = self.get_ciphers(scan_id_1).await?;
         let ciphers2 = self.get_ciphers(scan_id_2).await?;
 
-        let set1: HashMap<String, &CipherRecord> = ciphers1
+        // Use string references as HashMap keys to avoid cloning
+        let set1: HashMap<&str, &CipherRecord> = ciphers1
             .iter()
-            .map(|c| (c.cipher_name.clone(), c))
+            .map(|c| (c.cipher_name.as_str(), c))
             .collect();
-        let set2: HashMap<String, &CipherRecord> = ciphers2
+        let set2: HashMap<&str, &CipherRecord> = ciphers2
             .iter()
-            .map(|c| (c.cipher_name.clone(), c))
+            .map(|c| (c.cipher_name.as_str(), c))
             .collect();
 
         let mut added = Vec::new();
         let mut removed = Vec::new();
         let mut unchanged = Vec::new();
 
+        // Helper function to convert CipherRecord to CipherInfo (reduces duplication)
+        let to_cipher_info = |cipher: &CipherRecord| CipherInfo {
+            name: cipher.cipher_name.clone(), // Necessary: building owned result
+            protocol: cipher.protocol_name.clone(),
+            strength: cipher.strength.clone(),
+            forward_secrecy: cipher.forward_secrecy,
+        };
+
         for (name, cipher) in &set2 {
             if !set1.contains_key(name) {
-                added.push(CipherInfo {
-                    name: cipher.cipher_name.clone(),
-                    protocol: cipher.protocol_name.clone(),
-                    strength: cipher.strength.clone(),
-                    forward_secrecy: cipher.forward_secrecy,
-                });
+                added.push(to_cipher_info(cipher));
             } else {
-                unchanged.push(CipherInfo {
-                    name: cipher.cipher_name.clone(),
-                    protocol: cipher.protocol_name.clone(),
-                    strength: cipher.strength.clone(),
-                    forward_secrecy: cipher.forward_secrecy,
-                });
+                unchanged.push(to_cipher_info(cipher));
             }
         }
 
         for (name, cipher) in &set1 {
             if !set2.contains_key(name) {
-                removed.push(CipherInfo {
-                    name: cipher.cipher_name.clone(),
-                    protocol: cipher.protocol_name.clone(),
-                    strength: cipher.strength.clone(),
-                    forward_secrecy: cipher.forward_secrecy,
-                });
+                removed.push(to_cipher_info(cipher));
             }
         }
 
@@ -620,42 +616,38 @@ impl ScanComparator {
         let vulns1 = self.get_vulnerabilities(scan_id_1).await?;
         let vulns2 = self.get_vulnerabilities(scan_id_2).await?;
 
-        let set1: HashMap<String, &VulnerabilityRecord> = vulns1
+        // Use string references as HashMap keys
+        let set1: HashMap<&str, &VulnerabilityRecord> = vulns1
             .iter()
-            .map(|v| (v.vulnerability_type.clone(), v))
+            .map(|v| (v.vulnerability_type.as_str(), v))
             .collect();
-        let set2: HashMap<String, &VulnerabilityRecord> = vulns2
+        let set2: HashMap<&str, &VulnerabilityRecord> = vulns2
             .iter()
-            .map(|v| (v.vulnerability_type.clone(), v))
+            .map(|v| (v.vulnerability_type.as_str(), v))
             .collect();
 
         let mut new = Vec::new();
         let mut resolved = Vec::new();
         let mut unchanged = Vec::new();
 
+        // Helper function to convert VulnerabilityRecord to VulnInfo
+        let to_vuln_info = |vuln: &VulnerabilityRecord| VulnInfo {
+            vuln_type: vuln.vulnerability_type.clone(), // Necessary: building owned result
+            severity: vuln.severity.clone(),
+            description: vuln.description.clone(),
+        };
+
         for (vuln_type, vuln) in &set2 {
             if !set1.contains_key(vuln_type) {
-                new.push(VulnInfo {
-                    vuln_type: vuln.vulnerability_type.clone(),
-                    severity: vuln.severity.clone(),
-                    description: vuln.description.clone(),
-                });
+                new.push(to_vuln_info(vuln));
             } else {
-                unchanged.push(VulnInfo {
-                    vuln_type: vuln.vulnerability_type.clone(),
-                    severity: vuln.severity.clone(),
-                    description: vuln.description.clone(),
-                });
+                unchanged.push(to_vuln_info(vuln));
             }
         }
 
         for (vuln_type, vuln) in &set1 {
             if !set2.contains_key(vuln_type) {
-                resolved.push(VulnInfo {
-                    vuln_type: vuln.vulnerability_type.clone(),
-                    severity: vuln.severity.clone(),
-                    description: vuln.description.clone(),
-                });
+                resolved.push(to_vuln_info(vuln));
             }
         }
 
@@ -702,9 +694,9 @@ impl ScanComparator {
 
         Ok(RatingDiff {
             overall_changed,
-            scan_1_grade: scan_1.overall_grade.clone(),
+            scan_1_grade: scan_1.overall_grade.clone(), // Necessary: Option<String> for return
             scan_1_score: scan_1.overall_score,
-            scan_2_grade: scan_2.overall_grade.clone(),
+            scan_2_grade: scan_2.overall_grade.clone(), // Necessary: Option<String> for return
             scan_2_score: scan_2.overall_score,
             component_diffs,
         })

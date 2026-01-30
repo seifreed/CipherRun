@@ -477,14 +477,17 @@ mod tests {
 
     #[test]
     fn test_client_hello_build() {
-        let target = Target {
-            hostname: "example.com".to_string(),
-            port: 443,
-            ip_addresses: vec![],
-        };
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["93.184.216.34".parse().unwrap()],
+        )
+        .unwrap();
 
         let scanner = PreHandshakeScanner::new(target);
-        let client_hello = scanner.build_client_hello().unwrap();
+        let client_hello = scanner
+            .build_client_hello()
+            .expect("test assertion should succeed");
 
         // Verify record header
         assert_eq!(client_hello[0], 0x16); // Handshake
@@ -497,11 +500,12 @@ mod tests {
 
     #[test]
     fn test_sni_extension() {
-        let target = Target {
-            hostname: "example.com".to_string(),
-            port: 443,
-            ip_addresses: vec![],
-        };
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["93.184.216.34".parse().unwrap()],
+        )
+        .unwrap();
 
         let scanner = PreHandshakeScanner::new(target);
         let sni = scanner.build_sni_extension();

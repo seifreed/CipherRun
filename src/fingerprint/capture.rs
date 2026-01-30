@@ -180,11 +180,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_synthetic_client_hello() {
-        let target = Target {
-            hostname: "example.com".to_string(),
-            port: 443,
-            ip_addresses: vec![],
-        };
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["93.184.216.34".parse().unwrap()],
+        )
+        .unwrap();
 
         let capture = ClientHelloNetworkCapture::new(target);
         let client_hello = capture.create_synthetic_client_hello();

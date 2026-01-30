@@ -235,7 +235,9 @@ mod tests {
         );
 
         let rule = CipherRule::new(&policy, &results);
-        let violations = rule.evaluate("example.com:443").unwrap();
+        let violations = rule
+            .evaluate("example.com:443")
+            .expect("test assertion should succeed");
 
         assert!(!violations.is_empty());
         assert_eq!(violations[0].rule_path, "ciphers.prohibited_patterns");
@@ -276,7 +278,9 @@ mod tests {
         );
 
         let rule = CipherRule::new(&policy, &results);
-        let violations = rule.evaluate("example.com:443").unwrap();
+        let violations = rule
+            .evaluate("example.com:443")
+            .expect("test assertion should succeed");
 
         assert!(!violations.is_empty());
         assert_eq!(violations[0].rule_path, "ciphers.min_strength");

@@ -113,11 +113,10 @@ impl ScanJob {
         self.eta_seconds = None;
     }
 
-    /// Mark as failed
-    pub fn mark_failed(&mut self, error: String) {
+    pub fn mark_failed(&mut self, error: impl Into<String>) {
         self.status = ScanStatus::Failed;
         self.completed_at = Some(Utc::now());
-        self.error = Some(error);
+        self.error = Some(error.into());
         self.eta_seconds = None;
     }
 
@@ -252,10 +251,17 @@ mod tests {
         let queue = InMemoryJobQueue::new(10);
         let job = ScanJob::new("example.com:443".to_string(), ScanOptions::default(), None);
 
-        let job_id = queue.enqueue(job.clone()).await.unwrap();
+        let job_id = queue
+            .enqueue(job.clone())
+            .await
+            .expect("test assertion should succeed");
         assert_eq!(job_id, job.id);
 
-        let dequeued = queue.dequeue().await.unwrap().unwrap();
+        let dequeued = queue
+            .dequeue()
+            .await
+            .unwrap()
+            .expect("test assertion should succeed");
         assert_eq!(dequeued.id, job.id);
     }
 
@@ -267,8 +273,14 @@ mod tests {
         let job2 = ScanJob::new("example2.com:443".to_string(), ScanOptions::default(), None);
         let job3 = ScanJob::new("example3.com:443".to_string(), ScanOptions::default(), None);
 
-        queue.enqueue(job1).await.unwrap();
-        queue.enqueue(job2).await.unwrap();
+        queue
+            .enqueue(job1)
+            .await
+            .expect("test assertion should succeed");
+        queue
+            .enqueue(job2)
+            .await
+            .expect("test assertion should succeed");
         assert!(queue.enqueue(job3).await.is_err());
     }
 
@@ -276,12 +288,22 @@ mod tests {
     async fn test_cancel_job() {
         let queue = InMemoryJobQueue::new(10);
         let job = ScanJob::new("example.com:443".to_string(), ScanOptions::default(), None);
-        let job_id = queue.enqueue(job).await.unwrap();
+        let job_id = queue
+            .enqueue(job)
+            .await
+            .expect("test assertion should succeed");
 
-        let cancelled = queue.cancel_job(&job_id).await.unwrap();
+        let cancelled = queue
+            .cancel_job(&job_id)
+            .await
+            .expect("test assertion should succeed");
         assert!(cancelled);
 
-        let job = queue.get_job(&job_id).await.unwrap().unwrap();
+        let job = queue
+            .get_job(&job_id)
+            .await
+            .unwrap()
+            .expect("test assertion should succeed");
         assert_eq!(job.status, ScanStatus::Cancelled);
     }
 }

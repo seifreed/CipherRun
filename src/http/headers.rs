@@ -14,6 +14,20 @@ pub enum IssueSeverity {
     Info,
 }
 
+impl IssueSeverity {
+    /// Returns a colored string representation for terminal display
+    pub fn colored_display(&self) -> colored::ColoredString {
+        use colored::Colorize;
+        match self {
+            Self::Critical => "CRITICAL".red().bold(),
+            Self::High => "HIGH".red(),
+            Self::Medium => "MEDIUM".yellow(),
+            Self::Low => "LOW".normal(),
+            Self::Info => "INFO".cyan(),
+        }
+    }
+}
+
 /// Security header issue
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HeaderIssue {

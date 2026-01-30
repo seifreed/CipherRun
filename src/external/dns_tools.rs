@@ -2,6 +2,7 @@
 // Extended DNS lookups for target discovery
 
 use crate::Result;
+use crate::security::validate_hostname;
 use serde::{Deserialize, Serialize};
 use std::process::Command;
 
@@ -82,6 +83,10 @@ impl Dig {
 
     /// Lookup DNS record
     pub fn lookup(&self, domain: &str, record_type: RecordType) -> Result<DnsLookupResult> {
+        // SECURITY: Validate domain to prevent command injection (CWE-78)
+        validate_hostname(domain)
+            .map_err(|e| crate::error::TlsError::Other(format!("Invalid domain: {}", e)))?;
+
         let output = Command::new(&self.dig_path)
             .arg(domain)
             .arg(record_type.as_str())
@@ -117,6 +122,10 @@ impl Dig {
         domain: &str,
         record_type: RecordType,
     ) -> Result<DnsLookupResult> {
+        // SECURITY: Validate domain to prevent command injection
+        validate_hostname(domain)
+            .map_err(|e| crate::error::TlsError::Other(format!("Invalid domain: {}", e)))?;
+
         let output = Command::new(&self.dig_path)
             .arg(domain)
             .arg(record_type.as_str())
@@ -143,6 +152,10 @@ impl Dig {
 
     /// Reverse DNS lookup
     pub fn reverse_lookup(&self, ip: &str) -> Result<Vec<String>> {
+        // SECURITY: Validate IP address to prevent command injection
+        validate_hostname(ip)
+            .map_err(|e| crate::error::TlsError::Other(format!("Invalid IP address: {}", e)))?;
+
         let output = Command::new(&self.dig_path)
             .arg("-x")
             .arg(ip)
@@ -173,6 +186,12 @@ impl Dig {
         record_type: RecordType,
         nameserver: &str,
     ) -> Result<DnsLookupResult> {
+        // SECURITY: Validate inputs to prevent command injection
+        validate_hostname(domain)
+            .map_err(|e| crate::error::TlsError::Other(format!("Invalid domain: {}", e)))?;
+        validate_hostname(nameserver)
+            .map_err(|e| crate::error::TlsError::Other(format!("Invalid nameserver: {}", e)))?;
+
         let output = Command::new(&self.dig_path)
             .arg(format!("@{}", nameserver))
             .arg(domain)
@@ -237,6 +256,10 @@ impl Host {
 
     /// Simple DNS lookup
     pub fn lookup(&self, domain: &str) -> Result<Vec<String>> {
+        // SECURITY: Validate domain to prevent command injection
+        validate_hostname(domain)
+            .map_err(|e| crate::error::TlsError::Other(format!("Invalid domain: {}", e)))?;
+
         let output = Command::new(&self.host_path).arg(domain).output()?;
 
         if output.status.success() {
@@ -253,6 +276,10 @@ impl Host {
 
     /// Lookup specific record type
     pub fn lookup_type(&self, domain: &str, record_type: RecordType) -> Result<Vec<String>> {
+        // SECURITY: Validate domain to prevent command injection
+        validate_hostname(domain)
+            .map_err(|e| crate::error::TlsError::Other(format!("Invalid domain: {}", e)))?;
+
         let output = Command::new(&self.host_path)
             .arg("-t")
             .arg(record_type.as_str())
@@ -273,6 +300,10 @@ impl Host {
 
     /// Reverse DNS lookup
     pub fn reverse_lookup(&self, ip: &str) -> Result<Vec<String>> {
+        // SECURITY: Validate IP address to prevent command injection
+        validate_hostname(ip)
+            .map_err(|e| crate::error::TlsError::Other(format!("Invalid IP address: {}", e)))?;
+
         let output = Command::new(&self.host_path).arg(ip).output()?;
 
         if output.status.success() {

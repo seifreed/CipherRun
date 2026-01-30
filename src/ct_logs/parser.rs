@@ -234,11 +234,11 @@ mod tests {
     #[test]
     fn test_cert_type_serialization() {
         let cert_type = CertType::X509Certificate;
-        let json = serde_json::to_string(&cert_type).unwrap();
+        let json = serde_json::to_string(&cert_type).expect("test assertion should succeed");
         assert!(json.contains("X509Certificate"));
 
         let precert_type = CertType::PreCertificate;
-        let json2 = serde_json::to_string(&precert_type).unwrap();
+        let json2 = serde_json::to_string(&precert_type).expect("test assertion should succeed");
         assert!(json2.contains("PreCertificate"));
     }
 }

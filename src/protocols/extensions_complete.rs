@@ -475,7 +475,7 @@ mod tests {
 
     #[test]
     fn test_get_extension_info() {
-        let sni = TlsExtensions::get_extension_info(0x0000).unwrap();
+        let sni = TlsExtensions::get_extension_info(0x0000).expect("test assertion should succeed");
         assert_eq!(sni.name, "server_name (SNI)");
         assert_eq!(sni.security_impact, SecurityImpact::Critical);
     }

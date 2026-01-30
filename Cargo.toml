@@ -55,7 +55,6 @@ native-tls = "0.2"
 
 # Networking
 socket2 = "0.5"
-trust-dns-resolver = "0.23"
 hickory-resolver = "0.24"
 ipnetwork = "0.20"
 
@@ -113,6 +112,7 @@ hex = "0.4"
 nom = "7.1"
 bytes = "1.8"
 url = "2.5"
+urlencoding = "2.1"
 rand = "0.8"
 x25519-dalek = "2.0"
 
@@ -154,6 +154,12 @@ bloomfilter = "1.0"
 criterion = "0.5"
 mockito = "1.5"
 proptest = "1.5"
+
+# Kani formal verification
+# Configuration for running `cargo kani` proofs
+[package.metadata.kani]
+# Enable unstable features for better verification
+unstable = ["concrete-playback"]
 
 [[bin]]
 name = "cipherrun"

@@ -214,11 +214,12 @@ mod tests {
 
     #[test]
     fn test_client_hello_with_npn() {
-        let target = Target {
-            hostname: "example.com".to_string(),
-            port: 443,
-            ip_addresses: vec!["93.184.216.34".parse().unwrap()],
-        };
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["93.184.216.34".parse().unwrap()],
+        )
+        .unwrap();
 
         let tester = NpnTester::new(target);
         let hello = tester.build_client_hello_with_npn();

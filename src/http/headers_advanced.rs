@@ -119,9 +119,9 @@ pub fn parse_hsts(headers: &HashMap<String, String>) -> HstsAnalysis {
                 if let Ok(age) = value.parse::<u64>() {
                     max_age = Some(age);
                 }
-            } else if part == "includeSubDomains" {
+            } else if part.eq_ignore_ascii_case("includesubdomains") {
                 include_subdomains = true;
-            } else if part == "preload" {
+            } else if part.eq_ignore_ascii_case("preload") {
                 preload = true;
             }
         }
@@ -200,7 +200,7 @@ pub fn parse_hpkp(headers: &HashMap<String, String>) -> HpkpAnalysis {
                 if let Ok(age) = value.parse::<u64>() {
                     max_age = Some(age);
                 }
-            } else if part == "includeSubDomains" {
+            } else if part.eq_ignore_ascii_case("includesubdomains") {
                 include_subdomains = true;
             } else if let Some(value) = part.strip_prefix("report-uri=") {
                 report_uri = Some(value.trim_matches('"').to_string());

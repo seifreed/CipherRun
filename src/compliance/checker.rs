@@ -415,7 +415,8 @@ mod tests {
             },
         ];
 
-        let violations = ComplianceChecker::check_protocols(&rule, &results).unwrap();
+        let violations = ComplianceChecker::check_protocols(&rule, &results)
+            .expect("test assertion should succeed");
         assert_eq!(violations.len(), 1);
         assert_eq!(violations[0].violation_type, "Prohibited Protocol");
     }
@@ -466,7 +467,8 @@ mod tests {
             },
         ];
 
-        let violations = ComplianceChecker::check_protocols(&rule, &results).unwrap();
+        let violations = ComplianceChecker::check_protocols(&rule, &results)
+            .expect("test assertion should succeed");
         assert_eq!(violations.len(), 1);
         assert_eq!(violations[0].violation_type, "Non-Compliant Protocol");
     }

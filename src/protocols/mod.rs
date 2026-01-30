@@ -192,3 +192,5 @@ pub mod server_defaults_advanced;
 pub mod session_resumption;
 pub mod signatures;
 pub mod tester;
+
+pub use tester::{ProtocolTestable, ProtocolTester};

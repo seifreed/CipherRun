@@ -102,7 +102,7 @@ impl ServerHelloNetworkCapture {
         use std::time::SystemTime;
         let now = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_else(|_| std::time::Duration::from_secs(0))
             .as_secs() as u32;
         let mut random = [0u8; 32];
         random[0..4].copy_from_slice(&now.to_be_bytes());
@@ -281,11 +281,12 @@ mod tests {
 
     #[test]
     fn test_build_client_hello() {
-        let target = Target {
-            hostname: "example.com".to_string(),
-            port: 443,
-            ip_addresses: vec![],
-        };
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["93.184.216.34".parse().unwrap()],
+        )
+        .unwrap();
 
         let capture = ServerHelloNetworkCapture::new(target);
         let client_hello = capture.build_client_hello();
@@ -293,7 +294,7 @@ mod tests {
         // Should be a valid TLS record
         assert_eq!(client_hello[0], 0x16); // Handshake
         assert_eq!(client_hello[1], 0x03); // Version major
-        assert_eq!(client_hello[2], 0x03); // Version minor (TLS 1.2)
+        assert_eq!(client_hello[2], 0x01); // Legacy record version (TLS 1.0) for compatibility
 
         // Should have reasonable length
         assert!(client_hello.len() > 50);

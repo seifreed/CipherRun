@@ -50,7 +50,7 @@ pub fn generate_csv(results: &ScanResults) -> Result<String> {
     output.push('\n');
 
     // HTTP Headers Issues (if available)
-    if let Some(headers) = &results.http_headers {
+    if let Some(headers) = results.http_headers() {
         output.push_str("=== HTTP SECURITY HEADERS ===\n");
         output.push_str("Grade,Score\n");
         output.push_str(&format!("{:?},{}\n", headers.grade, headers.score));
@@ -169,7 +169,7 @@ pub fn generate_csv(results: &ScanResults) -> Result<String> {
     }
 
     // Rating (if available)
-    if let Some(rating) = &results.rating {
+    if let Some(rating) = results.ssl_rating() {
         output.push_str("=== SSL LABS RATING ===\n");
         output.push_str("Grade,Overall Score,Certificate Score,Protocol Score,Key Exchange Score,Cipher Strength Score\n");
         output.push_str(&format!(
@@ -185,7 +185,7 @@ pub fn generate_csv(results: &ScanResults) -> Result<String> {
     }
 
     // Client Simulations (if available)
-    if let Some(clients) = &results.client_simulations {
+    if let Some(clients) = results.client_simulations() {
         output.push_str("=== CLIENT COMPATIBILITY ===\n");
         output.push_str("Client,Success,Protocol,Cipher,Handshake Time (ms)\n");
         for client in clients {
@@ -249,7 +249,7 @@ mod tests {
             ..Default::default()
         };
 
-        let csv = generate_csv(&results).unwrap();
+        let csv = generate_csv(&results).expect("test assertion should succeed");
         assert!(csv.contains("SCAN SUMMARY"));
         assert!(csv.contains("example.com"));
     }
@@ -257,7 +257,7 @@ mod tests {
     #[test]
     fn test_vulnerabilities_csv() {
         let results = ScanResults::default();
-        let csv = generate_vulnerabilities_csv(&results).unwrap();
+        let csv = generate_vulnerabilities_csv(&results).expect("test assertion should succeed");
         assert!(csv.contains("Type,Severity,Vulnerable,CVE,Details"));
     }
 }

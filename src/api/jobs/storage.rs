@@ -95,21 +95,28 @@ mod tests {
 
     #[test]
     fn test_file_storage() {
-        let temp_dir = TempDir::new().unwrap();
-        let storage = FileJobStorage::new(temp_dir.path()).unwrap();
+        let temp_dir = TempDir::new().expect("test assertion should succeed");
+        let storage = FileJobStorage::new(temp_dir.path()).expect("test assertion should succeed");
 
         let job = ScanJob::new("example.com:443".to_string(), ScanOptions::default(), None);
 
         // Save
-        storage.save_job(&job).unwrap();
+        storage
+            .save_job(&job)
+            .expect("test assertion should succeed");
 
         // Load
-        let loaded = storage.load_job(&job.id).unwrap().unwrap();
+        let loaded = storage
+            .load_job(&job.id)
+            .unwrap()
+            .expect("test assertion should succeed");
         assert_eq!(loaded.id, job.id);
         assert_eq!(loaded.target, job.target);
 
         // Delete
-        storage.delete_job(&job.id).unwrap();
+        storage
+            .delete_job(&job.id)
+            .expect("test assertion should succeed");
         assert!(storage.load_job(&job.id).unwrap().is_none());
     }
 }

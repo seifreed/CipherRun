@@ -112,9 +112,8 @@ impl MonitorDaemon {
             return Ok(());
         }
 
-        // Clone domains that need scanning
-        let domains_to_check: Vec<MonitoredDomain> =
-            enabled_domains.iter().map(|d| (*d).clone()).collect();
+        // Clone domains that need scanning (necessary for async task ownership)
+        let domains_to_check: Vec<MonitoredDomain> = enabled_domains.into_iter().cloned().collect();
         drop(inventory);
 
         // Get domains due for scanning
@@ -133,8 +132,8 @@ impl MonitorDaemon {
         let mut tasks = Vec::new();
 
         for domain in due_domains {
-            let domain_clone = domain.clone();
-            let inventory_clone = Arc::clone(&self.inventory);
+            let domain_clone = domain.clone(); // Necessary: move into async task
+            let inventory_clone = Arc::clone(&self.inventory); // Arc clone is cheap
             let alert_manager_clone = Arc::clone(&self.alert_manager);
             let detector_clone = Arc::clone(&self.detector);
             let semaphore_clone = Arc::clone(&self.scan_semaphore);
@@ -223,7 +222,8 @@ impl MonitorDaemon {
         let mut inventory_guard = inventory.lock().await;
         let previous_cert = inventory_guard
             .get_domain(&identifier)
-            .and_then(|d| d.last_certificate.clone());
+            .and_then(|d| d.last_certificate.as_ref())
+            .cloned();
 
         // Detect changes
         if let Some(prev) = previous_cert {
@@ -399,7 +399,9 @@ mod tests {
     #[tokio::test]
     async fn test_daemon_stats() {
         let config = MonitorConfig::default();
-        let daemon = MonitorDaemon::new(config).await.unwrap();
+        let daemon = MonitorDaemon::new(config)
+            .await
+            .expect("test assertion should succeed");
 
         let stats = daemon.stats().await;
         assert_eq!(stats.total_domains, 0);
@@ -410,10 +412,15 @@ mod tests {
     #[tokio::test]
     async fn test_add_domain() {
         let config = MonitorConfig::default();
-        let daemon = MonitorDaemon::new(config).await.unwrap();
+        let daemon = MonitorDaemon::new(config)
+            .await
+            .expect("test assertion should succeed");
 
         let domain = MonitoredDomain::new("example.com".to_string(), 443);
-        daemon.add_domain(domain).await.unwrap();
+        daemon
+            .add_domain(domain)
+            .await
+            .expect("test assertion should succeed");
 
         let stats = daemon.stats().await;
         assert_eq!(stats.total_domains, 1);

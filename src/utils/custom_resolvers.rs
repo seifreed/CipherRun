@@ -231,7 +231,7 @@ mod tests {
     #[test]
     fn test_parse_with_port() {
         let resolvers = vec!["8.8.8.8:53".to_string()];
-        let resolver = CustomResolver::new(resolvers).unwrap();
+        let resolver = CustomResolver::new(resolvers).expect("test assertion should succeed");
 
         assert_eq!(resolver.count(), 1);
         assert_eq!(
@@ -243,7 +243,7 @@ mod tests {
     #[test]
     fn test_parse_without_port() {
         let resolvers = vec!["8.8.8.8".to_string()];
-        let resolver = CustomResolver::new(resolvers).unwrap();
+        let resolver = CustomResolver::new(resolvers).expect("test assertion should succeed");
 
         assert_eq!(resolver.count(), 1);
         let expected = SocketAddr::new("8.8.8.8".parse().unwrap(), 53);
@@ -257,7 +257,7 @@ mod tests {
             "1.1.1.1:53".to_string(),
             "208.67.222.222:5353".to_string(),
         ];
-        let resolver = CustomResolver::new(resolvers).unwrap();
+        let resolver = CustomResolver::new(resolvers).expect("test assertion should succeed");
 
         assert_eq!(resolver.count(), 3);
     }

@@ -5,6 +5,12 @@
 // It affects TLS implementations that support RSA key exchange.
 
 use crate::Result;
+use crate::constants::{
+    CONTENT_TYPE_CHANGE_CIPHER_SPEC, CONTENT_TYPE_HANDSHAKE, HANDSHAKE_TYPE_CLIENT_KEY_EXCHANGE,
+    HANDSHAKE_TYPE_FINISHED, VERSION_TLS_1_0,
+};
+use crate::protocols::Protocol;
+use crate::protocols::handshake::ClientHelloBuilder;
 use crate::utils::network::Target;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -86,7 +92,14 @@ impl RobotTester {
                 stream.write_all(&client_key_exchange).await?;
 
                 // Send ChangeCipherSpec
-                let ccs = vec![0x14, 0x03, 0x03, 0x00, 0x01, 0x01];
+                let ccs = vec![
+                    CONTENT_TYPE_CHANGE_CIPHER_SPEC, // 0x14
+                    0x03,
+                    0x03, // TLS 1.2 version
+                    0x00,
+                    0x01, // Length: 1 byte
+                    0x01, // CCS message
+                ];
                 stream.write_all(&ccs).await?;
 
                 // Send Finished (will be invalid)
@@ -107,70 +120,27 @@ impl RobotTester {
         }
     }
 
-    /// Build ClientHello with RSA key exchange
+    /// Build ClientHello with RSA key exchange using ClientHelloBuilder
     fn build_client_hello(&self) -> Vec<u8> {
-        let mut hello = Vec::new();
-
-        // TLS Record: Handshake
-        hello.push(0x16);
-        hello.push(0x03);
-        hello.push(0x01);
-
-        // Placeholder for length
-        let len_pos = hello.len();
-        hello.push(0x00);
-        hello.push(0x00);
-
-        // Handshake: ClientHello
-        hello.push(0x01);
-
-        // Handshake length placeholder
-        let hs_len_pos = hello.len();
-        hello.push(0x00);
-        hello.push(0x00);
-        hello.push(0x00);
-
-        // Client Version: TLS 1.0
-        hello.push(0x03);
-        hello.push(0x01);
-
-        // Random (32 bytes)
-        hello.extend_from_slice(&[0x00; 32]);
-
-        // Session ID (empty)
-        hello.push(0x00);
-
-        // Cipher Suites - RSA only
-        hello.push(0x00);
-        hello.push(0x02);
-        hello.push(0x00);
-        hello.push(0x2f); // TLS_RSA_WITH_AES_128_CBC_SHA
-
-        // Compression (none)
-        hello.push(0x01);
-        hello.push(0x00);
-
-        // Update lengths
-        let hs_len = hello.len() - hs_len_pos - 3;
-        hello[hs_len_pos] = ((hs_len >> 16) & 0xff) as u8;
-        hello[hs_len_pos + 1] = ((hs_len >> 8) & 0xff) as u8;
-        hello[hs_len_pos + 2] = (hs_len & 0xff) as u8;
-
-        let rec_len = hello.len() - len_pos - 2;
-        hello[len_pos] = ((rec_len >> 8) & 0xff) as u8;
-        hello[len_pos + 1] = (rec_len & 0xff) as u8;
-
-        hello
+        let mut builder = ClientHelloBuilder::new(Protocol::TLS10);
+        builder.for_rsa_key_exchange();
+        builder.build_minimal().unwrap_or_else(|_| Vec::new())
     }
 
     /// Build ClientKeyExchange with invalid RSA padding
     fn build_invalid_client_key_exchange(&self, variant: u8) -> Vec<u8> {
         let mut msg = vec![
-            0x16, 0x03, 0x01, // TLS Record: Handshake
-            0x00, 0x86, // Length (134 bytes)
-            0x10, // Handshake: ClientKeyExchange
-            0x00, 0x00, 0x82, // Handshake length (130 bytes)
-            0x00, 0x80, // Encrypted PMS length (128 bytes for 1024-bit RSA)
+            CONTENT_TYPE_HANDSHAKE,         // TLS Record: Handshake (0x16)
+            (VERSION_TLS_1_0 >> 8) as u8,   // 0x03
+            (VERSION_TLS_1_0 & 0xff) as u8, // 0x01
+            0x00,
+            0x86,                               // Length (134 bytes)
+            HANDSHAKE_TYPE_CLIENT_KEY_EXCHANGE, // Handshake: ClientKeyExchange (0x10)
+            0x00,
+            0x00,
+            0x82, // Handshake length (130 bytes)
+            0x00,
+            0x80, // Encrypted PMS length (128 bytes for 1024-bit RSA)
         ];
 
         // Invalid RSA ciphertext (different variants)
@@ -197,10 +167,26 @@ impl RobotTester {
     /// Build Finished message
     fn build_finished(&self) -> Vec<u8> {
         vec![
-            0x16, 0x03, 0x01, 0x00, 0x10, // Record header
-            0x14, // Finished
-            0x00, 0x00, 0x0c, // Length
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            CONTENT_TYPE_HANDSHAKE,         // Record header (0x16)
+            (VERSION_TLS_1_0 >> 8) as u8,   // 0x03
+            (VERSION_TLS_1_0 & 0xff) as u8, // 0x01
+            0x00,
+            0x10,                    // Length
+            HANDSHAKE_TYPE_FINISHED, // Finished (0x14)
+            0x00,
+            0x00,
+            0x0c, // Length
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
             0x00, // Verify data (invalid)
         ]
     }

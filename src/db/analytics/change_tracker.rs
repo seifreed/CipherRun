@@ -224,16 +224,16 @@ impl ChangeTracker {
 
         let mut changes = Vec::new();
 
-        let set1: HashSet<String> = protocols1
+        let set1: HashSet<&str> = protocols1
             .iter()
             .filter(|p| p.enabled)
-            .map(|p| p.protocol_name.clone())
+            .map(|p| p.protocol_name.as_str())
             .collect();
 
-        let set2: HashSet<String> = protocols2
+        let set2: HashSet<&str> = protocols2
             .iter()
             .filter(|p| p.enabled)
-            .map(|p| p.protocol_name.clone())
+            .map(|p| p.protocol_name.as_str())
             .collect();
 
         // Removed protocols
@@ -303,15 +303,15 @@ impl ChangeTracker {
 
         let mut changes = Vec::new();
 
-        let set1: HashSet<String> = ciphers1.iter().map(|c| c.cipher_name.clone()).collect();
-        let set2: HashSet<String> = ciphers2.iter().map(|c| c.cipher_name.clone()).collect();
+        let set1: HashSet<&str> = ciphers1.iter().map(|c| c.cipher_name.as_str()).collect();
+        let set2: HashSet<&str> = ciphers2.iter().map(|c| c.cipher_name.as_str()).collect();
 
         // Removed ciphers
         for cipher_name in set1.difference(&set2) {
             let cipher = ciphers1
                 .iter()
                 .find(|c| &c.cipher_name == cipher_name)
-                .unwrap();
+                .ok_or_else(|| anyhow::anyhow!("Cipher {} not found in set1", cipher_name))?;
             let severity = match cipher.strength.as_str() {
                 "weak" | "export" | "null" => ChangeSeverity::Low,
                 _ => ChangeSeverity::Info,
@@ -321,7 +321,7 @@ impl ChangeTracker {
                 change_type: ChangeType::Cipher,
                 severity,
                 description: format!("Cipher removed: {}", cipher_name),
-                previous_value: Some(cipher.strength.clone()),
+                previous_value: Some(cipher.strength.clone()), // Necessary: String for ChangeEvent
                 current_value: None,
                 timestamp,
             });
@@ -332,7 +332,7 @@ impl ChangeTracker {
             let cipher = ciphers2
                 .iter()
                 .find(|c| &c.cipher_name == cipher_name)
-                .unwrap();
+                .ok_or_else(|| anyhow::anyhow!("Cipher {} not found in set2", cipher_name))?;
             let severity = match cipher.strength.as_str() {
                 "weak" | "export" | "null" => ChangeSeverity::High,
                 "medium" => ChangeSeverity::Medium,
@@ -344,7 +344,7 @@ impl ChangeTracker {
                 severity,
                 description: format!("Cipher added: {}", cipher_name),
                 previous_value: None,
-                current_value: Some(cipher.strength.clone()),
+                current_value: Some(cipher.strength.clone()), // Necessary: String for ChangeEvent
                 timestamp,
             });
         }
@@ -456,13 +456,13 @@ impl ChangeTracker {
 
         let mut changes = Vec::new();
 
-        let set1: HashSet<String> = vulns1
+        let set1: HashSet<&str> = vulns1
             .iter()
-            .map(|v| v.vulnerability_type.clone())
+            .map(|v| v.vulnerability_type.as_str())
             .collect();
-        let set2: HashSet<String> = vulns2
+        let set2: HashSet<&str> = vulns2
             .iter()
-            .map(|v| v.vulnerability_type.clone())
+            .map(|v| v.vulnerability_type.as_str())
             .collect();
 
         // Resolved vulnerabilities
@@ -470,7 +470,7 @@ impl ChangeTracker {
             let vuln = vulns1
                 .iter()
                 .find(|v| &v.vulnerability_type == vuln_type)
-                .unwrap();
+                .ok_or_else(|| anyhow::anyhow!("Vulnerability {} not found in set1", vuln_type))?;
             let severity = match vuln.severity.as_str() {
                 "critical" => ChangeSeverity::Info,
                 "high" => ChangeSeverity::Info,
@@ -483,7 +483,7 @@ impl ChangeTracker {
                 change_type: ChangeType::Vulnerability,
                 severity,
                 description: format!("Vulnerability resolved: {}", vuln_type),
-                previous_value: Some(vuln.severity.clone()),
+                previous_value: Some(vuln.severity.clone()), // Necessary: String for ChangeEvent
                 current_value: Some("resolved".to_string()),
                 timestamp,
             });
@@ -494,7 +494,7 @@ impl ChangeTracker {
             let vuln = vulns2
                 .iter()
                 .find(|v| &v.vulnerability_type == vuln_type)
-                .unwrap();
+                .ok_or_else(|| anyhow::anyhow!("Vulnerability {} not found in set2", vuln_type))?;
             let severity = match vuln.severity.as_str() {
                 "critical" => ChangeSeverity::Critical,
                 "high" => ChangeSeverity::High,
@@ -508,7 +508,7 @@ impl ChangeTracker {
                 severity,
                 description: format!("New vulnerability detected: {}", vuln_type),
                 previous_value: None,
-                current_value: Some(vuln.severity.clone()),
+                current_value: Some(vuln.severity.clone()), // Necessary: String for ChangeEvent
                 timestamp,
             });
         }

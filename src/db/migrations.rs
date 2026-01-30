@@ -196,7 +196,9 @@ mod tests {
     async fn test_migrations_with_sqlite() {
         // Use in-memory database for testing
         let config = DatabaseConfig::sqlite(PathBuf::from(":memory:"));
-        let pool = DatabasePool::new(&config).await.unwrap();
+        let pool = DatabasePool::new(&config)
+            .await
+            .expect("test assertion should succeed");
 
         // Note: This test will only work if migrations directory exists
         // In a real scenario, you would have proper test fixtures

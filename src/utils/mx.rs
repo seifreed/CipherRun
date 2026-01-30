@@ -81,13 +81,19 @@ impl MxTester {
         let mut records = Vec::new();
 
         for line in output_str.lines() {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() >= 2
-                && let Ok(priority) = parts[0].parse::<u16>()
-            {
-                let hostname = parts[1].trim_end_matches('.').to_string();
-                records.push(MxRecord { priority, hostname });
-            }
+            let mut parts = line.split_whitespace();
+            let Some(priority_str) = parts.next() else {
+                continue;
+            };
+            let Some(hostname_raw) = parts.next() else {
+                continue;
+            };
+            let Ok(priority) = priority_str.parse::<u16>() else {
+                continue;
+            };
+
+            let hostname = hostname_raw.trim_end_matches('.').to_string();
+            records.push(MxRecord { priority, hostname });
         }
 
         Ok(records)
@@ -101,17 +107,22 @@ impl MxTester {
         for line in output_str.lines() {
             if line.contains("mail exchanger") {
                 // Format: "example.com    mail exchanger = 10 mx.example.com."
-                let parts: Vec<&str> = line.split('=').collect();
-                if parts.len() >= 2 {
-                    let right_side = parts[1].trim();
-                    let mx_parts: Vec<&str> = right_side.split_whitespace().collect();
-                    if mx_parts.len() >= 2
-                        && let Ok(priority) = mx_parts[0].parse::<u16>()
-                    {
-                        let hostname = mx_parts[1].trim_end_matches('.').to_string();
-                        records.push(MxRecord { priority, hostname });
-                    }
-                }
+                let Some((_, right_side)) = line.split_once('=') else {
+                    continue;
+                };
+                let mut mx_parts = right_side.split_whitespace();
+                let Some(priority_str) = mx_parts.next() else {
+                    continue;
+                };
+                let Some(hostname_raw) = mx_parts.next() else {
+                    continue;
+                };
+                let Ok(priority) = priority_str.parse::<u16>() else {
+                    continue;
+                };
+
+                let hostname = hostname_raw.trim_end_matches('.').to_string();
+                records.push(MxRecord { priority, hostname });
             }
         }
 
@@ -145,7 +156,7 @@ impl MxTester {
             // Create modified args for this MX host
             let mut mx_args = args.clone();
             mx_args.target = Some(format!("{}:25", record.hostname));
-            mx_args.quiet = true;
+            mx_args.output.quiet = true;
 
             // Create scanner and run
             let result = match Scanner::new(mx_args.clone()) {
@@ -156,7 +167,7 @@ impl MxTester {
             match &result {
                 Ok(scan_results) => {
                     println!("  {} Scan completed", "✓".green());
-                    if let Some(rating) = &scan_results.rating {
+                    if let Some(rating) = scan_results.ssl_rating() {
                         println!("  {} SSL Labs Grade: {}", "→".blue(), rating.grade);
                     }
                 }
@@ -198,9 +209,9 @@ impl MxTester {
         let mut grade_counts = std::collections::HashMap::new();
         for (_, result) in results {
             if let Ok(scan_result) = result
-                && let Some(rating) = &scan_result.rating
+                && let Some(rating) = scan_result.ssl_rating()
             {
-                *grade_counts.entry(format!("{}", rating.grade)).or_insert(0) += 1;
+                *grade_counts.entry(rating.grade.to_string()).or_insert(0) += 1;
             }
         }
 
@@ -222,8 +233,7 @@ impl MxTester {
             match result {
                 Ok(scan_result) => {
                     let grade = scan_result
-                        .rating
-                        .as_ref()
+                        .ssl_rating()
                         .map(|r| format!("{}", r.grade))
                         .unwrap_or_else(|| "N/A".to_string());
 
@@ -296,7 +306,9 @@ mod tests {
         let tester = MxTester::new("example.com".to_string());
         let output = b"10 mx1.example.com.\n20 mx2.example.com.\n";
 
-        let records = tester.parse_dig_output(output).unwrap();
+        let records = tester
+            .parse_dig_output(output)
+            .expect("test assertion should succeed");
         assert_eq!(records.len(), 2);
         assert_eq!(records[0].priority, 10);
         assert_eq!(records[0].hostname, "mx1.example.com");

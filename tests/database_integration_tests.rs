@@ -61,6 +61,9 @@ async fn test_scan_storage_and_retrieval() {
             preferred: true,
             ciphers_count: 5,
             handshake_time_ms: Some(120),
+            session_resumption_caching: None,
+            session_resumption_tickets: None,
+            secure_renegotiation: None,
             heartbeat_enabled: Some(false),
         });
 
@@ -218,6 +221,9 @@ async fn test_protocol_storage() {
             preferred: false,
             ciphers_count: 30,
             handshake_time_ms: Some(150),
+            session_resumption_caching: None,
+            session_resumption_tickets: None,
+            secure_renegotiation: None,
             heartbeat_enabled: None,
         });
 
@@ -229,6 +235,9 @@ async fn test_protocol_storage() {
             preferred: true,
             ciphers_count: 5,
             handshake_time_ms: Some(100),
+            session_resumption_caching: None,
+            session_resumption_tickets: None,
+            secure_renegotiation: None,
             heartbeat_enabled: Some(false),
         });
 
@@ -336,14 +345,16 @@ async fn test_scan_with_rating() {
         ..Default::default()
     };
 
-    results.rating = Some(cipherrun::rating::RatingResult {
-        grade: cipherrun::rating::Grade::A,
-        score: 90,
-        certificate_score: 95,
-        protocol_score: 90,
-        key_exchange_score: 85,
-        cipher_strength_score: 90,
-        warnings: vec![],
+    results.rating = Some(cipherrun::scanner::RatingResults {
+        ssl_rating: Some(cipherrun::rating::RatingResult {
+            grade: cipherrun::rating::Grade::A,
+            score: 90,
+            certificate_score: 95,
+            protocol_score: 90,
+            key_exchange_score: 85,
+            cipher_strength_score: 90,
+            warnings: vec![],
+        }),
     });
 
     // Store scan

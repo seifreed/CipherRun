@@ -20,14 +20,14 @@ use tokio::net::TcpStream;
 use tokio::time::{Instant, timeout};
 
 /// OpenSSL Padding Oracle 2016 vulnerability tester (CVE-2016-2107)
-pub struct PaddingOracle2016Tester {
-    target: Target,
+pub struct PaddingOracle2016Tester<'a> {
+    target: &'a Target,
     connect_timeout: Duration,
 }
 
-impl PaddingOracle2016Tester {
+impl<'a> PaddingOracle2016Tester<'a> {
     /// Create new Padding Oracle 2016 tester
-    pub fn new(target: Target) -> Self {
+    pub fn new(target: &'a Target) -> Self {
         Self {
             target,
             connect_timeout: Duration::from_secs(10),
@@ -295,12 +295,13 @@ mod tests {
 
     #[test]
     fn test_build_application_data_valid() {
-        let target = Target {
-            hostname: "example.com".to_string(),
-            port: 443,
-            ip_addresses: vec!["127.0.0.1".parse().unwrap()],
-        };
-        let tester = PaddingOracle2016Tester::new(target);
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+        let tester = PaddingOracle2016Tester::new(&target);
 
         let valid_data = tester.build_application_data(true);
 
@@ -323,12 +324,13 @@ mod tests {
 
     #[test]
     fn test_build_application_data_invalid() {
-        let target = Target {
-            hostname: "example.com".to_string(),
-            port: 443,
-            ip_addresses: vec!["127.0.0.1".parse().unwrap()],
-        };
-        let tester = PaddingOracle2016Tester::new(target);
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+        let tester = PaddingOracle2016Tester::new(&target);
 
         let invalid_data = tester.build_application_data(false);
 
@@ -350,10 +352,12 @@ mod tests {
     #[tokio::test]
     #[ignore] // Requires network access
     async fn test_padding_oracle_modern_server() {
-        let target = Target::parse("www.google.com:443").await.unwrap();
-        let tester = PaddingOracle2016Tester::new(target);
+        let target = Target::parse("www.google.com:443")
+            .await
+            .expect("test assertion should succeed");
+        let tester = PaddingOracle2016Tester::new(&target);
 
-        let result = tester.test().await.unwrap();
+        let result = tester.test().await.expect("test assertion should succeed");
 
         // Google should not be vulnerable (patched OpenSSL)
         assert!(!result.vulnerable);

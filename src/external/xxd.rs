@@ -3,6 +3,7 @@
 
 use crate::Result;
 use std::io::Write;
+use std::path::Path;
 use std::process::{Command, Stdio};
 
 /// xxd wrapper
@@ -141,6 +142,32 @@ impl Xxd {
 
     /// Dump file to hex
     pub fn dump_file(&self, path: &str) -> Result<String> {
+        // SECURITY: Validate path to prevent command injection via path argument
+        if path.contains('\0') {
+            return Err(crate::error::TlsError::Other(
+                "Path contains null byte".to_string(),
+            ));
+        }
+
+        // Check for shell metacharacters
+        let dangerous = ['|', '&', ';', '$', '`', '\n', '\r'];
+        for ch in dangerous.iter() {
+            if path.contains(*ch) {
+                return Err(crate::error::TlsError::Other(format!(
+                    "Path contains dangerous character: '{}'",
+                    ch
+                )));
+            }
+        }
+
+        // Verify path exists
+        if !Path::new(path).exists() {
+            return Err(crate::error::TlsError::Other(format!(
+                "File does not exist: {}",
+                path
+            )));
+        }
+
         let output = Command::new(&self.xxd_path).arg(path).output()?;
 
         if output.status.success() {
@@ -278,7 +305,7 @@ mod tests {
     #[test]
     fn test_hex_to_bytes() {
         let hex = "48656c6c6f";
-        let bytes = hex_to_bytes(hex).unwrap();
+        let bytes = hex_to_bytes(hex).expect("test assertion should succeed");
         assert_eq!(bytes, b"Hello");
     }
 
@@ -295,7 +322,7 @@ mod tests {
     #[test]
     fn test_hex_to_bytes_with_spaces() {
         let hex = "48 65 6c 6c 6f";
-        let bytes = hex_to_bytes(hex).unwrap();
+        let bytes = hex_to_bytes(hex).expect("test assertion should succeed");
         assert_eq!(bytes, b"Hello");
     }
 

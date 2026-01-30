@@ -40,6 +40,7 @@ fn create_mock_certificate(
         fingerprint_sha256: None,
         debian_weak_key: None,
         aia_url: None,
+        certificate_transparency: None,
         der_bytes: vec![],
     }
 }
@@ -122,7 +123,7 @@ fn test_filter_expired_certificates() {
 
     // Test filter matching
     let mut args = Args::default();
-    args.filter_expired = true;
+    args.cert_filters.filter_expired = true;
 
     assert!(
         cert_status.matches_filter(&args),
@@ -136,7 +137,7 @@ fn test_filter_self_signed_certificates() {
     let cert = create_mock_certificate(
         "CN=selfsigned.com",
         "CN=selfsigned.com", // Same as subject
-        "2025-01-01 00:00:00 UTC",
+        "2035-01-01 00:00:00 UTC",
         vec!["selfsigned.com".to_string()],
     );
 
@@ -162,7 +163,7 @@ fn test_filter_self_signed_certificates() {
 
     // Test filter matching
     let mut args = Args::default();
-    args.filter_self_signed = true;
+    args.cert_filters.filter_self_signed = true;
 
     assert!(
         cert_status.matches_filter(&args),
@@ -176,7 +177,7 @@ fn test_filter_mismatched_certificates() {
     let cert = create_mock_certificate(
         "CN=example.com",
         "CN=CA",
-        "2025-01-01 00:00:00 UTC",
+        "2035-01-01 00:00:00 UTC",
         vec!["example.com".to_string()],
     );
 
@@ -202,7 +203,7 @@ fn test_filter_mismatched_certificates() {
 
     // Test filter matching
     let mut args = Args::default();
-    args.filter_mismatched = true;
+    args.cert_filters.filter_mismatched = true;
 
     assert!(
         cert_status.matches_filter(&args),
@@ -215,7 +216,7 @@ fn test_filter_revoked_certificates() {
     let cert = create_mock_certificate(
         "CN=revoked.com",
         "CN=CA",
-        "2025-01-01 00:00:00 UTC",
+        "2035-01-01 00:00:00 UTC",
         vec!["revoked.com".to_string()],
     );
 
@@ -243,7 +244,7 @@ fn test_filter_revoked_certificates() {
 
     // Test filter matching
     let mut args = Args::default();
-    args.filter_revoked = true;
+    args.cert_filters.filter_revoked = true;
 
     assert!(
         cert_status.matches_filter(&args),
@@ -256,7 +257,7 @@ fn test_filter_untrusted_certificates() {
     let cert = create_mock_certificate(
         "CN=untrusted.com",
         "CN=Unknown CA",
-        "2025-01-01 00:00:00 UTC",
+        "2035-01-01 00:00:00 UTC",
         vec!["untrusted.com".to_string()],
     );
 
@@ -282,7 +283,7 @@ fn test_filter_untrusted_certificates() {
 
     // Test filter matching
     let mut args = Args::default();
-    args.filter_untrusted = true;
+    args.cert_filters.filter_untrusted = true;
 
     assert!(
         cert_status.matches_filter(&args),
@@ -324,7 +325,7 @@ fn test_multiple_filters_or_logic() {
 
     // Test with only expired filter
     let mut args = Args::default();
-    args.filter_expired = true;
+    args.cert_filters.filter_expired = true;
     assert!(
         cert_status.matches_filter(&args),
         "Should match with expired filter"
@@ -332,7 +333,7 @@ fn test_multiple_filters_or_logic() {
 
     // Test with only self-signed filter
     args = Args::default();
-    args.filter_self_signed = true;
+    args.cert_filters.filter_self_signed = true;
     assert!(
         cert_status.matches_filter(&args),
         "Should match with self-signed filter"
@@ -340,8 +341,8 @@ fn test_multiple_filters_or_logic() {
 
     // Test with both filters (OR logic)
     args = Args::default();
-    args.filter_expired = true;
-    args.filter_self_signed = true;
+    args.cert_filters.filter_expired = true;
+    args.cert_filters.filter_self_signed = true;
     assert!(
         cert_status.matches_filter(&args),
         "Should match with either filter"
@@ -353,7 +354,7 @@ fn test_no_filters_active_shows_all() {
     let cert = create_mock_certificate(
         "CN=example.com",
         "CN=CA",
-        "2025-01-01 00:00:00 UTC",
+        "2035-01-01 00:00:00 UTC",
         vec!["example.com".to_string()],
     );
 
@@ -376,7 +377,7 @@ fn test_valid_certificate_filtered_out_when_filters_active() {
     let cert = create_mock_certificate(
         "CN=valid.com",
         "CN=Trusted CA",
-        "2025-12-31 00:00:00 UTC",
+        "2035-12-31 00:00:00 UTC",
         vec!["valid.com".to_string()],
     );
 
@@ -387,7 +388,7 @@ fn test_valid_certificate_filtered_out_when_filters_active() {
 
     // When expired filter is active, valid cert should NOT match
     let mut args = Args::default();
-    args.filter_expired = true;
+    args.cert_filters.filter_expired = true;
 
     assert!(
         !cert_status.matches_filter(&args),
@@ -421,7 +422,7 @@ fn test_mass_scanner_filtering() {
     let valid_cert = create_mock_certificate(
         "CN=valid.com",
         "CN=CA",
-        "2025-12-31 00:00:00 UTC",
+        "2035-12-31 00:00:00 UTC",
         vec!["valid.com".to_string()],
     );
     let valid_validation = create_mock_validation(true, vec![], true, true, true);
@@ -429,7 +430,7 @@ fn test_mass_scanner_filtering() {
 
     // Test filtering with expired filter
     let mut args = Args::default();
-    args.filter_expired = true;
+    args.cert_filters.filter_expired = true;
 
     let results_with_filter = vec![
         ("expired.com:443".to_string(), Ok(expired_result.clone())),
@@ -464,35 +465,35 @@ fn test_has_certificate_filters() {
         "Default args should have no filters"
     );
 
-    args.filter_expired = true;
+    args.cert_filters.filter_expired = true;
     assert!(
         args.has_certificate_filters(),
         "Should detect expired filter"
     );
 
     args = Args::default();
-    args.filter_self_signed = true;
+    args.cert_filters.filter_self_signed = true;
     assert!(
         args.has_certificate_filters(),
         "Should detect self-signed filter"
     );
 
     args = Args::default();
-    args.filter_mismatched = true;
+    args.cert_filters.filter_mismatched = true;
     assert!(
         args.has_certificate_filters(),
         "Should detect mismatched filter"
     );
 
     args = Args::default();
-    args.filter_revoked = true;
+    args.cert_filters.filter_revoked = true;
     assert!(
         args.has_certificate_filters(),
         "Should detect revoked filter"
     );
 
     args = Args::default();
-    args.filter_untrusted = true;
+    args.cert_filters.filter_untrusted = true;
     assert!(
         args.has_certificate_filters(),
         "Should detect untrusted filter"

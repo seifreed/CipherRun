@@ -124,7 +124,7 @@ pub fn generate_xml_report(results: &ScanResults) -> Result<String> {
     }
 
     // Rating
-    if let Some(rating) = &results.rating {
+    if let Some(rating) = results.ssl_rating() {
         xml.push_str("  <rating>\n");
         xml.push_str(&format!("    <grade>{}</grade>\n", rating.grade));
         xml.push_str(&format!("    <score>{}</score>\n", rating.score));

@@ -80,3 +80,5 @@ impl fmt::Display for CipherStrength {
 
 pub mod parser;
 pub mod tester;
+
+pub use tester::{CipherTestable, CipherTester, ProtocolCipherSummary};

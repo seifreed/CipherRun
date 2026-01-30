@@ -138,7 +138,7 @@ pub fn generate_html_report(results: &ScanResults) -> Result<String> {
         "target": results.target,
         "scan_time_ms": results.scan_time_ms,
         "timestamp": chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC").to_string(),
-        "rating": results.rating.as_ref().map(|r| json!({
+        "rating": results.ssl_rating().map(|r| json!({
             "grade": format!("{}", r.grade).replace("+", "-plus").replace("-", "-minus"),
             "score": r.score,
             "certificate_score": r.certificate_score,
@@ -181,7 +181,7 @@ mod tests {
             ..Default::default()
         };
 
-        let html = generate_html_report(&results).unwrap();
+        let html = generate_html_report(&results).expect("test assertion should succeed");
         assert!(html.contains("CipherRun Security Scan Report"));
         assert!(html.contains("example.com:443"));
     }

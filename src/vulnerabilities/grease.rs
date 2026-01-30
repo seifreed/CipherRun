@@ -279,11 +279,12 @@ mod tests {
 
     #[test]
     fn test_grease_tester_creation() {
-        let target = Target {
-            hostname: "example.com".to_string(),
-            port: 443,
-            ip_addresses: vec![],
-        };
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["93.184.216.34".parse().unwrap()],
+        )
+        .unwrap();
 
         let tester = GreaseTester::new(target);
         assert_eq!(tester.target.hostname, "example.com");

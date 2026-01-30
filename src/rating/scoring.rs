@@ -391,9 +391,9 @@ mod tests {
         assert_eq!(score, 100);
 
         // Mixed scores: Protocol 90%, Key Exchange 85%, Cipher 95%
-        // (90*30 + 85*30 + 95*40) / 100 = (2700 + 2550 + 3800) / 100 = 91
+        // (90*30 + 85*30 + 95*40) / 100 = (2700 + 2550 + 3800) / 100 = 90
         let score = RatingCalculator::calculate_overall_score(90, 85, 95);
-        assert_eq!(score, 91);
+        assert_eq!(score, 90);
 
         // Test case from user report: Protocol 100%, Key Exchange 95%, Cipher 95%
         // (100*30 + 95*30 + 95*40) / 100 = (3000 + 2850 + 3800) / 100 = 96

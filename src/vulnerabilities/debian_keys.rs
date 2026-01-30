@@ -148,18 +148,10 @@ impl DebianKeyDetector {
             // Sample RSA 1024-bit weak key fingerprints
             // In reality, these would be actual SHA256 hashes from the database
             // Format: SHA256 hash of public key DER encoding
-            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_string(), // Example hash 1
-            "d7a8fbb307d7809469ca9abcb0082e4f8d5651e46d3cdb762d02d0bf37c9e592".to_string(), // Example hash 2
-            "e7f6c011776e8db7cd330b54174fd76f7d0216b612387a5ffcfb81e6f0919683".to_string(), // Example hash 3
-
-                                                                                            // Additional sample entries would go here
-                                                                                            // Each representing a different PID-generated key
-
-                                                                                            // NOTE: To enable full detection, replace this with:
-                                                                                            // - Load from embedded resource file
-                                                                                            // - Load from external database file
-                                                                                            // - Query from remote API
-                                                                                            // - Use debian-ssh toolkit integration
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_string(),
+            "d7a8fbb307d7809469ca9abcb0082e4f8d5651e46d3cdb762d02d0bf37c9e592".to_string(),
+            "e7f6c011776e8db7cd330b54174fd76f7d0216b612387a5ffcfb81e6f0919683".to_string(),
+            // Full detection requires loading ~32,000 entries from external source
         ]
     }
 
@@ -304,11 +296,13 @@ mod tests {
     #[test]
     fn test_normal_key_not_weak() {
         // Generate a normal RSA key (not a Debian weak key)
-        let rsa = Rsa::generate(2048).unwrap();
-        let pkey = PKey::from_rsa(rsa).unwrap();
+        let rsa = Rsa::generate(2048).expect("test assertion should succeed");
+        let pkey = PKey::from_rsa(rsa).expect("test assertion should succeed");
 
         let detector = DebianKeyDetector::new();
-        let is_weak = detector.is_weak_public_key(&pkey).unwrap();
+        let is_weak = detector
+            .is_weak_public_key(&pkey)
+            .expect("test assertion should succeed");
 
         // A freshly generated key should not match the weak key sample
         assert!(

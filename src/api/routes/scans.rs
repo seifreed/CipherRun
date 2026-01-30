@@ -10,6 +10,7 @@ use crate::api::{
     state::AppState,
     ws::progress::scan_websocket_handler,
 };
+use crate::security::validate_target;
 use axum::{
     Json,
     extract::{Path, State, WebSocketUpgrade},
@@ -41,16 +42,41 @@ pub async fn create_scan(
 ) -> Result<Json<ScanResponse>, ApiError> {
     info!("Creating new scan for target: {}", request.target);
 
-    // Validate target
+    // SECURITY: Comprehensive input validation (CWE-20, CWE-918)
+    // Validates format, length, and prevents SSRF attacks
+
+    // Basic empty check
     if request.target.is_empty() {
         return Err(ApiError::BadRequest("Target cannot be empty".to_string()));
     }
 
+    // Length limit to prevent DoS
+    if request.target.len() > 255 {
+        return Err(ApiError::BadRequest(
+            "Target string is too long (max 255 characters)".to_string(),
+        ));
+    }
+
+    // SECURITY: Validate target format and prevent SSRF
+    // By default, we block private IPs. If internal scanning is needed,
+    // this should be configured through a separate, authorized API endpoint
+    let (validated_hostname, validated_port) = validate_target(&request.target, false)
+        .map_err(|e| ApiError::BadRequest(format!("Invalid target: {}", e)))?;
+
+    // If port was provided in target, use it; otherwise target remains as-is
+    let final_target = if let Some(port) = validated_port {
+        format!("{}:{}", validated_hostname, port)
+    } else {
+        validated_hostname
+    };
+
+    info!("Validated target: {}", final_target);
+
     // Record scan in stats
     state.record_scan().await;
 
-    // Create scan job
-    let job = ScanJob::new(request.target.clone(), request.options, request.webhook_url);
+    // Create scan job with validated target
+    let job = ScanJob::new(final_target.clone(), request.options, request.webhook_url);
 
     let scan_id = job.id.clone();
     let queued_at = job.queued_at;
@@ -68,7 +94,7 @@ pub async fn create_scan(
     Ok(Json(ScanResponse {
         scan_id,
         status: ScanStatus::Queued,
-        target: request.target,
+        target: final_target,
         websocket_url: Some(websocket_url),
         queued_at,
         estimated_completion: None,

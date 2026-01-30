@@ -7,6 +7,43 @@ use crate::protocols::{Protocol, tester::ProtocolTester};
 use crate::utils::network::Target;
 use std::collections::HashMap;
 
+/// Collects a vulnerability result, logging any errors
+fn collect_result(
+    results: &mut Vec<VulnerabilityResult>,
+    result: Result<VulnerabilityResult>,
+    test_name: &str,
+) {
+    match result {
+        Ok(r) => results.push(r),
+        Err(e) => tracing::warn!("{} test failed: {}", test_name, e),
+    }
+}
+
+/// Collects multiple vulnerability results, logging any errors
+fn collect_results(
+    results: &mut Vec<VulnerabilityResult>,
+    result: Result<Vec<VulnerabilityResult>>,
+    test_name: &str,
+) {
+    match result {
+        Ok(r) => results.extend(r),
+        Err(e) => tracing::warn!("{} test failed: {}", test_name, e),
+    }
+}
+
+/// Collects an optional vulnerability result, logging any errors
+fn collect_optional_result(
+    results: &mut Vec<VulnerabilityResult>,
+    result: Result<Option<VulnerabilityResult>>,
+    test_name: &str,
+) {
+    match result {
+        Ok(Some(r)) => results.push(r),
+        Ok(None) => {}
+        Err(e) => tracing::warn!("{} test failed: {}", test_name, e),
+    }
+}
+
 /// Main vulnerability scanner
 pub struct VulnerabilityScanner {
     target: Target,
@@ -41,7 +78,7 @@ impl VulnerabilityScanner {
         let mut cipher_tester = CipherTester::new(target.clone());
 
         // Enable testing all IPs if specified
-        if args.test_all_ips {
+        if args.network.test_all_ips {
             protocol_tester = protocol_tester.with_test_all_ips(true);
             cipher_tester = cipher_tester.with_test_all_ips(true);
         }
@@ -50,35 +87,54 @@ impl VulnerabilityScanner {
             target,
             protocol_tester,
             cipher_tester,
-            skip_fallback: args.no_fallback,
-            skip_compression: args.no_compression,
-            skip_heartbleed: args.no_heartbleed,
-            skip_renegotiation: args.no_renegotiation,
+            skip_fallback: args.scan.no_fallback,
+            skip_compression: args.scan.no_compression,
+            skip_heartbleed: args.scan.no_heartbleed,
+            skip_renegotiation: args.scan.no_renegotiation,
         }
     }
 
     /// Test all vulnerabilities (PARALLELIZED for maximum performance)
+    ///
+    /// Orchestrates the complete vulnerability scan in three phases:
+    /// 1. Protocol detection - identify supported TLS/SSL versions
+    /// 2. Cipher caching - test ciphers for supported protocols
+    /// 3. Vulnerability tests - run all checks in parallel
     pub async fn test_all(&self) -> Result<Vec<VulnerabilityResult>> {
-        let mut results = Vec::new();
+        // Step 1: Detect supported protocols
+        let protocols = self.detect_protocols().await?;
 
-        // OPTIMIZATION STRATEGY:
-        // 1. First, quickly test which protocols are supported (fast - just handshake)
-        // 2. Then, test ciphers ONLY for supported protocols (slow - avoid waste)
-        // 3. Cache cipher results and reuse for all vulnerability checks
-        // 4. **NEW**: Run ALL independent vulnerability tests in PARALLEL
+        // Step 2: Cache ciphers for supported protocols
+        let cipher_cache = self.cache_ciphers(&protocols).await?;
 
-        // Step 1: Quick protocol detection (already tested in main scanner)
+        // Step 3: Run vulnerability tests in parallel
+        let results = self.run_vulnerability_tests(&cipher_cache).await;
+
+        Ok(results)
+    }
+
+    /// Detects which protocols are supported by the target
+    async fn detect_protocols(&self) -> Result<Vec<Protocol>> {
         let protocol_results = self.protocol_tester.test_all_protocols().await?;
-        let supported_protocols: Vec<Protocol> = protocol_results
+
+        let supported = protocol_results
             .iter()
             .filter(|r| r.supported)
             .map(|r| r.protocol)
             .collect();
 
-        // Step 2: Test ciphers ONLY for supported protocols
+        Ok(supported)
+    }
+
+    /// Caches cipher test results for all supported protocols
+    async fn cache_ciphers(
+        &self,
+        protocols: &[Protocol],
+    ) -> Result<HashMap<Protocol, crate::ciphers::tester::ProtocolCipherSummary>> {
         let mut cipher_cache = HashMap::new();
-        for protocol in &supported_protocols {
-            // Skip QUIC for now
+
+        for protocol in protocols {
+            // Skip QUIC - not supported by cipher tester
             if matches!(protocol, Protocol::QUIC) {
                 continue;
             }
@@ -87,55 +143,39 @@ impl VulnerabilityScanner {
             cipher_cache.insert(*protocol, cipher_summary);
         }
 
-        // Step 3: Run ALL vulnerability checks in PARALLEL using tokio::join!
-        // This provides 5-10x speedup by running all network I/O concurrently
+        Ok(cipher_cache)
+    }
 
-        // Create futures for all tests (respect skip flags)
+    /// Runs all vulnerability tests in parallel
+    ///
+    /// Executes all vulnerability checks concurrently using tokio::join! for
+    /// maximum performance. Results are collected with partial success handling
+    /// (if one test fails, others still succeed).
+    async fn run_vulnerability_tests(
+        &self,
+        cipher_cache: &HashMap<Protocol, crate::ciphers::tester::ProtocolCipherSummary>,
+    ) -> Vec<VulnerabilityResult> {
+        let mut results = Vec::new();
+
+        // Create futures for all tests
         let drown_future = self.test_drown();
         let poodle_ssl_future = self.test_poodle_ssl();
         let poodle_variants_future = self.test_poodle_variants();
-        let rc4_future = self.test_rc4_cached(&cipher_cache);
-        let des3_future = self.test_3des_cached(&cipher_cache);
-        let null_future = self.test_null_ciphers_cached(&cipher_cache);
-        let export_future = self.test_export_ciphers_cached(&cipher_cache);
-        let beast_future = self.test_beast_cached(&cipher_cache);
+        let rc4_future = self.test_rc4_cached(cipher_cache);
+        let des3_future = self.test_3des_cached(cipher_cache);
+        let null_future = self.test_null_ciphers_cached(cipher_cache);
+        let export_future = self.test_export_ciphers_cached(cipher_cache);
+        let beast_future = self.test_beast_cached(cipher_cache);
         let early_data_future = self.test_early_data();
         let padding_oracle_future = self.test_padding_oracle_2016();
 
         // Conditional futures (respect CLI flags)
-        let renegotiation_future = async {
-            if self.skip_renegotiation {
-                Ok(None)
-            } else {
-                self.test_renegotiation().await.map(Some)
-            }
-        };
+        let renegotiation_future = self.test_renegotiation_if_enabled();
+        let fallback_future = self.test_fallback_if_enabled();
+        let compression_future = self.test_compression_if_enabled();
+        let heartbleed_future = self.test_heartbleed_if_enabled();
 
-        let fallback_future = async {
-            if self.skip_fallback {
-                Ok(None)
-            } else {
-                self.test_tls_fallback().await.map(Some)
-            }
-        };
-
-        let compression_future = async {
-            if self.skip_compression {
-                Ok(None)
-            } else {
-                self.test_compression().await.map(Some)
-            }
-        };
-
-        let heartbleed_future = async {
-            if self.skip_heartbleed {
-                Ok(None)
-            } else {
-                self.test_heartbleed().await.map(Some)
-            }
-        };
-
-        // Execute ALL tests in PARALLEL - maximum concurrency
+        // Execute ALL tests in PARALLEL
         let (
             drown_result,
             poodle_ssl_result,
@@ -168,42 +208,55 @@ impl VulnerabilityScanner {
             padding_oracle_future,
         );
 
-        // Collect results (propagate errors)
-        results.push(drown_result?);
-        results.push(poodle_ssl_result?);
+        // Collect results - allow partial success
+        collect_result(&mut results, drown_result, "DROWN");
+        collect_result(&mut results, poodle_ssl_result, "POODLE SSL");
+        collect_results(&mut results, poodle_variants_result, "POODLE variants");
+        collect_result(&mut results, rc4_result, "RC4");
+        collect_result(&mut results, des3_result, "3DES");
+        collect_result(&mut results, null_result, "NULL ciphers");
+        collect_result(&mut results, export_result, "EXPORT ciphers");
+        collect_result(&mut results, beast_result, "BEAST");
+        collect_optional_result(&mut results, renegotiation_result, "Renegotiation");
+        collect_optional_result(&mut results, fallback_result, "TLS Fallback");
+        collect_optional_result(&mut results, compression_result, "Compression");
+        collect_optional_result(&mut results, heartbleed_result, "Heartbleed");
+        collect_result(&mut results, early_data_result, "Early data");
+        collect_result(&mut results, padding_oracle_result, "Padding oracle");
 
-        // POODLE variants returns Vec<VulnerabilityResult>
-        results.extend(poodle_variants_result?);
+        results
+    }
 
-        results.push(rc4_result?);
-        results.push(des3_result?);
-        results.push(null_result?);
-        results.push(export_result?);
-        results.push(beast_result?);
-
-        // Conditional results (only add if not skipped)
-        if let Some(result) = renegotiation_result? {
-            results.push(result);
+    /// Tests renegotiation if not skipped via CLI flags
+    async fn test_renegotiation_if_enabled(&self) -> Result<Option<VulnerabilityResult>> {
+        if self.skip_renegotiation {
+            return Ok(None);
         }
-        if let Some(result) = fallback_result? {
-            results.push(result);
-        }
-        if let Some(result) = compression_result? {
-            results.push(result);
-        }
-        if let Some(result) = heartbleed_result? {
-            results.push(result);
-        }
+        self.test_renegotiation().await.map(Some)
+    }
 
-        results.push(early_data_result?);
-        results.push(padding_oracle_result?);
+    /// Tests TLS fallback if not skipped via CLI flags
+    async fn test_fallback_if_enabled(&self) -> Result<Option<VulnerabilityResult>> {
+        if self.skip_fallback {
+            return Ok(None);
+        }
+        self.test_tls_fallback().await.map(Some)
+    }
 
-        // More complex checks that require specific handshakes
-        // These will be implemented in separate modules
-        // results.push(self.test_ccs_injection().await?);
-        // results.push(self.test_robot().await?);
+    /// Tests compression if not skipped via CLI flags
+    async fn test_compression_if_enabled(&self) -> Result<Option<VulnerabilityResult>> {
+        if self.skip_compression {
+            return Ok(None);
+        }
+        self.test_compression().await.map(Some)
+    }
 
-        Ok(results)
+    /// Tests heartbleed if not skipped via CLI flags
+    async fn test_heartbleed_if_enabled(&self) -> Result<Option<VulnerabilityResult>> {
+        if self.skip_heartbleed {
+            return Ok(None);
+        }
+        self.test_heartbleed().await.map(Some)
     }
 
     /// Test for DROWN (CVE-2016-0800)
@@ -433,7 +486,7 @@ impl VulnerabilityScanner {
     pub async fn test_poodle_variants(&self) -> Result<Vec<VulnerabilityResult>> {
         use crate::vulnerabilities::poodle::PoodleTester;
 
-        let tester = PoodleTester::new(self.target.clone());
+        let tester = PoodleTester::new(&self.target);
         let test_result = tester.test_all_variants().await?;
 
         let mut results = Vec::new();
@@ -482,7 +535,7 @@ impl VulnerabilityScanner {
             results.push(VulnerabilityResult {
                 vuln_type,
                 vulnerable: variant_result.vulnerable,
-                details: variant_result.details.clone(),
+                details: variant_result.details,
                 cve: Some(variant_result.variant.cve().to_string()),
                 cwe: Some("CWE-310".to_string()), // Cryptographic Issues
                 severity,
@@ -548,7 +601,7 @@ impl VulnerabilityScanner {
     pub async fn test_renegotiation(&self) -> Result<VulnerabilityResult> {
         use crate::protocols::renegotiation::RenegotiationTester;
 
-        let tester = RenegotiationTester::new(self.target.clone());
+        let tester = RenegotiationTester::new(&self.target);
         let result = tester.test().await?;
 
         Ok(VulnerabilityResult {
@@ -569,7 +622,7 @@ impl VulnerabilityScanner {
     pub async fn test_tls_fallback(&self) -> Result<VulnerabilityResult> {
         use crate::protocols::fallback_scsv::FallbackScsvTester;
 
-        let mut tester = FallbackScsvTester::new(self.target.clone());
+        let mut tester = FallbackScsvTester::new(&self.target);
         let result = tester.test().await?;
 
         // Determine severity based on TLS 1.3 support
@@ -599,7 +652,7 @@ impl VulnerabilityScanner {
     pub async fn test_compression(&self) -> Result<VulnerabilityResult> {
         use crate::vulnerabilities::crime::CrimeTester;
 
-        let tester = CrimeTester::new(self.target.clone());
+        let tester = CrimeTester::new(&self.target);
         let result = tester.test().await?;
 
         Ok(VulnerabilityResult {
@@ -620,7 +673,7 @@ impl VulnerabilityScanner {
     pub async fn test_heartbleed(&self) -> Result<VulnerabilityResult> {
         use crate::vulnerabilities::heartbleed::HeartbleedTester;
 
-        let tester = HeartbleedTester::new(self.target.clone());
+        let tester = HeartbleedTester::new(&self.target);
         let vulnerable = tester.test().await?;
 
         Ok(VulnerabilityResult {
@@ -645,7 +698,7 @@ impl VulnerabilityScanner {
     pub async fn test_early_data(&self) -> Result<VulnerabilityResult> {
         use crate::vulnerabilities::early_data::EarlyDataTester;
 
-        let tester = EarlyDataTester::new(self.target.clone());
+        let tester = EarlyDataTester::new(&self.target);
         let result = tester.test().await?;
 
         Ok(VulnerabilityResult {
@@ -667,7 +720,7 @@ impl VulnerabilityScanner {
     pub async fn test_padding_oracle_2016(&self) -> Result<VulnerabilityResult> {
         use crate::vulnerabilities::padding_oracle_2016::PaddingOracle2016Tester;
 
-        let tester = PaddingOracle2016Tester::new(self.target.clone());
+        let tester = PaddingOracle2016Tester::new(&self.target);
         let result = tester.test().await?;
 
         Ok(VulnerabilityResult {
@@ -966,10 +1019,15 @@ mod tests {
     #[tokio::test]
     #[ignore] // Requires network access
     async fn test_drown_detection() {
-        let target = Target::parse("www.google.com:443").await.unwrap();
+        let target = Target::parse("www.google.com:443")
+            .await
+            .expect("test assertion should succeed");
         let scanner = VulnerabilityScanner::new(target);
 
-        let result = scanner.test_drown().await.unwrap();
+        let result = scanner
+            .test_drown()
+            .await
+            .expect("test assertion should succeed");
 
         // Google should not be vulnerable to DROWN
         assert!(!result.vulnerable);
@@ -978,10 +1036,15 @@ mod tests {
     #[tokio::test]
     #[ignore] // Requires network access
     async fn test_rc4_detection() {
-        let target = Target::parse("www.google.com:443").await.unwrap();
+        let target = Target::parse("www.google.com:443")
+            .await
+            .expect("test assertion should succeed");
         let scanner = VulnerabilityScanner::new(target);
 
-        let result = scanner.test_rc4().await.unwrap();
+        let result = scanner
+            .test_rc4()
+            .await
+            .expect("test assertion should succeed");
 
         // Google should not support RC4
         assert!(!result.vulnerable);

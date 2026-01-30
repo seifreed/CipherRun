@@ -2,6 +2,9 @@
 // Complete wrapper around OpenSSL s_client for advanced testing
 
 use crate::Result;
+use crate::security::{
+    validate_cipher, validate_hostname, validate_port, validate_starttls_protocol,
+};
 use serde::{Deserialize, Serialize};
 use std::process::{Command, Stdio};
 use std::time::Duration;
@@ -97,6 +100,13 @@ impl OpenSslClient {
 
     /// Run OpenSSL s_client with the given options
     pub fn run(&self, options: &OpenSslClientOptions) -> Result<OpenSslClientResult> {
+        // SECURITY: Validate all inputs to prevent command injection (CWE-78)
+        validate_hostname(&options.host)
+            .map_err(|e| crate::error::TlsError::Other(format!("Invalid hostname: {}", e)))?;
+
+        validate_port(options.port)
+            .map_err(|e| crate::error::TlsError::Other(format!("Invalid port: {}", e)))?;
+
         let mut cmd = Command::new(&self.openssl_path);
         cmd.arg("s_client");
 
@@ -106,18 +116,28 @@ impl OpenSslClient {
 
         // Add STARTTLS protocol
         if let Some(ref protocol) = options.starttls {
+            // SECURITY: Validate STARTTLS protocol to prevent command injection
+            validate_starttls_protocol(protocol).map_err(|e| {
+                crate::error::TlsError::Other(format!("Invalid STARTTLS protocol: {}", e))
+            })?;
             cmd.arg("-starttls");
             cmd.arg(protocol);
         }
 
         // Add SNI servername
         if let Some(ref servername) = options.servername {
+            // SECURITY: Validate servername to prevent command injection
+            validate_hostname(servername)
+                .map_err(|e| crate::error::TlsError::Other(format!("Invalid servername: {}", e)))?;
             cmd.arg("-servername");
             cmd.arg(servername);
         }
 
         // Add cipher
         if let Some(ref cipher) = options.cipher {
+            // SECURITY: Validate cipher string to prevent command injection
+            validate_cipher(cipher)
+                .map_err(|e| crate::error::TlsError::Other(format!("Invalid cipher: {}", e)))?;
             cmd.arg("-cipher");
             cmd.arg(cipher);
         }

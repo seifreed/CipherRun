@@ -154,7 +154,7 @@ mod tests {
 
     #[test]
     fn test_parse_proxy_simple() {
-        let proxy = ProxyConfig::parse("localhost:8080").unwrap();
+        let proxy = ProxyConfig::parse("localhost:8080").expect("test assertion should succeed");
         assert_eq!(proxy.host, "localhost");
         assert_eq!(proxy.port, 8080);
         assert!(proxy.username.is_none());
@@ -162,7 +162,8 @@ mod tests {
 
     #[test]
     fn test_parse_proxy_with_auth() {
-        let proxy = ProxyConfig::parse("user:pass@proxy.example.com:3128").unwrap();
+        let proxy = ProxyConfig::parse("user:pass@proxy.example.com:3128")
+            .expect("test assertion should succeed");
         assert_eq!(proxy.host, "proxy.example.com");
         assert_eq!(proxy.port, 3128);
         assert_eq!(proxy.username.as_deref(), Some("user"));
@@ -171,7 +172,7 @@ mod tests {
 
     #[test]
     fn test_parse_proxy_default_port() {
-        let proxy = ProxyConfig::parse("proxy.local").unwrap();
+        let proxy = ProxyConfig::parse("proxy.local").expect("test assertion should succeed");
         assert_eq!(proxy.host, "proxy.local");
         assert_eq!(proxy.port, 8080);
     }

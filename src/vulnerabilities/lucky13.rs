@@ -5,6 +5,8 @@
 // It exploits timing differences in MAC verification to recover plaintext.
 
 use crate::Result;
+use crate::protocols::Protocol;
+use crate::protocols::handshake::ClientHelloBuilder;
 use crate::utils::network::Target;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -148,60 +150,11 @@ impl Lucky13Tester {
         }
     }
 
-    /// Build ClientHello with CBC cipher preference
+    /// Build ClientHello with CBC cipher preference using ClientHelloBuilder
     fn build_client_hello(&self) -> Vec<u8> {
-        let mut hello = Vec::new();
-
-        // TLS Record: Handshake
-        hello.push(0x16);
-        hello.push(0x03);
-        hello.push(0x01);
-
-        // Length placeholder
-        let len_pos = hello.len();
-        hello.push(0x00);
-        hello.push(0x00);
-
-        // Handshake: ClientHello
-        hello.push(0x01);
-
-        // Handshake length placeholder
-        let hs_len_pos = hello.len();
-        hello.push(0x00);
-        hello.push(0x00);
-        hello.push(0x00);
-
-        // Client Version: TLS 1.0
-        hello.push(0x03);
-        hello.push(0x01);
-
-        // Random (32 bytes)
-        hello.extend_from_slice(&[0x00; 32]);
-
-        // Session ID (empty)
-        hello.push(0x00);
-
-        // Cipher Suites - CBC only
-        hello.push(0x00);
-        hello.push(0x02);
-        hello.push(0x00);
-        hello.push(0x2f); // TLS_RSA_WITH_AES_128_CBC_SHA
-
-        // Compression (none)
-        hello.push(0x01);
-        hello.push(0x00);
-
-        // Update lengths
-        let hs_len = hello.len() - hs_len_pos - 3;
-        hello[hs_len_pos] = ((hs_len >> 16) & 0xff) as u8;
-        hello[hs_len_pos + 1] = ((hs_len >> 8) & 0xff) as u8;
-        hello[hs_len_pos + 2] = (hs_len & 0xff) as u8;
-
-        let rec_len = hello.len() - len_pos - 2;
-        hello[len_pos] = ((rec_len >> 8) & 0xff) as u8;
-        hello[len_pos + 1] = (rec_len & 0xff) as u8;
-
-        hello
+        let mut builder = ClientHelloBuilder::new(Protocol::TLS10);
+        builder.for_cbc_ciphers();
+        builder.build_minimal().unwrap_or_else(|_| Vec::new())
     }
 
     /// Build ClientKeyExchange

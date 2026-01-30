@@ -5,6 +5,9 @@
 // by injecting a ChangeCipherSpec message early in the handshake process.
 
 use crate::Result;
+use crate::constants::{CONTENT_TYPE_ALERT, CONTENT_TYPE_CHANGE_CIPHER_SPEC, VERSION_TLS_1_2};
+use crate::protocols::Protocol;
+use crate::protocols::handshake::ClientHelloBuilder;
 use crate::utils::network::Target;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -57,7 +60,14 @@ impl CcsInjectionTester {
                 }
 
                 // Send premature ChangeCipherSpec (before key exchange)
-                let ccs = vec![0x14, 0x03, 0x03, 0x00, 0x01, 0x01];
+                let ccs = vec![
+                    CONTENT_TYPE_CHANGE_CIPHER_SPEC, // 0x14
+                    (VERSION_TLS_1_2 >> 8) as u8,    // 0x03
+                    (VERSION_TLS_1_2 & 0xff) as u8,  // 0x03
+                    0x00,
+                    0x01, // Length: 1 byte
+                    0x01, // CCS message
+                ];
                 stream.write_all(&ccs).await?;
 
                 // Try to read response
@@ -66,7 +76,7 @@ impl CcsInjectionTester {
                     Ok(Ok(n)) if n > 0 => {
                         // If server responds positively, it's vulnerable
                         // Check for Alert or normal handshake continuation
-                        if response[0] == 0x15 {
+                        if response[0] == CONTENT_TYPE_ALERT {
                             // Alert - not vulnerable
                             Ok(false)
                         } else {
@@ -81,48 +91,11 @@ impl CcsInjectionTester {
         }
     }
 
-    /// Build a basic TLS ClientHello message
+    /// Build a basic TLS ClientHello message using ClientHelloBuilder
     fn build_client_hello(&self) -> Vec<u8> {
-        let mut hello = vec![
-            0x16, 0x03, 0x01, // TLS Record Layer (Handshake, TLS 1.0)
-            0x00, 0x00, // Length placeholder
-            0x01, // Handshake Protocol (ClientHello)
-            0x00, 0x00, 0x00, // Handshake length placeholder
-        ];
-
-        // Version TLS 1.0
-        hello.push(0x03);
-        hello.push(0x01);
-
-        // Random (32 bytes)
-        hello.extend_from_slice(&[0x00; 32]);
-
-        // Session ID (empty)
-        hello.push(0x00);
-
-        // Cipher Suites length
-        hello.push(0x00);
-        hello.push(0x02);
-
-        // Cipher Suite: TLS_RSA_WITH_AES_128_CBC_SHA
-        hello.push(0x00);
-        hello.push(0x2f);
-
-        // Compression methods length
-        hello.push(0x01);
-        hello.push(0x00); // No compression
-
-        // Calculate and update lengths
-        let handshake_len = (hello.len() - 9) as u32;
-        hello[6] = ((handshake_len >> 16) & 0xff) as u8;
-        hello[7] = ((handshake_len >> 8) & 0xff) as u8;
-        hello[8] = (handshake_len & 0xff) as u8;
-
-        let record_len = (hello.len() - 5) as u16;
-        hello[3] = ((record_len >> 8) & 0xff) as u8;
-        hello[4] = (record_len & 0xff) as u8;
-
-        hello
+        let mut builder = ClientHelloBuilder::new(Protocol::TLS10);
+        builder.for_rsa_key_exchange();
+        builder.build_minimal().unwrap_or_else(|_| Vec::new())
     }
 }
 
@@ -136,21 +109,23 @@ pub struct CcsTestResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::constants::{CONTENT_TYPE_HANDSHAKE, HANDSHAKE_TYPE_CLIENT_HELLO};
 
     #[test]
     fn test_client_hello_build() {
-        let target = Target {
-            hostname: "example.com".to_string(),
-            port: 443,
-            ip_addresses: vec!["93.184.216.34".parse().unwrap()],
-        };
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["93.184.216.34".parse().unwrap()],
+        )
+        .unwrap();
 
         let tester = CcsInjectionTester::new(target);
         let hello = tester.build_client_hello();
 
         assert!(hello.len() > 40);
-        assert_eq!(hello[0], 0x16); // Handshake
-        assert_eq!(hello[5], 0x01); // ClientHello
+        assert_eq!(hello[0], CONTENT_TYPE_HANDSHAKE); // Handshake (0x16)
+        assert_eq!(hello[5], HANDSHAKE_TYPE_CLIENT_HELLO); // ClientHello (0x01)
     }
 
     #[test]

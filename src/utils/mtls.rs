@@ -80,7 +80,11 @@ impl MtlsConfig {
 
         Ok(Self {
             cert_chain: certs,
-            private_key: keys.into_iter().next().unwrap(),
+            private_key: keys.into_iter().next().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "No private key found in key file (should have been caught earlier)"
+                )
+            })?,
         })
     }
 
@@ -136,7 +140,11 @@ impl MtlsConfig {
 
         Ok(Self {
             cert_chain: certs,
-            private_key: keys.into_iter().next().unwrap(),
+            private_key: keys.into_iter().next().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "No private key found in key file (should have been caught earlier)"
+                )
+            })?,
         })
     }
 
@@ -217,7 +225,7 @@ mod tests {
     #[test]
     fn test_mtls_config_parsing() {
         // Create a temporary PEM file with a test certificate and key
-        let mut temp_file = NamedTempFile::new().unwrap();
+        let mut temp_file = NamedTempFile::new().expect("test assertion should succeed");
 
         // This is a minimal test - in practice you'd use real cert/key pairs
         let pem_data = r#"-----BEGIN CERTIFICATE-----
@@ -240,8 +248,8 @@ z2H2IWYh2fKcFO6s7AYL6G0KOm6KQAECIBNKDX+4tN7R4x/pNMxsqHrG4k5pZGRq
 KHvHJKYnrKyB
 -----END PRIVATE KEY-----"#;
 
-        write!(temp_file, "{}", pem_data).unwrap();
-        temp_file.flush().unwrap();
+        write!(temp_file, "{}", pem_data).expect("test assertion should succeed");
+        temp_file.flush().expect("test assertion should succeed");
 
         // This test might fail with real validation, but tests the parsing logic
         let result = MtlsConfig::from_pem_file(temp_file.path());

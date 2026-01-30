@@ -143,7 +143,7 @@ impl PolicyEvaluator {
     ) -> Result<Vec<PolicyViolation>> {
         let mut violations = Vec::new();
 
-        if let Some(ref rating) = results.rating {
+        if let Some(rating) = results.ssl_rating() {
             // Check minimum grade
             if let Some(ref min_grade_str) = policy.min_grade {
                 let min_grade = self.parse_grade(min_grade_str)?;
@@ -274,51 +274,27 @@ mod tests {
             exceptions: Vec::new(),
         };
 
-        let results = ScanResults {
+        let mut results = ScanResults {
             target: "example.com:443".to_string(),
-            protocols: vec![ProtocolTestResult {
-                protocol: Protocol::TLS12,
-                supported: true,
-                preferred: false,
-                ciphers_count: 0,
-                heartbeat_enabled: None,
-                handshake_time_ms: None,
-                session_resumption_caching: None,
-                session_resumption_tickets: None,
-                secure_renegotiation: None,
-            }],
-            ciphers: HashMap::new(),
-            certificate_chain: None,
-            http_headers: None,
-            vulnerabilities: Vec::new(),
-            client_simulations: None,
-            rating: None,
             scan_time_ms: 1000,
-            signature_algorithms: None,
-            key_exchange_groups: None,
-            client_cas: None,
-            intolerance: None,
-            ja3_fingerprint: None,
-            ja3_match: None,
-            ct_log_source: None,
-            ct_log_index: None,
-            client_hello_raw: None,
-            ja3s_fingerprint: None,
-            ja3s_match: None,
-            cdn_detection: None,
-            load_balancer_info: None,
-            server_hello_raw: None,
-            pre_handshake_used: false,
-            scanned_ips: Vec::new(),
-            jarm_fingerprint: None,
-            sni_used: None,
-            sni_generation_method: None,
-            probe_status: crate::output::probe_status::ProbeStatus::default(),
-            alpn_result: None,
+            ..Default::default()
         };
+        results.protocols = vec![ProtocolTestResult {
+            protocol: Protocol::TLS12,
+            supported: true,
+            preferred: false,
+            ciphers_count: 0,
+            heartbeat_enabled: None,
+            handshake_time_ms: None,
+            session_resumption_caching: None,
+            session_resumption_tickets: None,
+            secure_renegotiation: None,
+        }];
 
         let evaluator = PolicyEvaluator::new(policy);
-        let result = evaluator.evaluate(&results).unwrap();
+        let result = evaluator
+            .evaluate(&results)
+            .expect("test assertion should succeed");
 
         assert!(result.has_violations());
         assert!(!result.violations.is_empty());
@@ -353,51 +329,27 @@ mod tests {
             }],
         };
 
-        let results = ScanResults {
+        let mut results = ScanResults {
             target: "example.com:443".to_string(),
-            protocols: vec![ProtocolTestResult {
-                protocol: Protocol::TLS12,
-                supported: true,
-                preferred: false,
-                ciphers_count: 0,
-                heartbeat_enabled: None,
-                handshake_time_ms: None,
-                session_resumption_caching: None,
-                session_resumption_tickets: None,
-                secure_renegotiation: None,
-            }],
-            ciphers: HashMap::new(),
-            certificate_chain: None,
-            http_headers: None,
-            vulnerabilities: Vec::new(),
-            client_simulations: None,
-            rating: None,
             scan_time_ms: 1000,
-            signature_algorithms: None,
-            key_exchange_groups: None,
-            client_cas: None,
-            intolerance: None,
-            ja3_fingerprint: None,
-            ja3_match: None,
-            ct_log_source: None,
-            ct_log_index: None,
-            client_hello_raw: None,
-            ja3s_fingerprint: None,
-            ja3s_match: None,
-            cdn_detection: None,
-            load_balancer_info: None,
-            server_hello_raw: None,
-            pre_handshake_used: false,
-            scanned_ips: Vec::new(),
-            jarm_fingerprint: None,
-            sni_used: None,
-            sni_generation_method: None,
-            probe_status: crate::output::probe_status::ProbeStatus::default(),
-            alpn_result: None,
+            ..Default::default()
         };
+        results.protocols = vec![ProtocolTestResult {
+            protocol: Protocol::TLS12,
+            supported: true,
+            preferred: false,
+            ciphers_count: 0,
+            heartbeat_enabled: None,
+            handshake_time_ms: None,
+            session_resumption_caching: None,
+            session_resumption_tickets: None,
+            secure_renegotiation: None,
+        }];
 
         let evaluator = PolicyEvaluator::new(policy);
-        let result = evaluator.evaluate(&results).unwrap();
+        let result = evaluator
+            .evaluate(&results)
+            .expect("test assertion should succeed");
 
         // Violation should be filtered out by exception
         assert!(!result.has_violations());

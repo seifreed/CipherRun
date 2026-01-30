@@ -165,7 +165,9 @@ mod tests {
             },
         ];
 
-        let report = engine.evaluate(&results).unwrap();
+        let report = engine
+            .evaluate(&results)
+            .expect("test assertion should succeed");
 
         assert_eq!(report.summary.total, 1);
         assert_eq!(report.summary.failed, 1);
@@ -227,7 +229,9 @@ mod tests {
             secure_renegotiation: None,
         }];
 
-        let report = engine.evaluate(&results).unwrap();
+        let report = engine
+            .evaluate(&results)
+            .expect("test assertion should succeed");
 
         assert_eq!(report.summary.total, 1);
         assert_eq!(report.summary.passed, 1);

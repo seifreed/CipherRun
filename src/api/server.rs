@@ -63,14 +63,19 @@ impl ApiServer {
             .route("/health", get(routes::health::health_check));
 
         // Build main router with versioning
-
+        // Note: Middleware layers are applied in reverse order in Axum
         Router::new()
             .nest("/api/v1", api_routes)
             // Also support /health at root level
             .route("/health", get(routes::health::health_check))
             // Add OpenAPI/Swagger UI if enabled
             .merge(self.swagger_routes())
-            // Add authentication middleware
+            // Add rate limiting middleware (runs after auth due to reverse order)
+            .layer(axum_middleware::from_fn_with_state(
+                self.state.clone(),
+                middleware::rate_limit,
+            ))
+            // Add authentication middleware (runs first due to reverse order)
             .layer(axum_middleware::from_fn_with_state(
                 Arc::new(self.config.clone()),
                 middleware::authenticate,
@@ -145,7 +150,7 @@ mod tests {
     #[tokio::test]
     async fn test_router_build() {
         let config = ApiConfig::default();
-        let server = ApiServer::new(config).unwrap();
+        let server = ApiServer::new(config).expect("test assertion should succeed");
         let _router = server.build_router();
         // Just verify it builds without panicking
     }

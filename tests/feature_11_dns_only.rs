@@ -31,6 +31,7 @@ mod dns_only_tests {
             debian_weak_key: None,
             aia_url: None,
             der_bytes: vec![],
+            certificate_transparency: None,
         }
     }
 

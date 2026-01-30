@@ -72,32 +72,48 @@ impl LogjamTester {
     }
 
     /// Test for weak DH parameters
+    ///
+    /// Performance optimization: Wraps blocking OpenSSL operations in spawn_blocking
+    /// to prevent blocking the async runtime.
     async fn test_weak_dh_params(&self) -> Result<bool> {
+        use openssl::pkey::Id;
         use openssl::ssl::{SslConnector, SslMethod};
 
         let addr = self.target.socket_addrs()[0];
+        let hostname = self.target.hostname.clone();
 
         match timeout(Duration::from_secs(5), TcpStream::connect(addr)).await {
             Ok(Ok(stream)) => {
+                // Convert to std stream for OpenSSL
                 let std_stream = stream.into_std()?;
                 std_stream.set_nonblocking(false)?;
 
-                let mut builder = SslConnector::builder(SslMethod::tls())?;
+                // Wrap blocking SSL operations in spawn_blocking
+                let result = tokio::task::spawn_blocking(move || -> crate::Result<bool> {
+                    let mut builder = SslConnector::builder(SslMethod::tls())?;
 
-                // Set DHE ciphers only
-                builder.set_cipher_list("DHE:EDH:!aNULL:!eNULL")?;
+                    // Set DHE ciphers only
+                    builder.set_cipher_list("DHE:EDH:!aNULL:!eNULL")?;
 
-                let connector = builder.build();
-                match connector.connect(&self.target.hostname, std_stream) {
-                    Ok(_ssl_stream) => {
-                        // Check DH key size
-                        // Note: OpenSSL may not expose this easily
-                        // Real implementation would parse ServerKeyExchange
-                        // For now, we assume if export DH works, params are weak
-                        Ok(false) // Conservative: assume strong unless proven weak
+                    let connector = builder.build();
+                    match connector.connect(&hostname, std_stream) {
+                        Ok(ssl_stream) => match ssl_stream.ssl().peer_tmp_key() {
+                            Ok(tmp_key) => {
+                                if tmp_key.id() == Id::DH {
+                                    Ok(tmp_key.bits() <= 1024)
+                                } else {
+                                    Ok(false)
+                                }
+                            }
+                            Err(_) => Ok(false),
+                        },
+                        Err(_) => Ok(false),
                     }
-                    Err(_) => Ok(false),
-                }
+                })
+                .await
+                .map_err(|e| anyhow::anyhow!("Spawn blocking failed: {}", e))??;
+
+                Ok(result)
             }
             _ => Ok(false),
         }
@@ -134,34 +150,46 @@ impl LogjamTester {
     }
 
     /// Test if a specific cipher is supported
+    ///
+    /// Performance optimization: Wraps blocking OpenSSL operations in spawn_blocking
     async fn test_cipher(&self, cipher: &str) -> Result<bool> {
         use openssl::ssl::{SslConnector, SslMethod, SslVersion};
 
         let addr = self.target.socket_addrs()[0];
+        let hostname = self.target.hostname.clone();
+        let cipher = cipher.to_string();
 
         match timeout(Duration::from_secs(3), TcpStream::connect(addr)).await {
             Ok(Ok(stream)) => {
+                // Convert to std stream for OpenSSL
                 let std_stream = stream.into_std()?;
                 std_stream.set_nonblocking(false)?;
 
-                let mut builder = SslConnector::builder(SslMethod::tls())?;
+                // Wrap blocking SSL operations in spawn_blocking
+                let result = tokio::task::spawn_blocking(move || -> Result<bool> {
+                    let mut builder = SslConnector::builder(SslMethod::tls())?;
 
-                // Allow SSL 3.0 for export ciphers
-                if cipher.starts_with("EXP") {
-                    builder.set_min_proto_version(Some(SslVersion::SSL3))?;
-                }
-
-                // Try to set the specific cipher
-                match builder.set_cipher_list(cipher) {
-                    Ok(_) => {
-                        let connector = builder.build();
-                        match connector.connect(&self.target.hostname, std_stream) {
-                            Ok(_) => Ok(true),
-                            Err(_) => Ok(false),
-                        }
+                    // Allow SSL 3.0 for export ciphers
+                    if cipher.starts_with("EXP") {
+                        builder.set_min_proto_version(Some(SslVersion::SSL3))?;
                     }
-                    Err(_) => Ok(false),
-                }
+
+                    // Try to set the specific cipher
+                    match builder.set_cipher_list(&cipher) {
+                        Ok(_) => {
+                            let connector = builder.build();
+                            match connector.connect(&hostname, std_stream) {
+                                Ok(_) => Ok(true),
+                                Err(_) => Ok(false),
+                            }
+                        }
+                        Err(_) => Ok(false),
+                    }
+                })
+                .await
+                .map_err(|e| anyhow::anyhow!("Spawn blocking failed: {}", e))??;
+
+                Ok(result)
             }
             _ => Ok(false),
         }

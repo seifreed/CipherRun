@@ -3,15 +3,18 @@
 // CVE-2009-3555 (insecure renegotiation vulnerability)
 
 use crate::Result;
+use crate::constants::{
+    CONTENT_TYPE_HANDSHAKE, DEFAULT_READ_TIMEOUT, EXTENSION_RENEGOTIATION_INFO,
+    HANDSHAKE_TYPE_CLIENT_HELLO, SHORT_TIMEOUT, VERSION_TLS_1_2, VULNERABILITY_CHECK_BUFFER_SIZE,
+};
 use crate::utils::network::Target;
-use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::time::timeout;
 
 /// Renegotiation tester
-pub struct RenegotiationTester {
-    target: Target,
+pub struct RenegotiationTester<'a> {
+    target: &'a Target,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -22,8 +25,8 @@ pub enum RenegotiationSupport {
     NotSupported,            // Renegotiation not supported
 }
 
-impl RenegotiationTester {
-    pub fn new(target: Target) -> Self {
+impl<'a> RenegotiationTester<'a> {
+    pub fn new(target: &'a Target) -> Self {
         Self { target }
     }
 
@@ -61,7 +64,7 @@ impl RenegotiationTester {
 
         let addr = self.target.socket_addrs()[0];
 
-        match timeout(Duration::from_secs(5), TcpStream::connect(addr)).await {
+        match timeout(DEFAULT_READ_TIMEOUT, TcpStream::connect(addr)).await {
             Ok(Ok(stream)) => {
                 let std_stream = stream.into_std()?;
                 std_stream.set_nonblocking(false)?;
@@ -87,15 +90,15 @@ impl RenegotiationTester {
     async fn test_secure_renegotiation_extension(&self) -> Result<bool> {
         let addr = self.target.socket_addrs()[0];
 
-        match timeout(Duration::from_secs(5), TcpStream::connect(addr)).await {
+        match timeout(DEFAULT_READ_TIMEOUT, TcpStream::connect(addr)).await {
             Ok(Ok(mut stream)) => {
                 // Send ClientHello
                 let client_hello = self.build_client_hello();
                 stream.write_all(&client_hello).await?;
 
                 // Read ServerHello
-                let mut buffer = vec![0u8; 8192];
-                match timeout(Duration::from_secs(3), stream.read(&mut buffer)).await {
+                let mut buffer = vec![0u8; VULNERABILITY_CHECK_BUFFER_SIZE];
+                match timeout(SHORT_TIMEOUT, stream.read(&mut buffer)).await {
                     Ok(Ok(n)) if n > 0 => {
                         // Look for renegotiation_info extension (0xff01)
                         let has_extension = self.has_renegotiation_info_extension(&buffer[..n]);
@@ -113,9 +116,9 @@ impl RenegotiationTester {
         let mut hello = Vec::new();
 
         // TLS Record: Handshake
-        hello.push(0x16);
-        hello.push(0x03);
-        hello.push(0x03); // TLS 1.2
+        hello.push(CONTENT_TYPE_HANDSHAKE);
+        hello.push((VERSION_TLS_1_2 >> 8) as u8);
+        hello.push((VERSION_TLS_1_2 & 0xff) as u8);
 
         // Length placeholder
         let len_pos = hello.len();
@@ -123,7 +126,7 @@ impl RenegotiationTester {
         hello.push(0x00);
 
         // Handshake: ClientHello
-        hello.push(0x01);
+        hello.push(HANDSHAKE_TYPE_CLIENT_HELLO);
 
         // Handshake length placeholder
         let hs_len_pos = hello.len();
@@ -132,8 +135,8 @@ impl RenegotiationTester {
         hello.push(0x00);
 
         // Client Version: TLS 1.2
-        hello.push(0x03);
-        hello.push(0x03);
+        hello.push((VERSION_TLS_1_2 >> 8) as u8);
+        hello.push((VERSION_TLS_1_2 & 0xff) as u8);
 
         // Random (32 bytes)
         for i in 0..32 {
@@ -160,9 +163,9 @@ impl RenegotiationTester {
         hello.push(0x00);
         hello.push(0x00); // Extensions length placeholder
 
-        // Renegotiation Info Extension (0xff01)
-        hello.push(0xff);
-        hello.push(0x01);
+        // Renegotiation Info Extension
+        hello.push((EXTENSION_RENEGOTIATION_INFO >> 8) as u8);
+        hello.push((EXTENSION_RENEGOTIATION_INFO & 0xff) as u8);
         hello.push(0x00);
         hello.push(0x01); // Length: 1 byte
         hello.push(0x00); // Empty renegotiation info
@@ -188,8 +191,10 @@ impl RenegotiationTester {
 
     /// Check if response has renegotiation_info extension
     fn has_renegotiation_info_extension(&self, response: &[u8]) -> bool {
-        // Look for extension type 0xff01
-        response.windows(2).any(|w| w == [0xff, 0x01])
+        // Look for renegotiation_info extension type
+        let ext_high = (EXTENSION_RENEGOTIATION_INFO >> 8) as u8;
+        let ext_low = (EXTENSION_RENEGOTIATION_INFO & 0xff) as u8;
+        response.windows(2).any(|w| w == [ext_high, ext_low])
     }
 }
 
@@ -220,13 +225,14 @@ mod tests {
 
     #[test]
     fn test_client_hello_with_renegotiation_info() {
-        let target = Target {
-            hostname: "example.com".to_string(),
-            port: 443,
-            ip_addresses: vec!["93.184.216.34".parse().unwrap()],
-        };
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["93.184.216.34".parse().unwrap()],
+        )
+        .unwrap();
 
-        let tester = RenegotiationTester::new(target);
+        let tester = RenegotiationTester::new(&target);
         let hello = tester.build_client_hello();
 
         assert!(hello.len() > 50);

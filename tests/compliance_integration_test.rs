@@ -54,6 +54,9 @@ fn test_pci_dss_pass_scenario() {
             ciphers_count: 0,
             heartbeat_enabled: None,
             handshake_time_ms: None,
+            session_resumption_caching: None,
+            session_resumption_tickets: None,
+            secure_renegotiation: None,
         },
         ProtocolTestResult {
             protocol: Protocol::TLS13,
@@ -62,6 +65,9 @@ fn test_pci_dss_pass_scenario() {
             ciphers_count: 0,
             heartbeat_enabled: None,
             handshake_time_ms: None,
+            session_resumption_caching: None,
+            session_resumption_tickets: None,
+            secure_renegotiation: None,
         },
     ];
 
@@ -93,6 +99,9 @@ fn test_pci_dss_fail_scenario() {
             ciphers_count: 0,
             heartbeat_enabled: None,
             handshake_time_ms: None,
+            session_resumption_caching: None,
+            session_resumption_tickets: None,
+            secure_renegotiation: None,
         },
         ProtocolTestResult {
             protocol: Protocol::TLS12,
@@ -101,6 +110,9 @@ fn test_pci_dss_fail_scenario() {
             ciphers_count: 0,
             heartbeat_enabled: None,
             handshake_time_ms: None,
+            session_resumption_caching: None,
+            session_resumption_tickets: None,
+            secure_renegotiation: None,
         },
     ];
 
@@ -137,6 +149,9 @@ fn test_mozilla_modern_tls13_only() {
             ciphers_count: 0,
             heartbeat_enabled: None,
             handshake_time_ms: None,
+            session_resumption_caching: None,
+            session_resumption_tickets: None,
+            secure_renegotiation: None,
         },
         ProtocolTestResult {
             protocol: Protocol::TLS13,
@@ -145,6 +160,9 @@ fn test_mozilla_modern_tls13_only() {
             ciphers_count: 0,
             heartbeat_enabled: None,
             handshake_time_ms: None,
+            session_resumption_caching: None,
+            session_resumption_tickets: None,
+            secure_renegotiation: None,
         },
     ];
 
@@ -171,6 +189,9 @@ fn test_mozilla_intermediate_tls12_allowed() {
             ciphers_count: 0,
             heartbeat_enabled: None,
             handshake_time_ms: None,
+            session_resumption_caching: None,
+            session_resumption_tickets: None,
+            secure_renegotiation: None,
         },
         ProtocolTestResult {
             protocol: Protocol::TLS13,
@@ -179,6 +200,9 @@ fn test_mozilla_intermediate_tls12_allowed() {
             ciphers_count: 0,
             heartbeat_enabled: None,
             handshake_time_ms: None,
+            session_resumption_caching: None,
+            session_resumption_tickets: None,
+            secure_renegotiation: None,
         },
     ];
 
@@ -210,6 +234,9 @@ fn test_report_json_serialization() {
         ciphers_count: 0,
         heartbeat_enabled: None,
         handshake_time_ms: None,
+        session_resumption_caching: None,
+        session_resumption_tickets: None,
+        secure_renegotiation: None,
     }];
 
     let engine = ComplianceEngine::new(framework);
@@ -239,6 +266,9 @@ fn test_report_csv_generation() {
         ciphers_count: 0,
         heartbeat_enabled: None,
         handshake_time_ms: None,
+        session_resumption_caching: None,
+        session_resumption_tickets: None,
+        secure_renegotiation: None,
     }];
 
     let engine = ComplianceEngine::new(framework);
@@ -263,6 +293,9 @@ fn test_report_html_generation() {
         ciphers_count: 0,
         heartbeat_enabled: None,
         handshake_time_ms: None,
+        session_resumption_caching: None,
+        session_resumption_tickets: None,
+        secure_renegotiation: None,
     }];
 
     let engine = ComplianceEngine::new(framework);
@@ -288,6 +321,9 @@ fn test_report_terminal_output() {
         ciphers_count: 0,
         heartbeat_enabled: None,
         handshake_time_ms: None,
+        session_resumption_caching: None,
+        session_resumption_tickets: None,
+        secure_renegotiation: None,
     }];
 
     let engine = ComplianceEngine::new(framework);
@@ -337,6 +373,9 @@ fn test_compliance_summary_calculation() {
             ciphers_count: 0,
             heartbeat_enabled: None,
             handshake_time_ms: None,
+            session_resumption_caching: None,
+            session_resumption_tickets: None,
+            secure_renegotiation: None,
         },
         ProtocolTestResult {
             protocol: Protocol::TLS13,
@@ -345,6 +384,9 @@ fn test_compliance_summary_calculation() {
             ciphers_count: 0,
             heartbeat_enabled: None,
             handshake_time_ms: None,
+            session_resumption_caching: None,
+            session_resumption_tickets: None,
+            secure_renegotiation: None,
         },
     ];
 

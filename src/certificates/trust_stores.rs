@@ -61,6 +61,19 @@ impl TrustStore {
     }
 }
 
+impl std::fmt::Display for TrustStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name = match self {
+            TrustStore::Mozilla => "Mozilla",
+            TrustStore::Apple => "Apple",
+            TrustStore::Android => "Android",
+            TrustStore::Java => "Java",
+            TrustStore::Windows => "Windows",
+        };
+        write!(f, "{}", name)
+    }
+}
+
 /// Per-platform trust validation status
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlatformTrustStatus {
@@ -263,7 +276,10 @@ impl TrustStoreValidator {
         }
 
         // Get the last certificate in the chain (should be root or closest to root)
-        let last_cert = chain.certificates.last().unwrap();
+        let last_cert = chain
+            .certificates
+            .last()
+            .ok_or_else(|| anyhow::anyhow!("Certificate chain is empty"))?;
 
         // Check if the last cert is a self-signed root
         let is_self_signed_root = last_cert.subject == last_cert.issuer && last_cert.is_ca;
@@ -500,14 +516,14 @@ mod tests {
         let validator = TrustStoreValidator::new();
         assert!(validator.is_ok());
 
-        let validator = validator.unwrap();
+        let validator = validator.expect("test assertion should succeed");
         // Indexes should be populated
         assert!(!validator.subject_index.is_empty());
     }
 
     #[test]
     fn test_empty_chain_validation() {
-        let validator = TrustStoreValidator::new().unwrap();
+        let validator = TrustStoreValidator::new().expect("test assertion should succeed");
 
         let empty_chain = CertificateChain {
             certificates: vec![],
@@ -518,7 +534,7 @@ mod tests {
         let result = validator.validate_chain(&empty_chain);
         assert!(result.is_ok());
 
-        let result = result.unwrap();
+        let result = result.expect("test assertion should succeed");
         assert!(!result.overall_trusted);
         assert_eq!(result.trusted_count, 0);
     }
@@ -585,12 +601,19 @@ mod tests {
         use crate::utils::network::Target;
 
         // Test with a well-known public certificate
-        let target = Target::parse("www.google.com:443").await.unwrap();
+        let target = Target::parse("www.google.com:443")
+            .await
+            .expect("test assertion should succeed");
         let parser = CertificateParser::new(target);
-        let chain = parser.get_certificate_chain().await.unwrap();
+        let chain = parser
+            .get_certificate_chain()
+            .await
+            .expect("test assertion should succeed");
 
-        let validator = TrustStoreValidator::new().unwrap();
-        let result = validator.validate_chain(&chain).unwrap();
+        let validator = TrustStoreValidator::new().expect("test assertion should succeed");
+        let result = validator
+            .validate_chain(&chain)
+            .expect("test assertion should succeed");
 
         // Google's certificate should be trusted by major platforms
         assert!(result.overall_trusted);

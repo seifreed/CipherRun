@@ -119,7 +119,9 @@ mod tests {
         }];
 
         let rule = ProtocolRule::new(&policy, &results);
-        let violations = rule.evaluate("example.com:443").unwrap();
+        let violations = rule
+            .evaluate("example.com:443")
+            .expect("test assertion should succeed");
 
         assert_eq!(violations.len(), 1);
         assert_eq!(violations[0].rule_path, "protocols.required");
@@ -146,7 +148,9 @@ mod tests {
         }];
 
         let rule = ProtocolRule::new(&policy, &results);
-        let violations = rule.evaluate("example.com:443").unwrap();
+        let violations = rule
+            .evaluate("example.com:443")
+            .expect("test assertion should succeed");
 
         assert_eq!(violations.len(), 1);
         assert_eq!(violations[0].rule_path, "protocols.prohibited");

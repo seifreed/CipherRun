@@ -198,7 +198,7 @@ impl From<tokio::time::error::Elapsed> for TlsError {
     fn from(_err: tokio::time::error::Elapsed) -> Self {
         TlsError::ConnectionTimeout {
             duration: std::time::Duration::from_secs(0), // Timeout duration unknown
-            addr: "0.0.0.0:0".parse().unwrap(),
+            addr: std::net::SocketAddr::from(([0, 0, 0, 0], 0)),
         }
     }
 }
@@ -219,41 +219,44 @@ impl From<tokio::task::JoinError> for TlsError {
     }
 }
 
-impl From<csv::Error> for TlsError {
-    fn from(err: csv::Error) -> Self {
-        TlsError::Other(format!("CSV error: {}", err))
-    }
+/// Macro to reduce boilerplate for simple From implementations that convert
+/// to TlsError::Other with a formatted message prefix.
+///
+/// # Example
+/// ```ignore
+/// impl_from_error!(csv::Error, "CSV error");
+/// // Expands to:
+/// // impl From<csv::Error> for TlsError {
+/// //     fn from(err: csv::Error) -> Self {
+/// //         TlsError::Other(format!("CSV error: {}", err))
+/// //     }
+/// // }
+/// ```
+macro_rules! impl_from_error {
+    ($error_type:ty, $prefix:literal) => {
+        impl From<$error_type> for TlsError {
+            fn from(err: $error_type) -> Self {
+                TlsError::Other(format!(concat!($prefix, ": {}"), err))
+            }
+        }
+    };
 }
 
+// Simple error conversions using the macro
+impl_from_error!(csv::Error, "CSV error");
+impl_from_error!(handlebars::RenderError, "Template render error");
+impl_from_error!(lettre::address::AddressError, "Email address error");
+impl_from_error!(lettre::error::Error, "Email error");
+impl_from_error!(lettre::transport::smtp::Error, "SMTP error");
+impl_from_error!(toml::de::Error, "TOML deserialization error");
+impl_from_error!(toml::ser::Error, "TOML serialization error");
+
+// This implementation requires a generic type parameter, so it cannot use the macro
 impl<W> From<csv::IntoInnerError<W>> for TlsError {
     fn from(err: csv::IntoInnerError<W>) -> Self {
         TlsError::IoError {
             source: std::io::Error::other(format!("CSV writer error: {}", err)),
         }
-    }
-}
-
-impl From<handlebars::RenderError> for TlsError {
-    fn from(err: handlebars::RenderError) -> Self {
-        TlsError::Other(format!("Template render error: {}", err))
-    }
-}
-
-impl From<lettre::address::AddressError> for TlsError {
-    fn from(err: lettre::address::AddressError) -> Self {
-        TlsError::Other(format!("Email address error: {}", err))
-    }
-}
-
-impl From<lettre::error::Error> for TlsError {
-    fn from(err: lettre::error::Error) -> Self {
-        TlsError::Other(format!("Email error: {}", err))
-    }
-}
-
-impl From<lettre::transport::smtp::Error> for TlsError {
-    fn from(err: lettre::transport::smtp::Error) -> Self {
-        TlsError::Other(format!("SMTP error: {}", err))
     }
 }
 

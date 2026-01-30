@@ -1,6 +1,11 @@
 // ClientHello Capture and Parsing
 // Captures and parses TLS ClientHello messages for JA3 fingerprinting
 
+use crate::constants::{
+    CONTENT_TYPE_HANDSHAKE, EXTENSION_ALPN, EXTENSION_EC_POINT_FORMATS, EXTENSION_SERVER_NAME,
+    EXTENSION_SUPPORTED_GROUPS, HANDSHAKE_TYPE_CLIENT_HELLO, RANDOM_BYTES_SIZE,
+    TLS_RECORD_HEADER_SIZE,
+};
 use crate::{Result, TlsError};
 use serde::{Deserialize, Serialize};
 
@@ -42,7 +47,7 @@ impl ClientHelloCapture {
         let mut cursor = 0;
 
         // Parse TLS record layer
-        if data.len() < 5 {
+        if data.len() < TLS_RECORD_HEADER_SIZE {
             return Err(TlsError::ParseError {
                 message: "Data too short for TLS record header".to_string(),
             });
@@ -51,8 +56,7 @@ impl ClientHelloCapture {
         let record_type = data[cursor];
         cursor += 1;
 
-        if record_type != 0x16 {
-            // 0x16 = Handshake
+        if record_type != CONTENT_TYPE_HANDSHAKE {
             return Err(TlsError::ParseError {
                 message: format!("Not a handshake record (type: 0x{:02x})", record_type),
             });
@@ -71,8 +75,7 @@ impl ClientHelloCapture {
         let handshake_type = data[cursor];
         cursor += 1;
 
-        if handshake_type != 0x01 {
-            // 0x01 = ClientHello
+        if handshake_type != HANDSHAKE_TYPE_CLIENT_HELLO {
             return Err(TlsError::ParseError {
                 message: format!("Not a ClientHello (type: 0x{:02x})", handshake_type),
             });
@@ -92,15 +95,15 @@ impl ClientHelloCapture {
         cursor += 2;
 
         // Random (32 bytes)
-        if data.len() < cursor + 32 {
+        if data.len() < cursor + RANDOM_BYTES_SIZE {
             return Err(TlsError::ParseError {
                 message: "Data too short for random".to_string(),
             });
         }
 
-        let mut random = [0u8; 32];
-        random.copy_from_slice(&data[cursor..cursor + 32]);
-        cursor += 32;
+        let mut random = [0u8; RANDOM_BYTES_SIZE];
+        random.copy_from_slice(&data[cursor..cursor + RANDOM_BYTES_SIZE]);
+        cursor += RANDOM_BYTES_SIZE;
 
         // Session ID
         if data.len() < cursor + 1 {
@@ -254,11 +257,9 @@ impl ClientHelloCapture {
     }
 
     /// Get supported groups (curves) from extensions
-    /// Extension ID 10 (supported_groups)
     pub fn get_supported_groups(&self) -> Vec<u16> {
         for ext in &self.extensions {
-            if ext.extension_type == 10 {
-                // supported_groups
+            if ext.extension_type == EXTENSION_SUPPORTED_GROUPS {
                 return Self::parse_supported_groups(&ext.data);
             }
         }
@@ -288,11 +289,9 @@ impl ClientHelloCapture {
     }
 
     /// Get EC point formats from extensions
-    /// Extension ID 11 (ec_point_formats)
     pub fn get_point_formats(&self) -> Vec<u8> {
         for ext in &self.extensions {
-            if ext.extension_type == 11 {
-                // ec_point_formats
+            if ext.extension_type == EXTENSION_EC_POINT_FORMATS {
                 return Self::parse_point_formats(&ext.data);
             }
         }
@@ -318,7 +317,7 @@ impl ClientHelloCapture {
         let mut bytes = Vec::new();
 
         // TLS Record Header
-        bytes.push(0x16); // Handshake
+        bytes.push(CONTENT_TYPE_HANDSHAKE);
         bytes.extend_from_slice(&self.version.to_be_bytes());
 
         // Placeholder for record length (will update later)
@@ -326,7 +325,7 @@ impl ClientHelloCapture {
         bytes.extend_from_slice(&[0u8, 0u8]);
 
         // Handshake Header
-        bytes.push(0x01); // ClientHello
+        bytes.push(HANDSHAKE_TYPE_CLIENT_HELLO);
 
         // Placeholder for handshake length (will update later)
         let handshake_len_pos = bytes.len();
@@ -384,11 +383,9 @@ impl ClientHelloCapture {
     }
 
     /// Get SNI (Server Name Indication) from extensions
-    /// Extension ID 0 (server_name)
     pub fn get_sni(&self) -> Option<String> {
         for ext in &self.extensions {
-            if ext.extension_type == 0 {
-                // server_name
+            if ext.extension_type == EXTENSION_SERVER_NAME {
                 return Self::parse_sni(&ext.data);
             }
         }
@@ -424,11 +421,9 @@ impl ClientHelloCapture {
     }
 
     /// Get ALPN (Application-Layer Protocol Negotiation) from extensions
-    /// Extension ID 16 (application_layer_protocol_negotiation)
     pub fn get_alpn(&self) -> Vec<String> {
         for ext in &self.extensions {
-            if ext.extension_type == 16 {
-                // application_layer_protocol_negotiation
+            if ext.extension_type == EXTENSION_ALPN {
                 return Self::parse_alpn(&ext.data);
             }
         }
@@ -527,7 +522,7 @@ mod tests {
         let parsed = ClientHelloCapture::parse(&bytes);
         assert!(parsed.is_ok());
 
-        let parsed = parsed.unwrap();
+        let parsed = parsed.expect("test assertion should succeed");
         assert_eq!(parsed.version, client_hello.version);
         assert_eq!(parsed.cipher_suites, client_hello.cipher_suites);
     }

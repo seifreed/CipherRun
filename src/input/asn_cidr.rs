@@ -383,7 +383,8 @@ mod tests {
 
     #[test]
     fn test_expand_cidr_small() {
-        let expansion = AsnCidrParser::expand_cidr("192.0.2.0/30").unwrap();
+        let expansion =
+            AsnCidrParser::expand_cidr("192.0.2.0/30").expect("test assertion should succeed");
 
         match expansion {
             CidrExpansion::FullList { ips, total, .. } => {
@@ -396,7 +397,8 @@ mod tests {
 
     #[test]
     fn test_expand_cidr_large() {
-        let expansion = AsnCidrParser::expand_cidr("10.0.0.0/8").unwrap();
+        let expansion =
+            AsnCidrParser::expand_cidr("10.0.0.0/8").expect("test assertion should succeed");
 
         match expansion {
             CidrExpansion::Network { total, .. } => {
@@ -408,7 +410,8 @@ mod tests {
 
     #[test]
     fn test_cidr_expansion_iter() {
-        let expansion = AsnCidrParser::expand_cidr("192.0.2.0/30").unwrap();
+        let expansion =
+            AsnCidrParser::expand_cidr("192.0.2.0/30").expect("test assertion should succeed");
         let ips: Vec<IpAddr> = expansion.iter().collect();
 
         assert_eq!(ips.len(), 4);

@@ -180,8 +180,8 @@ mod tests {
         assert!(label.len() <= 12);
 
         // First and last chars should be alphanumeric
-        let first = label.chars().next().unwrap();
-        let last = label.chars().last().unwrap();
+        let first = label.chars().next().expect("test assertion should succeed");
+        let last = label.chars().last().expect("test assertion should succeed");
         assert!(first.is_ascii_alphanumeric());
         assert!(last.is_ascii_alphanumeric());
     }

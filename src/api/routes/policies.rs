@@ -11,6 +11,7 @@ use crate::api::{
 use crate::policy::evaluator::PolicyEvaluator;
 use crate::policy::parser::PolicyLoader;
 use crate::scanner::Scanner;
+use crate::security::sanitize_path;
 use axum::{
     Json,
     extract::{Path, State},
@@ -57,8 +58,10 @@ pub async fn create_policy(
     // Generate policy ID (use name as filename-safe ID)
     let policy_id = sanitize_filename(&request.name);
 
-    // Save policy to filesystem
-    let policy_path = policy_dir.join(format!("{}.yaml", policy_id));
+    // SECURITY: Sanitize path to prevent path traversal (CWE-22)
+    let filename = format!("{}.yaml", policy_id);
+    let policy_path = sanitize_path(&filename, policy_dir)
+        .map_err(|e| ApiError::BadRequest(format!("Invalid policy filename: {}", e)))?;
 
     // Create policy file with metadata
     let policy_content = format!(
@@ -116,8 +119,10 @@ pub async fn get_policy(
         .as_ref()
         .ok_or_else(|| ApiError::Internal("Policy storage not configured".to_string()))?;
 
-    // Read policy file
-    let policy_path = policy_dir.join(format!("{}.yaml", id));
+    // SECURITY: Sanitize path to prevent path traversal (CWE-22)
+    let filename = format!("{}.yaml", id);
+    let policy_path = sanitize_path(&filename, policy_dir)
+        .map_err(|e| ApiError::BadRequest(format!("Invalid policy ID: {}", e)))?;
 
     if !policy_path.exists() {
         return Err(ApiError::NotFound(format!("Policy {} not found", id)));
@@ -212,8 +217,10 @@ pub async fn evaluate_policy(
         .as_ref()
         .ok_or_else(|| ApiError::Internal("Policy storage not configured".to_string()))?;
 
-    // Load policy
-    let policy_path = policy_dir.join(format!("{}.yaml", id));
+    // SECURITY: Sanitize path to prevent path traversal (CWE-22)
+    let filename = format!("{}.yaml", id);
+    let policy_path = sanitize_path(&filename, policy_dir)
+        .map_err(|e| ApiError::BadRequest(format!("Invalid policy ID: {}", e)))?;
 
     if !policy_path.exists() {
         return Err(ApiError::NotFound(format!("Policy {} not found", id)));
@@ -283,7 +290,17 @@ pub async fn evaluate_policy(
 }
 
 /// Sanitize filename to make it safe for filesystem
+///
+/// SECURITY: This only sanitizes the filename portion, not the full path.
+/// For full path safety, use sanitize_path() which prevents traversal.
 fn sanitize_filename(name: &str) -> String {
+    // Remove any path separators
+    let name = name.replace(['/', '\\'], "_");
+
+    // Remove null bytes
+    let name = name.replace('\0', "");
+
+    // Convert to safe characters
     name.chars()
         .map(|c| {
             if c.is_alphanumeric() || c == '-' || c == '_' {

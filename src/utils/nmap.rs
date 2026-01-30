@@ -138,7 +138,7 @@ Host: 192.168.1.1 (example.com)	Status: Up
 Host: 192.168.1.1 (example.com)	Ports: 443/open/tcp//https///	Ignored State: closed (999)
 "#;
 
-        let targets = NmapParser::parse_content(content).unwrap();
+        let targets = NmapParser::parse_content(content).expect("test assertion should succeed");
         assert!(!targets.is_empty());
     }
 

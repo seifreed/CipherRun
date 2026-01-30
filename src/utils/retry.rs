@@ -305,15 +305,17 @@ fn is_io_error_retriable(error: &std::io::Error) -> bool {
         // Other errors: analyze message for network-related issues
         _ => {
             let msg = error.to_string().to_lowercase();
-            
+
             // Check for ENETDOWN (error 50) - "Network is down"
             // This typically occurs when too many concurrent connections saturate the network stack
             // It's retriable with backoff to allow the system to recover
             if msg.contains("network is down") || msg.contains("os error 50") {
-                tracing::debug!("Detected ENETDOWN (error 50) - network saturation, will retry with backoff");
+                tracing::debug!(
+                    "Detected ENETDOWN (error 50) - network saturation, will retry with backoff"
+                );
                 return true;
             }
-            
+
             // Check for other network unreachable patterns
             msg.contains("network unreachable")
                 || msg.contains("host unreachable")

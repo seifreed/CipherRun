@@ -249,7 +249,9 @@ mod tests {
 
         let cert_result = create_test_cert_result();
         let rule = CertificateRule::new(&policy, Some(&cert_result));
-        let violations = rule.evaluate("example.com:443").unwrap();
+        let violations = rule
+            .evaluate("example.com:443")
+            .expect("test assertion should succeed");
 
         assert!(!violations.is_empty());
         assert_eq!(violations[0].rule_path, "certificates.min_key_size");
@@ -271,7 +273,9 @@ mod tests {
         cert_result.chain.certificates[0].san.clear();
 
         let rule = CertificateRule::new(&policy, Some(&cert_result));
-        let violations = rule.evaluate("example.com:443").unwrap();
+        let violations = rule
+            .evaluate("example.com:443")
+            .expect("test assertion should succeed");
 
         assert!(!violations.is_empty());
         assert_eq!(violations[0].rule_path, "certificates.require_san");

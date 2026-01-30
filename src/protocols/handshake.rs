@@ -2,6 +2,14 @@
 
 use super::{Extension, Protocol};
 use crate::Result;
+use crate::constants::{
+    COMPRESSION_DEFLATE, COMPRESSION_NULL, CONTENT_TYPE_HANDSHAKE, EXTENSION_ALPN,
+    EXTENSION_EC_POINT_FORMATS, EXTENSION_ENCRYPT_THEN_MAC, EXTENSION_EXTENDED_MASTER_SECRET,
+    EXTENSION_KEY_SHARE, EXTENSION_RENEGOTIATION_INFO, EXTENSION_SERVER_NAME,
+    EXTENSION_SESSION_TICKET, EXTENSION_SIGNATURE_ALGORITHMS, EXTENSION_SUPPORTED_GROUPS,
+    EXTENSION_SUPPORTED_VERSIONS, HANDSHAKE_TYPE_CLIENT_HELLO, HANDSHAKE_TYPE_SERVER_HELLO,
+    VERSION_SSL_3_0, VERSION_TLS_1_0, VERSION_TLS_1_2, VERSION_TLS_1_3,
+};
 use bytes::{BufMut, BytesMut};
 
 /// ClientHello message builder
@@ -21,7 +29,7 @@ impl ClientHelloBuilder {
         // First 4 bytes are Unix time
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_else(|_| std::time::Duration::from_secs(0))
             .as_secs() as u32;
         random[0..4].copy_from_slice(&timestamp.to_be_bytes());
         // Rest is random
@@ -33,7 +41,7 @@ impl ClientHelloBuilder {
             cipher_suites: Vec::new(),
             extensions: Vec::new(),
             session_id: Vec::new(),
-            compression_methods: vec![0], // No compression
+            compression_methods: vec![COMPRESSION_NULL], // No compression
             random,
         }
     }
@@ -71,7 +79,8 @@ impl ClientHelloBuilder {
         data.put_u16(hostname.len() as u16);
         data.put_slice(hostname.as_bytes());
 
-        self.extensions.push(Extension::new(0x0000, data.to_vec()));
+        self.extensions
+            .push(Extension::new(EXTENSION_SERVER_NAME, data.to_vec()));
         self
     }
 
@@ -87,7 +96,8 @@ impl ClientHelloBuilder {
             data.put_u16(*curve);
         }
 
-        self.extensions.push(Extension::new(0x000a, data.to_vec()));
+        self.extensions
+            .push(Extension::new(EXTENSION_SUPPORTED_GROUPS, data.to_vec()));
         self
     }
 
@@ -104,7 +114,10 @@ impl ClientHelloBuilder {
             data.put_u8(*sig);
         }
 
-        self.extensions.push(Extension::new(0x000d, data.to_vec()));
+        self.extensions.push(Extension::new(
+            EXTENSION_SIGNATURE_ALGORITHMS,
+            data.to_vec(),
+        ));
         self
     }
 
@@ -122,7 +135,8 @@ impl ClientHelloBuilder {
             data.put_slice(protocol.as_bytes());
         }
 
-        self.extensions.push(Extension::new(0x0010, data.to_vec()));
+        self.extensions
+            .push(Extension::new(EXTENSION_ALPN, data.to_vec()));
         self
     }
 
@@ -133,25 +147,29 @@ impl ClientHelloBuilder {
         data.put_u8(1);
         // uncompressed (0)
         data.put_u8(0);
-        self.extensions.push(Extension::new(0x000b, data.to_vec()));
+        self.extensions
+            .push(Extension::new(EXTENSION_EC_POINT_FORMATS, data.to_vec()));
         self
     }
 
     /// Add session_ticket extension (empty for new ticket)
     pub fn add_session_ticket(&mut self) -> &mut Self {
-        self.extensions.push(Extension::new(0x0023, vec![]));
+        self.extensions
+            .push(Extension::new(EXTENSION_SESSION_TICKET, vec![]));
         self
     }
 
     /// Add encrypt_then_mac extension
     pub fn add_encrypt_then_mac(&mut self) -> &mut Self {
-        self.extensions.push(Extension::new(0x0016, vec![]));
+        self.extensions
+            .push(Extension::new(EXTENSION_ENCRYPT_THEN_MAC, vec![]));
         self
     }
 
     /// Add extended master secret extension
     pub fn add_extended_master_secret(&mut self) -> &mut Self {
-        self.extensions.push(Extension::new(0x0017, vec![]));
+        self.extensions
+            .push(Extension::new(EXTENSION_EXTENDED_MASTER_SECRET, vec![]));
         self
     }
 
@@ -159,7 +177,8 @@ impl ClientHelloBuilder {
     pub fn add_renegotiation_info(&mut self) -> &mut Self {
         let mut data = BytesMut::new();
         data.put_u8(0); // Empty renegotiation info
-        self.extensions.push(Extension::new(0xff01, data.to_vec()));
+        self.extensions
+            .push(Extension::new(EXTENSION_RENEGOTIATION_INFO, data.to_vec()));
         self
     }
 
@@ -189,7 +208,8 @@ impl ClientHelloBuilder {
             data.put_u16(*version);
         }
 
-        self.extensions.push(Extension::new(0x002b, data.to_vec()));
+        self.extensions
+            .push(Extension::new(EXTENSION_SUPPORTED_VERSIONS, data.to_vec()));
         self
     }
 
@@ -233,7 +253,8 @@ impl ClientHelloBuilder {
         // Key exchange data
         data.put_slice(&public_key);
 
-        self.extensions.push(Extension::new(0x0033, data.to_vec()));
+        self.extensions
+            .push(Extension::new(EXTENSION_KEY_SHARE, data.to_vec()));
         self
     }
 
@@ -249,6 +270,133 @@ impl ClientHelloBuilder {
 
         self.extensions.push(Extension::new(0x002d, data.to_vec()));
         self
+    }
+
+    /// Add NPN (Next Protocol Negotiation) extension for SPDY testing
+    /// Used primarily for CRIME vulnerability testing
+    pub fn add_npn(&mut self) -> &mut Self {
+        // NPN Extension (0x3374) - empty extension to request NPN
+        self.extensions.push(Extension::new(0x3374, vec![]));
+        self
+    }
+
+    /// Set compression methods (for CRIME vulnerability testing)
+    /// By default, compression is disabled (only null compression)
+    pub fn with_compression(&mut self, enable_deflate: bool) -> &mut Self {
+        if enable_deflate {
+            self.compression_methods = vec![COMPRESSION_DEFLATE, COMPRESSION_NULL]; // DEFLATE + null
+        } else {
+            self.compression_methods = vec![COMPRESSION_NULL]; // null only
+        }
+        self
+    }
+
+    /// Configure for vulnerability testing with minimal ciphers
+    /// Sets up a basic ClientHello suitable for most vulnerability tests
+    pub fn for_vulnerability_testing(&mut self) -> &mut Self {
+        // Use common RSA and ECDHE ciphers for broad compatibility
+        self.add_ciphers(&[
+            0xc02f, // TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+            0xc030, // TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA256
+            0x009e, // TLS_DHE_RSA_WITH_AES_128_GCM_SHA256
+            0x009c, // TLS_RSA_WITH_AES_128_GCM_SHA256
+            0x002f, // TLS_RSA_WITH_AES_128_CBC_SHA
+            0x0035, // TLS_RSA_WITH_AES_256_CBC_SHA
+        ]);
+        self
+    }
+
+    /// Configure for RSA key exchange only (for ROBOT testing)
+    pub fn for_rsa_key_exchange(&mut self) -> &mut Self {
+        self.add_ciphers(&[
+            0x002f, // TLS_RSA_WITH_AES_128_CBC_SHA
+            0x0035, // TLS_RSA_WITH_AES_256_CBC_SHA
+            0x009c, // TLS_RSA_WITH_AES_128_GCM_SHA256
+        ]);
+        self
+    }
+
+    /// Configure for CBC cipher testing (for POODLE, Lucky13, etc.)
+    pub fn for_cbc_ciphers(&mut self) -> &mut Self {
+        self.add_ciphers(&[
+            0x002f, // TLS_RSA_WITH_AES_128_CBC_SHA
+            0x0035, // TLS_RSA_WITH_AES_256_CBC_SHA
+            0x003c, // TLS_RSA_WITH_AES_128_CBC_SHA256
+            0x003d, // TLS_RSA_WITH_AES_256_CBC_SHA256
+        ]);
+        self
+    }
+
+    /// Build a minimal ClientHello without extensions (for simple vulnerability tests)
+    pub fn build_minimal(&self) -> Result<Vec<u8>> {
+        let mut buf = BytesMut::new();
+
+        // Record Layer
+        buf.put_u8(CONTENT_TYPE_HANDSHAKE); // Content Type: Handshake (0x16)
+
+        // Record version
+        let record_version = match self.protocol {
+            Protocol::SSLv3 => VERSION_SSL_3_0,
+            _ => VERSION_TLS_1_0,
+        };
+        buf.put_u16(record_version);
+
+        // Length placeholder
+        let length_pos = buf.len();
+        buf.put_u16(0);
+
+        // Handshake Protocol
+        let handshake_start = buf.len();
+        buf.put_u8(HANDSHAKE_TYPE_CLIENT_HELLO); // Handshake Type: ClientHello (0x01)
+
+        // Handshake length placeholder
+        let handshake_length_pos = buf.len();
+        buf.put_u8(0);
+        buf.put_u16(0);
+
+        // ClientHello content
+        let hello_start = buf.len();
+
+        // Protocol version
+        let client_version = if matches!(self.protocol, Protocol::TLS13) {
+            VERSION_TLS_1_2 // TLS 1.3 uses 0x0303 for compatibility (RFC 8446)
+        } else {
+            self.protocol.as_hex()
+        };
+        buf.put_u16(client_version);
+
+        // Random (32 bytes)
+        buf.put_slice(&self.random);
+
+        // Session ID
+        buf.put_u8(self.session_id.len() as u8);
+        if !self.session_id.is_empty() {
+            buf.put_slice(&self.session_id);
+        }
+
+        // Cipher suites
+        buf.put_u16((self.cipher_suites.len() * 2) as u16);
+        for cipher in &self.cipher_suites {
+            buf.put_u16(*cipher);
+        }
+
+        // Compression methods
+        buf.put_u8(self.compression_methods.len() as u8);
+        buf.put_slice(&self.compression_methods);
+
+        // No extensions in minimal build
+
+        // Fill in handshake length
+        let handshake_len = buf.len() - hello_start;
+        buf[handshake_length_pos] = ((handshake_len >> 16) & 0xff) as u8;
+        buf[handshake_length_pos + 1..handshake_length_pos + 3]
+            .copy_from_slice(&((handshake_len & 0xffff) as u16).to_be_bytes());
+
+        // Fill in record length
+        let record_len = buf.len() - handshake_start;
+        buf[length_pos..length_pos + 2].copy_from_slice(&(record_len as u16).to_be_bytes());
+
+        Ok(buf.to_vec())
     }
 
     /// Add signature algorithms cert (TLS 1.3)
@@ -273,13 +421,13 @@ impl ClientHelloBuilder {
         let mut buf = BytesMut::new();
 
         // Record Layer
-        // Content Type: Handshake (22)
-        buf.put_u8(0x16);
+        // Content Type: Handshake (0x16)
+        buf.put_u8(CONTENT_TYPE_HANDSHAKE);
 
-        // Legacy version (0x0301 for TLS 1.0, compatibility)
+        // Legacy version (TLS 1.0 for compatibility)
         let record_version = match self.protocol {
-            Protocol::SSLv3 => 0x0300,
-            _ => 0x0301,
+            Protocol::SSLv3 => VERSION_SSL_3_0,
+            _ => VERSION_TLS_1_0,
         };
         buf.put_u16(record_version);
 
@@ -290,8 +438,8 @@ impl ClientHelloBuilder {
         // Handshake Protocol
         let handshake_start = buf.len();
 
-        // Handshake Type: ClientHello (1)
-        buf.put_u8(0x01);
+        // Handshake Type: ClientHello (0x01)
+        buf.put_u8(HANDSHAKE_TYPE_CLIENT_HELLO);
 
         // Length placeholder
         let handshake_length_pos = buf.len();
@@ -302,10 +450,10 @@ impl ClientHelloBuilder {
         let hello_start = buf.len();
 
         // Protocol version
-        // For TLS 1.3, use 0x0303 (TLS 1.2) for compatibility (RFC 8446)
+        // For TLS 1.3, use TLS 1.2 (0x0303) for compatibility (RFC 8446)
         // The actual version is negotiated via supported_versions extension
         let client_version = if matches!(self.protocol, Protocol::TLS13) {
-            0x0303
+            VERSION_TLS_1_2
         } else {
             self.protocol.as_hex()
         };
@@ -418,8 +566,8 @@ impl ClientHelloBuilder {
                 (0x06, 0x01), // rsa_pkcs1_sha512
             ]);
 
-            // 9. supported_versions (0x002b) - ONLY TLS 1.3 for TLS 1.3 tests
-            self.add_supported_versions(&[0x0304]);
+            // 9. supported_versions - ONLY TLS 1.3 for TLS 1.3 tests
+            self.add_supported_versions(&[VERSION_TLS_1_3]);
 
             // 10. psk_key_exchange_modes (0x002d)
             self.add_psk_key_exchange_modes();
@@ -478,13 +626,13 @@ impl ServerHelloParser {
         let mut offset = 0;
 
         // Skip record header (5 bytes)
-        if data[0] != 0x16 {
+        if data[0] != CONTENT_TYPE_HANDSHAKE {
             crate::tls_bail!("Not a handshake record");
         }
         offset += 5;
 
         // Handshake type
-        if data[offset] != 0x02 {
+        if data[offset] != HANDSHAKE_TYPE_SERVER_HELLO {
             crate::tls_bail!("Not a ServerHello");
         }
         offset += 1;
@@ -665,11 +813,11 @@ mod tests {
         let mut builder = ClientHelloBuilder::new(Protocol::TLS12);
         builder.add_ciphers(&[0xc030, 0xc02f, 0x009e]);
 
-        let hello = builder.build().unwrap();
+        let hello = builder.build().expect("test assertion should succeed");
 
         assert!(hello.len() > 40);
-        assert_eq!(hello[0], 0x16); // Handshake
-        assert_eq!(hello[5], 0x01); // ClientHello
+        assert_eq!(hello[0], CONTENT_TYPE_HANDSHAKE); // Handshake (0x16)
+        assert_eq!(hello[5], HANDSHAKE_TYPE_CLIENT_HELLO); // ClientHello (0x01)
     }
 
     #[test]
@@ -678,7 +826,7 @@ mod tests {
         builder.add_ciphers(&[0xc030]);
         builder.add_sni("example.com");
 
-        let hello = builder.build().unwrap();
+        let hello = builder.build().expect("test assertion should succeed");
         assert!(hello.len() > 60);
     }
 
@@ -687,7 +835,9 @@ mod tests {
         let mut builder = ClientHelloBuilder::new(Protocol::TLS12);
         builder.add_ciphers(&[0xc030, 0xc02f]);
 
-        let hello = builder.build_with_defaults(Some("example.com")).unwrap();
+        let hello = builder
+            .build_with_defaults(Some("example.com"))
+            .expect("test assertion should succeed");
         assert!(hello.len() > 100); // Should have several extensions
     }
 
@@ -697,7 +847,7 @@ mod tests {
         builder.add_ciphers(&[0xc030]);
         builder.add_status_request();
 
-        let hello = builder.build().unwrap();
+        let hello = builder.build().expect("test assertion should succeed");
         assert!(hello.len() > 40);
 
         // Verify status_request extension is present (type 0x0005)
@@ -744,7 +894,8 @@ mod tests {
         // Extension data (empty OCSP response placeholder)
         server_hello.push(0x00);
 
-        let parsed = ServerHelloParser::parse(&server_hello).unwrap();
+        let parsed =
+            ServerHelloParser::parse(&server_hello).expect("test assertion should succeed");
 
         assert_eq!(parsed.ocsp_stapling_detected, Some(true));
         assert!(parsed.supports_ocsp_stapling().unwrap());
@@ -783,7 +934,8 @@ mod tests {
         server_hello.extend_from_slice(&[0x00, 0x04]);
         server_hello.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]);
 
-        let parsed = ServerHelloParser::parse(&server_hello).unwrap();
+        let parsed =
+            ServerHelloParser::parse(&server_hello).expect("test assertion should succeed");
 
         assert_eq!(parsed.ocsp_stapling_detected, Some(false));
         assert!(!parsed.supports_ocsp_stapling().unwrap());
@@ -816,7 +968,8 @@ mod tests {
 
         // No extensions section
 
-        let parsed = ServerHelloParser::parse(&server_hello).unwrap();
+        let parsed =
+            ServerHelloParser::parse(&server_hello).expect("test assertion should succeed");
 
         assert_eq!(parsed.ocsp_stapling_detected, None);
         assert_eq!(parsed.supports_ocsp_stapling(), None);
@@ -856,7 +1009,8 @@ mod tests {
         // Extension data (peer_allowed_to_send = 1)
         server_hello.push(0x01);
 
-        let parsed = ServerHelloParser::parse(&server_hello).unwrap();
+        let parsed =
+            ServerHelloParser::parse(&server_hello).expect("test assertion should succeed");
 
         assert_eq!(parsed.heartbeat_enabled, Some(true));
         assert!(parsed.supports_heartbeat().unwrap());
@@ -895,7 +1049,8 @@ mod tests {
         server_hello.extend_from_slice(&[0x00, 0x04]);
         server_hello.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]);
 
-        let parsed = ServerHelloParser::parse(&server_hello).unwrap();
+        let parsed =
+            ServerHelloParser::parse(&server_hello).expect("test assertion should succeed");
 
         assert_eq!(parsed.heartbeat_enabled, Some(false));
         assert!(!parsed.supports_heartbeat().unwrap());
@@ -939,7 +1094,8 @@ mod tests {
         server_hello.extend_from_slice(&[0x00, 0x01]);
         server_hello.push(0x01);
 
-        let parsed = ServerHelloParser::parse(&server_hello).unwrap();
+        let parsed =
+            ServerHelloParser::parse(&server_hello).expect("test assertion should succeed");
 
         // Both should be detected
         assert_eq!(parsed.ocsp_stapling_detected, Some(true));

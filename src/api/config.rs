@@ -55,15 +55,36 @@ pub enum Permission {
 impl Default for ApiConfig {
     fn default() -> Self {
         let mut api_keys = HashMap::new();
-        // Default demo key
-        api_keys.insert("demo-key-12345".to_string(), Permission::User);
+
+        // SECURITY: Generate random API key instead of hardcoded default (CWE-798)
+        // This prevents unauthorized access if default config is used in production
+        let random_key = generate_secure_api_key();
+        api_keys.insert(random_key.clone(), Permission::User);
+
+        // SECURITY WARNING: Log the generated key only once at startup
+        // In production, users should set their own keys via config file
+        tracing::warn!(
+            "=============================================================================\n\
+             SECURITY WARNING: Using auto-generated API key: {}\n\
+             \n\
+             This key is randomly generated and will change on restart.\n\
+             For production use:\n\
+             1. Create a config file with your own API keys\n\
+             2. Set strong, unique API keys for each client\n\
+             3. Never use the default configuration in production\n\
+             4. Restrict API access to specific IP addresses if possible\n\
+             =============================================================================",
+            random_key
+        );
 
         Self {
-            host: "0.0.0.0".to_string(),
+            // SECURITY: Bind to localhost by default to prevent external access
+            // Users must explicitly configure 0.0.0.0 to allow external connections
+            host: "127.0.0.1".to_string(),
             port: 8080,
             max_concurrent_scans: 10,
             api_keys,
-            enable_cors: true,
+            enable_cors: false, // SECURITY: Disable CORS by default
             rate_limit_per_minute: 100,
             max_body_size: 1024 * 1024,   // 1MB
             request_timeout_seconds: 300, // 5 minutes
@@ -72,6 +93,29 @@ impl Default for ApiConfig {
             enable_swagger: true,
         }
     }
+}
+
+/// Generate a cryptographically secure random API key
+///
+/// SECURITY: Uses system random number generator for unpredictable keys
+fn generate_secure_api_key() -> String {
+    use rand::Rng;
+
+    const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ\
+                             abcdefghijklmnopqrstuvwxyz\
+                             0123456789-_";
+    const KEY_LENGTH: usize = 32;
+
+    let mut rng = rand::thread_rng();
+
+    let key: String = (0..KEY_LENGTH)
+        .map(|_| {
+            let idx = rng.gen_range(0..CHARSET.len());
+            CHARSET[idx] as char
+        })
+        .collect();
+
+    format!("auto-{}", key)
 }
 
 impl ApiConfig {

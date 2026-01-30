@@ -210,7 +210,7 @@ mod tests {
         let time_until = scheduler.time_until_next_scan("example.com:443");
         assert!(time_until.is_some());
 
-        let duration = time_until.unwrap();
+        let duration = time_until.expect("test assertion should succeed");
         // Should be around 3600 seconds (±10% jitter)
         assert!(duration.num_seconds() > 3200);
         assert!(duration.num_seconds() < 4000);
@@ -245,7 +245,9 @@ mod tests {
 
         scheduler.schedule_immediate("example.com:443");
 
-        let next_scan = scheduler.next_scan_time("example.com:443").unwrap();
+        let next_scan = scheduler
+            .next_scan_time("example.com:443")
+            .expect("test assertion should succeed");
         let now = Utc::now();
 
         // Should be scheduled for now (within 1 second tolerance)

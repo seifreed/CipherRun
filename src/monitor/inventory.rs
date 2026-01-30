@@ -308,10 +308,14 @@ mod tests {
         let mut inventory = CertificateInventory::new();
         let domain = MonitoredDomain::new("example.com".to_string(), 443);
 
-        inventory.add_domain(domain).unwrap();
+        inventory
+            .add_domain(domain)
+            .expect("test assertion should succeed");
         assert_eq!(inventory.len(), 1);
 
-        inventory.remove_domain("example.com").unwrap();
+        inventory
+            .remove_domain("example.com")
+            .expect("test assertion should succeed");
         assert_eq!(inventory.len(), 0);
     }
 
@@ -319,7 +323,9 @@ mod tests {
     fn test_inventory_get_domain() {
         let mut inventory = CertificateInventory::new();
         let domain = MonitoredDomain::new("example.com".to_string(), 443);
-        inventory.add_domain(domain).unwrap();
+        inventory
+            .add_domain(domain)
+            .expect("test assertion should succeed");
 
         let retrieved = inventory.get_domain("example.com");
         assert!(retrieved.is_some());
@@ -333,8 +339,12 @@ mod tests {
         let domain1 = MonitoredDomain::new("example.com".to_string(), 443);
         let domain2 = MonitoredDomain::new("disabled.com".to_string(), 443).disable();
 
-        inventory.add_domain(domain1).unwrap();
-        inventory.add_domain(domain2).unwrap();
+        inventory
+            .add_domain(domain1)
+            .expect("test assertion should succeed");
+        inventory
+            .add_domain(domain2)
+            .expect("test assertion should succeed");
 
         let enabled = inventory.enabled_domains();
         assert_eq!(enabled.len(), 1);
@@ -372,7 +382,9 @@ mod tests {
         assert!(inventory.get_domain("example.com").is_some());
         assert!(inventory.get_domain("test.com:8443").is_some());
 
-        let test_domain = inventory.get_domain("test.com:8443").unwrap();
+        let test_domain = inventory
+            .get_domain("test.com:8443")
+            .expect("test assertion should succeed");
         assert_eq!(test_domain.interval_seconds, 1800); // 30 minutes
 
         Ok(())

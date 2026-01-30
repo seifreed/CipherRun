@@ -11,7 +11,9 @@ pub mod certificates;
 pub mod ciphers;
 pub mod cli;
 pub mod client_sim;
+pub mod commands;
 pub mod compliance;
+pub mod constants;
 pub mod ct_logs;
 pub mod data;
 pub mod db;
@@ -26,9 +28,15 @@ pub mod policy;
 pub mod protocols;
 pub mod rating;
 pub mod scanner;
+pub mod security;
 pub mod starttls;
 pub mod utils;
 pub mod vulnerabilities;
+
+// Kani formal verification proof harnesses
+// Only compiled when running Kani verification
+#[cfg(kani)]
+pub mod proofs;
 
 // Re-export commonly used types
 pub use crate::cli::Args;

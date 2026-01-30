@@ -139,7 +139,7 @@ impl MultiIpScanReport {
             writeln!(f, "  {} {}", "✓".green(), result.ip.to_string().yellow())?;
 
             // Display grade if available
-            if let Some(ref rating) = result.scan_result.rating {
+            if let Some(rating) = result.scan_result.ssl_rating() {
                 let grade_str = format!("{}", rating.grade);
                 let grade_colored = Self::color_grade(&grade_str, rating.score);
                 writeln!(f, "    Grade: {} ({}/100)", grade_colored, rating.score)?;

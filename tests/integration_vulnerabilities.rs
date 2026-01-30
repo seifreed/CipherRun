@@ -209,7 +209,7 @@ async fn test_beast_vulnerability_async() {
 #[ignore]
 async fn test_heartbleed_vulnerability_async() {
     let target = create_target("www.google.com", 443).await;
-    let tester = HeartbleedTester::new(target);
+    let tester = HeartbleedTester::new(&target);
 
     let result = tester.test().await;
 

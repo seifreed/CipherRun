@@ -1,6 +1,7 @@
 // Heartbleed (CVE-2014-0160) vulnerability checker
 
 use crate::Result;
+use crate::constants::{CONTENT_TYPE_HEARTBEAT, HEARTBEAT_REQUEST, VERSION_TLS_1_2};
 use crate::protocols::{Protocol, handshake::ClientHelloBuilder};
 use crate::utils::network::Target;
 use std::time::Duration;
@@ -9,15 +10,15 @@ use tokio::net::TcpStream;
 use tokio::time::timeout;
 
 /// Heartbleed vulnerability tester
-pub struct HeartbleedTester {
-    target: Target,
+pub struct HeartbleedTester<'a> {
+    target: &'a Target,
     connect_timeout: Duration,
     read_timeout: Duration,
 }
 
-impl HeartbleedTester {
+impl<'a> HeartbleedTester<'a> {
     /// Create new Heartbleed tester
-    pub fn new(target: Target) -> Self {
+    pub fn new(target: &'a Target) -> Self {
         Self {
             target,
             connect_timeout: Duration::from_secs(10),
@@ -106,16 +107,16 @@ impl HeartbleedTester {
         let mut heartbeat = Vec::new();
 
         // Record header
-        heartbeat.push(0x18); // Content Type: Heartbeat
-        heartbeat.push(0x03); // Version: TLS 1.2
-        heartbeat.push(0x03);
+        heartbeat.push(CONTENT_TYPE_HEARTBEAT); // Content Type: Heartbeat (0x18)
+        heartbeat.push((VERSION_TLS_1_2 >> 8) as u8); // Version: TLS 1.2 (0x0303)
+        heartbeat.push((VERSION_TLS_1_2 & 0xff) as u8);
 
         // Record length
         heartbeat.push(0x00);
         heartbeat.push(0x03); // 3 bytes payload
 
         // Heartbeat request
-        heartbeat.push(0x01); // Type: Request
+        heartbeat.push(HEARTBEAT_REQUEST); // Type: Request (0x01)
         heartbeat.push(0x40); // Payload length: 16384 (0x4000) - MALICIOUS!
         heartbeat.push(0x00);
 
@@ -146,10 +147,12 @@ mod tests {
     #[tokio::test]
     #[ignore] // Requires network access
     async fn test_heartbleed_modern_server() {
-        let target = Target::parse("www.google.com:443").await.unwrap();
-        let tester = HeartbleedTester::new(target);
+        let target = Target::parse("www.google.com:443")
+            .await
+            .expect("test assertion should succeed");
+        let tester = HeartbleedTester::new(&target);
 
-        let vulnerable = tester.test().await.unwrap();
+        let vulnerable = tester.test().await.expect("test assertion should succeed");
 
         // Google should not be vulnerable
         assert!(!vulnerable);
@@ -157,12 +160,14 @@ mod tests {
 
     #[test]
     fn test_heartbeat_extension_check() {
+        let target = Target::with_ips(
+            "test.com".to_string(),
+            443,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
         let tester = HeartbleedTester {
-            target: Target {
-                hostname: "test.com".to_string(),
-                port: 443,
-                ip_addresses: vec!["127.0.0.1".parse().unwrap()],
-            },
+            target: &target,
             connect_timeout: Duration::from_secs(5),
             read_timeout: Duration::from_secs(5),
         };

@@ -308,7 +308,7 @@ mod tests {
     #[test]
     fn test_format_text_body() {
         let config = create_test_config();
-        let channel = EmailChannel::new(config).unwrap();
+        let channel = EmailChannel::new(config).expect("test assertion should succeed");
 
         let alert =
             Alert::scan_failure("example.com".to_string(), "Connection refused".to_string());
@@ -323,7 +323,7 @@ mod tests {
     #[test]
     fn test_format_html_body() {
         let config = create_test_config();
-        let channel = EmailChannel::new(config).unwrap();
+        let channel = EmailChannel::new(config).expect("test assertion should succeed");
 
         let alert = Alert::expiry_warning(
             "example.com".to_string(),
@@ -348,7 +348,7 @@ mod tests {
     #[test]
     fn test_channel_name() {
         let config = create_test_config();
-        let channel = EmailChannel::new(config).unwrap();
+        let channel = EmailChannel::new(config).expect("test assertion should succeed");
         assert_eq!(channel.channel_name(), "email");
     }
 }

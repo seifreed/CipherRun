@@ -4,8 +4,24 @@ use super::parser::{CertificateChain, CertificateInfo};
 use super::trust_stores::{TrustStoreValidator, TrustValidationResult};
 use crate::Result;
 use crate::data::CA_STORES;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+
+/// Parse a certificate date string into a DateTime<Utc>.
+/// Supports multiple date formats commonly found in certificates.
+fn parse_cert_date(date_str: &str) -> Option<DateTime<Utc>> {
+    const FORMATS: &[&str] = &[
+        "%b %d %H:%M:%S %Y %Z", // e.g., "Jan 01 00:00:00 2024 GMT"
+        "%Y-%m-%d %H:%M:%S %z", // e.g., "2024-01-01 00:00:00 +00:00"
+    ];
+
+    for format in FORMATS {
+        if let Ok(dt) = DateTime::parse_from_str(date_str, format) {
+            return Some(dt.with_timezone(&Utc));
+        }
+    }
+    None
+}
 
 /// Certificate validation result
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,6 +52,20 @@ pub enum IssueSeverity {
     Medium,
     Low,
     Info,
+}
+
+impl IssueSeverity {
+    /// Returns a colored string representation for terminal display
+    pub fn colored_display(&self) -> colored::ColoredString {
+        use colored::Colorize;
+        match self {
+            Self::Critical => "CRITICAL".red().bold(),
+            Self::High => "HIGH".red(),
+            Self::Medium => "MEDIUM".yellow(),
+            Self::Low => "LOW".normal(),
+            Self::Info => "INFO".cyan(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -133,15 +163,11 @@ impl CertificateValidator {
 
         // 1. Check expiration
         let not_expired = self.check_expiration(leaf, &mut issues);
-        if !not_expired {
-            valid = false;
-        }
+        valid &= not_expired;
 
         // 2. Check hostname
         let hostname_match = self.check_hostname(leaf, &mut issues);
-        if !hostname_match {
-            valid = false;
-        }
+        valid &= hostname_match;
 
         // 3. Check key strength
         self.check_key_strength(leaf, &mut issues);
@@ -151,9 +177,7 @@ impl CertificateValidator {
 
         // 5. Validate trust chain
         let (trust_chain_valid, trusted_ca) = self.validate_trust_chain(chain, &mut issues);
-        if !trust_chain_valid {
-            valid = false;
-        }
+        valid &= trust_chain_valid;
 
         // 6. Check chain completeness
         if !chain.is_complete() {
@@ -195,38 +219,18 @@ impl CertificateValidator {
 
     /// Check certificate expiration
     fn check_expiration(&self, cert: &CertificateInfo, issues: &mut Vec<ValidationIssue>) -> bool {
-        use chrono::DateTime;
-
         let now = Utc::now();
 
-        // Parse not_before date
-        let not_before = match DateTime::parse_from_str(&cert.not_before, "%b %d %H:%M:%S %Y %Z") {
-            Ok(dt) => dt.with_timezone(&Utc),
-            Err(_) => {
-                // Try alternative format: "2024-01-01 00:00:00 +00:00"
-                match DateTime::parse_from_str(&cert.not_before, "%Y-%m-%d %H:%M:%S %z") {
-                    Ok(dt) => dt.with_timezone(&Utc),
-                    Err(_) => {
-                        // If parsing fails, assume valid to avoid false positives
-                        return true;
-                    }
-                }
-            }
+        // Parse not_before date using the helper function
+        let Some(not_before) = parse_cert_date(&cert.not_before) else {
+            // If parsing fails, assume valid to avoid false positives
+            return true;
         };
 
-        // Parse not_after date
-        let not_after = match DateTime::parse_from_str(&cert.not_after, "%b %d %H:%M:%S %Y %Z") {
-            Ok(dt) => dt.with_timezone(&Utc),
-            Err(_) => {
-                // Try alternative format
-                match DateTime::parse_from_str(&cert.not_after, "%Y-%m-%d %H:%M:%S %z") {
-                    Ok(dt) => dt.with_timezone(&Utc),
-                    Err(_) => {
-                        // If parsing fails, assume valid to avoid false positives
-                        return true;
-                    }
-                }
-            }
+        // Parse not_after date using the helper function
+        let Some(not_after) = parse_cert_date(&cert.not_after) else {
+            // If parsing fails, assume valid to avoid false positives
+            return true;
         };
 
         // Check if certificate is not yet valid
@@ -283,7 +287,14 @@ impl CertificateValidator {
             if let Some(san_domain) = san.strip_prefix("*.")
                 && hostname_lower.ends_with(san_domain)
             {
-                return true;
+                let prefix_len = hostname_lower.len().saturating_sub(san_domain.len());
+                let prefix = &hostname_lower[..prefix_len];
+                if prefix.ends_with('.') {
+                    let label = prefix.trim_end_matches('.');
+                    if !label.is_empty() && !label.contains('.') {
+                        return true;
+                    }
+                }
             }
         }
 
@@ -370,30 +381,32 @@ impl CertificateValidator {
         issues: &mut Vec<ValidationIssue>,
     ) -> (bool, Option<String>) {
         let ca_stores = CA_STORES.as_ref();
+        let find_store_for_subject = |subject: &str| -> Option<String> {
+            for store in ca_stores.all_stores() {
+                for ca_cert in &store.certificates {
+                    if ca_cert.subject == subject {
+                        return Some(store.name.clone());
+                    }
+                }
+            }
+            None
+        };
 
         // Get root/issuer from chain
-        let root_or_issuer = chain.certificates.last();
-
-        if root_or_issuer.is_none() {
+        let Some(last_cert) = chain.certificates.last() else {
             issues.push(ValidationIssue {
                 severity: IssueSeverity::High,
                 issue_type: IssueType::UntrustedCA,
                 description: "No issuer certificate in chain".to_string(),
             });
             return (false, None);
-        }
-
-        let last_cert = root_or_issuer.unwrap();
+        };
 
         // Check if self-signed first
         if chain.certificates.len() == 1 && last_cert.subject == last_cert.issuer {
             // Check if this self-signed cert is a known root CA
-            for store in ca_stores.all_stores() {
-                for ca_cert in &store.certificates {
-                    if ca_cert.subject == last_cert.subject {
-                        return (true, Some(store.name.clone()));
-                    }
-                }
+            if let Some(store_name) = find_store_for_subject(&last_cert.subject) {
+                return (true, Some(store_name));
             }
 
             issues.push(ValidationIssue {
@@ -408,28 +421,19 @@ impl CertificateValidator {
         // Strategy 1: Check if the last cert in chain is itself a root (subject == issuer)
         if last_cert.subject == last_cert.issuer {
             // It's a root certificate, check if it's in our stores
-            for store in ca_stores.all_stores() {
-                for ca_cert in &store.certificates {
-                    if ca_cert.subject == last_cert.subject {
-                        return (true, Some(store.name.clone()));
-                    }
-                }
+            if let Some(store_name) = find_store_for_subject(&last_cert.subject) {
+                return (true, Some(store_name));
             }
         }
 
         // Strategy 2: Check if the issuer of the last cert matches any known root CA
-        for store in ca_stores.all_stores() {
-            for ca_cert in &store.certificates {
-                // Check if the CA's subject matches the issuer of our last cert
-                if ca_cert.subject == last_cert.issuer {
-                    return (true, Some(store.name.clone()));
-                }
+        if let Some(store_name) = find_store_for_subject(&last_cert.issuer) {
+            return (true, Some(store_name));
+        }
 
-                // Also check if the CA cert itself is the last cert in our chain
-                if ca_cert.subject == last_cert.subject {
-                    return (true, Some(store.name.clone()));
-                }
-            }
+        // Also check if the CA cert itself is the last cert in our chain
+        if let Some(store_name) = find_store_for_subject(&last_cert.subject) {
+            return (true, Some(store_name));
         }
 
         issues.push(ValidationIssue {

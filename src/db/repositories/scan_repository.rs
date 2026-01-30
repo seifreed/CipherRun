@@ -253,22 +253,32 @@ mod tests {
     #[tokio::test]
     async fn test_scan_repository() {
         let config = DatabaseConfig::sqlite(PathBuf::from(":memory:"));
-        let pool = DatabasePool::new(&config).await.unwrap();
+        let pool = DatabasePool::new(&config)
+            .await
+            .expect("test assertion should succeed");
 
         // Run migrations to create tables
-        run_migrations(&pool).await.unwrap();
+        run_migrations(&pool)
+            .await
+            .expect("test assertion should succeed");
 
         // Create repository
         let repo = ScanRepositoryImpl::new(pool.clone());
 
         // Create scan
         let scan = ScanRecord::new("example.com".to_string(), 443);
-        let scan_id = repo.create_scan(&scan).await.unwrap();
+        let scan_id = repo
+            .create_scan(&scan)
+            .await
+            .expect("test assertion should succeed");
 
         assert!(scan_id > 0);
 
         // Fetch scan
-        let fetched = repo.get_scan_by_id(scan_id).await.unwrap();
+        let fetched = repo
+            .get_scan_by_id(scan_id)
+            .await
+            .expect("test assertion should succeed");
         assert!(fetched.is_some());
         assert_eq!(fetched.unwrap().target_hostname, "example.com");
 

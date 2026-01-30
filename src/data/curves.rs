@@ -183,7 +183,7 @@ mod tests {
     #[test]
     fn test_parse_curve_line() {
         let line = "0x00,0x1d - X25519  Curve25519";
-        let curve = CurvesDatabase::parse_line(line).unwrap();
+        let curve = CurvesDatabase::parse_line(line).expect("test assertion should succeed");
 
         assert_eq!(curve.id, "001d");
         assert_eq!(curve.short_name, "X25519");

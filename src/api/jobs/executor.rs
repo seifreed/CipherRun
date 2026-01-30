@@ -65,7 +65,7 @@ impl ScanExecutor {
             }
 
             // Wait for available slot
-            let permit = match self.semaphore.clone().try_acquire_owned() {
+            let permit = match Arc::clone(&self.semaphore).try_acquire_owned() {
                 Ok(p) => p,
                 Err(_) => {
                     // No slots available, wait a bit
@@ -77,8 +77,8 @@ impl ScanExecutor {
             // Try to dequeue a job
             match self.job_queue.dequeue().await {
                 Ok(Some(job)) => {
-                    let executor = self.clone();
-                    let queue = self.job_queue.clone();
+                    let executor = Arc::clone(&self);
+                    let queue = Arc::clone(&self.job_queue);
 
                     // Spawn task to process job
                     tokio::spawn(async move {
@@ -113,25 +113,23 @@ impl ScanExecutor {
         }
 
         // Send progress update
-        self.send_progress(&job, 0, "Starting scan".to_string());
+        self.send_progress(&job, 0, "Starting scan");
 
         // Execute the scan
-        match Self::run_scan(&job, self.progress_tx.clone()).await {
+        match Self::run_scan(&job, &self.progress_tx).await {
             Ok(results) => {
                 info!("Scan job {} completed successfully", job.id);
                 job.mark_completed(results);
 
-                // Send completion message
-                let msg = ProgressMessage::completed(job.id.clone());
+                let msg = ProgressMessage::completed(&job.id);
                 let _ = self.progress_tx.send(msg);
             }
             Err(e) => {
-                error!("Scan job {} failed: {}", job.id, e);
-                job.mark_failed(e.to_string());
-
-                // Send failure message
-                let msg = ProgressMessage::failed(job.id.clone(), e.to_string());
+                let error_msg = e.to_string();
+                error!("Scan job {} failed: {}", job.id, error_msg);
+                let msg = ProgressMessage::failed(&job.id, &error_msg);
                 let _ = self.progress_tx.send(msg);
+                job.mark_failed(error_msg);
             }
         }
 
@@ -151,49 +149,29 @@ impl ScanExecutor {
     /// Run the actual scan
     async fn run_scan(
         job: &ScanJob,
-        progress_tx: broadcast::Sender<ProgressMessage>,
+        progress_tx: &broadcast::Sender<ProgressMessage>,
     ) -> Result<ScanResults> {
         // Convert ScanOptions to Args
         let args = Self::options_to_args(&job.target, &job.options)?;
 
-        // Send progress: Initializing
-        let _ = progress_tx.send(ProgressMessage::new(
-            job.id.clone(),
-            5,
-            "Initializing scanner".to_string(),
-        ));
+        let _ = progress_tx.send(ProgressMessage::new(&job.id, 5, "Initializing scanner"));
 
         // Create scanner
         let scanner = Scanner::new(args)?;
 
-        // Send progress: Resolving DNS
-        let _ = progress_tx.send(ProgressMessage::new(
-            job.id.clone(),
-            10,
-            "Resolving target".to_string(),
-        ));
+        let _ = progress_tx.send(ProgressMessage::new(&job.id, 10, "Resolving target"));
 
         // Initialize scanner (DNS resolution)
         scanner.initialize().await?;
 
-        // Send progress: Starting scan
-        let _ = progress_tx.send(ProgressMessage::new(
-            job.id.clone(),
-            15,
-            "Starting TLS scan".to_string(),
-        ));
+        let _ = progress_tx.send(ProgressMessage::new(&job.id, 15, "Starting TLS scan"));
 
         // Run the scan
         // Note: We'll send progress updates during the scan
         // This is a simplified version - in production you'd want more granular progress
         let results = scanner.run().await?;
 
-        // Send progress: Finalizing
-        let _ = progress_tx.send(ProgressMessage::new(
-            job.id.clone(),
-            95,
-            "Finalizing results".to_string(),
-        ));
+        let _ = progress_tx.send(ProgressMessage::new(&job.id, 95, "Finalizing results"));
 
         Ok(results)
     }
@@ -204,61 +182,53 @@ impl ScanExecutor {
         let mut args = Args::default();
 
         args.target = Some(target.to_string());
-        args.quiet = true; // Suppress output
+        args.output.quiet = true; // Suppress output
 
         // Set timeout
-        args.socket_timeout = Some(options.timeout_seconds);
+        args.connection.socket_timeout = Some(options.timeout_seconds);
 
         // Protocol testing
         if options.test_protocols || options.full_scan {
-            args.protocols = true;
+            args.scan.protocols = true;
         }
 
         // Cipher testing
         if options.test_ciphers || options.full_scan {
-            args.each_cipher = true;
+            args.scan.each_cipher = true;
         }
 
         // Vulnerability testing
         if options.test_vulnerabilities || options.full_scan {
-            args.vulnerabilities = true;
+            args.scan.vulnerabilities = true;
         }
 
         // HTTP headers
         if options.test_http_headers || options.full_scan {
-            args.headers = true;
+            args.scan.headers = true;
         }
 
         // Client simulation
         if options.client_simulation || options.full_scan {
-            args.client_simulation = true;
+            args.fingerprint.client_simulation = true;
         }
 
-        // STARTTLS
-        if let Some(ref proto) = options.starttls_protocol {
-            args.starttls = Some(proto.clone());
-        }
+        args.starttls.protocol = options.starttls_protocol.clone();
 
-        // IP version
-        args.ipv4_only = options.ipv4_only;
-        args.ipv6_only = options.ipv6_only;
+        args.network.ipv4_only = options.ipv4_only;
+        args.network.ipv6_only = options.ipv6_only;
 
-        // Specific IP
-        if let Some(ref ip) = options.ip {
-            args.ip = Some(ip.clone());
-        }
+        args.ip = options.ip.clone();
 
         // Full scan flag
         if options.full_scan {
-            args.all = true;
+            args.scan.all = true;
         }
 
         Ok(args)
     }
 
-    /// Send progress update
-    fn send_progress(&self, job: &ScanJob, progress: u8, stage: String) {
-        let msg = ProgressMessage::new(job.id.clone(), progress, stage);
+    fn send_progress(&self, job: &ScanJob, progress: u8, stage: &str) {
+        let msg = ProgressMessage::new(&job.id, progress, stage);
         let _ = self.progress_tx.send(msg);
     }
 

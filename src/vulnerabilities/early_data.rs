@@ -24,12 +24,12 @@ use tokio::net::TcpStream;
 use tokio::time::timeout;
 
 /// 0-RTT / Early Data vulnerability tester
-pub struct EarlyDataTester {
-    target: Target,
+pub struct EarlyDataTester<'a> {
+    target: &'a Target,
 }
 
-impl EarlyDataTester {
-    pub fn new(target: Target) -> Self {
+impl<'a> EarlyDataTester<'a> {
+    pub fn new(target: &'a Target) -> Self {
         Self { target }
     }
 
@@ -222,14 +222,15 @@ mod tests {
     #[tokio::test]
     #[ignore] // Requires network access
     async fn test_early_data_detection() {
-        let target = Target {
-            hostname: "www.cloudflare.com".to_string(),
-            port: 443,
-            ip_addresses: vec!["104.16.132.229".parse().unwrap()],
-        };
+        let target = Target::with_ips(
+            "www.cloudflare.com".to_string(),
+            443,
+            vec!["104.16.132.229".parse().unwrap()],
+        )
+        .unwrap();
 
-        let tester = EarlyDataTester::new(target);
-        let result = tester.test().await.unwrap();
+        let tester = EarlyDataTester::new(&target);
+        let result = tester.test().await.expect("test assertion should succeed");
 
         // Cloudflare supports TLS 1.3
         assert!(result.supports_early_data || !result.vulnerable);

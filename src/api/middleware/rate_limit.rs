@@ -38,9 +38,10 @@ pub struct PerKeyRateLimiter {
 impl PerKeyRateLimiter {
     /// Create new per-key rate limiter
     pub fn new(requests_per_minute: u32) -> Self {
-        let default_quota = Quota::per_minute(
-            NonZeroU32::new(requests_per_minute).unwrap_or(NonZeroU32::new(100).unwrap()),
-        );
+        // Ensure we have a valid non-zero value, defaulting to 100 if invalid
+        let rpm = NonZeroU32::new(requests_per_minute)
+            .unwrap_or_else(|| NonZeroU32::new(100).expect("100 is always non-zero"));
+        let default_quota = Quota::per_minute(rpm);
 
         Self {
             limiters: Arc::new(DashMap::new()),
@@ -75,20 +76,15 @@ impl PerKeyRateLimiter {
         match snapshot {
             Ok(_) => {
                 // Request allowed
-                // Calculate remaining capacity (approximation since governor doesn't expose it directly)
-                // We do this by checking how many more requests would succeed
-                let mut remaining = 0u32;
-                for _ in 0..self.requests_per_minute {
-                    match limiter.check() {
-                        Ok(_) => remaining += 1,
-                        Err(_) => break,
-                    }
-                }
+                // Note: We cannot accurately calculate remaining capacity without
+                // consuming additional tokens. Governor doesn't expose this information.
+                // We'll report a conservative estimate (limit - 1) since we just consumed one.
+                let remaining = self.requests_per_minute.saturating_sub(1);
 
                 // Calculate reset time - use system time since QuantaInstant isn't directly convertible
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .unwrap_or_default()
                     .as_secs();
                 let reset_at = now + self.window_seconds;
 
@@ -106,7 +102,7 @@ impl PerKeyRateLimiter {
                 // Calculate reset timestamp
                 let reset_at = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .unwrap_or_default()
                     .as_secs()
                     + retry_after;
 
@@ -205,18 +201,16 @@ pub async fn rate_limit(
                 let mut response = next.run(req).await;
                 let headers = response.headers_mut();
 
-                headers.insert(
-                    "X-RateLimit-Limit",
-                    HeaderValue::from_str(&limit.to_string()).unwrap(),
-                );
-                headers.insert(
-                    "X-RateLimit-Remaining",
-                    HeaderValue::from_str(&remaining.to_string()).unwrap(),
-                );
-                headers.insert(
-                    "X-RateLimit-Reset",
-                    HeaderValue::from_str(&reset_at.to_string()).unwrap(),
-                );
+                // Insert rate limit headers - these should always be valid ASCII
+                if let Ok(header_val) = HeaderValue::from_str(&limit.to_string()) {
+                    headers.insert("X-RateLimit-Limit", header_val);
+                }
+                if let Ok(header_val) = HeaderValue::from_str(&remaining.to_string()) {
+                    headers.insert("X-RateLimit-Remaining", header_val);
+                }
+                if let Ok(header_val) = HeaderValue::from_str(&reset_at.to_string()) {
+                    headers.insert("X-RateLimit-Reset", header_val);
+                }
 
                 Ok(response)
             }
@@ -242,6 +236,9 @@ pub async fn rate_limit(
                 };
 
                 // Build response with proper headers
+                let json_body = serde_json::to_string(&error_body)
+                    .unwrap_or_else(|_| r#"{"error":"Rate limit exceeded"}"#.to_string());
+
                 let response = Response::builder()
                     .status(StatusCode::TOO_MANY_REQUESTS)
                     .header("Content-Type", "application/json")
@@ -249,8 +246,14 @@ pub async fn rate_limit(
                     .header("X-RateLimit-Remaining", "0")
                     .header("X-RateLimit-Reset", reset_at.to_string())
                     .header("Retry-After", retry_after.to_string())
-                    .body(Body::from(serde_json::to_string(&error_body).unwrap()))
-                    .unwrap();
+                    .body(Body::from(json_body))
+                    .unwrap_or_else(|_| {
+                        // Fallback if response building fails
+                        Response::builder()
+                            .status(StatusCode::TOO_MANY_REQUESTS)
+                            .body(Body::from(r#"{"error":"Rate limit exceeded"}"#))
+                            .expect("Fallback response should always build")
+                    });
 
                 Err(response)
             }

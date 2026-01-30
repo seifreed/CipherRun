@@ -15,10 +15,13 @@ pub mod html;
 pub mod json;
 pub mod multi_ip_terminal;
 pub mod probe_status;
+pub mod scanner_formatter;
 pub mod schema;
-pub mod terminal;
 pub mod xml;
 
 // MEDIUM PRIORITY Features (11-15)
 pub mod dns_only;
 pub mod response_only;
+
+// Re-export ScannerFormatter for easy access
+pub use scanner_formatter::ScannerFormatter;

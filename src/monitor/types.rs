@@ -107,10 +107,11 @@ mod tests {
             last_certificate: None,
         };
 
-        let json = serde_json::to_string(&domain).unwrap();
+        let json = serde_json::to_string(&domain).expect("test assertion should succeed");
         assert!(json.contains("example.com"));
 
-        let deserialized: MonitoredDomain = serde_json::from_str(&json).unwrap();
+        let deserialized: MonitoredDomain =
+            serde_json::from_str(&json).expect("test assertion should succeed");
         assert_eq!(deserialized.hostname, "example.com");
         assert_eq!(deserialized.port, 443);
     }

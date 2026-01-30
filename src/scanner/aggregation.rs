@@ -14,7 +14,6 @@
 //! the weakest security posture in a load-balanced environment.
 
 use crate::certificates::parser::CertificateInfo;
-use crate::ciphers::CipherSuite;
 use crate::ciphers::tester::ProtocolCipherSummary;
 use crate::protocols::{Protocol, ProtocolTestResult};
 use crate::scanner::inconsistency::{Inconsistency, SingleIpScanResult};
@@ -151,7 +150,7 @@ impl ConservativeAggregator {
             for (protocol, summary) in &result.scan_result.ciphers {
                 let cipher_set = aggregated.entry(*protocol).or_default();
                 for cipher in &summary.supported_ciphers {
-                    cipher_set.insert(cipher.openssl_name.clone());
+                    cipher_set.insert(cipher.openssl_name.clone()); // Necessary: HashSet<String>
                 }
             }
         }
@@ -168,27 +167,57 @@ impl ConservativeAggregator {
 
             if let Some(template_summary) = template {
                 // Collect all CipherSuite objects for this protocol
-                let all_ciphers: Vec<CipherSuite> = self
-                    .results
-                    .values()
-                    .filter(|r| r.error.is_none())
-                    .filter_map(|r| r.scan_result.ciphers.get(&protocol))
-                    .flat_map(|s| s.supported_ciphers.clone())
-                    .collect();
-
-                // Deduplicate by OpenSSL name
+                // Performance optimization: Use references during iteration, clone only unique ciphers
                 let mut unique_ciphers = Vec::new();
                 let mut seen = HashSet::new();
-                for cipher in all_ciphers {
-                    if seen.insert(cipher.openssl_name.clone()) {
-                        unique_ciphers.push(cipher);
+
+                for result in self.results.values() {
+                    if result.error.is_some() {
+                        continue;
+                    }
+                    if let Some(summary) = result.scan_result.ciphers.get(&protocol) {
+                        for cipher in &summary.supported_ciphers {
+                            if seen.insert(&cipher.openssl_name) {
+                                unique_ciphers.push(cipher.clone()); // Necessary: building owned Vec
+                            }
+                        }
                     }
                 }
 
-                // Create aggregated summary
-                let mut summary = template_summary.clone();
+                // Create aggregated summary with recalculated cipher counts
+                let mut summary = template_summary.clone(); // Necessary: owned result struct
                 summary.supported_ciphers = unique_ciphers;
+
+                // Recalculate ALL cipher counts based on aggregated cipher list
+                // This matches the logic in CipherTester::calculate_cipher_counts
+                use crate::ciphers::CipherStrength;
+
                 summary.counts.total = summary.supported_ciphers.len();
+                summary.counts.null_ciphers = 0;
+                summary.counts.export_ciphers = 0;
+                summary.counts.low_strength = 0;
+                summary.counts.medium_strength = 0;
+                summary.counts.high_strength = 0;
+                summary.counts.forward_secrecy = 0;
+                summary.counts.aead = 0;
+
+                for cipher in &summary.supported_ciphers {
+                    match cipher.strength() {
+                        CipherStrength::NULL => summary.counts.null_ciphers += 1,
+                        CipherStrength::Export => summary.counts.export_ciphers += 1,
+                        CipherStrength::Low => summary.counts.low_strength += 1,
+                        CipherStrength::Medium => summary.counts.medium_strength += 1,
+                        CipherStrength::High => summary.counts.high_strength += 1,
+                    }
+
+                    if cipher.has_forward_secrecy() {
+                        summary.counts.forward_secrecy += 1;
+                    }
+
+                    if cipher.is_aead() {
+                        summary.counts.aead += 1;
+                    }
+                }
 
                 result.insert(protocol, summary);
             }
@@ -206,7 +235,7 @@ impl ConservativeAggregator {
                 continue;
             }
 
-            if let Some(ref rating) = result.scan_result.rating {
+            if let Some(rating) = result.scan_result.ssl_rating() {
                 let current_grade = (format!("{}", rating.grade), rating.score);
 
                 match worst_grade {
@@ -225,7 +254,8 @@ impl ConservativeAggregator {
 
     /// Aggregate certificate - return most common certificate
     fn aggregate_certificate(&self) -> Option<CertificateInfo> {
-        let mut cert_counts: HashMap<String, (CertificateInfo, usize)> = HashMap::new();
+        // Performance optimization: Track counts using references, clone only the winner
+        let mut cert_counts: HashMap<&str, (&CertificateInfo, usize)> = HashMap::new();
 
         for result in self.results.values() {
             if result.error.is_some() {
@@ -237,21 +267,22 @@ impl ConservativeAggregator {
                 && let Some(ref fingerprint) = cert.fingerprint_sha256
             {
                 cert_counts
-                    .entry(fingerprint.clone())
+                    .entry(fingerprint.as_str())
                     .and_modify(|(_, count)| *count += 1)
-                    .or_insert((cert.clone(), 1));
+                    .or_insert((cert, 1));
             }
         }
 
-        // Return the most common certificate
+        // Return the most common certificate (clone only once)
         cert_counts
             .into_iter()
             .max_by_key(|(_, (_, count))| *count)
-            .map(|(_, (cert, _))| cert)
+            .map(|(_, (cert, _))| cert.clone())
     }
 
     /// Check if all backends serve the same certificate
     fn check_certificate_consistency(&self) -> bool {
+        // Performance optimization: Use references instead of cloning fingerprints
         let mut fingerprints = HashSet::new();
 
         for result in self.results.values() {
@@ -263,7 +294,7 @@ impl ConservativeAggregator {
                 && let Some(cert) = cert_chain.chain.leaf()
                 && let Some(ref fingerprint) = cert.fingerprint_sha256
             {
-                fingerprints.insert(fingerprint.clone());
+                fingerprints.insert(fingerprint.as_str());
             }
         }
 
@@ -282,18 +313,18 @@ impl ConservativeAggregator {
             return Vec::new();
         }
 
-        // Collect ALPN protocols from each successful result
-        let mut protocol_sets: Vec<HashSet<String>> = Vec::new();
+        // Performance optimization: Collect ALPN protocols using references
+        let mut protocol_sets: Vec<HashSet<&str>> = Vec::new();
 
         for result in &successful_results {
-            if let Some(ref alpn_report) = result.scan_result.alpn_result
+            if let Some(alpn_report) = result.scan_result.alpn_result()
                 && alpn_report.alpn_enabled
             {
-                let protocols: HashSet<String> = alpn_report
+                let protocols: HashSet<&str> = alpn_report
                     .alpn_result
                     .supported_protocols
                     .iter()
-                    .cloned()
+                    .map(|s| s.as_str())
                     .collect();
                 protocol_sets.push(protocols);
             }
@@ -305,14 +336,19 @@ impl ConservativeAggregator {
         }
 
         // Find intersection - only protocols supported by ALL IPs
-        let first_set = protocol_sets.first().unwrap().clone();
-        let intersection: HashSet<String> =
-            protocol_sets.iter().skip(1).fold(first_set, |acc, set| {
-                acc.intersection(set).cloned().collect()
+        // Safety: protocol_sets is guaranteed non-empty by check above
+        let Some(first_set) = protocol_sets.first() else {
+            return Vec::new(); // Unreachable, but explicit for safety
+        };
+        let intersection: HashSet<&str> = protocol_sets
+            .iter()
+            .skip(1)
+            .fold(first_set.clone(), |acc, set| {
+                acc.intersection(set).copied().collect()
             });
 
-        // Convert to sorted vector for consistent output
-        let mut result: Vec<String> = intersection.into_iter().collect();
+        // Convert to sorted vector for consistent output (clone only final strings)
+        let mut result: Vec<String> = intersection.into_iter().map(|s| s.to_string()).collect();
         result.sort();
         result
     }

@@ -107,13 +107,12 @@ impl Alert {
 
     /// Create validation failure alert
     pub fn validation_failure(hostname: String, reason: String, details: AlertDetails) -> Self {
+        let message = format!("Certificate validation failed for {}: {}", hostname, reason);
         Self {
-            hostname: hostname.clone(),
-            alert_type: AlertType::ValidationFailure {
-                reason: reason.clone(),
-            },
+            hostname,
+            alert_type: AlertType::ValidationFailure { reason },
             severity: ChangeSeverity::High,
-            message: format!("Certificate validation failed for {}: {}", hostname, reason),
+            message,
             details,
             timestamp: Utc::now(),
         }
@@ -121,13 +120,12 @@ impl Alert {
 
     /// Create scan failure alert
     pub fn scan_failure(hostname: String, error: String) -> Self {
+        let message = format!("Failed to scan {}: {}", hostname, error);
         Self {
-            hostname: hostname.clone(),
-            alert_type: AlertType::ScanFailure {
-                error: error.clone(),
-            },
+            hostname,
+            alert_type: AlertType::ScanFailure { error },
             severity: ChangeSeverity::Medium,
-            message: format!("Failed to scan {}: {}", hostname, error),
+            message,
             details: AlertDetails {
                 certificate_serial: None,
                 certificate_issuer: None,
@@ -238,34 +236,21 @@ impl AlertManager {
         // Record alert
         self.record_alert(alert).await;
 
-        // Send to all channels concurrently
-        let mut tasks = Vec::new();
+        // Send to all channels
+        let mut success_count = 0;
 
         for channel in &self.channels {
-            let alert_clone = alert.clone();
-            let channel_name = channel.channel_name().to_string();
-
-            let task = async move {
-                match channel.send_alert(&alert_clone).await {
-                    Ok(_) => {
-                        tracing::info!("Alert sent via {}: {}", channel_name, alert_clone.message);
-                        Ok(())
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to send alert via {}: {}", channel_name, e);
-                        Err(e)
-                    }
+            let channel_name = channel.channel_name();
+            match channel.send_alert(alert).await {
+                Ok(_) => {
+                    tracing::info!("Alert sent via {}: {}", channel_name, alert.message);
+                    success_count += 1;
                 }
-            };
-
-            tasks.push(task);
+                Err(e) => {
+                    tracing::error!("Failed to send alert via {}: {}", channel_name, e);
+                }
+            }
         }
-
-        // Wait for all channels (but don't fail if some fail)
-        let results = futures::future::join_all(tasks).await;
-
-        // Check if at least one succeeded
-        let success_count = results.iter().filter(|r| r.is_ok()).count();
 
         if success_count == 0 && !self.channels.is_empty() {
             return Err(anyhow::anyhow!("All alert channels failed").into());

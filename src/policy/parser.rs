@@ -263,7 +263,7 @@ policy:
         let result = PolicyLoader::load_from_string(yaml);
         assert!(result.is_ok());
 
-        let policy = result.unwrap();
+        let policy = result.expect("test assertion should succeed");
         assert_eq!(policy.name, "Test Policy");
         assert_eq!(policy.version, "1.0");
         assert!(policy.protocols.is_some());
@@ -347,7 +347,7 @@ protocols:
         let result = PolicyLoader::load_from_string(yaml);
         assert!(result.is_ok());
 
-        let policy = result.unwrap();
+        let policy = result.expect("test assertion should succeed");
         assert_eq!(policy.name, "Test Policy");
         assert_eq!(policy.version, "1.0");
         assert!(policy.protocols.is_some());

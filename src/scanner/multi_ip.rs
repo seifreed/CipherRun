@@ -25,11 +25,185 @@ use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::Semaphore;
 
+/// Progress information for a completed IP scan
+#[derive(Debug, Clone)]
+pub struct IpScanProgress<'a> {
+    pub ip: &'a str,
+    pub index: usize,
+    pub total: usize,
+    pub success: bool,
+    pub duration_secs: f64,
+    pub error: Option<&'a str>,
+}
+
+/// Summary of a multi-IP scan operation
+#[derive(Debug, Clone)]
+pub struct MultiIpScanSummary<'a> {
+    pub total_ips: usize,
+    pub successful: usize,
+    pub failed: usize,
+    pub duration_secs: f64,
+    pub failed_results: &'a [(IpAddr, String)],
+}
+
+/// Callback trait for multi-IP scan progress reporting.
+///
+/// Implement this trait to receive progress updates during multi-IP scanning.
+/// The default implementation `TerminalMultiIpProgress` provides colored terminal output.
+pub trait MultiIpProgressCallback: Send + Sync {
+    /// Called when the scan starts
+    fn on_scan_start(&self, total_ips: usize);
+
+    /// Called when scanning of an individual IP begins
+    fn on_ip_start(&self, ip: &str, index: usize, total: usize);
+
+    /// Called when scanning of an individual IP completes
+    fn on_ip_complete(&self, progress: &IpScanProgress<'_>);
+
+    /// Called after all IPs are scanned with summary information
+    fn on_scan_summary(&self, summary: &MultiIpScanSummary<'_>);
+
+    /// Called when consistency analysis begins
+    fn on_consistency_analysis_start(&self);
+
+    /// Called when consistency analysis completes
+    fn on_consistency_analysis_complete(&self, inconsistencies: &[Inconsistency]);
+
+    /// Called when aggregation begins
+    fn on_aggregation_start(&self);
+}
+
+/// Default terminal progress callback with colored output
+pub struct TerminalMultiIpProgress;
+
+impl TerminalMultiIpProgress {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for TerminalMultiIpProgress {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl MultiIpProgressCallback for TerminalMultiIpProgress {
+    fn on_scan_start(&self, total_ips: usize) {
+        println!(
+            "Scanning {} IP address{} in parallel...\n",
+            total_ips.to_string().cyan().bold(),
+            if total_ips == 1 { "" } else { "es" }
+        );
+    }
+
+    fn on_ip_start(&self, ip: &str, index: usize, total: usize) {
+        println!(
+            "[{}/{}] {} - Scanning...",
+            index.to_string().cyan(),
+            total,
+            ip.yellow()
+        );
+    }
+
+    fn on_ip_complete(&self, progress: &IpScanProgress<'_>) {
+        if progress.success {
+            println!(
+                "[{}/{}] {} - {} Complete ({:.1}s)",
+                progress.index.to_string().cyan(),
+                progress.total,
+                progress.ip.yellow(),
+                "✓".green(),
+                progress.duration_secs
+            );
+        } else {
+            println!(
+                "[{}/{}] {} - {} Failed: {}",
+                progress.index.to_string().cyan(),
+                progress.total,
+                progress.ip.yellow(),
+                "✗".red(),
+                progress.error.unwrap_or("Unknown error").red()
+            );
+        }
+    }
+
+    fn on_scan_summary(&self, summary: &MultiIpScanSummary<'_>) {
+        println!();
+        if summary.failed == 0 {
+            println!(
+                "{} All IPs scanned successfully in {:.1}s",
+                "✓".green().bold(),
+                summary.duration_secs
+            );
+        } else {
+            println!(
+                "{} {}/{} IPs scanned successfully in {:.1}s",
+                "⚠".yellow().bold(),
+                summary.successful,
+                summary.total_ips,
+                summary.duration_secs
+            );
+            println!(
+                "  {} {} of {} IPs failed to scan:",
+                "⚠".yellow(),
+                summary.failed,
+                summary.total_ips
+            );
+            for (ip, err) in summary.failed_results {
+                println!("    {} {}", ip.to_string().yellow(), err.red());
+            }
+        }
+    }
+
+    fn on_consistency_analysis_start(&self) {
+        println!("\nAnalyzing configuration consistency across backends...");
+    }
+
+    fn on_consistency_analysis_complete(&self, inconsistencies: &[Inconsistency]) {
+        if !inconsistencies.is_empty() {
+            println!(
+                "{} {} configuration inconsistenc{} detected",
+                "⚠".yellow().bold(),
+                inconsistencies.len(),
+                if inconsistencies.len() == 1 {
+                    "y"
+                } else {
+                    "ies"
+                }
+            );
+        } else {
+            println!(
+                "{} All backends have consistent configuration",
+                "✓".green().bold()
+            );
+        }
+    }
+
+    fn on_aggregation_start(&self) {
+        println!("Aggregating results (conservative worst-case approach)...");
+    }
+}
+
+/// Silent progress callback that produces no output
+pub struct SilentMultiIpProgress;
+
+impl MultiIpProgressCallback for SilentMultiIpProgress {
+    fn on_scan_start(&self, _total_ips: usize) {}
+    fn on_ip_start(&self, _ip: &str, _index: usize, _total: usize) {}
+    fn on_ip_complete(&self, _progress: &IpScanProgress<'_>) {}
+    fn on_scan_summary(&self, _summary: &MultiIpScanSummary<'_>) {}
+    fn on_consistency_analysis_start(&self) {}
+    fn on_consistency_analysis_complete(&self, _inconsistencies: &[Inconsistency]) {}
+    fn on_aggregation_start(&self) {}
+}
+
 /// Multi-IP scanner that scans multiple IP addresses in parallel
 pub struct MultiIpScanner {
     pub target: Target,
     pub args: Args,
     pub max_concurrent_scans: usize,
+    callback: Option<Arc<dyn MultiIpProgressCallback>>,
 }
 
 /// Result from scanning a single IP address
@@ -59,6 +233,7 @@ impl MultiIpScanner {
             target,
             args,
             max_concurrent_scans: 4, // Default to 4 concurrent scans
+            callback: None,
         }
     }
 
@@ -68,27 +243,43 @@ impl MultiIpScanner {
         self
     }
 
+    /// Set progress callback for receiving scan updates
+    pub fn with_callback(mut self, callback: Arc<dyn MultiIpProgressCallback>) -> Self {
+        self.callback = Some(callback);
+        self
+    }
+
+    /// Set terminal progress callback (convenience method)
+    pub fn with_terminal_progress(self) -> Self {
+        self.with_callback(Arc::new(TerminalMultiIpProgress::new()))
+    }
+
     /// Scan all IP addresses in parallel with inconsistency detection
     pub async fn scan_all_ips(&self) -> Result<MultiIpScanReport> {
         let total_start = Instant::now();
         let total_ips = self.target.ip_addresses.len();
 
-        println!(
-            "Scanning {} IP address{} in parallel...\n",
-            total_ips.to_string().cyan().bold(),
-            if total_ips == 1 { "" } else { "es" }
-        );
+        // Notify callback of scan start
+        if let Some(ref callback) = self.callback {
+            callback.on_scan_start(total_ips);
+        }
 
         // Create semaphore to limit concurrency
         let semaphore = Arc::new(Semaphore::new(self.max_concurrent_scans));
         let mut futures = FuturesUnordered::new();
 
+        // Performance optimization: Use Arc to avoid cloning Target and Args for each scan
+        let target_arc = Arc::new(self.target.clone());
+        let args_arc = Arc::new(self.args.clone());
+        let callback_arc = self.callback.clone();
+
         // Create futures for each IP (without spawning)
         for (index, ip) in self.target.ip_addresses.iter().enumerate() {
             let sem = Arc::clone(&semaphore);
             let ip = *ip;
-            let target = self.target.clone();
-            let args = self.args.clone();
+            let target = Arc::clone(&target_arc);
+            let args = Arc::clone(&args_arc);
+            let callback = callback_arc.clone();
             let total = total_ips;
             let task_index = index + 1;
 
@@ -97,35 +288,26 @@ impl MultiIpScanner {
                 // Acquire semaphore permit
                 let _permit = sem.acquire().await.expect("semaphore closed");
 
-                // Display progress
-                println!(
-                    "[{}/{}] {} - Scanning...",
-                    task_index.to_string().cyan(),
-                    total,
-                    ip.to_string().yellow()
-                );
+                // Notify callback of IP scan start
+                if let Some(ref cb) = callback {
+                    cb.on_ip_start(&ip.to_string(), task_index, total);
+                }
 
-                // Scan this IP
-                let result = Self::scan_single_ip(ip, target, args).await;
+                // Scan this IP (dereference Arc to pass owned values)
+                let result = Self::scan_single_ip(ip, (*target).clone(), (*args).clone()).await;
 
-                // Display completion
-                match &result.error {
-                    None => println!(
-                        "[{}/{}] {} - {} Complete ({:.1}s)",
-                        task_index.to_string().cyan(),
+                // Notify callback of IP scan completion
+                if let Some(ref cb) = callback {
+                    let ip_str = ip.to_string();
+                    let progress = IpScanProgress {
+                        ip: &ip_str,
+                        index: task_index,
                         total,
-                        ip.to_string().yellow(),
-                        "✓".green(),
-                        result.scan_duration_ms as f64 / 1000.0
-                    ),
-                    Some(err) => println!(
-                        "[{}/{}] {} - {} Failed: {}",
-                        task_index.to_string().cyan(),
-                        total,
-                        ip.to_string().yellow(),
-                        "✗".red(),
-                        err.red()
-                    ),
+                        success: result.error.is_none(),
+                        duration_secs: result.scan_duration_ms as f64 / 1000.0,
+                        error: result.error.as_deref(),
+                    };
+                    cb.on_ip_complete(&progress);
                 }
 
                 result
@@ -147,60 +329,37 @@ impl MultiIpScanner {
             .count();
         let failed_scans = total_ips - successful_scans;
 
-        // Display summary
-        println!();
-        if failed_scans == 0 {
-            println!(
-                "{} All IPs scanned successfully in {:.1}s",
-                "✓".green().bold(),
-                total_duration_ms as f64 / 1000.0
-            );
-        } else {
-            println!(
-                "{} {}/{} IPs scanned successfully in {:.1}s",
-                "⚠".yellow().bold(),
-                successful_scans,
+        // Notify callback of scan summary
+        if let Some(ref callback) = self.callback {
+            let failed_results: Vec<(IpAddr, String)> = per_ip_results
+                .values()
+                .filter_map(|r| r.error.as_ref().map(|err| (r.ip, err.clone())))
+                .collect();
+            let summary = MultiIpScanSummary {
                 total_ips,
-                total_duration_ms as f64 / 1000.0
-            );
-            println!(
-                "  {} {} of {} IPs failed to scan:",
-                "⚠".yellow(),
-                failed_scans,
-                total_ips
-            );
-            for result in per_ip_results.values() {
-                if let Some(ref err) = result.error {
-                    println!("    {} {}", result.ip.to_string().yellow(), err.red());
-                }
-            }
+                successful: successful_scans,
+                failed: failed_scans,
+                duration_secs: total_duration_ms as f64 / 1000.0,
+                failed_results: &failed_results,
+            };
+            callback.on_scan_summary(&summary);
         }
 
         // Phase 3: Detect inconsistencies
-        println!("\nAnalyzing configuration consistency across backends...");
+        if let Some(ref callback) = self.callback {
+            callback.on_consistency_analysis_start();
+        }
         let detector = InconsistencyDetector::new(per_ip_results.clone());
         let inconsistencies = detector.detect_all();
 
-        if !inconsistencies.is_empty() {
-            println!(
-                "{} {} configuration inconsistenc{} detected",
-                "⚠".yellow().bold(),
-                inconsistencies.len(),
-                if inconsistencies.len() == 1 {
-                    "y"
-                } else {
-                    "ies"
-                }
-            );
-        } else {
-            println!(
-                "{} All backends have consistent configuration",
-                "✓".green().bold()
-            );
+        if let Some(ref callback) = self.callback {
+            callback.on_consistency_analysis_complete(&inconsistencies);
         }
 
         // Phase 3: Perform conservative aggregation
-        println!("Aggregating results (conservative worst-case approach)...");
+        if let Some(ref callback) = self.callback {
+            callback.on_aggregation_start();
+        }
         let aggregator =
             ConservativeAggregator::new(per_ip_results.clone(), inconsistencies.clone());
         let aggregated = aggregator.aggregate();
@@ -294,11 +453,12 @@ mod tests {
 
     #[test]
     fn test_multi_ip_report_successful_results() {
-        let target = Target {
-            hostname: "example.com".to_string(),
-            port: 443,
-            ip_addresses: vec!["93.184.216.34".parse().unwrap()],
-        };
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["93.184.216.34".parse().unwrap()],
+        )
+        .unwrap();
 
         let mut per_ip_results = HashMap::new();
         per_ip_results.insert(

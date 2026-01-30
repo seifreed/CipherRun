@@ -306,7 +306,7 @@ mod tests {
         let db = ClientDatabase::load();
         assert!(db.is_ok());
 
-        let db = db.unwrap();
+        let db = db.expect("test assertion should succeed");
         assert!(db.count() > 0);
     }
 

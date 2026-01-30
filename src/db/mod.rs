@@ -11,7 +11,7 @@ pub mod traits;
 
 // Re-exports
 pub use config::{Config, DatabaseConfig, DatabaseType, RetentionConfig};
-pub use connection::DatabasePool;
+pub use connection::{BindValue, DatabasePool, QueryBuilder};
 pub use migrations::{revert_migration, run_migrations};
 pub use models::*;
 pub use traits::*;
@@ -66,7 +66,7 @@ impl CipherRunDatabase {
         // Create scan record
         let mut scan = ScanRecord::new(hostname, port);
 
-        if let Some(rating) = &results.rating {
+        if let Some(rating) = results.ssl_rating() {
             scan = scan.with_rating(rating.grade.to_string(), rating.score);
         }
 
@@ -85,7 +85,7 @@ impl CipherRunDatabase {
         self.store_vulnerabilities(scan_id, results).await?;
 
         // Store ratings
-        if let Some(rating) = &results.rating {
+        if let Some(rating) = results.ssl_rating() {
             self.store_ratings(scan_id, rating).await?;
         }
 
@@ -98,9 +98,25 @@ impl CipherRunDatabase {
     }
 
     /// Store protocols for a scan
+    ///
+    /// Performance optimization: Uses batch INSERT with multiple VALUES clauses
+    /// instead of N individual queries. This reduces round-trips to the database.
+    ///
+    /// Time complexity: O(1) database round-trip instead of O(n)
+    /// Expected improvement: 10-100x faster for n>10 protocols
     async fn store_protocols(&self, scan_id: i64, results: &ScanResults) -> crate::Result<()> {
         use crate::db::models::ProtocolRecord;
 
+        if results.protocols.is_empty() {
+            return Ok(());
+        }
+
+        // Build single batch INSERT with multiple VALUES
+        let mut qb = self.pool.query_builder();
+        let columns = &["scan_id", "protocol_name", "enabled", "preferred"];
+
+        // Collect all bind values
+        let mut all_bindings = Vec::new();
         for protocol_result in &results.protocols {
             let protocol = ProtocolRecord::new(
                 scan_id,
@@ -109,53 +125,66 @@ impl CipherRunDatabase {
                 protocol_result.preferred,
             );
 
-            // Insert protocol
-            match &self.pool {
-                DatabasePool::Postgres(pool) => {
-                    sqlx::query(
-                        r#"
-                        INSERT INTO protocols (scan_id, protocol_name, enabled, preferred)
-                        VALUES ($1, $2, $3, $4)
-                        "#,
-                    )
-                    .bind(protocol.scan_id)
-                    .bind(&protocol.protocol_name)
-                    .bind(protocol.enabled)
-                    .bind(protocol.preferred)
-                    .execute(pool)
-                    .await
-                    .map_err(|e| {
-                        crate::TlsError::DatabaseError(format!("Failed to insert protocol: {}", e))
-                    })?;
-                }
-                DatabasePool::Sqlite(pool) => {
-                    sqlx::query(
-                        r#"
-                        INSERT INTO protocols (scan_id, protocol_name, enabled, preferred)
-                        VALUES (?, ?, ?, ?)
-                        "#,
-                    )
-                    .bind(protocol.scan_id)
-                    .bind(&protocol.protocol_name)
-                    .bind(protocol.enabled)
-                    .bind(protocol.preferred)
-                    .execute(pool)
-                    .await
-                    .map_err(|e| {
-                        crate::TlsError::DatabaseError(format!("Failed to insert protocol: {}", e))
-                    })?;
-                }
-            }
+            all_bindings.push(vec![
+                BindValue::Int64(protocol.scan_id),
+                BindValue::String(protocol.protocol_name),
+                BindValue::Bool(protocol.enabled),
+                BindValue::Bool(protocol.preferred),
+            ]);
         }
+
+        // Build batch query
+        let query = qb.batch_insert_query("protocols", columns, all_bindings.len());
+
+        // Flatten bindings for execution
+        let flat_bindings: Vec<BindValue> = all_bindings.into_iter().flatten().collect();
+
+        self.pool
+            .execute(&query, flat_bindings)
+            .await
+            .map_err(|e| {
+                crate::TlsError::DatabaseError(format!("Failed to batch insert protocols: {}", e))
+            })?;
 
         Ok(())
     }
 
     /// Store ciphers for a scan
+    ///
+    /// Performance optimization: Uses batch INSERT with multiple VALUES clauses
+    /// instead of N individual queries. This dramatically improves performance
+    /// when storing large cipher lists.
+    ///
+    /// Time complexity: O(1) database round-trip instead of O(n*m)
+    /// Expected improvement: 50-500x faster for typical cipher counts (200-500 ciphers)
     async fn store_ciphers(&self, scan_id: i64, results: &ScanResults) -> crate::Result<()> {
-        use crate::db::models::CipherRecord;
+        let total_ciphers: usize = results
+            .ciphers
+            .values()
+            .map(|s| s.supported_ciphers.len())
+            .sum();
+
+        if total_ciphers == 0 {
+            return Ok(());
+        }
+
+        let columns = &[
+            "scan_id",
+            "protocol_name",
+            "cipher_name",
+            "key_exchange",
+            "authentication",
+            "encryption",
+            "mac",
+            "bits",
+            "forward_secrecy",
+            "strength",
+        ];
+
+        let mut all_bindings = Vec::with_capacity(total_ciphers);
 
         for (protocol, summary) in &results.ciphers {
+            let protocol_name = protocol.name();
             for cipher_result in &summary.supported_ciphers {
                 let strength = match cipher_result.strength() {
                     crate::ciphers::CipherStrength::NULL => "null",
@@ -165,68 +194,32 @@ impl CipherRunDatabase {
                     crate::ciphers::CipherStrength::High => "high",
                 };
 
-                let cipher = CipherRecord::new(
-                    scan_id,
-                    protocol.name().to_string(),
-                    cipher_result.iana_name.clone(),
-                    strength.to_string(),
-                    cipher_result.has_forward_secrecy(),
-                )
-                .with_details(
-                    cipher_result.key_exchange.clone(),
-                    cipher_result.authentication.clone(),
-                    cipher_result.encryption.clone(),
-                    cipher_result.mac.clone(),
-                    cipher_result.bits,
-                );
-
-                // Insert cipher
-                match &self.pool {
-                    DatabasePool::Postgres(pool) => {
-                        sqlx::query(
-                            r#"
-                            INSERT INTO cipher_suites (scan_id, protocol_name, cipher_name, key_exchange, authentication, encryption, mac, bits, forward_secrecy, strength)
-                            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-                            "#
-                        )
-                        .bind(cipher.scan_id)
-                        .bind(&cipher.protocol_name)
-                        .bind(&cipher.cipher_name)
-                        .bind(&cipher.key_exchange)
-                        .bind(&cipher.authentication)
-                        .bind(&cipher.encryption)
-                        .bind(&cipher.mac)
-                        .bind(cipher.bits)
-                        .bind(cipher.forward_secrecy)
-                        .bind(&cipher.strength)
-                        .execute(pool)
-                        .await
-                        .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to insert cipher: {}", e)))?;
-                    }
-                    DatabasePool::Sqlite(pool) => {
-                        sqlx::query(
-                            r#"
-                            INSERT INTO cipher_suites (scan_id, protocol_name, cipher_name, key_exchange, authentication, encryption, mac, bits, forward_secrecy, strength)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            "#
-                        )
-                        .bind(cipher.scan_id)
-                        .bind(&cipher.protocol_name)
-                        .bind(&cipher.cipher_name)
-                        .bind(&cipher.key_exchange)
-                        .bind(&cipher.authentication)
-                        .bind(&cipher.encryption)
-                        .bind(&cipher.mac)
-                        .bind(cipher.bits)
-                        .bind(cipher.forward_secrecy)
-                        .bind(&cipher.strength)
-                        .execute(pool)
-                        .await
-                        .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to insert cipher: {}", e)))?;
-                    }
-                }
+                all_bindings.push(vec![
+                    BindValue::Int64(scan_id),
+                    BindValue::String(protocol_name.to_string()),
+                    BindValue::String(cipher_result.iana_name.clone()),
+                    BindValue::OptString(Some(cipher_result.key_exchange.clone())),
+                    BindValue::OptString(Some(cipher_result.authentication.clone())),
+                    BindValue::OptString(Some(cipher_result.encryption.clone())),
+                    BindValue::OptString(Some(cipher_result.mac.clone())),
+                    BindValue::OptInt32(Some(cipher_result.bits as i32)),
+                    BindValue::Bool(cipher_result.has_forward_secrecy()),
+                    BindValue::String(strength.to_string()),
+                ]);
             }
         }
+
+        let mut qb = self.pool.query_builder();
+        let query = qb.batch_insert_query("cipher_suites", columns, all_bindings.len());
+
+        let flat_bindings: Vec<BindValue> = all_bindings.into_iter().flatten().collect();
+
+        self.pool
+            .execute(&query, flat_bindings)
+            .await
+            .map_err(|e| {
+                crate::TlsError::DatabaseError(format!("Failed to batch insert ciphers: {}", e))
+            })?;
 
         Ok(())
     }
@@ -237,11 +230,22 @@ impl CipherRunDatabase {
         scan_id: i64,
         results: &ScanResults,
     ) -> crate::Result<()> {
-        use crate::db::models::VulnerabilityRecord;
+        let mut qb = self.pool.query_builder();
+        let query = qb.insert_query(
+            "vulnerabilities",
+            &[
+                "scan_id",
+                "vulnerability_type",
+                "severity",
+                "description",
+                "cve_id",
+                "affected_component",
+            ],
+        );
 
         for vuln_result in &results.vulnerabilities {
             if !vuln_result.vulnerable {
-                continue; // Only store actual vulnerabilities
+                continue;
             }
 
             let severity = match vuln_result.severity {
@@ -252,54 +256,22 @@ impl CipherRunDatabase {
                 crate::vulnerabilities::Severity::Info => "info",
             };
 
-            let mut vuln = VulnerabilityRecord::new(
-                scan_id,
-                format!("{:?}", vuln_result.vuln_type),
-                severity.to_string(),
-            )
-            .with_description(vuln_result.details.clone());
-
-            if let Some(cve) = &vuln_result.cve {
-                vuln = vuln.with_cve(cve.clone());
-            }
-
-            // Insert vulnerability
-            match &self.pool {
-                DatabasePool::Postgres(pool) => {
-                    sqlx::query(
-                        r#"
-                        INSERT INTO vulnerabilities (scan_id, vulnerability_type, severity, description, cve_id, affected_component)
-                        VALUES ($1, $2, $3, $4, $5, $6)
-                        "#
-                    )
-                    .bind(vuln.scan_id)
-                    .bind(&vuln.vulnerability_type)
-                    .bind(&vuln.severity)
-                    .bind(&vuln.description)
-                    .bind(&vuln.cve_id)
-                    .bind(&vuln.affected_component)
-                    .execute(pool)
-                    .await
-                    .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to insert vulnerability: {}", e)))?;
-                }
-                DatabasePool::Sqlite(pool) => {
-                    sqlx::query(
-                        r#"
-                        INSERT INTO vulnerabilities (scan_id, vulnerability_type, severity, description, cve_id, affected_component)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                        "#
-                    )
-                    .bind(vuln.scan_id)
-                    .bind(&vuln.vulnerability_type)
-                    .bind(&vuln.severity)
-                    .bind(&vuln.description)
-                    .bind(&vuln.cve_id)
-                    .bind(&vuln.affected_component)
-                    .execute(pool)
-                    .await
-                    .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to insert vulnerability: {}", e)))?;
-                }
-            }
+            self.pool
+                .execute(
+                    &query,
+                    vec![
+                        BindValue::Int64(scan_id),
+                        BindValue::String(format!("{:?}", vuln_result.vuln_type)),
+                        BindValue::String(severity.to_string()),
+                        BindValue::OptString(Some(vuln_result.details.clone())),
+                        BindValue::OptString(vuln_result.cve.clone()),
+                        BindValue::OptString(None),
+                    ],
+                )
+                .await
+                .map_err(|e| {
+                    crate::TlsError::DatabaseError(format!("Failed to insert vulnerability: {}", e))
+                })?;
         }
 
         Ok(())
@@ -313,6 +285,12 @@ impl CipherRunDatabase {
     ) -> crate::Result<()> {
         use crate::db::models::RatingRecord;
 
+        let mut qb = self.pool.query_builder();
+        let query = qb.insert_query(
+            "ratings",
+            &["scan_id", "category", "score", "grade", "rationale"],
+        );
+
         let ratings = vec![
             RatingRecord::new(scan_id, "certificate".to_string(), rating.certificate_score),
             RatingRecord::new(scan_id, "protocol".to_string(), rating.protocol_score),
@@ -325,44 +303,21 @@ impl CipherRunDatabase {
         ];
 
         for rating_record in ratings {
-            match &self.pool {
-                DatabasePool::Postgres(pool) => {
-                    sqlx::query(
-                        r#"
-                        INSERT INTO ratings (scan_id, category, score, grade, rationale)
-                        VALUES ($1, $2, $3, $4, $5)
-                        "#,
-                    )
-                    .bind(rating_record.scan_id)
-                    .bind(&rating_record.category)
-                    .bind(rating_record.score)
-                    .bind(&rating_record.grade)
-                    .bind(&rating_record.rationale)
-                    .execute(pool)
-                    .await
-                    .map_err(|e| {
-                        crate::TlsError::DatabaseError(format!("Failed to insert rating: {}", e))
-                    })?;
-                }
-                DatabasePool::Sqlite(pool) => {
-                    sqlx::query(
-                        r#"
-                        INSERT INTO ratings (scan_id, category, score, grade, rationale)
-                        VALUES (?, ?, ?, ?, ?)
-                        "#,
-                    )
-                    .bind(rating_record.scan_id)
-                    .bind(&rating_record.category)
-                    .bind(rating_record.score)
-                    .bind(&rating_record.grade)
-                    .bind(&rating_record.rationale)
-                    .execute(pool)
-                    .await
-                    .map_err(|e| {
-                        crate::TlsError::DatabaseError(format!("Failed to insert rating: {}", e))
-                    })?;
-                }
-            }
+            self.pool
+                .execute(
+                    &query,
+                    vec![
+                        BindValue::Int64(rating_record.scan_id),
+                        BindValue::String(rating_record.category),
+                        BindValue::Int32(rating_record.score),
+                        BindValue::OptString(rating_record.grade),
+                        BindValue::OptString(rating_record.rationale),
+                    ],
+                )
+                .await
+                .map_err(|e| {
+                    crate::TlsError::DatabaseError(format!("Failed to insert rating: {}", e))
+                })?;
         }
 
         Ok(())
@@ -374,14 +329,13 @@ impl CipherRunDatabase {
         scan_id: i64,
         cert_data: &crate::scanner::CertificateAnalysisResult,
     ) -> crate::Result<()> {
-        use crate::db::models::CertificateRecord;
         use chrono::{DateTime, Utc};
 
         for (position, cert_info) in cert_data.chain.certificates.iter().enumerate() {
-            // Create certificate record
             let fingerprint = cert_info
                 .fingerprint_sha256
-                .clone()
+                .as_deref()
+                .map(String::from)
                 .unwrap_or_else(|| format!("unknown_{}", position));
 
             let not_before = DateTime::parse_from_rfc3339(&cert_info.not_before)
@@ -394,36 +348,25 @@ impl CipherRunDatabase {
                 .map(|dt| dt.with_timezone(&Utc))
                 .unwrap_or_else(Utc::now);
 
-            let mut cert = CertificateRecord::new(
-                fingerprint,
-                cert_info.subject.clone(),
-                cert_info.issuer.clone(),
-                not_before,
-                not_after,
-                cert_info.is_ca,
-            );
+            let cert_id = self
+                .insert_or_get_certificate_direct(
+                    &fingerprint,
+                    &cert_info.subject,
+                    &cert_info.issuer,
+                    Some(&cert_info.serial_number),
+                    not_before,
+                    not_after,
+                    Some(&cert_info.signature_algorithm),
+                    Some(&cert_info.public_key_algorithm),
+                    cert_info.public_key_size.map(|s| s as i32),
+                    &cert_info.san,
+                    cert_info.is_ca,
+                    &cert_info.key_usage,
+                    &cert_info.extended_key_usage,
+                    Some(&cert_info.der_bytes),
+                )
+                .await?;
 
-            cert = cert.with_serial(cert_info.serial_number.clone());
-
-            if let Some(key_size) = cert_info.public_key_size {
-                cert = cert.with_algorithms(
-                    cert_info.signature_algorithm.clone(),
-                    cert_info.public_key_algorithm.clone(),
-                    key_size,
-                );
-            }
-
-            cert = cert.with_san_domains(cert_info.san.clone());
-            cert = cert.with_key_usage(
-                cert_info.key_usage.clone(),
-                cert_info.extended_key_usage.clone(),
-            );
-            cert = cert.with_der_bytes(cert_info.der_bytes.clone());
-
-            // Insert or get certificate ID (deduplication by fingerprint)
-            let cert_id = self.insert_or_get_certificate(&cert).await?;
-
-            // Link certificate to scan
             self.link_certificate(scan_id, cert_id, position as i32)
                 .await?;
         }
@@ -431,123 +374,91 @@ impl CipherRunDatabase {
         Ok(())
     }
 
-    /// Insert certificate or get existing ID by fingerprint
-    async fn insert_or_get_certificate(&self, cert: &CertificateRecord) -> crate::Result<i64> {
-        match &self.pool {
-            DatabasePool::Postgres(pool) => {
-                // Try to get existing certificate
-                use sqlx::Row;
-                let existing = sqlx::query(
-                    r#"
-                    SELECT cert_id
-                    FROM certificates
-                    WHERE fingerprint_sha256 = $1
-                    "#,
-                )
-                .bind(&cert.fingerprint_sha256)
-                .fetch_optional(pool)
-                .await
-                .map_err(|e| {
-                    crate::TlsError::DatabaseError(format!(
-                        "Failed to check existing certificate: {}",
-                        e
-                    ))
-                })?;
+    /// Insert certificate or get existing ID by fingerprint (direct binding version)
+    ///
+    /// Note: Many parameters are required to fully represent an X.509 certificate.
+    /// Using a struct would add complexity without benefit for this internal function.
+    #[allow(clippy::too_many_arguments)]
+    async fn insert_or_get_certificate_direct(
+        &self,
+        fingerprint: &str,
+        subject: &str,
+        issuer: &str,
+        serial_number: Option<&str>,
+        not_before: chrono::DateTime<chrono::Utc>,
+        not_after: chrono::DateTime<chrono::Utc>,
+        signature_algorithm: Option<&str>,
+        public_key_algorithm: Option<&str>,
+        public_key_size: Option<i32>,
+        san_domains: &[String],
+        is_ca: bool,
+        key_usage: &[String],
+        extended_key_usage: &[String],
+        der_bytes: Option<&[u8]>,
+    ) -> crate::Result<i64> {
+        let mut qb = self.pool.query_builder();
+        let select_query = qb.select_where_query("certificates", "cert_id", "fingerprint_sha256");
 
-                if let Some(existing) = existing {
-                    return Ok(existing.get("cert_id"));
-                }
-
-                // Insert new certificate
-                let san_json = serde_json::to_string(&cert.san_domains).unwrap_or_default();
-                let key_usage_json = serde_json::to_string(&cert.key_usage).unwrap_or_default();
-                let extended_key_usage_json =
-                    serde_json::to_string(&cert.extended_key_usage).unwrap_or_default();
-
-                let result = sqlx::query(
-                    r#"
-                    INSERT INTO certificates (fingerprint_sha256, subject, issuer, serial_number, not_before, not_after, signature_algorithm, public_key_algorithm, public_key_size, san_domains, is_ca, key_usage, extended_key_usage, der_bytes)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-                    RETURNING cert_id
-                    "#
-                )
-                .bind(&cert.fingerprint_sha256)
-                .bind(&cert.subject)
-                .bind(&cert.issuer)
-                .bind(&cert.serial_number)
-                .bind(cert.not_before)
-                .bind(cert.not_after)
-                .bind(&cert.signature_algorithm)
-                .bind(&cert.public_key_algorithm)
-                .bind(cert.public_key_size)
-                .bind(san_json)
-                .bind(cert.is_ca)
-                .bind(key_usage_json)
-                .bind(extended_key_usage_json)
-                .bind(&cert.der_bytes)
-                .fetch_one(pool)
-                .await
-                .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to insert certificate: {}", e)))?;
-
-                Ok(result.get("cert_id"))
-            }
-            DatabasePool::Sqlite(pool) => {
-                // Try to get existing certificate
-                use sqlx::Row;
-                let existing = sqlx::query(
-                    r#"
-                    SELECT cert_id
-                    FROM certificates
-                    WHERE fingerprint_sha256 = ?
-                    "#,
-                )
-                .bind(&cert.fingerprint_sha256)
-                .fetch_optional(pool)
-                .await
-                .map_err(|e| {
-                    crate::TlsError::DatabaseError(format!(
-                        "Failed to check existing certificate: {}",
-                        e
-                    ))
-                })?;
-
-                if let Some(existing) = existing {
-                    return Ok(existing.get("cert_id"));
-                }
-
-                // Insert new certificate
-                let san_json = serde_json::to_string(&cert.san_domains).unwrap_or_default();
-                let key_usage_json = serde_json::to_string(&cert.key_usage).unwrap_or_default();
-                let extended_key_usage_json =
-                    serde_json::to_string(&cert.extended_key_usage).unwrap_or_default();
-
-                let result = sqlx::query(
-                    r#"
-                    INSERT INTO certificates (fingerprint_sha256, subject, issuer, serial_number, not_before, not_after, signature_algorithm, public_key_algorithm, public_key_size, san_domains, is_ca, key_usage, extended_key_usage, der_bytes)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    "#
-                )
-                .bind(&cert.fingerprint_sha256)
-                .bind(&cert.subject)
-                .bind(&cert.issuer)
-                .bind(&cert.serial_number)
-                .bind(cert.not_before)
-                .bind(cert.not_after)
-                .bind(&cert.signature_algorithm)
-                .bind(&cert.public_key_algorithm)
-                .bind(cert.public_key_size)
-                .bind(san_json)
-                .bind(cert.is_ca)
-                .bind(key_usage_json)
-                .bind(extended_key_usage_json)
-                .bind(&cert.der_bytes)
-                .execute(pool)
-                .await
-                .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to insert certificate: {}", e)))?;
-
-                Ok(result.last_insert_rowid())
-            }
+        if let Some(existing_id) = self
+            .pool
+            .fetch_optional_id(
+                &select_query,
+                vec![BindValue::String(fingerprint.to_string())],
+            )
+            .await?
+        {
+            return Ok(existing_id);
         }
+
+        let san_json = serde_json::to_string(san_domains).unwrap_or_default();
+        let key_usage_json = serde_json::to_string(key_usage).unwrap_or_default();
+        let extended_key_usage_json = serde_json::to_string(extended_key_usage).unwrap_or_default();
+
+        let mut qb = self.pool.query_builder();
+        let insert_query = qb.insert_returning_query(
+            "certificates",
+            &[
+                "fingerprint_sha256",
+                "subject",
+                "issuer",
+                "serial_number",
+                "not_before",
+                "not_after",
+                "signature_algorithm",
+                "public_key_algorithm",
+                "public_key_size",
+                "san_domains",
+                "is_ca",
+                "key_usage",
+                "extended_key_usage",
+                "der_bytes",
+            ],
+            "cert_id",
+        );
+
+        let bindings = vec![
+            BindValue::String(fingerprint.to_string()),
+            BindValue::String(subject.to_string()),
+            BindValue::String(issuer.to_string()),
+            BindValue::OptString(serial_number.map(String::from)),
+            BindValue::DateTime(not_before),
+            BindValue::DateTime(not_after),
+            BindValue::OptString(signature_algorithm.map(String::from)),
+            BindValue::OptString(public_key_algorithm.map(String::from)),
+            BindValue::OptInt32(public_key_size),
+            BindValue::String(san_json),
+            BindValue::Bool(is_ca),
+            BindValue::String(key_usage_json),
+            BindValue::String(extended_key_usage_json),
+            BindValue::OptBytes(der_bytes.map(Vec::from)),
+        ];
+
+        self.pool
+            .execute_insert_returning(&insert_query, bindings)
+            .await
+            .map_err(|e| {
+                crate::TlsError::DatabaseError(format!("Failed to insert certificate: {}", e))
+            })
     }
 
     /// Link certificate to scan
@@ -557,42 +468,25 @@ impl CipherRunDatabase {
         cert_id: i64,
         position: i32,
     ) -> crate::Result<()> {
-        match &self.pool {
-            DatabasePool::Postgres(pool) => {
-                sqlx::query(
-                    r#"
-                    INSERT INTO scan_certificates (scan_id, cert_id, chain_position)
-                    VALUES ($1, $2, $3)
-                    "#,
-                )
-                .bind(scan_id)
-                .bind(cert_id)
-                .bind(position)
-                .execute(pool)
-                .await
-                .map_err(|e| {
-                    crate::TlsError::DatabaseError(format!("Failed to link certificate: {}", e))
-                })?;
-            }
-            DatabasePool::Sqlite(pool) => {
-                sqlx::query(
-                    r#"
-                    INSERT INTO scan_certificates (scan_id, cert_id, chain_position)
-                    VALUES (?, ?, ?)
-                    "#,
-                )
-                .bind(scan_id)
-                .bind(cert_id)
-                .bind(position)
-                .execute(pool)
-                .await
-                .map_err(|e| {
-                    crate::TlsError::DatabaseError(format!("Failed to link certificate: {}", e))
-                })?;
-            }
-        }
+        let mut qb = self.pool.query_builder();
+        let query = qb.insert_query(
+            "scan_certificates",
+            &["scan_id", "cert_id", "chain_position"],
+        );
 
-        Ok(())
+        self.pool
+            .execute(
+                &query,
+                vec![
+                    BindValue::Int64(scan_id),
+                    BindValue::Int64(cert_id),
+                    BindValue::Int32(position),
+                ],
+            )
+            .await
+            .map_err(|e| {
+                crate::TlsError::DatabaseError(format!("Failed to link certificate: {}", e))
+            })
     }
 
     /// Get scan history for a hostname
@@ -630,7 +524,9 @@ mod tests {
     #[tokio::test]
     async fn test_database_creation() {
         let config = DatabaseConfig::sqlite(PathBuf::from(":memory:"));
-        let db = CipherRunDatabase::new(&config).await.unwrap();
+        let db = CipherRunDatabase::new(&config)
+            .await
+            .expect("test assertion should succeed");
 
         // Verify database was created
         assert!(matches!(db.pool.db_type(), DatabaseType::Sqlite));

@@ -210,7 +210,7 @@ mod tests {
     #[test]
     fn test_config_serialization() {
         let config = MonitorConfig::default();
-        let toml_str = toml::to_string(&config).unwrap();
+        let toml_str = toml::to_string(&config).expect("test assertion should succeed");
         assert!(toml_str.contains("default_interval_seconds"));
         assert!(toml_str.contains("max_concurrent_scans"));
     }

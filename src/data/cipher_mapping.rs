@@ -254,7 +254,7 @@ mod tests {
     fn test_parse_cipher_line() {
         let line = "0xCC,0x14 - TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256  TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256  TLSv1.2  Kx=ECDH  Au=ECDSA  Enc=CHACHA20/POLY1305(256)  Mac=AEAD";
 
-        let cipher = CipherDatabase::parse_line(line).unwrap();
+        let cipher = CipherDatabase::parse_line(line).expect("test assertion should succeed");
 
         assert_eq!(cipher.hexcode, "cc14");
         assert_eq!(
@@ -274,7 +274,7 @@ mod tests {
     fn test_parse_export_cipher() {
         let line = "0x00,0x03 - EXP-RC4-MD5  TLS_RSA_EXPORT_WITH_RC4_40_MD5  SSLv3  Kx=RSA(512)  Au=RSA  Enc=RC4(40)  Mac=MD5";
 
-        let cipher = CipherDatabase::parse_line(line).unwrap();
+        let cipher = CipherDatabase::parse_line(line).expect("test assertion should succeed");
 
         assert_eq!(cipher.hexcode, "0003");
         assert_eq!(cipher.bits, 40);
@@ -286,7 +286,7 @@ mod tests {
         let db = CipherDatabase::load();
         assert!(db.is_ok());
 
-        let db = db.unwrap();
+        let db = db.expect("test assertion should succeed");
         assert!(db.count() > 100); // Should have at least 100 ciphers
     }
 

@@ -320,7 +320,7 @@ mod tests {
         let result = ServerHelloCapture::parse(&data);
         assert!(result.is_ok());
 
-        let server_hello = result.unwrap();
+        let server_hello = result.expect("test assertion should succeed");
         assert_eq!(server_hello.version, 0x0303); // TLS 1.2
         assert_eq!(server_hello.cipher_suite, 0x002F);
         assert_eq!(server_hello.compression_method, 0);
@@ -358,7 +358,7 @@ mod tests {
         let result = ServerHelloCapture::parse(&data);
         assert!(result.is_ok());
 
-        let server_hello = result.unwrap();
+        let server_hello = result.expect("test assertion should succeed");
         assert_eq!(server_hello.version, 0x0303);
         assert_eq!(server_hello.cipher_suite, 0xC02F);
         assert_eq!(server_hello.extensions.len(), 2);

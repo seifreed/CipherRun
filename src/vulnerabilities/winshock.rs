@@ -6,6 +6,8 @@
 // specially crafted TLS packets during the handshake phase.
 
 use crate::Result;
+use crate::protocols::Protocol;
+use crate::protocols::handshake::ClientHelloBuilder;
 use crate::utils::network::Target;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -128,64 +130,11 @@ impl WinshockTester {
         }
     }
 
-    /// Build standard ClientHello
+    /// Build standard ClientHello using ClientHelloBuilder
     fn build_client_hello(&self) -> Vec<u8> {
-        let mut hello = Vec::new();
-
-        // TLS Record: Handshake
-        hello.push(0x16);
-        hello.push(0x03);
-        hello.push(0x03); // TLS 1.2
-
-        // Length placeholder
-        let len_pos = hello.len();
-        hello.push(0x00);
-        hello.push(0x00);
-
-        // Handshake: ClientHello
-        hello.push(0x01);
-
-        // Handshake length placeholder
-        let hs_len_pos = hello.len();
-        hello.push(0x00);
-        hello.push(0x00);
-        hello.push(0x00);
-
-        // Client Version: TLS 1.2
-        hello.push(0x03);
-        hello.push(0x03);
-
-        // Random (32 bytes)
-        for i in 0..32 {
-            hello.push((i * 11) as u8);
-        }
-
-        // Session ID (empty)
-        hello.push(0x00);
-
-        // Cipher Suites
-        hello.push(0x00);
-        hello.push(0x04);
-        hello.push(0x00);
-        hello.push(0x2f); // TLS_RSA_WITH_AES_128_CBC_SHA
-        hello.push(0x00);
-        hello.push(0x35); // TLS_RSA_WITH_AES_256_CBC_SHA
-
-        // Compression (none)
-        hello.push(0x01);
-        hello.push(0x00);
-
-        // Update lengths
-        let hs_len = hello.len() - hs_len_pos - 3;
-        hello[hs_len_pos] = ((hs_len >> 16) & 0xff) as u8;
-        hello[hs_len_pos + 1] = ((hs_len >> 8) & 0xff) as u8;
-        hello[hs_len_pos + 2] = (hs_len & 0xff) as u8;
-
-        let rec_len = hello.len() - len_pos - 2;
-        hello[len_pos] = ((rec_len >> 8) & 0xff) as u8;
-        hello[len_pos + 1] = (rec_len & 0xff) as u8;
-
-        hello
+        let mut builder = ClientHelloBuilder::new(Protocol::TLS12);
+        builder.for_rsa_key_exchange();
+        builder.build_minimal().unwrap_or_else(|_| Vec::new())
     }
 
     /// Build malformed ClientKeyExchange that triggers Winshock
@@ -231,11 +180,12 @@ mod tests {
 
     #[test]
     fn test_malformed_cke_build() {
-        let target = Target {
-            hostname: "example.com".to_string(),
-            port: 443,
-            ip_addresses: vec!["93.184.216.34".parse().unwrap()],
-        };
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["93.184.216.34".parse().unwrap()],
+        )
+        .unwrap();
 
         let tester = WinshockTester::new(target);
         let malformed = tester.build_malformed_client_key_exchange();

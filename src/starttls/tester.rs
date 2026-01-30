@@ -146,11 +146,12 @@ mod tests {
 
     #[test]
     fn test_tester_creation() {
-        let target = Target {
-            hostname: "example.com".to_string(),
-            port: 25,
-            ip_addresses: vec![],
-        };
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            25,
+            vec!["93.184.216.34".parse().unwrap()],
+        )
+        .unwrap();
         let tester = StarttlsTester::new(target);
         assert_eq!(tester.connect_timeout, Duration::from_secs(10));
     }

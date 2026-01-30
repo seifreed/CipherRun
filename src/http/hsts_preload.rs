@@ -428,7 +428,7 @@ mod tests {
         let cached = checker.get_from_cache("example.com");
         assert!(cached.is_some());
 
-        let cached_status = cached.unwrap();
+        let cached_status = cached.expect("test assertion should succeed");
         assert_eq!(cached_status.source, PreloadSource::Cache);
         assert!(cached_status.in_chrome);
     }

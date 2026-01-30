@@ -1,0 +1,239 @@
+# =============================================================================
+# cargo-deny configuration for CipherRun
+# =============================================================================
+# This file configures cargo-deny to validate licenses, detect duplicate crates,
+# and block insecure dependencies.
+#
+# Run checks with: cargo deny check
+# Run specific checks: cargo deny check licenses|bans|advisories|sources
+#
+# Documentation: https://embarkstudios.github.io/cargo-deny/
+# =============================================================================
+
+# =============================================================================
+# [graph] - Dependency graph configuration
+# =============================================================================
+# Controls how the dependency graph is constructed for analysis.
+[graph]
+# Target platforms to check. Empty means check all targets.
+# Uncomment to restrict checks to specific platforms:
+# targets = [
+#     "x86_64-unknown-linux-gnu",
+#     "x86_64-apple-darwin",
+#     "aarch64-apple-darwin",
+#     "x86_64-pc-windows-msvc",
+# ]
+targets = []
+
+# Include all features when building dependency graph
+all-features = false
+
+# Don't disable default features
+no-default-features = false
+
+# =============================================================================
+# [output] - Diagnostic output configuration
+# =============================================================================
+[output]
+# Depth for feature edges in inclusion graphs (limits verbosity)
+feature-depth = 1
+
+# =============================================================================
+# [advisories] - Security advisory checks (RUSTSEC database)
+# =============================================================================
+# Checks dependencies against the RustSec Advisory Database for known
+# security vulnerabilities and unmaintained crates.
+#
+# Advisory database: https://rustsec.org/
+[advisories]
+# Path where advisory database is cloned (uses default cargo home location)
+# db-path = "~/.cargo/advisory-db"
+
+# Advisory database URLs (default is the official RustSec database)
+# db-urls = ["https://github.com/rustsec/advisory-db"]
+
+# Vulnerability handling: In cargo-deny 0.19+, all vulnerability advisories
+# automatically emit errors. Use the 'ignore' list below to handle specific cases.
+
+# Unmaintained crate detection
+# Options: "all" (check all), "workspace" (only direct), "transitive", "none" (disable)
+# Using "workspace" to only flag unmaintained crates that are direct dependencies
+unmaintained = "workspace"
+
+# Unsound code detection (memory safety issues without CVEs)
+# Options: "all", "workspace" (default), "transitive", "none"
+unsound = "workspace"
+
+# Yanked crate version detection
+# Options: "deny" (error), "warn" (default), "allow" (ignore)
+yanked = "warn"
+
+# Advisories to ignore with documented reasons
+ignore = [
+    # RUSTSEC-2025-0134: rustls-pemfile is unmaintained
+    # This is a direct dependency used for PEM parsing. The crate is archived but
+    # still functional. Migration to rustls-pki-types PemObject API is planned
+    # but not yet implemented. The functionality is stable and poses no security risk.
+    { id = "RUSTSEC-2025-0134", reason = "Functional but archived; migration to rustls-pki-types planned" },
+]
+
+# =============================================================================
+# [licenses] - License compliance checks
+# =============================================================================
+# CipherRun is licensed under GPL-3.0, which is a copyleft license.
+# We allow GPL-3.0-compatible licenses including:
+# - Permissive licenses (MIT, Apache-2.0, BSD, ISC, Zlib, etc.)
+# - Public domain dedications (CC0-1.0, Unlicense, 0BSD)
+# - MPL-2.0 (weak copyleft, compatible with GPL-3.0)
+#
+# Reference: https://www.gnu.org/licenses/license-list.html
+[licenses]
+# Confidence threshold for license text detection (0.0 to 1.0)
+# Higher values require closer match to canonical SPDX license text
+confidence-threshold = 0.8
+
+# Explicitly allowed licenses (GPL-3.0 compatible)
+# See: https://spdx.org/licenses/
+allow = [
+    # The project's own license (deprecated SPDX identifier still used in ecosystem)
+    "GPL-3.0",
+
+    # Permissive licenses - fully compatible with GPL-3.0
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+
+    # Public domain / no copyright
+    "CC0-1.0",
+    "Unlicense",
+    "0BSD",
+    "MIT-0",
+
+    # Weak copyleft - compatible with GPL-3.0
+    "MPL-2.0",
+
+    # Boost Software License - permissive
+    "BSL-1.0",
+
+    # Unicode license - permissive, used by unicode-ident and ICU data
+    "Unicode-3.0",
+
+    # OpenSSL license - used by aws-lc-sys/aws-lc-rs (rust TLS backend)
+    # This is a permissive license compatible with GPL-3.0
+    "OpenSSL",
+
+    # LGPL - can be linked with GPL-3.0 (may be used by transitive deps)
+    "LGPL-2.1-or-later",
+
+    # CDLA - Community Data License Agreement (permissive variant)
+    "CDLA-Permissive-2.0",
+]
+
+# Per-crate license exceptions for crates that need special handling
+# These are crates with non-standard license expressions that need clarification
+exceptions = [
+    # No exceptions currently needed - all licenses are in the allow list
+]
+
+[licenses.private]
+# Don't check licenses for unpublished workspace crates
+ignore = false
+# Private registries (none for this project)
+registries = []
+
+# =============================================================================
+# [bans] - Crate banning and duplicate detection
+# =============================================================================
+# Controls which crates are allowed/denied and how duplicate versions are handled.
+[bans]
+# Multiple versions of the same crate
+# Set to "warn" because some duplicates are unavoidable in the Rust ecosystem
+# (e.g., transitive dependencies pulling different major versions)
+multiple-versions = "warn"
+
+# Wildcard version requirements (e.g., version = "*")
+# Allow because this check is informational
+wildcards = "allow"
+
+# Graph highlighting mode for duplicates visualization
+highlight = "all"
+
+# Allow default features for workspace and external crates
+workspace-default-features = "allow"
+external-default-features = "allow"
+
+# Crates that are explicitly denied (problematic or deprecated crates)
+deny = [
+    # Deprecated/superseded crates that should not be used
+    # { crate = "atty", reason = "Unmaintained, use std::io::IsTerminal instead" },
+    # { crate = "chrono-tz", reason = "Consider using time-tz instead" },
+]
+
+# Crates that are allowed (use sparingly)
+allow = []
+
+# Skip duplicate detection for these crates
+# These are typically crates where multiple versions are unavoidable due to
+# ecosystem fragmentation or where the duplicate poses no practical issue
+skip = [
+    # hashbrown: Multiple versions due to ecosystem dependencies (0.14 via dashmap, 0.15/0.16 via sqlx/indexmap)
+    { crate = "hashbrown@0.14", reason = "Older version required by dashmap/governor transitive deps" },
+    { crate = "hashbrown@0.15", reason = "sqlx ecosystem uses 0.15, others use 0.16" },
+
+    # getrandom: v0.2 vs v0.3 split in the ecosystem
+    { crate = "getrandom@0.2", reason = "Older version required by some transitive dependencies" },
+
+    # thiserror: v1 vs v2 transition in progress across ecosystem
+    { crate = "thiserror@1", reason = "Ecosystem transition from v1 to v2 in progress" },
+
+    # socket2: Different versions for different async runtimes
+    { crate = "socket2@0.5", reason = "Different versions used by hyper/tokio ecosystem" },
+
+    # unicode-width: v0.1 vs v0.2 ecosystem split
+    { crate = "unicode-width@0.1", reason = "Older version required by some text formatting crates" },
+
+    # webpki-roots: v0.26 vs v1.0 major version bump
+    { crate = "webpki-roots@0.26", reason = "Project uses 0.26, tokio-rustls uses 1.0" },
+
+    # dashmap: v5 vs v6 - governor requires v5
+    { crate = "dashmap@5", reason = "governor crate requires dashmap 5.x" },
+
+    # nom: v7 vs v8 ecosystem transition
+    { crate = "nom@7", reason = "Project uses v7, transitive deps use v8" },
+]
+
+# Skip entire dependency trees for these crates
+# Use sparingly - this is a heavy hammer
+skip-tree = [
+    # proptest is only a dev-dependency, skip its entire tree for duplicate checking
+    # { crate = "proptest", reason = "Dev-dependency only, duplicates don't affect production" },
+]
+
+# =============================================================================
+# [sources] - Crate source restrictions
+# =============================================================================
+# Controls where crates can be fetched from.
+[sources]
+# Warn on crates from unknown registries
+unknown-registry = "warn"
+
+# Warn on crates from unknown git repositories
+unknown-git = "warn"
+
+# Allowed crate registries (official crates.io only)
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+
+# Allowed git repositories (none - all deps should come from crates.io)
+allow-git = []
+
+# Organization-based git source allowlists
+[sources.allow-org]
+# Uncomment to allow git sources from specific GitHub organizations:
+# github = ["rust-lang", "tokio-rs"]
+github = []
+gitlab = []
+bitbucket = []

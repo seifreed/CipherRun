@@ -83,19 +83,19 @@ impl CertificateStatus {
         // Check each active filter - if ANY match, show the certificate
         let mut matches = false;
 
-        if args.filter_expired && self.is_expired {
+        if args.cert_filters.filter_expired && self.is_expired {
             matches = true;
         }
-        if args.filter_self_signed && self.is_self_signed {
+        if args.cert_filters.filter_self_signed && self.is_self_signed {
             matches = true;
         }
-        if args.filter_mismatched && self.is_mismatched {
+        if args.cert_filters.filter_mismatched && self.is_mismatched {
             matches = true;
         }
-        if args.filter_revoked && self.is_revoked {
+        if args.cert_filters.filter_revoked && self.is_revoked {
             matches = true;
         }
-        if args.filter_untrusted && self.is_untrusted {
+        if args.cert_filters.filter_untrusted && self.is_untrusted {
             matches = true;
         }
 
@@ -388,10 +388,8 @@ mod tests {
             is_untrusted: false,
         };
 
-        let args = Args {
-            filter_expired: true,
-            ..Default::default()
-        };
+        let mut args = Args::default();
+        args.cert_filters.filter_expired = true;
 
         assert!(
             status.matches_filter(&args),
@@ -420,11 +418,9 @@ mod tests {
             is_untrusted: false,
         };
 
-        let args = Args {
-            filter_expired: true,
-            filter_self_signed: true,
-            ..Default::default()
-        };
+        let mut args = Args::default();
+        args.cert_filters.filter_expired = true;
+        args.cert_filters.filter_self_signed = true;
 
         assert!(
             status.matches_filter(&args),

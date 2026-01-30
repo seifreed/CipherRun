@@ -35,6 +35,7 @@ mod tests {
     fn test_default_config() {
         let config = ApiConfig::default();
         assert_eq!(config.port, 8080);
-        assert!(config.enable_cors);
+        // CORS disabled by default for security (changed from true to false)
+        assert!(!config.enable_cors);
     }
 }

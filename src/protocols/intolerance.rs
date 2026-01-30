@@ -8,6 +8,12 @@
 // 5. Uses common DH primes - Server uses known weak DH primes
 
 use crate::Result;
+use crate::constants::{
+    ALERT_LEVEL_FATAL, ALERT_UNRECOGNIZED_NAME, BUFFER_SIZE_MAX_TLS_RECORD, CONTENT_TYPE_ALERT,
+    CONTENT_TYPE_HANDSHAKE, DEFAULT_CONNECT_TIMEOUT, DEFAULT_READ_TIMEOUT,
+    EXTENSION_EC_POINT_FORMATS, EXTENSION_SERVER_NAME, EXTENSION_SIGNATURE_ALGORITHMS,
+    EXTENSION_SUPPORTED_GROUPS, HANDSHAKE_TYPE_CLIENT_HELLO, VERSION_TLS_1_0, VERSION_TLS_1_2,
+};
 use crate::utils::network::Target;
 use bytes::{BufMut, BytesMut};
 use serde::{Deserialize, Serialize};
@@ -40,8 +46,8 @@ impl IntoleranceTester {
     pub fn new(target: Target) -> Self {
         Self {
             target,
-            connect_timeout: Duration::from_secs(10),
-            read_timeout: Duration::from_secs(5),
+            connect_timeout: DEFAULT_CONNECT_TIMEOUT,
+            read_timeout: DEFAULT_READ_TIMEOUT,
         }
     }
 
@@ -174,9 +180,9 @@ impl IntoleranceTester {
 
         match self.send_and_read_alert(&invalid_sni_hello).await {
             Ok(Some(alert_code)) => {
-                // Correct alert for SNI failure is 112 (unrecognized_name)
-                // Incorrect alerts might be 40 (handshake_failure), 47 (certificate_unknown), etc.
-                Ok(alert_code != 112)
+                // Correct alert for SNI failure is unrecognized_name
+                // Incorrect alerts might be handshake_failure, certificate_unknown, etc.
+                Ok(alert_code != ALERT_UNRECOGNIZED_NAME)
             }
             _ => {
                 // No alert or connection succeeded - not applicable
@@ -209,26 +215,26 @@ impl IntoleranceTester {
         let mut buf = BytesMut::new();
 
         // TLS Record Layer
-        buf.put_u8(0x16); // Content Type: Handshake
-        buf.put_u16(0x0301); // Version: TLS 1.0
+        buf.put_u8(CONTENT_TYPE_HANDSHAKE);
+        buf.put_u16(VERSION_TLS_1_0);
         // Length placeholder (will be filled later)
         let length_pos = buf.len();
         buf.put_u16(0);
 
         // Handshake Header
-        buf.put_u8(0x01); // Handshake Type: ClientHello
+        buf.put_u8(HANDSHAKE_TYPE_CLIENT_HELLO);
         // Length placeholder
         let hs_length_pos = buf.len();
         buf.put_u8(0);
         buf.put_u16(0);
 
         // ClientHello
-        buf.put_u16(0x0303); // Client Version: TLS 1.2
+        buf.put_u16(VERSION_TLS_1_2);
 
         // Random (32 bytes)
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_else(|_| std::time::Duration::from_secs(0))
             .as_secs() as u32;
         buf.put_u32(timestamp);
         buf.put_slice(&[0u8; 28]);
@@ -274,24 +280,24 @@ impl IntoleranceTester {
         let mut buf = BytesMut::new();
 
         // TLS Record Layer
-        buf.put_u8(0x16);
-        buf.put_u16(0x0301);
+        buf.put_u8(CONTENT_TYPE_HANDSHAKE);
+        buf.put_u16(VERSION_TLS_1_0);
         let length_pos = buf.len();
         buf.put_u16(0);
 
         // Handshake Header
-        buf.put_u8(0x01);
+        buf.put_u8(HANDSHAKE_TYPE_CLIENT_HELLO);
         let hs_length_pos = buf.len();
         buf.put_u8(0);
         buf.put_u16(0);
 
         // ClientHello
-        buf.put_u16(0x0303);
+        buf.put_u16(VERSION_TLS_1_2);
 
         // Random
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_else(|_| std::time::Duration::from_secs(0))
             .as_secs() as u32;
         buf.put_u32(timestamp);
         buf.put_slice(&[0u8; 28]);
@@ -349,24 +355,24 @@ impl IntoleranceTester {
         let mut buf = BytesMut::new();
 
         // TLS Record Layer with specified version
-        buf.put_u8(0x16);
+        buf.put_u8(CONTENT_TYPE_HANDSHAKE);
         buf.put_u16(record_version); // Variable version
         let length_pos = buf.len();
         buf.put_u16(0);
 
         // Handshake Header
-        buf.put_u8(0x01);
+        buf.put_u8(HANDSHAKE_TYPE_CLIENT_HELLO);
         let hs_length_pos = buf.len();
         buf.put_u8(0);
         buf.put_u16(0);
 
         // ClientHello (always advertise TLS 1.2 capability)
-        buf.put_u16(0x0303);
+        buf.put_u16(VERSION_TLS_1_2);
 
         // Random
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_else(|_| std::time::Duration::from_secs(0))
             .as_secs() as u32;
         buf.put_u32(timestamp);
         buf.put_slice(&[0u8; 28]);
@@ -405,24 +411,24 @@ impl IntoleranceTester {
         let mut buf = BytesMut::new();
 
         // TLS Record Layer
-        buf.put_u8(0x16);
-        buf.put_u16(0x0301);
+        buf.put_u8(CONTENT_TYPE_HANDSHAKE);
+        buf.put_u16(VERSION_TLS_1_0);
         let length_pos = buf.len();
         buf.put_u16(0);
 
         // Handshake Header
-        buf.put_u8(0x01);
+        buf.put_u8(HANDSHAKE_TYPE_CLIENT_HELLO);
         let hs_length_pos = buf.len();
         buf.put_u8(0);
         buf.put_u16(0);
 
         // ClientHello
-        buf.put_u16(0x0303);
+        buf.put_u16(VERSION_TLS_1_2);
 
         // Random
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_else(|_| std::time::Duration::from_secs(0))
             .as_secs() as u32;
         buf.put_u32(timestamp);
         buf.put_slice(&[0u8; 28]);
@@ -484,24 +490,24 @@ impl IntoleranceTester {
         let mut buf = BytesMut::new();
 
         // TLS Record Layer
-        buf.put_u8(0x16);
-        buf.put_u16(0x0301);
+        buf.put_u8(CONTENT_TYPE_HANDSHAKE);
+        buf.put_u16(VERSION_TLS_1_0);
         let length_pos = buf.len();
         buf.put_u16(0);
 
         // Handshake Header
-        buf.put_u8(0x01);
+        buf.put_u8(HANDSHAKE_TYPE_CLIENT_HELLO);
         let hs_length_pos = buf.len();
         buf.put_u8(0);
         buf.put_u16(0);
 
         // ClientHello
-        buf.put_u16(0x0303);
+        buf.put_u16(VERSION_TLS_1_2);
 
         // Random
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_else(|_| std::time::Duration::from_secs(0))
             .as_secs() as u32;
         buf.put_u32(timestamp);
         buf.put_slice(&[0u8; 28]);
@@ -544,7 +550,7 @@ impl IntoleranceTester {
 
     /// Add SNI extension to extensions buffer
     fn add_sni_extension(&self, buf: &mut BytesMut, hostname: &str) {
-        buf.put_u16(0x0000); // Extension type: server_name
+        buf.put_u16(EXTENSION_SERVER_NAME);
 
         let ext_data_len = 2 + 1 + 2 + hostname.len(); // list_len + type + name_len + name
         buf.put_u16(ext_data_len as u16);
@@ -559,7 +565,7 @@ impl IntoleranceTester {
 
     /// Add supported_groups extension
     fn add_supported_groups_extension(&self, buf: &mut BytesMut) {
-        buf.put_u16(0x000a); // Extension type: supported_groups
+        buf.put_u16(EXTENSION_SUPPORTED_GROUPS);
 
         let curves = vec![
             0x0017, // secp256r1
@@ -577,7 +583,7 @@ impl IntoleranceTester {
 
     /// Add ec_point_formats extension
     fn add_ec_point_formats_extension(&self, buf: &mut BytesMut) {
-        buf.put_u16(0x000b); // Extension type: ec_point_formats
+        buf.put_u16(EXTENSION_EC_POINT_FORMATS);
         buf.put_u16(2); // Extension length
         buf.put_u8(1); // Formats length
         buf.put_u8(0); // uncompressed
@@ -585,7 +591,7 @@ impl IntoleranceTester {
 
     /// Add signature_algorithms extension
     fn add_signature_algorithms_extension(&self, buf: &mut BytesMut) {
-        buf.put_u16(0x000d); // Extension type: signature_algorithms
+        buf.put_u16(EXTENSION_SIGNATURE_ALGORITHMS);
 
         let algorithms = vec![
             (0x04, 0x01), // rsa_pkcs1_sha256
@@ -624,7 +630,7 @@ impl IntoleranceTester {
         writer.flush().await?;
 
         // Read response
-        let mut response = vec![0u8; 16384];
+        let mut response = vec![0u8; BUFFER_SIZE_MAX_TLS_RECORD];
         match timeout(self.read_timeout, reader.read(&mut response)).await {
             Ok(Ok(n)) if n > 0 => {
                 response.truncate(n);
@@ -641,7 +647,10 @@ impl IntoleranceTester {
         match self.send_client_hello(client_hello).await {
             Ok(response) => {
                 // Check if response is a TLS Alert
-                if response.len() >= 7 && response[0] == 0x15 && response[5] == 0x02 {
+                if response.len() >= 7
+                    && response[0] == CONTENT_TYPE_ALERT
+                    && response[5] == ALERT_LEVEL_FATAL
+                {
                     // Alert record, fatal alert
                     let alert_code = response[6];
                     Ok(Some(alert_code))
@@ -723,7 +732,8 @@ mod tests {
 
     #[test]
     fn test_load_common_primes() {
-        let primes = IntoleranceTester::load_common_primes().unwrap();
+        let primes =
+            IntoleranceTester::load_common_primes().expect("test assertion should succeed");
         assert!(!primes.is_empty());
         // Should contain Oakley Group 1, 2, 5, etc.
         assert!(primes.len() > 10);
@@ -742,14 +752,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_build_minimal_client_hello() {
-        let target = Target {
-            hostname: "example.com".to_string(),
-            port: 443,
-            ip_addresses: vec!["93.184.216.34".parse().unwrap()],
-        };
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["93.184.216.34".parse().unwrap()],
+        )
+        .unwrap();
 
         let tester = IntoleranceTester::new(target);
-        let hello = tester.build_minimal_client_hello().unwrap();
+        let hello = tester
+            .build_minimal_client_hello()
+            .expect("test assertion should succeed");
 
         // Verify structure
         assert_eq!(hello[0], 0x16); // Handshake record
@@ -758,34 +771,42 @@ mod tests {
 
     #[tokio::test]
     async fn test_build_extended_client_hello() {
-        let target = Target {
-            hostname: "example.com".to_string(),
-            port: 443,
-            ip_addresses: vec!["93.184.216.34".parse().unwrap()],
-        };
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["93.184.216.34".parse().unwrap()],
+        )
+        .unwrap();
 
         let tester = IntoleranceTester::new(target);
-        let hello = tester.build_extended_client_hello().unwrap();
+        let hello = tester
+            .build_extended_client_hello()
+            .expect("test assertion should succeed");
 
         // Verify structure
         assert_eq!(hello[0], 0x16); // Handshake record
         assert_eq!(hello[5], 0x01); // ClientHello
 
         // Should be longer than minimal due to extensions
-        let minimal = tester.build_minimal_client_hello().unwrap();
+        let minimal = tester
+            .build_minimal_client_hello()
+            .expect("test assertion should succeed");
         assert!(hello.len() > minimal.len());
     }
 
     #[tokio::test]
     async fn test_build_long_client_hello() {
-        let target = Target {
-            hostname: "example.com".to_string(),
-            port: 443,
-            ip_addresses: vec!["93.184.216.34".parse().unwrap()],
-        };
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["93.184.216.34".parse().unwrap()],
+        )
+        .unwrap();
 
         let tester = IntoleranceTester::new(target);
-        let hello = tester.build_long_client_hello().unwrap();
+        let hello = tester
+            .build_long_client_hello()
+            .expect("test assertion should succeed");
 
         // Should be > 256 bytes
         assert!(hello.len() > 256);

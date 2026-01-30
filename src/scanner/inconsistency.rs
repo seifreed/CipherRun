@@ -282,27 +282,28 @@ impl InconsistencyDetector {
         // Compare cipher sets
         if cipher_sets.len() > 1 {
             // Check if all sets are identical
-            let first_set: std::collections::HashSet<_> =
-                cipher_sets.values().next().unwrap().iter().collect();
+            if let Some(first_ciphers) = cipher_sets.values().next() {
+                let first_set: std::collections::HashSet<_> = first_ciphers.iter().collect();
 
-            let all_identical = cipher_sets.values().all(|set| {
-                let current_set: std::collections::HashSet<_> = set.iter().collect();
-                current_set == first_set
-            });
-
-            if !all_identical {
-                inconsistencies.push(Inconsistency {
-                    inconsistency_type: InconsistencyType::CipherSuites,
-                    severity: Severity::Medium,
-                    description: format!(
-                        "Different cipher suites available across {} backends",
-                        cipher_sets.len()
-                    ),
-                    ips_affected: cipher_sets.keys().copied().collect(),
-                    details: InconsistencyDetails::CipherSuites {
-                        differences: cipher_sets,
-                    },
+                let all_identical = cipher_sets.values().all(|set| {
+                    let current_set: std::collections::HashSet<_> = set.iter().collect();
+                    current_set == first_set
                 });
+
+                if !all_identical {
+                    inconsistencies.push(Inconsistency {
+                        inconsistency_type: InconsistencyType::CipherSuites,
+                        severity: Severity::Medium,
+                        description: format!(
+                            "Different cipher suites available across {} backends",
+                            cipher_sets.len()
+                        ),
+                        ips_affected: cipher_sets.keys().copied().collect(),
+                        details: InconsistencyDetails::CipherSuites {
+                            differences: cipher_sets,
+                        },
+                    });
+                }
             }
         }
 
@@ -320,7 +321,7 @@ impl InconsistencyDetector {
                 continue;
             }
 
-            if let Some(ref rating) = result.scan_result.rating {
+            if let Some(rating) = result.scan_result.ssl_rating() {
                 grades.insert(*ip, (format!("{}", rating.grade), rating.score));
             }
         }
@@ -418,7 +419,7 @@ impl InconsistencyDetector {
                 continue;
             }
 
-            if let Some(ref alpn_report) = result.scan_result.alpn_result
+            if let Some(alpn_report) = result.scan_result.alpn_result()
                 && alpn_report.alpn_enabled
                 && !alpn_report.alpn_result.supported_protocols.is_empty()
             {
@@ -462,25 +463,27 @@ impl InconsistencyDetector {
         // If we have at least 2 IPs with ALPN, check for protocol differences
         if protocols_by_ip.len() > 1 {
             // Check if all protocol lists are identical
-            let first_protocols: std::collections::HashSet<_> =
-                protocols_by_ip.values().next().unwrap().iter().collect();
+            if let Some(first_protocols_vec) = protocols_by_ip.values().next() {
+                let first_protocols: std::collections::HashSet<_> =
+                    first_protocols_vec.iter().collect();
 
-            let all_identical = protocols_by_ip.values().all(|protocols| {
-                let current_set: std::collections::HashSet<_> = protocols.iter().collect();
-                current_set == first_protocols
-            });
-
-            if !all_identical {
-                inconsistencies.push(Inconsistency {
-                    inconsistency_type: InconsistencyType::Alpn,
-                    severity: Severity::Medium,
-                    description: format!(
-                        "Different ALPN protocols available across {} backends",
-                        protocols_by_ip.len()
-                    ),
-                    ips_affected: protocols_by_ip.keys().copied().collect(),
-                    details: InconsistencyDetails::Alpn { protocols_by_ip },
+                let all_identical = protocols_by_ip.values().all(|protocols| {
+                    let current_set: std::collections::HashSet<_> = protocols.iter().collect();
+                    current_set == first_protocols
                 });
+
+                if !all_identical {
+                    inconsistencies.push(Inconsistency {
+                        inconsistency_type: InconsistencyType::Alpn,
+                        severity: Severity::Medium,
+                        description: format!(
+                            "Different ALPN protocols available across {} backends",
+                            protocols_by_ip.len()
+                        ),
+                        ips_affected: protocols_by_ip.keys().copied().collect(),
+                        details: InconsistencyDetails::Alpn { protocols_by_ip },
+                    });
+                }
             }
         }
 
@@ -515,7 +518,9 @@ mod tests {
     #[test]
     fn test_detector_with_single_result() {
         let mut results = HashMap::new();
-        let ip = "192.168.1.1".parse().unwrap();
+        let ip = "192.168.1.1"
+            .parse()
+            .expect("test assertion should succeed");
         results.insert(
             ip,
             SingleIpScanResult {

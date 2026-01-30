@@ -362,7 +362,7 @@ mod tests {
         let mut report = ComplianceReport::new(&framework, "test.com:443".to_string());
         report.finalize();
 
-        let json = Reporter::to_json(&report, false).unwrap();
+        let json = Reporter::to_json(&report, false).expect("test assertion should succeed");
         assert!(json.contains("test.com:443"));
         assert!(json.contains("Test Framework"));
     }
@@ -382,7 +382,7 @@ mod tests {
         let mut report = ComplianceReport::new(&framework, "test.com:443".to_string());
         report.finalize();
 
-        let csv = Reporter::to_csv(&report).unwrap();
+        let csv = Reporter::to_csv(&report).expect("test assertion should succeed");
         assert!(csv.contains("Requirement ID,Name,Category"));
     }
 }

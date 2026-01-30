@@ -7,19 +7,144 @@ use crate::scanner::{ScanResults, Scanner};
 use colored::*;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::Duration;
 use tokio::sync::Semaphore;
 
+/// Progress information for a completed target scan
+#[derive(Debug)]
+pub struct TargetScanProgress<'a> {
+    pub target: &'a str,
+    pub index: usize,
+    pub total: usize,
+    pub result: &'a Result<ScanResults>,
+    pub duration: Duration,
+}
+
+/// Callback trait for mass scan progress reporting.
+///
+/// Implement this trait to receive progress updates during mass scanning.
+/// The default implementation `TerminalMassProgress` provides colored terminal output.
+pub trait MassScanProgressCallback: Send + Sync {
+    /// Called when serial scanning starts
+    fn on_serial_scan_start(&self, total_targets: usize);
+
+    /// Called when parallel scanning starts
+    fn on_parallel_scan_start(&self, total_targets: usize, max_concurrent: usize);
+
+    /// Called when scanning of an individual target begins
+    fn on_target_start(&self, target: &str, index: usize, total: usize);
+
+    /// Called when scanning of an individual target completes
+    fn on_target_complete(&self, progress: &TargetScanProgress<'_>);
+
+    /// Called periodically during parallel scanning to update progress
+    fn on_parallel_progress(&self, completed: usize, total: usize, current_target: &str);
+
+    /// Called when all scans are complete
+    fn on_all_scans_complete(&self);
+}
+
+/// Default terminal progress callback with colored output
+pub struct TerminalMassProgress;
+
+impl TerminalMassProgress {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for TerminalMassProgress {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl MassScanProgressCallback for TerminalMassProgress {
+    fn on_serial_scan_start(&self, total_targets: usize) {
+        println!(
+            "\n{} {} targets serially...\n",
+            "Scanning".cyan().bold(),
+            total_targets
+        );
+    }
+
+    fn on_parallel_scan_start(&self, total_targets: usize, max_concurrent: usize) {
+        println!(
+            "\n{} {} targets in parallel (max {} concurrent)...\n",
+            "Scanning".cyan().bold(),
+            total_targets,
+            max_concurrent
+        );
+    }
+
+    fn on_target_start(&self, target: &str, index: usize, total: usize) {
+        println!(
+            "{} Scanning {}/{}: {}",
+            "[+]".green(),
+            index,
+            total,
+            target.yellow()
+        );
+    }
+
+    fn on_target_complete(&self, progress: &TargetScanProgress<'_>) {
+        match progress.result {
+            Ok(scan_results) => {
+                println!(
+                    "  {} Scan completed in {:.2}s",
+                    "OK".green(),
+                    progress.duration.as_secs_f64()
+                );
+                if let Some(rating) = scan_results.ssl_rating() {
+                    println!("  {} SSL Labs Grade: {}", "INFO".blue(), rating.grade);
+                }
+            }
+            Err(e) => {
+                println!("  {} Scan failed: {}", "ERR".red(), e);
+            }
+        }
+        println!();
+    }
+
+    fn on_parallel_progress(&self, _completed: usize, _total: usize, _current_target: &str) {
+        // Progress bar handles this in terminal mode
+    }
+
+    fn on_all_scans_complete(&self) {
+        // Progress bar handles this in terminal mode
+    }
+}
+
+/// Silent progress callback that produces no output
+pub struct SilentMassProgress;
+
+impl MassScanProgressCallback for SilentMassProgress {
+    fn on_serial_scan_start(&self, _total_targets: usize) {}
+    fn on_parallel_scan_start(&self, _total_targets: usize, _max_concurrent: usize) {}
+    fn on_target_start(&self, _target: &str, _index: usize, _total: usize) {}
+    fn on_target_complete(&self, _progress: &TargetScanProgress<'_>) {}
+    fn on_parallel_progress(&self, _completed: usize, _total: usize, _current_target: &str) {}
+    fn on_all_scans_complete(&self) {}
+}
+
 /// Mass scanner for scanning multiple targets
+///
+/// Performance optimization: Uses Arc<Args> to avoid expensive cloning
+/// in parallel scanning operations.
 pub struct MassScanner {
-    args: Args,
+    args: Arc<Args>,
     pub targets: Vec<String>,
+    callback: Option<Arc<dyn MassScanProgressCallback>>,
 }
 
 impl MassScanner {
     /// Create a new mass scanner
     pub fn new(args: Args, targets: Vec<String>) -> Self {
-        Self { args, targets }
+        Self {
+            args: Arc::new(args),
+            targets,
+            callback: None,
+        }
     }
 
     /// Load targets from file
@@ -38,51 +163,60 @@ impl MassScanner {
             )));
         }
 
-        Ok(Self { args, targets })
+        Ok(Self {
+            args: Arc::new(args),
+            targets,
+            callback: None,
+        })
+    }
+
+    /// Set progress callback for receiving scan updates
+    pub fn with_callback(mut self, callback: Arc<dyn MassScanProgressCallback>) -> Self {
+        self.callback = Some(callback);
+        self
+    }
+
+    /// Set terminal progress callback (convenience method)
+    pub fn with_terminal_progress(self) -> Self {
+        self.with_callback(Arc::new(TerminalMassProgress::new()))
     }
 
     /// Scan all targets serially
     pub async fn scan_serial(&self) -> Result<Vec<(String, Result<ScanResults>)>> {
-        println!(
-            "\n{} {} targets serially...\n",
-            "Scanning".cyan().bold(),
-            self.targets.len()
-        );
-
-        let mut results = Vec::new();
         let total = self.targets.len();
 
-        for (idx, target) in self.targets.iter().enumerate() {
-            println!(
-                "{} Scanning {}/{}: {}",
-                "[+]".green(),
-                idx + 1,
-                total,
-                target.yellow()
-            );
+        // Notify callback of scan start
+        if let Some(ref callback) = self.callback {
+            callback.on_serial_scan_start(total);
+        }
 
-            let start = Instant::now();
+        let mut results = Vec::new();
+
+        for (idx, target) in self.targets.iter().enumerate() {
+            let index = idx + 1;
+
+            // Notify callback of target start
+            if let Some(ref callback) = self.callback {
+                callback.on_target_start(target, index, total);
+            }
+
+            let start = std::time::Instant::now();
             let result = self.scan_single_target(target).await;
             let duration = start.elapsed();
 
-            match &result {
-                Ok(scan_results) => {
-                    println!(
-                        "  {} Scan completed in {:.2}s",
-                        "".green(),
-                        duration.as_secs_f64()
-                    );
-                    if let Some(rating) = &scan_results.rating {
-                        println!("  {} SSL Labs Grade: {}", "�".blue(), rating.grade);
-                    }
-                }
-                Err(e) => {
-                    println!("  {} Scan failed: {}", "".red(), e);
-                }
+            // Notify callback of target completion
+            if let Some(ref callback) = self.callback {
+                let progress = TargetScanProgress {
+                    target,
+                    index,
+                    total,
+                    result: &result,
+                    duration,
+                };
+                callback.on_target_complete(&progress);
             }
 
             results.push((target.clone(), result));
-            println!();
         }
 
         Ok(results)
@@ -90,18 +224,17 @@ impl MassScanner {
 
     /// Scan all targets in parallel
     pub async fn scan_parallel(&self) -> Result<Vec<(String, Result<ScanResults>)>> {
-        let max_parallel = self.args.max_parallel;
+        let max_parallel = self.args.network.max_parallel;
+        let total = self.targets.len();
 
-        println!(
-            "\n{} {} targets in parallel (max {} concurrent)...\n",
-            "Scanning".cyan().bold(),
-            self.targets.len(),
-            max_parallel
-        );
+        // Notify callback of scan start
+        if let Some(ref callback) = self.callback {
+            callback.on_parallel_scan_start(total, max_parallel);
+        }
 
         // Create progress bars
         let multi_progress = Arc::new(MultiProgress::new());
-        let main_pb = multi_progress.add(ProgressBar::new(self.targets.len() as u64));
+        let main_pb = multi_progress.add(ProgressBar::new(total as u64));
         main_pb.set_style(
             ProgressStyle::default_bar()
                 .template("[{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} {msg}")
@@ -118,12 +251,16 @@ impl MassScanner {
         for target in &self.targets {
             let target = target.clone();
             let semaphore = Arc::clone(&semaphore);
-            let args = self.args.clone();
+            // Performance optimization: Use Arc::clone instead of expensive Args clone
+            let args = Arc::clone(&self.args);
             let multi_progress = Arc::clone(&multi_progress);
 
             let task = tokio::spawn(async move {
-                // Acquire semaphore permit
-                let _permit = semaphore.acquire().await.unwrap();
+                // Acquire semaphore permit - use expect since closed semaphore is fatal
+                let _permit = semaphore
+                    .acquire()
+                    .await
+                    .expect("Semaphore closed unexpectedly");
 
                 // Create progress bar for this target
                 let pb = multi_progress.add(ProgressBar::new_spinner());
@@ -153,11 +290,22 @@ impl MassScanner {
         for task in tasks {
             let (target, result) = task.await?;
             main_pb.inc(1);
+
+            // Notify callback of progress
+            if let Some(ref callback) = self.callback {
+                callback.on_parallel_progress(results.len() + 1, total, &target);
+            }
+
             main_pb.set_message(format!("Completed: {}", target));
             results.push((target, result));
         }
 
         main_pb.finish_with_message("All scans completed");
+
+        // Notify callback of completion
+        if let Some(ref callback) = self.callback {
+            callback.on_all_scans_complete();
+        }
 
         Ok(results)
     }
@@ -169,10 +317,13 @@ impl MassScanner {
     }
 
     /// Create a scanner for a specific target
-    fn create_scanner(args: &Args, target: &str) -> Result<Scanner> {
-        let mut modified_args = args.clone();
+    ///
+    /// Performance optimization: Takes Arc<Args> to avoid cloning
+    fn create_scanner(args: &Arc<Args>, target: &str) -> Result<Scanner> {
+        // Only clone when necessary to modify target and quiet flag
+        let mut modified_args = (**args).clone();
         modified_args.target = Some(target.to_string());
-        modified_args.quiet = true; // Suppress banner in mass scan
+        modified_args.output.quiet = true; // Suppress banner in mass scan
         Scanner::new(modified_args)
     }
 
@@ -243,6 +394,11 @@ impl MassScanner {
             .collect()
     }
 
+    /// Get reference to args (for external use)
+    pub fn args(&self) -> &Args {
+        &self.args
+    }
+
     /// Generate summary report
     pub fn generate_summary(results: &[(String, Result<ScanResults>)]) -> String {
         let mut summary = String::new();
@@ -270,7 +426,7 @@ impl MassScanner {
         let mut grade_counts = std::collections::HashMap::new();
         for (_, result) in results {
             if let Ok(scan_result) = result
-                && let Some(rating) = &scan_result.rating
+                && let Some(rating) = scan_result.ssl_rating()
             {
                 *grade_counts.entry(format!("{}", rating.grade)).or_insert(0) += 1;
             }
@@ -295,8 +451,7 @@ impl MassScanner {
             match result {
                 Ok(scan_result) => {
                     let grade = scan_result
-                        .rating
-                        .as_ref()
+                        .ssl_rating()
                         .map(|r| format!("{}", r.grade))
                         .unwrap_or_else(|| "N/A".to_string());
 
@@ -305,9 +460,9 @@ impl MassScanner {
                         .as_ref()
                         .map(|c| {
                             if c.validation.valid {
-                                "".green()
+                                "OK".green()
                             } else {
-                                "".red()
+                                "INVALID".red()
                             }
                         })
                         .unwrap_or_else(|| "?".yellow());
@@ -393,11 +548,8 @@ mod tests {
 
     #[test]
     fn test_mass_scanner_creation() {
-        let args = Args {
-            target: None,
-            all: true,
-            ..Default::default()
-        };
+        let mut args = Args::default();
+        args.scan.all = true;
         let targets = vec!["example.com:443".to_string(), "google.com:443".to_string()];
         let scanner = MassScanner::new(args, targets);
         assert_eq!(scanner.targets.len(), 2);

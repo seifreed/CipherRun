@@ -270,17 +270,11 @@ impl RevocationChecker {
         let mut ocsp_req = OcspRequest::new()
             .map_err(|e| anyhow::anyhow!("Failed to create OCSP request: {}", e))?;
 
-        // Add the certificate ID to the request
         ocsp_req
             .add_id(cert_id)
             .map_err(|e| anyhow::anyhow!("Failed to add CertId to OCSP request: {}", e))?;
 
-        // Optionally add a nonce for replay protection (recommended but not required)
-        // Some OCSP responders may not support nonces
-        // ocsp_req.add_nonce()
-        //     .map_err(|e| anyhow::anyhow!("Failed to add nonce to OCSP request: {}", e))?;
-
-        // Serialize the request to DER format
+        // Note: Nonce is not added because some OCSP responders don't support it
         let request_der = ocsp_req
             .to_der()
             .map_err(|e| anyhow::anyhow!("Failed to serialize OCSP request to DER: {}", e))?;
@@ -496,7 +490,10 @@ mod tests {
             der_bytes: vec![],
         };
 
-        let result = checker.check_revocation_status(&cert, None).await.unwrap();
+        let result = checker
+            .check_revocation_status(&cert, None)
+            .await
+            .expect("test assertion should succeed");
         assert_eq!(result.status, RevocationStatus::NotChecked);
         assert_eq!(result.method, RevocationMethod::None);
     }

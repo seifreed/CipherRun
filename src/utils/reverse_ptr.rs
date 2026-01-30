@@ -5,8 +5,8 @@ use crate::Result;
 use crate::error::TlsError;
 use crate::utils::sni_generator::SniGenerator;
 use std::net::IpAddr;
-use trust_dns_resolver::TokioAsyncResolver;
-use trust_dns_resolver::config::*;
+use hickory_resolver::TokioAsyncResolver;
+use hickory_resolver::config::*;
 
 /// Reverse PTR lookup utilities
 pub struct ReversePtrLookup;
@@ -195,14 +195,16 @@ mod tests {
 
     #[test]
     fn test_construct_reverse_query_name_ipv4() {
-        let ip: IpAddr = "192.0.2.1".parse().unwrap();
+        let ip: IpAddr = "192.0.2.1".parse().expect("test assertion should succeed");
         let query = ReversePtrLookup::construct_reverse_query_name(&ip);
         assert_eq!(query, "1.2.0.192.in-addr.arpa");
     }
 
     #[test]
     fn test_construct_reverse_query_name_ipv6() {
-        let ip: IpAddr = "2001:db8::1".parse().unwrap();
+        let ip: IpAddr = "2001:db8::1"
+            .parse()
+            .expect("test assertion should succeed");
         let query = ReversePtrLookup::construct_reverse_query_name(&ip);
         assert!(query.ends_with(".ip6.arpa"));
         assert!(query.contains("1.0.0.0"));
@@ -210,7 +212,7 @@ mod tests {
 
     #[test]
     fn test_try_common_patterns_aws() {
-        let ip: IpAddr = "52.1.2.3".parse().unwrap();
+        let ip: IpAddr = "52.1.2.3".parse().expect("test assertion should succeed");
         let pattern = ReversePtrLookup::try_common_patterns(&ip);
         assert!(pattern.is_some());
         assert!(pattern.unwrap().contains("amazonaws.com"));
@@ -218,7 +220,7 @@ mod tests {
 
     #[test]
     fn test_try_common_patterns_gcp() {
-        let ip: IpAddr = "35.1.2.3".parse().unwrap();
+        let ip: IpAddr = "35.1.2.3".parse().expect("test assertion should succeed");
         let pattern = ReversePtrLookup::try_common_patterns(&ip);
         assert!(pattern.is_some());
         assert!(pattern.unwrap().contains("googleusercontent.com"));
@@ -226,7 +228,9 @@ mod tests {
 
     #[test]
     fn test_try_common_patterns_unknown() {
-        let ip: IpAddr = "192.168.1.1".parse().unwrap();
+        let ip: IpAddr = "192.168.1.1"
+            .parse()
+            .expect("test assertion should succeed");
         let pattern = ReversePtrLookup::try_common_patterns(&ip);
         assert!(pattern.is_none());
     }

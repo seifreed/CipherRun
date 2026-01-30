@@ -6,6 +6,8 @@
 // session keys, passwords, and other confidential data.
 
 use crate::Result;
+use crate::protocols::Protocol;
+use crate::protocols::handshake::ClientHelloBuilder;
 use crate::utils::network::Target;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -83,81 +85,11 @@ impl TicketbleedTester {
         }
     }
 
-    /// Build ClientHello with SessionTicket extension
+    /// Build ClientHello with SessionTicket extension using ClientHelloBuilder
     fn build_client_hello_with_session_ticket(&self) -> Vec<u8> {
-        let mut hello = Vec::new();
-
-        // TLS Record: Handshake
-        hello.push(0x16);
-        hello.push(0x03);
-        hello.push(0x03); // TLS 1.2
-
-        // Length placeholder
-        let len_pos = hello.len();
-        hello.push(0x00);
-        hello.push(0x00);
-
-        // Handshake: ClientHello
-        hello.push(0x01);
-
-        // Handshake length placeholder
-        let hs_len_pos = hello.len();
-        hello.push(0x00);
-        hello.push(0x00);
-        hello.push(0x00);
-
-        // Client Version: TLS 1.2
-        hello.push(0x03);
-        hello.push(0x03);
-
-        // Random (32 bytes)
-        for i in 0..32 {
-            hello.push((i * 7) as u8);
-        }
-
-        // Session ID (empty)
-        hello.push(0x00);
-
-        // Cipher Suites
-        hello.push(0x00);
-        hello.push(0x04);
-        hello.push(0xc0);
-        hello.push(0x2f); // TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
-        hello.push(0x00);
-        hello.push(0x9c); // TLS_RSA_WITH_AES_128_GCM_SHA256
-
-        // Compression (none)
-        hello.push(0x01);
-        hello.push(0x00);
-
-        // Extensions
-        let ext_pos = hello.len();
-        hello.push(0x00);
-        hello.push(0x00); // Extensions length placeholder
-
-        // SessionTicket extension (0x0023)
-        hello.push(0x00);
-        hello.push(0x23);
-        hello.push(0x00);
-        hello.push(0x00); // Empty ticket
-
-        // Update extensions length
-        let ext_len = hello.len() - ext_pos - 2;
-        hello[ext_pos] = ((ext_len >> 8) & 0xff) as u8;
-        hello[ext_pos + 1] = (ext_len & 0xff) as u8;
-
-        // Update handshake length
-        let hs_len = hello.len() - hs_len_pos - 3;
-        hello[hs_len_pos] = ((hs_len >> 16) & 0xff) as u8;
-        hello[hs_len_pos + 1] = ((hs_len >> 8) & 0xff) as u8;
-        hello[hs_len_pos + 2] = (hs_len & 0xff) as u8;
-
-        // Update record length
-        let rec_len = hello.len() - len_pos - 2;
-        hello[len_pos] = ((rec_len >> 8) & 0xff) as u8;
-        hello[len_pos + 1] = (rec_len & 0xff) as u8;
-
-        hello
+        let mut builder = ClientHelloBuilder::new(Protocol::TLS12);
+        builder.for_vulnerability_testing().add_session_ticket(); // Add empty session ticket for ticketbleed testing
+        builder.build().unwrap_or_else(|_| Vec::new())
     }
 
     /// Build ClientHello with received session ticket
@@ -238,11 +170,12 @@ mod tests {
 
     #[test]
     fn test_client_hello_with_session_ticket() {
-        let target = Target {
-            hostname: "example.com".to_string(),
-            port: 443,
-            ip_addresses: vec!["93.184.216.34".parse().unwrap()],
-        };
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["93.184.216.34".parse().unwrap()],
+        )
+        .unwrap();
 
         let tester = TicketbleedTester::new(target);
         let hello = tester.build_client_hello_with_session_ticket();

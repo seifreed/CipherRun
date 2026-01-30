@@ -202,12 +202,12 @@ impl CipherRunSchema {
         let mut errors = Vec::new();
 
         // Basic validation (simplified)
-        if !data.is_object() {
+        let obj = if let Some(obj) = data.as_object() {
+            obj
+        } else {
             errors.push("Root must be an object".to_string());
             return Err(errors);
-        }
-
-        let obj = data.as_object().unwrap();
+        };
 
         // Check required fields
         let required = vec!["target", "timestamp", "scan_version"];

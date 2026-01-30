@@ -3,6 +3,9 @@
 // Protects against attacks like POODLE by preventing fallback to older protocols
 
 use crate::Result;
+use crate::constants::{
+    COMPRESSION_NULL, CONTENT_TYPE_ALERT, CONTENT_TYPE_HANDSHAKE, HANDSHAKE_TYPE_CLIENT_HELLO,
+};
 use crate::protocols::{Protocol, tester::ProtocolTester};
 use crate::utils::network::Target;
 use std::time::Duration;
@@ -11,14 +14,14 @@ use tokio::net::TcpStream;
 use tokio::time::timeout;
 
 /// TLS Fallback SCSV tester
-pub struct FallbackScsvTester {
-    target: Target,
+pub struct FallbackScsvTester<'a> {
+    target: &'a Target,
     max_supported_protocol: Option<Protocol>,
     test_all_ips: bool,
 }
 
-impl FallbackScsvTester {
-    pub fn new(target: Target) -> Self {
+impl<'a> FallbackScsvTester<'a> {
+    pub fn new(target: &'a Target) -> Self {
         Self {
             target,
             max_supported_protocol: None,
@@ -73,8 +76,11 @@ impl FallbackScsvTester {
         // If only one protocol version is supported, downgrade attacks are not possible
         // Match SSL Labs behavior: "Unknown (requires support for at least two protocols, excl. SSL2)"
         if supported_protocols.len() <= 1 {
-            let protocol_name = self.max_supported_protocol.unwrap().name();
-            let has_tls13 = matches!(self.max_supported_protocol.unwrap(), Protocol::TLS13);
+            let max_protocol = self.max_supported_protocol.ok_or_else(|| {
+                anyhow::anyhow!("max_supported_protocol is None when it should be Some")
+            })?;
+            let protocol_name = max_protocol.name();
+            let has_tls13 = matches!(max_protocol, Protocol::TLS13);
             return Ok(FallbackScsvTestResult {
                 supported: false,
                 accepts_downgrade: false,
@@ -89,19 +95,26 @@ impl FallbackScsvTester {
 
         // Test if server properly rejects inappropriate fallback
         // This is the definitive test for SCSV support
-        let supported = self.test_rejects_inappropriate_fallback().await?;
+        let supported = self
+            .test_rejects_inappropriate_fallback(&supported_protocols)
+            .await?;
 
-        let accepts_downgrade = !supported;
-        let vulnerable = !supported;
+        let accepts_downgrade = supported.accepts_downgrade;
+        let vulnerable = supported.vulnerable;
 
         // Check if TLS 1.3 or higher is supported (reduces severity)
         let has_tls13 = supported_protocols
             .iter()
             .any(|p| matches!(p, Protocol::TLS13));
 
-        let details = if supported {
+        let details = if supported.supported {
             format!(
                 "TLS_FALLBACK_SCSV supported - Protected against downgrade attacks (Protocols: {})",
+                self.format_protocol_list(&supported_protocols)
+            )
+        } else if supported.inconclusive {
+            format!(
+                "Downgrade attack prevention: Inconclusive (fallback test did not complete cleanly) (Protocols: {})",
                 self.format_protocol_list(&supported_protocols)
             )
         } else {
@@ -112,7 +125,7 @@ impl FallbackScsvTester {
         };
 
         Ok(FallbackScsvTestResult {
-            supported,
+            supported: supported.supported,
             accepts_downgrade,
             vulnerable,
             details,
@@ -154,37 +167,62 @@ impl FallbackScsvTester {
             .join(", ")
     }
 
+    /// Select the highest supported protocol below the maximum
+    fn select_fallback_protocol(
+        &self,
+        supported_protocols: &[Protocol],
+        max_protocol: Protocol,
+    ) -> Option<Protocol> {
+        supported_protocols
+            .iter()
+            .copied()
+            .filter(|protocol| *protocol < max_protocol)
+            .max()
+    }
+
     /// Test if server properly rejects inappropriate fallback
-    async fn test_rejects_inappropriate_fallback(&self) -> Result<bool> {
+    async fn test_rejects_inappropriate_fallback(
+        &self,
+        supported_protocols: &[Protocol],
+    ) -> Result<ScsvSupport> {
         // Determine the test version based on the maximum supported protocol
         let max_protocol = self
             .max_supported_protocol
             .expect("max_supported_protocol must be set before calling this method");
 
-        // Get the fallback version (one version lower than max)
-        let (test_version, test_version_name) = match max_protocol {
-            Protocol::TLS13 => (0x0303, "TLS 1.2"), // Test with TLS 1.2
-            Protocol::TLS12 => (0x0302, "TLS 1.1"), // Test with TLS 1.1
-            Protocol::TLS11 => (0x0301, "TLS 1.0"), // Test with TLS 1.0
-            Protocol::TLS10 => (0x0300, "SSLv3"),   // Test with SSLv3
+        // Get the fallback version (highest supported protocol below max)
+        let fallback_protocol = match max_protocol {
             Protocol::SSLv3 => {
                 // SSLv3 is the lowest - cannot test SCSV with anything lower
                 tracing::warn!(
                     "Server only supports SSLv3 - cannot test SCSV (no lower version available)"
                 );
-                return Ok(false);
+                return Ok(ScsvSupport::not_supported());
             }
             Protocol::SSLv2 => {
                 // SSLv2 doesn't support SCSV
                 tracing::warn!("Server only supports SSLv2 - SCSV not applicable");
-                return Ok(false);
+                return Ok(ScsvSupport::not_supported());
             }
             Protocol::QUIC => {
                 // QUIC has different mechanisms
                 tracing::warn!("QUIC protocol detected - SCSV testing not applicable");
-                return Ok(false);
+                return Ok(ScsvSupport::not_supported());
+            }
+            _ => {
+                let fallback = self.select_fallback_protocol(supported_protocols, max_protocol);
+                let Some(fallback) = fallback else {
+                    tracing::warn!(
+                        "No lower supported protocol found for SCSV test - cannot test fallback"
+                    );
+                    return Ok(ScsvSupport::inconclusive());
+                };
+                fallback
             }
         };
+
+        let test_version = fallback_protocol.as_hex();
+        let test_version_name = fallback_protocol.name();
 
         tracing::debug!(
             "Testing SCSV: Max supported = {}, Testing with {} + SCSV",
@@ -203,11 +241,11 @@ impl FallbackScsvTester {
     }
 
     /// Test SCSV on all IPs
-    async fn test_scsv_all_ips(&self, test_version: u16) -> Result<bool> {
+    async fn test_scsv_all_ips(&self, test_version: u16) -> Result<ScsvSupport> {
         let addrs = self.target.socket_addrs();
 
         if addrs.is_empty() {
-            return Ok(false);
+            return Ok(ScsvSupport::inconclusive());
         }
 
         tracing::info!(
@@ -217,6 +255,7 @@ impl FallbackScsvTester {
         );
 
         let mut all_support = true;
+        let mut inconclusive = false;
 
         for (idx, addr) in addrs.iter().enumerate() {
             let ip_supports = self.test_scsv_on_ip(test_version, *addr).await?;
@@ -226,30 +265,69 @@ impl FallbackScsvTester {
                 addr.ip(),
                 idx + 1,
                 addrs.len(),
-                if ip_supports {
+                if ip_supports.supported {
                     "supported"
                 } else {
                     "NOT supported"
                 },
-                if ip_supports { "✓" } else { "✗" }
+                if ip_supports.supported { "✓" } else { "✗" }
             );
 
-            if !ip_supports {
+            if ip_supports.inconclusive {
+                inconclusive = true;
+            }
+
+            if !ip_supports.supported {
                 all_support = false;
             }
         }
 
-        Ok(all_support)
+        if inconclusive {
+            Ok(ScsvSupport::inconclusive())
+        } else if all_support {
+            Ok(ScsvSupport::supported())
+        } else {
+            Ok(ScsvSupport::not_supported())
+        }
     }
 
     /// Test SCSV on specific IP
-    async fn test_scsv_on_ip(&self, test_version: u16, addr: std::net::SocketAddr) -> Result<bool> {
+    async fn test_scsv_on_ip(
+        &self,
+        test_version: u16,
+        addr: std::net::SocketAddr,
+    ) -> Result<ScsvSupport> {
         match timeout(Duration::from_secs(5), TcpStream::connect(addr)).await {
             Ok(Ok(mut stream)) => {
-                // Send ClientHello with (max-1) version + TLS_FALLBACK_SCSV
-                // This simulates an inappropriate fallback from max to max-1
-                // If server properly implements SCSV, it should reject with inappropriate_fallback alert
-                let client_hello = self.build_client_hello_with_scsv(test_version, true);
+                // Send ClientHello with (max-1) version WITHOUT SCSV first
+                // If this fails, the SCSV result is inconclusive (fallback path not viable)
+                let client_hello_no_scsv = self.build_client_hello_with_scsv(test_version, false);
+
+                tracing::debug!(
+                    "Sending ClientHello with version 0x{:04x} (no SCSV) to IP {}",
+                    test_version,
+                    addr.ip()
+                );
+
+                stream.write_all(&client_hello_no_scsv).await?;
+
+                let mut buffer = vec![0u8; 8192];
+                let baseline = timeout(Duration::from_secs(3), stream.read(&mut buffer)).await;
+                if !self.baseline_fallback_accepted(baseline, &buffer) {
+                    tracing::debug!(
+                        "SCSV test: baseline fallback without SCSV did not complete cleanly"
+                    );
+                    return Ok(ScsvSupport::inconclusive());
+                }
+
+                // Reconnect and test with SCSV
+                let stream = timeout(Duration::from_secs(5), TcpStream::connect(addr)).await;
+                let Ok(Ok(mut stream)) = stream else {
+                    tracing::debug!("SCSV test: Failed to reconnect for SCSV test");
+                    return Ok(ScsvSupport::inconclusive());
+                };
+
+                let client_hello_scsv = self.build_client_hello_with_scsv(test_version, true);
 
                 tracing::debug!(
                     "Sending ClientHello with version 0x{:04x} + TLS_FALLBACK_SCSV to IP {}",
@@ -257,9 +335,8 @@ impl FallbackScsvTester {
                     addr.ip()
                 );
 
-                stream.write_all(&client_hello).await?;
+                stream.write_all(&client_hello_scsv).await?;
 
-                // Read response
                 let mut buffer = vec![0u8; 8192];
                 match timeout(Duration::from_secs(3), stream.read(&mut buffer)).await {
                     Ok(Ok(n)) if n > 0 => {
@@ -269,22 +346,19 @@ impl FallbackScsvTester {
                             buffer[0]
                         );
 
-                        // Log all bytes for debugging
                         let bytes_hex: Vec<String> =
                             buffer[..n].iter().map(|b| format!("{:02x}", b)).collect();
                         tracing::debug!("SCSV test: full response bytes: {}", bytes_hex.join(" "));
 
-                        // Check if server sends alert (0x15) for inappropriate_fallback
-                        if n > 5 && buffer[0] == 0x15 {
-                            // TLS Alert structure:
-                            // Byte 0: 0x15 (alert)
-                            // Bytes 1-2: version
-                            // Bytes 3-4: length
-                            // Byte 5: alert level (0x01=warning, 0x02=fatal)
-                            // Byte 6: alert description
-
-                            let alert_level = if n > 5 { buffer[5] } else { 0 };
-                            let alert_desc = if n > 6 { buffer[6] } else { 0 };
+                        // TLS Alert structure requires at least 7 bytes:
+                        // Byte 0: Content Type (CONTENT_TYPE_ALERT = 0x15)
+                        // Bytes 1-2: Version
+                        // Bytes 3-4: Length
+                        // Byte 5: Alert Level
+                        // Byte 6: Alert Description
+                        if n > 6 && buffer[0] == CONTENT_TYPE_ALERT {
+                            let alert_level = buffer[5];
+                            let alert_desc = buffer[6];
 
                             tracing::debug!(
                                 "SCSV test: Alert level: 0x{:02x}, description: 0x{:02x}",
@@ -292,53 +366,51 @@ impl FallbackScsvTester {
                                 alert_desc
                             );
 
-                            // Check for inappropriate_fallback (0x56) alert
                             let has_inappropriate_fallback_alert = alert_desc == 0x56;
 
                             if has_inappropriate_fallback_alert {
                                 tracing::info!(
                                     "✓ Server correctly rejected inappropriate fallback with alert 0x56 (inappropriate_fallback)"
                                 );
+                                Ok(ScsvSupport::supported())
                             } else {
                                 tracing::debug!(
                                     "Server sent alert 0x{:02x} (not inappropriate_fallback)",
                                     alert_desc
                                 );
+                                Ok(ScsvSupport::not_supported())
                             }
-
-                            Ok(has_inappropriate_fallback_alert)
                         } else {
-                            // Server accepted the fallback - not properly protected
                             tracing::warn!(
                                 "✗ Server at IP {} accepted fallback (version 0x{:04x}) - NOT protected by SCSV",
                                 addr.ip(),
                                 test_version
                             );
-                            Ok(false)
+                            Ok(ScsvSupport::not_supported())
                         }
                     }
                     Ok(Ok(_)) => {
                         tracing::debug!(
                             "SCSV test: Empty response - server may have rejected connection"
                         );
-                        Ok(false)
+                        Ok(ScsvSupport::inconclusive())
                     }
                     Err(e) => {
                         tracing::debug!("SCSV test: Timeout reading response: {}", e);
-                        Ok(false)
+                        Ok(ScsvSupport::inconclusive())
                     }
                     Ok(Err(e)) => {
                         tracing::debug!(
                             "SCSV test: Error reading response: {} - Server may have closed connection",
                             e
                         );
-                        Ok(false)
+                        Ok(ScsvSupport::inconclusive())
                     }
                 }
             }
             _ => {
                 tracing::debug!("SCSV test: Failed to connect to server");
-                Ok(false)
+                Ok(ScsvSupport::inconclusive())
             }
         }
     }
@@ -348,7 +420,7 @@ impl FallbackScsvTester {
         let mut hello = Vec::new();
 
         // TLS Record: Handshake
-        hello.push(0x16);
+        hello.push(CONTENT_TYPE_HANDSHAKE); // 0x16
         hello.push(((version >> 8) & 0xff) as u8);
         hello.push((version & 0xff) as u8);
 
@@ -358,7 +430,7 @@ impl FallbackScsvTester {
         hello.push(0x00);
 
         // Handshake: ClientHello
-        hello.push(0x01);
+        hello.push(HANDSHAKE_TYPE_CLIENT_HELLO); // 0x01
 
         // Handshake length placeholder
         let hs_len_pos = hello.len();
@@ -395,8 +467,8 @@ impl FallbackScsvTester {
         }
 
         // Compression (none)
-        hello.push(0x01);
-        hello.push(0x00);
+        hello.push(0x01); // 1 compression method
+        hello.push(COMPRESSION_NULL); // 0x00
 
         // Extensions
         let ext_start_pos = hello.len();
@@ -447,6 +519,66 @@ impl FallbackScsvTester {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct ScsvSupport {
+    supported: bool,
+    vulnerable: bool,
+    accepts_downgrade: bool,
+    inconclusive: bool,
+}
+
+impl ScsvSupport {
+    fn supported() -> Self {
+        Self {
+            supported: true,
+            vulnerable: false,
+            accepts_downgrade: false,
+            inconclusive: false,
+        }
+    }
+
+    fn not_supported() -> Self {
+        Self {
+            supported: false,
+            vulnerable: true,
+            accepts_downgrade: true,
+            inconclusive: false,
+        }
+    }
+
+    fn inconclusive() -> Self {
+        Self {
+            supported: false,
+            vulnerable: false,
+            accepts_downgrade: false,
+            inconclusive: true,
+        }
+    }
+}
+
+impl FallbackScsvTester<'_> {
+    fn baseline_fallback_accepted(
+        &self,
+        read_result: std::result::Result<
+            std::result::Result<usize, std::io::Error>,
+            tokio::time::error::Elapsed,
+        >,
+        buffer: &[u8],
+    ) -> bool {
+        match read_result {
+            Ok(Ok(n)) if n > 0 => {
+                // If we got an alert immediately without SCSV, baseline failed.
+                // Alert record requires at least 7 bytes (header + level + desc)
+                if n > 6 && buffer[0] == CONTENT_TYPE_ALERT {
+                    return false;
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+}
+
 /// TLS_FALLBACK_SCSV test result
 #[derive(Debug, Clone)]
 pub struct FallbackScsvTestResult {
@@ -476,13 +608,14 @@ mod tests {
 
     #[test]
     fn test_client_hello_with_scsv() {
-        let target = Target {
-            hostname: "example.com".to_string(),
-            port: 443,
-            ip_addresses: vec!["93.184.216.34".parse().unwrap()],
-        };
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["93.184.216.34".parse().unwrap()],
+        )
+        .unwrap();
 
-        let tester = FallbackScsvTester::new(target);
+        let tester = FallbackScsvTester::new(&target);
         let hello = tester.build_client_hello_with_scsv(0x0303, true);
 
         assert!(hello.len() > 50);
@@ -493,13 +626,14 @@ mod tests {
 
     #[test]
     fn test_client_hello_without_scsv() {
-        let target = Target {
-            hostname: "example.com".to_string(),
-            port: 443,
-            ip_addresses: vec!["93.184.216.34".parse().unwrap()],
-        };
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["93.184.216.34".parse().unwrap()],
+        )
+        .unwrap();
 
-        let tester = FallbackScsvTester::new(target);
+        let tester = FallbackScsvTester::new(&target);
         let hello = tester.build_client_hello_with_scsv(0x0303, false);
 
         // Should not have TLS_FALLBACK_SCSV

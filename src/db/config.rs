@@ -108,9 +108,23 @@ impl DatabaseConfig {
                     crate::TlsError::DatabaseError("Missing password".to_string())
                 })?;
 
+                // SECURITY: URL-encode password to handle special characters safely
+                // This prevents issues with passwords containing @, :, /, etc.
+                let encoded_password = urlencoding::encode(password);
+
+                // SECURITY WARNING: Log when embedding credentials in connection string
+                // Consider using environment variables or secret managers instead
+                if !password.is_empty() {
+                    tracing::warn!(
+                        "Database password is embedded in connection string. \
+                         Consider using PostgreSQL .pgpass file or environment variables \
+                         for more secure credential management."
+                    );
+                }
+
                 Ok(format!(
                     "postgres://{}:{}@{}:{}/{}",
-                    username, password, host, port, database
+                    username, encoded_password, host, port, database
                 ))
             }
             DatabaseType::Sqlite => {
@@ -206,14 +220,18 @@ mod tests {
             "pass".to_string(),
         );
 
-        let conn_str = config.connection_string().unwrap();
+        let conn_str = config
+            .connection_string()
+            .expect("test assertion should succeed");
         assert_eq!(conn_str, "postgres://user:pass@localhost:5432/testdb");
     }
 
     #[test]
     fn test_sqlite_connection_string() {
         let config = DatabaseConfig::sqlite(PathBuf::from("/tmp/test.db"));
-        let conn_str = config.connection_string().unwrap();
+        let conn_str = config
+            .connection_string()
+            .expect("test assertion should succeed");
         assert!(conn_str.contains("sqlite:"));
     }
 }
