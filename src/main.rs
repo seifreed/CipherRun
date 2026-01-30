@@ -117,22 +117,6 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    // Display banner (unless quiet mode or specific operational modes that don't need it)
-    if !args.output.quiet
-        && !args.api_server.enable
-        && !args.monitoring.enable
-        && !args.monitoring.test_alert
-        && !args.ct_logs.enable
-        && args.compare.is_none()
-        && args.changes.is_none()
-        && args.trends.is_none()
-        && args.dashboard.is_none()
-        && if args.database.init
-            || args.database.cleanup_days.is_some() || args.database.history.is_some() { args.target.is_some() || args.input_file.is_some() || args.mx_domain.is_some() } else { true }
-    {
-        display_banner();
-    }
-
     // Validate routing before creating command
     if let Err(e) = CommandRouter::validate_routing(&args) {
         eprintln!("Error: {}", e);
@@ -146,19 +130,4 @@ async fn main() -> Result<()> {
     command.execute().await?;
 
     Ok(())
-}
-
-fn display_banner() {
-    println!(
-        r#"
-    ╔═══════════════════════════════════════════════════════════╗
-    ║                     CipherRun v0.2.1                      ║
-    ║      Fast, Modular TLS/SSL Security Scanner (Rust)       ║
-    ║                                                           ║
-    ║              Author: Marc Rivero | @seifreed              ║
-    ╚═══════════════════════════════════════════════════════════╝
-
-    Licensed under GPL-3.0 | Use at your own risk
-    "#
-    );
 }
