@@ -44,21 +44,16 @@ impl CustomResolver {
         for resolver_str in resolvers {
             let resolver_str = resolver_str.trim();
 
-            let socket_addr = if resolver_str.contains(':') {
-                // Already has port
-                SocketAddr::from_str(resolver_str).map_err(|e| {
-                    crate::TlsError::InvalidHandshake {
-                        details: format!("Invalid resolver address '{}': {}", resolver_str, e),
-                    }
-                })?
-            } else {
-                // No port, use default DNS port 53
-                let ip = IpAddr::from_str(resolver_str).map_err(|e| {
-                    crate::TlsError::InvalidHandshake {
-                        details: format!("Invalid IP address '{}': {}", resolver_str, e),
-                    }
-                })?;
+            // Prefer full socket address parsing first (handles IPv4:port and [IPv6]:port).
+            let socket_addr = if let Ok(addr) = SocketAddr::from_str(resolver_str) {
+                addr
+            } else if let Ok(ip) = IpAddr::from_str(resolver_str) {
+                // Bare IP (IPv4 or IPv6) -> default DNS port 53.
                 SocketAddr::new(ip, 53)
+            } else {
+                return Err(crate::TlsError::InvalidHandshake {
+                    details: format!("Invalid resolver address '{}'", resolver_str),
+                });
             };
 
             parsed_resolvers.push(socket_addr);
