@@ -110,7 +110,7 @@ chrono = { version = "0.4", features = ["serde"] }
 base64 = "0.22"
 hex = "0.4"
 nom = "7.1"
-bytes = "1.8"
+bytes = "1.11"
 url = "2.5"
 urlencoding = "2.1"
 rand = "0.8"
