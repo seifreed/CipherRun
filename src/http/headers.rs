@@ -589,4 +589,207 @@ mod tests {
                 .any(|i| matches!(i.issue_type, IssueType::Insecure))
         );
     }
+
+    #[test]
+    fn test_extract_directive_case_insensitive() {
+        let value = "max-age=63072000; IncludeSubDomains";
+        let directive = SecurityHeaderChecker::extract_directive(value, "Max-Age");
+        assert_eq!(directive, Some("63072000"));
+    }
+
+    #[test]
+    fn test_extract_directive_missing() {
+        let value = "includeSubDomains; preload";
+        let directive = SecurityHeaderChecker::extract_directive(value, "max-age");
+        assert_eq!(directive, None);
+    }
+
+    #[test]
+    fn test_csp_missing_directives() {
+        let mut headers = HashMap::new();
+        headers.insert(
+            "Content-Security-Policy".to_string(),
+            "img-src 'self'".to_string(),
+        );
+
+        let issues = SecurityHeaderChecker::check_all_headers(&headers);
+        assert!(issues.iter().any(|i| {
+            i.header_name == "Content-Security-Policy" && matches!(i.issue_type, IssueType::Weak)
+        }));
+    }
+
+    #[test]
+    fn test_invalid_x_frame_options() {
+        let mut headers = HashMap::new();
+        headers.insert("X-Frame-Options".to_string(), "ALLOWALL".to_string());
+
+        let issues = SecurityHeaderChecker::check_all_headers(&headers);
+        assert!(issues.iter().any(|i| {
+            i.header_name == "X-Frame-Options" && matches!(i.issue_type, IssueType::Invalid)
+        }));
+    }
+
+    #[test]
+    fn test_x_content_type_options_invalid() {
+        let mut headers = HashMap::new();
+        headers.insert("X-Content-Type-Options".to_string(), "sniff".to_string());
+
+        let issues = SecurityHeaderChecker::check_all_headers(&headers);
+        assert!(issues.iter().any(|i| {
+            i.header_name == "X-Content-Type-Options" && matches!(i.issue_type, IssueType::Invalid)
+        }));
+    }
+
+    #[test]
+    fn test_x_xss_protection_disabled() {
+        let mut headers = HashMap::new();
+        headers.insert("X-XSS-Protection".to_string(), "0".to_string());
+
+        let issues = SecurityHeaderChecker::check_all_headers(&headers);
+        assert!(issues.iter().any(|i| {
+            i.header_name == "X-XSS-Protection" && matches!(i.issue_type, IssueType::Insecure)
+        }));
+    }
+
+    #[test]
+    fn test_referrer_policy_weak() {
+        let mut headers = HashMap::new();
+        headers.insert("Referrer-Policy".to_string(), "unsafe-url".to_string());
+
+        let issues = SecurityHeaderChecker::check_all_headers(&headers);
+        assert!(issues.iter().any(|i| {
+            i.header_name == "Referrer-Policy" && matches!(i.issue_type, IssueType::Weak)
+        }));
+    }
+
+    #[test]
+    fn test_permissions_policy_missing() {
+        let headers = HashMap::new();
+        let issues = SecurityHeaderChecker::check_all_headers(&headers);
+        assert!(issues.iter().any(|i| {
+            i.header_name == "Permissions-Policy" && matches!(i.issue_type, IssueType::Missing)
+        }));
+    }
+
+    #[test]
+    fn test_expect_ct_and_expect_staple_deprecated() {
+        let mut headers = HashMap::new();
+        headers.insert("Expect-CT".to_string(), "max-age=0".to_string());
+        headers.insert("Expect-Staple".to_string(), "max-age=0".to_string());
+
+        let issues = SecurityHeaderChecker::check_all_headers(&headers);
+        assert!(issues.iter().any(|i| {
+            i.header_name == "Expect-CT" && matches!(i.issue_type, IssueType::Deprecated)
+        }));
+        assert!(issues.iter().any(|i| {
+            i.header_name == "Expect-Staple" && matches!(i.issue_type, IssueType::Deprecated)
+        }));
+    }
+
+    #[test]
+    fn test_cors_wildcard_with_credentials() {
+        let mut headers = HashMap::new();
+        headers.insert("Access-Control-Allow-Origin".to_string(), "*".to_string());
+        headers.insert(
+            "Access-Control-Allow-Credentials".to_string(),
+            "true".to_string(),
+        );
+
+        let issues = SecurityHeaderChecker::check_all_headers(&headers);
+        assert!(issues.iter().any(|i| {
+            i.header_name == "Access-Control-Allow-Origin"
+                && matches!(i.issue_type, IssueType::Insecure)
+        }));
+    }
+
+    #[test]
+    fn test_find_header_case_insensitive() {
+        let mut headers = HashMap::new();
+        headers.insert("x-content-type-options".to_string(), "nosniff".to_string());
+
+        let found =
+            SecurityHeaderChecker::find_header_case_insensitive(&headers, "X-Content-Type-Options");
+        assert!(found.is_some());
+    }
+
+    #[test]
+    fn test_extract_directive_parses_value() {
+        let value = "max-age=31536000; includeSubDomains; preload";
+        let directive = SecurityHeaderChecker::extract_directive(value, "max-age");
+        assert_eq!(directive, Some("31536000"));
+    }
+
+    #[test]
+    fn test_hsts_invalid_max_age() {
+        let mut headers = HashMap::new();
+        headers.insert(
+            "Strict-Transport-Security".to_string(),
+            "max-age=abc".to_string(),
+        );
+
+        let issues = SecurityHeaderChecker::check_all_headers(&headers);
+        assert!(issues.iter().any(|i| {
+            i.header_name == "Strict-Transport-Security"
+                && matches!(i.issue_type, IssueType::Invalid)
+        }));
+    }
+
+    #[test]
+    fn test_hsts_missing_max_age() {
+        let mut headers = HashMap::new();
+        headers.insert(
+            "Strict-Transport-Security".to_string(),
+            "includeSubDomains".to_string(),
+        );
+
+        let issues = SecurityHeaderChecker::check_all_headers(&headers);
+        assert!(issues.iter().any(|i| {
+            i.header_name == "Strict-Transport-Security"
+                && matches!(i.issue_type, IssueType::Invalid)
+        }));
+    }
+
+    #[test]
+    fn test_hsts_missing_include_subdomains() {
+        let mut headers = HashMap::new();
+        headers.insert(
+            "Strict-Transport-Security".to_string(),
+            "max-age=31536000".to_string(),
+        );
+
+        let issues = SecurityHeaderChecker::check_all_headers(&headers);
+        assert!(issues.iter().any(|i| {
+            i.header_name == "Strict-Transport-Security"
+                && matches!(i.issue_type, IssueType::Weak)
+                && i.description.contains("include subdomains")
+        }));
+    }
+
+    #[test]
+    fn test_hsts_missing_preload() {
+        let mut headers = HashMap::new();
+        headers.insert(
+            "Strict-Transport-Security".to_string(),
+            "max-age=31536000; includeSubDomains".to_string(),
+        );
+
+        let issues = SecurityHeaderChecker::check_all_headers(&headers);
+        assert!(issues.iter().any(|i| {
+            i.header_name == "Strict-Transport-Security"
+                && matches!(i.issue_type, IssueType::Weak)
+                && i.description.contains("preload")
+        }));
+    }
+
+    #[test]
+    fn test_cors_wildcard_without_credentials_is_weak() {
+        let mut headers = HashMap::new();
+        headers.insert("Access-Control-Allow-Origin".to_string(), "*".to_string());
+
+        let issues = SecurityHeaderChecker::check_all_headers(&headers);
+        assert!(issues.iter().any(|i| {
+            i.header_name == "Access-Control-Allow-Origin"
+                && matches!(i.issue_type, IssueType::Weak)
+        }));
+    }
 }

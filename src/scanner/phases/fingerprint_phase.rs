@@ -16,7 +16,7 @@
 // - ServerHelloNetworkCapture (JA3S fingerprinting)
 // - JarmFingerprinter (JARM active fingerprinting)
 // - Ja3Database, Ja3sDatabase, JarmDatabase (signature matching)
-// - Args (CLI configuration for database paths, capture options)
+// - ScanRequest (scan configuration for database paths, capture options)
 //
 // Fingerprinting methods:
 // - JA3: Client TLS fingerprint (ClientHello parameters)
@@ -31,7 +31,8 @@
 // - TLS stack identification (OpenSSL, BoringSSL, NSS)
 
 use super::{ScanContext, ScanPhase};
-use crate::{Args, Result};
+use crate::Result;
+use crate::application::ScanRequest;
 use async_trait::async_trait;
 
 /// TLS fingerprinting phase
@@ -42,7 +43,7 @@ use async_trait::async_trait;
 /// - JA3S (passive server fingerprinting)
 /// - JARM (active server fingerprinting)
 ///
-/// Configuration sources (from Args):
+/// Configuration sources (from ScanRequest):
 /// - JA3 capture (--ja3)
 /// - JA3S capture (--ja3s)
 /// - JARM capture (--jarm)
@@ -253,7 +254,7 @@ impl ScanPhase for FingerprintPhase {
         "Capturing TLS Fingerprints"
     }
 
-    fn should_run(&self, args: &Args) -> bool {
+    fn should_run(&self, args: &ScanRequest) -> bool {
         // Run if any fingerprinting method is requested:
         // - JA3 client fingerprinting (--ja3)
         // - JA3S server fingerprinting (--ja3s)
@@ -264,21 +265,24 @@ impl ScanPhase for FingerprintPhase {
     async fn execute(&self, context: &mut ScanContext) -> Result<()> {
         // Capture JA3 if requested
         if context.args.fingerprint.ja3
-            && let Err(e) = self.capture_ja3(context).await {
-                eprintln!("  Failed to generate JA3 fingerprint: {}", e);
-            }
+            && let Err(e) = self.capture_ja3(context).await
+        {
+            eprintln!("  Failed to generate JA3 fingerprint: {}", e);
+        }
 
         // Capture JA3S if requested
         if context.args.fingerprint.ja3s
-            && let Err(e) = self.capture_ja3s(context).await {
-                eprintln!("  Failed to generate JA3S fingerprint: {}", e);
-            }
+            && let Err(e) = self.capture_ja3s(context).await
+        {
+            eprintln!("  Failed to generate JA3S fingerprint: {}", e);
+        }
 
         // Capture JARM if requested
         if context.args.fingerprint.jarm
-            && let Err(e) = self.capture_jarm(context).await {
-                eprintln!("  Failed to generate JARM fingerprint: {}", e);
-            }
+            && let Err(e) = self.capture_jarm(context).await
+        {
+            eprintln!("  Failed to generate JARM fingerprint: {}", e);
+        }
 
         Ok(())
     }
@@ -293,34 +297,108 @@ mod tests {
     fn test_fingerprint_phase_should_run() {
         let phase = FingerprintPhase::new();
 
-        // Test with --ja3 flag
-        let mut args = Args::default();
+        // Test with --ja3 flag (explicit)
+        let mut args = ScanRequest::default();
         args.fingerprint.ja3 = true;
         assert!(phase.should_run(&args));
 
-        // Test with --ja3s flag
-        let mut args = Args::default();
+        // Test with --ja3s flag (explicit)
+        let mut args = ScanRequest::default();
         args.fingerprint.ja3s = true;
         assert!(phase.should_run(&args));
 
-        // Test with --jarm flag
-        let mut args = Args::default();
+        // Test with --jarm flag (explicit)
+        let mut args = ScanRequest::default();
         args.fingerprint.jarm = true;
         assert!(phase.should_run(&args));
 
-        // Test with --all flag (should NOT run unless fingerprint flags set)
-        let mut args = Args::default();
-        args.scan.all = true;
-        assert!(!phase.should_run(&args));
+        // Test with default args (fingerprint flags are true by default)
+        // ScanRequestFingerprint::default() sets ja3=true, ja3s=true, jarm=true
+        let args = ScanRequest::default();
+        assert!(phase.should_run(&args), "Default config should run fingerprint phase");
 
-        // Test with no relevant flags
-        let args = Args::default();
-        assert!(!phase.should_run(&args));
+        // Test with all fingerprint flags explicitly disabled
+        let mut args = ScanRequest::default();
+        args.fingerprint.ja3 = false;
+        args.fingerprint.ja3s = false;
+        args.fingerprint.jarm = false;
+        assert!(!phase.should_run(&args), "Should not run when all fingerprint flags disabled");
+
+        // Test with --all flag alone (fingerprint still runs because flags are true by default)
+        let mut args = ScanRequest::default();
+        args.scan.all = true;
+        // Default fingerprint flags are true, so this should run
+        assert!(phase.should_run(&args), "Should run with --all since fingerprint flags default to true");
+
+        // Test with --all but fingerprint explicitly disabled
+        let mut args = ScanRequest::default();
+        args.scan.all = true;
+        args.fingerprint.ja3 = false;
+        args.fingerprint.ja3s = false;
+        args.fingerprint.jarm = false;
+        assert!(!phase.should_run(&args), "Should not run with --all when fingerprint disabled");
     }
 
     #[test]
     fn test_fingerprint_phase_name() {
         let phase = FingerprintPhase::new();
         assert_eq!(phase.name(), "Capturing TLS Fingerprints");
+    }
+
+    #[test]
+    fn test_fingerprint_phase_should_run_multiple_flags() {
+        let phase = FingerprintPhase::new();
+        let mut args = ScanRequest::default();
+        args.fingerprint.ja3 = true;
+        args.fingerprint.jarm = true;
+        assert!(phase.should_run(&args));
+    }
+
+    #[test]
+    fn test_fingerprint_phase_default_trait() {
+        let phase: FingerprintPhase = Default::default();
+        assert_eq!(phase.name(), "Capturing TLS Fingerprints");
+    }
+
+    #[tokio::test]
+    async fn test_execute_no_flags_no_fingerprints() {
+        // This test verifies that when no fingerprint flags are set,
+        // the execute method doesn't modify the results
+        let target = crate::utils::network::Target::with_ips(
+            "localhost".to_string(),
+            443,
+            vec!["127.0.0.1".parse().expect("valid IP")],
+        )
+        .expect("test assertion should succeed");
+
+        let mut args = ScanRequest::default();
+        // Explicitly ensure all fingerprint flags are false
+        args.fingerprint.ja3 = false;
+        args.fingerprint.ja3s = false;
+        args.fingerprint.jarm = false;
+        
+        let args = Arc::new(args);
+        let mut context = ScanContext::new(target, args, None);
+
+        // Before execute, fingerprints should be None
+        assert!(context.results.fingerprints.is_none());
+
+        let phase = FingerprintPhase::new();
+        
+        // Execute should run without error since no fingerprint flags are set
+        // and should_run returns false
+        let result = phase.execute(&mut context).await;
+        
+        // The execute should complete successfully (no fingerprint methods called)
+        // Even if connection fails, execute should return Ok since errors are caught internally
+        // But since should_run is false, it should do nothing
+        assert!(result.is_ok(), "execute should return Ok with no flags");
+
+        // After execute, fingerprints should still be None
+        // (we didn't set any fingerprint flags)
+        assert!(
+            context.results.fingerprints.is_none(),
+            "fingerprints should remain None when no flags are set"
+        );
     }
 }

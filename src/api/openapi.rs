@@ -139,3 +139,30 @@ impl Modify for SecurityAddon {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_openapi_contains_security_scheme_and_title() {
+        let doc = ApiDoc::openapi();
+        assert_eq!(doc.info.title, "CipherRun API");
+
+        let schemes = doc
+            .components
+            .as_ref()
+            .map(|c| &c.security_schemes)
+            .expect("security schemes should be present");
+
+        assert!(schemes.contains_key("api_key"));
+    }
+
+    #[test]
+    fn test_openapi_has_servers() {
+        let doc = ApiDoc::openapi();
+        assert!(doc.servers.is_some());
+        let servers = doc.servers.unwrap();
+        assert!(servers.len() >= 1);
+    }
+}

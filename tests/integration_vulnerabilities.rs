@@ -214,11 +214,11 @@ async fn test_heartbleed_vulnerability_async() {
     let result = tester.test().await;
 
     match result {
-        Ok(is_vulnerable) => {
-            println!("Heartbleed test result: vulnerable={}", is_vulnerable);
+        Ok(heartbleed_result) => {
+            println!("Heartbleed test result: vulnerable={}", heartbleed_result.vulnerable);
             // Modern servers should not be vulnerable to Heartbleed
             assert!(
-                !is_vulnerable,
+                !heartbleed_result.vulnerable,
                 "Modern server should not be vulnerable to Heartbleed"
             );
         }

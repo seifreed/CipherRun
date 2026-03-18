@@ -178,10 +178,7 @@ impl AdaptiveController {
             sub_duration(state.socket_timeout, Duration::from_secs(1)),
             state.base_socket_timeout,
         );
-        state.backoff = max_duration(
-            div_duration(state.backoff, 2),
-            state.base_backoff,
-        );
+        state.backoff = max_duration(div_duration(state.backoff, 2), state.base_backoff);
         state.max_backoff = max_duration(
             sub_duration(state.max_backoff, div_duration(state.base_max_backoff, 4)),
             state.base_max_backoff,
@@ -264,5 +261,64 @@ mod tests {
         let snapshot = controller.snapshot();
         assert!(snapshot.connect_timeout <= Duration::from_secs(7));
         assert!(snapshot.max_concurrency >= 1);
+    }
+
+    #[test]
+    fn test_concurrency_reduces_on_retries_and_timeouts() {
+        let controller = AdaptiveController::new(
+            Duration::from_secs(5),
+            Duration::from_secs(5),
+            Duration::from_millis(100),
+            Duration::from_secs(2),
+            3,
+            4,
+        );
+
+        controller.on_retryable_error();
+        controller.on_retryable_error();
+        controller.on_retryable_error();
+        let snapshot = controller.snapshot();
+        assert!(snapshot.max_concurrency <= 3);
+
+        controller.on_timeout();
+        controller.on_timeout();
+        let snapshot = controller.snapshot();
+        assert!(snapshot.max_concurrency <= 2);
+    }
+
+    #[test]
+    fn test_duration_helpers_edge_cases() {
+        let base = Duration::from_millis(250);
+        assert_eq!(sub_duration(base, base), Duration::from_millis(0));
+        assert_eq!(div_duration(base, 0), base);
+        assert_eq!(
+            min_duration(Duration::from_millis(5), Duration::from_millis(10)),
+            Duration::from_millis(5)
+        );
+        assert_eq!(
+            max_duration(Duration::from_millis(5), Duration::from_millis(10)),
+            Duration::from_millis(10)
+        );
+    }
+
+    #[test]
+    fn test_success_streak_below_threshold_no_recovery() {
+        let controller = AdaptiveController::new(
+            Duration::from_secs(5),
+            Duration::from_secs(5),
+            Duration::from_millis(100),
+            Duration::from_secs(2),
+            3,
+            6,
+        );
+
+        controller.on_timeout();
+        for _ in 0..4 {
+            controller.on_success();
+        }
+
+        let snapshot = controller.snapshot();
+        assert!(snapshot.connect_timeout >= Duration::from_secs(6));
+        assert!(snapshot.max_concurrency <= 6);
     }
 }

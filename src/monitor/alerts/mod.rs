@@ -156,6 +156,66 @@ impl Alert {
     }
 }
 
+#[cfg(test)]
+mod tests_extra {
+    use super::*;
+    use crate::monitor::detector::{ChangeEvent, ChangeSeverity, ChangeType};
+
+    #[test]
+    fn test_certificate_change_alert_severity_and_message() {
+        let changes = vec![
+            ChangeEvent {
+                change_type: ChangeType::Renewal,
+                severity: ChangeSeverity::Info,
+                description: "Renewed".to_string(),
+                previous_value: Some("old".to_string()),
+                current_value: Some("new".to_string()),
+                detected_at: Utc::now(),
+            },
+            ChangeEvent {
+                change_type: ChangeType::IssuerChange,
+                severity: ChangeSeverity::Critical,
+                description: "Issuer changed".to_string(),
+                previous_value: Some("CA1".to_string()),
+                current_value: Some("CA2".to_string()),
+                detected_at: Utc::now(),
+            },
+        ];
+
+        let details = AlertDetails {
+            certificate_serial: Some("01".to_string()),
+            certificate_issuer: Some("CA2".to_string()),
+            certificate_expiry: Some("2030-01-01".to_string()),
+            previous_serial: Some("00".to_string()),
+            scan_time: Utc::now(),
+        };
+
+        let alert = Alert::certificate_change("example.com".to_string(), changes, details);
+
+        assert_eq!(alert.hostname, "example.com");
+        assert_eq!(alert.severity, ChangeSeverity::Critical);
+        assert!(alert.message.contains("Certificate changed"));
+        matches!(alert.alert_type, AlertType::CertificateChange { .. });
+    }
+
+    #[test]
+    fn test_expiry_warning_severity_and_dedup_key() {
+        let details = AlertDetails {
+            certificate_serial: Some("01".to_string()),
+            certificate_issuer: Some("CA1".to_string()),
+            certificate_expiry: Some("2030-01-01".to_string()),
+            previous_serial: None,
+            scan_time: chrono::Utc::now(),
+        };
+
+        let alert = Alert::expiry_warning("example.com".to_string(), 3, details);
+
+        assert_eq!(alert.severity, ChangeSeverity::High);
+        assert_eq!(alert.dedup_key(), "expiry:example.com:3");
+        matches!(alert.alert_type, AlertType::ExpiryWarning { .. });
+    }
+}
+
 /// Alert manager - coordinates multiple alert channels
 pub struct AlertManager {
     channels: Vec<Box<dyn AlertChannel>>,

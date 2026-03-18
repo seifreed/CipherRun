@@ -2,13 +2,14 @@
 
 use crate::api::jobs::{JobQueue, ScanJob};
 use crate::api::models::request::ScanOptions;
-use crate::api::models::response::ProgressMessage;
-use crate::cli::Args;
+use crate::api::models::response::{ProgressMessage, ScanStatus};
+use crate::api::state::ApiStats;
+use crate::application::ScanRequest;
 use crate::scanner::{ScanResults, Scanner};
 use anyhow::Result;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{Semaphore, broadcast};
+use tokio::sync::{RwLock, Semaphore, broadcast};
 use tracing::{error, info, warn};
 
 /// Scan executor for processing background jobs
@@ -17,6 +18,7 @@ pub struct ScanExecutor {
     max_concurrent: usize,
     semaphore: Arc<Semaphore>,
     progress_tx: broadcast::Sender<ProgressMessage>,
+    stats: Option<Arc<RwLock<ApiStats>>>,
     shutdown_tx: tokio::sync::watch::Sender<bool>,
     shutdown_rx: tokio::sync::watch::Receiver<bool>,
 }
@@ -33,9 +35,15 @@ impl ScanExecutor {
             max_concurrent,
             semaphore,
             progress_tx,
+            stats: None,
             shutdown_tx,
             shutdown_rx,
         }
+    }
+
+    pub fn with_stats(mut self, stats: Arc<RwLock<ApiStats>>) -> Self {
+        self.stats = Some(stats);
+        self
     }
 
     /// Get progress broadcaster
@@ -104,6 +112,13 @@ impl ScanExecutor {
 
     /// Execute a scan job
     async fn execute_scan(&self, queue: Arc<dyn JobQueue>, mut job: ScanJob) {
+        if let Ok(Some(current)) = queue.get_job(&job.id).await
+            && matches!(current.status, ScanStatus::Cancelled)
+        {
+            info!("Skipping cancelled scan job {} before start", job.id);
+            return;
+        }
+
         info!("Starting scan job {} for target {}", job.id, job.target);
 
         // Mark job as started
@@ -115,21 +130,102 @@ impl ScanExecutor {
         // Send progress update
         self.send_progress(&job, 0, "Starting scan");
 
+        let progress_tx = self.progress_tx.clone();
+        let job_for_scan = job.clone();
+        let mut scan_task =
+            tokio::spawn(async move { Self::run_scan(&job_for_scan, &progress_tx).await });
+
+        let scan_result = loop {
+            tokio::select! {
+                joined = &mut scan_task => {
+                    break match joined {
+                        Ok(result) => result,
+                        Err(err) if err.is_cancelled() => {
+                            info!("Scan job {} task aborted after cancellation", job.id);
+                            return;
+                        }
+                        Err(err) => Err(anyhow::anyhow!("Scan task join error: {}", err)),
+                    };
+                }
+                _ = tokio::time::sleep(Duration::from_millis(200)) => {
+                    if let Ok(Some(current)) = queue.get_job(&job.id).await
+                        && matches!(current.status, ScanStatus::Cancelled)
+                    {
+                        info!("Aborting running scan job {} after cancellation request", job.id);
+                        scan_task.abort();
+                        let _ = (&mut scan_task).await;
+                        let _ = self.progress_tx.send(ProgressMessage::new(&job.id, job.progress, "cancelled"));
+                        return;
+                    }
+                }
+            }
+        };
+
         // Execute the scan
-        match Self::run_scan(&job, &self.progress_tx).await {
+        match scan_result {
             Ok(results) => {
                 info!("Scan job {} completed successfully", job.id);
-                job.mark_completed(results);
+                let duration_ms = job
+                    .started_at
+                    .map(|started| (chrono::Utc::now() - started).num_milliseconds().max(0) as u64)
+                    .unwrap_or_default();
+                let mut cancelled = false;
 
-                let msg = ProgressMessage::completed(&job.id);
+                if let Ok(Some(current)) = queue.get_job(&job.id).await {
+                    if matches!(current.status, ScanStatus::Cancelled) {
+                        cancelled = true;
+                        job = current;
+                        info!(
+                            "Scan job {} finished after cancellation request; preserving cancelled state",
+                            job.id
+                        );
+                    } else {
+                        job.mark_completed(results);
+                    }
+                } else {
+                    job.mark_completed(results);
+                }
+
+                let msg = if cancelled {
+                    ProgressMessage::new(&job.id, job.progress, "cancelled")
+                } else {
+                    ProgressMessage::completed(&job.id)
+                };
                 let _ = self.progress_tx.send(msg);
+                if !cancelled && let Some(stats) = &self.stats {
+                    stats.write().await.record_completed_scan(duration_ms);
+                }
             }
             Err(e) => {
                 let error_msg = e.to_string();
                 error!("Scan job {} failed: {}", job.id, error_msg);
-                let msg = ProgressMessage::failed(&job.id, &error_msg);
+                let mut cancelled = false;
+                if let Ok(Some(current)) = queue.get_job(&job.id).await {
+                    if matches!(current.status, ScanStatus::Cancelled) {
+                        cancelled = true;
+                        job = current;
+                        info!(
+                            "Scan job {} failed after cancellation request; preserving cancelled state",
+                            job.id
+                        );
+                    } else {
+                        job.mark_failed(error_msg);
+                        if let Some(stats) = &self.stats {
+                            stats.write().await.record_failed_scan();
+                        }
+                    }
+                } else {
+                    job.mark_failed(error_msg);
+                    if let Some(stats) = &self.stats {
+                        stats.write().await.record_failed_scan();
+                    }
+                }
+                let msg = if cancelled {
+                    ProgressMessage::new(&job.id, job.progress, "cancelled")
+                } else {
+                    ProgressMessage::failed(&job.id, &job.error.clone().unwrap_or_default())
+                };
                 let _ = self.progress_tx.send(msg);
-                job.mark_failed(error_msg);
             }
         }
 
@@ -140,6 +236,7 @@ impl ScanExecutor {
 
         // Call webhook if configured
         if let Some(webhook_url) = &job.webhook_url
+            && !matches!(job.status, ScanStatus::Cancelled)
             && let Err(e) = Self::send_webhook(webhook_url, &job).await
         {
             warn!("Failed to send webhook for job {}: {}", job.id, e);
@@ -151,13 +248,12 @@ impl ScanExecutor {
         job: &ScanJob,
         progress_tx: &broadcast::Sender<ProgressMessage>,
     ) -> Result<ScanResults> {
-        // Convert ScanOptions to Args
-        let args = Self::options_to_args(&job.target, &job.options)?;
+        let request = Self::options_to_request(&job.target, &job.options);
 
         let _ = progress_tx.send(ProgressMessage::new(&job.id, 5, "Initializing scanner"));
 
         // Create scanner
-        let scanner = Scanner::new(args)?;
+        let scanner = Scanner::new(request)?;
 
         let _ = progress_tx.send(ProgressMessage::new(&job.id, 10, "Resolving target"));
 
@@ -176,55 +272,38 @@ impl ScanExecutor {
         Ok(results)
     }
 
-    /// Convert ScanOptions to Args
-    #[allow(clippy::field_reassign_with_default)]
-    fn options_to_args(target: &str, options: &ScanOptions) -> Result<Args> {
-        let mut args = Args::default();
-
-        args.target = Some(target.to_string());
-        args.output.quiet = true; // Suppress output
-
-        // Set timeout
-        args.connection.socket_timeout = Some(options.timeout_seconds);
-
-        // Protocol testing
-        if options.test_protocols || options.full_scan {
-            args.scan.protocols = true;
+    fn options_to_request(target: &str, options: &ScanOptions) -> ScanRequest {
+        ScanRequest {
+            target: Some(target.to_string()),
+            scan: crate::application::scan_request::ScanRequestScan {
+                protocols: options.test_protocols || options.full_scan,
+                each_cipher: options.test_ciphers || options.full_scan,
+                vulnerabilities: options.test_vulnerabilities || options.full_scan,
+                headers: options.test_http_headers || options.full_scan,
+                all: options.full_scan,
+                full: options.full_scan,
+                ..Default::default()
+            },
+            network: crate::application::scan_request::ScanRequestNetwork {
+                ipv4_only: options.ipv4_only,
+                ipv6_only: options.ipv6_only,
+                ..Default::default()
+            },
+            connection: crate::application::scan_request::ScanRequestConnection {
+                socket_timeout: Some(options.timeout_seconds),
+                ..Default::default()
+            },
+            fingerprint: crate::application::scan_request::ScanRequestFingerprint {
+                client_simulation: options.client_simulation || options.full_scan,
+                ..Default::default()
+            },
+            starttls: crate::application::scan_request::ScanRequestStarttls {
+                protocol: options.starttls_protocol.clone(),
+                ..Default::default()
+            },
+            ip: options.ip.clone(),
+            ..Default::default()
         }
-
-        // Cipher testing
-        if options.test_ciphers || options.full_scan {
-            args.scan.each_cipher = true;
-        }
-
-        // Vulnerability testing
-        if options.test_vulnerabilities || options.full_scan {
-            args.scan.vulnerabilities = true;
-        }
-
-        // HTTP headers
-        if options.test_http_headers || options.full_scan {
-            args.scan.headers = true;
-        }
-
-        // Client simulation
-        if options.client_simulation || options.full_scan {
-            args.fingerprint.client_simulation = true;
-        }
-
-        args.starttls.protocol = options.starttls_protocol.clone();
-
-        args.network.ipv4_only = options.ipv4_only;
-        args.network.ipv6_only = options.ipv6_only;
-
-        args.ip = options.ip.clone();
-
-        // Full scan flag
-        if options.full_scan {
-            args.scan.all = true;
-        }
-
-        Ok(args)
     }
 
     fn send_progress(&self, job: &ScanJob, progress: u8, stage: &str) {
@@ -273,8 +352,91 @@ impl Clone for ScanExecutor {
             max_concurrent: self.max_concurrent,
             semaphore: self.semaphore.clone(),
             progress_tx: self.progress_tx.clone(),
+            stats: self.stats.clone(),
             shutdown_tx: self.shutdown_tx.clone(),
             shutdown_rx: self.shutdown_rx.clone(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_options_to_request_basic_flags() {
+        let options = ScanOptions {
+            test_protocols: true,
+            test_ciphers: true,
+            test_vulnerabilities: true,
+            test_http_headers: true,
+            client_simulation: true,
+            timeout_seconds: 12,
+            starttls_protocol: Some("smtp".to_string()),
+            ipv4_only: true,
+            ipv6_only: false,
+            ip: Some("192.0.2.1".to_string()),
+            full_scan: false,
+            ..Default::default()
+        };
+
+        let request = ScanExecutor::options_to_request("example.com:443", &options);
+
+        assert_eq!(request.target.as_deref(), Some("example.com:443"));
+        assert_eq!(request.connection.socket_timeout, Some(12));
+        assert!(request.scan.protocols);
+        assert!(request.scan.each_cipher);
+        assert!(request.scan.vulnerabilities);
+        assert!(request.scan.headers);
+        assert!(request.fingerprint.client_simulation);
+        assert_eq!(request.starttls.protocol.as_deref(), Some("smtp"));
+        assert!(request.network.ipv4_only);
+        assert!(!request.network.ipv6_only);
+        assert_eq!(request.ip.as_deref(), Some("192.0.2.1"));
+        assert!(!request.scan.all);
+    }
+
+    #[test]
+    fn test_options_to_request_full_scan() {
+        let options = ScanOptions {
+            full_scan: true,
+            ..Default::default()
+        };
+
+        let request = ScanExecutor::options_to_request("example.com", &options);
+
+        assert!(request.scan.protocols);
+        assert!(request.scan.each_cipher);
+        assert!(request.scan.vulnerabilities);
+        assert!(request.scan.headers);
+        assert!(request.fingerprint.client_simulation);
+        assert!(request.scan.all);
+    }
+
+    #[test]
+    fn test_options_to_request_minimal() {
+        let options = ScanOptions::default();
+        let request = ScanExecutor::options_to_request("example.com:443", &options);
+
+        assert_eq!(request.target.as_deref(), Some("example.com:443"));
+        assert!(!request.scan.protocols);
+        assert!(!request.scan.each_cipher);
+        assert!(!request.scan.vulnerabilities);
+        assert!(!request.scan.headers);
+        assert!(!request.scan.all);
+    }
+
+    #[test]
+    fn test_options_to_request_ipv6_only() {
+        let options = ScanOptions {
+            ipv6_only: true,
+            ..Default::default()
+        };
+
+        let request = ScanExecutor::options_to_request("example.com", &options);
+
+        assert!(request.network.ipv6_only);
+        assert!(!request.network.ipv4_only);
+        assert!(request.starttls.protocol.is_none());
     }
 }

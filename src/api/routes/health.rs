@@ -1,6 +1,8 @@
 // Health Check Route
 
-use crate::api::{models::response::HealthResponse, state::AppState};
+use crate::api::{
+    models::response::HealthResponse, presenters::health::present_health_response, state::AppState,
+};
 use axum::{Json, extract::State};
 use std::sync::Arc;
 
@@ -29,14 +31,13 @@ pub async fn health_check(State(state): State<Arc<AppState>>) -> Json<HealthResp
         Some("not_configured".to_string())
     };
 
-    Json(HealthResponse {
-        status: "healthy".to_string(),
-        version: env!("CARGO_PKG_VERSION").to_string(),
-        uptime_seconds: state.uptime_seconds(),
+    Json(present_health_response(
+        env!("CARGO_PKG_VERSION").to_string(),
+        state.uptime_seconds(),
         active_scans,
         queued_scans,
-        database: database_status,
-    })
+        database_status,
+    ))
 }
 
 /// Check database health with a simple query
@@ -56,5 +57,37 @@ async fn check_database_health(db: &crate::db::connection::DatabasePool) -> crat
             })?;
             Ok(())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::config::ApiConfig;
+    use crate::db::{DatabaseConfig, DatabasePool};
+    use std::path::PathBuf;
+
+    #[tokio::test]
+    async fn test_health_check_without_db() {
+        let state = AppState::new(ApiConfig::default()).expect("state should build");
+        let Json(response) = health_check(State(Arc::new(state))).await;
+
+        assert_eq!(response.status, "healthy");
+        assert_eq!(response.version, env!("CARGO_PKG_VERSION"));
+        assert_eq!(response.database.as_deref(), Some("not_configured"));
+        assert_eq!(response.active_scans, 0);
+        assert_eq!(response.queued_scans, 0);
+    }
+
+    #[tokio::test]
+    async fn test_health_check_with_sqlite_db() {
+        let config = DatabaseConfig::sqlite(PathBuf::from(":memory:"));
+        let pool = DatabasePool::new(&config).await.expect("db should build");
+
+        let mut state = AppState::new(ApiConfig::default()).expect("state should build");
+        state.db_pool = Some(Arc::new(pool));
+
+        let Json(response) = health_check(State(Arc::new(state))).await;
+        assert_eq!(response.database.as_deref(), Some("connected"));
     }
 }

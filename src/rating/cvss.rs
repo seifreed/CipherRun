@@ -476,4 +476,37 @@ mod tests {
         let score_zero = CvssCalculator::calculate_base_score(&metrics_zero);
         assert_eq!(score_zero, 0.0);
     }
+
+    #[test]
+    fn test_cvss_metric_scores_and_labels() {
+        assert_eq!(AttackVector::Adjacent.score(), 0.62);
+        assert_eq!(AttackVector::Adjacent.as_str(), "A");
+        assert_eq!(AttackComplexity::High.score(), 0.44);
+        assert_eq!(AttackComplexity::High.as_str(), "H");
+        assert_eq!(UserInteraction::Required.score(), 0.62);
+        assert_eq!(UserInteraction::Required.as_str(), "R");
+        assert_eq!(Impact::Low.score(), 0.22);
+        assert_eq!(Impact::Low.as_str(), "L");
+    }
+
+    #[test]
+    fn test_privileges_required_scores_with_scope() {
+        assert_eq!(PrivilegesRequired::Low.score(false), 0.62);
+        assert_eq!(PrivilegesRequired::Low.score(true), 0.68);
+        assert_eq!(PrivilegesRequired::High.score(false), 0.27);
+        assert_eq!(PrivilegesRequired::High.score(true), 0.50);
+    }
+
+    #[test]
+    fn test_scope_and_severity_helpers() {
+        assert!(Scope::Changed.is_changed());
+        assert!(!Scope::Unchanged.is_changed());
+        assert_eq!(CvssSeverity::High.as_str(), "High");
+        assert_eq!(CvssSeverity::None.as_str(), "None");
+    }
+
+    #[test]
+    fn test_cvss_severity_boundary_medium() {
+        assert_eq!(CvssSeverity::from_score(4.0), CvssSeverity::Medium);
+    }
 }

@@ -159,7 +159,7 @@ impl MxTester {
             mx_args.output.quiet = true;
 
             // Create scanner and run
-            let result = match Scanner::new(mx_args.clone()) {
+            let result = match Scanner::new(mx_args.to_scan_request()) {
                 Ok(scanner) => scanner.run().await,
                 Err(e) => Err(e),
             };
@@ -289,6 +289,10 @@ impl MxTester {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::TlsError;
+    use crate::rating::grader::Grade;
+    use crate::rating::scoring::RatingResult;
+    use crate::scanner::{RatingResults, ScanResults};
 
     #[test]
     fn test_mx_record_creation() {
@@ -312,5 +316,219 @@ mod tests {
         assert_eq!(records.len(), 2);
         assert_eq!(records[0].priority, 10);
         assert_eq!(records[0].hostname, "mx1.example.com");
+    }
+
+    #[test]
+    fn test_parse_nslookup_output() {
+        let tester = MxTester::new("example.com".to_string());
+        let output = b"example.com\tmail exchanger = 5 mx1.example.com.\nexample.com\tmail exchanger = 10 mx2.example.com.\n";
+
+        let records = tester
+            .parse_nslookup_output(output)
+            .expect("test assertion should succeed");
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].priority, 5);
+        assert_eq!(records[0].hostname, "mx1.example.com");
+    }
+
+    #[test]
+    fn test_parse_dig_output_handles_whitespace() {
+        let tester = MxTester::new("example.com".to_string());
+        let output = b" 10   mx1.example.com. \n\n  30\tmx3.example.com.\n";
+
+        let records = tester
+            .parse_dig_output(output)
+            .expect("test assertion should succeed");
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].priority, 10);
+        assert_eq!(records[0].hostname, "mx1.example.com");
+        assert_eq!(records[1].priority, 30);
+        assert_eq!(records[1].hostname, "mx3.example.com");
+    }
+
+    #[test]
+    fn test_generate_mx_summary() {
+        let mx1 = MxRecord {
+            priority: 10,
+            hostname: "mx1.example.com".to_string(),
+        };
+        let mx2 = MxRecord {
+            priority: 20,
+            hostname: "mx2.example.com".to_string(),
+        };
+
+        let rating = RatingResult {
+            grade: Grade::A,
+            score: 95,
+            certificate_score: 90,
+            protocol_score: 95,
+            key_exchange_score: 95,
+            cipher_strength_score: 95,
+            warnings: vec![],
+        };
+
+        let mut ok_result = ScanResults::default();
+        ok_result.rating = Some(RatingResults {
+            ssl_rating: Some(rating),
+        });
+
+        let results: Vec<(MxRecord, Result<ScanResults>)> = vec![
+            (mx1, Ok(ok_result)),
+            (mx2, Err(TlsError::Other("fail".to_string()))),
+        ];
+
+        let summary = MxTester::generate_mx_summary(&results);
+        assert!(summary.contains("MX RECORDS SCAN SUMMARY"));
+        assert!(summary.contains("Successful"));
+        assert!(summary.contains("Failed"));
+        assert!(summary.contains("A"));
+    }
+
+    #[test]
+    fn test_parse_dig_output_skips_invalid_lines() {
+        let tester = MxTester::new("example.com".to_string());
+        let output = b"invalid\n10 mx.example.com.\nmx.only.\n";
+
+        let records = tester
+            .parse_dig_output(output)
+            .expect("test assertion should succeed");
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].priority, 10);
+        assert_eq!(records[0].hostname, "mx.example.com");
+    }
+
+    #[test]
+    fn test_parse_nslookup_output_skips_invalid_lines() {
+        let tester = MxTester::new("example.com".to_string());
+        let output = b"example.com no mail exchanger\nexample.com mail exchanger = x mx.example.com.\nexample.com\tmail exchanger = 20 mx20.example.com.\n";
+
+        let records = tester
+            .parse_nslookup_output(output)
+            .expect("test assertion should succeed");
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].priority, 20);
+        assert_eq!(records[0].hostname, "mx20.example.com");
+    }
+
+    #[test]
+    fn test_generate_mx_summary_without_grades() {
+        let mx = MxRecord {
+            priority: 5,
+            hostname: "mx.example.com".to_string(),
+        };
+
+        let results: Vec<(MxRecord, Result<ScanResults>)> = vec![(mx, Ok(ScanResults::default()))];
+        let summary = MxTester::generate_mx_summary(&results);
+
+        assert!(summary.contains("Individual MX Server Results"));
+        assert!(!summary.contains("SSL Labs Grade Distribution"));
+    }
+
+    #[test]
+    fn test_generate_mx_summary_error_line() {
+        let mx = MxRecord {
+            priority: 5,
+            hostname: "mx.example.com".to_string(),
+        };
+        let results: Vec<(MxRecord, Result<ScanResults>)> =
+            vec![(mx, Err(TlsError::Other("fail".to_string())))];
+
+        let summary = MxTester::generate_mx_summary(&results);
+        assert!(summary.contains("ERROR"));
+        assert!(summary.contains("fail"));
+    }
+
+    #[test]
+    fn test_generate_mx_summary_grade_distribution_multiple() {
+        let mx1 = MxRecord {
+            priority: 10,
+            hostname: "mx1.example.com".to_string(),
+        };
+        let mx2 = MxRecord {
+            priority: 20,
+            hostname: "mx2.example.com".to_string(),
+        };
+
+        let rating_a = RatingResult {
+            grade: Grade::A,
+            score: 95,
+            certificate_score: 90,
+            protocol_score: 95,
+            key_exchange_score: 95,
+            cipher_strength_score: 95,
+            warnings: vec![],
+        };
+        let rating_b = RatingResult {
+            grade: Grade::B,
+            score: 70,
+            certificate_score: 80,
+            protocol_score: 70,
+            key_exchange_score: 70,
+            cipher_strength_score: 70,
+            warnings: vec![],
+        };
+
+        let mut ok_a = ScanResults::default();
+        ok_a.rating = Some(RatingResults {
+            ssl_rating: Some(rating_a),
+        });
+
+        let mut ok_b = ScanResults::default();
+        ok_b.rating = Some(RatingResults {
+            ssl_rating: Some(rating_b),
+        });
+
+        let results: Vec<(MxRecord, Result<ScanResults>)> = vec![(mx1, Ok(ok_a)), (mx2, Ok(ok_b))];
+
+        let summary = MxTester::generate_mx_summary(&results);
+        assert!(summary.contains("SSL Labs Grade Distribution"));
+        assert!(summary.contains("A: 1"));
+        assert!(summary.contains("B: 1"));
+    }
+
+    #[test]
+    fn test_parse_dig_output_empty() {
+        let tester = MxTester::new("example.com".to_string());
+        let output = b"";
+        let records = tester
+            .parse_dig_output(output)
+            .expect("test assertion should succeed");
+        assert!(records.is_empty());
+    }
+
+    #[test]
+    fn test_parse_nslookup_output_empty() {
+        let tester = MxTester::new("example.com".to_string());
+        let output = b"example.com has no mail exchanger\n";
+        let records = tester
+            .parse_nslookup_output(output)
+            .expect("test assertion should succeed");
+        assert!(records.is_empty());
+    }
+
+    #[test]
+    fn test_generate_mx_summary_with_failures() {
+        let mx = MxRecord {
+            priority: 10,
+            hostname: "mx.example.com".to_string(),
+        };
+        let results: Vec<(MxRecord, Result<ScanResults>)> = vec![
+            (mx.clone(), Ok(ScanResults::default())),
+            (mx, Err(TlsError::Other("fail".to_string()))),
+        ];
+
+        let summary = MxTester::generate_mx_summary(&results);
+        assert!(summary.contains("Failed"));
+    }
+
+    #[test]
+    fn test_parse_nslookup_output_trims_dot_and_spaces() {
+        let tester = MxTester::new("example.com".to_string());
+        let output = b"example.com mail exchanger = 10 mx.example.com.  \n";
+        let records = tester
+            .parse_nslookup_output(output)
+            .expect("test assertion should succeed");
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].hostname, "mx.example.com");
     }
 }

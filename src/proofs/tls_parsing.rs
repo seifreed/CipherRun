@@ -89,7 +89,10 @@ fn proof_extension_new_no_panic() {
     let ext = Extension::new(extension_type, data[..data_len].to_vec());
 
     // Verify invariants
-    kani::assert(ext.extension_type == extension_type, "Extension type must match");
+    kani::assert(
+        ext.extension_type == extension_type,
+        "Extension type must match",
+    );
 }
 
 /// Proof: Protocol conversion from u16 is total (handles all values)
@@ -200,4 +203,34 @@ fn proof_tls_version_parsing() {
     // Verify protocol is in valid state
     let _name = protocol.name();
     let _hex = protocol.as_hex();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_protocol_from_known_and_unknown() {
+        assert_eq!(Protocol::from(0x0303), Protocol::TLS12);
+        assert_eq!(Protocol::from(0x0304), Protocol::TLS13);
+        // Unknown values default to TLS 1.2
+        assert_eq!(Protocol::from(0x1234), Protocol::TLS12);
+    }
+
+    #[test]
+    fn test_extension_new_sets_name() {
+        let ext = Extension::new(0x000f, vec![1, 2, 3]);
+        assert_eq!(ext.extension_type, 0x000f);
+        assert_eq!(ext.name, "heartbeat");
+        assert_eq!(ext.data, vec![1, 2, 3]);
+
+        let unknown = Extension::new(0x9999, Vec::new());
+        assert_eq!(unknown.name, "unknown");
+    }
+
+    #[test]
+    fn test_server_hello_parse_short_input_fails() {
+        let result = ServerHelloParser::parse(&[]);
+        assert!(result.is_err());
+    }
 }

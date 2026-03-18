@@ -135,3 +135,104 @@ impl SignatureTester {
         Ok(SignatureEnumerationResult { algorithms })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::net::TcpListener;
+
+    #[tokio::test]
+    async fn test_signature_enumeration_success_sets_supported() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test assertion should succeed");
+        let addr = listener
+            .local_addr()
+            .expect("test assertion should succeed");
+
+        tokio::spawn(async move {
+            if let Ok((socket, _)) = listener.accept().await {
+                let _ = socket.try_write(&[0x16, 0x03, 0x03, 0x00, 0x01]);
+            }
+        });
+
+        let target = Target::with_ips("localhost".to_string(), addr.port(), vec![addr.ip()])
+            .expect("test assertion should succeed");
+        let tester = SignatureTester::new(target);
+
+        let result = tester
+            .enumerate_signatures()
+            .await
+            .expect("test assertion should succeed");
+
+        let supported = result
+            .algorithms
+            .iter()
+            .filter(|a| a.supported)
+            .map(|a| a.iana_value)
+            .collect::<Vec<_>>();
+
+        assert!(supported.contains(&0x0401));
+        assert!(supported.contains(&0x0403));
+        assert!(supported.contains(&0x0804));
+        assert!(supported.contains(&0x0805));
+        assert!(supported.contains(&0x0806));
+    }
+
+    #[tokio::test]
+    async fn test_signature_enumeration_failure_has_no_supported() {
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            9, // discard port, likely closed
+            vec!["127.0.0.1".parse().expect("valid IP")],
+        )
+        .expect("test assertion should succeed");
+        let tester = SignatureTester::new(target);
+
+        let result = tester
+            .enumerate_signatures()
+            .await
+            .expect("test assertion should succeed");
+
+        assert!(result.algorithms.iter().all(|a| !a.supported));
+    }
+
+    #[test]
+    fn test_signature_algorithm_serde_roundtrip() {
+        let alg = SignatureAlgorithm {
+            name: "rsa_pkcs1_sha256".to_string(),
+            iana_value: 0x0401,
+            supported: true,
+        };
+        let json = serde_json::to_string(&alg).expect("serialize");
+        let decoded: SignatureAlgorithm = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(decoded.name, "rsa_pkcs1_sha256");
+        assert_eq!(decoded.iana_value, 0x0401);
+        assert!(decoded.supported);
+    }
+
+    #[test]
+    fn test_signature_enumeration_list_contains_expected() {
+        let result = SignatureEnumerationResult {
+            algorithms: vec![
+                SignatureAlgorithm {
+                    name: "rsa_pkcs1_sha256".to_string(),
+                    iana_value: 0x0401,
+                    supported: false,
+                },
+                SignatureAlgorithm {
+                    name: "ed25519".to_string(),
+                    iana_value: 0x0807,
+                    supported: false,
+                },
+            ],
+        };
+        let names = result
+            .algorithms
+            .iter()
+            .map(|a| a.name.as_str())
+            .collect::<Vec<_>>();
+        assert!(names.contains(&"rsa_pkcs1_sha256"));
+        assert!(names.contains(&"ed25519"));
+    }
+}

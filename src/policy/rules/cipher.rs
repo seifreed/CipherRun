@@ -285,4 +285,144 @@ mod tests {
         assert!(!violations.is_empty());
         assert_eq!(violations[0].rule_path, "ciphers.min_strength");
     }
+
+    #[test]
+    fn test_require_forward_secrecy_violation() {
+        let policy = CipherPolicy {
+            min_strength: None,
+            require_forward_secrecy: Some(true),
+            require_aead: None,
+            prohibited_patterns: None,
+            required_patterns: None,
+            action: PolicyAction::Fail,
+        };
+
+        let mut results = HashMap::new();
+        results.insert(
+            Protocol::TLS12,
+            ProtocolCipherSummary {
+                protocol: Protocol::TLS12,
+                supported_ciphers: vec![],
+                counts: CipherCounts {
+                    total: 4,
+                    forward_secrecy: 2,
+                    ..Default::default()
+                },
+                server_ordered: true,
+                server_preference: vec![],
+                preferred_cipher: None,
+                avg_handshake_time_ms: None,
+            },
+        );
+
+        let rule = CipherRule::new(&policy, &results);
+        let violations = rule
+            .evaluate("example.com:443")
+            .expect("test assertion should succeed");
+
+        assert_eq!(violations[0].rule_path, "ciphers.require_forward_secrecy");
+    }
+
+    #[test]
+    fn test_require_aead_violation() {
+        let policy = CipherPolicy {
+            min_strength: None,
+            require_forward_secrecy: None,
+            require_aead: Some(true),
+            prohibited_patterns: None,
+            required_patterns: None,
+            action: PolicyAction::Fail,
+        };
+
+        let mut results = HashMap::new();
+        results.insert(
+            Protocol::TLS12,
+            ProtocolCipherSummary {
+                protocol: Protocol::TLS12,
+                supported_ciphers: vec![],
+                counts: CipherCounts {
+                    total: 3,
+                    aead: 1,
+                    ..Default::default()
+                },
+                server_ordered: true,
+                server_preference: vec![],
+                preferred_cipher: None,
+                avg_handshake_time_ms: None,
+            },
+        );
+
+        let rule = CipherRule::new(&policy, &results);
+        let violations = rule
+            .evaluate("example.com:443")
+            .expect("test assertion should succeed");
+
+        assert_eq!(violations[0].rule_path, "ciphers.require_aead");
+    }
+
+    #[test]
+    fn test_required_patterns_violation() {
+        let policy = CipherPolicy {
+            min_strength: None,
+            require_forward_secrecy: None,
+            require_aead: None,
+            prohibited_patterns: None,
+            required_patterns: Some(vec!["TLS_AES_128_GCM_SHA256".to_string()]),
+            action: PolicyAction::Fail,
+        };
+
+        let mut results = HashMap::new();
+        results.insert(
+            Protocol::TLS12,
+            ProtocolCipherSummary {
+                protocol: Protocol::TLS12,
+                supported_ciphers: vec![create_test_cipher("TLS_RSA_WITH_AES_128_CBC_SHA")],
+                counts: CipherCounts::default(),
+                server_ordered: true,
+                server_preference: vec![],
+                preferred_cipher: None,
+                avg_handshake_time_ms: None,
+            },
+        );
+
+        let rule = CipherRule::new(&policy, &results);
+        let violations = rule
+            .evaluate("example.com:443")
+            .expect("test assertion should succeed");
+
+        assert_eq!(violations[0].rule_path, "ciphers.required_patterns");
+    }
+
+    #[test]
+    fn test_required_patterns_satisfied() {
+        let policy = CipherPolicy {
+            min_strength: None,
+            require_forward_secrecy: None,
+            require_aead: None,
+            prohibited_patterns: None,
+            required_patterns: Some(vec![".*GCM.*".to_string()]),
+            action: PolicyAction::Fail,
+        };
+
+        let mut results = HashMap::new();
+        results.insert(
+            Protocol::TLS12,
+            ProtocolCipherSummary {
+                protocol: Protocol::TLS12,
+                supported_ciphers: vec![create_test_cipher("TLS_AES_128_GCM_SHA256")],
+                counts: CipherCounts::default(),
+                server_ordered: true,
+                server_preference: vec![],
+                preferred_cipher: None,
+                avg_handshake_time_ms: None,
+            },
+        );
+
+        let rule = CipherRule::new(&policy, &results);
+        let violations = rule
+            .evaluate("example.com:443")
+            .expect("test assertion should succeed");
+
+        assert!(violations.is_empty());
+    }
 }

@@ -374,19 +374,19 @@ impl MultiIpScanReport {
         writeln!(
             f,
             "    Caching: {}",
-            if aggregated.session_resumption_caching {
-                "✓ All backends".green()
-            } else {
-                "✗ Not all backends".red()
+            match aggregated.session_resumption_caching {
+                Some(true) => "✓ All measured backends".green(),
+                Some(false) => "✗ Not all measured backends".red(),
+                None => "? Inconclusive / not measured".yellow(),
             }
         )?;
         writeln!(
             f,
             "    Tickets: {}",
-            if aggregated.session_resumption_tickets {
-                "✓ All backends".green()
-            } else {
-                "✗ Not all backends".red()
+            match aggregated.session_resumption_tickets {
+                Some(true) => "✓ All measured backends".green(),
+                Some(false) => "✗ Not all measured backends".red(),
+                None => "? Inconclusive / not measured".yellow(),
             }
         )?;
 
@@ -471,5 +471,176 @@ impl MultiIpScanReport {
             Grade::D | Grade::E | Grade::F => grade_str.red(),
             Grade::T | Grade::M => grade_str.red().bold(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::utils::network::Target;
+    use std::collections::HashMap;
+
+    #[test]
+    fn test_color_grade_includes_grade_text() {
+        let grade = MultiIpScanReport::color_grade("A", 95).to_string();
+        assert!(grade.contains('A'));
+
+        let grade = MultiIpScanReport::color_grade("F", 10).to_string();
+        assert!(grade.contains('F'));
+    }
+
+    #[test]
+    fn test_display_report_includes_header_and_target() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["192.0.2.10".parse().unwrap()],
+        )
+        .unwrap();
+
+        let report = MultiIpScanReport {
+            target,
+            per_ip_results: HashMap::new(),
+            total_ips: 1,
+            successful_scans: 0,
+            failed_scans: 1,
+            total_duration_ms: 0,
+            aggregated: AggregatedScanResult {
+                protocols: Vec::new(),
+                ciphers: HashMap::new(),
+                grade: ("F".to_string(), 0),
+                certificate_info: None,
+                certificate_consistent: true,
+                inconsistencies: Vec::new(),
+                alpn_protocols: Vec::new(),
+                session_resumption_caching: Some(false),
+                session_resumption_tickets: Some(false),
+            },
+            inconsistencies: Vec::new(),
+        };
+
+        let output = format!("{}", report);
+        assert!(output.contains("MULTI-IP SCAN REPORT"));
+        assert!(output.contains("Target:"));
+        assert!(output.contains("example.com"));
+    }
+
+    #[test]
+    fn test_display_report_includes_totals() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["192.0.2.11".parse().unwrap()],
+        )
+        .unwrap();
+
+        let report = MultiIpScanReport {
+            target,
+            per_ip_results: HashMap::new(),
+            total_ips: 2,
+            successful_scans: 1,
+            failed_scans: 1,
+            total_duration_ms: 123,
+            aggregated: AggregatedScanResult {
+                protocols: Vec::new(),
+                ciphers: HashMap::new(),
+                grade: ("B".to_string(), 80),
+                certificate_info: None,
+                certificate_consistent: true,
+                inconsistencies: Vec::new(),
+                alpn_protocols: Vec::new(),
+                session_resumption_caching: Some(false),
+                session_resumption_tickets: Some(false),
+            },
+            inconsistencies: Vec::new(),
+        };
+
+        let output = format!("{}", report);
+        assert!(output.contains("IPs Scanned:"));
+        assert!(output.contains("1"));
+        assert!(output.contains("/2 successful"));
+    }
+
+    #[test]
+    fn test_display_report_includes_inconsistency_warning() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["192.0.2.12".parse().unwrap()],
+        )
+        .unwrap();
+
+        let inconsistency = Inconsistency {
+            inconsistency_type: InconsistencyType::ProtocolSupport,
+            severity: crate::vulnerabilities::Severity::High,
+            description: "Protocol mismatch".to_string(),
+            ips_affected: vec!["192.0.2.10".parse().unwrap(), "192.0.2.11".parse().unwrap()],
+            details: InconsistencyDetails::Protocols {
+                protocol: crate::protocols::Protocol::TLS12,
+                ips_with_support: vec!["192.0.2.10".parse().unwrap()],
+                ips_without_support: vec!["192.0.2.11".parse().unwrap()],
+            },
+        };
+
+        let report = MultiIpScanReport {
+            target,
+            per_ip_results: HashMap::new(),
+            total_ips: 2,
+            successful_scans: 2,
+            failed_scans: 0,
+            total_duration_ms: 20,
+            aggregated: AggregatedScanResult {
+                protocols: Vec::new(),
+                ciphers: HashMap::new(),
+                grade: ("A".to_string(), 95),
+                certificate_info: None,
+                certificate_consistent: true,
+                inconsistencies: Vec::new(),
+                alpn_protocols: Vec::new(),
+                session_resumption_caching: Some(false),
+                session_resumption_tickets: Some(false),
+            },
+            inconsistencies: vec![inconsistency],
+        };
+
+        let output = format!("{}", report);
+        assert!(output.contains("INCONSISTENCIES DETECTED"));
+        assert!(output.contains("Protocol mismatch"));
+    }
+
+    #[test]
+    fn test_display_report_without_inconsistencies() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["192.0.2.13".parse().unwrap()],
+        )
+        .unwrap();
+
+        let report = MultiIpScanReport {
+            target,
+            per_ip_results: HashMap::new(),
+            total_ips: 1,
+            successful_scans: 1,
+            failed_scans: 0,
+            total_duration_ms: 5,
+            aggregated: AggregatedScanResult {
+                protocols: Vec::new(),
+                ciphers: HashMap::new(),
+                grade: ("A".to_string(), 95),
+                certificate_info: None,
+                certificate_consistent: true,
+                inconsistencies: Vec::new(),
+                alpn_protocols: Vec::new(),
+                session_resumption_caching: Some(false),
+                session_resumption_tickets: Some(false),
+            },
+            inconsistencies: Vec::new(),
+        };
+
+        let output = format!("{}", report);
+        assert!(!output.contains("INCONSISTENCIES DETECTED"));
+        assert!(!output.contains("Recommendations:"));
+        assert!(output.contains("Aggregated Results"));
     }
 }

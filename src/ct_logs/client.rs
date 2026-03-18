@@ -182,10 +182,161 @@ pub struct CtLogEntryResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::{
+        Json, Router, extract::State, http::StatusCode, response::IntoResponse, routing::get,
+    };
+    use serde_json::json;
+    use std::net::SocketAddr;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::net::TcpListener;
 
     #[test]
     fn test_client_creation() {
         let client = CtClient::new();
         assert!(std::ptr::addr_of!(client.client) as usize != 0);
+    }
+
+    #[derive(Clone)]
+    struct TestState {
+        sth_calls: Arc<AtomicUsize>,
+        entries_calls: Arc<AtomicUsize>,
+        fail_parse: Arc<AtomicUsize>,
+    }
+
+    async fn start_test_server(state: TestState) -> (SocketAddr, tokio::task::JoinHandle<()>) {
+        let app = Router::new()
+            .route(
+                "/ct/v1/get-sth",
+                get(|State(state): State<TestState>| async move {
+                    let call = state.sth_calls.fetch_add(1, Ordering::SeqCst);
+                    if call == 0 {
+                        return (StatusCode::TOO_MANY_REQUESTS, "rate limited").into_response();
+                    }
+                    (
+                        StatusCode::OK,
+                        Json(json!({
+                            "tree_size": 7,
+                            "timestamp": 0,
+                            "sha256_root_hash": "root",
+                            "tree_head_signature": "sig"
+                        })),
+                    )
+                        .into_response()
+                }),
+            )
+            .route(
+                "/ct/v1/get-entries",
+                get(|State(state): State<TestState>| async move {
+                    let call = state.entries_calls.fetch_add(1, Ordering::SeqCst);
+                    if call == 0 {
+                        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+                    }
+                    let fail_parse = state.fail_parse.load(Ordering::SeqCst) > 0;
+                    if fail_parse {
+                        return (StatusCode::OK, "not-json").into_response();
+                    }
+                    (
+                        StatusCode::OK,
+                        Json(json!({
+                            "entries": [
+                                {"leaf_input": "a", "extra_data": "b"},
+                                {"leaf_input": "c", "extra_data": "d"}
+                            ]
+                        })),
+                    )
+                        .into_response()
+                }),
+            )
+            .with_state(state);
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        (addr, handle)
+    }
+
+    #[tokio::test]
+    async fn test_get_tree_size_retries_on_429() {
+        let state = TestState {
+            sth_calls: Arc::new(AtomicUsize::new(0)),
+            entries_calls: Arc::new(AtomicUsize::new(0)),
+            fail_parse: Arc::new(AtomicUsize::new(0)),
+        };
+        let (addr, _handle) = start_test_server(state).await;
+
+        let client = CtClient::new();
+        let base = format!("http://{}", addr);
+        let size = client.get_tree_size(&base).await.unwrap();
+        assert_eq!(size, 7);
+    }
+
+    #[tokio::test]
+    async fn test_get_entries_retries_on_500() {
+        let state = TestState {
+            sth_calls: Arc::new(AtomicUsize::new(0)),
+            entries_calls: Arc::new(AtomicUsize::new(0)),
+            fail_parse: Arc::new(AtomicUsize::new(0)),
+        };
+        let (addr, _handle) = start_test_server(state).await;
+
+        let client = CtClient::new();
+        let base = format!("http://{}", addr);
+        let entries = client.get_entries(&base, 0, 1).await.unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].leaf_input, "a");
+    }
+
+    #[tokio::test]
+    async fn test_get_tree_size_client_error() {
+        let state = TestState {
+            sth_calls: Arc::new(AtomicUsize::new(0)),
+            entries_calls: Arc::new(AtomicUsize::new(0)),
+            fail_parse: Arc::new(AtomicUsize::new(0)),
+        };
+        let (addr, _handle) = start_test_server(state).await;
+
+        let client = CtClient::new();
+        let bad = format!("http://{}/bad-path", addr);
+        let err = client.get_tree_size(&bad).await.unwrap_err();
+        assert!(format!("{err}").contains("status"));
+    }
+
+    #[tokio::test]
+    async fn test_get_entries_parse_error() {
+        let state = TestState {
+            sth_calls: Arc::new(AtomicUsize::new(0)),
+            entries_calls: Arc::new(AtomicUsize::new(0)),
+            fail_parse: Arc::new(AtomicUsize::new(1)),
+        };
+        let (addr, _handle) = start_test_server(state).await;
+
+        let client = CtClient::new();
+        let base = format!("http://{}", addr);
+        let err = client.get_entries(&base, 0, 0).await.unwrap_err();
+        assert!(format!("{err}").contains("Failed to parse entries response"));
+    }
+
+    #[tokio::test]
+    async fn test_get_tree_size_parse_error() {
+        let app = Router::new().route(
+            "/ct/v1/get-sth",
+            get(|| async move { (StatusCode::OK, "not-json").into_response() }),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let client = CtClient::new();
+        let base = format!("http://{}", addr);
+        let err = client.get_tree_size(&base).await.unwrap_err();
+        assert!(format!("{err}").contains("Failed to parse STH response"));
+
+        handle.abort();
     }
 }

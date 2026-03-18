@@ -13,15 +13,16 @@
 // - CertificateParser (parse certificate chain)
 // - CertificateValidator (validate chain against trust stores)
 // - RevocationChecker (OCSP/CRL checking)
-// - Args (CLI configuration for validation options)
+// - ScanRequest (scan configuration for validation options)
 
 use super::{ScanContext, ScanPhase};
+use crate::Result;
+use crate::application::ScanRequest;
 use crate::certificates::{
     parser::{CertificateChain, CertificateParser},
     revocation::{RevocationChecker, RevocationResult},
     validator::{CertificateValidator, ValidationResult},
 };
-use crate::{Args, Result};
 use async_trait::async_trait;
 
 /// Certificate analysis phase
@@ -31,7 +32,7 @@ use async_trait::async_trait;
 /// - Chain validation (expiry, trust, hostname matching)
 /// - Revocation status checking (OCSP, CRL)
 ///
-/// Configuration sources (from Args):
+/// Configuration sources (from ScanRequest):
 /// - Certificate validation (--no-check-certificate disables validation)
 /// - Revocation checking (--phone-out enables OCSP/CRL checks)
 /// - mTLS client authentication (--mtls, --pk, --certs)
@@ -143,7 +144,7 @@ impl ScanPhase for CertificatePhase {
         "Analyzing Certificate"
     }
 
-    fn should_run(&self, args: &Args) -> bool {
+    fn should_run(&self, args: &ScanRequest) -> bool {
         // Run if:
         // - Full scan mode (--all)
         // - Default scan (target specified without other flags)
@@ -181,17 +182,17 @@ mod tests {
         let phase = CertificatePhase::new();
 
         // Test with --all flag
-        let mut args = Args::default();
+        let mut args = ScanRequest::default();
         args.scan.all = true;
         assert!(phase.should_run(&args));
 
         // Test with target specified (default scan)
-        let mut args = Args::default();
+        let mut args = ScanRequest::default();
         args.target = Some("example.com".to_string());
         assert!(phase.should_run(&args));
 
         // Test with no relevant flags
-        let args = Args::default();
+        let args = ScanRequest::default();
         assert!(!phase.should_run(&args));
     }
 
@@ -199,5 +200,27 @@ mod tests {
     fn test_certificate_phase_name() {
         let phase = CertificatePhase::new();
         assert_eq!(phase.name(), "Analyzing Certificate");
+    }
+
+    #[tokio::test]
+    async fn test_revocation_check_skipped_without_phone_out() {
+        let target = crate::utils::network::Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+        let args = Arc::new(ScanRequest::default());
+        let context = ScanContext::new(target, args, None);
+
+        let chain = CertificateChain {
+            certificates: vec![crate::certificates::parser::CertificateInfo::default()],
+            chain_length: 1,
+            chain_size_bytes: 0,
+        };
+
+        let phase = CertificatePhase::new();
+        let result = phase.check_revocation_status(&context, &chain).await;
+        assert!(result.is_none());
     }
 }

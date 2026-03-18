@@ -220,4 +220,72 @@ mod tests {
         assert!(rule.matches_denied_pattern("TLS_RSA_EXPORT_WITH_DES40_CBC_SHA"));
         assert!(!rule.matches_denied_pattern("TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384"));
     }
+
+    #[test]
+    fn test_rule_allowed_patterns() {
+        let rule = Rule {
+            rule_type: "CipherSuite".to_string(),
+            allowed: vec![],
+            denied: vec![],
+            allowed_patterns: vec!["[invalid".to_string(), "TLS_.*".to_string()],
+            denied_patterns: vec![],
+            preferred_patterns: vec![],
+            min_rsa_bits: None,
+            min_ecc_bits: None,
+            required: None,
+            require_valid_chain: None,
+            require_unexpired: None,
+            require_hostname_match: None,
+            max_days_until_expiration: None,
+            custom_params: HashMap::new(),
+        };
+
+        assert!(rule.matches_allowed_pattern("TLS_AES_128_GCM_SHA256"));
+        assert!(!rule.matches_allowed_pattern("SSLv3"));
+    }
+
+    #[test]
+    fn test_rule_allowed_patterns_all_invalid() {
+        let rule = Rule {
+            rule_type: "CipherSuite".to_string(),
+            allowed: vec![],
+            denied: vec![],
+            allowed_patterns: vec!["[".to_string()],
+            denied_patterns: vec![],
+            preferred_patterns: vec![],
+            min_rsa_bits: None,
+            min_ecc_bits: None,
+            required: None,
+            require_valid_chain: None,
+            require_unexpired: None,
+            require_hostname_match: None,
+            max_days_until_expiration: None,
+            custom_params: HashMap::new(),
+        };
+
+        assert!(!rule.matches_allowed_pattern("TLS_AES_128_GCM_SHA256"));
+    }
+
+    #[test]
+    fn test_rule_preferred_pattern() {
+        let rule = Rule {
+            rule_type: "CipherSuite".to_string(),
+            allowed: vec![],
+            denied: vec![],
+            allowed_patterns: vec![],
+            denied_patterns: vec![],
+            preferred_patterns: vec!["TLS_AES_.*".to_string()],
+            min_rsa_bits: None,
+            min_ecc_bits: None,
+            required: None,
+            require_valid_chain: None,
+            require_unexpired: None,
+            require_hostname_match: None,
+            max_days_until_expiration: None,
+            custom_params: HashMap::new(),
+        };
+
+        assert!(rule.matches_preferred_pattern("TLS_AES_128_GCM_SHA256"));
+        assert!(!rule.matches_preferred_pattern("TLS_CHACHA20_POLY1305_SHA256"));
+    }
 }

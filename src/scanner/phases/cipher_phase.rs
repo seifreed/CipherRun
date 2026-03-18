@@ -12,13 +12,14 @@
 //
 // Dependencies:
 // - CipherTester (domain logic for cipher enumeration)
-// - Args (CLI configuration for timeouts, concurrency, retries)
+// - ScanRequest (scan configuration for timeouts, concurrency, retries)
 // - ProtocolTestResult (determines which protocols to test)
 
 use super::{ScanContext, ScanPhase};
+use crate::Result;
+use crate::application::ScanRequest;
 use crate::ciphers::tester::CipherTester;
 use crate::protocols::{Protocol, ProtocolTestResult};
-use crate::{Args, Result};
 use async_trait::async_trait;
 use std::collections::HashMap;
 
@@ -28,7 +29,7 @@ use std::collections::HashMap;
 /// by ProtocolPhase. This is typically the most time-consuming phase
 /// as it performs hundreds of individual cipher tests.
 ///
-/// Configuration sources (from Args):
+/// Configuration sources (from ScanRequest):
 /// - Connection timeout (--connect-timeout)
 /// - Sleep between requests (--sleep)
 /// - Max concurrent tests (--max-concurrent-ciphers)
@@ -165,7 +166,7 @@ impl ScanPhase for CipherPhase {
         "Testing Cipher Suites"
     }
 
-    fn should_run(&self, args: &Args) -> bool {
+    fn should_run(&self, args: &ScanRequest) -> bool {
         // Run if:
         // - Cipher testing not explicitly disabled (--no-ciphersuites)
         // - AND one of:
@@ -208,28 +209,28 @@ mod tests {
         let phase = CipherPhase::new();
 
         // Test with --each-cipher flag
-        let mut args = Args::default();
+        let mut args = ScanRequest::default();
         args.scan.each_cipher = true;
         assert!(phase.should_run(&args));
 
         // Test with --all flag
-        let mut args = Args::default();
+        let mut args = ScanRequest::default();
         args.scan.all = true;
         assert!(phase.should_run(&args));
 
         // Test with target specified (default scan)
-        let mut args = Args::default();
+        let mut args = ScanRequest::default();
         args.target = Some("example.com".to_string());
         assert!(phase.should_run(&args));
 
         // Test with --no-ciphersuites (should not run)
-        let mut args = Args::default();
+        let mut args = ScanRequest::default();
         args.scan.all = true;
         args.scan.no_ciphersuites = true;
         assert!(!phase.should_run(&args));
 
         // Test with no relevant flags
-        let args = Args::default();
+        let args = ScanRequest::default();
         assert!(!phase.should_run(&args));
     }
 
@@ -237,5 +238,45 @@ mod tests {
     fn test_cipher_phase_name() {
         let phase = CipherPhase::new();
         assert_eq!(phase.name(), "Testing Cipher Suites");
+    }
+
+    #[tokio::test]
+    async fn test_cipher_phase_execute_skips_without_protocols() {
+        let target = crate::utils::network::Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+        let args = Arc::new(ScanRequest::default());
+        let mut context = ScanContext::new(target, args, None);
+
+        let phase = CipherPhase::new();
+        phase.execute(&mut context).await.expect("should succeed");
+        assert!(context.results.ciphers.is_empty());
+    }
+
+    #[test]
+    fn test_configure_tester_with_flags() {
+        let target = crate::utils::network::Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+
+        let mut args = ScanRequest::default();
+        args.target = Some("example.com".to_string());
+        args.connection.sleep = Some(5);
+        args.connection.max_retries = 2;
+        args.starttls.smtp = true;
+        args.starttls.rdp = true;
+        args.network.test_all_ips = true;
+
+        let context = ScanContext::new(target, Arc::new(args), None);
+        let phase = CipherPhase::new();
+        let tester = phase.configure_tester(&context);
+
+        assert!(std::mem::size_of_val(&tester) > 0);
     }
 }

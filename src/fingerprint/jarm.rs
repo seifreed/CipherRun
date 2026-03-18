@@ -527,4 +527,20 @@ mod tests {
         let not_found = db.lookup("nonexistent");
         assert!(not_found.is_none());
     }
+
+    #[test]
+    fn test_extract_extension_type_alpn() {
+        let etypes = vec![[0x00, 0x10]];
+        let evals = vec![vec![0x00, 0x03, 0x02, b'h', b'2']];
+        let alpn = extract_extension_type(&[0x00, 0x10], &etypes, &evals);
+        assert_eq!(alpn, "h2");
+    }
+
+    #[test]
+    fn test_extract_extension_type_non_alpn_hex() {
+        let etypes = vec![[0x00, 0x0a]];
+        let evals = vec![vec![0xde, 0xad, 0xbe, 0xef]];
+        let value = extract_extension_type(&[0x00, 0x0a], &etypes, &evals);
+        assert_eq!(value, "deadbeef");
+    }
 }

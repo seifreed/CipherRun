@@ -400,4 +400,20 @@ mod tests {
         assert!(most_severe.is_some());
         assert_eq!(most_severe.unwrap().severity, ChangeSeverity::Critical);
     }
+
+    #[test]
+    fn test_detect_expiry_extended() {
+        let detector = ChangeDetector::new();
+        let mut previous = create_test_cert("123", "CN=Let's Encrypt", Some(2048), vec![]);
+        let mut current = previous.clone();
+        previous.not_after = "2025-01-01 00:00:00 UTC".to_string();
+        current.not_after = "2026-01-01 00:00:00 UTC".to_string();
+
+        let changes = detector.detect_changes(&previous, &current);
+        assert!(
+            changes
+                .iter()
+                .any(|c| matches!(c.change_type, ChangeType::ExpiryExtended))
+        );
+    }
 }

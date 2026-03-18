@@ -1,11 +1,13 @@
-use cipherrun::output::xml::generate_xml_report;
-use cipherrun::scanner::{CertificateAnalysisResult, RatingResults, ScanResults};
 use cipherrun::certificates::parser::{CertificateChain, CertificateInfo};
-use cipherrun::certificates::validator::{ValidationResult, ValidationIssue, IssueSeverity, IssueType};
+use cipherrun::certificates::validator::{
+    IssueSeverity, IssueType, ValidationIssue, ValidationResult,
+};
+use cipherrun::output::xml::generate_xml_report;
 use cipherrun::protocols::{Protocol, ProtocolTestResult};
-use cipherrun::vulnerabilities::{Severity, VulnerabilityResult, VulnerabilityType};
 use cipherrun::rating::RatingResult;
 use cipherrun::rating::grader::Grade;
+use cipherrun::scanner::{CertificateAnalysisResult, RatingResults, ScanResults};
+use cipherrun::vulnerabilities::{Severity, VulnerabilityResult, VulnerabilityType};
 
 fn build_test_results() -> ScanResults {
     let mut results = ScanResults::default();

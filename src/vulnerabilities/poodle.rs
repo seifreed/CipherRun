@@ -45,17 +45,19 @@ impl<'a> PoodleTester<'a> {
         let tls_poodle = if !ssl3_supported {
             self.test_tls_poodle().await?
         } else {
-            false
+            None
         };
 
-        let vulnerable = ssl3_supported || tls_poodle;
+        let vulnerable = ssl3_supported || tls_poodle == Some(true);
 
         let details = if ssl3_supported {
             "Vulnerable: SSL 3.0 is supported (CVE-2014-3566)".to_string()
-        } else if tls_poodle {
+        } else if tls_poodle == Some(true) {
             "Vulnerable: TLS implementation vulnerable to POODLE (CVE-2014-8730)".to_string()
+        } else if tls_poodle.is_none() {
+            "SSL 3.0 disabled. TLS POODLE test is inconclusive because active CBC padding manipulation is not implemented".to_string()
         } else {
-            "Not vulnerable: SSL 3.0 disabled and TLS not vulnerable".to_string()
+            "Not vulnerable: SSL 3.0 disabled and CBC-based TLS POODLE was not observed".to_string()
         };
 
         Ok(PoodleTestResult {
@@ -88,11 +90,13 @@ impl<'a> PoodleTester<'a> {
         let tls_poodle = self.test_tls_poodle().await?;
         variants.push(PoodleVariantResult {
             variant: PoodleVariant::Tls,
-            vulnerable: tls_poodle,
-            details: if tls_poodle {
+            vulnerable: tls_poodle == Some(true),
+            details: if tls_poodle == Some(true) {
                 "TLS implementation vulnerable to POODLE-style attack".to_string()
+            } else if tls_poodle.is_none() {
+                "TLS POODLE test inconclusive - CBC negotiation succeeded but active padding manipulation is not implemented".to_string()
             } else {
-                "TLS implementation not vulnerable to POODLE".to_string()
+                "TLS implementation not vulnerable to POODLE because CBC-based TLS negotiation was not observed".to_string()
             },
             timing_data: None,
         });
@@ -144,18 +148,26 @@ impl<'a> PoodleTester<'a> {
     }
 
     /// Test for TLS POODLE vulnerability
-    async fn test_tls_poodle(&self) -> Result<bool> {
-        // TLS POODLE requires testing CBC padding validation
-        // This is a simplified test - real test would need padding manipulation
+    async fn test_tls_poodle(&self) -> Result<Option<bool>> {
+        // TLS POODLE requires CBC negotiation plus an observable padding/MAC oracle.
+        // Reuse the existing POODLE-family active probes so this path can confirm
+        // vulnerability when CBC is negotiated and an oracle is actually observed.
         let config = VulnSslConfig::tls10_with_ciphers("AES128-SHA:AES256-SHA:DES-CBC3-SHA");
         let connected = test_vuln_ssl_connection(self.target, config)
             .await
             .map_err(crate::TlsError::from)?;
 
-        // Would need to send malformed padding to confirm
-        // For now, assume not vulnerable if using TLS
-        let _ = connected; // Connection result captured for future detailed testing
-        Ok(false)
+        if !connected {
+            return Ok(Some(false));
+        }
+
+        let zombie = self.test_zombie_poodle().await?;
+        let golden = self.test_goldendoodle().await?;
+        let sleeping = self.test_sleeping_poodle().await?;
+
+        Ok(Some(
+            zombie.vulnerable || golden.vulnerable || sleeping.vulnerable,
+        ))
     }
 
     /// Test for Zombie POODLE - Observable MAC validity oracle
@@ -296,10 +308,12 @@ impl<'a> PoodleTester<'a> {
             });
         }
 
-        const SAMPLES: usize = 10;
-        const TIMING_THRESHOLD_MS: f64 = 5.0; // 5ms threshold for timing oracle
-        let mut valid_timings = Vec::new();
-        let mut invalid_timings = Vec::new();
+        const SAMPLES: usize = 20; // Increased from 10 for better statistical significance
+        const TIMING_THRESHOLD_MS: f64 = 15.0; // Increased from 5ms - network jitter can easily exceed 5ms
+        const MIN_TIMING_THRESHOLD_MS: f64 = 10.0; // Minimum threshold to avoid false positives from network variability
+        const COEFFICIENT_OF_VARIATION_MAX: f64 = 0.5; // Max acceptable CV for reliable timing detection
+        let mut valid_timings = Vec::with_capacity(SAMPLES);
+        let mut invalid_timings = Vec::with_capacity(SAMPLES);
 
         // Collect timing samples
         for _ in 0..SAMPLES {
@@ -319,8 +333,8 @@ impl<'a> PoodleTester<'a> {
                 invalid_timings.push(timing);
             }
 
-            // Small delay between tests
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            // Small delay between tests to avoid rate limiting
+            tokio::time::sleep(Duration::from_millis(150)).await;
         }
 
         if valid_timings.is_empty() || invalid_timings.is_empty() {
@@ -332,33 +346,98 @@ impl<'a> PoodleTester<'a> {
             });
         }
 
-        // Calculate timing statistics
+        // Need at least 5 samples for meaningful statistics
+        if valid_timings.len() < 5 || invalid_timings.len() < 5 {
+            return Ok(PoodleVariantResult {
+                variant: PoodleVariant::SleepingPoodle,
+                vulnerable: false,
+                details: format!(
+                    "Insufficient timing samples (valid: {}, invalid: {}). Need at least 5 samples for reliable detection.",
+                    valid_timings.len(),
+                    invalid_timings.len()
+                ),
+                timing_data: None,
+            });
+        }
+
+        // Calculate timing statistics using mean and standard deviation
         let valid_avg = valid_timings.iter().sum::<f64>() / valid_timings.len() as f64;
         let invalid_avg = invalid_timings.iter().sum::<f64>() / invalid_timings.len() as f64;
         let timing_diff = (valid_avg - invalid_avg).abs();
-        let oracle_detected = timing_diff > TIMING_THRESHOLD_MS;
+
+        // Calculate standard deviations for variance analysis
+        let valid_variance = valid_timings.iter()
+            .map(|t| (t - valid_avg).powi(2))
+            .sum::<f64>() / valid_timings.len() as f64;
+        let valid_stddev = valid_variance.sqrt();
+        
+        let invalid_variance = invalid_timings.iter()
+            .map(|t| (t - invalid_avg).powi(2))
+            .sum::<f64>() / invalid_timings.len() as f64;
+        let invalid_stddev = invalid_variance.sqrt();
+
+        // Calculate coefficient of variation for timing reliability
+        let valid_cv = if valid_avg > 0.0 { valid_stddev / valid_avg } else { f64::MAX };
+        let invalid_cv = if invalid_avg > 0.0 { invalid_stddev / invalid_avg } else { f64::MAX };
+
+        // Timing is only reliable if variance is low enough
+        let timing_is_reliable = valid_cv < COEFFICIENT_OF_VARIATION_MAX 
+            && invalid_cv < COEFFICIENT_OF_VARIATION_MAX;
+
+        // Determine vulnerability based on multiple factors:
+        // 1. Timing difference must exceed minimum threshold
+        // 2. Timing difference must be statistically significant (more than 2 std devs from noise)
+        // 3. Timing measurements should be reliable (low variance)
+        let min_samples = valid_timings.len().min(invalid_timings.len());
+        let combined_stddev = (valid_variance + invalid_variance).sqrt();
+        
+        // Use t-test like significance: diff should be > 2 * combined_stddev
+        let significant_diff = timing_diff > 2.0 * combined_stddev + MIN_TIMING_THRESHOLD_MS;
+        let exceeds_threshold = timing_diff > TIMING_THRESHOLD_MS;
+        
+        let oracle_detected = timing_is_reliable 
+            && exceeds_threshold 
+            && significant_diff
+            && min_samples >= 5;
 
         let timing_data = Some(TimingData {
             valid_padding_avg_ms: valid_avg,
             invalid_padding_avg_ms: invalid_avg,
             timing_difference_ms: timing_diff,
-            samples_collected: valid_timings.len().min(invalid_timings.len()),
+            samples_collected: min_samples,
         });
+
+        let details = if oracle_detected {
+            format!(
+                "Vulnerable to Sleeping POODLE - Timing oracle detected: valid={:.2}ms (σ={:.2}ms), \
+                 invalid={:.2}ms (σ={:.2}ms), diff={:.2}ms (threshold: {:.1}ms). \
+                 Statistical significance confirmed.",
+                valid_avg, valid_stddev, invalid_avg, invalid_stddev, timing_diff, TIMING_THRESHOLD_MS
+            )
+        } else if !timing_is_reliable {
+            format!(
+                "Timing measurement unreliable (CV valid={:.2}, invalid={:.2}). \
+                 Diff={:.2}ms - high variance suggests network jitter, not timing oracle.",
+                valid_cv, invalid_cv, timing_diff
+            )
+        } else if !exceeds_threshold {
+            format!(
+                "Not vulnerable to Sleeping POODLE - Timing diff ({:.2}ms) below threshold ({:.1}ms). \
+                 Valid={:.2}ms, Invalid={:.2}ms",
+                timing_diff, TIMING_THRESHOLD_MS, valid_avg, invalid_avg
+            )
+        } else {
+            format!(
+                "Not vulnerable to Sleeping POODLE - Timing difference ({:.2}ms) not statistically significant. \
+                 Valid={:.2}ms (σ={:.2}ms), Invalid={:.2}ms (σ={:.2}ms)",
+                timing_diff, valid_avg, valid_stddev, invalid_avg, invalid_stddev
+            )
+        };
 
         Ok(PoodleVariantResult {
             variant: PoodleVariant::SleepingPoodle,
             vulnerable: oracle_detected,
-            details: if oracle_detected {
-                format!(
-                    "Vulnerable to Sleeping POODLE - Timing oracle detected: valid={:.2}ms, invalid={:.2}ms, diff={:.2}ms",
-                    valid_avg, invalid_avg, timing_diff
-                )
-            } else {
-                format!(
-                    "Not vulnerable to Sleeping POODLE - No significant timing difference: valid={:.2}ms, invalid={:.2}ms, diff={:.2}ms",
-                    valid_avg, invalid_avg, timing_diff
-                )
-            },
+            details,
             timing_data,
         })
     }
@@ -505,19 +584,27 @@ impl<'a> PoodleTester<'a> {
             return false;
         }
 
-        // Check for different alert types
-        let alert_types_a: Vec<_> = responses_a.iter().filter_map(|r| r.alert_type).collect();
-        let alert_types_b: Vec<_> = responses_b.iter().filter_map(|r| r.alert_type).collect();
+        // Check for different alert types using proper categorical comparison
+        let alert_types_a: std::collections::HashSet<u8> = responses_a
+            .iter()
+            .filter_map(|r| r.alert_type)
+            .collect();
+        let alert_types_b: std::collections::HashSet<u8> = responses_b
+            .iter()
+            .filter_map(|r| r.alert_type)
+            .collect();
 
-        // If alert types consistently differ, oracle exists
+        // If both sets have alert types and they differ consistently, oracle exists
         if !alert_types_a.is_empty() && !alert_types_b.is_empty() {
-            let avg_a = alert_types_a.iter().map(|&x| x as u32).sum::<u32>() as f64
-                / alert_types_a.len() as f64;
-            let avg_b = alert_types_b.iter().map(|&x| x as u32).sum::<u32>() as f64
-                / alert_types_b.len() as f64;
+            // Check if the dominant alert type in A is different from B
+            let dominant_a = Self::find_dominant_alert_type(responses_a);
+            let dominant_b = Self::find_dominant_alert_type(responses_b);
 
-            if (avg_a - avg_b).abs() > 0.5 {
-                return true;
+            // If both sets have consistent but different alert types, oracle detected
+            if let (Some(alert_a), Some(alert_b)) = (dominant_a, dominant_b) {
+                if alert_a != alert_b {
+                    return true;
+                }
             }
         }
 
@@ -528,6 +615,23 @@ impl<'a> PoodleTester<'a> {
             responses_b.iter().map(|r| r.response_time_ms).sum::<f64>() / responses_b.len() as f64;
 
         (avg_time_a - avg_time_b).abs() > 10.0 // 10ms threshold
+    }
+
+    /// Find the most common alert type in responses
+    fn find_dominant_alert_type(responses: &[ServerResponse]) -> Option<u8> {
+        use std::collections::HashMap;
+        let mut counts: HashMap<u8, usize> = HashMap::new();
+
+        for response in responses {
+            if let Some(alert) = response.alert_type {
+                *counts.entry(alert).or_insert(0) += 1;
+            }
+        }
+
+        counts
+            .into_iter()
+            .max_by_key(|&(_, count)| count)
+            .map(|(alert, _)| alert)
     }
 
     /// Build ClientHello with CBC cipher preference using ClientHelloBuilder
@@ -658,7 +762,7 @@ struct ServerResponse {
 pub struct PoodleTestResult {
     pub vulnerable: bool,
     pub ssl3_supported: bool,
-    pub tls_poodle: bool,
+    pub tls_poodle: Option<bool>,
     pub details: String,
     pub variants: Vec<PoodleVariantResult>,
 }
@@ -743,7 +847,7 @@ mod tests {
         let result = PoodleTestResult {
             vulnerable: true,
             ssl3_supported: true,
-            tls_poodle: false,
+            tls_poodle: Some(false),
             details: "Test".to_string(),
             variants: Vec::new(),
         };
@@ -775,6 +879,17 @@ mod tests {
     }
 
     #[test]
+    fn test_poodle_variant_descriptions() {
+        assert!(PoodleVariant::SslV3.description().contains("SSL 3.0"));
+        assert!(PoodleVariant::Tls.description().contains("TLS"));
+        assert!(
+            PoodleVariant::OpenSsl0Length
+                .description()
+                .contains("Zero-length")
+        );
+    }
+
+    #[test]
     fn test_variant_result_structure() {
         let timing_data = TimingData {
             valid_padding_avg_ms: 15.5,
@@ -797,6 +912,19 @@ mod tests {
         let timing = result.timing_data.expect("test assertion should succeed");
         assert_eq!(timing.samples_collected, 10);
         assert_eq!(timing.timing_difference_ms, 5.3);
+    }
+
+    #[test]
+    fn test_variant_result_without_timing_data() {
+        let result = PoodleVariantResult {
+            variant: PoodleVariant::Tls,
+            vulnerable: false,
+            details: "No timing data".to_string(),
+            timing_data: None,
+        };
+
+        assert!(!result.vulnerable);
+        assert!(result.timing_data.is_none());
     }
 
     #[test]
@@ -866,6 +994,191 @@ mod tests {
 
         // Verify cipher suites present
         assert!(hello.len() > 50, "ClientHello should contain cipher suites");
+    }
+
+    #[test]
+    fn test_build_record_invalid_padding_invalid_mac() {
+        let target = crate::utils::network::Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+        let tester = PoodleTester::new(&target);
+        let record = tester.build_record_invalid_padding_invalid_mac();
+
+        assert_eq!(record[0], CONTENT_TYPE_APPLICATION_DATA);
+        let padding = &record[record.len() - 7..];
+        let first = padding[0];
+        assert!(padding.iter().any(|&b| b != first));
+    }
+
+    #[test]
+    fn test_build_malformed_record_dispatch() {
+        let target = crate::utils::network::Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+        let tester = PoodleTester::new(&target);
+
+        let a = tester.build_malformed_record(MalformedRecordType::InvalidPaddingValidMac);
+        let b = tester.build_malformed_record(MalformedRecordType::ValidPaddingInvalidMac);
+        let c = tester.build_malformed_record(MalformedRecordType::InvalidPaddingInvalidMac);
+        let d = tester.build_malformed_record(MalformedRecordType::ZeroLengthFragment);
+
+        assert!(a.len() > d.len());
+        assert!(b.len() > d.len());
+        assert!(c.len() > d.len());
+        assert_eq!(d.len(), 5);
+    }
+
+    #[test]
+    fn test_detect_response_oracle_alert_difference() {
+        let target = crate::utils::network::Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+
+        let tester = PoodleTester::new(&target);
+        let responses_a = vec![
+            ServerResponse {
+                connection_accepted: true,
+                alert_type: Some(20),
+                response_time_ms: 5.0,
+                shows_differential_behavior: true,
+            },
+            ServerResponse {
+                connection_accepted: true,
+                alert_type: Some(20),
+                response_time_ms: 6.0,
+                shows_differential_behavior: true,
+            },
+        ];
+        let responses_b = vec![ServerResponse {
+            connection_accepted: true,
+            alert_type: Some(40),
+            response_time_ms: 5.5,
+            shows_differential_behavior: true,
+        }];
+
+        assert!(tester.detect_response_oracle(&responses_a, &responses_b));
+    }
+
+    #[test]
+    fn test_detect_response_oracle_timing_difference() {
+        let target = crate::utils::network::Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+
+        let tester = PoodleTester::new(&target);
+        let responses_a = vec![ServerResponse {
+            connection_accepted: true,
+            alert_type: None,
+            response_time_ms: 1.0,
+            shows_differential_behavior: false,
+        }];
+        let responses_b = vec![ServerResponse {
+            connection_accepted: true,
+            alert_type: None,
+            response_time_ms: 25.0,
+            shows_differential_behavior: false,
+        }];
+
+        assert!(tester.detect_response_oracle(&responses_a, &responses_b));
+    }
+
+    #[test]
+    fn test_build_malformed_record_selector() {
+        let target = crate::utils::network::Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+
+        let tester = PoodleTester::new(&target);
+        let record = tester.build_malformed_record(MalformedRecordType::ZeroLengthFragment);
+        assert_eq!(record.len(), 5);
+        assert_eq!(record[0], CONTENT_TYPE_APPLICATION_DATA);
+    }
+
+    #[test]
+    fn test_detect_response_oracle_no_difference() {
+        let target = crate::utils::network::Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+
+        let tester = PoodleTester::new(&target);
+
+        let responses_a = vec![
+            ServerResponse {
+                connection_accepted: false,
+                alert_type: Some(40),
+                response_time_ms: 5.0,
+                shows_differential_behavior: false,
+            },
+            ServerResponse {
+                connection_accepted: false,
+                alert_type: Some(40),
+                response_time_ms: 6.0,
+                shows_differential_behavior: false,
+            },
+        ];
+        let responses_b = vec![
+            ServerResponse {
+                connection_accepted: false,
+                alert_type: Some(40),
+                response_time_ms: 5.5,
+                shows_differential_behavior: false,
+            },
+            ServerResponse {
+                connection_accepted: false,
+                alert_type: Some(40),
+                response_time_ms: 5.2,
+                shows_differential_behavior: false,
+            },
+        ];
+
+        assert!(!tester.detect_response_oracle(&responses_a, &responses_b));
+        assert!(!tester.detect_response_oracle(&[], &responses_b));
+    }
+
+    #[test]
+    fn test_record_construction_variants() {
+        let target = crate::utils::network::Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+
+        let tester = PoodleTester::new(&target);
+
+        let valid = tester.build_record_valid_padding_invalid_mac();
+        assert_eq!(valid[0], CONTENT_TYPE_APPLICATION_DATA);
+        assert_eq!(valid.len(), 60);
+        assert!(valid[valid.len() - 7..].iter().all(|&b| b == 0x06));
+
+        let invalid = tester.build_record_invalid_padding_invalid_mac();
+        assert_eq!(invalid[0], CONTENT_TYPE_APPLICATION_DATA);
+        assert_eq!(invalid.len(), 60);
+        let unique_padding: std::collections::HashSet<u8> =
+            invalid[invalid.len() - 7..].iter().copied().collect();
+        assert!(unique_padding.len() > 1);
+
+        let zero = tester.build_zero_length_record();
+        assert_eq!(zero.len(), 5);
+        assert_eq!(zero[0], CONTENT_TYPE_APPLICATION_DATA);
     }
 
     #[tokio::test]

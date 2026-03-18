@@ -1,37 +1,16 @@
 // Database Integration Tests
 // Tests the complete database backend with both PostgreSQL and SQLite
 
+mod common;
+
 use cipherrun::db::*;
 use cipherrun::protocols::Protocol;
 use cipherrun::scanner::ScanResults;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
-
-/// Atomic counter to ensure unique database identifiers across tests
-static DB_COUNTER: AtomicU64 = AtomicU64::new(0);
-
-/// Helper function to create a unique in-memory SQLite database for each test
-fn create_unique_db_path() -> PathBuf {
-    // Create a unique temporary file for each test to ensure database isolation
-    // This prevents UNIQUE constraint failures on _sqlx_migrations table
-    let counter = DB_COUNTER.fetch_add(1, Ordering::SeqCst);
-
-    // Use simple /tmp directory for better compatibility
-    #[cfg(unix)]
-    let path = PathBuf::from(format!("/tmp/cipherruntest{}.db", counter));
-
-    #[cfg(not(unix))]
-    let path = std::env::temp_dir().join(format!("cipherruntest{}.db", counter));
-
-    // Clean up any existing database file to ensure fresh start
-    let _ = std::fs::remove_file(&path);
-
-    path
-}
 
 #[tokio::test]
 async fn test_sqlite_database_creation() {
-    let config = DatabaseConfig::sqlite(create_unique_db_path());
+    let config = DatabaseConfig::sqlite(common::sqlite::unique_sqlite_db_path("cipherruntest"));
     let db = CipherRunDatabase::new(&config).await.unwrap();
 
     // Verify database type
@@ -42,7 +21,7 @@ async fn test_sqlite_database_creation() {
 
 #[tokio::test]
 async fn test_scan_storage_and_retrieval() {
-    let config = DatabaseConfig::sqlite(create_unique_db_path());
+    let config = DatabaseConfig::sqlite(common::sqlite::unique_sqlite_db_path("cipherruntest"));
     let db = CipherRunDatabase::new(&config).await.unwrap();
 
     // Create sample scan results
@@ -68,7 +47,10 @@ async fn test_scan_storage_and_retrieval() {
         });
 
     // Store scan
-    let scan_id = db.store_scan(&results).await.unwrap();
+    let scan_id = db
+        .store_scan(&PersistedScan::from_scan_results(&results))
+        .await
+        .unwrap();
     assert!(scan_id > 0);
 
     // Retrieve scan
@@ -82,7 +64,7 @@ async fn test_scan_storage_and_retrieval() {
 
 #[tokio::test]
 async fn test_scan_history_limit() {
-    let config = DatabaseConfig::sqlite(create_unique_db_path());
+    let config = DatabaseConfig::sqlite(common::sqlite::unique_sqlite_db_path("cipherruntest"));
     let db = CipherRunDatabase::new(&config).await.unwrap();
 
     // Store 5 scans
@@ -92,7 +74,9 @@ async fn test_scan_history_limit() {
             scan_time_ms: i * 100,
             ..Default::default()
         };
-        db.store_scan(&results).await.unwrap();
+        db.store_scan(&PersistedScan::from_scan_results(&results))
+            .await
+            .unwrap();
     }
 
     // Query with limit
@@ -108,7 +92,7 @@ async fn test_scan_history_limit() {
 
 #[tokio::test]
 async fn test_latest_scan_retrieval() {
-    let config = DatabaseConfig::sqlite(create_unique_db_path());
+    let config = DatabaseConfig::sqlite(common::sqlite::unique_sqlite_db_path("cipherruntest"));
     let db = CipherRunDatabase::new(&config).await.unwrap();
 
     // Store multiple scans
@@ -118,7 +102,9 @@ async fn test_latest_scan_retrieval() {
             scan_time_ms: i * 1000,
             ..Default::default()
         };
-        db.store_scan(&results).await.unwrap();
+        db.store_scan(&PersistedScan::from_scan_results(&results))
+            .await
+            .unwrap();
 
         // Small delay to ensure different timestamps
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
@@ -136,8 +122,22 @@ async fn test_latest_scan_retrieval() {
 }
 
 #[tokio::test]
+async fn test_history_and_latest_are_empty_for_unknown_target() {
+    let config = DatabaseConfig::sqlite(common::sqlite::unique_sqlite_db_path("cipherruntest"));
+    let db = CipherRunDatabase::new(&config).await.unwrap();
+
+    let history = db.get_scan_history("unknown.com", 443, 10).await.unwrap();
+    let latest = db.get_latest_scan("unknown.com", 443).await.unwrap();
+
+    assert!(history.is_empty());
+    assert!(latest.is_none());
+
+    db.close().await;
+}
+
+#[tokio::test]
 async fn test_cleanup_old_scans() {
-    let config = DatabaseConfig::sqlite(create_unique_db_path());
+    let config = DatabaseConfig::sqlite(common::sqlite::unique_sqlite_db_path("cipherruntest"));
     let db = CipherRunDatabase::new(&config).await.unwrap();
 
     // Store a scan
@@ -146,7 +146,9 @@ async fn test_cleanup_old_scans() {
         scan_time_ms: 1000,
         ..Default::default()
     };
-    db.store_scan(&results).await.unwrap();
+    db.store_scan(&PersistedScan::from_scan_results(&results))
+        .await
+        .unwrap();
 
     // Cleanup scans older than 0 days (should delete all)
     let deleted = db.cleanup_old_scans(0).await.unwrap();
@@ -154,6 +156,40 @@ async fn test_cleanup_old_scans() {
     // Note: Depending on timestamp precision, this might be 0 or 1
     // SQLite timestamp precision can cause issues with immediate deletion
     assert!(deleted <= 1);
+
+    db.close().await;
+}
+
+#[tokio::test]
+async fn test_cleanup_old_scans_is_noop_on_empty_database() {
+    let config = DatabaseConfig::sqlite(common::sqlite::unique_sqlite_db_path("cipherruntest"));
+    let db = CipherRunDatabase::new(&config).await.unwrap();
+
+    let deleted = db.cleanup_old_scans(30).await.unwrap();
+
+    assert_eq!(deleted, 0);
+
+    db.close().await;
+}
+
+#[tokio::test]
+async fn test_cleanup_old_scans_preserves_recent_history_lookup() {
+    let config = DatabaseConfig::sqlite(common::sqlite::unique_sqlite_db_path("cipherruntest"));
+    let db = CipherRunDatabase::new(&config).await.unwrap();
+
+    let results = ScanResults {
+        target: "recent.com:443".to_string(),
+        scan_time_ms: 1000,
+        ..Default::default()
+    };
+    db.store_scan(&PersistedScan::from_scan_results(&results))
+        .await
+        .unwrap();
+
+    let _deleted = db.cleanup_old_scans(365).await.unwrap();
+    let latest = db.get_latest_scan("recent.com", 443).await.unwrap();
+
+    assert!(latest.is_some());
 
     db.close().await;
 }
@@ -203,7 +239,7 @@ async fn test_example_config_generation() {
 
 #[tokio::test]
 async fn test_protocol_storage() {
-    let config = DatabaseConfig::sqlite(create_unique_db_path());
+    let config = DatabaseConfig::sqlite(common::sqlite::unique_sqlite_db_path("cipherruntest"));
     let db = CipherRunDatabase::new(&config).await.unwrap();
 
     // Create scan with multiple protocols
@@ -242,14 +278,16 @@ async fn test_protocol_storage() {
         });
 
     // Store scan
-    db.store_scan(&results).await.unwrap();
+    db.store_scan(&PersistedScan::from_scan_results(&results))
+        .await
+        .unwrap();
 
     db.close().await;
 }
 
 #[tokio::test]
 async fn test_vulnerability_storage() {
-    let config = DatabaseConfig::sqlite(create_unique_db_path());
+    let config = DatabaseConfig::sqlite(common::sqlite::unique_sqlite_db_path("cipherruntest"));
     let db = CipherRunDatabase::new(&config).await.unwrap();
 
     // Create scan with vulnerabilities
@@ -282,7 +320,9 @@ async fn test_vulnerability_storage() {
         });
 
     // Store scan (only vulnerable items should be stored)
-    db.store_scan(&results).await.unwrap();
+    db.store_scan(&PersistedScan::from_scan_results(&results))
+        .await
+        .unwrap();
 
     db.close().await;
 }
@@ -309,7 +349,7 @@ async fn test_connection_string_generation() {
 
 #[tokio::test]
 async fn test_multiple_scans_same_target() {
-    let config = DatabaseConfig::sqlite(create_unique_db_path());
+    let config = DatabaseConfig::sqlite(common::sqlite::unique_sqlite_db_path("cipherruntest"));
     let db = CipherRunDatabase::new(&config).await.unwrap();
 
     // Store multiple scans for same target
@@ -319,7 +359,9 @@ async fn test_multiple_scans_same_target() {
             scan_time_ms: i * 500,
             ..Default::default()
         };
-        db.store_scan(&results).await.unwrap();
+        db.store_scan(&PersistedScan::from_scan_results(&results))
+            .await
+            .unwrap();
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
     }
 
@@ -335,7 +377,7 @@ async fn test_multiple_scans_same_target() {
 
 #[tokio::test]
 async fn test_scan_with_rating() {
-    let config = DatabaseConfig::sqlite(create_unique_db_path());
+    let config = DatabaseConfig::sqlite(common::sqlite::unique_sqlite_db_path("cipherruntest"));
     let db = CipherRunDatabase::new(&config).await.unwrap();
 
     // Create scan with rating
@@ -358,7 +400,9 @@ async fn test_scan_with_rating() {
     });
 
     // Store scan
-    db.store_scan(&results).await.unwrap();
+    db.store_scan(&PersistedScan::from_scan_results(&results))
+        .await
+        .unwrap();
 
     // Retrieve and verify
     let history = db.get_scan_history("rated.com", 443, 1).await.unwrap();
@@ -368,3 +412,4 @@ async fn test_scan_with_rating() {
 
     db.close().await;
 }
+use cipherrun::application::PersistedScan;

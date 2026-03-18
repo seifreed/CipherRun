@@ -25,3 +25,41 @@ pub mod response_only;
 
 // Re-export ScannerFormatter for easy access
 pub use scanner_formatter::ScannerFormatter;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_output_format_debug_and_equality() {
+        assert_eq!(OutputFormat::JSON, OutputFormat::JSON);
+        assert_ne!(OutputFormat::JSON, OutputFormat::CSV);
+        assert_eq!(format!("{:?}", OutputFormat::JSONPretty), "JSONPretty");
+    }
+
+    #[test]
+    fn test_output_format_debug_log() {
+        assert_eq!(format!("{:?}", OutputFormat::Log), "Log");
+    }
+
+    #[test]
+    fn test_output_format_terminal_variant() {
+        let format = OutputFormat::Terminal;
+        assert_eq!(format, OutputFormat::Terminal);
+        assert_eq!(format!("{:?}", format), "Terminal");
+    }
+
+    #[test]
+    fn test_output_format_copy_semantics() {
+        let format = OutputFormat::JSON;
+        let copied = format;
+        assert_eq!(format, copied);
+    }
+
+    #[test]
+    fn test_output_format_html_variant() {
+        let format = OutputFormat::HTML;
+        assert_eq!(format, OutputFormat::HTML);
+        assert_eq!(format!("{:?}", format), "HTML");
+    }
+}

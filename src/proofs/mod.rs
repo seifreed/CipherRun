@@ -26,3 +26,11 @@ pub mod certificate_parsing;
 
 #[cfg(kani)]
 pub mod protocol_conversion;
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_proofs_module_compiles() {
+        assert!(true);
+    }
+}

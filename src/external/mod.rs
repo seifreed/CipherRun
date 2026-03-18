@@ -44,4 +44,10 @@ mod tests {
         // This tool definitely doesn't exist
         assert!(!check_tool_available("nonexistent_tool_xyz123"));
     }
+
+    #[test]
+    fn test_get_tool_version_invalid_tool() {
+        let result = get_tool_version("nonexistent_tool_xyz123");
+        assert!(result.is_err());
+    }
 }

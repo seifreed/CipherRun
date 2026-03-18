@@ -193,7 +193,18 @@ impl JobQueue for InMemoryJobQueue {
 
     async fn dequeue(&self) -> Result<Option<ScanJob>> {
         let mut queue = self.queue.write().await;
-        Ok(queue.pop_front())
+        let jobs = self.jobs.read().await;
+
+        while let Some(job) = queue.pop_front() {
+            match jobs.get(&job.id) {
+                Some(current) if matches!(current.status, ScanStatus::Queued) => {
+                    return Ok(Some(current.clone()));
+                }
+                _ => continue,
+            }
+        }
+
+        Ok(None)
     }
 
     async fn get_job(&self, id: &str) -> Result<Option<ScanJob>> {
@@ -208,6 +219,7 @@ impl JobQueue for InMemoryJobQueue {
     }
 
     async fn cancel_job(&self, id: &str) -> Result<bool> {
+        let mut queue = self.queue.write().await;
         let mut jobs = self.jobs.write().await;
 
         if let Some(mut job) = jobs.get(id).cloned() {
@@ -215,6 +227,7 @@ impl JobQueue for InMemoryJobQueue {
             if matches!(job.status, ScanStatus::Queued | ScanStatus::Running) {
                 job.mark_cancelled();
                 jobs.insert(id.to_string(), job);
+                queue.retain(|queued| queued.id != id);
                 return Ok(true);
             }
         }
@@ -305,5 +318,6 @@ mod tests {
             .unwrap()
             .expect("test assertion should succeed");
         assert_eq!(job.status, ScanStatus::Cancelled);
+        assert_eq!(queue.queue_length().await.unwrap(), 0);
     }
 }

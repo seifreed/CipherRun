@@ -205,6 +205,7 @@ pub struct AlpnReport {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::IpAddr;
 
     #[test]
     fn test_alpn_tester_creation() {
@@ -231,5 +232,117 @@ mod tests {
 
         assert!(result.http2_supported);
         assert_eq!(result.supported_protocols.len(), 1);
+    }
+
+    #[test]
+    fn test_generate_recommendations() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .unwrap();
+        let tester = AlpnTester::new(target);
+
+        let mut result = AlpnResult {
+            supported_protocols: Vec::new(),
+            http2_supported: false,
+            http3_supported: false,
+            negotiated_protocol: None,
+            details: Vec::new(),
+        };
+
+        let recs = tester.generate_recommendations(&result, true);
+        assert!(recs.iter().any(|r| r.contains("HTTP/2")));
+        assert!(recs.iter().any(|r| r.contains("SPDY is deprecated")));
+        assert!(recs.iter().any(|r| r.contains("ALPN is not enabled")));
+
+        result.supported_protocols = vec!["h2".to_string()];
+        result.http2_supported = true;
+        let recs = tester.generate_recommendations(&result, false);
+        assert!(recs.iter().any(|r| r.contains("HTTP/2 is enabled")));
+        assert!(!recs.iter().any(|r| r.contains("ALPN is not enabled")));
+    }
+
+    #[test]
+    fn test_alpn_result_serde_roundtrip() {
+        let result = AlpnResult {
+            supported_protocols: vec!["h2".to_string(), "http/1.1".to_string()],
+            http2_supported: true,
+            http3_supported: false,
+            negotiated_protocol: Some("h2".to_string()),
+            details: vec!["detail".to_string()],
+        };
+
+        let json = serde_json::to_string(&result).expect("serialize");
+        let decoded: AlpnResult = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(decoded.supported_protocols, result.supported_protocols);
+        assert_eq!(decoded.http2_supported, result.http2_supported);
+        assert_eq!(decoded.http3_supported, result.http3_supported);
+        assert_eq!(decoded.negotiated_protocol, result.negotiated_protocol);
+        assert_eq!(decoded.details, result.details);
+    }
+
+    #[test]
+    fn test_generate_recommendations_alpn_enabled_without_http2() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .unwrap();
+        let tester = AlpnTester::new(target);
+
+        let result = AlpnResult {
+            supported_protocols: vec!["http/1.1".to_string()],
+            http2_supported: false,
+            http3_supported: false,
+            negotiated_protocol: None,
+            details: Vec::new(),
+        };
+
+        let recs = tester.generate_recommendations(&result, false);
+        assert!(recs.iter().any(|r| r.contains("Consider enabling HTTP/2")));
+        assert!(!recs.iter().any(|r| r.contains("ALPN is not enabled")));
+    }
+
+    #[test]
+    fn test_alpn_report_serde_roundtrip() {
+        let report = AlpnReport {
+            alpn_enabled: true,
+            alpn_result: AlpnResult {
+                supported_protocols: vec!["h2".to_string()],
+                http2_supported: true,
+                http3_supported: false,
+                negotiated_protocol: Some("h2".to_string()),
+                details: vec!["detail".to_string()],
+            },
+            spdy_supported: false,
+            recommendations: vec!["ok".to_string()],
+        };
+
+        let json = serde_json::to_string(&report).expect("serialize");
+        let decoded: AlpnReport = serde_json::from_str(&json).expect("deserialize");
+        assert!(decoded.alpn_enabled);
+        assert_eq!(decoded.alpn_result.supported_protocols.len(), 1);
+        assert_eq!(decoded.recommendations.len(), 1);
+    }
+
+    #[test]
+    fn test_alpn_report_disabled_has_no_protocols() {
+        let report = AlpnReport {
+            alpn_enabled: false,
+            alpn_result: AlpnResult {
+                supported_protocols: Vec::new(),
+                http2_supported: false,
+                http3_supported: false,
+                negotiated_protocol: None,
+                details: vec!["none".to_string()],
+            },
+            spdy_supported: false,
+            recommendations: vec![],
+        };
+        assert!(!report.alpn_enabled);
+        assert!(report.alpn_result.supported_protocols.is_empty());
     }
 }

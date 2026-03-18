@@ -12,7 +12,7 @@
 //
 // Dependencies:
 // - SignatureTester (domain logic for signature algorithm testing)
-// - Args (CLI configuration)
+// - ScanRequest (scan configuration)
 // - Target (server information)
 //
 // Signature algorithms tested:
@@ -22,8 +22,9 @@
 // - Legacy algorithms (RSA-SHA1, RSA-MD5 - deprecated)
 
 use super::{ScanContext, ScanPhase};
+use crate::Result;
+use crate::application::ScanRequest;
 use crate::protocols::signatures::SignatureTester;
-use crate::{Args, Result};
 use async_trait::async_trait;
 
 /// Signature algorithm enumeration phase
@@ -33,7 +34,7 @@ use async_trait::async_trait;
 /// is useful for understanding server capabilities and identifying
 /// potential compatibility or security issues.
 ///
-/// Configuration sources (from Args):
+/// Configuration sources (from ScanRequest):
 /// - Signature enumeration flag (--show-sigs)
 /// - Target information (hostname, port, resolved IPs)
 pub struct SignaturePhase;
@@ -57,7 +58,7 @@ impl ScanPhase for SignaturePhase {
         "Enumerating Signature Algorithms"
     }
 
-    fn should_run(&self, args: &Args) -> bool {
+    fn should_run(&self, args: &ScanRequest) -> bool {
         // Run if:
         // - Explicit signature enumeration requested (--show-sigs)
         args.scan.show_sigs
@@ -91,16 +92,16 @@ mod tests {
         let phase = SignaturePhase::new();
 
         // Test with --show-sigs flag
-        let mut args = Args::default();
+        let mut args = ScanRequest::default();
         args.scan.show_sigs = true;
         assert!(phase.should_run(&args));
 
         // Test without --show-sigs flag
-        let args = Args::default();
+        let args = ScanRequest::default();
         assert!(!phase.should_run(&args));
 
         // Test with --all flag (should not enable signature enumeration)
-        let mut args = Args::default();
+        let mut args = ScanRequest::default();
         args.scan.all = true;
         assert!(!phase.should_run(&args));
     }
@@ -108,6 +109,12 @@ mod tests {
     #[test]
     fn test_signature_phase_name() {
         let phase = SignaturePhase::new();
+        assert_eq!(phase.name(), "Enumerating Signature Algorithms");
+    }
+
+    #[test]
+    fn test_signature_phase_default() {
+        let phase: SignaturePhase = Default::default();
         assert_eq!(phase.name(), "Enumerating Signature Algorithms");
     }
 }

@@ -179,4 +179,112 @@ Host: 192.168.1.1 (example.com)	Ports: 443/open/tcp//https///	Ignored State: clo
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].port, 443);
     }
+
+    #[test]
+    fn test_parse_host_line_uses_ip_when_hostname_missing() {
+        let line = "Host: 10.0.0.1 Ports: 443/open/tcp//https///";
+        let targets = NmapParser::parse_host_line(line).expect("should parse");
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].hostname, "10.0.0.1");
+    }
+
+    #[test]
+    fn test_parse_host_line_skips_closed_ports() {
+        let line = "Host: 10.0.0.2 Ports: 443/closed/tcp//https///";
+        let targets = NmapParser::parse_host_line(line).expect("should parse");
+        assert!(targets.is_empty());
+    }
+
+    #[test]
+    fn test_parse_host_line_missing_ports_section() {
+        let line = "Host: 10.0.0.3 (example.com) Status: Up";
+        let targets = NmapParser::parse_host_line(line);
+        assert!(targets.is_none());
+    }
+
+    #[test]
+    fn test_parse_host_line_invalid_port_returns_none() {
+        let line = "Host: 10.0.0.4 (example.com) Ports: abc/open/tcp//https///";
+        let targets = NmapParser::parse_host_line(line);
+        assert!(targets.is_none());
+    }
+
+    #[test]
+    fn test_to_target_strings_filters_udp() {
+        let targets = vec![
+            NmapTarget {
+                hostname: "example.com".to_string(),
+                ip: "192.168.1.1".to_string(),
+                port: 443,
+                protocol: "udp".to_string(),
+                state: "open".to_string(),
+            },
+            NmapTarget {
+                hostname: "example.com".to_string(),
+                ip: "192.168.1.1".to_string(),
+                port: 443,
+                protocol: "tcp".to_string(),
+                state: "open".to_string(),
+            },
+        ];
+
+        let strings = NmapParser::to_target_strings(&targets);
+        assert_eq!(strings, vec!["example.com:443".to_string()]);
+    }
+
+    #[test]
+    fn test_get_tls_ports_filters() {
+        let targets = vec![
+            NmapTarget {
+                hostname: "example.com".to_string(),
+                ip: "192.168.1.1".to_string(),
+                port: 443,
+                protocol: "tcp".to_string(),
+                state: "open".to_string(),
+            },
+            NmapTarget {
+                hostname: "example.com".to_string(),
+                ip: "192.168.1.1".to_string(),
+                port: 80,
+                protocol: "tcp".to_string(),
+                state: "open".to_string(),
+            },
+            NmapTarget {
+                hostname: "example.com".to_string(),
+                ip: "192.168.1.1".to_string(),
+                port: 993,
+                protocol: "tcp".to_string(),
+                state: "open".to_string(),
+            },
+        ];
+
+        let filtered = NmapParser::get_tls_ports(&targets);
+        let ports: Vec<u16> = filtered.iter().map(|t| t.port).collect();
+        assert_eq!(ports, vec![443, 993]);
+    }
+
+    #[test]
+    fn test_parse_content_multiple_ports() {
+        let content = r#"Host: 10.0.0.1 (example.com)	Ports: 443/open/tcp//https///, 80/closed/tcp//http///
+Host: 10.0.0.2 (other)	Ports: 993/open/tcp//imaps///"#;
+
+        let targets = NmapParser::parse_content(content).expect("test assertion should succeed");
+        assert_eq!(targets.len(), 2);
+        assert!(targets.iter().any(|t| t.port == 443));
+        assert!(targets.iter().any(|t| t.port == 993));
+    }
+
+    #[test]
+    fn test_filter_by_ports_empty_list() {
+        let targets = vec![NmapTarget {
+            hostname: "example.com".to_string(),
+            ip: "192.168.1.1".to_string(),
+            port: 443,
+            protocol: "tcp".to_string(),
+            state: "open".to_string(),
+        }];
+
+        let filtered = NmapParser::filter_by_ports(&targets, &[]);
+        assert!(filtered.is_empty());
+    }
 }

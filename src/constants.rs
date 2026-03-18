@@ -660,4 +660,19 @@ mod tests {
         assert_eq!(DEFAULT_READ_TIMEOUT, Duration::from_secs(5));
         assert_eq!(CIPHER_TEST_READ_TIMEOUT, Duration::from_secs(3));
     }
+
+    #[test]
+    fn test_additional_default_ports() {
+        assert_eq!(PORT_FTPS, 990);
+        assert_eq!(PORT_LDAPS, 636);
+        assert_eq!(PORT_RDP, 3389);
+        assert_eq!(PORT_MYSQL, 3306);
+        assert_eq!(PORT_POSTGRESQL, 5432);
+    }
+
+    #[test]
+    fn test_alert_levels() {
+        assert_eq!(ALERT_LEVEL_WARNING, 0x01);
+        assert_eq!(ALERT_LEVEL_FATAL, 0x02);
+    }
 }

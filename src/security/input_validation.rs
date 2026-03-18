@@ -303,7 +303,8 @@ fn is_private_ipv4(ip: &Ipv4Addr) -> bool {
         // Reserved (240.0.0.0/4)
         || ip.octets()[0] >= 240
         // Carrier-grade NAT (100.64.0.0/10, RFC 6598)
-        || (ip.octets()[0] == 100 && (ip.octets()[1] & 0xC0) == 64)
+        // Correct range: 100.64.0.0 - 100.127.255.255
+        || (ip.octets()[0] == 100 && ip.octets()[1] >= 64 && ip.octets()[1] <= 127)
         // IPv4 mapped IPv6 (RFC 4291)
         || (ip.octets()[0] == 0 && ip.octets()[1] == 0 && ip.octets()[2] == 0)
 }
@@ -357,38 +358,87 @@ pub fn validate_target(
     }
 
     // Parse hostname and port
-    let parts: Vec<&str> = target.split(':').collect();
-
-    let hostname = parts[0];
-    let port = if parts.len() > 1 {
-        parts[1]
-            .parse::<u16>()
-            .map_err(|_| ValidationError::InvalidPort("Invalid port format".to_string()))?
+    // IPv6 addresses contain colons, so we need special handling
+    let (hostname, port) = if target.starts_with('[') {
+        // IPv6 address in bracket notation: [::1]:443 or [::1]
+        if let Some(bracket_end) = target.find(']') {
+            let hostname = &target[1..bracket_end];
+            let rest = &target[bracket_end + 1..];
+            let port = if rest.starts_with(':') {
+                Some(rest[1..].parse::<u16>().map_err(|_| {
+                    ValidationError::InvalidPort("Invalid port format".to_string())
+                })?)
+            } else if rest.is_empty() {
+                None
+            } else {
+                return Err(ValidationError::InvalidPort(
+                    "Invalid format after IPv6 address".to_string(),
+                ));
+            };
+            (hostname.to_string(), port)
+        } else {
+            return Err(ValidationError::InvalidHostname(
+                "Invalid IPv6 address format - missing closing bracket".to_string(),
+            ));
+        }
+    } else if target.contains("::") || target.matches(':').count() >= 2 {
+        // Likely an IPv6 address without port (no brackets)
+        // Try to parse as IPv6 first
+        if target.parse::<Ipv6Addr>().is_ok() {
+            (target.to_string(), None)
+        } else if let Some(last_colon) = target.rfind(':') {
+            // Check if there's a port after the last colon
+            // IPv6 addresses have multiple colons, so we need to be careful
+            let potential_port = &target[last_colon + 1..];
+            if potential_port.parse::<u16>().is_ok() {
+                // It might be port, but only if the part before is valid
+                let potential_host = &target[..last_colon];
+                if potential_host.parse::<Ipv6Addr>().is_ok() {
+                    (potential_host.to_string(), Some(potential_port.parse().unwrap()))
+                } else {
+                    // Invalid - use IPv6 without port
+                    (target.to_string(), None)
+                }
+            } else {
+                (target.to_string(), None)
+            }
+        } else {
+            (target.to_string(), None)
+        }
     } else {
-        0
+        // Regular hostname or IPv4 with optional port
+        let parts: Vec<&str> = target.split(':').collect();
+        let hostname = parts[0].to_string();
+        let port = if parts.len() > 1 {
+            Some(parts[1].parse::<u16>().map_err(|_| {
+                ValidationError::InvalidPort("Invalid port format".to_string())
+            })?)
+        } else {
+            None
+        };
+        (hostname, port)
     };
 
     // Validate hostname
-    validate_hostname(hostname)?;
+    validate_hostname(&hostname)?;
 
     // Validate port if present
-    if port != 0 {
-        validate_port(port)?;
+    if let Some(p) = port {
+        validate_port(p)?;
     }
 
     // SSRF check: reject private IPs if not allowed
     if !allow_private_ips
         && let Ok(ip) = hostname.parse::<IpAddr>()
-            && is_private_ip(&ip) {
-                return Err(ValidationError::SsrfAttempt(format!(
-                    "Access to private IP addresses is not allowed: {}",
-                    ip
-                )));
-            }
+        && is_private_ip(&ip)
+    {
+        return Err(ValidationError::SsrfAttempt(format!(
+            "Access to private IP addresses is not allowed: {}",
+            ip
+        )));
+    }
 
-    let port_opt = if port != 0 { Some(port) } else { None };
-
-    Ok((hostname.to_string(), port_opt))
+    Ok((hostname, port))
 }
 
 /// Sanitize and validate filesystem path
@@ -450,9 +500,10 @@ pub fn sanitize_path(path: &str, base_dir: &Path) -> std::result::Result<PathBuf
         // If file doesn't exist yet, canonicalize parent and append filename
         if let Some(parent) = full_path.parent()
             && let Ok(canonical_parent) = parent.canonicalize()
-                && let Some(filename) = full_path.file_name() {
-                    return canonical_parent.join(filename);
-                }
+            && let Some(filename) = full_path.file_name()
+        {
+            return canonical_parent.join(filename);
+        }
         full_path.clone()
     });
 
@@ -580,6 +631,69 @@ mod tests {
     }
 
     #[test]
+    fn test_validate_target_private_ipv6() {
+        // fc00::1 is a private IPv6 address (unique local)
+        // Should be rejected when private IPs are not allowed
+        assert!(validate_target("fc00::1", false).is_err());
+        // Should be allowed when private IPs are explicitly allowed
+        assert!(validate_target("fc00::1", true).is_ok());
+    }
+
+    #[test]
+    fn test_validate_hostname_label_length_boundaries() {
+        let valid_label = "a".repeat(63);
+        let valid_host = format!("{}.com", valid_label);
+        assert!(validate_hostname(&valid_host).is_ok());
+
+        let invalid_label = "b".repeat(64);
+        let invalid_host = format!("{}.com", invalid_label);
+        assert!(validate_hostname(&invalid_host).is_err());
+    }
+
+    #[test]
+    fn test_validate_hostname_hyphen_positions() {
+        assert!(validate_hostname("-example.com").is_err());
+        assert!(validate_hostname("example-.com").is_err());
+        assert!(validate_hostname("exa-mple.com").is_ok());
+    }
+
+    #[test]
+    fn test_validate_hostname_rejects_empty_label() {
+        assert!(validate_hostname("example..com").is_err());
+    }
+
+    #[test]
+    fn test_validate_target_public_ipv6_allowed() {
+        // IPv6 addresses need to be valid but can be parsed
+        let result = validate_target("2001:4860:4860::8888", false);
+        assert!(result.is_ok(), "Expected IPv6 address to be valid");
+        let (host, port) = result.expect("test assertion should succeed");
+        // IPv6 address should match exactly
+        assert_eq!(host, "2001:4860:4860::8888");
+        assert!(port.is_none());
+    }
+
+    #[test]
+    fn test_validate_target_ipv6_with_port() {
+        // IPv6 with port using bracket notation
+        let result = validate_target("[::1]:443", true);
+        assert!(result.is_ok());
+        let (host, port) = result.expect("test assertion should succeed");
+        assert_eq!(host, "::1");
+        assert_eq!(port, Some(443));
+    }
+
+    #[test]
+    fn test_validate_target_ipv6_without_port() {
+        // IPv6 without port
+        let result = validate_target("::1", true);
+        assert!(result.is_ok());
+        let (host, port) = result.expect("test assertion should succeed");
+        assert_eq!(host, "::1");
+        assert!(port.is_none());
+    }
+
+    #[test]
     fn test_sanitize_path() {
         let temp_dir = TempDir::new().expect("test assertion should succeed");
         let base = temp_dir.path();
@@ -608,5 +722,35 @@ mod tests {
 
         // Null bytes
         assert!(sanitize_path("test\0.txt", base).is_err());
+    }
+
+    #[test]
+    fn test_validate_target_with_max_port() {
+        let result = validate_target("example.com:65535", true);
+        assert!(result.is_ok());
+        let (_host, port) = result.expect("test assertion should succeed");
+        assert_eq!(port, Some(65535));
+    }
+
+    #[test]
+    fn test_sanitize_path_allows_new_file_within_base() {
+        let temp_dir = TempDir::new().expect("test assertion should succeed");
+        let base = temp_dir.path();
+
+        // For new files that don't exist yet, the path is constructed from
+        // the canonicalized parent directory. We need to compare with the
+        // canonical base, not the original base path (especially on macOS
+        // where /var is a symlink to /private/var).
+        let safe_path = sanitize_path("newfile.txt", base).expect("test assertion should succeed");
+        
+        // The safe path should have a valid file name
+        assert!(safe_path.file_name().is_some());
+        
+        // Create the file to verify the path works
+        fs::write(&safe_path, "test content").expect("Should be able to write to safe path");
+        assert!(safe_path.exists(), "File should have been created");
+        
+        // Clean up
+        let _ = fs::remove_file(&safe_path);
     }
 }

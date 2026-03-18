@@ -51,7 +51,9 @@ impl ProxyConfig {
     /// Parse host:port string
     fn parse_hostport(hostport: &str) -> Result<(String, u16)> {
         if let Some((host, port_str)) = hostport.rsplit_once(':') {
-            let port = port_str.parse::<u16>().context("Invalid proxy port")?;
+            let port = port_str.parse::<u16>().map_err(|_| {
+                anyhow::anyhow!("Invalid port")
+            })?;
             Ok((host.to_string(), port))
         } else {
             // Default to port 8080 for HTTP proxies
@@ -195,5 +197,46 @@ mod tests {
         );
         assert!(request.contains("CONNECT example.com:443"));
         assert!(request.contains("Proxy-Authorization: Basic"));
+    }
+
+    #[test]
+    fn test_parse_proxy_invalid_port_non_numeric() {
+        let err = ProxyConfig::parse("proxy.example.com:notaport")
+            .err()
+            .expect("should fail");
+        assert!(err.to_string().contains("Invalid port"));
+    }
+
+    #[test]
+    fn test_parse_proxy_invalid_port() {
+        let err = ProxyConfig::parse("proxy.local:notaport")
+            .err()
+            .expect("should fail");
+        assert!(err.to_string().contains("Invalid port"));
+    }
+
+    #[test]
+    fn test_parse_proxy_username_only() {
+        let proxy =
+            ProxyConfig::parse("user@proxy.local:8080").expect("test assertion should succeed");
+        assert_eq!(proxy.username.as_deref(), Some("user"));
+        assert!(proxy.password.is_none());
+        assert_eq!(proxy.host, "proxy.local");
+        assert_eq!(proxy.port, 8080);
+    }
+
+    #[test]
+    fn test_build_connect_request_username_only_no_header() {
+        let request = build_connect_request("example.com", 443, &Some("user".to_string()), &None);
+        assert!(!request.contains("Proxy-Authorization"));
+    }
+
+    #[test]
+    fn test_parse_proxy_user_without_port_defaults() {
+        let proxy = ProxyConfig::parse("user@proxy.local").expect("test assertion should succeed");
+        assert_eq!(proxy.host, "proxy.local");
+        assert_eq!(proxy.port, 8080);
+        assert_eq!(proxy.username.as_deref(), Some("user"));
+        assert!(proxy.password.is_none());
     }
 }

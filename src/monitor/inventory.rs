@@ -304,6 +304,15 @@ mod tests {
     }
 
     #[test]
+    fn test_monitored_domain_update_scan() {
+        let mut domain = MonitoredDomain::new("example.com".to_string(), 443);
+        assert!(domain.last_scan.is_none());
+        domain.update_scan(None);
+        assert!(domain.last_scan.is_some());
+        assert!(domain.last_certificate.is_none());
+    }
+
+    #[test]
     fn test_inventory_add_remove() {
         let mut inventory = CertificateInventory::new();
         let domain = MonitoredDomain::new("example.com".to_string(), 443);
@@ -330,6 +339,23 @@ mod tests {
         let retrieved = inventory.get_domain("example.com");
         assert!(retrieved.is_some());
         assert_eq!(retrieved.unwrap().hostname, "example.com");
+    }
+
+    #[test]
+    fn test_inventory_get_domain_mut_updates() {
+        let mut inventory = CertificateInventory::new();
+        inventory
+            .add_domain(MonitoredDomain::new("example.com".to_string(), 443))
+            .expect("test assertion should succeed");
+
+        if let Some(domain) = inventory.get_domain_mut("example.com") {
+            domain.interval_seconds = 120;
+        }
+
+        let updated = inventory
+            .get_domain("example.com")
+            .expect("test assertion should succeed");
+        assert_eq!(updated.interval_seconds, 120);
     }
 
     #[test]
@@ -387,6 +413,18 @@ mod tests {
             .expect("test assertion should succeed");
         assert_eq!(test_domain.interval_seconds, 1800); // 30 minutes
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_load_from_file_invalid_port() -> Result<()> {
+        let mut temp_file = NamedTempFile::new()?;
+        writeln!(temp_file, "example.com:notaport")?;
+
+        let mut inventory = CertificateInventory::new();
+        let result = inventory.load_from_file(temp_file.path());
+
+        assert!(result.is_err());
         Ok(())
     }
 

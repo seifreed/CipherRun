@@ -4,9 +4,9 @@
 use crate::Result;
 use crate::error::TlsError;
 use crate::utils::sni_generator::SniGenerator;
-use std::net::IpAddr;
 use hickory_resolver::TokioAsyncResolver;
 use hickory_resolver::config::*;
+use std::net::IpAddr;
 
 /// Reverse PTR lookup utilities
 pub struct ReversePtrLookup;
@@ -201,6 +201,13 @@ mod tests {
     }
 
     #[test]
+    fn test_construct_reverse_query_name_ipv4_zero() {
+        let ip: IpAddr = "0.0.0.0".parse().expect("test assertion should succeed");
+        let query = ReversePtrLookup::construct_reverse_query_name(&ip);
+        assert_eq!(query, "0.0.0.0.in-addr.arpa");
+    }
+
+    #[test]
     fn test_construct_reverse_query_name_ipv6() {
         let ip: IpAddr = "2001:db8::1"
             .parse()
@@ -233,6 +240,60 @@ mod tests {
             .expect("test assertion should succeed");
         let pattern = ReversePtrLookup::try_common_patterns(&ip);
         assert!(pattern.is_none());
+    }
+
+    #[test]
+    fn test_try_common_patterns_cloudflare() {
+        let ip: IpAddr = "104.16.1.2".parse().expect("test assertion should succeed");
+        let pattern = ReversePtrLookup::try_common_patterns(&ip);
+        assert_eq!(pattern.as_deref(), Some("cloudflare.example.com"));
+    }
+
+    #[test]
+    fn test_try_common_patterns_ipv6_none_additional() {
+        let ip: IpAddr = "2001:db8::1"
+            .parse()
+            .expect("test assertion should succeed");
+        let pattern = ReversePtrLookup::try_common_patterns(&ip);
+        assert!(pattern.is_none());
+    }
+
+    #[test]
+    fn test_try_common_patterns_aws_alt_block() {
+        let ip: IpAddr = "3.1.2.3".parse().expect("test assertion should succeed");
+        let pattern = ReversePtrLookup::try_common_patterns(&ip);
+        assert!(pattern.is_some());
+        assert!(pattern.unwrap().contains("amazonaws.com"));
+    }
+
+    #[test]
+    fn test_try_common_patterns_ipv6_none() {
+        let ip: IpAddr = "2001:db8::2"
+            .parse()
+            .expect("test assertion should succeed");
+        let pattern = ReversePtrLookup::try_common_patterns(&ip);
+        assert!(pattern.is_none());
+    }
+
+    #[test]
+    fn test_construct_reverse_query_name_ipv6_contains_tail() {
+        let ip: IpAddr = "2001:db8::1"
+            .parse()
+            .expect("test assertion should succeed");
+        let query = ReversePtrLookup::construct_reverse_query_name(&ip);
+        assert!(query.starts_with("1.0.0.0"));
+        assert!(query.contains("8.b.d.0.1.0.0.2"));
+        assert!(query.ends_with(".ip6.arpa"));
+    }
+
+    #[test]
+    fn test_try_common_patterns_aws_54_block() {
+        let ip: IpAddr = "54.10.20.30"
+            .parse()
+            .expect("test assertion should succeed");
+        let pattern = ReversePtrLookup::try_common_patterns(&ip);
+        assert!(pattern.is_some());
+        assert!(pattern.unwrap().contains("amazonaws.com"));
     }
 
     // Note: Actual PTR lookups require network access and working DNS

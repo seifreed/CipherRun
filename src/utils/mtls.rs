@@ -219,6 +219,7 @@ pub fn build_tls_connector_with_roots(root_store: RootCertStore) -> TlsConnector
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rustls_pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
     use std::io::Write;
     use tempfile::NamedTempFile;
 
@@ -265,6 +266,85 @@ KHvHJKYnrKyB
     fn test_build_standard_connector() {
         let connector = build_standard_tls_connector();
         // Just verify it builds successfully
+        assert!(std::mem::size_of_val(&connector) > 0);
+    }
+
+    #[test]
+    fn test_build_connector_with_roots() {
+        let store = RootCertStore::empty();
+        let connector = build_tls_connector_with_roots(store);
+        assert!(std::mem::size_of_val(&connector) > 0);
+    }
+
+    #[test]
+    fn test_mtls_from_pem_file_empty_fails() {
+        let temp_file = NamedTempFile::new().expect("test assertion should succeed");
+        let err = MtlsConfig::from_pem_file(temp_file.path())
+            .err()
+            .expect("should fail on empty PEM");
+        assert!(err.to_string().contains("No certificates"));
+    }
+
+    #[test]
+    fn test_mtls_from_separate_files_empty_fails() {
+        let cert_file = NamedTempFile::new().expect("test assertion should succeed");
+        let key_file = NamedTempFile::new().expect("test assertion should succeed");
+
+        let err = MtlsConfig::from_separate_files(cert_file.path(), key_file.path(), None)
+            .err()
+            .expect("should fail on empty cert/key");
+        assert!(err.to_string().contains("No certificates"));
+    }
+
+    #[test]
+    fn test_mtls_from_separate_files_missing_data() {
+        let mut cert_file = NamedTempFile::new().expect("test assertion should succeed");
+        let key_file = NamedTempFile::new().expect("test assertion should succeed");
+        writeln!(cert_file, "not a cert").expect("test assertion should succeed");
+
+        let err = MtlsConfig::from_separate_files(cert_file.path(), key_file.path(), None)
+            .err()
+            .expect("should fail on invalid input");
+        assert!(err.to_string().contains("No certificates"));
+    }
+
+    #[test]
+    fn test_mtls_from_pem_file_without_private_key() {
+        let err = MtlsConfig::from_pem_file("data/Mozilla.pem")
+            .err()
+            .expect("should fail without private key");
+        assert!(err.to_string().contains("No private key"));
+    }
+
+    #[test]
+    fn test_mtls_from_separate_files_missing_key() {
+        let key_file = NamedTempFile::new().expect("test assertion should succeed");
+        let err = MtlsConfig::from_separate_files(
+            std::path::PathBuf::from("data/Mozilla.pem"),
+            key_file.path().to_path_buf(),
+            None,
+        )
+        .err()
+        .expect("should fail without private key");
+        assert!(err.to_string().contains("No private key"));
+    }
+
+    #[test]
+    fn test_mtls_config_clone_preserves_fields() {
+        let config = MtlsConfig {
+            cert_chain: vec![CertificateDer::from(vec![0x01, 0x02])],
+            private_key: PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(vec![0x03, 0x04])),
+        };
+
+        let cloned = config.clone();
+        assert_eq!(cloned.cert_chain.len(), 1);
+        assert!(matches!(cloned.private_key, PrivateKeyDer::Pkcs8(_)));
+    }
+
+    #[test]
+    fn test_build_tls_connector_with_empty_roots() {
+        let root_store = RootCertStore::empty();
+        let connector = build_tls_connector_with_roots(root_store);
         assert!(std::mem::size_of_val(&connector) > 0);
     }
 }

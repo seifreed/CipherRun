@@ -379,6 +379,60 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
+    #[test]
+    fn test_query_builder_placeholders_postgres() {
+        let mut builder = QueryBuilder::new(DatabaseType::Postgres);
+        assert_eq!(builder.placeholder(), "$1");
+        assert_eq!(builder.placeholder(), "$2");
+        assert_eq!(builder.placeholders(2), "$3, $4");
+        builder.reset();
+        assert_eq!(builder.placeholder(), "$1");
+    }
+
+    #[test]
+    fn test_query_builder_placeholders_sqlite() {
+        let mut builder = QueryBuilder::new(DatabaseType::Sqlite);
+        assert_eq!(builder.placeholder(), "?");
+        assert_eq!(builder.placeholder(), "?");
+        assert_eq!(builder.placeholders(2), "?, ?");
+        builder.reset();
+        assert_eq!(builder.placeholder(), "?");
+    }
+
+    #[test]
+    fn test_insert_returning_query_sqlite() {
+        let mut builder = QueryBuilder::new(DatabaseType::Sqlite);
+        let query = builder.insert_returning_query("items", &["a", "b"], "id");
+        assert_eq!(query, "INSERT INTO items (a, b) VALUES (?, ?)");
+    }
+
+    #[test]
+    fn test_batch_insert_query_postgres() {
+        let mut builder = QueryBuilder::new(DatabaseType::Postgres);
+        let query = builder.batch_insert_query("items", &["a", "b"], 2);
+        assert_eq!(query, "INSERT INTO items (a, b) VALUES ($1, $2), ($3, $4)");
+    }
+
+    #[test]
+    fn test_insert_query_postgres_and_sqlite() {
+        let mut pg = QueryBuilder::new(DatabaseType::Postgres);
+        let pg_query = pg.insert_query("items", &["a", "b"]);
+        assert_eq!(pg_query, "INSERT INTO items (a, b) VALUES ($1, $2)");
+
+        let mut sqlite = QueryBuilder::new(DatabaseType::Sqlite);
+        let sqlite_query = sqlite.insert_query("items", &["a", "b"]);
+        assert_eq!(sqlite_query, "INSERT INTO items (a, b) VALUES (?, ?)");
+    }
+
+    #[test]
+    fn test_select_where_query_resets_counter() {
+        let mut builder = QueryBuilder::new(DatabaseType::Postgres);
+        let query = builder.select_where_query("items", "a, b", "id");
+        assert_eq!(query, "SELECT a, b FROM items WHERE id = $1");
+        let query2 = builder.select_where_query("items", "a", "id");
+        assert_eq!(query2, "SELECT a FROM items WHERE id = $1");
+    }
+
     #[tokio::test]
     async fn test_sqlite_pool_creation() {
         let config = DatabaseConfig::sqlite(PathBuf::from(":memory:"));

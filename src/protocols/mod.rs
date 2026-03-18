@@ -194,3 +194,33 @@ pub mod signatures;
 pub mod tester;
 
 pub use tester::{ProtocolTestable, ProtocolTester};
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extension_new_known_and_unknown() {
+        let ext = Extension::new(0x0000, vec![1, 2, 3]);
+        assert_eq!(ext.name, "server_name (SNI)");
+        assert_eq!(ext.data, vec![1, 2, 3]);
+
+        let unknown = Extension::new(0x9999, vec![]);
+        assert_eq!(unknown.name, "unknown");
+    }
+
+    #[test]
+    fn test_protocol_all_excludes_quic() {
+        let all = Protocol::all();
+        assert!(all.contains(&Protocol::TLS12));
+        assert!(!all.contains(&Protocol::QUIC));
+    }
+
+    #[test]
+    fn test_protocol_from_str_known() {
+        let protocol: Protocol = "TLS 1.2".parse().expect("should parse");
+        assert_eq!(protocol, Protocol::TLS12);
+        let protocol: Protocol = "SSLv3".parse().expect("should parse");
+        assert_eq!(protocol, Protocol::SSLv3);
+    }
+}

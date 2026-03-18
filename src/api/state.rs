@@ -64,17 +64,17 @@ pub struct ApiStats {
     /// Requests in last hour (timestamp, count)
     pub requests_last_hour: Vec<(Instant, u64)>,
 
+    /// Request timestamps for rolling-window stats
+    pub request_timestamps: Vec<Instant>,
+
     /// Total response time for averaging
     pub total_response_time_ms: u64,
 
     /// Total responses counted for averaging
     pub total_responses: u64,
 
-    /// Scans in last 24 hours
-    pub scans_24h: u64,
-
-    /// Scans in last 7 days
-    pub scans_7d: u64,
+    /// Scan timestamps for rolling-window stats
+    pub scan_timestamps: Vec<Instant>,
 }
 
 impl ApiStats {
@@ -85,16 +85,21 @@ impl ApiStats {
         // Update hourly stats
         let now = Instant::now();
         self.requests_last_hour.push((now, 1));
+        self.request_timestamps.push(now);
 
         // Clean up old entries (older than 1 hour). Guard against underflow on some platforms.
         if let Some(one_hour_ago) = now.checked_sub(std::time::Duration::from_secs(3600)) {
             self.requests_last_hour.retain(|(t, _)| *t > one_hour_ago);
         }
+        self.prune_request_timestamps(now);
     }
 
     /// Increment scan counter
     pub fn increment_scans(&mut self) {
         self.total_scans += 1;
+        let now = Instant::now();
+        self.scan_timestamps.push(now);
+        self.prune_scan_timestamps(now);
     }
 
     /// Record completed scan
@@ -106,6 +111,11 @@ impl ApiStats {
     /// Record failed scan
     pub fn record_failed_scan(&mut self) {
         self.failed_scans += 1;
+    }
+
+    pub fn record_response(&mut self, response_time_ms: u64) {
+        self.total_response_time_ms += response_time_ms;
+        self.total_responses += 1;
     }
 
     /// Get average scan duration
@@ -131,14 +141,40 @@ impl ApiStats {
         }
     }
 
+    pub fn requests_in_last_day(&self) -> u64 {
+        let now = Instant::now();
+        self.request_timestamps
+            .iter()
+            .filter(|ts| now.duration_since(**ts).as_secs() <= 24 * 60 * 60)
+            .count() as u64
+    }
+
     /// Get scans in last 24 hours
     pub fn scans_last_24h(&self) -> u64 {
-        self.scans_24h
+        let now = Instant::now();
+        self.scan_timestamps
+            .iter()
+            .filter(|ts| now.duration_since(**ts).as_secs() <= 24 * 60 * 60)
+            .count() as u64
     }
 
     /// Get scans in last 7 days
     pub fn scans_last_7d(&self) -> u64 {
-        self.scans_7d
+        let now = Instant::now();
+        self.scan_timestamps
+            .iter()
+            .filter(|ts| now.duration_since(**ts).as_secs() <= 7 * 24 * 60 * 60)
+            .count() as u64
+    }
+
+    fn prune_scan_timestamps(&mut self, now: Instant) {
+        self.scan_timestamps
+            .retain(|ts| now.duration_since(*ts).as_secs() <= 7 * 24 * 60 * 60);
+    }
+
+    fn prune_request_timestamps(&mut self, now: Instant) {
+        self.request_timestamps
+            .retain(|ts| now.duration_since(*ts).as_secs() <= 24 * 60 * 60);
     }
 }
 
@@ -146,6 +182,7 @@ impl AppState {
     /// Create new application state
     pub fn new(config: ApiConfig) -> Result<Self> {
         let config = Arc::new(config);
+        let stats = Arc::new(tokio::sync::RwLock::new(ApiStats::default()));
 
         // Create job queue
         let job_queue: Arc<dyn JobQueue> =
@@ -155,7 +192,8 @@ impl AppState {
         let executor = Arc::new(ScanExecutor::new(
             job_queue.clone(),
             config.max_concurrent_scans,
-        ));
+        )
+        .with_stats(stats.clone()));
 
         // Get progress broadcaster
         let progress_tx = executor.progress_broadcaster();
@@ -169,7 +207,7 @@ impl AppState {
             executor,
             progress_tx,
             start_time: Instant::now(),
-            stats: Arc::new(tokio::sync::RwLock::new(ApiStats::default())),
+            stats,
             rate_limiter,
             db_pool: None,
             policy_dir: None,
@@ -214,6 +252,11 @@ impl AppState {
         stats.increment_requests();
     }
 
+    pub async fn record_response(&self, response_time_ms: u64) {
+        let mut stats = self.stats.write().await;
+        stats.record_response(response_time_ms);
+    }
+
     /// Record new scan
     pub async fn record_scan(&self) {
         let mut stats = self.stats.write().await;
@@ -247,5 +290,45 @@ impl AppState {
     pub fn with_policy_dir(mut self, dir: PathBuf) -> Self {
         self.policy_dir = Some(dir);
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_api_stats_request_tracking() {
+        let mut stats = ApiStats::default();
+        stats.increment_requests();
+
+        assert_eq!(stats.total_requests, 1);
+        assert_eq!(stats.requests_last_hour.len(), 1);
+        assert_eq!(stats.requests_in_last_hour(), 1);
+    }
+
+    #[test]
+    fn test_api_stats_scan_and_response_metrics() {
+        let mut stats = ApiStats::default();
+        stats.record_completed_scan(100);
+        stats.record_completed_scan(200);
+        stats.record_failed_scan();
+
+        assert_eq!(stats.completed_scans, 2);
+        assert_eq!(stats.failed_scans, 1);
+        assert!((stats.avg_scan_duration() - 150.0).abs() < f64::EPSILON);
+
+        assert_eq!(stats.avg_response_time_ms(), 0.0);
+        stats.total_response_time_ms = 250;
+        stats.total_responses = 10;
+        assert!((stats.avg_response_time_ms() - 25.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_api_stats_defaults_and_scan_counts() {
+        let stats = ApiStats::default();
+        assert_eq!(stats.avg_scan_duration(), 0.0);
+        assert_eq!(stats.scans_last_24h(), 0);
+        assert_eq!(stats.scans_last_7d(), 0);
     }
 }

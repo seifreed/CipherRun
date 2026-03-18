@@ -233,8 +233,11 @@ pub fn is_debian_weak_key(cert: &X509) -> Result<bool, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use openssl::asn1::Asn1Time;
+    use openssl::hash::MessageDigest;
     use openssl::pkey::PKey;
     use openssl::rsa::Rsa;
+    use openssl::x509::{X509Builder, X509NameBuilder};
 
     #[test]
     fn test_detector_creation() {
@@ -315,5 +318,44 @@ mod tests {
     fn test_default_implementation() {
         let detector = DebianKeyDetector::default();
         assert!(detector.blacklist_size() > 0);
+    }
+
+    #[test]
+    fn test_is_debian_weak_key_false_for_generated_cert() {
+        let rsa = Rsa::generate(2048).expect("test assertion should succeed");
+        let pkey = PKey::from_rsa(rsa).expect("test assertion should succeed");
+
+        let mut name_builder = X509NameBuilder::new().expect("test assertion should succeed");
+        name_builder
+            .append_entry_by_text("CN", "example.com")
+            .expect("test assertion should succeed");
+        let name = name_builder.build();
+
+        let mut builder = X509Builder::new().expect("test assertion should succeed");
+        builder
+            .set_version(2)
+            .expect("test assertion should succeed");
+        builder
+            .set_subject_name(&name)
+            .expect("test assertion should succeed");
+        builder
+            .set_issuer_name(&name)
+            .expect("test assertion should succeed");
+        builder
+            .set_pubkey(&pkey)
+            .expect("test assertion should succeed");
+        builder
+            .set_not_before(&Asn1Time::days_from_now(0).unwrap())
+            .expect("test assertion should succeed");
+        builder
+            .set_not_after(&Asn1Time::days_from_now(365).unwrap())
+            .expect("test assertion should succeed");
+        builder
+            .sign(&pkey, MessageDigest::sha256())
+            .expect("test assertion should succeed");
+
+        let cert = builder.build();
+        let is_weak = is_debian_weak_key(&cert).expect("test assertion should succeed");
+        assert!(!is_weak);
     }
 }

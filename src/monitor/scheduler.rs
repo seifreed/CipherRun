@@ -315,4 +315,10 @@ mod tests {
         let due_again = scheduler.get_domains_to_scan(&domains);
         assert_eq!(due_again.len(), 0);
     }
+
+    #[test]
+    fn test_time_until_next_scan_unknown() {
+        let scheduler = SchedulingEngine::new();
+        assert!(scheduler.time_until_next_scan("missing:443").is_none());
+    }
 }

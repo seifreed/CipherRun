@@ -3,7 +3,7 @@
 use super::parser::CertificateInfo;
 use super::revocation::{RevocationResult, RevocationStatus};
 use super::validator::{IssueType, ValidationResult};
-use crate::cli::Args;
+use crate::application::CertificateFilters;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -70,36 +70,21 @@ impl CertificateStatus {
     /// This implements OR logic: if any filter matches, the cert is shown.
     ///
     /// # Arguments
-    /// * `args` - CLI arguments containing filter flags
+    /// * `filters` - certificate filter configuration
     ///
     /// # Returns
     /// true if certificate should be displayed, false if it should be filtered out
-    pub fn matches_filter(&self, args: &Args) -> bool {
+    pub fn matches_filter(&self, filters: &CertificateFilters) -> bool {
         // If no filters are active, show everything
-        if !args.has_certificate_filters() {
+        if !filters.has_filters() {
             return true;
         }
 
-        // Check each active filter - if ANY match, show the certificate
-        let mut matches = false;
-
-        if args.cert_filters.filter_expired && self.is_expired {
-            matches = true;
-        }
-        if args.cert_filters.filter_self_signed && self.is_self_signed {
-            matches = true;
-        }
-        if args.cert_filters.filter_mismatched && self.is_mismatched {
-            matches = true;
-        }
-        if args.cert_filters.filter_revoked && self.is_revoked {
-            matches = true;
-        }
-        if args.cert_filters.filter_untrusted && self.is_untrusted {
-            matches = true;
-        }
-
-        matches
+        (filters.expired && self.is_expired)
+            || (filters.self_signed && self.is_self_signed)
+            || (filters.mismatched && self.is_mismatched)
+            || (filters.revoked && self.is_revoked)
+            || (filters.untrusted && self.is_untrusted)
     }
 
     /// Detect if certificate is expired
@@ -270,6 +255,7 @@ fn parse_certificate_date(date_str: &str) -> Result<DateTime<Utc>, chrono::Parse
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::CertificateFilters;
     use crate::certificates::validator::{IssueSeverity, ValidationIssue};
 
     #[test]
@@ -370,12 +356,17 @@ mod tests {
             is_untrusted: false,
         };
 
-        let args = Args::default();
+        let filters = CertificateFilters::default();
 
         assert!(
-            status.matches_filter(&args),
+            status.matches_filter(&filters),
             "Should match when no filters are active"
         );
+    }
+
+    #[test]
+    fn test_detect_revoked_none() {
+        assert!(!CertificateStatus::detect_revoked(None));
     }
 
     #[test]
@@ -388,11 +379,13 @@ mod tests {
             is_untrusted: false,
         };
 
-        let mut args = Args::default();
-        args.cert_filters.filter_expired = true;
+        let filters = CertificateFilters {
+            expired: true,
+            ..Default::default()
+        };
 
         assert!(
-            status.matches_filter(&args),
+            status.matches_filter(&filters),
             "Expired certificate should match expired filter"
         );
 
@@ -403,7 +396,7 @@ mod tests {
         };
 
         assert!(
-            !status_not_expired.matches_filter(&args),
+            !status_not_expired.matches_filter(&filters),
             "Non-expired certificate should not match expired filter"
         );
     }
@@ -418,12 +411,14 @@ mod tests {
             is_untrusted: false,
         };
 
-        let mut args = Args::default();
-        args.cert_filters.filter_expired = true;
-        args.cert_filters.filter_self_signed = true;
+        let filters = CertificateFilters {
+            expired: true,
+            self_signed: true,
+            ..Default::default()
+        };
 
         assert!(
-            status.matches_filter(&args),
+            status.matches_filter(&filters),
             "Self-signed certificate should match when self-signed filter is active"
         );
     }

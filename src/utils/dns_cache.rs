@@ -238,6 +238,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_cache_stats_expired_entries() {
+        let cache = DnsCache::new(Duration::from_millis(50));
+
+        cache
+            .insert(
+                "example.com".to_string(),
+                vec![IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1))],
+            )
+            .await;
+
+        tokio::time::sleep(Duration::from_millis(80)).await;
+
+        let stats = cache.stats().await;
+        assert_eq!(stats.total_entries, 1);
+        assert_eq!(stats.active_entries, 0);
+        assert_eq!(stats.expired_entries, 1);
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_expired_none_removed() {
+        let cache = DnsCache::new(Duration::from_secs(60));
+        cache
+            .insert(
+                "example.com".to_string(),
+                vec![IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1))],
+            )
+            .await;
+        let removed = cache.cleanup_expired().await;
+        assert_eq!(removed, 0);
+        assert_eq!(cache.size().await, 1);
+    }
+
+    #[tokio::test]
     async fn test_ipv6_support() {
         let cache = DnsCache::default();
         let hostname = "ipv6.example.com".to_string();
@@ -248,5 +281,59 @@ mod tests {
         let cached = cache.get(&hostname).await;
         assert!(cached.is_some());
         assert_eq!(cached.unwrap(), ips);
+    }
+
+    #[tokio::test]
+    async fn test_cache_stats_counts() {
+        let cache = DnsCache::new(Duration::from_millis(50));
+        let hostname = "example.com".to_string();
+        let ips = vec![IpAddr::V4(Ipv4Addr::new(93, 184, 216, 34))];
+
+        cache.insert(hostname.clone(), ips).await;
+        let stats = cache.stats().await;
+        assert_eq!(stats.total_entries, 1);
+        assert_eq!(stats.active_entries, 1);
+
+        tokio::time::sleep(Duration::from_millis(60)).await;
+        let stats = cache.stats().await;
+        assert_eq!(stats.expired_entries, 1);
+    }
+
+    #[tokio::test]
+    async fn test_cache_clear() {
+        let cache = DnsCache::new(Duration::from_secs(60));
+        cache
+            .insert(
+                "example.com".to_string(),
+                vec![IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1))],
+            )
+            .await;
+
+        assert_eq!(cache.size().await, 1);
+        cache.clear().await;
+        assert_eq!(cache.size().await, 0);
+    }
+
+    #[test]
+    fn test_global_cache_singleton() {
+        let first = global_cache() as *const DnsCache;
+        let second = global_cache() as *const DnsCache;
+        assert_eq!(first, second);
+    }
+
+    #[tokio::test]
+    async fn test_cache_stats_empty() {
+        let cache = DnsCache::new(Duration::from_secs(60));
+        let stats = cache.stats().await;
+        assert_eq!(stats.total_entries, 0);
+        assert_eq!(stats.active_entries, 0);
+        assert_eq!(stats.expired_entries, 0);
+    }
+
+    #[tokio::test]
+    async fn test_cache_get_missing_returns_none() {
+        let cache = DnsCache::new(Duration::from_secs(60));
+        let missing = cache.get("missing.example").await;
+        assert!(missing.is_none());
     }
 }

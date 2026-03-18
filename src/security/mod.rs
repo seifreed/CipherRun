@@ -26,3 +26,32 @@ pub use input_validation::{
     ValidationError, is_private_ip, sanitize_path, validate_cipher, validate_hostname,
     validate_port, validate_starttls_protocol, validate_target,
 };
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_port_reexport() {
+        assert!(validate_port(443).is_ok());
+        assert!(validate_port(0).is_err());
+    }
+
+    #[test]
+    fn test_validate_hostname_reexport() {
+        assert!(validate_hostname("example.com").is_ok());
+        assert!(validate_hostname("bad host").is_err());
+    }
+
+    #[test]
+    fn test_validate_cipher_reexport() {
+        assert!(validate_cipher("HIGH:!aNULL").is_ok());
+        assert!(validate_cipher("bad;cipher").is_err());
+    }
+
+    #[test]
+    fn test_validate_starttls_protocol_reexport() {
+        assert!(validate_starttls_protocol("smtp").is_ok());
+        assert!(validate_starttls_protocol("badproto").is_err());
+    }
+}

@@ -382,6 +382,30 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_input_empty_string_defaults_to_hostname() {
+        match AsnCidrParser::parse_input("   ") {
+            InputType::Hostname(hostname) => assert!(hostname.is_empty()),
+            _ => panic!("Expected Hostname input type"),
+        }
+    }
+
+    #[test]
+    fn test_parse_input_asn_zero_is_hostname() {
+        match AsnCidrParser::parse_input("AS0") {
+            InputType::Hostname(hostname) => assert_eq!(hostname, "AS0"),
+            _ => panic!("Expected Hostname for invalid ASN"),
+        }
+    }
+
+    #[test]
+    fn test_parse_input_trims_whitespace_cidr() {
+        match AsnCidrParser::parse_input("  192.0.2.0/24  ") {
+            InputType::Cidr(cidr) => assert_eq!(cidr, "192.0.2.0/24"),
+            _ => panic!("Expected CIDR input type"),
+        }
+    }
+
+    #[test]
     fn test_expand_cidr_small() {
         let expansion =
             AsnCidrParser::expand_cidr("192.0.2.0/30").expect("test assertion should succeed");
@@ -409,6 +433,13 @@ mod tests {
     }
 
     #[test]
+    fn test_expand_cidr_ipv6_large() {
+        let expansion =
+            AsnCidrParser::expand_cidr("2001:db8::/64").expect("test assertion should succeed");
+        assert_eq!(expansion.total_ips(), u64::MAX);
+    }
+
+    #[test]
     fn test_cidr_expansion_iter() {
         let expansion =
             AsnCidrParser::expand_cidr("192.0.2.0/30").expect("test assertion should succeed");
@@ -417,6 +448,52 @@ mod tests {
         assert_eq!(ips.len(), 4);
         assert_eq!(ips[0].to_string(), "192.0.2.0");
         assert_eq!(ips[3].to_string(), "192.0.2.3");
+    }
+
+    #[test]
+    fn test_expanded_input_target_count_ipv6_large() {
+        let network: IpNetwork = "2001:db8::/64".parse().expect("valid network");
+        let expanded = ExpandedInput::Asn {
+            asn: "AS64496".to_string(),
+            networks: vec![network],
+        };
+        assert_eq!(expanded.target_count(), u64::MAX);
+    }
+
+    #[test]
+    fn test_expand_cidr_single_host() {
+        let expansion =
+            AsnCidrParser::expand_cidr("198.51.100.42/32").expect("test assertion should succeed");
+        match expansion {
+            CidrExpansion::FullList { ips, total, .. } => {
+                assert_eq!(total, 1);
+                assert_eq!(ips.len(), 1);
+                assert_eq!(ips[0].to_string(), "198.51.100.42");
+            }
+            _ => panic!("Expected FullList for /32"),
+        }
+    }
+
+    #[test]
+    fn test_parse_input_trims_whitespace() {
+        match AsnCidrParser::parse_input("  203.0.113.0/24  ") {
+            InputType::Cidr(cidr) => assert_eq!(cidr, "203.0.113.0/24"),
+            _ => panic!("Expected CIDR input type"),
+        }
+    }
+
+    #[test]
+    fn test_expand_cidr_invalid() {
+        let result = AsnCidrParser::expand_cidr("invalid/cidr");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_input_large_asn_is_hostname() {
+        match AsnCidrParser::parse_input("AS4294967296") {
+            InputType::Hostname(hostname) => assert_eq!(hostname, "AS4294967296"),
+            _ => panic!("Expected Hostname for out-of-range ASN"),
+        }
     }
 
     // Note: ASN API tests require network access and are integration tests

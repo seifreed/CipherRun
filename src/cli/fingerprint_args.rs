@@ -53,3 +53,51 @@ pub struct FingerprintArgs {
     #[arg(long = "export-hello", value_name = "FORMAT")]
     pub export_hello: Option<String>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[derive(Parser)]
+    struct TestCli {
+        #[command(flatten)]
+        args: FingerprintArgs,
+    }
+
+    #[test]
+    fn test_fingerprint_args_defaults_from_clap() {
+        let parsed = TestCli::parse_from(["test"]);
+        let args = parsed.args;
+
+        assert!(args.ja3);
+        assert!(args.ja3s);
+        assert!(args.jarm);
+        assert!(!args.client_hello);
+        assert!(!args.server_hello);
+        assert!(!args.client_simulation);
+        assert!(args.ja3_database.is_none());
+        assert!(args.ja3s_database.is_none());
+        assert!(args.jarm_database.is_none());
+        assert!(args.export_hello.is_none());
+    }
+
+    #[test]
+    fn test_fingerprint_args_disable_ja3() {
+        let parsed = TestCli::parse_from(["test", "--ja3=false"]);
+        let args = parsed.args;
+
+        assert!(!args.ja3);
+        assert!(args.ja3s);
+        assert!(args.jarm);
+    }
+
+    #[test]
+    fn test_fingerprint_args_disable_jarm_and_export() {
+        let parsed = TestCli::parse_from(["test", "--jarm=false", "--export-hello", "hex"]);
+        let args = parsed.args;
+
+        assert!(!args.jarm);
+        assert_eq!(args.export_hello.as_deref(), Some("hex"));
+    }
+}

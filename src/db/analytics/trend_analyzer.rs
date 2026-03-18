@@ -724,6 +724,10 @@ impl TrendAnalyzer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::{BindValue, CipherRunDatabase, DatabaseConfig};
+    use std::path::PathBuf;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     #[test]
     fn test_calculate_mean() {
@@ -777,5 +781,273 @@ mod tests {
             TrendAnalyzer::determine_trend_direction(&degrading),
             TrendDirection::Degrading
         );
+    }
+
+    #[test]
+    fn test_trend_direction_stable_and_usize() {
+        let stable = vec![(Utc::now(), 80), (Utc::now(), 81), (Utc::now(), 79)];
+        assert_eq!(
+            TrendAnalyzer::determine_trend_direction(&stable),
+            TrendDirection::Stable
+        );
+
+        let improving = vec![(Utc::now(), 10usize), (Utc::now(), 5usize)];
+        assert_eq!(
+            TrendAnalyzer::determine_usize_trend_direction(&improving),
+            TrendDirection::Improving
+        );
+
+        let degrading = vec![(Utc::now(), 1usize), (Utc::now(), 10usize)];
+        assert_eq!(
+            TrendAnalyzer::determine_usize_trend_direction(&degrading),
+            TrendDirection::Degrading
+        );
+    }
+
+    #[test]
+    fn test_forecast_linear() {
+        let points = vec![(Utc::now(), 60), (Utc::now(), 70), (Utc::now(), 80)];
+        let forecast = TrendAnalyzer::forecast_linear(&points).unwrap();
+        assert!(forecast >= 80);
+    }
+
+    #[test]
+    fn test_generate_protocol_summary() {
+        let tls13 = vec![(Utc::now(), true), (Utc::now(), false)];
+        let tls12 = vec![(Utc::now(), true), (Utc::now(), true)];
+        let legacy = vec![(Utc::now(), vec!["SSLv3".to_string()])];
+
+        let summary = TrendAnalyzer::generate_protocol_summary(&tls13, &tls12, &legacy);
+        assert!(summary.contains("TLS 1.3 adoption"));
+        assert!(summary.contains("TLS 1.2 usage"));
+        assert!(summary.contains("Legacy protocols detected"));
+    }
+
+    static DB_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    fn create_unique_db_path() -> PathBuf {
+        let counter = DB_COUNTER.fetch_add(1, Ordering::SeqCst);
+        #[cfg(unix)]
+        let path = PathBuf::from(format!("/tmp/cipherrun-trend-test{}.db", counter));
+        #[cfg(not(unix))]
+        let path = std::env::temp_dir().join(format!("cipherrun-trend-test{}.db", counter));
+        let _ = std::fs::remove_file(&path);
+        path
+    }
+
+    async fn setup_db() -> Arc<CipherRunDatabase> {
+        let config = DatabaseConfig::sqlite(create_unique_db_path());
+        let db = CipherRunDatabase::new(&config)
+            .await
+            .expect("test assertion should succeed");
+        Arc::new(db)
+    }
+
+    async fn insert_scan(
+        db: &CipherRunDatabase,
+        hostname: &str,
+        port: u16,
+        timestamp: chrono::DateTime<chrono::Utc>,
+        grade: Option<&str>,
+        score: Option<i32>,
+    ) -> i64 {
+        let mut qb = db.pool().query_builder();
+        let query = qb.insert_returning_query(
+            "scans",
+            &[
+                "target_hostname",
+                "target_port",
+                "scan_timestamp",
+                "overall_grade",
+                "overall_score",
+                "scan_duration_ms",
+                "scanner_version",
+            ],
+            "scan_id",
+        );
+
+        let bindings = vec![
+            BindValue::String(hostname.to_string()),
+            BindValue::Int32(port as i32),
+            BindValue::DateTime(timestamp),
+            BindValue::OptString(grade.map(|g| g.to_string())),
+            BindValue::OptInt32(score),
+            BindValue::OptInt32(Some(1200)),
+            BindValue::OptString(Some("test".to_string())),
+        ];
+
+        db.pool()
+            .execute_insert_returning(&query, bindings)
+            .await
+            .expect("test assertion should succeed")
+    }
+
+    async fn insert_protocol(
+        db: &CipherRunDatabase,
+        scan_id: i64,
+        name: &str,
+        enabled: bool,
+        preferred: bool,
+    ) {
+        let mut qb = db.pool().query_builder();
+        let query = qb.insert_query(
+            "protocols",
+            &["scan_id", "protocol_name", "enabled", "preferred"],
+        );
+        let bindings = vec![
+            BindValue::Int64(scan_id),
+            BindValue::String(name.to_string()),
+            BindValue::Bool(enabled),
+            BindValue::Bool(preferred),
+        ];
+        db.pool()
+            .execute(&query, bindings)
+            .await
+            .expect("test assertion should succeed");
+    }
+
+    async fn insert_cipher(
+        db: &CipherRunDatabase,
+        scan_id: i64,
+        protocol: &str,
+        cipher_name: &str,
+        strength: &str,
+    ) {
+        let mut qb = db.pool().query_builder();
+        let query = qb.insert_query(
+            "cipher_suites",
+            &[
+                "scan_id",
+                "protocol_name",
+                "cipher_name",
+                "key_exchange",
+                "authentication",
+                "encryption",
+                "mac",
+                "bits",
+                "forward_secrecy",
+                "strength",
+            ],
+        );
+        let bindings = vec![
+            BindValue::Int64(scan_id),
+            BindValue::String(protocol.to_string()),
+            BindValue::String(cipher_name.to_string()),
+            BindValue::OptString(None),
+            BindValue::OptString(None),
+            BindValue::OptString(None),
+            BindValue::OptString(None),
+            BindValue::OptInt32(None),
+            BindValue::Bool(true),
+            BindValue::String(strength.to_string()),
+        ];
+        db.pool()
+            .execute(&query, bindings)
+            .await
+            .expect("test assertion should succeed");
+    }
+
+    async fn insert_vulnerability(
+        db: &CipherRunDatabase,
+        scan_id: i64,
+        vuln_type: &str,
+        severity: &str,
+    ) {
+        let mut qb = db.pool().query_builder();
+        let query = qb.insert_query(
+            "vulnerabilities",
+            &[
+                "scan_id",
+                "vulnerability_type",
+                "severity",
+                "description",
+                "cve_id",
+                "affected_component",
+            ],
+        );
+        let bindings = vec![
+            BindValue::Int64(scan_id),
+            BindValue::String(vuln_type.to_string()),
+            BindValue::String(severity.to_string()),
+            BindValue::OptString(None),
+            BindValue::OptString(None),
+            BindValue::OptString(None),
+        ];
+        db.pool()
+            .execute(&query, bindings)
+            .await
+            .expect("test assertion should succeed");
+    }
+
+    #[tokio::test]
+    async fn test_trend_analyzer_with_database_data() {
+        let db = setup_db().await;
+        let hostname = "example.com";
+        let port = 443;
+
+        let scan1 = insert_scan(
+            &db,
+            hostname,
+            port,
+            Utc::now() - Duration::days(2),
+            Some("A"),
+            Some(95),
+        )
+        .await;
+        let scan2 = insert_scan(
+            &db,
+            hostname,
+            port,
+            Utc::now() - Duration::days(1),
+            Some("B"),
+            Some(80),
+        )
+        .await;
+
+        insert_protocol(&db, scan1, "TLS 1.3", true, true).await;
+        insert_protocol(&db, scan1, "TLS 1.2", true, false).await;
+        insert_protocol(&db, scan2, "TLS 1.2", true, true).await;
+        insert_protocol(&db, scan2, "SSLv3", true, false).await;
+
+        insert_cipher(&db, scan1, "TLS 1.3", "TLS_AES_128_GCM_SHA256", "strong").await;
+        insert_cipher(&db, scan2, "TLS 1.2", "AES128-SHA", "weak").await;
+
+        insert_vulnerability(&db, scan1, "ROBOT", "high").await;
+        insert_vulnerability(&db, scan2, "SWEET32", "medium").await;
+
+        let analyzer = TrendAnalyzer::new(db.clone());
+
+        let rating = analyzer
+            .analyze_rating_trend(hostname, port, 30)
+            .await
+            .expect("rating trend should succeed");
+        assert_eq!(rating.data_points.len(), 2);
+        assert!(rating.mean > 0.0);
+
+        let vuln = analyzer
+            .analyze_vulnerability_trend(hostname, port, 30)
+            .await
+            .expect("vulnerability trend should succeed");
+        assert_eq!(vuln.data_points.len(), 2);
+        assert!(vuln.severity_distribution.contains_key("high"));
+
+        let protocol = analyzer
+            .analyze_protocol_trend(hostname, port, 30)
+            .await
+            .expect("protocol trend should succeed");
+        assert!(protocol.summary.contains("TLS 1.3 adoption"));
+
+        let cipher = analyzer
+            .analyze_cipher_strength_trend(hostname, port, 30)
+            .await
+            .expect("cipher trend should succeed");
+        assert_eq!(cipher.data_points.len(), 2);
+
+        let report = analyzer
+            .generate_trend_report(hostname, port, 30)
+            .await
+            .expect("trend report should succeed");
+        assert!(report.contains("TREND ANALYSIS REPORT"));
+        assert!(report.contains("RATING TREND"));
     }
 }

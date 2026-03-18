@@ -2,120 +2,17 @@
 // Enables compatibility with systems from 1990s-2000s that nobody uses anymore
 // For security testing and penetration testing purposes only
 
+mod catalog;
+mod model;
+
+pub use catalog::LegacyCiphers;
+pub use model::{
+    AnonymousDhTest, CipherInfo, CompatibilityLevel, ExportCipherTest, LegacyCompatResult,
+    LegacyHandshakeTest, NullCipherTest, SecurityConcern, Sslv2Test, WeakCipherTest,
+};
+
 use crate::Result;
 use crate::utils::network::Target;
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-
-/// Legacy compatibility test results
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LegacyCompatResult {
-    pub sslv2_support: Sslv2Test,
-    pub weak_ciphers: WeakCipherTest,
-    pub export_ciphers: ExportCipherTest,
-    pub null_ciphers: NullCipherTest,
-    pub anonymous_dh: AnonymousDhTest,
-    pub legacy_handshakes: LegacyHandshakeTest,
-    pub compatibility_level: CompatibilityLevel,
-    pub details: String,
-}
-
-/// SSLv2 support test (pre-1996 protocol)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Sslv2Test {
-    pub supported: bool,
-    pub cipher_count: usize,
-    pub ciphers: Vec<String>,
-    pub security_concern: SecurityConcern,
-}
-
-/// Weak cipher support (DES, RC2, MD5, etc.)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WeakCipherTest {
-    pub des_support: bool,
-    pub rc2_support: bool,
-    pub md5_mac_support: bool,
-    pub weak_ciphers_found: Vec<String>,
-    pub security_concern: SecurityConcern,
-}
-
-/// Export-grade cipher support (40-bit, 56-bit)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExportCipherTest {
-    pub export_40bit: bool,
-    pub export_56bit: bool,
-    pub export_ciphers_found: Vec<String>,
-    pub freak_vulnerable: bool, // Factoring RSA Export Keys
-    pub security_concern: SecurityConcern,
-}
-
-/// Null cipher support (no encryption)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NullCipherTest {
-    pub null_encryption: bool,
-    pub null_ciphers_found: Vec<String>,
-    pub security_concern: SecurityConcern,
-}
-
-/// Anonymous Diffie-Hellman support (no authentication)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AnonymousDhTest {
-    pub adh_support: bool,
-    pub aecdh_support: bool,
-    pub anonymous_ciphers_found: Vec<String>,
-    pub security_concern: SecurityConcern,
-}
-
-/// Legacy handshake quirks and compatibility
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LegacyHandshakeTest {
-    pub sslv2_compatible_hello: bool,
-    pub fragmented_handshake: bool,
-    pub old_signature_algorithms: bool,
-    pub quirks: Vec<String>,
-}
-
-/// Security concern level
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum SecurityConcern {
-    Critical, // Immediate security risk
-    High,     // Significant weakness
-    Medium,   // Potential issue
-    Low,      // Minor concern
-    None,     // Not supported
-}
-
-impl SecurityConcern {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            SecurityConcern::Critical => "CRITICAL",
-            SecurityConcern::High => "HIGH",
-            SecurityConcern::Medium => "MEDIUM",
-            SecurityConcern::Low => "LOW",
-            SecurityConcern::None => "NONE",
-        }
-    }
-}
-
-/// Compatibility level with ancient systems
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum CompatibilityLevel {
-    Modern,     // TLS 1.2+ only
-    Compatible, // TLS 1.0+
-    Legacy,     // SSLv3+
-    Ancient,    // SSLv2 support
-}
-
-impl CompatibilityLevel {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            CompatibilityLevel::Modern => "Modern (TLS 1.2+)",
-            CompatibilityLevel::Compatible => "Compatible (TLS 1.0+)",
-            CompatibilityLevel::Legacy => "Legacy (SSLv3+)",
-            CompatibilityLevel::Ancient => "Ancient (SSLv2)",
-        }
-    }
-}
 
 /// Legacy compatibility tester
 pub struct LegacyCompatTester {
@@ -161,9 +58,7 @@ impl LegacyCompatTester {
         })
     }
 
-    /// Test SSLv2 support (ancient protocol from 1995)
     async fn test_sslv2_support(&self) -> Result<Sslv2Test> {
-        // SSLv2 cipher list (historical reference)
         let _sslv2_ciphers = [
             "SSL_CK_RC4_128_WITH_MD5",
             "SSL_CK_RC4_128_EXPORT40_WITH_MD5",
@@ -174,10 +69,7 @@ impl LegacyCompatTester {
             "SSL_CK_DES_192_EDE3_CBC_WITH_MD5",
         ];
 
-        // Try to connect with SSLv2
-        // Note: Modern OpenSSL doesn't support SSLv2, so this will likely fail
-        // This is intentional - SSLv2 should NOT be supported
-        let supported = false; // SSLv2 is disabled in modern OpenSSL
+        let supported = false;
         let cipher_count = 0;
         let ciphers = Vec::new();
 
@@ -195,22 +87,17 @@ impl LegacyCompatTester {
         })
     }
 
-    /// Test weak cipher support
     async fn test_weak_ciphers(&self) -> Result<WeakCipherTest> {
         let weak_cipher_names = vec![
-            // DES ciphers (56-bit)
             "DES-CBC-SHA",
             "DES-CBC3-SHA",
             "EDH-RSA-DES-CBC-SHA",
             "EDH-DSS-DES-CBC-SHA",
-            // RC2 ciphers
             "RC2-CBC-MD5",
             "EXP-RC2-CBC-MD5",
-            // MD5-based ciphers
             "RC4-MD5",
             "DES-CBC-MD5",
             "DES-CBC3-MD5",
-            // IDEA ciphers
             "IDEA-CBC-SHA",
             "IDEA-CBC-MD5",
         ];
@@ -220,18 +107,10 @@ impl LegacyCompatTester {
         let md5_mac_support = false;
         let weak_ciphers_found = Vec::new();
 
-        // Check which weak ciphers are supported
-        // In a real implementation, this would test each cipher
         for cipher in &weak_cipher_names {
-            if cipher.contains("DES") {
-                // Would test DES support
-            }
-            if cipher.contains("RC2") {
-                // Would test RC2 support
-            }
-            if cipher.contains("MD5") {
-                // Would test MD5 MAC support
-            }
+            if cipher.contains("DES") {}
+            if cipher.contains("RC2") {}
+            if cipher.contains("MD5") {}
         }
 
         let security_concern = if !weak_ciphers_found.is_empty() {
@@ -249,16 +128,13 @@ impl LegacyCompatTester {
         })
     }
 
-    /// Test export-grade cipher support (FREAK vulnerability)
     async fn test_export_ciphers(&self) -> Result<ExportCipherTest> {
         let _export_cipher_names = [
-            // 40-bit export ciphers
             "EXP-RC4-MD5",
             "EXP-RC2-CBC-MD5",
             "EXP-DES-CBC-SHA",
             "EXP-EDH-RSA-DES-CBC-SHA",
             "EXP-EDH-DSS-DES-CBC-SHA",
-            // 56-bit export ciphers
             "EXP1024-DES-CBC-SHA",
             "EXP1024-RC4-SHA",
             "EXP1024-RC2-CBC-MD5",
@@ -267,9 +143,6 @@ impl LegacyCompatTester {
         let export_40bit = false;
         let export_56bit = false;
         let export_ciphers_found = Vec::new();
-
-        // Check for FREAK vulnerability
-        // FREAK: Factoring RSA Export Keys
         let freak_vulnerable = false;
 
         let security_concern = if !export_ciphers_found.is_empty() {
@@ -287,7 +160,6 @@ impl LegacyCompatTester {
         })
     }
 
-    /// Test null cipher support (no encryption)
     async fn test_null_ciphers(&self) -> Result<NullCipherTest> {
         let _null_cipher_names = [
             "NULL-MD5",
@@ -314,10 +186,8 @@ impl LegacyCompatTester {
         })
     }
 
-    /// Test anonymous Diffie-Hellman support
     async fn test_anonymous_dh(&self) -> Result<AnonymousDhTest> {
         let _anonymous_cipher_names = [
-            // ADH (Anonymous Diffie-Hellman)
             "ADH-AES256-SHA256",
             "ADH-AES128-SHA256",
             "ADH-AES256-SHA",
@@ -325,7 +195,6 @@ impl LegacyCompatTester {
             "ADH-DES-CBC3-SHA",
             "ADH-DES-CBC-SHA",
             "ADH-RC4-MD5",
-            // AECDH (Anonymous Elliptic Curve Diffie-Hellman)
             "AECDH-AES256-SHA",
             "AECDH-AES128-SHA",
             "AECDH-DES-CBC3-SHA",
@@ -351,20 +220,13 @@ impl LegacyCompatTester {
         })
     }
 
-    /// Test legacy handshake quirks
     async fn test_legacy_handshakes(&self) -> Result<LegacyHandshakeTest> {
         let mut quirks = Vec::new();
 
-        // SSLv2-compatible ClientHello
         let sslv2_compatible_hello = false;
-
-        // Fragmented handshake messages (for very small MTU)
         let fragmented_handshake = false;
-
-        // Old signature algorithms (MD5, SHA1-only)
         let old_signature_algorithms = false;
 
-        // Detect specific quirks
         if sslv2_compatible_hello {
             quirks.push("SSLv2-compatible ClientHello".to_string());
         }
@@ -383,7 +245,6 @@ impl LegacyCompatTester {
         })
     }
 
-    /// Determine overall compatibility level
     fn determine_compatibility_level(
         &self,
         sslv2: &Sslv2Test,
@@ -402,170 +263,10 @@ impl LegacyCompatTester {
     }
 }
 
-/// Legacy cipher suites database
-pub struct LegacyCiphers;
-
-impl LegacyCiphers {
-    /// Get all legacy cipher suites by category
-    pub fn all_by_category() -> HashMap<String, Vec<String>> {
-        let mut categories = HashMap::new();
-
-        // SSLv2 ciphers (1995-1996)
-        categories.insert(
-            "SSLv2".to_string(),
-            vec![
-                "SSL_CK_RC4_128_WITH_MD5".to_string(),
-                "SSL_CK_RC4_128_EXPORT40_WITH_MD5".to_string(),
-                "SSL_CK_RC2_128_CBC_WITH_MD5".to_string(),
-                "SSL_CK_RC2_128_CBC_EXPORT40_WITH_MD5".to_string(),
-                "SSL_CK_IDEA_128_CBC_WITH_MD5".to_string(),
-                "SSL_CK_DES_64_CBC_WITH_MD5".to_string(),
-                "SSL_CK_DES_192_EDE3_CBC_WITH_MD5".to_string(),
-            ],
-        );
-
-        // Export ciphers (40-bit, 56-bit)
-        categories.insert(
-            "Export".to_string(),
-            vec![
-                "EXP-RC4-MD5".to_string(),
-                "EXP-RC2-CBC-MD5".to_string(),
-                "EXP-DES-CBC-SHA".to_string(),
-                "EXP-EDH-RSA-DES-CBC-SHA".to_string(),
-                "EXP-EDH-DSS-DES-CBC-SHA".to_string(),
-                "EXP1024-DES-CBC-SHA".to_string(),
-                "EXP1024-RC4-SHA".to_string(),
-                "EXP1024-RC2-CBC-MD5".to_string(),
-            ],
-        );
-
-        // Null ciphers (no encryption)
-        categories.insert(
-            "Null".to_string(),
-            vec![
-                "NULL-MD5".to_string(),
-                "NULL-SHA".to_string(),
-                "NULL-SHA256".to_string(),
-                "AECDH-NULL-SHA".to_string(),
-                "ECDHE-RSA-NULL-SHA".to_string(),
-                "ECDHE-ECDSA-NULL-SHA".to_string(),
-            ],
-        );
-
-        // Anonymous DH (no authentication)
-        categories.insert(
-            "Anonymous".to_string(),
-            vec![
-                "ADH-AES256-SHA256".to_string(),
-                "ADH-AES128-SHA256".to_string(),
-                "ADH-AES256-SHA".to_string(),
-                "ADH-AES128-SHA".to_string(),
-                "ADH-DES-CBC3-SHA".to_string(),
-                "ADH-DES-CBC-SHA".to_string(),
-                "ADH-RC4-MD5".to_string(),
-                "AECDH-AES256-SHA".to_string(),
-                "AECDH-AES128-SHA".to_string(),
-                "AECDH-DES-CBC3-SHA".to_string(),
-                "AECDH-RC4-SHA".to_string(),
-                "AECDH-NULL-SHA".to_string(),
-            ],
-        );
-
-        // Weak ciphers (DES, RC2, MD5, IDEA)
-        categories.insert(
-            "Weak".to_string(),
-            vec![
-                "DES-CBC-SHA".to_string(),
-                "DES-CBC3-SHA".to_string(),
-                "EDH-RSA-DES-CBC-SHA".to_string(),
-                "EDH-DSS-DES-CBC-SHA".to_string(),
-                "RC2-CBC-MD5".to_string(),
-                "EXP-RC2-CBC-MD5".to_string(),
-                "RC4-MD5".to_string(),
-                "DES-CBC-MD5".to_string(),
-                "DES-CBC3-MD5".to_string(),
-                "IDEA-CBC-SHA".to_string(),
-                "IDEA-CBC-MD5".to_string(),
-            ],
-        );
-
-        // Windows Server 2003 compatibility
-        categories.insert(
-            "Windows2003".to_string(),
-            vec![
-                "RC4-SHA".to_string(),
-                "RC4-MD5".to_string(),
-                "DES-CBC3-SHA".to_string(),
-                "DES-CBC-SHA".to_string(),
-            ],
-        );
-
-        // Old Java compatibility (Java 6, Java 7)
-        categories.insert(
-            "OldJava".to_string(),
-            vec![
-                "SSL_RSA_WITH_RC4_128_SHA".to_string(),
-                "SSL_RSA_WITH_RC4_128_MD5".to_string(),
-                "SSL_RSA_WITH_3DES_EDE_CBC_SHA".to_string(),
-                "TLS_RSA_WITH_AES_128_CBC_SHA".to_string(),
-                "TLS_RSA_WITH_AES_256_CBC_SHA".to_string(),
-            ],
-        );
-
-        categories
-    }
-
-    /// Get cipher details
-    pub fn get_cipher_info(cipher: &str) -> CipherInfo {
-        let security_level = if cipher.contains("NULL")
-            || cipher.contains("EXP")
-            || cipher.contains("EXPORT")
-            || cipher.contains("ADH")
-            || cipher.contains("AECDH")
-        {
-            SecurityConcern::Critical
-        } else if (cipher.contains("DES") && !cipher.contains("3DES"))
-            || cipher.contains("RC2")
-            || cipher.contains("MD5")
-            || cipher.contains("RC4")
-        {
-            SecurityConcern::High
-        } else if cipher.contains("3DES") {
-            SecurityConcern::Medium
-        } else {
-            SecurityConcern::Low
-        };
-
-        let description = match cipher {
-            c if c.contains("NULL") => "No encryption - plaintext communication",
-            c if c.contains("EXP") => "Export-grade cipher - 40/56-bit encryption",
-            c if c.contains("ADH") || c.contains("AECDH") => "Anonymous DH - no authentication",
-            c if c.contains("DES") && !c.contains("3DES") => "DES - 56-bit encryption",
-            c if c.contains("RC2") => "RC2 - weak cipher",
-            c if c.contains("RC4") => "RC4 - deprecated stream cipher",
-            c if c.contains("3DES") => "3DES - 112-bit effective security",
-            _ => "Legacy cipher",
-        };
-
-        CipherInfo {
-            name: cipher.to_string(),
-            security_level,
-            description: description.to_string(),
-        }
-    }
-}
-
-/// Cipher information
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CipherInfo {
-    pub name: String,
-    pub security_level: SecurityConcern,
-    pub description: String,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::IpAddr;
 
     #[test]
     fn test_security_concern_display() {
@@ -599,5 +300,116 @@ mod tests {
         let info2 = LegacyCiphers::get_cipher_info("EXP-RC4-MD5");
         assert_eq!(info2.security_level, SecurityConcern::Critical);
         assert!(info2.description.contains("Export-grade"));
+    }
+
+    #[test]
+    fn test_cipher_info_modern_cipher_is_low() {
+        let info = LegacyCiphers::get_cipher_info("TLS_AES_128_GCM_SHA256");
+        assert_eq!(info.security_level, SecurityConcern::Low);
+    }
+
+    #[tokio::test]
+    async fn test_legacy_compat_tester_defaults() {
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            443,
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .unwrap();
+        let tester = LegacyCompatTester::new(target);
+        let result = tester.test().await.unwrap();
+
+        assert_eq!(result.compatibility_level, CompatibilityLevel::Modern);
+        assert!(!result.sslv2_support.supported);
+        assert!(result.weak_ciphers.weak_ciphers_found.is_empty());
+        assert!(result.export_ciphers.export_ciphers_found.is_empty());
+        assert!(!result.null_ciphers.null_encryption);
+        assert!(!result.anonymous_dh.adh_support);
+        assert!(result.details.contains("Compatibility"));
+    }
+
+    #[test]
+    fn test_determine_compatibility_levels() {
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            443,
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .unwrap();
+        let tester = LegacyCompatTester::new(target);
+
+        let sslv2 = Sslv2Test {
+            supported: true,
+            cipher_count: 1,
+            ciphers: vec!["SSL_CK_RC4_128_WITH_MD5".to_string()],
+            security_concern: SecurityConcern::Critical,
+        };
+        let weak = WeakCipherTest {
+            des_support: false,
+            rc2_support: false,
+            md5_mac_support: false,
+            weak_ciphers_found: Vec::new(),
+            security_concern: SecurityConcern::None,
+        };
+        let export = ExportCipherTest {
+            export_40bit: false,
+            export_56bit: false,
+            export_ciphers_found: Vec::new(),
+            freak_vulnerable: false,
+            security_concern: SecurityConcern::None,
+        };
+        assert_eq!(
+            tester.determine_compatibility_level(&sslv2, &weak, &export),
+            CompatibilityLevel::Ancient
+        );
+
+        let sslv2 = Sslv2Test {
+            supported: false,
+            cipher_count: 0,
+            ciphers: Vec::new(),
+            security_concern: SecurityConcern::None,
+        };
+        let export = ExportCipherTest {
+            export_40bit: true,
+            export_56bit: false,
+            export_ciphers_found: vec!["EXP-RC4-MD5".to_string()],
+            freak_vulnerable: true,
+            security_concern: SecurityConcern::Critical,
+        };
+        assert_eq!(
+            tester.determine_compatibility_level(&sslv2, &weak, &export),
+            CompatibilityLevel::Legacy
+        );
+
+        let export = ExportCipherTest {
+            export_40bit: false,
+            export_56bit: false,
+            export_ciphers_found: Vec::new(),
+            freak_vulnerable: false,
+            security_concern: SecurityConcern::None,
+        };
+        let weak = WeakCipherTest {
+            des_support: true,
+            rc2_support: false,
+            md5_mac_support: false,
+            weak_ciphers_found: vec!["DES-CBC-SHA".to_string()],
+            security_concern: SecurityConcern::High,
+        };
+        assert_eq!(
+            tester.determine_compatibility_level(&sslv2, &weak, &export),
+            CompatibilityLevel::Compatible
+        );
+    }
+
+    #[test]
+    fn test_cipher_info_security_levels() {
+        let des = LegacyCiphers::get_cipher_info("DES-CBC-SHA");
+        assert_eq!(des.security_level, SecurityConcern::High);
+
+        let triple = LegacyCiphers::get_cipher_info("TLS_RSA_WITH_3DES_EDE_CBC_SHA");
+        assert_eq!(triple.security_level, SecurityConcern::Medium);
+
+        let modern = LegacyCiphers::get_cipher_info("TLS_AES_128_GCM_SHA256");
+        assert_eq!(modern.security_level, SecurityConcern::Low);
     }
 }

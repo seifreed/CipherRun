@@ -355,6 +355,7 @@ impl ClientSimulationResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::{IpAddr, Ipv4Addr};
 
     #[test]
     fn test_client_simulation_result_summary() {
@@ -396,5 +397,101 @@ mod tests {
         let summary = result.summary();
         assert!(summary.contains(""));
         assert!(summary.contains("TLS version not supported"));
+    }
+
+    #[test]
+    fn test_format_cipher_suite_known_tls13() {
+        let name =
+            ClientSimulator::format_cipher_suite(rustls::CipherSuite::TLS13_AES_128_GCM_SHA256);
+        assert_eq!(name, "TLS_AES_128_GCM_SHA256");
+    }
+
+    #[test]
+    fn test_format_cipher_suite_tls12_debug() {
+        let name = ClientSimulator::format_cipher_suite(
+            rustls::CipherSuite::TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+        );
+        assert_eq!(name, "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256");
+    }
+
+    #[test]
+    fn test_extract_key_exchange_tls13_uses_curve() {
+        let curves = vec!["x25519".to_string()];
+        let kex = ClientSimulator::extract_key_exchange(
+            &rustls::crypto::ring::cipher_suite::TLS13_AES_128_GCM_SHA256,
+            &curves,
+        );
+        assert_eq!(kex.as_deref(), Some("ECDH x25519"));
+    }
+
+    #[test]
+    fn test_extract_key_exchange_tls13_defaults_curve() {
+        let kex = ClientSimulator::extract_key_exchange(
+            &rustls::crypto::ring::cipher_suite::TLS13_AES_256_GCM_SHA384,
+            &[],
+        );
+        assert_eq!(kex.as_deref(), Some("ECDH x25519"));
+    }
+
+    #[test]
+    fn test_extract_key_exchange_tls12_ecdhe() {
+        let curves = vec!["secp256r1".to_string()];
+        let kex = ClientSimulator::extract_key_exchange(
+            &rustls::crypto::ring::cipher_suite::TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+            &curves,
+        );
+        assert_eq!(kex.as_deref(), Some("ECDH secp256r1"));
+    }
+
+    #[test]
+    fn test_extract_certificate_info_ecdsa() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
+        let cert_der = rustls_pki_types::CertificateDer::from(cert.cert.der().as_ref().to_vec());
+        let info = ClientSimulator::extract_certificate_info(&cert_der).unwrap();
+        assert!(info.contains('('));
+        assert!(info.contains(')'));
+    }
+
+    #[test]
+    fn test_extract_certificate_info_invalid_der() {
+        let cert_der = rustls_pki_types::CertificateDer::from(Vec::new());
+        assert!(ClientSimulator::extract_certificate_info(&cert_der).is_none());
+    }
+
+    #[test]
+    fn test_build_client_config_success() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            443,
+            vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
+        )
+        .unwrap();
+        let simulator = ClientSimulator::new(target);
+        let profile = ClientProfile {
+            name: "Test Client".to_string(),
+            short_id: "test".to_string(),
+            cipher_string: None,
+            tls13_ciphers: None,
+            uses_sni: true,
+            warning: None,
+            handshake_bytes: None,
+            protocol_flags: vec![],
+            tls_version: None,
+            lowest_protocol: None,
+            highest_protocol: Some("tls1_3".to_string()),
+            services: vec![],
+            min_dh_bits: None,
+            max_dh_bits: None,
+            min_rsa_bits: None,
+            max_rsa_bits: None,
+            min_ecdsa_bits: None,
+            curves: vec!["x25519".to_string()],
+            requires_sha2: false,
+            current: true,
+        };
+        let config = simulator.build_client_config(&profile).unwrap();
+        assert!(config.enable_sni);
     }
 }

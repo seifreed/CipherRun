@@ -160,6 +160,8 @@ pub struct Rc4TestResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::{IpAddr, SocketAddr};
+    use tokio::net::TcpListener;
 
     #[test]
     fn test_rc4_result_not_vulnerable() {
@@ -181,5 +183,79 @@ mod tests {
         };
         assert!(result.vulnerable);
         assert_eq!(result.rc4_ciphers.len(), 2);
+    }
+
+    #[test]
+    fn test_rc4_result_details_contains_text() {
+        let result = Rc4TestResult {
+            vulnerable: false,
+            rc4_ciphers: vec![],
+            details: "No RC4 ciphers supported".to_string(),
+        };
+        assert!(result.details.contains("RC4"));
+    }
+
+    async fn spawn_dummy_server(max_accepts: usize) -> SocketAddr {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let mut remaining = max_accepts;
+            while remaining > 0 {
+                if let Ok((socket, _)) = listener.accept().await {
+                    drop(socket);
+                }
+                remaining -= 1;
+            }
+        });
+        addr
+    }
+
+    #[tokio::test]
+    async fn test_rc4_tester_no_support() {
+        let addr = spawn_dummy_server(30).await;
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            addr.port(),
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .unwrap();
+
+        let tester = Rc4Tester::new(target);
+        let result = tester.test().await.unwrap();
+        assert!(!result.vulnerable);
+    }
+
+    #[test]
+    fn test_rc4_result_details_contains_cipher_name() {
+        let result = Rc4TestResult {
+            vulnerable: true,
+            rc4_ciphers: vec!["RC4-SHA".to_string()],
+            details: "INSECURE: 1 RC4 cipher(s) supported (RFC 7465 prohibits RC4): RC4-SHA"
+                .to_string(),
+        };
+        assert!(result.details.contains("RC4"));
+        assert!(result.details.contains("RC4-SHA"));
+    }
+
+    #[test]
+    fn test_rc4_result_details_non_vulnerable() {
+        let result = Rc4TestResult {
+            vulnerable: false,
+            rc4_ciphers: Vec::new(),
+            details: "Good: No RC4 ciphers supported".to_string(),
+        };
+        assert!(!result.vulnerable);
+        assert!(result.details.contains("No RC4"));
+    }
+
+    #[test]
+    fn test_rc4_result_details_mentions_rfc() {
+        let result = Rc4TestResult {
+            vulnerable: true,
+            rc4_ciphers: vec!["RC4-SHA".to_string()],
+            details: "INSECURE: 1 RC4 cipher(s) supported (RFC 7465 prohibits RC4): RC4-SHA"
+                .to_string(),
+        };
+        assert!(result.details.contains("RFC 7465"));
     }
 }

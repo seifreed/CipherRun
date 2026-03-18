@@ -19,3 +19,16 @@ pub use ja3s::{
 pub use jarm::{JarmDatabase, JarmFingerprint, JarmFingerprinter, JarmSignature};
 pub use jarm_probes::{JarmProbe, JarmProbeOptions, get_probes};
 pub use server_hello::{Extension as ServerExtension, ServerHelloCapture};
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_probes_includes_hostname_and_port() {
+        let probes = get_probes("example.com", 443);
+        assert_eq!(probes.len(), 10);
+        assert_eq!(probes[0].options.hostname, "example.com");
+        assert_eq!(probes[0].options.port, 443);
+    }
+}

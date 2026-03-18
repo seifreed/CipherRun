@@ -113,6 +113,8 @@ impl StarttlsNegotiator for IrcsNegotiator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::net::TcpListener;
+    use tokio::task::JoinHandle;
 
     #[test]
     fn test_irc_negotiator_creation() {
@@ -124,5 +126,132 @@ mod tests {
     fn test_ircs_negotiator_creation() {
         let negotiator = IrcsNegotiator::new();
         assert_eq!(negotiator.protocol(), StarttlsProtocol::IRCS);
+    }
+
+    async fn spawn_irc_server() -> (u16, JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let port = listener.local_addr().expect("local addr").port();
+
+        let handle = tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let mut reader = BufReader::new(&mut socket);
+                let mut line = String::new();
+
+                let _ = reader.read_line(&mut line).await;
+                let _ = reader
+                    .get_mut()
+                    .write_all(b"CAP * LS :multi-prefix tls\r\n")
+                    .await;
+                let _ = reader.get_mut().flush().await;
+
+                line.clear();
+                let _ = reader.read_line(&mut line).await;
+                let _ = reader
+                    .get_mut()
+                    .write_all(b":server 670 Begin TLS\r\n")
+                    .await;
+                let _ = reader.get_mut().flush().await;
+            }
+        });
+
+        (port, handle)
+    }
+
+    #[tokio::test]
+    async fn test_irc_negotiation_success() {
+        let (port, handle) = spawn_irc_server().await;
+        let mut stream = TcpStream::connect(("127.0.0.1", port))
+            .await
+            .expect("test assertion should succeed");
+
+        let negotiator = IrcNegotiator::new();
+        negotiator
+            .negotiate_starttls(&mut stream)
+            .await
+            .expect("test assertion should succeed");
+
+        let _ = handle.await;
+    }
+
+    #[tokio::test]
+    async fn test_ircs_negotiation_noop() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let port = listener.local_addr().expect("local addr").port();
+
+        let handle = tokio::spawn(async move {
+            let _ = listener.accept().await;
+        });
+
+        let mut stream = TcpStream::connect(("127.0.0.1", port))
+            .await
+            .expect("test assertion should succeed");
+        let negotiator = IrcsNegotiator::new();
+        negotiator
+            .negotiate_starttls(&mut stream)
+            .await
+            .expect("test assertion should succeed");
+
+        let _ = handle.await;
+    }
+
+    #[tokio::test]
+    async fn test_irc_negotiation_missing_starttls() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let port = listener.local_addr().expect("local addr").port();
+
+        let handle = tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let mut reader = BufReader::new(&mut socket);
+                let mut line = String::new();
+
+                let _ = reader.read_line(&mut line).await;
+                let _ = reader
+                    .get_mut()
+                    .write_all(b"CAP * LS :multi-prefix\r\n")
+                    .await;
+                let _ = reader.get_mut().flush().await;
+            }
+        });
+
+        let mut stream = TcpStream::connect(("127.0.0.1", port))
+            .await
+            .expect("test assertion should succeed");
+
+        let negotiator = IrcNegotiator::new();
+        let result = negotiator.negotiate_starttls(&mut stream).await;
+        assert!(result.is_err());
+
+        let _ = handle.await;
+    }
+
+    #[tokio::test]
+    async fn test_irc_read_response_line() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let port = listener.local_addr().expect("local addr").port();
+
+        let handle = tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let _ = socket.write_all(b"CAP * LS :tls\r\n").await;
+            }
+        });
+
+        let mut stream = TcpStream::connect(("127.0.0.1", port))
+            .await
+            .expect("test assertion should succeed");
+        let mut reader = BufReader::new(&mut stream);
+        let line = IrcNegotiator::read_response(&mut reader)
+            .await
+            .expect("test assertion should succeed");
+        assert!(line.contains("CAP"));
+
+        let _ = handle.await;
     }
 }

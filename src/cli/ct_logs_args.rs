@@ -43,3 +43,57 @@ pub struct CtLogsArgs {
     #[arg(long = "ct-silent", requires = "ct_logs_enable")]
     pub silent: bool,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[derive(Parser)]
+    struct TestCli {
+        #[command(flatten)]
+        args: CtLogsArgs,
+    }
+
+    #[test]
+    fn test_ct_logs_args_defaults_from_clap() {
+        let parsed = TestCli::parse_from(["test"]);
+        let args = parsed.args;
+
+        assert!(!args.enable);
+        assert!(!args.beginning);
+        assert!(args.index.is_empty());
+        assert_eq!(args.poll_interval, 60);
+        assert_eq!(args.batch_size, 1000);
+        assert!(!args.json);
+        assert!(!args.silent);
+    }
+
+    #[test]
+    fn test_ct_logs_args_with_enable_and_flags() {
+        let parsed = TestCli::parse_from(["test", "--ct-logs", "--ct-beginning", "--ct-json"]);
+        let args = parsed.args;
+
+        assert!(args.enable);
+        assert!(args.beginning);
+        assert!(args.json);
+        assert!(!args.silent);
+    }
+
+    #[test]
+    fn test_ct_logs_args_custom_intervals() {
+        let parsed = TestCli::parse_from([
+            "test",
+            "--ct-logs",
+            "--ct-poll-interval",
+            "15",
+            "--ct-batch-size",
+            "500",
+        ]);
+        let args = parsed.args;
+
+        assert!(args.enable);
+        assert_eq!(args.poll_interval, 15);
+        assert_eq!(args.batch_size, 500);
+    }
+}

@@ -104,11 +104,122 @@ impl StarttlsNegotiator for XmppNegotiator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::{TcpListener, TcpStream};
 
     #[test]
     fn test_xmpp_negotiator_creation() {
         let negotiator = XmppNegotiator::new("example.com".to_string());
         assert_eq!(negotiator.protocol(), StarttlsProtocol::XMPP);
         assert_eq!(negotiator.expected_greeting(), Some("<?xml"));
+    }
+
+    #[tokio::test]
+    async fn test_read_until_tag_success() {
+        let (mut client, mut server) = tokio::io::duplex(1024);
+        let writer = tokio::spawn(async move {
+            server
+                .write_all(b"<stream:features><starttls/></stream:features>")
+                .await
+                .unwrap();
+        });
+
+        let result = XmppNegotiator::read_until_tag(&mut client, "</stream:features>")
+            .await
+            .unwrap();
+        assert!(result.contains("</stream:features>"));
+
+        writer.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_read_until_tag_connection_closed() {
+        let (mut client, server) = tokio::io::duplex(16);
+        drop(server);
+
+        let err = XmppNegotiator::read_until_tag(&mut client, "</stream:features>")
+            .await
+            .unwrap_err();
+        assert!(format!("{err}").contains("Connection closed"));
+    }
+
+    #[tokio::test]
+    async fn test_read_until_tag_too_large() {
+        let (mut client, mut server) = tokio::io::duplex(65536);
+        let writer = tokio::spawn(async move {
+            let payload = vec![b'a'; 70000];
+            let _ = server.write_all(&payload).await;
+        });
+
+        let err = XmppNegotiator::read_until_tag(&mut client, "</stream:features>")
+            .await
+            .unwrap_err();
+        assert!(format!("{err}").contains("Response too large"));
+
+        writer.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_xmpp_negotiate_starttls_success() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut buffer = vec![0u8; 2048];
+            let _ = stream.read(&mut buffer).await.unwrap();
+
+            stream
+                .write_all(
+                    b"<stream:features><starttls xmlns='urn:ietf:params:xml:ns:xmpp-tls'/></stream:features>",
+                )
+                .await
+                .unwrap();
+
+            let _ = stream.read(&mut buffer).await.unwrap();
+            stream
+                .write_all(b"<proceed xmlns='urn:ietf:params:xml:ns:xmpp-tls'/>")
+                .await
+                .unwrap();
+        });
+
+        let mut client = TcpStream::connect(addr).await.unwrap();
+        let negotiator = XmppNegotiator::new("example.com".to_string());
+        let result = negotiator.negotiate_starttls(&mut client).await;
+        assert!(result.is_ok());
+
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_xmpp_negotiate_starttls_failure_response() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut buffer = vec![0u8; 2048];
+            let _ = stream.read(&mut buffer).await.unwrap();
+
+            stream
+                .write_all(
+                    b"<stream:features><starttls xmlns='urn:ietf:params:xml:ns:xmpp-tls'/></stream:features>",
+                )
+                .await
+                .unwrap();
+
+            let _ = stream.read(&mut buffer).await.unwrap();
+            stream
+                .write_all(b"<failure xmlns='urn:ietf:params:xml:ns:xmpp-tls'/>")
+                .await
+                .unwrap();
+        });
+
+        let mut client = TcpStream::connect(addr).await.unwrap();
+        let negotiator = XmppNegotiator::new("example.com".to_string());
+        let result = negotiator.negotiate_starttls(&mut client).await;
+        assert!(result.is_err());
+
+        server.await.unwrap();
     }
 }

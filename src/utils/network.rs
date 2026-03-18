@@ -359,9 +359,10 @@ pub async fn try_vuln_ssl_connection(
         }
 
         if let Some(ciphers) = config.cipher_list
-            && builder.set_cipher_list(ciphers).is_err() {
-                return Ok(VulnSslResult::Failed);
-            }
+            && builder.set_cipher_list(ciphers).is_err()
+        {
+            return Ok(VulnSslResult::Failed);
+        }
 
         let connector = builder.build();
 
@@ -518,6 +519,38 @@ mod tests {
     }
 
     #[test]
+    fn test_primary_ip_and_socket_addrs() {
+        let ip: IpAddr = "192.0.2.10".parse().expect("test assertion should succeed");
+        let target = Target::with_ips("example.com".to_string(), 8443, vec![ip])
+            .expect("test assertion should succeed");
+        assert_eq!(target.primary_ip(), ip);
+        let addrs = target.socket_addrs();
+        assert_eq!(addrs.len(), 1);
+        assert_eq!(addrs[0].ip(), ip);
+        assert_eq!(addrs[0].port(), 8443);
+    }
+
+    #[test]
+    fn test_socket_addrs_multiple_ips() {
+        let ips = vec!["192.0.2.10".parse().unwrap(), "192.0.2.11".parse().unwrap()];
+        let target = Target::with_ips("example.com".to_string(), 443, ips.clone())
+            .expect("test assertion should succeed");
+        let addrs = target.socket_addrs();
+        assert_eq!(addrs.len(), 2);
+        assert_eq!(addrs[0].ip(), ips[0]);
+        assert_eq!(addrs[1].ip(), ips[1]);
+    }
+
+    #[tokio::test]
+    async fn test_resolve_hostname_short_circuit_ip() {
+        let ips = resolve_hostname("192.0.2.1")
+            .await
+            .expect("test assertion should succeed");
+        assert_eq!(ips.len(), 1);
+        assert_eq!(ips[0], "192.0.2.1".parse::<IpAddr>().unwrap());
+    }
+
+    #[test]
     fn test_primary_ip() {
         let target = Target::with_ips(
             "example.com".to_string(),
@@ -530,5 +563,34 @@ mod tests {
         .unwrap();
         let primary: IpAddr = "93.184.216.34".parse().unwrap();
         assert_eq!(target.primary_ip(), primary);
+    }
+
+    #[test]
+    fn test_parse_port_invalid() {
+        let result = parse_port("not-a-port");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_port_valid() {
+        let port = parse_port("443").expect("test assertion should succeed");
+        assert_eq!(port, 443);
+    }
+
+    #[test]
+    fn test_default_starttls_protocol_additional_ports() {
+        assert_eq!(default_starttls_protocol(587), Some("smtp"));
+        assert_eq!(default_starttls_protocol(2525), Some("smtp"));
+        assert_eq!(default_starttls_protocol(3306), Some("mysql"));
+    }
+
+    #[test]
+    fn test_starttls_port_and_protocol_mappings() {
+        assert!(is_starttls_port(21));
+        assert!(is_starttls_port(389));
+        assert!(!is_starttls_port(587));
+        assert_eq!(default_starttls_protocol(21), Some("ftp"));
+        assert_eq!(default_starttls_protocol(389), Some("ldap"));
+        assert_eq!(default_starttls_protocol(465), None);
     }
 }

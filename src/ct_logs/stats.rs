@@ -316,4 +316,21 @@ mod tests {
         let snapshot = tracker1.get_snapshot();
         assert_eq!(snapshot.total_processed, 2);
     }
+
+    #[test]
+    fn test_source_stats_average_and_failures() {
+        let tracker = StatsTracker::new();
+
+        tracker.update_source_stats("log-a", 10, 100, Duration::from_millis(100));
+        tracker.update_source_stats("log-a", 20, 100, Duration::from_millis(300));
+        tracker.increment_source_failures("log-a");
+        tracker.increment_retries();
+
+        let snapshot = tracker.get_snapshot();
+        let source = &snapshot.per_source["log-a"];
+        assert_eq!(source.successful_fetches, 2);
+        assert_eq!(source.avg_fetch_time_ms, 200);
+        assert_eq!(source.failed_fetches, 1);
+        assert_eq!(snapshot.retry_attempts, 1);
+    }
 }

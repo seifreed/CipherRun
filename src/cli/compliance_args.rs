@@ -48,3 +48,47 @@ pub struct ComplianceArgs {
     #[arg(long = "severity", value_name = "LEVEL")]
     pub severity: Option<String>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[derive(Parser)]
+    struct TestCli {
+        #[command(flatten)]
+        args: ComplianceArgs,
+    }
+
+    #[test]
+    fn test_compliance_args_defaults_from_clap() {
+        let parsed = TestCli::parse_from(["test"]);
+        let args = parsed.args;
+
+        assert!(args.framework.is_none());
+        assert_eq!(args.format, "terminal");
+        assert!(!args.list_frameworks);
+        assert!(args.policy.is_none());
+        assert!(!args.enforce);
+        assert_eq!(args.policy_format, "terminal");
+        assert!(args.severity.is_none());
+    }
+
+    #[test]
+    fn test_compliance_args_custom_values() {
+        let parsed = TestCli::parse_from([
+            "test",
+            "--compliance",
+            "pci-dss-v4",
+            "--policy-format",
+            "json",
+            "--severity",
+            "high",
+        ]);
+        let args = parsed.args;
+
+        assert_eq!(args.framework.as_deref(), Some("pci-dss-v4"));
+        assert_eq!(args.policy_format, "json");
+        assert_eq!(args.severity.as_deref(), Some("high"));
+    }
+}

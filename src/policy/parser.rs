@@ -4,25 +4,42 @@ use crate::Result;
 use crate::policy::Policy;
 use regex::Regex;
 use serde_yaml;
-use std::fs;
 use std::path::{Path, PathBuf};
 
-/// Policy loader with support for inheritance
-pub struct PolicyLoader {
-    base_path: PathBuf,
+pub trait PolicyDocumentSource: Send + Sync {
+    fn read_to_string(&self, path: &Path) -> Result<String>;
 }
 
-impl PolicyLoader {
-    /// Create a new policy loader with a base path for resolving relative imports
-    pub fn new(base_path: impl Into<PathBuf>) -> Self {
+struct NoopPolicyDocumentSource;
+
+impl PolicyDocumentSource for NoopPolicyDocumentSource {
+    fn read_to_string(&self, _path: &Path) -> Result<String> {
+        Err(crate::TlsError::ConfigError {
+            message: "No policy document source configured for this loader".to_string(),
+        }
+        .into())
+    }
+}
+
+/// Policy loader with support for inheritance
+pub struct PolicyLoader<'a> {
+    base_path: PathBuf,
+    source: &'a dyn PolicyDocumentSource,
+}
+
+impl<'a> PolicyLoader<'a> {
+    /// Create a new policy loader with a base path and document source.
+    pub fn from_source(base_path: impl Into<PathBuf>, source: &'a dyn PolicyDocumentSource) -> Self {
         Self {
             base_path: base_path.into(),
+            source,
         }
     }
 
     /// Load a policy from a file path
     pub fn load(&self, policy_path: &Path) -> Result<Policy> {
-        let mut policy = self.load_yaml(policy_path)?;
+        let content = self.source.read_to_string(policy_path)?;
+        let mut policy = self.parse_policy_document(&content)?;
 
         // Handle inheritance (extends)
         if let Some(ref extends_path) = policy.extends.clone() {
@@ -39,41 +56,17 @@ impl PolicyLoader {
 
     /// Load policy from YAML string
     pub fn load_from_string(yaml_content: &str) -> Result<Policy> {
-        // Parse the YAML into a generic value first
-        let yaml_value: serde_yaml::Value =
-            serde_yaml::from_str(yaml_content).map_err(|e| crate::TlsError::ParseError {
-                message: format!("Failed to parse YAML: {}", e),
-            })?;
-
-        // Check if the policy is wrapped under a "policy" key
-        let policy_value = if let Some(policy_obj) = yaml_value.get("policy") {
-            policy_obj.clone()
-        } else {
-            // If no "policy" key, assume the entire content is the policy
-            yaml_value
-        };
-
-        // Deserialize the policy
-        let policy: Policy =
-            serde_yaml::from_value(policy_value).map_err(|e| crate::TlsError::ParseError {
-                message: format!("Failed to parse policy YAML: {}", e),
-            })?;
-
-        // Basic validation
-        let loader = PolicyLoader::new(".");
+        let loader = PolicyLoader::from_source(".", &NoopPolicyDocumentSource);
+        let policy = loader.parse_policy_document(yaml_content)?;
         loader.validate(&policy)?;
 
         Ok(policy)
     }
 
-    /// Load YAML file
-    fn load_yaml(&self, path: &Path) -> Result<Policy> {
-        let content =
-            fs::read_to_string(path).map_err(|e| crate::TlsError::IoError { source: e })?;
-
+    fn parse_policy_document(&self, content: &str) -> Result<Policy> {
         // Parse the YAML into a generic value first
         let yaml_value: serde_yaml::Value =
-            serde_yaml::from_str(&content).map_err(|e| crate::TlsError::ParseError {
+            serde_yaml::from_str(content).map_err(|e| crate::TlsError::ParseError {
                 message: format!("Failed to parse YAML: {}", e),
             })?;
 
@@ -189,7 +182,7 @@ impl PolicyLoader {
         if let Some(ref rating_policy) = policy.rating {
             if let Some(ref min_grade) = rating_policy.min_grade {
                 let valid_grades = [
-                    "A+", "A", "A-", "B", "B+", "B-", "C", "C+", "C-", "D", "E", "F", "T", "M",
+                    "A+", "A", "A-", "B", "C", "D", "E", "F", "T", "M",
                 ];
                 if !valid_grades.contains(&min_grade.as_str()) {
                     return Err(crate::TlsError::ConfigError {
@@ -354,6 +347,38 @@ protocols:
     }
 
     #[test]
+    fn test_validate_rating_min_score_too_high() {
+        let yaml = r#"
+policy:
+  name: "Test Policy"
+  version: "1.0"
+  rating:
+    min_score: 101
+    action: FAIL
+"#;
+
+        let result = PolicyLoader::load_from_string(yaml);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_rating_min_grade_valid() {
+        let yaml = r#"
+policy:
+  name: "Test Policy"
+  version: "1.0"
+  rating:
+    min_grade: "A-"
+    action: FAIL
+"#;
+
+        let result = PolicyLoader::load_from_string(yaml);
+        assert!(result.is_ok());
+        let policy = result.expect("test assertion should succeed");
+        assert!(policy.rating.is_some());
+    }
+
+    #[test]
     fn test_load_example_policy_file() {
         // Test loading an actual example policy file
         use std::path::PathBuf;
@@ -362,7 +387,8 @@ protocols:
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/policies/base-security.yaml");
 
         if policy_path.exists() {
-            let loader = PolicyLoader::new(".");
+            let source = crate::policy::source::FilesystemPolicySource;
+            let loader = PolicyLoader::from_source(".", &source);
             let result = loader.load(&policy_path);
 
             match &result {

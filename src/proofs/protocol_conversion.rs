@@ -122,12 +122,15 @@ fn proof_unknown_version_handling() {
             && version != 0x0301
             && version != 0x0302
             && version != 0x0303
-            && version != 0x0304
+            && version != 0x0304,
     );
 
     // Should not panic, defaults to TLS 1.2
     let protocol = Protocol::from(version);
-    kani::assert(protocol == Protocol::TLS12, "Unknown versions should default to TLS 1.2");
+    kani::assert(
+        protocol == Protocol::TLS12,
+        "Unknown versions should default to TLS 1.2",
+    );
 }
 
 /// Proof: Record layer version determination
@@ -160,7 +163,7 @@ fn proof_record_layer_version() {
     // Verify valid version codes
     kani::assert(
         record_version == VERSION_SSL_3_0 || record_version == VERSION_TLS_1_0,
-        "Record version should be SSL 3.0 or TLS 1.0"
+        "Record version should be SSL 3.0 or TLS 1.0",
     );
 }
 
@@ -195,7 +198,10 @@ fn proof_client_version_tls13() {
 
     // Verify valid version
     if matches!(protocol, Protocol::TLS13) {
-        kani::assert(client_version == VERSION_TLS_1_2, "TLS 1.3 should use 0x0303 for compatibility");
+        kani::assert(
+            client_version == VERSION_TLS_1_2,
+            "TLS 1.3 should use 0x0303 for compatibility",
+        );
     }
 }
 
@@ -266,7 +272,10 @@ fn proof_cipher_suite_parsing_bounds() {
         parsed_count += 1;
     }
 
-    kani::assert(parsed_count == suite_count, "Should have expected number of suites");
+    kani::assert(
+        parsed_count == suite_count,
+        "Should have expected number of suites",
+    );
 }
 
 /// Proof: SNI hostname length handling
@@ -345,7 +354,10 @@ fn proof_session_id_handling() {
 
     let actual_len = session_id_len as usize;
     let _ = session_id;
-    kani::assert(actual_len == session_id_len as usize, "Session ID should match length");
+    kani::assert(
+        actual_len == session_id_len as usize,
+        "Session ID should match length",
+    );
     kani::assert(actual_len <= 32, "Session ID should not exceed max");
 }
 
@@ -367,4 +379,21 @@ fn proof_handshake_length_encoding() {
     let decoded = ((byte0 as u32) << 16) | ((byte1 as u32) << 8) | (byte2 as u32);
 
     kani::assert(decoded == length, "Handshake length roundtrip should match");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_protocol_from_unknown_defaults_tls12() {
+        let protocol = Protocol::from(0x1234);
+        assert_eq!(protocol, Protocol::TLS12);
+    }
+
+    #[test]
+    fn test_protocol_name_for_known_versions() {
+        assert_eq!(Protocol::from(0x0301).name(), "TLS 1.0");
+        assert_eq!(Protocol::from(0x0304).name(), "TLS 1.3");
+    }
 }

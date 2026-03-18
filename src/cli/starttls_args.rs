@@ -92,3 +92,52 @@ impl StarttlsArgs {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::starttls::StarttlsProtocol;
+
+    #[test]
+    fn test_starttls_protocol_none() {
+        let args = StarttlsArgs::default();
+        assert!(args.starttls_protocol().is_none());
+    }
+
+    #[test]
+    fn test_starttls_protocol_smtp() {
+        let mut args = StarttlsArgs::default();
+        args.smtp = true;
+        assert_eq!(args.starttls_protocol(), Some(StarttlsProtocol::SMTP));
+    }
+
+    #[test]
+    fn test_starttls_protocol_xmpp_server() {
+        let mut args = StarttlsArgs::default();
+        args.xmpp_server = true;
+        assert_eq!(args.starttls_protocol(), Some(StarttlsProtocol::XMPP));
+    }
+
+    #[test]
+    fn test_starttls_protocol_precedence() {
+        let mut args = StarttlsArgs::default();
+        args.imap = true;
+        args.smtp = true;
+        assert_eq!(args.starttls_protocol(), Some(StarttlsProtocol::SMTP));
+    }
+
+    #[test]
+    fn test_starttls_args_parse_protocol_string() {
+        use clap::Parser;
+
+        #[derive(Parser)]
+        struct TestCli {
+            #[command(flatten)]
+            args: StarttlsArgs,
+        }
+
+        let parsed = TestCli::parse_from(["test", "--starttls", "pop3"]);
+        let args = parsed.args;
+        assert_eq!(args.protocol.as_deref(), Some("pop3"));
+    }
+}

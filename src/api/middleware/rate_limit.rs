@@ -42,11 +42,13 @@ impl PerKeyRateLimiter {
         let rpm = NonZeroU32::new(requests_per_minute)
             .unwrap_or_else(|| NonZeroU32::new(100).expect("100 is always non-zero"));
         let default_quota = Quota::per_minute(rpm);
+        // Store the actual RPM value used (may differ from input if input was 0)
+        let effective_rpm = rpm.get();
 
         Self {
             limiters: Arc::new(DashMap::new()),
             default_quota,
-            requests_per_minute,
+            requests_per_minute: effective_rpm,
             window_seconds: 60,
         }
     }
@@ -155,6 +157,33 @@ pub enum RateLimitResult {
         retry_after: u64,
         reset_at: u64,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_rate_limiter_allows_first_request() {
+        let limiter = PerKeyRateLimiter::new(100);
+        match limiter.check("key") {
+            RateLimitResult::Allowed { limit, .. } => {
+                assert_eq!(limit, 100);
+            }
+            RateLimitResult::Limited { .. } => panic!("expected allowed"),
+        }
+    }
+
+    #[test]
+    fn test_rate_limiter_zero_defaults() {
+        let limiter = PerKeyRateLimiter::new(0);
+        match limiter.check("key") {
+            RateLimitResult::Allowed { limit, .. } => {
+                assert_eq!(limit, 100);
+            }
+            RateLimitResult::Limited { .. } => panic!("expected allowed"),
+        }
+    }
 }
 
 /// Rate limiting middleware function

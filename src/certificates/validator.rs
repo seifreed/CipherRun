@@ -2,8 +2,8 @@
 
 use super::parser::{CertificateChain, CertificateInfo};
 use super::trust_stores::{TrustStoreValidator, TrustValidationResult};
-use crate::Result;
 use crate::data::CA_STORES;
+use crate::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -284,16 +284,24 @@ impl CertificateValidator {
             }
 
             // Check wildcard match
-            if let Some(san_domain) = san.strip_prefix("*.")
-                && hostname_lower.ends_with(san_domain)
-            {
-                let prefix_len = hostname_lower.len().saturating_sub(san_domain.len());
-                let prefix = &hostname_lower[..prefix_len];
-                if prefix.ends_with('.') {
-                    let label = prefix.trim_end_matches('.');
-                    if !label.is_empty() && !label.contains('.') {
+            // Wildcard certificates like "*.example.com" should match "www.example.com"
+            // but NOT "sub.www.example.com" (only one level)
+            if let Some(san_domain) = san.strip_prefix("*.") {
+                // Check if hostname ends with the domain part (e.g., ".example.com")
+                let domain_suffix = format!(".{}", san_domain.to_lowercase());
+                if hostname_lower.ends_with(&domain_suffix) {
+                    // Extract the label before the domain suffix
+                    // e.g., for "www.example.com" and ".example.com", we get "www"
+                    let prefix = &hostname_lower[..hostname_lower.len() - domain_suffix.len()];
+                    // Wildcard matches exactly one label (no dots in prefix)
+                    if !prefix.is_empty() && !prefix.contains('.') {
                         return true;
                     }
+                }
+                // Also check for exact match of san_domain with hostname
+                // Some wildcard certs also match the bare domain
+                if hostname_lower == san_domain.to_lowercase() {
+                    return true;
                 }
             }
         }
@@ -475,6 +483,127 @@ impl ValidationResult {
 mod tests {
     use super::*;
 
+    fn base_cert(not_before: String, not_after: String) -> CertificateInfo {
+        CertificateInfo {
+            subject: "CN=example.com".to_string(),
+            issuer: "CN=CA".to_string(),
+            serial_number: "123".to_string(),
+            not_before,
+            not_after,
+            expiry_countdown: None,
+            signature_algorithm: "sha256WithRSAEncryption".to_string(),
+            public_key_algorithm: "rsaEncryption".to_string(),
+            public_key_size: Some(2048),
+            rsa_exponent: None,
+            san: vec!["example.com".to_string()],
+            is_ca: false,
+            key_usage: vec![],
+            extended_key_usage: vec![],
+            extended_validation: false,
+            ev_oids: vec![],
+            pin_sha256: None,
+            fingerprint_sha256: None,
+            debian_weak_key: None,
+            aia_url: None,
+            certificate_transparency: None,
+            der_bytes: vec![],
+        }
+    }
+
+    #[test]
+    fn test_parse_cert_date_formats() {
+        assert!(parse_cert_date("2024-01-01 00:00:00 +0000").is_some());
+        assert!(parse_cert_date("not a date").is_none());
+    }
+
+    #[test]
+    fn test_validation_result_summary_and_critical() {
+        let result = ValidationResult {
+            valid: false,
+            issues: vec![ValidationIssue {
+                severity: IssueSeverity::Critical,
+                issue_type: IssueType::Expired,
+                description: "expired".to_string(),
+            }],
+            trust_chain_valid: false,
+            hostname_match: false,
+            not_expired: false,
+            signature_valid: false,
+            trusted_ca: None,
+            platform_trust: None,
+        };
+        assert!(result.summary().contains("1 issues"));
+        assert_eq!(result.critical_issues().len(), 1);
+    }
+
+    #[test]
+    fn test_expiration_checks() {
+        let validator = CertificateValidator::new("example.com".to_string());
+        let mut issues = Vec::new();
+
+        let future = (Utc::now() + chrono::Duration::days(10))
+            .format("%Y-%m-%d %H:%M:%S +0000")
+            .to_string();
+        let past = (Utc::now() - chrono::Duration::days(10))
+            .format("%Y-%m-%d %H:%M:%S +0000")
+            .to_string();
+
+        let cert = base_cert(future.clone(), future.clone());
+        assert!(!validator.check_expiration(&cert, &mut issues));
+
+        let mut issues = Vec::new();
+        let cert = base_cert(past.clone(), past.clone());
+        assert!(!validator.check_expiration(&cert, &mut issues));
+        assert!(!issues.is_empty());
+    }
+
+    #[test]
+    fn test_expiration_with_invalid_dates_returns_true() {
+        let validator = CertificateValidator::new("example.com".to_string());
+        let mut issues = Vec::new();
+
+        let cert = base_cert("invalid".to_string(), "also invalid".to_string());
+        assert!(validator.check_expiration(&cert, &mut issues));
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn test_wildcard_hostname_match() {
+        let cert = CertificateInfo {
+            subject: "CN=unused".to_string(),
+            issuer: "CN=CA".to_string(),
+            serial_number: "123".to_string(),
+            not_before: "2024-01-01 00:00:00 +0000".to_string(),
+            not_after: "2025-01-01 00:00:00 +0000".to_string(),
+            expiry_countdown: None,
+            signature_algorithm: "sha256WithRSAEncryption".to_string(),
+            public_key_algorithm: "rsaEncryption".to_string(),
+            public_key_size: Some(2048),
+            rsa_exponent: None,
+            san: vec!["*.example.com".to_string()],
+            is_ca: false,
+            key_usage: vec![],
+            extended_key_usage: vec![],
+            extended_validation: false,
+            ev_oids: vec![],
+            pin_sha256: None,
+            fingerprint_sha256: None,
+            debian_weak_key: None,
+            aia_url: None,
+            certificate_transparency: None,
+            der_bytes: vec![],
+        };
+
+        let validator = CertificateValidator::new("api.example.com".to_string());
+        let mut issues = Vec::new();
+        assert!(validator.check_hostname(&cert, &mut issues));
+
+        let validator = CertificateValidator::new("a.b.example.com".to_string());
+        let mut issues = Vec::new();
+        assert!(!validator.check_hostname(&cert, &mut issues));
+        assert!(!issues.is_empty());
+    }
+
     #[test]
     fn test_hostname_matching() {
         let cert = CertificateInfo {
@@ -543,5 +672,91 @@ mod tests {
 
         assert!(!issues.is_empty());
         assert!(matches!(issues[0].issue_type, IssueType::ShortKeyLength));
+    }
+
+    #[test]
+    fn test_key_strength_skip_warnings() {
+        let validator = CertificateValidator::with_skip_warnings("example.com".to_string(), true);
+        let mut issues = Vec::new();
+
+        let mut cert = base_cert(
+            "2024-01-01 00:00:00 +0000".to_string(),
+            "2025-01-01 00:00:00 +0000".to_string(),
+        );
+        cert.public_key_size = Some(1024);
+
+        validator.check_key_strength(&cert, &mut issues);
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn test_signature_algorithm_md5_and_sha1() {
+        let validator = CertificateValidator::new("example.com".to_string());
+        let mut issues = Vec::new();
+
+        let mut cert = base_cert(
+            "2024-01-01 00:00:00 +0000".to_string(),
+            "2025-01-01 00:00:00 +0000".to_string(),
+        );
+        cert.signature_algorithm = "md5WithRSAEncryption".to_string();
+        validator.check_signature_algorithm(&cert, &mut issues);
+        assert!(issues.iter().any(|i| {
+            matches!(i.issue_type, IssueType::WeakSignature)
+                && matches!(i.severity, IssueSeverity::Critical)
+        }));
+
+        let mut issues = Vec::new();
+        cert.signature_algorithm = "sha1WithRSAEncryption".to_string();
+        validator.check_signature_algorithm(&cert, &mut issues);
+        assert!(issues.iter().any(|i| {
+            matches!(i.issue_type, IssueType::WeakSignature)
+                && matches!(i.severity, IssueSeverity::High)
+        }));
+    }
+
+    #[test]
+    fn test_validate_trust_chain_empty() {
+        let validator = CertificateValidator::new("example.com".to_string());
+        let mut issues = Vec::new();
+
+        let chain = CertificateChain {
+            certificates: Vec::new(),
+            chain_length: 0,
+            chain_size_bytes: 0,
+        };
+
+        let (valid, ca) = validator.validate_trust_chain(&chain, &mut issues);
+        assert!(!valid);
+        assert!(ca.is_none());
+        assert!(issues
+            .iter()
+            .any(|i| matches!(i.issue_type, IssueType::UntrustedCA)));
+    }
+
+    #[test]
+    fn test_validate_trust_chain_self_signed_unknown() {
+        let validator = CertificateValidator::new("example.com".to_string());
+        let mut issues = Vec::new();
+
+        let mut cert = base_cert(
+            "2024-01-01 00:00:00 +0000".to_string(),
+            "2025-01-01 00:00:00 +0000".to_string(),
+        );
+        cert.subject = "CN=Unknown Root".to_string();
+        cert.issuer = "CN=Unknown Root".to_string();
+        cert.is_ca = true;
+
+        let chain = CertificateChain {
+            certificates: vec![cert],
+            chain_length: 1,
+            chain_size_bytes: 0,
+        };
+
+        let (valid, ca) = validator.validate_trust_chain(&chain, &mut issues);
+        assert!(!valid);
+        assert!(ca.is_none());
+        assert!(issues
+            .iter()
+            .any(|i| matches!(i.issue_type, IssueType::SelfSigned)));
     }
 }

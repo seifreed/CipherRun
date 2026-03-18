@@ -322,6 +322,40 @@ impl SecurityGrade {
 mod tests {
     use super::*;
     use crate::http::headers::IssueType;
+    use std::net::{IpAddr, Ipv4Addr};
+    use tokio::net::TcpListener;
+    use tokio_rustls::TlsAcceptor;
+
+    async fn spawn_https_server(response: String) -> u16 {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
+        let cert_der = rustls_pki_types::CertificateDer::from(cert.cert.der().as_ref().to_vec());
+        let key_der = rustls_pki_types::PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der());
+        let key = rustls_pki_types::PrivateKeyDer::Pkcs8(key_der);
+
+        let config = rustls::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(vec![cert_der], key)
+            .unwrap();
+        let acceptor = TlsAcceptor::from(std::sync::Arc::new(config));
+
+        tokio::spawn(async move {
+            if let Ok((stream, _)) = listener.accept().await {
+                if let Ok(mut tls_stream) = acceptor.accept(stream).await {
+                    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                    let mut buffer = [0u8; 4096];
+                    let _ = tls_stream.read(&mut buffer).await;
+                    let _ = tls_stream.write_all(response.as_bytes()).await;
+                    let _ = tls_stream.shutdown().await;
+                }
+            }
+        });
+
+        port
+    }
 
     #[test]
     fn test_score_calculation() {
@@ -348,8 +382,81 @@ mod tests {
     }
 
     #[test]
+    fn test_score_calculation_multiple_severities() {
+        let issues = vec![
+            HeaderIssue {
+                header_name: "HSTS".to_string(),
+                severity: crate::http::headers::IssueSeverity::High,
+                issue_type: IssueType::Missing,
+                description: "Missing HSTS".to_string(),
+                recommendation: "Add HSTS".to_string(),
+                preload_status: None,
+            },
+            HeaderIssue {
+                header_name: "X-Content-Type-Options".to_string(),
+                severity: crate::http::headers::IssueSeverity::Low,
+                issue_type: IssueType::Missing,
+                description: "Missing XCTO".to_string(),
+                recommendation: "Add XCTO".to_string(),
+                preload_status: None,
+            },
+        ];
+
+        let score = HeaderAnalyzer::calculate_score(&issues);
+        assert_eq!(score, 80); // 100 - 15 - 5
+    }
+
+    #[test]
     fn test_security_grade_color() {
         assert_eq!(SecurityGrade::A.color(), "green");
         assert_eq!(SecurityGrade::F.color(), "red");
+    }
+
+    #[tokio::test]
+    async fn test_analyze_headers_ok_response() {
+        let response =
+            "HTTP/1.1 200 OK\r\nServer: TestServer\r\nContent-Length: 0\r\n\r\n".to_string();
+        let port = spawn_https_server(response).await;
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
+        )
+        .unwrap();
+
+        let analyzer = HeaderAnalyzer::new(target);
+        let result = analyzer.analyze().await.unwrap();
+        assert_eq!(result.http_status_code, Some(200));
+        assert_eq!(result.redirect_location, None);
+        assert_eq!(result.server_hostname.as_deref(), Some("TestServer"));
+        assert!(result.headers.contains_key("server"));
+    }
+
+    #[tokio::test]
+    async fn test_analyze_headers_redirect() {
+        let response =
+            "HTTP/1.1 302 Found\r\nLocation: https://example.com/\r\nContent-Length: 0\r\n\r\n"
+                .to_string();
+        let port = spawn_https_server(response).await;
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
+        )
+        .unwrap();
+
+        let analyzer = HeaderAnalyzer::new(target);
+        let result = analyzer.analyze().await.unwrap();
+        assert_eq!(result.http_status_code, Some(302));
+        assert_eq!(
+            result.redirect_location.as_deref(),
+            Some("https://example.com/")
+        );
+    }
+
+    #[test]
+    fn test_security_grade_description() {
+        assert!(SecurityGrade::A.description().contains("Excellent"));
+        assert!(SecurityGrade::F.description().contains("Failing"));
     }
 }

@@ -60,7 +60,7 @@ pub use tls_config_args::TlsConfigArgs;
 /// - Certificate filters (CertificateFilterArgs)
 /// - Analytics and database queries
 #[derive(Parser, Debug, Clone, Default)]
-#[command(author, version, about, long_about = None)]
+#[command(author, about, long_about = None, disable_version_flag = true)]
 #[command(name = "cipherrun")]
 #[command(about = "Fast, modular TLS/SSL security scanner", long_about = None)]
 pub struct Args {
@@ -168,31 +168,115 @@ impl Args {
     ///
     /// Returns an error if conflicting flags are used together
     pub fn validate(&self) -> anyhow::Result<()> {
-        // Check for conflicting IP scanning flags
-        if self.network.test_all_ips && self.network.first_ip_only {
-            anyhow::bail!(
-                "Cannot use --test-all-ips and --first-ip-only together. Choose one scanning mode."
-            );
-        }
+        self.to_scan_request()
+            .validate_common()
+            .map_err(anyhow::Error::from)
+    }
 
-        if self.ip.is_some() && self.network.test_all_ips {
-            anyhow::bail!(
-                "Cannot use --ip with --test-all-ips. The --ip flag specifies a single IP to scan."
-            );
+    pub fn to_scan_request(&self) -> crate::application::ScanRequest {
+        crate::application::ScanRequest {
+            target: self.target.clone(),
+            port: self.port,
+            ip: self.ip.clone(),
+            scan: crate::application::scan_request::ScanRequestScan {
+                protocols: self.scan.protocols,
+                each_cipher: self.scan.each_cipher,
+                vulnerabilities: self.scan.vulnerabilities,
+                headers: self.scan.headers,
+                all: self.scan.all,
+                full: self.scan.full,
+                no_ciphersuites: self.scan.no_ciphersuites,
+                no_fallback: self.scan.no_fallback,
+                no_compression: self.scan.no_compression,
+                no_heartbleed: self.scan.no_heartbleed,
+                no_renegotiation: self.scan.no_renegotiation,
+                no_check_certificate: self.scan.no_check_certificate,
+                show_sigs: self.scan.show_sigs,
+                show_groups: self.scan.show_groups,
+                no_groups: self.scan.no_groups,
+                show_client_cas: self.scan.show_client_cas,
+                ssl2: self.scan.ssl2,
+                ssl3: self.scan.ssl3,
+                tls10: self.scan.tls10,
+                tls11: self.scan.tls11,
+                tls12: self.scan.tls12,
+                tls13: self.scan.tls13,
+                tlsall: self.scan.tlsall,
+            },
+            network: crate::application::scan_request::ScanRequestNetwork {
+                ipv4_only: self.network.ipv4_only,
+                ipv6_only: self.network.ipv6_only,
+                test_all_ips: self.network.test_all_ips,
+                first_ip_only: self.network.first_ip_only,
+                max_concurrent_ciphers: self.network.max_concurrent_ciphers,
+            },
+            connection: crate::application::scan_request::ScanRequestConnection {
+                socket_timeout: self.connection.socket_timeout,
+                connect_timeout: self.connection.connect_timeout,
+                sleep: self.connection.sleep,
+                max_retries: self.connection.max_retries,
+                retry_backoff_ms: self.connection.retry_backoff_ms,
+                max_backoff_ms: self.connection.max_backoff_ms,
+                no_retry: self.connection.no_retry,
+            },
+            tls: crate::application::scan_request::ScanRequestTls {
+                bugs: self.tls.bugs,
+                phone_out: self.tls.phone_out,
+                hardfail: self.tls.hardfail,
+                sni_name: self.tls.sni_name.clone(),
+                mtls_cert: self.tls.mtls_cert.clone(),
+                client_key: self.tls.client_key.clone(),
+                client_key_password: self.tls.client_key_password.clone(),
+                client_certs: self.tls.client_certs.clone(),
+            },
+            fingerprint: crate::application::scan_request::ScanRequestFingerprint {
+                ja3: self.fingerprint.ja3,
+                client_hello: self.fingerprint.client_hello,
+                ja3_database: self.fingerprint.ja3_database.clone(),
+                ja3s: self.fingerprint.ja3s,
+                server_hello: self.fingerprint.server_hello,
+                ja3s_database: self.fingerprint.ja3s_database.clone(),
+                jarm: self.fingerprint.jarm,
+                jarm_database: self.fingerprint.jarm_database.clone(),
+                client_simulation: self.fingerprint.client_simulation,
+            },
+            http: crate::application::scan_request::ScanRequestHttp {
+                custom_headers: self.http.custom_headers.clone(),
+                sneaky: self.http.sneaky,
+            },
+            starttls: crate::application::scan_request::ScanRequestStarttls {
+                protocol: self.starttls.protocol.clone(),
+                smtp: self.starttls.smtp,
+                imap: self.starttls.imap,
+                pop3: self.starttls.pop3,
+                ftp: self.starttls.ftp,
+                ldap: self.starttls.ldap,
+                xmpp: self.starttls.xmpp,
+                psql: self.starttls.psql,
+                mysql: self.starttls.mysql,
+                irc: self.starttls.irc,
+                xmpp_server: self.starttls.xmpp_server,
+                rdp: self.starttls.rdp,
+            },
+            ct_logs: crate::application::scan_request::ScanRequestCtLogs {
+                enable: self.ct_logs.enable,
+            },
         }
+    }
 
-        if self.ip.is_some() && self.network.first_ip_only {
-            anyhow::bail!(
-                "Cannot use --ip with --first-ip-only. The --ip flag already specifies a single IP to scan."
-            );
+    pub fn to_certificate_filters(&self) -> crate::application::CertificateFilters {
+        crate::application::CertificateFilters {
+            expired: self.cert_filters.filter_expired,
+            self_signed: self.cert_filters.filter_self_signed,
+            mismatched: self.cert_filters.filter_mismatched,
+            revoked: self.cert_filters.filter_revoked,
+            untrusted: self.cert_filters.filter_untrusted,
         }
-
-        Ok(())
     }
 
     /// Detect which STARTTLS protocol is requested
     pub fn starttls_protocol(&self) -> Option<crate::starttls::StarttlsProtocol> {
-        self.starttls.starttls_protocol()
+        self.to_scan_request().starttls_protocol()
     }
 
     /// Check if we should run the default test suite
@@ -243,50 +327,7 @@ impl Args {
 
     /// Get list of protocols to test based on flags
     pub fn protocols_to_test(&self) -> Option<Vec<crate::protocols::Protocol>> {
-        use crate::protocols::Protocol;
-
-        // If specific protocol flags are set, only test those
-        if self.scan.ssl2
-            || self.scan.ssl3
-            || self.scan.tls10
-            || self.scan.tls11
-            || self.scan.tls12
-            || self.scan.tls13
-        {
-            let mut protocols = Vec::new();
-            if self.scan.ssl2 {
-                protocols.push(Protocol::SSLv2);
-            }
-            if self.scan.ssl3 {
-                protocols.push(Protocol::SSLv3);
-            }
-            if self.scan.tls10 {
-                protocols.push(Protocol::TLS10);
-            }
-            if self.scan.tls11 {
-                protocols.push(Protocol::TLS11);
-            }
-            if self.scan.tls12 {
-                protocols.push(Protocol::TLS12);
-            }
-            if self.scan.tls13 {
-                protocols.push(Protocol::TLS13);
-            }
-            return Some(protocols);
-        }
-
-        // If --tlsall is set, skip SSL protocols
-        if self.scan.tlsall {
-            return Some(vec![
-                Protocol::TLS10,
-                Protocol::TLS11,
-                Protocol::TLS12,
-                Protocol::TLS13,
-            ]);
-        }
-
-        // Otherwise test all protocols
-        None
+        self.to_scan_request().protocols_to_test()
     }
 
     /// Build a RetryConfig from CLI arguments
@@ -294,15 +335,7 @@ impl Args {
     /// Returns None if retry is disabled (--no-retry or --max-retries 0)
     /// Otherwise returns a configured RetryConfig with the specified parameters
     pub fn retry_config(&self) -> Option<crate::utils::retry::RetryConfig> {
-        if self.connection.no_retry || self.connection.max_retries == 0 {
-            return None;
-        }
-
-        Some(crate::utils::retry::RetryConfig::new(
-            self.connection.max_retries,
-            std::time::Duration::from_millis(self.connection.retry_backoff_ms),
-            std::time::Duration::from_millis(self.connection.max_backoff_ms),
-        ))
+        self.to_scan_request().retry_config()
     }
 
     /// Check if any certificate validation filters are active
@@ -311,5 +344,130 @@ impl Args {
     /// indicating that scan results should be filtered based on certificate validation status
     pub fn has_certificate_filters(&self) -> bool {
         self.cert_filters.has_filters()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_conflicting_ip_flags() {
+        let mut args = Args::default();
+        args.network.test_all_ips = true;
+        args.network.first_ip_only = true;
+        assert!(args.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_ip_with_test_all_ips_conflict() {
+        let mut args = Args::default();
+        args.ip = Some("127.0.0.1".to_string());
+        args.network.test_all_ips = true;
+        assert!(args.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_ip_with_first_ip_only_conflict() {
+        let mut args = Args::default();
+        args.ip = Some("127.0.0.1".to_string());
+        args.network.first_ip_only = true;
+        assert!(args.validate().is_err());
+    }
+
+    #[test]
+    fn test_run_default_suite_flags() {
+        let args = Args::default();
+        assert!(args.run_default_suite());
+
+        let mut args = Args::default();
+        args.scan.protocols = true;
+        assert!(!args.run_default_suite());
+    }
+
+    #[test]
+    fn test_vulnerability_flags() {
+        let args = Args::default();
+        assert!(!args.test_vulnerabilities());
+
+        let mut args = Args::default();
+        args.scan.breach = true;
+        assert!(args.test_vulnerabilities());
+    }
+
+    #[test]
+    fn test_effective_sni() {
+        let mut args = Args::default();
+        assert_eq!(args.effective_sni("example.com"), "example.com");
+
+        args.tls.sni_name = Some("custom.test".to_string());
+        assert_eq!(args.effective_sni("example.com"), "custom.test");
+    }
+
+    #[test]
+    fn test_protocols_to_test_flags() {
+        let mut args = Args::default();
+        args.scan.ssl2 = true;
+        args.scan.tls13 = true;
+        let protocols = args.protocols_to_test().unwrap();
+        assert_eq!(
+            protocols,
+            vec![
+                crate::protocols::Protocol::SSLv2,
+                crate::protocols::Protocol::TLS13
+            ]
+        );
+
+        let mut args = Args::default();
+        args.scan.tlsall = true;
+        let protocols = args.protocols_to_test().unwrap();
+        assert_eq!(
+            protocols,
+            vec![
+                crate::protocols::Protocol::TLS10,
+                crate::protocols::Protocol::TLS11,
+                crate::protocols::Protocol::TLS12,
+                crate::protocols::Protocol::TLS13,
+            ]
+        );
+
+        let args = Args::default();
+        assert!(args.protocols_to_test().is_none());
+    }
+
+    #[test]
+    fn test_retry_config() {
+        let mut args = Args::default();
+        args.connection.no_retry = true;
+        assert!(args.retry_config().is_none());
+
+        let mut args = Args::default();
+        args.connection.max_retries = 0;
+        assert!(args.retry_config().is_none());
+
+        let mut args = Args::default();
+        args.connection.max_retries = 5;
+        args.connection.retry_backoff_ms = 250;
+        args.connection.max_backoff_ms = 2000;
+        let cfg = args.retry_config().expect("should return retry config");
+        assert_eq!(cfg.max_retries, 5);
+        assert_eq!(cfg.initial_backoff, std::time::Duration::from_millis(250));
+        assert_eq!(cfg.max_backoff, std::time::Duration::from_millis(2000));
+    }
+
+    #[test]
+    fn test_has_certificate_filters() {
+        let mut args = Args::default();
+        assert!(!args.has_certificate_filters());
+
+        args.cert_filters.filter_expired = true;
+        assert!(args.has_certificate_filters());
+    }
+
+    #[test]
+    fn test_run_default_suite_disabled_by_client_simulation() {
+        let mut args = Args::default();
+        args.fingerprint.client_simulation = true;
+        assert!(!args.run_default_suite());
     }
 }

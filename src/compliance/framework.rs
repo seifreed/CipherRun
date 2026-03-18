@@ -151,4 +151,44 @@ mod tests {
         assert!(categories.contains(&"Protocol Security".to_string()));
         assert!(categories.contains(&"Cipher Security".to_string()));
     }
+
+    #[test]
+    fn test_requirements_by_category_and_severity() {
+        let framework = ComplianceFramework {
+            id: "test".to_string(),
+            name: "Test".to_string(),
+            version: "1.0".to_string(),
+            description: "Test framework".to_string(),
+            organization: "Test Org".to_string(),
+            effective_date: None,
+            requirements: vec![
+                Requirement {
+                    id: "REQ-1".to_string(),
+                    name: "Req 1".to_string(),
+                    description: "".to_string(),
+                    category: "Protocols".to_string(),
+                    severity: Severity::High,
+                    remediation: "".to_string(),
+                    rules: vec![],
+                },
+                Requirement {
+                    id: "REQ-2".to_string(),
+                    name: "Req 2".to_string(),
+                    description: "".to_string(),
+                    category: "Ciphers".to_string(),
+                    severity: Severity::Medium,
+                    remediation: "".to_string(),
+                    rules: vec![],
+                },
+            ],
+        };
+
+        let protocols = framework.requirements_by_category("Protocols");
+        assert_eq!(protocols.len(), 1);
+        assert_eq!(protocols[0].id, "REQ-1");
+
+        let high = framework.requirements_by_severity(Severity::High);
+        assert_eq!(high.len(), 1);
+        assert_eq!(high[0].id, "REQ-1");
+    }
 }

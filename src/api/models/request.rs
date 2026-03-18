@@ -20,30 +20,25 @@ pub struct ScanRequest {
 }
 
 /// Scan options
-#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(default)]
 pub struct ScanOptions {
     /// Test all protocols (SSLv2, SSLv3, TLS 1.0-1.3)
-    #[serde(default)]
     pub test_protocols: bool,
 
     /// Test all cipher suites
-    #[serde(default)]
     pub test_ciphers: bool,
 
     /// Test all vulnerabilities
-    #[serde(default)]
     pub test_vulnerabilities: bool,
 
     /// Analyze certificates
-    #[serde(default)]
     pub analyze_certificates: bool,
 
     /// Test HTTP security headers
-    #[serde(default)]
     pub test_http_headers: bool,
 
     /// Run client simulations
-    #[serde(default)]
     pub client_simulation: bool,
 
     /// STARTTLS protocol (smtp, imap, pop3, etc.)
@@ -51,15 +46,12 @@ pub struct ScanOptions {
     pub starttls_protocol: Option<String>,
 
     /// Connection timeout in seconds
-    #[serde(default = "default_timeout")]
     pub timeout_seconds: u64,
 
     /// Use IPv4 only
-    #[serde(default)]
     pub ipv4_only: bool,
 
     /// Use IPv6 only
-    #[serde(default)]
     pub ipv6_only: bool,
 
     /// Specific IP address to test
@@ -67,12 +59,30 @@ pub struct ScanOptions {
     pub ip: Option<String>,
 
     /// Run full comprehensive scan
-    #[serde(default)]
     pub full_scan: bool,
 }
 
 fn default_timeout() -> u64 {
     30
+}
+
+impl Default for ScanOptions {
+    fn default() -> Self {
+        Self {
+            test_protocols: false,
+            test_ciphers: false,
+            test_vulnerabilities: false,
+            analyze_certificates: false,
+            test_http_headers: false,
+            client_simulation: false,
+            starttls_protocol: None,
+            timeout_seconds: default_timeout(),
+            ipv4_only: false,
+            ipv6_only: false,
+            ip: None,
+            full_scan: false,
+        }
+    }
 }
 
 impl ScanOptions {
@@ -193,4 +203,82 @@ pub struct ComplianceCheckRequest {
     /// Generate detailed report
     #[serde(default)]
     pub detailed: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_scan_options_defaults_via_serde() {
+        let opts: ScanOptions = serde_json::from_str("{}").expect("test assertion should succeed");
+        assert_eq!(opts.timeout_seconds, 30);
+        assert!(!opts.test_protocols);
+        assert!(!opts.test_ciphers);
+    }
+
+    #[test]
+    fn test_scan_options_full_and_quick() {
+        let full = ScanOptions::full();
+        assert!(full.test_protocols);
+        assert!(full.test_ciphers);
+        assert!(full.test_vulnerabilities);
+        assert!(full.analyze_certificates);
+        assert!(full.test_http_headers);
+        assert!(full.client_simulation);
+        assert!(full.full_scan);
+
+        let quick = ScanOptions::quick();
+        assert!(quick.test_protocols);
+        assert!(!quick.test_ciphers);
+        assert!(!quick.test_vulnerabilities);
+        assert!(quick.analyze_certificates);
+        assert!(!quick.test_http_headers);
+        assert!(!quick.client_simulation);
+        assert!(!quick.full_scan);
+    }
+
+    #[test]
+    fn test_policy_request_default_enabled() {
+        let json = r#"{ "name": "Policy", "rules": "rules" }"#;
+        let req: PolicyRequest = serde_json::from_str(json).expect("test assertion should succeed");
+        assert!(req.enabled);
+    }
+
+    #[test]
+    fn test_certificate_query_default() {
+        let query = CertificateQuery::default();
+        assert_eq!(query.limit, 50);
+        assert_eq!(query.offset, 0);
+        assert_eq!(query.sort, "expiry_asc");
+        assert!(query.hostname.is_none());
+        assert!(query.expiring_within_days.is_none());
+    }
+
+    #[test]
+    fn test_scan_request_defaults_options() {
+        let json = r#"{ "target": "example.com:443" }"#;
+        let req: ScanRequest = serde_json::from_str(json).expect("test assertion should succeed");
+        assert_eq!(req.target, "example.com:443");
+        // ScanOptions::default() doesn't set timeout_seconds explicitly,
+        // but the serde default function sets it to 30
+        assert_eq!(req.options.timeout_seconds, 30);
+        assert!(req.webhook_url.is_none());
+    }
+
+    #[test]
+    fn test_certificate_query_defaults_from_serde() {
+        let query: CertificateQuery =
+            serde_json::from_str("{}").expect("test assertion should succeed");
+        assert_eq!(query.limit, 50);
+        assert_eq!(query.offset, 0);
+        assert_eq!(query.sort, "expiry_asc");
+    }
+
+    #[test]
+    fn test_scan_options_default_ipv_flags() {
+        let opts: ScanOptions = serde_json::from_str("{}").expect("test assertion should succeed");
+        assert!(!opts.ipv4_only);
+        assert!(!opts.ipv6_only);
+    }
 }

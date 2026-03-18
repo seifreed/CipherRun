@@ -524,4 +524,13 @@ mod tests {
         assert!(detection.detected);
         assert_eq!(detection.proxy_type, Some("nginx".to_string()));
     }
+
+    #[test]
+    fn test_parse_hsts_missing_header() {
+        let headers = HashMap::new();
+        let hsts = parse_hsts(&headers);
+        assert!(!hsts.enabled);
+        assert_eq!(hsts.grade, Grade::F);
+        assert!(hsts.details.contains("HSTS not enabled"));
+    }
 }

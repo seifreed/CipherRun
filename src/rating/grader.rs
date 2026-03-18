@@ -80,6 +80,31 @@ impl std::fmt::Display for Grade {
 }
 
 #[cfg(test)]
+mod tests_extra {
+    use super::*;
+
+    #[test]
+    fn test_grade_color_and_description() {
+        assert_eq!(Grade::APlus.color(), "green");
+        assert!(Grade::APlus.description().contains("Excellent"));
+        assert_eq!(Grade::M.color(), "red");
+        assert!(Grade::M.description().contains("mismatch"));
+    }
+
+    #[test]
+    fn test_grade_from_score_boundaries() {
+        assert_eq!(Grade::from_score(95), Grade::APlus);
+        assert_eq!(Grade::from_score(85), Grade::A);
+        assert_eq!(Grade::from_score(80), Grade::AMinus);
+        assert_eq!(Grade::from_score(65), Grade::B);
+        assert_eq!(Grade::from_score(50), Grade::C);
+        assert_eq!(Grade::from_score(35), Grade::D);
+        assert_eq!(Grade::from_score(20), Grade::E);
+        assert_eq!(Grade::from_score(0), Grade::F);
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -109,5 +134,23 @@ mod tests {
         assert_eq!(Grade::B.color(), "blue");
         assert_eq!(Grade::C.color(), "yellow");
         assert_eq!(Grade::F.color(), "red");
+    }
+
+    #[test]
+    fn test_grade_display_special_cases() {
+        assert_eq!(Grade::T.to_string(), "T");
+        assert_eq!(Grade::M.to_string(), "M");
+    }
+
+    #[test]
+    fn test_grade_description_special_cases() {
+        assert!(Grade::T.description().contains("not trusted"));
+        assert!(Grade::M.description().contains("mismatch"));
+    }
+
+    #[test]
+    fn test_grade_color_orange() {
+        assert_eq!(Grade::D.color(), "orange");
+        assert_eq!(Grade::E.color(), "orange");
     }
 }

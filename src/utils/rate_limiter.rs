@@ -119,6 +119,8 @@ impl RateLimiter {
 /// - Seconds: "2s" or "2"
 /// - Combinations: "1.5s"
 ///
+/// Negative values are not supported.
+///
 /// # Arguments
 /// * `s` - The delay string to parse
 ///
@@ -133,6 +135,11 @@ impl RateLimiter {
 /// ```
 pub fn parse_delay(s: &str) -> Result<Duration> {
     let s = s.trim();
+
+    // Reject negative values
+    if s.starts_with('-') {
+        anyhow::bail!("Negative delays are not supported: {}", s);
+    }
 
     // Check for milliseconds suffix
     if let Some(value_str) = s.strip_suffix("ms") {
@@ -210,6 +217,18 @@ mod tests {
         assert!(wait_time.as_millis() > 50 && wait_time.as_millis() <= 100);
     }
 
+    #[tokio::test]
+    async fn test_time_until_next_zero_after_elapsed() {
+        let limiter = RateLimiter::new(Duration::from_millis(50));
+        {
+            let mut last = limiter.last_request.lock().await;
+            *last = Some(Instant::now() - Duration::from_millis(200));
+        }
+
+        let wait_time = limiter.time_until_next().await;
+        assert_eq!(wait_time, Duration::ZERO);
+    }
+
     #[test]
     fn test_parse_delay_milliseconds() {
         assert_eq!(parse_delay("500ms").unwrap(), Duration::from_millis(500));
@@ -233,6 +252,17 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_delay_fractional_seconds() {
+        assert_eq!(parse_delay("1.25s").unwrap(), Duration::from_millis(1250));
+    }
+
+    #[test]
+    fn test_rate_limiter_delay_accessor() {
+        let limiter = RateLimiter::new(Duration::from_millis(250));
+        assert_eq!(limiter.delay(), Duration::from_millis(250));
+    }
+
+    #[test]
     fn test_parse_delay_with_whitespace() {
         assert_eq!(
             parse_delay("  500ms  ").unwrap(),
@@ -246,5 +276,19 @@ mod tests {
         assert!(parse_delay("invalid").is_err());
         assert!(parse_delay("abc ms").is_err());
         assert!(parse_delay("").is_err());
+    }
+
+    #[test]
+    fn test_parse_delay_negative_rejected() {
+        assert!(parse_delay("-1").is_err());
+        assert!(parse_delay("-2s").is_err());
+    }
+
+    #[tokio::test]
+    async fn test_time_until_next_zero_after_reset() {
+        let limiter = RateLimiter::new(Duration::from_millis(50));
+        limiter.wait().await;
+        limiter.reset().await;
+        assert_eq!(limiter.time_until_next().await, Duration::ZERO);
     }
 }

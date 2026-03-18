@@ -33,7 +33,7 @@ fn proof_expiry_duration_calculation() {
     };
     kani::assert(
         diff < 13, // Allow for month length variance
-        "Reconstruction should be close"
+        "Reconstruction should be close",
     );
 }
 
@@ -127,7 +127,10 @@ fn proof_serial_number_hex_conversion() {
         j = j.saturating_add(1);
     }
 
-    kani::assert(hex_len == (len.saturating_mul(2)), "Hex string should be 2x byte length");
+    kani::assert(
+        hex_len == (len.saturating_mul(2)),
+        "Hex string should be 2x byte length",
+    );
 }
 
 /// Proof: Key size extraction handles all algorithm types
@@ -282,11 +285,24 @@ fn proof_key_usage_extraction() {
 fn proof_ct_extension_detection() {
     let has_sct: bool = kani::any();
 
-    let ct_status: &str = if has_sct {
-        "Yes (certificate)"
-    } else {
-        "No"
-    };
+    let ct_status: &str = if has_sct { "Yes (certificate)" } else { "No" };
 
     kani::assert(!ct_status.is_empty(), "CT status should not be empty");
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_base64_length_for_sha256() {
+        let hash_len: u8 = 32;
+        let base64_len = ((hash_len + 2) / 3) * 4;
+        assert_eq!(base64_len, 44);
+    }
+
+    #[test]
+    fn test_serial_hex_length() {
+        let len: u8 = 20;
+        let hex_len = len.saturating_mul(2);
+        assert_eq!(hex_len, 40);
+    }
 }

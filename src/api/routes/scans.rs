@@ -7,6 +7,7 @@ use crate::api::{
         request::ScanRequest,
         response::{ScanResponse, ScanStatus, ScanStatusResponse},
     },
+    presenters::scans::{present_queued_scan, present_scan_status},
     state::AppState,
     ws::progress::scan_websocket_handler,
 };
@@ -72,14 +73,10 @@ pub async fn create_scan(
 
     info!("Validated target: {}", final_target);
 
-    // Record scan in stats
-    state.record_scan().await;
-
     // Create scan job with validated target
     let job = ScanJob::new(final_target.clone(), request.options, request.webhook_url);
 
     let scan_id = job.id.clone();
-    let queued_at = job.queued_at;
 
     // Enqueue job
     state
@@ -87,18 +84,15 @@ pub async fn create_scan(
         .enqueue(job)
         .await
         .map_err(|e| ApiError::ServiceUnavailable(format!("Failed to queue scan: {}", e)))?;
+    state.record_scan().await;
+    let queued_job = state
+        .job_queue
+        .get_job(&scan_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .ok_or_else(|| ApiError::Internal("Queued scan was not found".to_string()))?;
 
-    // Generate WebSocket URL
-    let websocket_url = format!("/api/v1/scan/{}/stream", scan_id);
-
-    Ok(Json(ScanResponse {
-        scan_id,
-        status: ScanStatus::Queued,
-        target: final_target,
-        websocket_url: Some(websocket_url),
-        queued_at,
-        estimated_completion: None,
-    }))
+    Ok(Json(present_queued_scan(&queued_job, final_target)))
 }
 
 /// Get scan status
@@ -131,24 +125,7 @@ pub async fn get_scan_status(
         .map_err(|e| ApiError::Internal(e.to_string()))?
         .ok_or_else(|| ApiError::NotFound(format!("Scan {} not found", id)))?;
 
-    // Build results URL if completed
-    let results_url = if matches!(job.status, ScanStatus::Completed) {
-        Some(format!("/api/v1/scan/{}/results", id))
-    } else {
-        None
-    };
-
-    Ok(Json(ScanStatusResponse {
-        scan_id: job.id,
-        status: job.status,
-        progress: job.progress,
-        current_stage: job.current_stage,
-        eta_seconds: job.eta_seconds,
-        started_at: job.started_at,
-        completed_at: job.completed_at,
-        error: job.error,
-        results_url,
-    }))
+    Ok(Json(present_scan_status(job)))
 }
 
 /// Get scan results
@@ -277,5 +254,72 @@ pub async fn websocket_handler(
     } else {
         // Return 404 if scan not found
         axum::http::StatusCode::NOT_FOUND.into_response()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::config::ApiConfig;
+    use crate::api::models::request::ScanOptions;
+
+    fn build_state() -> Arc<AppState> {
+        Arc::new(AppState::new(ApiConfig::default()).expect("state should build"))
+    }
+
+    #[tokio::test]
+    async fn test_create_scan_empty_target() {
+        let state = build_state();
+        let request = ScanRequest {
+            target: "".to_string(),
+            options: ScanOptions::default(),
+            webhook_url: None,
+        };
+
+        let err = create_scan(State(state), Json(request))
+            .await
+            .expect_err("empty target should fail");
+        assert!(matches!(err, ApiError::BadRequest(_)));
+    }
+
+    #[tokio::test]
+    async fn test_create_scan_target_too_long() {
+        let state = build_state();
+        let request = ScanRequest {
+            target: "a".repeat(256),
+            options: ScanOptions::default(),
+            webhook_url: None,
+        };
+
+        let err = create_scan(State(state), Json(request))
+            .await
+            .expect_err("too long target should fail");
+        assert!(matches!(err, ApiError::BadRequest(_)));
+    }
+
+    #[tokio::test]
+    async fn test_get_scan_status_not_found() {
+        let state = build_state();
+        let err = get_scan_status(State(state), Path("missing".to_string()))
+            .await
+            .expect_err("missing job should fail");
+        assert!(matches!(err, ApiError::NotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn test_get_scan_results_not_completed() {
+        let state = build_state();
+        let job = ScanJob::new("example.com:443".to_string(), ScanOptions::default(), None);
+        let id = job.id.clone();
+        state
+            .job_queue
+            .enqueue(job)
+            .await
+            .expect("enqueue should succeed");
+
+        let err = get_scan_results(State(state), Path(id))
+            .await
+            .expect_err("not completed should fail");
+        assert!(matches!(err, ApiError::BadRequest(_)));
     }
 }

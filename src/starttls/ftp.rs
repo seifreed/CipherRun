@@ -103,11 +103,85 @@ impl Default for FtpNegotiator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::AsyncReadExt;
 
     #[test]
     fn test_ftp_negotiator_creation() {
         let negotiator = FtpNegotiator::new();
         assert_eq!(negotiator.protocol(), StarttlsProtocol::FTP);
         assert_eq!(negotiator.expected_greeting(), Some("220"));
+    }
+
+    #[tokio::test]
+    async fn test_read_response_multiline() {
+        let (mut client, mut server) = tokio::io::duplex(1024);
+        tokio::spawn(async move {
+            let _ = server.write_all(b"220-First line\r\n220 Ready\r\n").await;
+        });
+
+        let mut reader = BufReader::new(&mut client);
+        let (code, response) = FtpNegotiator::read_response(&mut reader)
+            .await
+            .expect("test assertion should succeed");
+
+        assert_eq!(code, 220);
+        assert!(response.contains("First line"));
+        assert!(response.contains("220 Ready"));
+    }
+
+    #[tokio::test]
+    async fn test_read_response_invalid() {
+        let (mut client, mut server) = tokio::io::duplex(128);
+        tokio::spawn(async move {
+            let _ = server.write_all(b"12\r\n").await;
+        });
+
+        let mut reader = BufReader::new(&mut client);
+        let result = FtpNegotiator::read_response(&mut reader).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_read_response_single_line() {
+        let (mut client, mut server) = tokio::io::duplex(128);
+        tokio::spawn(async move {
+            let _ = server.write_all(b"220 Ready\r\n").await;
+        });
+
+        let mut reader = BufReader::new(&mut client);
+        let (code, response) = FtpNegotiator::read_response(&mut reader)
+            .await
+            .expect("test assertion should succeed");
+        assert_eq!(code, 220);
+        assert!(response.contains("Ready"));
+    }
+
+    #[tokio::test]
+    async fn test_ftp_negotiate_starttls_not_supported() {
+        use tokio::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            stream.write_all(b"220 ready\r\n").await.unwrap();
+
+            let mut buf = [0u8; 16];
+            let _ = stream.read(&mut buf).await.unwrap();
+            stream
+                .write_all(b"502 command not implemented\r\n")
+                .await
+                .unwrap();
+        });
+
+        let mut client = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let negotiator = FtpNegotiator::new();
+        let err = negotiator
+            .negotiate_starttls(&mut client)
+            .await
+            .unwrap_err();
+        assert!(format!("{err}").contains("does not support"));
+
+        server.await.unwrap();
     }
 }

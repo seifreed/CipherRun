@@ -2,14 +2,18 @@ use std::collections::HashMap;
 use std::net::IpAddr;
 
 use cipherrun::certificates::parser::{CertificateChain, CertificateInfo};
-use cipherrun::certificates::validator::{IssueSeverity, IssueType, ValidationIssue, ValidationResult};
-use cipherrun::ciphers::tester::{CipherCounts, ProtocolCipherSummary};
+use cipherrun::certificates::validator::{
+    IssueSeverity, IssueType, ValidationIssue, ValidationResult,
+};
 use cipherrun::ciphers::CipherSuite;
+use cipherrun::ciphers::tester::{CipherCounts, ProtocolCipherSummary};
 use cipherrun::protocols::{Protocol, ProtocolTestResult};
-use cipherrun::rating::grader::Grade;
 use cipherrun::rating::RatingResult;
+use cipherrun::rating::grader::Grade;
 use cipherrun::scanner::aggregation::AggregatedScanResult;
-use cipherrun::scanner::inconsistency::{Inconsistency, InconsistencyDetails, InconsistencyType, SingleIpScanResult};
+use cipherrun::scanner::inconsistency::{
+    Inconsistency, InconsistencyDetails, InconsistencyType, SingleIpScanResult,
+};
 use cipherrun::scanner::multi_ip::MultiIpScanReport;
 use cipherrun::scanner::{CertificateAnalysisResult, RatingResults, ScanResults};
 use cipherrun::utils::network::Target;
@@ -196,7 +200,9 @@ fn test_multi_ip_report_display() {
             severity: Severity::Low,
             description: "Cipher mismatch".to_string(),
             ips_affected: vec![ip1, ip2],
-            details: InconsistencyDetails::CipherSuites { differences: cipher_diffs },
+            details: InconsistencyDetails::CipherSuites {
+                differences: cipher_diffs,
+            },
         },
         Inconsistency {
             inconsistency_type: InconsistencyType::SessionResumption,
@@ -214,7 +220,9 @@ fn test_multi_ip_report_display() {
             severity: Severity::Info,
             description: "ALPN differs".to_string(),
             ips_affected: vec![ip1, ip2],
-            details: InconsistencyDetails::Alpn { protocols_by_ip: alpn },
+            details: InconsistencyDetails::Alpn {
+                protocols_by_ip: alpn,
+            },
         },
     ];
 

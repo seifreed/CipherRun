@@ -391,10 +391,76 @@ MIIDXTCCAkWgAwIBAgIJAKJ
     }
 
     #[test]
+    fn test_extract_certificates_empty() {
+        let certs = extract_certificates("no certs here");
+        assert!(certs.is_empty());
+    }
+
+    #[test]
     fn test_default_options() {
         let options = OpenSslClientOptions::default();
         assert_eq!(options.port, 443);
         assert!(!options.showcerts);
         assert!(!options.debug);
+    }
+
+    #[test]
+    fn test_parse_connection_info() {
+        let stdout = r#"
+Protocol  : TLSv1.2
+Cipher    : ECDHE-RSA-AES256-GCM-SHA384
+Verify return code: 0 (ok)
+SSL-Session:
+    Session-ID: 1234
+-----BEGIN CERTIFICATE-----
+MIIDXTCCAkWgAwIBAgIJAKJ
+-----END CERTIFICATE-----
+"#;
+
+        let info = parse_connection_info(stdout);
+        assert_eq!(info.protocol, "TLSv1.2");
+        assert_eq!(info.cipher, "ECDHE-RSA-AES256-GCM-SHA384");
+        assert!(info.verify_result.contains("Verify return code"));
+        assert_eq!(info.session_details, "SSL-Session:");
+        assert_eq!(info.certificate_chain.len(), 1);
+    }
+
+    #[test]
+    fn test_run_rejects_invalid_inputs() {
+        let client = OpenSslClient::new();
+
+        let mut options = OpenSslClientOptions::default();
+        options.host = "bad host\n".to_string();
+        let err = client.run(&options).err().expect("should fail");
+        assert!(err.to_string().contains("Invalid hostname"));
+
+        let mut options = OpenSslClientOptions::default();
+        options.host = "example.com".to_string();
+        options.port = 0;
+        let err = client.run(&options).err().expect("should fail");
+        assert!(err.to_string().contains("Invalid port"));
+
+        let mut options = OpenSslClientOptions::default();
+        options.host = "example.com".to_string();
+        options.cipher = Some("AES128-SHA;rm".to_string());
+        let err = client.run(&options).err().expect("should fail");
+        assert!(err.to_string().contains("Invalid cipher"));
+
+        let mut options = OpenSslClientOptions::default();
+        options.host = "example.com".to_string();
+        options.starttls = Some("invalid".to_string());
+        let err = client.run(&options).err().expect("should fail");
+        assert!(err.to_string().contains("Invalid STARTTLS"));
+    }
+
+    #[test]
+    fn test_parse_connection_info_with_missing_fields() {
+        let stdout = "Verify return code: 0 (ok)\n";
+        let info = parse_connection_info(stdout);
+        assert_eq!(info.protocol, "");
+        assert_eq!(info.cipher, "");
+        assert!(info.verify_result.contains("Verify return code"));
+        assert_eq!(info.session_details, "");
+        assert!(info.certificate_chain.is_empty());
     }
 }

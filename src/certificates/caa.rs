@@ -300,4 +300,112 @@ mod tests {
         assert_eq!(record.flags, 0);
         assert_eq!(record.tag, "issue");
     }
+
+    #[test]
+    fn test_parse_dig_caa_output() {
+        let checker = CaaChecker::new("example.com".to_string());
+        let output = b"0 issue \"letsencrypt.org\"\n128 issuewild \"ca.example.com\"";
+        let records = checker
+            .parse_dig_caa_output(output)
+            .expect("parse should succeed");
+
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].flags, 0);
+        assert_eq!(records[0].tag, "issue");
+        assert_eq!(records[0].value, "letsencrypt.org");
+        assert_eq!(records[1].flags, 128);
+        assert_eq!(records[1].tag, "issuewild");
+    }
+
+    #[test]
+    fn test_parse_dig_caa_output_skips_invalid_lines() {
+        let checker = CaaChecker::new("example.com".to_string());
+        let output = b"bad line\n0 issue \"letsencrypt.org\"";
+        let records = checker
+            .parse_dig_caa_output(output)
+            .expect("parse should succeed");
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].tag, "issue");
+    }
+
+    #[test]
+    fn test_parse_host_caa_output() {
+        let checker = CaaChecker::new("example.com".to_string());
+        let output = b"example.com has CAA record 0 iodef \"mailto:security@example.com\"";
+        let records = checker
+            .parse_host_caa_output(output)
+            .expect("parse should succeed");
+
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].tag, "iodef");
+        assert_eq!(records[0].value, "mailto:security@example.com");
+    }
+
+    #[test]
+    fn test_analyze_caa_records_flags_and_unknown_tags() {
+        let checker = CaaChecker::new("example.com".to_string());
+        let mut result = CaaCheckResult {
+            has_caa_records: true,
+            records: vec![
+                CaaRecord {
+                    flags: 0,
+                    tag: "issue".to_string(),
+                    value: ";".to_string(),
+                },
+                CaaRecord {
+                    flags: 0,
+                    tag: "unknown".to_string(),
+                    value: "x".to_string(),
+                },
+            ],
+            compliant: true,
+            issues: Vec::new(),
+            recommendations: Vec::new(),
+        };
+
+        checker.analyze_caa_records(&mut result);
+
+        assert!(
+            result
+                .issues
+                .iter()
+                .any(|issue| issue.contains("forbids ALL"))
+        );
+        assert!(
+            result
+                .issues
+                .iter()
+                .any(|issue| issue.contains("Unknown CAA tag"))
+        );
+        assert!(
+            result
+                .recommendations
+                .iter()
+                .any(|rec| rec.contains("issuewild"))
+        );
+    }
+
+    #[test]
+    fn test_analyze_caa_records_recommends_issuewild_when_missing() {
+        let checker = CaaChecker::new("example.com".to_string());
+        let mut result = CaaCheckResult {
+            has_caa_records: true,
+            records: vec![CaaRecord {
+                flags: 0,
+                tag: "issue".to_string(),
+                value: "letsencrypt.org".to_string(),
+            }],
+            compliant: true,
+            issues: Vec::new(),
+            recommendations: Vec::new(),
+        };
+
+        checker.analyze_caa_records(&mut result);
+        assert!(
+            result
+                .recommendations
+                .iter()
+                .any(|rec| rec.contains("issuewild"))
+        );
+    }
 }

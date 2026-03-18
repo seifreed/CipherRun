@@ -453,9 +453,147 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_host_output_mx() {
+        let output = "example.com mail is handled by 10 mail.example.com.\n";
+        let records = parse_host_output(output);
+        assert_eq!(records, vec!["mail.example.com".to_string()]);
+    }
+
+    #[test]
+    fn test_parse_dig_output_multiple_records() {
+        let output = r#"
+; <<>> DiG 9.10.6 <<>> example.com TXT
+;; ANSWER SECTION:
+example.com. 3600 IN TXT "v=spf1 include:example.com -all"
+example.com. 3600 IN TXT "hello world"
+;; AUTHORITY SECTION:
+example.com. 3600 IN NS ns1.example.com.
+"#;
+        let (records, ttl) = parse_dig_output(output, RecordType::TXT);
+        assert_eq!(ttl, Some(3600));
+        assert_eq!(records.len(), 2);
+        assert!(records[0].contains("v=spf1"));
+    }
+
+    #[test]
+    fn test_parse_host_output_ignores_unrelated_lines() {
+        let output = "random text\nexample.com has address 93.184.216.34\nmore text\n";
+        let records = parse_host_output(output);
+        assert_eq!(records, vec!["93.184.216.34".to_string()]);
+    }
+
+    #[test]
+    fn test_parse_dig_output_with_ttl() {
+        let output = "\
+; <<>> DiG 9.10.6 <<>> example.com A\n\
+;; ANSWER SECTION:\n\
+example.com. 300 IN A 93.184.216.34\n\
+example.com. 300 IN A 93.184.216.35\n\
+;; AUTHORITY SECTION:\n\
+example.com. 172800 IN NS a.iana-servers.net.\n";
+        let (records, ttl) = parse_dig_output(output, RecordType::A);
+        assert_eq!(ttl, Some(300));
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0], "93.184.216.34");
+    }
+
+    #[test]
+    fn test_parse_dig_output_no_answer_section() {
+        let output = ";; QUESTION SECTION:\nexample.com. IN A\n";
+        let (records, ttl) = parse_dig_output(output, RecordType::A);
+        assert!(records.is_empty());
+        assert!(ttl.is_none());
+    }
+
+    #[test]
+    fn test_parse_dig_output_stops_at_section_break() {
+        let output = "\
+; <<>> DiG 9.10.6 <<>> example.com A\n\
+;; ANSWER SECTION:\n\
+example.com. 300 IN A 93.184.216.34\n\
+;; AUTHORITY SECTION:\n\
+example.com. 172800 IN NS a.iana-servers.net.\n";
+        let (records, ttl) = parse_dig_output(output, RecordType::A);
+        assert_eq!(ttl, Some(300));
+        assert_eq!(records, vec!["93.184.216.34".to_string()]);
+    }
+
+    #[test]
+    fn test_parse_dig_output_txt_record() {
+        let output = "\
+; <<>> DiG 9.10.6 <<>> example.com TXT\n\
+;; ANSWER SECTION:\n\
+example.com. 60 IN TXT \"v=spf1 include:_spf.example.com ~all\"\n";
+        let (records, ttl) = parse_dig_output(output, RecordType::TXT);
+        assert_eq!(ttl, Some(60));
+        assert_eq!(records.len(), 1);
+        assert!(records[0].contains("v=spf1"));
+    }
+
+    #[test]
+    fn test_record_type_as_str_values() {
+        assert_eq!(RecordType::A.as_str(), "A");
+        assert_eq!(RecordType::MX.as_str(), "MX");
+        assert_eq!(RecordType::TLSA.as_str(), "TLSA");
+    }
+
+    #[test]
+    fn test_dig_lookup_rejects_invalid_domain() {
+        let dig = Dig::new();
+        let err = dig.lookup("bad;name", RecordType::A).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("Invalid domain"));
+    }
+
+    #[test]
+    fn test_host_lookup_rejects_invalid_domain() {
+        let host = Host::new();
+        let err = host.lookup("bad;name").unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("Invalid domain"));
+    }
+
+    #[test]
+    fn test_reverse_lookup_rejects_invalid_ip() {
+        let dig = Dig::new();
+        let err = dig.reverse_lookup("bad;ip").unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("Invalid IP"));
+    }
+
+    #[test]
+    fn test_query_nameserver_rejects_invalid_inputs() {
+        let dig = Dig::new();
+        let err = dig
+            .query_nameserver("bad;name", RecordType::A, "8.8.8.8")
+            .unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("Invalid domain"));
+
+        let err = dig
+            .query_nameserver("example.com", RecordType::A, "bad;ns")
+            .unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("Invalid nameserver"));
+    }
+
+    #[test]
     fn test_record_type_as_str() {
         assert_eq!(RecordType::A.as_str(), "A");
         assert_eq!(RecordType::MX.as_str(), "MX");
         assert_eq!(RecordType::TLSA.as_str(), "TLSA");
+    }
+
+    #[test]
+    fn test_record_type_as_str_additional() {
+        assert_eq!(RecordType::AAAA.as_str(), "AAAA");
+        assert_eq!(RecordType::CAA.as_str(), "CAA");
+        assert_eq!(RecordType::PTR.as_str(), "PTR");
+    }
+
+    #[test]
+    fn test_host_is_available_with_missing_binary() {
+        let host = Host::with_path("missing-host-binary".to_string());
+        assert!(!host.is_available());
     }
 }

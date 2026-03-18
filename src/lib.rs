@@ -7,6 +7,7 @@
 //! vulnerabilities, and certificate validation.
 
 pub mod api;
+pub mod application;
 pub mod certificates;
 pub mod ciphers;
 pub mod cli;
@@ -39,6 +40,7 @@ pub mod vulnerabilities;
 pub mod proofs;
 
 // Re-export commonly used types
+pub use crate::application::ScanRequest;
 pub use crate::cli::Args;
 pub use crate::error::{CertificateValidationError, TlsError};
 pub use crate::output::OutputFormat;
@@ -70,3 +72,27 @@ pub type Result<T> = std::result::Result<T, TlsError>;
     note = "Use cipherrun::Result<T> instead of AnyhowResult<T>"
 )]
 pub type AnyhowResult<T> = anyhow::Result<T>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_result_alias_ok() {
+        fn do_ok() -> Result<()> {
+            Ok(())
+        }
+
+        assert!(do_ok().is_ok());
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn test_anyhow_result_alias_ok() {
+        fn do_ok() -> AnyhowResult<()> {
+            Ok(())
+        }
+
+        assert!(do_ok().is_ok());
+    }
+}

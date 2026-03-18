@@ -207,4 +207,23 @@ mod tests {
         assert_eq!(hash1, hash2);
         assert_eq!(hash1.len(), 32); // SHA256 produces 32 bytes
     }
+
+    #[test]
+    fn test_deduplicator_counts_empty() {
+        let dedup = Deduplicator::new(10, 0.1);
+        assert_eq!(dedup.total_seen(), 0);
+        assert_eq!(dedup.duplicates_filtered(), 0);
+        assert_eq!(dedup.unique_count(), 0);
+        assert_eq!(dedup.false_positive_rate(), 0.0);
+    }
+
+    #[test]
+    fn test_false_positive_rate_after_inserts() {
+        let mut dedup = Deduplicator::new(100, 0.05);
+        dedup.check_and_insert(b"alpha");
+        dedup.check_and_insert(b"beta");
+        let fp_rate = dedup.false_positive_rate();
+        assert!(fp_rate > 0.0);
+        assert!(fp_rate <= 1.0);
+    }
 }

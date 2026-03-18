@@ -274,4 +274,38 @@ mod tests {
         assert_eq!(manager.total_sources(), 0);
         assert_eq!(manager.healthy_sources_count(), 0);
     }
+
+    #[test]
+    fn test_source_manager_updates_and_failures() {
+        let mut manager = SourceManager::new();
+        manager.sources.insert(
+            "log1".to_string(),
+            LogSource {
+                id: "log1".to_string(),
+                description: "Test Log".to_string(),
+                operator: "Test Operator".to_string(),
+                url: "https://example.com".to_string(),
+                key: None,
+                mmd: None,
+                tree_size: 0,
+                usable: true,
+                last_error: None,
+                failure_count: 0,
+            },
+        );
+
+        manager.update_tree_size("log1", 42);
+        assert_eq!(manager.get_source("log1").unwrap().tree_size, 42);
+
+        manager.mark_source_failed("log1", "oops".to_string());
+        let source = manager.get_source("log1").unwrap();
+        assert_eq!(source.failure_count, 1);
+        assert!(source.last_error.as_deref().unwrap_or("").contains("oops"));
+
+        manager.mark_source_success("log1");
+        let source = manager.get_source("log1").unwrap();
+        assert_eq!(source.failure_count, 0);
+        assert!(source.last_error.is_none());
+        assert!(source.usable);
+    }
 }

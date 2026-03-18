@@ -150,3 +150,68 @@ pub trait Database: Send + Sync {
     fn vulnerabilities(&self) -> &dyn VulnerabilityRepository;
     fn ratings(&self) -> &dyn RatingRepository;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::models::ScanRecord;
+    use async_trait::async_trait;
+
+    struct DummyScanRepo;
+
+    #[async_trait]
+    impl ScanRepository for DummyScanRepo {
+        async fn create_scan(&self, _scan: &ScanRecord) -> crate::Result<i64> {
+            Ok(1)
+        }
+
+        async fn get_scan_by_id(&self, _scan_id: i64) -> crate::Result<Option<ScanRecord>> {
+            Ok(None)
+        }
+
+        async fn get_scans_by_hostname(
+            &self,
+            _hostname: &str,
+            _port: u16,
+            _limit: i64,
+        ) -> crate::Result<Vec<ScanRecord>> {
+            Ok(Vec::new())
+        }
+
+        async fn get_latest_scan(
+            &self,
+            _hostname: &str,
+            _port: u16,
+        ) -> crate::Result<Option<ScanRecord>> {
+            Ok(None)
+        }
+
+        async fn delete_old_scans(&self, _days: i64) -> crate::Result<u64> {
+            Ok(0)
+        }
+
+        async fn update_scan_rating(
+            &self,
+            _scan_id: i64,
+            _grade: &str,
+            _score: u8,
+        ) -> crate::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn test_dummy_scan_repository_methods() {
+        let repo = DummyScanRepo;
+        let scan = ScanRecord::new("example.com".to_string(), 443);
+
+        let id = repo.create_scan(&scan).await.expect("create ok");
+        assert_eq!(id, 1);
+
+        let scans = repo
+            .get_scans_by_hostname("example.com", 443, 10)
+            .await
+            .expect("get scans ok");
+        assert!(scans.is_empty());
+    }
+}

@@ -1,25 +1,43 @@
 // Policy Routes
 
+use super::policy_storage::{
+    build_policy_content, policy_dir_from_state, read_policy_with_metadata, sanitized_policy_path,
+};
 use crate::api::{
     models::{
         error::{ApiError, ApiErrorResponse},
         request::{PolicyEvaluationRequest, PolicyRequest},
-        response::{PolicyCheckResult, PolicyEvaluationResponse, PolicyResponse},
+        response::{PolicyEvaluationResponse, PolicyResponse},
+    },
+    presenters::{
+        policy::present_policy_evaluation,
+        policy_response::{present_created_policy, present_loaded_policy},
+        target_input::scan_request_from_target,
     },
     state::AppState,
 };
-use crate::policy::evaluator::PolicyEvaluator;
+use crate::application::use_cases::EvaluatePolicy;
+use crate::application::{PolicySource, ScanAssessment};
+use crate::policy::FilesystemPolicySource;
 use crate::policy::parser::PolicyLoader;
 use crate::scanner::Scanner;
-use crate::security::sanitize_path;
 use axum::{
     Json,
     extract::{Path, State},
 };
 use chrono::Utc;
 use std::fs;
+use std::path::PathBuf;
 use std::sync::Arc;
-use uuid::Uuid;
+
+fn existing_policy_path(policy_dir: &std::path::Path, id: &str) -> Result<PathBuf, ApiError> {
+    let policy_path = sanitized_policy_path(policy_dir, id)?;
+    if !policy_path.exists() {
+        return Err(ApiError::NotFound(format!("Policy {} not found", id)));
+    }
+
+    Ok(policy_path)
+}
 
 /// Create or update policy
 ///
@@ -41,13 +59,8 @@ pub async fn create_policy(
     State(state): State<Arc<AppState>>,
     Json(request): Json<PolicyRequest>,
 ) -> Result<Json<PolicyResponse>, ApiError> {
-    // Get policy directory
-    let policy_dir = state
-        .policy_dir
-        .as_ref()
-        .ok_or_else(|| ApiError::Internal("Policy storage not configured".to_string()))?;
+    let policy_dir = policy_dir_from_state(&state)?;
 
-    // Ensure policy directory exists
     fs::create_dir_all(policy_dir)
         .map_err(|e| ApiError::Internal(format!("Failed to create policy directory: {}", e)))?;
 
@@ -55,40 +68,20 @@ pub async fn create_policy(
     PolicyLoader::load_from_string(&request.rules)
         .map_err(|e| ApiError::BadRequest(format!("Invalid policy YAML: {}", e)))?;
 
-    // Generate policy ID (use name as filename-safe ID)
     let policy_id = sanitize_filename(&request.name);
-
-    // SECURITY: Sanitize path to prevent path traversal (CWE-22)
-    let filename = format!("{}.yaml", policy_id);
-    let policy_path = sanitize_path(&filename, policy_dir)
-        .map_err(|e| ApiError::BadRequest(format!("Invalid policy filename: {}", e)))?;
-
-    // Create policy file with metadata
-    let policy_content = format!(
-        "# Policy: {}\n# Description: {}\n# Created: {}\n# Enabled: {}\n\n{}",
-        request.name,
-        request
-            .description
-            .as_ref()
-            .unwrap_or(&"No description".to_string()),
-        Utc::now().to_rfc3339(),
-        request.enabled,
-        request.rules
-    );
+    let policy_path = sanitized_policy_path(policy_dir, &policy_id).map_err(|e| match e {
+        ApiError::BadRequest(_) => {
+            ApiError::BadRequest(format!("Invalid policy filename: {}", policy_id))
+        }
+        other => other,
+    })?;
+    let now = Utc::now();
+    let policy_content = build_policy_content(&request, now);
 
     fs::write(&policy_path, policy_content)
         .map_err(|e| ApiError::Internal(format!("Failed to write policy file: {}", e)))?;
 
-    // Return policy response
-    Ok(Json(PolicyResponse {
-        id: policy_id,
-        name: request.name,
-        description: request.description,
-        rules: request.rules,
-        enabled: request.enabled,
-        created_at: Utc::now(),
-        updated_at: Utc::now(),
-    }))
+    Ok(Json(present_created_policy(policy_id, request, now)))
 }
 
 /// Get policy
@@ -113,78 +106,21 @@ pub async fn get_policy(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<PolicyResponse>, ApiError> {
-    // Get policy directory
-    let policy_dir = state
-        .policy_dir
-        .as_ref()
-        .ok_or_else(|| ApiError::Internal("Policy storage not configured".to_string()))?;
+    let policy_dir = policy_dir_from_state(&state)?;
+    let policy_path = existing_policy_path(policy_dir, &id)?;
 
-    // SECURITY: Sanitize path to prevent path traversal (CWE-22)
-    let filename = format!("{}.yaml", id);
-    let policy_path = sanitize_path(&filename, policy_dir)
-        .map_err(|e| ApiError::BadRequest(format!("Invalid policy ID: {}", e)))?;
+    let (name, description, created_at, enabled, rules_content, updated_at) =
+        read_policy_with_metadata(&policy_path, id.clone())?;
 
-    if !policy_path.exists() {
-        return Err(ApiError::NotFound(format!("Policy {} not found", id)));
-    }
-
-    let content = fs::read_to_string(&policy_path)
-        .map_err(|e| ApiError::Internal(format!("Failed to read policy file: {}", e)))?;
-
-    // Extract metadata from comments
-    let mut name = id.clone();
-    let mut description = None;
-    let mut created_at = Utc::now();
-    let mut enabled = true;
-    let mut rules_content = String::new();
-    let mut in_metadata = true;
-
-    for line in content.lines() {
-        if in_metadata && line.starts_with("# Policy: ") {
-            name = line.trim_start_matches("# Policy: ").to_string();
-        } else if in_metadata && line.starts_with("# Description: ") {
-            let desc = line.trim_start_matches("# Description: ").to_string();
-            if desc != "No description" {
-                description = Some(desc);
-            }
-        } else if in_metadata && line.starts_with("# Created: ") {
-            let date_str = line.trim_start_matches("# Created: ");
-            if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(date_str) {
-                created_at = dt.with_timezone(&Utc);
-            }
-        } else if in_metadata && line.starts_with("# Enabled: ") {
-            enabled = line.trim_start_matches("# Enabled: ") == "true";
-        } else if !line.starts_with('#') {
-            in_metadata = false;
-            if !line.trim().is_empty() {
-                rules_content.push_str(line);
-                rules_content.push('\n');
-            }
-        }
-    }
-
-    // Get file metadata for updated_at
-    let metadata = fs::metadata(&policy_path)
-        .map_err(|e| ApiError::Internal(format!("Failed to get policy metadata: {}", e)))?;
-
-    let updated_at = metadata
-        .modified()
-        .ok()
-        .map(|t| {
-            let dt: chrono::DateTime<Utc> = t.into();
-            dt
-        })
-        .unwrap_or(created_at);
-
-    Ok(Json(PolicyResponse {
+    Ok(Json(present_loaded_policy(
         id,
         name,
         description,
-        rules: rules_content,
+        rules_content,
         enabled,
         created_at,
         updated_at,
-    }))
+    )))
 }
 
 /// Evaluate policy
@@ -211,43 +147,16 @@ pub async fn evaluate_policy(
     Path(id): Path<String>,
     Json(request): Json<PolicyEvaluationRequest>,
 ) -> Result<Json<PolicyEvaluationResponse>, ApiError> {
-    // Get policy directory
-    let policy_dir = state
-        .policy_dir
-        .as_ref()
-        .ok_or_else(|| ApiError::Internal("Policy storage not configured".to_string()))?;
+    let policy_dir = policy_dir_from_state(&state)?;
+    let policy_path = existing_policy_path(policy_dir, &id)?;
 
-    // SECURITY: Sanitize path to prevent path traversal (CWE-22)
-    let filename = format!("{}.yaml", id);
-    let policy_path = sanitize_path(&filename, policy_dir)
-        .map_err(|e| ApiError::BadRequest(format!("Invalid policy ID: {}", e)))?;
-
-    if !policy_path.exists() {
-        return Err(ApiError::NotFound(format!("Policy {} not found", id)));
-    }
-
-    let policy = PolicyLoader::new(policy_dir.clone())
-        .load(&policy_path)
+    let policy = FilesystemPolicySource
+        .load_policy(&policy_path)
         .map_err(|e| ApiError::Internal(format!("Failed to load policy: {}", e)))?;
 
-    // Parse target (hostname:port)
-    let parts: Vec<&str> = request.target.split(':').collect();
-    let hostname = parts.first().ok_or_else(|| {
-        ApiError::BadRequest("Invalid target format. Expected hostname:port".to_string())
-    })?;
-    let port = parts
-        .get(1)
-        .and_then(|p| p.parse::<u16>().ok())
-        .unwrap_or(443);
+    let request = scan_request_from_target(&request.target)?;
 
-    // Perform TLS scan - Create Args struct for Scanner
-    let args = crate::Args {
-        target: Some(format!("{}:{}", hostname, port)),
-        port: Some(port),
-        ..Default::default()
-    };
-
-    let scanner = Scanner::new(args)
+    let scanner = Scanner::new(request)
         .map_err(|e| ApiError::Internal(format!("Failed to create scanner: {}", e)))?;
 
     let scan_results = scanner
@@ -256,37 +165,16 @@ pub async fn evaluate_policy(
         .map_err(|e| ApiError::Internal(format!("Scan failed: {}", e)))?;
 
     // Evaluate policy against scan results
-    let evaluator = PolicyEvaluator::new(policy.clone());
-    let policy_result = evaluator
-        .evaluate(&scan_results)
+    let assessment = ScanAssessment::from_scan_results(&scan_results);
+    let policy_result = EvaluatePolicy::execute_assessment(&policy, &assessment)
         .map_err(|e| ApiError::Internal(format!("Policy evaluation failed: {}", e)))?;
 
-    // Convert violations to check results
-    let checks: Vec<PolicyCheckResult> = policy_result
-        .violations
-        .iter()
-        .map(|violation| PolicyCheckResult {
-            check: violation.rule_name.clone(),
-            passed: false,
-            severity: format!("{:?}", violation.action).to_lowercase(),
-            message: Some(violation.description.clone()),
-            expected: violation.remediation.clone(),
-            actual: violation.evidence.clone(),
-        })
-        .collect();
-
-    // Generate scan ID for reference
-    let scan_id = Uuid::new_v4().to_string();
-
-    Ok(Json(PolicyEvaluationResponse {
-        policy_id: id,
-        policy_name: policy.name,
-        target: request.target,
-        compliant: !policy_result.has_violations(),
-        checks,
-        evaluated_at: Utc::now(),
-        scan_id,
-    }))
+    Ok(Json(present_policy_evaluation(
+        id,
+        policy.name,
+        scan_results.target.clone(),
+        &policy_result,
+    )))
 }
 
 /// Sanitize filename to make it safe for filesystem
@@ -313,4 +201,143 @@ fn sanitize_filename(name: &str) -> String {
         })
         .collect::<String>()
         .to_lowercase()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::config::ApiConfig;
+    use crate::api::jobs::{InMemoryJobQueue, ScanExecutor};
+    use crate::api::middleware::rate_limit::PerKeyRateLimiter;
+    use crate::api::models::request::PolicyRequest;
+    use crate::api::routes::policy_storage::parse_policy_file_content;
+    use crate::api::state::{ApiStats, AppState};
+    use axum::Json;
+    use axum::extract::{Path, State};
+    use std::path::PathBuf;
+    use std::sync::Arc;
+    use std::time::Instant;
+    use tokio::sync::RwLock;
+
+    fn build_state(policy_dir: PathBuf) -> Arc<AppState> {
+        let config = Arc::new(ApiConfig::default());
+        let job_queue = Arc::new(InMemoryJobQueue::new(10));
+        let executor = Arc::new(ScanExecutor::new(job_queue.clone(), 1));
+        let progress_tx = executor.progress_broadcaster();
+
+        Arc::new(AppState {
+            config,
+            job_queue,
+            executor,
+            progress_tx,
+            start_time: Instant::now(),
+            stats: Arc::new(RwLock::new(ApiStats::default())),
+            rate_limiter: Arc::new(PerKeyRateLimiter::new(100)),
+            db_pool: None,
+            policy_dir: Some(policy_dir),
+        })
+    }
+
+    fn sample_policy_yaml() -> String {
+        r#"
+name: "Test Policy"
+version: "1.0"
+protocols:
+  action: "FAIL"
+  required:
+    - "TLS1.2"
+"#
+        .trim()
+        .to_string()
+    }
+
+    #[tokio::test]
+    async fn test_create_and_get_policy() {
+        let policy_dir = std::env::temp_dir().join("cipherrun_policy_tests");
+        let _ = std::fs::remove_dir_all(&policy_dir);
+        let state = build_state(policy_dir.clone());
+
+        let request = PolicyRequest {
+            name: "Test Policy".to_string(),
+            description: Some("Test policy description".to_string()),
+            rules: sample_policy_yaml(),
+            enabled: true,
+        };
+
+        let created = create_policy(State(state.clone()), Json(request))
+            .await
+            .expect("policy creation should succeed")
+            .0;
+
+        let fetched = get_policy(State(state), Path(created.id.clone()))
+            .await
+            .expect("policy fetch should succeed")
+            .0;
+
+        assert_eq!(fetched.id, created.id);
+        assert_eq!(fetched.name, "Test Policy");
+        assert!(fetched.rules.contains("protocols"));
+
+        let _ = std::fs::remove_dir_all(&policy_dir);
+    }
+
+    #[tokio::test]
+    async fn test_create_policy_invalid_yaml() {
+        let policy_dir = std::env::temp_dir().join("cipherrun_policy_tests_invalid");
+        let _ = std::fs::remove_dir_all(&policy_dir);
+        let state = build_state(policy_dir.clone());
+
+        let request = PolicyRequest {
+            name: "Broken Policy".to_string(),
+            description: None,
+            rules: "not: [valid".to_string(),
+            enabled: true,
+        };
+
+        let err = create_policy(State(state), Json(request))
+            .await
+            .expect_err("invalid policy should error");
+
+        assert!(matches!(err, ApiError::BadRequest(_)));
+        let _ = std::fs::remove_dir_all(&policy_dir);
+    }
+
+    #[tokio::test]
+    async fn test_get_policy_missing() {
+        let policy_dir = std::env::temp_dir().join("cipherrun_policy_tests_missing");
+        let _ = std::fs::remove_dir_all(&policy_dir);
+        std::fs::create_dir_all(&policy_dir).expect("policy dir should be created");
+        let state = build_state(policy_dir.clone());
+
+        let err = get_policy(State(state), Path("missing".to_string()))
+            .await
+            .expect_err("missing policy should error");
+
+        assert!(matches!(err, ApiError::NotFound(_)));
+        let _ = std::fs::remove_dir_all(&policy_dir);
+    }
+
+    #[test]
+    fn parses_policy_file_metadata() {
+        let content = "# Policy: Test\n# Description: Desc\n# Created: 2025-01-01T00:00:00Z\n# Enabled: false\n\nrules:\n  - test\n";
+        let (name, description, _created_at, enabled, rules) =
+            parse_policy_file_content("fallback".to_string(), content);
+
+        assert_eq!(name, "Test");
+        assert_eq!(description.as_deref(), Some("Desc"));
+        assert!(!enabled);
+        assert!(rules.contains("rules:"));
+    }
+
+    #[test]
+    fn existing_policy_path_returns_not_found_for_missing_file() {
+        let dir = std::env::temp_dir().join("cipherrun_policy_missing_helper");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("policy dir should be created");
+
+        let err = existing_policy_path(&dir, "missing").expect_err("missing policy should error");
+        assert!(matches!(err, ApiError::NotFound(_)));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

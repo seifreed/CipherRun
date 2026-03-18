@@ -40,7 +40,7 @@ pub struct ScanArgs {
     pub server_preference: bool,
 
     /// Test HTTP headers
-    #[arg(short = 'h', long = "headers")]
+    #[arg(long = "headers")]
     pub headers: bool,
 
     /// Test all vulnerabilities
@@ -221,4 +221,89 @@ pub struct ScanArgs {
     /// Displays connection status with timing information
     #[arg(long = "probe-status", alias = "tps")]
     pub probe_status: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[derive(Parser)]
+    struct TestCli {
+        #[command(flatten)]
+        args: ScanArgs,
+    }
+
+    #[test]
+    fn test_scan_args_defaults_from_clap() {
+        let parsed = TestCli::parse_from(["test"]);
+        let args = parsed.args;
+
+        assert!(!args.protocols);
+        assert!(!args.each_cipher);
+        assert!(!args.cipher_per_proto);
+        assert!(!args.categories);
+        assert!(!args.forward_secrecy);
+        assert!(!args.server_defaults);
+        assert!(!args.server_preference);
+        assert!(!args.headers);
+        assert!(!args.vulnerabilities);
+        assert!(!args.heartbleed);
+        assert!(!args.ccs);
+        assert!(!args.ticketbleed);
+        assert!(!args.robot);
+        assert!(!args.renegotiation);
+        assert!(!args.crime);
+        assert!(!args.breach);
+        assert!(!args.poodle);
+        assert!(!args.fallback);
+        assert!(!args.sweet32);
+        assert!(!args.beast);
+        assert!(!args.lucky13);
+        assert!(!args.freak);
+        assert!(!args.logjam);
+        assert!(!args.drown);
+        assert!(!args.early_data);
+        assert!(!args.full);
+        assert!(args.all);
+        assert!(!args.ssl2);
+        assert!(!args.ssl3);
+        assert!(!args.tls10);
+        assert!(!args.tls11);
+        assert!(!args.tls12);
+        assert!(!args.tls13);
+        assert!(!args.tlsall);
+        assert!(!args.show_sigs);
+        assert!(!args.show_groups);
+        assert!(!args.show_client_cas);
+        assert!(!args.show_ciphers);
+        assert!(!args.show_certificates);
+        assert!(!args.no_ciphersuites);
+        assert!(!args.no_fallback);
+        assert!(!args.no_cipher_details);
+        assert!(!args.ocsp);
+        assert!(!args.no_groups);
+        assert!(!args.no_compression);
+        assert!(!args.no_heartbleed);
+        assert!(!args.no_renegotiation);
+        assert!(!args.no_check_certificate);
+        assert!(!args.disable_rating);
+        assert!(!args.fast);
+        assert!(!args.pre_handshake);
+        assert!(!args.probe_status);
+    }
+
+    #[test]
+    fn test_scan_args_all_flag_disable() {
+        let parsed = TestCli::parse_from(["test", "--all=false"]);
+        let args = parsed.args;
+        assert!(!args.all);
+    }
+
+    #[test]
+    fn test_scan_args_full_flag() {
+        let parsed = TestCli::parse_from(["test", "--full"]);
+        let args = parsed.args;
+        assert!(args.full);
+    }
 }

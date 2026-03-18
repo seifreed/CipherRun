@@ -310,6 +310,13 @@ mod tests {
     }
 
     #[test]
+    fn test_hex_to_bytes_uppercase() {
+        let hex = "48656C6C6F";
+        let bytes = hex_to_bytes(hex).expect("test assertion should succeed");
+        assert_eq!(bytes, b"Hello");
+    }
+
+    #[test]
     fn test_bytes_to_hex() {
         let bytes = b"Hello";
         let hex_lower = bytes_to_hex(bytes, false);
@@ -333,5 +340,37 @@ mod tests {
 
         let hex = "123"; // Odd length
         assert!(hex_to_bytes(hex).is_err());
+    }
+
+    #[test]
+    fn test_dump_file_rejects_invalid_paths() {
+        let xxd = Xxd::new();
+        assert!(xxd.dump_file("bad\0path").is_err());
+        assert!(xxd.dump_file("bad;path").is_err());
+    }
+
+    #[test]
+    fn test_dump_file_rejects_newline_path() {
+        let xxd = Xxd::new();
+        assert!(xxd.dump_file("bad\npath").is_err());
+        assert!(xxd.dump_file("bad\rpath").is_err());
+    }
+
+    #[test]
+    fn test_dump_file_missing_path() {
+        let xxd = Xxd::new();
+        assert!(xxd.dump_file("this-file-does-not-exist.bin").is_err());
+    }
+
+    #[test]
+    fn test_xxd_is_available_with_missing_binary() {
+        let xxd = Xxd::with_path("missing-xxd-binary".to_string());
+        assert!(!xxd.is_available());
+    }
+
+    #[test]
+    fn test_bytes_to_hex_empty() {
+        let hex = bytes_to_hex(&[], false);
+        assert_eq!(hex, "");
     }
 }

@@ -119,6 +119,8 @@ pub struct BeastTestResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::{IpAddr, SocketAddr};
+    use tokio::net::TcpListener;
 
     #[test]
     fn test_beast_result_creation() {
@@ -130,5 +132,59 @@ mod tests {
         };
         assert!(result.vulnerable);
         assert!(result.tls10_cbc_supported);
+    }
+
+    async fn spawn_dummy_server(max_accepts: usize) -> SocketAddr {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let mut remaining = max_accepts;
+            while remaining > 0 {
+                if let Ok((socket, _)) = listener.accept().await {
+                    drop(socket);
+                }
+                remaining -= 1;
+            }
+        });
+        addr
+    }
+
+    #[tokio::test]
+    async fn test_beast_not_vulnerable_on_dummy_server() {
+        let addr = spawn_dummy_server(5).await;
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            addr.port(),
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .unwrap();
+
+        let tester = BeastTester::new(target);
+        let result = tester.test().await.unwrap();
+        assert!(!result.vulnerable);
+    }
+
+    #[test]
+    fn test_beast_result_details_contains_tls() {
+        let result = BeastTestResult {
+            vulnerable: true,
+            tls10_cbc_supported: true,
+            ssl3_cbc_supported: false,
+            details: "Vulnerable: TLS 1.0 with CBC ciphers enabled".to_string(),
+        };
+
+        assert!(result.details.contains("TLS 1.0"));
+    }
+
+    #[test]
+    fn test_beast_result_details_not_vulnerable_text() {
+        let result = BeastTestResult {
+            vulnerable: false,
+            tls10_cbc_supported: false,
+            ssl3_cbc_supported: false,
+            details: "Not vulnerable - TLS 1.0/SSL 3.0 CBC ciphers not supported".to_string(),
+        };
+        assert!(result.details.contains("Not vulnerable"));
+        assert!(!result.vulnerable);
     }
 }

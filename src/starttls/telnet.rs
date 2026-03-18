@@ -58,10 +58,84 @@ impl StarttlsNegotiator for TelnetNegotiator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
 
     #[test]
     fn test_telnet_negotiator_creation() {
         let negotiator = TelnetNegotiator::new();
         assert_eq!(negotiator.protocol(), StarttlsProtocol::Telnet);
+    }
+
+    #[test]
+    fn test_telnet_negotiator_default() {
+        let negotiator = TelnetNegotiator::default();
+        assert_eq!(negotiator.protocol(), StarttlsProtocol::Telnet);
+    }
+
+    #[tokio::test]
+    async fn test_telnet_negotiate_starttls_success() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 3];
+            stream.read_exact(&mut buf).await.unwrap();
+            assert_eq!(buf, [0xFF, 0xFB, 0x2E]);
+            stream.write_all(&[0xFF, 0xFD, 0x2E]).await.unwrap();
+        });
+
+        let mut client = TcpStream::connect(addr).await.unwrap();
+        let negotiator = TelnetNegotiator::new();
+        negotiator.negotiate_starttls(&mut client).await.unwrap();
+
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_telnet_negotiate_starttls_failure() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 3];
+            stream.read_exact(&mut buf).await.unwrap();
+            stream.write_all(&[0xFF, 0xFE, 0x2E]).await.unwrap();
+        });
+
+        let mut client = TcpStream::connect(addr).await.unwrap();
+        let negotiator = TelnetNegotiator::new();
+        let err = negotiator
+            .negotiate_starttls(&mut client)
+            .await
+            .unwrap_err();
+        assert!(format!("{err}").contains("STARTTLS negotiation failed"));
+
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_telnet_negotiate_starttls_unexpected_reply() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 3];
+            stream.read_exact(&mut buf).await.unwrap();
+            stream.write_all(&[0x00, 0x00, 0x00]).await.unwrap();
+        });
+
+        let mut client = TcpStream::connect(addr).await.unwrap();
+        let negotiator = TelnetNegotiator::new();
+        let err = negotiator
+            .negotiate_starttls(&mut client)
+            .await
+            .unwrap_err();
+        assert!(format!("{err}").contains("STARTTLS"));
+
+        server.await.unwrap();
     }
 }

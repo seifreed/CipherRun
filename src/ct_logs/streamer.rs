@@ -381,6 +381,9 @@ impl CtStreamer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ct_logs::CertType;
+    use crate::ct_logs::parser::Certificate;
+    use chrono::Utc;
 
     #[test]
     fn test_config_defaults() {
@@ -388,6 +391,14 @@ mod tests {
         assert!(!config.start_from_beginning);
         assert_eq!(config.batch_size, DEFAULT_BATCH_SIZE);
         assert_eq!(config.poll_interval, DEFAULT_POLL_INTERVAL);
+        assert!(!config.json_output);
+        assert!(!config.silent);
+    }
+
+    #[test]
+    fn test_config_default_custom_indices_empty() {
+        let config = CtConfig::default();
+        assert!(config.custom_indices.is_empty());
     }
 
     #[test]
@@ -399,5 +410,89 @@ mod tests {
 
         // Should be clamped to MAX_BATCH_SIZE
         assert!(config.batch_size > MAX_BATCH_SIZE);
+    }
+
+    #[tokio::test]
+    async fn test_stats_reporter_exits_when_shutdown() {
+        let stats = StatsTracker::new();
+        let shutdown = Arc::new(AtomicBool::new(true));
+        CtStreamer::stats_reporter(stats, shutdown).await;
+    }
+
+    #[test]
+    fn test_print_entry_no_panic() {
+        let entry = CtLogEntry {
+            log_source: "test".to_string(),
+            index: 1,
+            timestamp: Utc::now(),
+            cert_type: CertType::X509Certificate,
+            certificate: Certificate {
+                der: vec![0x01, 0x02],
+                subject_cn: Some("example.com".to_string()),
+                subject_an: vec!["example.com".to_string()],
+                issuer_cn: Some("issuer".to_string()),
+                not_before: Utc::now(),
+                not_after: Utc::now(),
+                serial: "01".to_string(),
+            },
+        };
+
+        CtStreamer::print_entry(&entry);
+    }
+
+    #[test]
+    fn test_print_entry_without_optional_fields() {
+        let entry = CtLogEntry {
+            log_source: "test".to_string(),
+            index: 2,
+            timestamp: Utc::now(),
+            cert_type: CertType::PreCertificate,
+            certificate: Certificate {
+                der: vec![0x01, 0x02],
+                subject_cn: None,
+                subject_an: Vec::new(),
+                issuer_cn: None,
+                not_before: Utc::now(),
+                not_after: Utc::now(),
+                serial: "02".to_string(),
+            },
+        };
+
+        CtStreamer::print_entry(&entry);
+    }
+
+    #[test]
+    fn test_config_custom_values_clone() {
+        let mut indices = HashMap::new();
+        indices.insert("log-a".to_string(), 42);
+
+        let config = CtConfig {
+            start_from_beginning: true,
+            custom_indices: indices.clone(),
+            poll_interval: Duration::from_secs(5),
+            batch_size: 10,
+            json_output: true,
+            silent: true,
+        };
+
+        let cloned = config.clone();
+        assert!(cloned.start_from_beginning);
+        assert_eq!(cloned.poll_interval, Duration::from_secs(5));
+        assert_eq!(cloned.batch_size, 10);
+        assert!(cloned.json_output);
+        assert!(cloned.silent);
+        assert_eq!(cloned.custom_indices, indices);
+    }
+
+    #[test]
+    fn test_config_flag_combinations() {
+        let config = CtConfig {
+            json_output: true,
+            silent: false,
+            ..Default::default()
+        };
+
+        assert!(config.json_output);
+        assert!(!config.silent);
     }
 }

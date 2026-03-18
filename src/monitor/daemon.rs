@@ -388,6 +388,8 @@ pub struct DaemonStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
 
     #[tokio::test]
     async fn test_daemon_creation() {
@@ -424,5 +426,76 @@ mod tests {
 
         let stats = daemon.stats().await;
         assert_eq!(stats.total_domains, 1);
+    }
+
+    #[tokio::test]
+    async fn test_load_domains_updates_stats() -> Result<()> {
+        let config = MonitorConfig::default();
+        let daemon = MonitorDaemon::new(config)
+            .await
+            .expect("test assertion should succeed");
+
+        let mut temp_file = NamedTempFile::new()?;
+        writeln!(temp_file, "# Domains\nexample.com\nexample.org:8443 5m")?;
+
+        daemon
+            .load_domains(
+                temp_file
+                    .path()
+                    .to_str()
+                    .expect("temp file path should be valid UTF-8"),
+            )
+            .await?;
+
+        let stats = daemon.stats().await;
+        assert_eq!(stats.total_domains, 2);
+        assert_eq!(stats.enabled_domains, 2);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_daemon_stop_flag() {
+        let config = MonitorConfig::default();
+        let daemon = MonitorDaemon::new(config)
+            .await
+            .expect("test assertion should succeed");
+
+        daemon.stop();
+        let stats = daemon.stats().await;
+        assert!(!stats.running);
+    }
+
+    #[tokio::test]
+    async fn test_run_scan_cycle_no_domains() {
+        let config = MonitorConfig::default();
+        let daemon = MonitorDaemon::new(config)
+            .await
+            .expect("test assertion should succeed");
+
+        daemon.run_scan_cycle().await.expect("scan cycle ok");
+    }
+
+    #[tokio::test]
+    async fn test_load_domains_empty_file() -> Result<()> {
+        let config = MonitorConfig::default();
+        let daemon = MonitorDaemon::new(config)
+            .await
+            .expect("test assertion should succeed");
+
+        let temp_file = NamedTempFile::new()?;
+        daemon
+            .load_domains(
+                temp_file
+                    .path()
+                    .to_str()
+                    .expect("temp file path should be valid UTF-8"),
+            )
+            .await?;
+
+        let stats = daemon.stats().await;
+        assert_eq!(stats.total_domains, 0);
+        assert_eq!(stats.enabled_domains, 0);
+        Ok(())
     }
 }

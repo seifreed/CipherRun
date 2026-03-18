@@ -211,6 +211,28 @@ mod tests {
     }
 
     #[test]
+    fn test_get_severity_hint_low() {
+        let hint = get_severity_hint(Severity::Low);
+        assert!(hint.title.contains("Low Severity"));
+        assert!(hint.remediation.contains("regular"));
+    }
+
+    #[test]
+    fn test_get_vulnerability_hint_unknown() {
+        let hint = get_vulnerability_hint("not_a_real_vuln");
+        assert!(hint.is_none());
+    }
+
+    #[test]
+    fn test_get_vulnerability_hint_multiple() {
+        let poodle = get_vulnerability_hint("poodle").expect("test assertion should succeed");
+        assert!(poodle.remediation.contains("SSL 3.0"));
+
+        let rc4 = get_vulnerability_hint("rc4").expect("test assertion should succeed");
+        assert!(rc4.description.contains("RC4"));
+    }
+
+    #[test]
     fn test_format_hint() {
         let hint = Hint {
             title: "Test Vulnerability".to_string(),
@@ -223,5 +245,42 @@ mod tests {
         assert!(formatted.contains("Test Vulnerability"));
         assert!(formatted.contains("Test remediation"));
         assert!(formatted.contains("https://example.com"));
+    }
+
+    #[test]
+    fn test_format_hint_without_references() {
+        let hint = Hint {
+            title: "No Refs".to_string(),
+            description: "desc".to_string(),
+            remediation: "fix".to_string(),
+            references: vec![],
+        };
+
+        let formatted = format_hint(&hint);
+        assert!(formatted.contains("No Refs"));
+        assert!(!formatted.contains("References"));
+    }
+
+    #[test]
+    fn test_get_vulnerability_hint_case_insensitive() {
+        let hint = get_vulnerability_hint("HeArTbLeEd").expect("test assertion should succeed");
+        assert!(hint.title.contains("Heartbleed"));
+    }
+
+    #[test]
+    fn test_format_hint_multiple_references() {
+        let hint = Hint {
+            title: "Multi".to_string(),
+            description: "desc".to_string(),
+            remediation: "fix".to_string(),
+            references: vec![
+                "https://a.example".to_string(),
+                "https://b.example".to_string(),
+            ],
+        };
+
+        let formatted = format_hint(&hint);
+        assert!(formatted.contains("https://a.example"));
+        assert!(formatted.contains("https://b.example"));
     }
 }

@@ -365,4 +365,29 @@ mod tests {
         assert_eq!(server_hello.extensions[0].extension_type, 0xFF01);
         assert_eq!(server_hello.extensions[1].extension_type, 0x0000);
     }
+
+    #[test]
+    fn test_parse_serverhello_alert_error() {
+        let data = vec![
+            0x15, 0x03, 0x03, 0x00, 0x02, // Alert record header
+            0x02, 0x28, // level=fatal(2), description=40
+        ];
+
+        let result = ServerHelloCapture::parse(&data);
+        assert!(result.is_err());
+        let err = result.err().unwrap().to_string();
+        assert!(err.contains("TLS Alert"));
+    }
+
+    #[test]
+    fn test_parse_serverhello_invalid_content_type() {
+        let data = vec![
+            0x14, 0x03, 0x03, 0x00, 0x00, // ChangeCipherSpec record
+        ];
+
+        let result = ServerHelloCapture::parse(&data);
+        assert!(result.is_err());
+        let err = result.err().unwrap().to_string();
+        assert!(err.contains("Invalid content type"));
+    }
 }

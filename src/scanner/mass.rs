@@ -1,154 +1,64 @@
 // Mass Scanner - Parallel and serial scanning of multiple targets
 
-use crate::Args;
+#[path = "mass/progress.rs"]
+mod progress;
+
+pub use progress::{
+    MassScanProgressCallback, SilentMassProgress, TargetScanProgress, TerminalMassProgress,
+};
+
 use crate::Result;
+use crate::application::{CertificateFilters, ScanRequest};
 use crate::certificates::status::CertificateStatus;
 use crate::scanner::{ScanResults, Scanner};
 use colored::*;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::sync::Semaphore;
-
-/// Progress information for a completed target scan
-#[derive(Debug)]
-pub struct TargetScanProgress<'a> {
-    pub target: &'a str,
-    pub index: usize,
-    pub total: usize,
-    pub result: &'a Result<ScanResults>,
-    pub duration: Duration,
-}
-
-/// Callback trait for mass scan progress reporting.
-///
-/// Implement this trait to receive progress updates during mass scanning.
-/// The default implementation `TerminalMassProgress` provides colored terminal output.
-pub trait MassScanProgressCallback: Send + Sync {
-    /// Called when serial scanning starts
-    fn on_serial_scan_start(&self, total_targets: usize);
-
-    /// Called when parallel scanning starts
-    fn on_parallel_scan_start(&self, total_targets: usize, max_concurrent: usize);
-
-    /// Called when scanning of an individual target begins
-    fn on_target_start(&self, target: &str, index: usize, total: usize);
-
-    /// Called when scanning of an individual target completes
-    fn on_target_complete(&self, progress: &TargetScanProgress<'_>);
-
-    /// Called periodically during parallel scanning to update progress
-    fn on_parallel_progress(&self, completed: usize, total: usize, current_target: &str);
-
-    /// Called when all scans are complete
-    fn on_all_scans_complete(&self);
-}
-
-/// Default terminal progress callback with colored output
-pub struct TerminalMassProgress;
-
-impl TerminalMassProgress {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
-impl Default for TerminalMassProgress {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl MassScanProgressCallback for TerminalMassProgress {
-    fn on_serial_scan_start(&self, total_targets: usize) {
-        println!(
-            "\n{} {} targets serially...\n",
-            "Scanning".cyan().bold(),
-            total_targets
-        );
-    }
-
-    fn on_parallel_scan_start(&self, total_targets: usize, max_concurrent: usize) {
-        println!(
-            "\n{} {} targets in parallel (max {} concurrent)...\n",
-            "Scanning".cyan().bold(),
-            total_targets,
-            max_concurrent
-        );
-    }
-
-    fn on_target_start(&self, target: &str, index: usize, total: usize) {
-        println!(
-            "{} Scanning {}/{}: {}",
-            "[+]".green(),
-            index,
-            total,
-            target.yellow()
-        );
-    }
-
-    fn on_target_complete(&self, progress: &TargetScanProgress<'_>) {
-        match progress.result {
-            Ok(scan_results) => {
-                println!(
-                    "  {} Scan completed in {:.2}s",
-                    "OK".green(),
-                    progress.duration.as_secs_f64()
-                );
-                if let Some(rating) = scan_results.ssl_rating() {
-                    println!("  {} SSL Labs Grade: {}", "INFO".blue(), rating.grade);
-                }
-            }
-            Err(e) => {
-                println!("  {} Scan failed: {}", "ERR".red(), e);
-            }
-        }
-        println!();
-    }
-
-    fn on_parallel_progress(&self, _completed: usize, _total: usize, _current_target: &str) {
-        // Progress bar handles this in terminal mode
-    }
-
-    fn on_all_scans_complete(&self) {
-        // Progress bar handles this in terminal mode
-    }
-}
-
-/// Silent progress callback that produces no output
-pub struct SilentMassProgress;
-
-impl MassScanProgressCallback for SilentMassProgress {
-    fn on_serial_scan_start(&self, _total_targets: usize) {}
-    fn on_parallel_scan_start(&self, _total_targets: usize, _max_concurrent: usize) {}
-    fn on_target_start(&self, _target: &str, _index: usize, _total: usize) {}
-    fn on_target_complete(&self, _progress: &TargetScanProgress<'_>) {}
-    fn on_parallel_progress(&self, _completed: usize, _total: usize, _current_target: &str) {}
-    fn on_all_scans_complete(&self) {}
-}
 
 /// Mass scanner for scanning multiple targets
 ///
-/// Performance optimization: Uses Arc<Args> to avoid expensive cloning
+/// Performance optimization: Uses Arc<ScanRequest> to avoid expensive cloning
 /// in parallel scanning operations.
+#[derive(Debug, Clone)]
+pub struct MassScanConfig {
+    pub max_parallel: usize,
+    pub certificate_filters: CertificateFilters,
+}
+
+impl Default for MassScanConfig {
+    fn default() -> Self {
+        Self {
+            max_parallel: 20,
+            certificate_filters: CertificateFilters::default(),
+        }
+    }
+}
+
 pub struct MassScanner {
-    args: Arc<Args>,
+    request: Arc<ScanRequest>,
+    config: MassScanConfig,
     pub targets: Vec<String>,
     callback: Option<Arc<dyn MassScanProgressCallback>>,
 }
 
 impl MassScanner {
     /// Create a new mass scanner
-    pub fn new(args: Args, targets: Vec<String>) -> Self {
+    pub fn new(request: ScanRequest, config: MassScanConfig, targets: Vec<String>) -> Self {
         Self {
-            args: Arc::new(args),
+            request: Arc::new(request),
+            config,
             targets,
             callback: None,
         }
     }
 
     /// Load targets from file
-    pub fn from_file(args: Args, file_path: &str) -> Result<Self> {
+    pub fn from_file(
+        request: ScanRequest,
+        config: MassScanConfig,
+        file_path: &str,
+    ) -> Result<Self> {
         let content = std::fs::read_to_string(file_path)?;
         let targets: Vec<String> = content
             .lines()
@@ -164,7 +74,8 @@ impl MassScanner {
         }
 
         Ok(Self {
-            args: Arc::new(args),
+            request: Arc::new(request),
+            config,
             targets,
             callback: None,
         })
@@ -224,7 +135,7 @@ impl MassScanner {
 
     /// Scan all targets in parallel
     pub async fn scan_parallel(&self) -> Result<Vec<(String, Result<ScanResults>)>> {
-        let max_parallel = self.args.network.max_parallel;
+        let max_parallel = self.config.max_parallel;
         let total = self.targets.len();
 
         // Notify callback of scan start
@@ -252,7 +163,7 @@ impl MassScanner {
             let target = target.clone();
             let semaphore = Arc::clone(&semaphore);
             // Performance optimization: Use Arc::clone instead of expensive Args clone
-            let args = Arc::clone(&self.args);
+            let request = Arc::clone(&self.request);
             let multi_progress = Arc::clone(&multi_progress);
 
             let task = tokio::spawn(async move {
@@ -272,7 +183,7 @@ impl MassScanner {
                 pb.set_message(format!("Scanning {}", target));
 
                 // Perform scan
-                let scanner = MassScanner::create_scanner(&args, &target);
+                let scanner = MassScanner::create_scanner(&request, &target);
                 let result = match scanner {
                     Ok(s) => s.run().await,
                     Err(e) => Err(e),
@@ -312,19 +223,15 @@ impl MassScanner {
 
     /// Scan a single target
     async fn scan_single_target(&self, target: &str) -> Result<ScanResults> {
-        let scanner = Self::create_scanner(&self.args, target)?;
+        let scanner = Self::create_scanner(&self.request, target)?;
         scanner.run().await
     }
 
     /// Create a scanner for a specific target
-    ///
-    /// Performance optimization: Takes Arc<Args> to avoid cloning
-    fn create_scanner(args: &Arc<Args>, target: &str) -> Result<Scanner> {
-        // Only clone when necessary to modify target and quiet flag
-        let mut modified_args = (**args).clone();
-        modified_args.target = Some(target.to_string());
-        modified_args.output.quiet = true; // Suppress banner in mass scan
-        Scanner::new(modified_args)
+    fn create_scanner(request: &Arc<ScanRequest>, target: &str) -> Result<Scanner> {
+        let mut scan_request = (**request).clone();
+        scan_request.target = Some(target.to_string());
+        Scanner::new(scan_request)
     }
 
     /// Filter results based on certificate validation filters
@@ -332,9 +239,9 @@ impl MassScanner {
     /// Returns true if the scan result should be included in output.
     /// If no certificate filters are active, all results pass.
     /// If filters are active, only results matching the filter criteria pass.
-    fn should_include_result(args: &Args, scan_result: &ScanResults) -> bool {
+    fn should_include_result(filters: &CertificateFilters, scan_result: &ScanResults) -> bool {
         // If no certificate filters are active, include everything
-        if !args.has_certificate_filters() {
+        if !filters.has_filters() {
             return true;
         }
 
@@ -366,7 +273,7 @@ impl MassScanner {
         );
 
         // Check if status matches any active filters
-        cert_status.matches_filter(args)
+        cert_status.matches_filter(filters)
     }
 
     /// Filter a collection of scan results based on certificate filters
@@ -374,11 +281,11 @@ impl MassScanner {
     /// Returns only the results that match the active certificate filters.
     /// If no filters are active, returns all results.
     pub fn filter_results(
-        args: &Args,
+        filters: &CertificateFilters,
         results: Vec<(String, Result<ScanResults>)>,
     ) -> Vec<(String, Result<ScanResults>)> {
         // If no certificate filters are active, return all results
-        if !args.has_certificate_filters() {
+        if !filters.has_filters() {
             return results;
         }
 
@@ -387,16 +294,11 @@ impl MassScanner {
             .into_iter()
             .filter(|(_, result)| {
                 match result {
-                    Ok(scan_result) => Self::should_include_result(args, scan_result),
+                    Ok(scan_result) => Self::should_include_result(filters, scan_result),
                     Err(_) => false, // Filter out failed scans when filters are active
                 }
             })
             .collect()
-    }
-
-    /// Get reference to args (for external use)
-    pub fn args(&self) -> &Args {
-        &self.args
     }
 
     /// Generate summary report
@@ -545,13 +447,270 @@ impl MassScanner {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::ScanRequest;
+    use crate::rating::grader::Grade;
+    use crate::rating::scoring::RatingResult;
+    use crate::scanner::RatingResults;
+    use crate::vulnerabilities::{Severity, VulnerabilityResult, VulnerabilityType};
+    use std::path::PathBuf;
+    use tempfile::tempdir;
+
+    fn build_scan_with_expired_cert(expired: bool) -> ScanResults {
+        use crate::certificates::parser::{CertificateChain, CertificateInfo};
+        use crate::certificates::validator::ValidationResult;
+
+        let mut validation = ValidationResult {
+            valid: false,
+            issues: Vec::new(),
+            trust_chain_valid: false,
+            hostname_match: true,
+            not_expired: !expired,
+            signature_valid: false,
+            trusted_ca: None,
+            platform_trust: None,
+        };
+        if expired {
+            validation.not_expired = false;
+        }
+
+        let cert = CertificateInfo {
+            subject: "CN=example.com".to_string(),
+            issuer: "CN=Example CA".to_string(),
+            ..Default::default()
+        };
+        let chain = CertificateChain {
+            certificates: vec![cert],
+            chain_length: 1,
+            chain_size_bytes: 0,
+        };
+
+        ScanResults {
+            target: "example.com:443".to_string(),
+            certificate_chain: Some(crate::scanner::CertificateAnalysisResult {
+                chain,
+                validation,
+                revocation: None,
+            }),
+            ..Default::default()
+        }
+    }
+
+    fn build_scan_with_rating(grade: Grade, score: u8, valid_cert: bool) -> ScanResults {
+        use crate::certificates::parser::{CertificateChain, CertificateInfo};
+        use crate::certificates::validator::ValidationResult;
+
+        let validation = ValidationResult {
+            valid: valid_cert,
+            issues: Vec::new(),
+            trust_chain_valid: valid_cert,
+            hostname_match: true,
+            not_expired: true,
+            signature_valid: valid_cert,
+            trusted_ca: None,
+            platform_trust: None,
+        };
+        let cert = CertificateInfo {
+            subject: "CN=example.com".to_string(),
+            issuer: "CN=Example CA".to_string(),
+            ..Default::default()
+        };
+        let chain = CertificateChain {
+            certificates: vec![cert],
+            chain_length: 1,
+            chain_size_bytes: 0,
+        };
+
+        let rating = RatingResult {
+            grade,
+            score,
+            certificate_score: score,
+            protocol_score: score,
+            key_exchange_score: score,
+            cipher_strength_score: score,
+            warnings: Vec::new(),
+        };
+
+        ScanResults {
+            target: "example.com:443".to_string(),
+            certificate_chain: Some(crate::scanner::CertificateAnalysisResult {
+                chain,
+                validation,
+                revocation: None,
+            }),
+            rating: Some(RatingResults {
+                ssl_rating: Some(rating),
+            }),
+            ..Default::default()
+        }
+    }
 
     #[test]
     fn test_mass_scanner_creation() {
-        let mut args = Args::default();
-        args.scan.all = true;
+        let mut request = ScanRequest::default();
+        request.scan.all = true;
         let targets = vec!["example.com:443".to_string(), "google.com:443".to_string()];
-        let scanner = MassScanner::new(args, targets);
+        let scanner = MassScanner::new(request, MassScanConfig::default(), targets);
         assert_eq!(scanner.targets.len(), 2);
+    }
+
+    #[test]
+    fn test_mass_scanner_from_file_parses_targets() {
+        let mut path = std::env::temp_dir();
+        path.push("cipherrun_targets.txt");
+        std::fs::write(
+            &path,
+            "example.com:443\n# comment\n\n  mail.example.com:25  \n",
+        )
+        .unwrap();
+
+        let scanner = MassScanner::from_file(
+            ScanRequest::default(),
+            MassScanConfig::default(),
+            path.to_str().unwrap(),
+        )
+        .expect("should parse targets");
+        assert_eq!(scanner.targets.len(), 2);
+        assert_eq!(scanner.targets[0], "example.com:443");
+        assert_eq!(scanner.targets[1], "mail.example.com:25");
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_mass_scanner_from_file_empty_fails() {
+        let mut path = PathBuf::from(std::env::temp_dir());
+        path.push("cipherrun_targets_empty.txt");
+        std::fs::write(&path, "  \n# only comment\n").unwrap();
+
+        let err = MassScanner::from_file(
+            ScanRequest::default(),
+            MassScanConfig::default(),
+            path.to_str().unwrap(),
+        )
+        .err()
+        .unwrap();
+        let msg = err.to_string();
+        assert!(msg.contains("No targets found"));
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_filter_results_no_filters_returns_all() {
+        let filters = CertificateFilters::default();
+        let results = vec![
+            ("one".to_string(), Ok(ScanResults::default())),
+            (
+                "two".to_string(),
+                Err(crate::error::TlsError::Other("fail".to_string()).into()),
+            ),
+        ];
+        let filtered = MassScanner::filter_results(&filters, results);
+        assert_eq!(filtered.len(), 2);
+    }
+
+    #[test]
+    fn test_filter_results_expired_only() {
+        let filters = CertificateFilters {
+            expired: true,
+            ..Default::default()
+        };
+
+        let results = vec![
+            (
+                "expired".to_string(),
+                Ok(build_scan_with_expired_cert(true)),
+            ),
+            ("valid".to_string(), Ok(build_scan_with_expired_cert(false))),
+            (
+                "error".to_string(),
+                Err(crate::error::TlsError::Other("fail".to_string()).into()),
+            ),
+        ];
+        let filtered = MassScanner::filter_results(&filters, results);
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].0, "expired");
+    }
+
+    #[test]
+    fn test_filter_results_with_missing_certificate_chain() {
+        let filters = CertificateFilters {
+            expired: true,
+            ..Default::default()
+        };
+
+        let results = vec![("no-cert".to_string(), Ok(ScanResults::default()))];
+        let filtered = MassScanner::filter_results(&filters, results);
+        assert!(filtered.is_empty());
+    }
+
+    #[test]
+    fn test_create_scanner_sets_target_and_quiet() {
+        let request = Arc::new(ScanRequest::default());
+        let scanner =
+            MassScanner::create_scanner(&request, "example.com:443").expect("should build scanner");
+        assert_eq!(scanner.request.target.as_deref(), Some("example.com:443"));
+    }
+
+    #[test]
+    fn test_generate_summary_includes_grades_and_errors() {
+        let mut ok_scan = build_scan_with_rating(Grade::A, 90, true);
+        ok_scan.vulnerabilities.push(VulnerabilityResult {
+            vuln_type: VulnerabilityType::ROBOT,
+            vulnerable: true,
+            inconclusive: false,
+            details: "Detected".to_string(),
+            cve: None,
+            cwe: None,
+            severity: Severity::High,
+        });
+
+        let results = vec![
+            ("ok.example:443".to_string(), Ok(ok_scan)),
+            (
+                "fail.example:443".to_string(),
+                Err(crate::error::TlsError::Other("fail".to_string()).into()),
+            ),
+            (
+                "ok2.example:443".to_string(),
+                Ok(build_scan_with_rating(Grade::B, 80, false)),
+            ),
+        ];
+
+        let summary = MassScanner::generate_summary(&results);
+        assert!(summary.contains("MASS SCAN SUMMARY"));
+        assert!(summary.contains("Grade Distribution"));
+        assert!(summary.contains("ERROR"));
+        assert!(summary.contains("Vulns"));
+    }
+
+    #[test]
+    fn test_export_all_json_writes_file() {
+        let dir = tempdir().expect("test assertion should succeed");
+        let path = dir.path().join("mass_scan.json");
+
+        let results = vec![("example.com:443".to_string(), Ok(ScanResults::default()))];
+        MassScanner::export_all_json(&results, path.to_str().unwrap(), true)
+            .expect("test assertion should succeed");
+
+        let contents = std::fs::read_to_string(&path).expect("test assertion should succeed");
+        assert!(contents.contains("\"scan_type\""));
+        assert!(contents.contains("\"mass_scan\""));
+    }
+
+    #[test]
+    fn test_from_file_with_only_comments_returns_error() {
+        let dir = tempdir().expect("test assertion should succeed");
+        let path = dir.path().join("targets.txt");
+        std::fs::write(&path, "# comment only\n\n   \n").expect("write should succeed");
+
+        let err = MassScanner::from_file(
+            ScanRequest::default(),
+            MassScanConfig::default(),
+            path.to_str().unwrap(),
+        )
+        .err()
+        .expect("should error");
+        assert!(err.to_string().contains("No targets found"));
     }
 }

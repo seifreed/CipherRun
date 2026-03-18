@@ -16,7 +16,7 @@ pub struct CertificateFilterArgs {
     pub filter_expired: bool,
 
     /// Filter: Show only self-signed certificates
-    #[arg(long = "self-signed", short = 's')]
+    #[arg(long = "self-signed")]
     pub filter_self_signed: bool,
 
     /// Filter: Show only hostname mismatched certificates
@@ -51,5 +51,48 @@ impl CertificateFilterArgs {
             || self.filter_mismatched
             || self.filter_revoked
             || self.filter_untrusted
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[derive(Parser)]
+    struct TestCli {
+        #[command(flatten)]
+        args: CertificateFilterArgs,
+    }
+
+    #[test]
+    fn test_certificate_filter_args_has_filters() {
+        let parsed = TestCli::parse_from(["test"]);
+        let args = parsed.args;
+
+        assert!(!args.has_filters());
+
+        let parsed = TestCli::parse_from(["test", "--expired"]);
+        let args = parsed.args;
+        assert!(args.has_filters());
+        assert!(args.filter_expired);
+    }
+
+    #[test]
+    fn test_certificate_filter_args_response_only() {
+        let parsed = TestCli::parse_from(["test", "--response-only"]);
+        let args = parsed.args;
+
+        assert!(args.response_only);
+        assert!(!args.dns_only);
+    }
+
+    #[test]
+    fn test_certificate_filter_args_dns_only() {
+        let parsed = TestCli::parse_from(["test", "--dns-only"]);
+        let args = parsed.args;
+
+        assert!(args.dns_only);
+        assert!(!args.response_only);
     }
 }

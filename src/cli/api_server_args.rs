@@ -53,3 +53,38 @@ pub struct ApiServerArgs {
     )]
     pub config_example: Option<PathBuf>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[derive(Parser)]
+    struct TestCli {
+        #[command(flatten)]
+        args: ApiServerArgs,
+    }
+
+    #[test]
+    fn test_api_server_args_defaults_from_clap() {
+        let parsed = TestCli::parse_from(["test"]);
+        let args = parsed.args;
+
+        assert!(!args.enable);
+        assert_eq!(args.host, "0.0.0.0");
+        assert_eq!(args.port, 8080);
+        assert!(args.config.is_none());
+        assert_eq!(args.max_concurrent, 10);
+        assert!(!args.swagger);
+        assert!(args.config_example.is_none());
+    }
+
+    #[test]
+    fn test_api_server_args_custom_host_port() {
+        let parsed = TestCli::parse_from(["test", "--api-host", "127.0.0.1", "--api-port", "9090"]);
+        let args = parsed.args;
+
+        assert_eq!(args.host, "127.0.0.1");
+        assert_eq!(args.port, 9090);
+    }
+}

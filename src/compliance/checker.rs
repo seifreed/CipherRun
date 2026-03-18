@@ -1,7 +1,7 @@
 // Compliance checkers - Rule evaluation logic
 
+use crate::application::ScanAssessment;
 use crate::compliance::{Rule, Severity, Violation};
-use crate::scanner::ScanResults;
 use anyhow::Result;
 
 /// Compliance checker for evaluating rules against scan results
@@ -9,7 +9,7 @@ pub struct ComplianceChecker;
 
 impl ComplianceChecker {
     /// Check protocol version compliance
-    pub fn check_protocols(rule: &Rule, results: &ScanResults) -> Result<Vec<Violation>> {
+    pub fn check_protocols(rule: &Rule, results: &ScanAssessment) -> Result<Vec<Violation>> {
         let mut violations = Vec::new();
 
         for protocol_result in &results.protocols {
@@ -60,7 +60,7 @@ impl ComplianceChecker {
     }
 
     /// Check cipher suite compliance
-    pub fn check_ciphers(rule: &Rule, results: &ScanResults) -> Result<Vec<Violation>> {
+    pub fn check_ciphers(rule: &Rule, results: &ScanAssessment) -> Result<Vec<Violation>> {
         let mut violations = Vec::new();
 
         for (protocol, cipher_summary) in &results.ciphers {
@@ -115,7 +115,7 @@ impl ComplianceChecker {
     }
 
     /// Check certificate key size compliance
-    pub fn check_key_size(rule: &Rule, results: &ScanResults) -> Result<Vec<Violation>> {
+    pub fn check_key_size(rule: &Rule, results: &ScanAssessment) -> Result<Vec<Violation>> {
         let mut violations = Vec::new();
 
         if let Some(cert_analysis) = &results.certificate_chain
@@ -161,7 +161,7 @@ impl ComplianceChecker {
     }
 
     /// Check signature algorithm compliance
-    pub fn check_signature(rule: &Rule, results: &ScanResults) -> Result<Vec<Violation>> {
+    pub fn check_signature(rule: &Rule, results: &ScanAssessment) -> Result<Vec<Violation>> {
         let mut violations = Vec::new();
 
         if let Some(cert_analysis) = &results.certificate_chain
@@ -212,7 +212,7 @@ impl ComplianceChecker {
     }
 
     /// Check forward secrecy compliance
-    pub fn check_forward_secrecy(rule: &Rule, results: &ScanResults) -> Result<Vec<Violation>> {
+    pub fn check_forward_secrecy(rule: &Rule, results: &ScanAssessment) -> Result<Vec<Violation>> {
         let mut violations = Vec::new();
 
         let required = rule.required.unwrap_or(false);
@@ -247,7 +247,7 @@ impl ComplianceChecker {
     }
 
     /// Check certificate validation compliance
-    pub fn check_cert_validation(rule: &Rule, results: &ScanResults) -> Result<Vec<Violation>> {
+    pub fn check_cert_validation(rule: &Rule, results: &ScanAssessment) -> Result<Vec<Violation>> {
         let mut violations = Vec::new();
 
         if let Some(cert_analysis) = &results.certificate_chain {
@@ -298,7 +298,7 @@ impl ComplianceChecker {
     }
 
     /// Check certificate expiration (early warning)
-    pub fn check_cert_expiration(rule: &Rule, results: &ScanResults) -> Result<Vec<Violation>> {
+    pub fn check_cert_expiration(rule: &Rule, results: &ScanAssessment) -> Result<Vec<Violation>> {
         let mut violations = Vec::new();
 
         if let Some(max_days) = rule.max_days_until_expiration
@@ -333,7 +333,7 @@ impl ComplianceChecker {
     }
 
     /// Check for known vulnerabilities
-    pub fn check_vulnerabilities(_rule: &Rule, results: &ScanResults) -> Result<Vec<Violation>> {
+    pub fn check_vulnerabilities(_rule: &Rule, results: &ScanAssessment) -> Result<Vec<Violation>> {
         let mut violations = Vec::new();
 
         for vuln in &results.vulnerabilities {
@@ -365,8 +365,12 @@ impl ComplianceChecker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::ScanAssessment;
     use crate::compliance::Rule;
     use crate::protocols::{Protocol, ProtocolTestResult};
+    use crate::vulnerabilities::{
+        Severity as VulnSeverity, VulnerabilityResult, VulnerabilityType,
+    };
     use std::collections::HashMap;
 
     #[test]
@@ -389,7 +393,7 @@ mod tests {
         };
 
         #[allow(clippy::field_reassign_with_default)]
-        let mut results = ScanResults::default();
+        let mut results = ScanAssessment::default();
         results.protocols = vec![
             ProtocolTestResult {
                 protocol: Protocol::SSLv2,
@@ -441,7 +445,7 @@ mod tests {
         };
 
         #[allow(clippy::field_reassign_with_default)]
-        let mut results = ScanResults::default();
+        let mut results = ScanAssessment::default();
         results.protocols = vec![
             ProtocolTestResult {
                 protocol: Protocol::TLS10,
@@ -471,5 +475,54 @@ mod tests {
             .expect("test assertion should succeed");
         assert_eq!(violations.len(), 1);
         assert_eq!(violations[0].violation_type, "Non-Compliant Protocol");
+    }
+
+    #[test]
+    fn test_check_vulnerabilities_maps_severity_and_evidence() {
+        let rule = Rule {
+            rule_type: "Vulnerability".to_string(),
+            allowed: vec![],
+            denied: vec![],
+            allowed_patterns: vec![],
+            denied_patterns: vec![],
+            preferred_patterns: vec![],
+            min_rsa_bits: None,
+            min_ecc_bits: None,
+            required: None,
+            require_valid_chain: None,
+            require_unexpired: None,
+            require_hostname_match: None,
+            max_days_until_expiration: None,
+            custom_params: HashMap::new(),
+        };
+
+        #[allow(clippy::field_reassign_with_default)]
+        let mut results = ScanAssessment::default();
+        results.vulnerabilities = vec![
+            VulnerabilityResult {
+                vuln_type: VulnerabilityType::Heartbleed,
+                vulnerable: true,
+                inconclusive: false,
+                details: "bad".to_string(),
+                cve: None,
+                cwe: None,
+                severity: VulnSeverity::High,
+            },
+            VulnerabilityResult {
+                vuln_type: VulnerabilityType::BEAST,
+                vulnerable: false,
+                inconclusive: false,
+                details: "ok".to_string(),
+                cve: Some("CVE-2011-3389".to_string()),
+                cwe: None,
+                severity: VulnSeverity::Medium,
+            },
+        ];
+
+        let violations = ComplianceChecker::check_vulnerabilities(&rule, &results)
+            .expect("test assertion should succeed");
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].violation_type.contains("Heartbleed"));
+        assert_eq!(violations[0].severity, Severity::High);
     }
 }

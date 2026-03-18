@@ -196,13 +196,10 @@ impl BreachTester {
                         let n = ssl_stream.read(&mut buffer)?;
 
                         if n > 0 {
-                            let response = String::from_utf8_lossy(&buffer[..n]);
-                            // Check for common patterns that indicate sensitive data
-                            let has_sensitive = response.contains("csrf")
-                                || response.contains("token")
-                                || response.contains("session")
-                                || response.contains("Set-Cookie");
-                            Ok(has_sensitive)
+                             let response = String::from_utf8_lossy(&buffer[..n]);
+                             // Check for sensitive data with more precise matching
+                             let has_sensitive = Self::detect_sensitive_patterns(&response);
+                             Ok(has_sensitive)
                         } else {
                             Ok(false)
                         }
@@ -212,6 +209,56 @@ impl BreachTester {
             }
             _ => Ok(false),
         }
+    }
+
+    /// Detect sensitive data patterns in HTTP response
+    /// Uses precise matching to reduce false positives from comments/irrelevant text
+    fn detect_sensitive_patterns(response: &str) -> bool {
+        let response_lower = response.to_lowercase();
+        
+        // Check Set-Cookie header (definitive indicator)
+        if response_lower.contains("set-cookie:") {
+            return true;
+        }
+        
+        // Check for CSRF tokens in HTML attributes (more precise)
+        // Look for actual HTML attributes, not just the word "csrf"
+        if response.contains("csrf-token=") 
+            || response.contains("csrf_token=")
+            || response.contains("_csrf=")
+            || response.contains("name=\"csrf")
+            || response.contains("name='csrf")
+            || response.contains("csrfmiddlewaretoken")
+        {
+            return true;
+        }
+        
+        // Check for session tokens in specific contexts
+        // Avoid matching "session" word in comments or unrelated text
+        if response_lower.contains("phpsessid=")
+            || response_lower.contains("jsessionid=")
+            || response_lower.contains("asp.net_sessionid=")
+            || response.contains("sessionId=")
+            || response.contains("session_id=")
+            || response.contains("name=\"session")
+            || response.contains("name='session")
+        {
+            return true;
+        }
+        
+        // Check for API tokens in headers or meta tags
+        if response_lower.contains("authorization:")
+            || response_lower.contains("x-auth-token:")
+            || response_lower.contains("x-api-key:")
+            || response.contains("api_key=")
+            || response.contains("access_token=")
+            || response.contains("name=\"token")
+            || response.contains("name='token")
+        {
+            return true;
+        }
+        
+        false
     }
 }
 

@@ -67,4 +67,68 @@ mod tests {
         assert!(RdpPreamble::should_use_rdp(3389));
         assert!(!RdpPreamble::should_use_rdp(443));
     }
+
+    #[test]
+    fn test_rdp_port_detection_other() {
+        assert!(!RdpPreamble::should_use_rdp(0));
+        assert!(!RdpPreamble::should_use_rdp(3390));
+    }
+
+    #[tokio::test]
+    async fn test_rdp_preamble_send() {
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test assertion should succeed");
+        let addr = listener
+            .local_addr()
+            .expect("test assertion should succeed");
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buffer = vec![0u8; 64];
+            let _ = socket.read(&mut buffer).await.unwrap();
+            let mut response = vec![0u8; 11];
+            response[0] = 0x03;
+            response[5] = 0xD0;
+            socket.write_all(&response).await.unwrap();
+        });
+
+        let mut stream = TcpStream::connect(addr)
+            .await
+            .expect("test assertion should succeed");
+        RdpPreamble::send(&mut stream)
+            .await
+            .expect("test assertion should succeed");
+
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_rdp_preamble_short_response() {
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test assertion should succeed");
+        let addr = listener
+            .local_addr()
+            .expect("test assertion should succeed");
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buffer = vec![0u8; 64];
+            let _ = socket.read(&mut buffer).await.unwrap();
+            socket.write_all(&[0x03, 0x00]).await.unwrap();
+        });
+
+        let mut stream = TcpStream::connect(addr)
+            .await
+            .expect("test assertion should succeed");
+        let err = RdpPreamble::send(&mut stream).await.unwrap_err();
+        assert!(err.to_string().contains("RDP response too short"));
+
+        server.await.unwrap();
+    }
 }

@@ -11,7 +11,7 @@
 //
 // Dependencies:
 // - ClientSimulator (domain logic for client simulation)
-// - Args (CLI configuration)
+// - ScanRequest (scan configuration)
 // - Target (server information)
 //
 // Client types simulated:
@@ -21,8 +21,9 @@
 // - API clients (curl, wget, Java, Python)
 
 use super::{ScanContext, ScanPhase};
+use crate::Result;
+use crate::application::ScanRequest;
 use crate::client_sim::simulator::ClientSimulator;
-use crate::{Args, Result};
 use async_trait::async_trait;
 
 /// Client simulation phase
@@ -32,7 +33,7 @@ use async_trait::async_trait;
 /// identify compatibility issues with legacy clients or modern security
 /// requirements.
 ///
-/// Configuration sources (from Args):
+/// Configuration sources (from ScanRequest):
 /// - Full scan mode (--all) enables client simulation
 /// - Target information (hostname, port, resolved IPs)
 pub struct ClientSimPhase;
@@ -56,7 +57,7 @@ impl ScanPhase for ClientSimPhase {
         "Simulating Client Connections"
     }
 
-    fn should_run(&self, args: &Args) -> bool {
+    fn should_run(&self, args: &ScanRequest) -> bool {
         // Run if:
         // - Full scan mode (--all)
         args.scan.all
@@ -90,16 +91,16 @@ mod tests {
         let phase = ClientSimPhase::new();
 
         // Test with --all flag
-        let mut args = Args::default();
+        let mut args = ScanRequest::default();
         args.scan.all = true;
         assert!(phase.should_run(&args));
 
         // Test without --all flag
-        let args = Args::default();
+        let args = ScanRequest::default();
         assert!(!phase.should_run(&args));
 
         // Test with target but no --all
-        let mut args = Args::default();
+        let mut args = ScanRequest::default();
         args.target = Some("example.com".to_string());
         assert!(!phase.should_run(&args));
     }
@@ -107,6 +108,12 @@ mod tests {
     #[test]
     fn test_client_sim_phase_name() {
         let phase = ClientSimPhase::new();
+        assert_eq!(phase.name(), "Simulating Client Connections");
+    }
+
+    #[test]
+    fn test_client_sim_phase_default() {
+        let phase: ClientSimPhase = Default::default();
         assert_eq!(phase.name(), "Simulating Client Connections");
     }
 }

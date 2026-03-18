@@ -80,6 +80,10 @@ impl ApiServer {
                 Arc::new(self.config.clone()),
                 middleware::authenticate,
             ))
+            .layer(axum_middleware::from_fn_with_state(
+                self.state.clone(),
+                middleware::metrics,
+            ))
             // Add CORS
             .layer(middleware::cors_layer())
             // Add compression

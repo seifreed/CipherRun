@@ -142,6 +142,7 @@ pub struct Sweet32TestResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::{IpAddr, Ipv4Addr, TcpListener};
 
     #[test]
     fn test_sweet32_result_not_vulnerable() {
@@ -166,5 +167,48 @@ mod tests {
         };
         assert!(result.vulnerable);
         assert_eq!(result.des3_ciphers.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_sweet32_inactive_target_not_vulnerable() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
+        )
+        .unwrap();
+
+        let tester = Sweet32Tester::new(target);
+        let result = tester.test().await.unwrap();
+        assert!(!result.vulnerable);
+        assert!(result.des3_ciphers.is_empty());
+        assert!(result.blowfish_ciphers.is_empty());
+        assert!(result.details.contains("Not vulnerable"));
+    }
+
+    #[test]
+    fn test_sweet32_result_details_contains_cipher() {
+        let result = Sweet32TestResult {
+            vulnerable: true,
+            des3_ciphers: vec!["DES-CBC3-SHA".to_string()],
+            blowfish_ciphers: vec![],
+            details: "DES-CBC3-SHA supported".to_string(),
+        };
+        assert!(result.details.contains("DES-CBC3-SHA"));
+    }
+
+    #[test]
+    fn test_sweet32_result_details_contains_blowfish() {
+        let result = Sweet32TestResult {
+            vulnerable: true,
+            des3_ciphers: vec![],
+            blowfish_ciphers: vec!["BF-CBC-SHA".to_string()],
+            details: "Blowfish cipher supported: BF-CBC-SHA".to_string(),
+        };
+        assert!(result.details.contains("Blowfish"));
     }
 }

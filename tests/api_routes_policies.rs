@@ -1,17 +1,16 @@
-use std::sync::Arc;
+use axum::{
+    Router,
+    routing::{get, post},
+};
 
-use axum::{routing::{get, post}, Router};
-use tower::ServiceExt;
-
-use cipherrun::api::config::ApiConfig;
 use cipherrun::api::models::request::{PolicyEvaluationRequest, PolicyRequest};
 use cipherrun::api::routes::policies;
-use cipherrun::api::state::AppState;
+
+mod common;
 
 #[tokio::test]
 async fn test_policies_no_policy_dir_returns_500() {
-    let config = ApiConfig::default();
-    let state = Arc::new(AppState::new(config).unwrap());
+    let state = common::api::test_api_state();
 
     let app = Router::new()
         .route("/policies", post(policies::create_policy))
@@ -26,49 +25,29 @@ async fn test_policies_no_policy_dir_returns_500() {
         enabled: true,
     };
 
-    let body = serde_json::to_string(&request).unwrap();
-    let response = app.clone()
-        .oneshot(
-            axum::http::Request::builder()
-                .method("POST")
-                .uri("/policies")
-                .header("content-type", "application/json")
-                .body(axum::body::Body::from(body))
-                .unwrap(),
+    assert_eq!(
+        common::api::send_status(
+            &app,
+            common::api::json_request("POST", "/policies", &request)
         )
-        .await
-        .unwrap();
-
-    assert_eq!(response.status(), axum::http::StatusCode::INTERNAL_SERVER_ERROR);
-
-    let response = app.clone()
-        .oneshot(
-            axum::http::Request::builder()
-                .uri("/policies/test")
-                .body(axum::body::Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(response.status(), axum::http::StatusCode::INTERNAL_SERVER_ERROR);
+        .await,
+        axum::http::StatusCode::INTERNAL_SERVER_ERROR
+    );
+    assert_eq!(
+        common::api::send_status(&app, common::api::request("GET", "/policies/test")).await,
+        axum::http::StatusCode::INTERNAL_SERVER_ERROR
+    );
 
     let eval_request = PolicyEvaluationRequest {
         target: "example.com:443".to_string(),
         options: Default::default(),
     };
-    let body = serde_json::to_string(&eval_request).unwrap();
-    let response = app
-        .oneshot(
-            axum::http::Request::builder()
-                .method("POST")
-                .uri("/policies/test/evaluate")
-                .header("content-type", "application/json")
-                .body(axum::body::Body::from(body))
-                .unwrap(),
+    assert_eq!(
+        common::api::send_status(
+            &app,
+            common::api::json_request("POST", "/policies/test/evaluate", &eval_request)
         )
-        .await
-        .unwrap();
-
-    assert_eq!(response.status(), axum::http::StatusCode::INTERNAL_SERVER_ERROR);
+        .await,
+        axum::http::StatusCode::INTERNAL_SERVER_ERROR
+    );
 }

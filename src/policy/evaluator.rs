@@ -1,12 +1,12 @@
 // Policy evaluator - Main policy enforcement engine
 
 use crate::Result;
+use crate::application::ScanAssessment;
 use crate::policy::exceptions::ExceptionMatcher;
 use crate::policy::rules::{certificate::*, cipher::*, protocol::*, vulnerability::*};
 use crate::policy::violation::PolicyViolation;
 use crate::policy::{Policy, PolicyResult};
 use crate::rating::Grade;
-use crate::scanner::ScanResults;
 use chrono::Utc;
 
 /// Policy evaluator
@@ -26,7 +26,7 @@ impl PolicyEvaluator {
     }
 
     /// Evaluate scan results against the policy
-    pub fn evaluate(&self, results: &ScanResults) -> Result<PolicyResult> {
+    pub fn evaluate(&self, results: &ScanAssessment) -> Result<PolicyResult> {
         let mut violations = Vec::new();
         let mut exceptions_applied = Vec::new();
         let target = &results.target;
@@ -94,10 +94,10 @@ impl PolicyEvaluator {
     fn check_protocols(
         &self,
         policy: &crate::policy::ProtocolPolicy,
-        results: &ScanResults,
+        results: &ScanAssessment,
         _target: &str,
     ) -> Result<Vec<PolicyViolation>> {
-        let rule = ProtocolRule::new(policy, &results.protocols);
+        let rule = ProtocolRule::new(policy, &results.protocols, &results.any_supported_protocols);
         rule.evaluate(&results.target)
     }
 
@@ -105,7 +105,7 @@ impl PolicyEvaluator {
     fn check_ciphers(
         &self,
         policy: &crate::policy::CipherPolicy,
-        results: &ScanResults,
+        results: &ScanAssessment,
         _target: &str,
     ) -> Result<Vec<PolicyViolation>> {
         let rule = CipherRule::new(policy, &results.ciphers);
@@ -116,7 +116,7 @@ impl PolicyEvaluator {
     fn check_certificates(
         &self,
         policy: &crate::policy::CertificatePolicy,
-        results: &ScanResults,
+        results: &ScanAssessment,
         _target: &str,
     ) -> Result<Vec<PolicyViolation>> {
         let rule = CertificateRule::new(policy, results.certificate_chain.as_ref());
@@ -127,7 +127,7 @@ impl PolicyEvaluator {
     fn check_vulnerabilities(
         &self,
         policy: &crate::policy::VulnerabilityPolicy,
-        results: &ScanResults,
+        results: &ScanAssessment,
         _target: &str,
     ) -> Result<Vec<PolicyViolation>> {
         let rule = VulnerabilityRule::new(policy, &results.vulnerabilities);
@@ -138,7 +138,7 @@ impl PolicyEvaluator {
     fn check_rating(
         &self,
         policy: &crate::policy::RatingPolicy,
-        results: &ScanResults,
+        results: &ScanAssessment,
         _target: &str,
     ) -> Result<Vec<PolicyViolation>> {
         let mut violations = Vec::new();
@@ -250,7 +250,6 @@ mod tests {
     use super::*;
     use crate::policy::*;
     use crate::protocols::{Protocol, ProtocolTestResult};
-    use std::collections::HashMap;
 
     #[test]
     fn test_evaluator_with_violations() {
@@ -274,9 +273,8 @@ mod tests {
             exceptions: Vec::new(),
         };
 
-        let mut results = ScanResults {
+        let mut results = ScanAssessment {
             target: "example.com:443".to_string(),
-            scan_time_ms: 1000,
             ..Default::default()
         };
         results.protocols = vec![ProtocolTestResult {
@@ -329,9 +327,8 @@ mod tests {
             }],
         };
 
-        let mut results = ScanResults {
+        let mut results = ScanAssessment {
             target: "example.com:443".to_string(),
-            scan_time_ms: 1000,
             ..Default::default()
         };
         results.protocols = vec![ProtocolTestResult {
@@ -354,5 +351,101 @@ mod tests {
         // Violation should be filtered out by exception
         assert!(!result.has_violations());
         assert!(!result.exceptions_applied.is_empty());
+    }
+
+    #[test]
+    fn test_parse_grade_invalid() {
+        let policy = Policy {
+            name: "Test Policy".to_string(),
+            version: "1.0".to_string(),
+            description: None,
+            organization: None,
+            effective_date: None,
+            extends: None,
+            protocols: None,
+            ciphers: None,
+            certificates: None,
+            vulnerabilities: None,
+            rating: None,
+            compliance: None,
+            exceptions: Vec::new(),
+        };
+
+        let evaluator = PolicyEvaluator::new(policy);
+        let result = evaluator.parse_grade("Z");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_rating_min_score_violation() {
+        let policy = Policy {
+            name: "Test Policy".to_string(),
+            version: "1.0".to_string(),
+            description: None,
+            organization: None,
+            effective_date: None,
+            extends: None,
+            protocols: None,
+            ciphers: None,
+            certificates: None,
+            vulnerabilities: None,
+            rating: Some(crate::policy::RatingPolicy {
+                min_grade: None,
+                min_score: Some(90),
+                action: PolicyAction::Fail,
+            }),
+            compliance: None,
+            exceptions: Vec::new(),
+        };
+
+        let mut results = ScanAssessment {
+            target: "example.com:443".to_string(),
+            ..Default::default()
+        };
+        results.rating = Some(crate::rating::scoring::RatingResult {
+            grade: Grade::B,
+            score: 70,
+            certificate_score: 80,
+            protocol_score: 70,
+            key_exchange_score: 70,
+            cipher_strength_score: 70,
+            warnings: vec![],
+        });
+
+        let evaluator = PolicyEvaluator::new(policy);
+        let result = evaluator
+            .evaluate(&results)
+            .expect("test assertion should succeed");
+
+        assert!(result.has_violations());
+        assert!(
+            result
+                .violations
+                .iter()
+                .any(|v| v.rule_path == "rating.min_score")
+        );
+    }
+
+    #[test]
+    fn test_parse_grade_valid() {
+        let policy = Policy {
+            name: "Test Policy".to_string(),
+            version: "1.0".to_string(),
+            description: None,
+            organization: None,
+            effective_date: None,
+            extends: None,
+            protocols: None,
+            ciphers: None,
+            certificates: None,
+            vulnerabilities: None,
+            rating: None,
+            compliance: None,
+            exceptions: Vec::new(),
+        };
+
+        let evaluator = PolicyEvaluator::new(policy);
+        let grade = evaluator.parse_grade("A+").expect("grade should parse");
+        assert_eq!(grade, Grade::APlus);
     }
 }

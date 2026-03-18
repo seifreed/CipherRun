@@ -13,6 +13,8 @@ use tokio::time::{Duration, timeout};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GreaseResult {
     pub tolerates_grease: bool,
+    pub inconclusive: bool,
+    pub direct_grease_test_performed: bool,
     pub issues: Vec<String>,
     pub details: Vec<String>,
 }
@@ -39,6 +41,8 @@ impl GreaseTester {
     pub async fn test(&self) -> Result<GreaseResult> {
         let mut result = GreaseResult {
             tolerates_grease: false,
+            inconclusive: false,
+            direct_grease_test_performed: false,
             issues: Vec::new(),
             details: Vec::new(),
         };
@@ -67,21 +71,24 @@ impl GreaseTester {
         // Test 2: Connection with GREASE extensions
         // Note: rustls doesn't directly support injecting GREASE values,
         // so this is a simplified test that checks server behavior
+        result.inconclusive = true;
+        result.issues.push(
+            "Direct GREASE injection is not implemented; this result is heuristic and inconclusive"
+                .to_string(),
+        );
         match self.test_with_unknown_extensions().await {
             Ok(true) => {
-                result.tolerates_grease = true;
                 result
                     .details
-                    .push("✓ Server tolerates unknown extensions (GREASE-like)".to_string());
+                    .push("✓ Server accepts a heuristic extension/ALPN variation, but this is not a direct GREASE proof".to_string());
             }
             Ok(false) => {
-                result.tolerates_grease = false;
                 result
                     .issues
-                    .push("Server may not properly handle unknown TLS extensions".to_string());
+                    .push("Server rejected a heuristic extension-variation probe".to_string());
                 result
                     .details
-                    .push("Server rejected connection with unknown extensions".to_string());
+                    .push("Server rejected connection with heuristic extension variation".to_string());
             }
             Err(e) => {
                 result.issues.push(format!("GREASE test error: {}", e));
@@ -244,9 +251,13 @@ impl GreaseTester {
     fn generate_recommendations(&self, result: &GreaseResult) -> Vec<String> {
         let mut recommendations = Vec::new();
 
-        if result.tolerates_grease {
+        if result.direct_grease_test_performed && result.tolerates_grease {
             recommendations.push(
                 "✓ Server properly implements TLS extensibility (RFC 8701 compliant)".to_string(),
+            );
+        } else if result.inconclusive {
+            recommendations.push(
+                "Direct GREASE injection is not implemented here; treat this result as inconclusive".to_string(),
             );
         } else {
             recommendations.push(
@@ -276,6 +287,16 @@ pub struct GreaseReport {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::IpAddr;
+    use std::sync::Once;
+    use tokio::net::TcpListener;
+
+    fn install_crypto_provider() {
+        static ONCE: Once = Once::new();
+        ONCE.call_once(|| {
+            let _ = rustls::crypto::ring::default_provider().install_default();
+        });
+    }
 
     #[test]
     fn test_grease_tester_creation() {
@@ -291,14 +312,156 @@ mod tests {
     }
 
     #[test]
+    fn test_generate_recommendations_variants() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .unwrap();
+        let tester = GreaseTester::new(target);
+
+        let ok_result = GreaseResult {
+            tolerates_grease: true,
+            inconclusive: false,
+            direct_grease_test_performed: true,
+            issues: vec![],
+            details: vec![],
+        };
+        let ok_recs = tester.generate_recommendations(&ok_result);
+        assert!(ok_recs.iter().any(|r| r.contains("RFC 8701")));
+
+        let bad_result = GreaseResult {
+            tolerates_grease: false,
+            inconclusive: false,
+            direct_grease_test_performed: true,
+            issues: vec!["issue".to_string()],
+            details: vec![],
+        };
+        let bad_recs = tester.generate_recommendations(&bad_result);
+        assert!(
+            bad_recs
+                .iter()
+                .any(|r| r.contains("handle unknown TLS extensions"))
+        );
+        assert!(
+            bad_recs
+                .iter()
+                .any(|r| r.contains("Address the identified issues"))
+        );
+    }
+
+    #[test]
     fn test_grease_result() {
         let result = GreaseResult {
             tolerates_grease: true,
+            inconclusive: false,
+            direct_grease_test_performed: true,
             issues: vec![],
             details: vec!["Test".to_string()],
         };
 
         assert!(result.tolerates_grease);
         assert_eq!(result.details.len(), 1);
+    }
+
+    #[test]
+    fn test_grease_report_fields() {
+        let report = GreaseReport {
+            grease_result: GreaseResult {
+                tolerates_grease: false,
+                inconclusive: true,
+                direct_grease_test_performed: false,
+                issues: vec!["issue".to_string()],
+                details: vec!["detail".to_string()],
+            },
+            recommendations: vec!["rec".to_string()],
+        };
+
+        assert!(!report.grease_result.tolerates_grease);
+        assert_eq!(report.grease_result.issues.len(), 1);
+        assert_eq!(report.recommendations.len(), 1);
+    }
+
+    async fn spawn_dummy_server(max_accepts: usize) -> std::net::SocketAddr {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let mut remaining = max_accepts;
+            while remaining > 0 {
+                if let Ok((socket, _)) = listener.accept().await {
+                    drop(socket);
+                }
+                remaining -= 1;
+            }
+        });
+        addr
+    }
+
+    #[tokio::test]
+    async fn test_grease_tester_baseline_failure_path() {
+        install_crypto_provider();
+        let addr = spawn_dummy_server(5).await;
+        let target = Target::with_ips(
+            "127.0.0.1".to_string(),
+            addr.port(),
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .unwrap();
+
+        let tester = GreaseTester::new(target);
+        let result = tester.test().await.unwrap();
+        assert!(!result.tolerates_grease);
+        assert!(
+            result
+                .issues
+                .iter()
+                .any(|issue| issue.contains("Baseline connection failed"))
+        );
+    }
+
+    #[test]
+    fn test_grease_result_details_includes_issues() {
+        let result = GreaseResult {
+            tolerates_grease: false,
+            inconclusive: true,
+            direct_grease_test_performed: false,
+            issues: vec!["Baseline connection failed".to_string()],
+            details: vec!["Not tolerant".to_string()],
+        };
+        assert!(!result.tolerates_grease);
+        assert!(result.details.iter().any(|d| d.contains("Not tolerant")));
+        assert_eq!(result.issues.len(), 1);
+    }
+
+    #[test]
+    fn test_recommendations_count_increases_with_issues() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .unwrap();
+        let tester = GreaseTester::new(target);
+
+        let base_result = GreaseResult {
+            tolerates_grease: false,
+            inconclusive: true,
+            direct_grease_test_performed: false,
+            issues: Vec::new(),
+            details: Vec::new(),
+        };
+        let base_recs = tester.generate_recommendations(&base_result);
+
+        let issue_result = GreaseResult {
+            tolerates_grease: false,
+            inconclusive: true,
+            direct_grease_test_performed: false,
+            issues: vec!["issue".to_string()],
+            details: Vec::new(),
+        };
+        let issue_recs = tester.generate_recommendations(&issue_result);
+
+        assert!(issue_recs.len() > base_recs.len());
     }
 }

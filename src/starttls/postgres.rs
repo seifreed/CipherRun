@@ -60,10 +60,73 @@ impl StarttlsNegotiator for PostgresNegotiator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::net::TcpListener;
 
     #[test]
     fn test_postgres_negotiator_creation() {
         let negotiator = PostgresNegotiator::new();
         assert_eq!(negotiator.protocol(), StarttlsProtocol::POSTGRES);
+    }
+
+    #[tokio::test]
+    async fn test_postgres_negotiate_starttls_success() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 8];
+            stream.read_exact(&mut buf).await.unwrap();
+            stream.write_all(b"S").await.unwrap();
+        });
+
+        let mut client = TcpStream::connect(addr).await.unwrap();
+        let negotiator = PostgresNegotiator::new();
+        negotiator.negotiate_starttls(&mut client).await.unwrap();
+
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_postgres_negotiate_starttls_not_supported() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 8];
+            stream.read_exact(&mut buf).await.unwrap();
+            stream.write_all(b"N").await.unwrap();
+        });
+
+        let mut client = TcpStream::connect(addr).await.unwrap();
+        let negotiator = PostgresNegotiator::new();
+        let err = negotiator
+            .negotiate_starttls(&mut client)
+            .await
+            .unwrap_err();
+        assert!(format!("{err}").contains("Server does not support SSL"));
+
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_postgres_sends_ssl_request_bytes() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 8];
+            stream.read_exact(&mut buf).await.unwrap();
+            buf
+        });
+
+        let mut client = TcpStream::connect(addr).await.unwrap();
+        let negotiator = PostgresNegotiator::new();
+        let _ = negotiator.negotiate_starttls(&mut client).await;
+
+        let sent = server.await.unwrap();
+        assert_eq!(sent, [0x00, 0x00, 0x00, 0x08, 0x04, 0xd2, 0x16, 0x2f]);
     }
 }

@@ -357,4 +357,42 @@ mod tests {
         // Verify the source chain is preserved
         assert!(err.source().is_some());
     }
+
+    #[test]
+    fn test_error_conversion_from_anyhow() {
+        let err = anyhow::anyhow!("wrapped");
+        let tls_err: TlsError = err.into();
+        assert!(matches!(tls_err, TlsError::Other(_)));
+    }
+
+    #[test]
+    fn test_config_error_display() {
+        let err = TlsError::ConfigError {
+            message: "bad config".to_string(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("Invalid configuration"));
+        assert!(msg.contains("bad config"));
+    }
+
+    #[test]
+    fn test_utf8_error_conversion() {
+        let bytes = vec![0xFF];
+        let err = std::str::from_utf8(&bytes).unwrap_err();
+        let tls_err: TlsError = err.into();
+        assert!(matches!(tls_err, TlsError::ParseError { .. }));
+        assert!(tls_err.to_string().contains("UTF-8 string error"));
+    }
+
+    #[tokio::test]
+    async fn test_timeout_conversion_to_connection_timeout() {
+        let result = tokio::time::timeout(Duration::from_millis(1), async {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        })
+        .await;
+
+        let err = result.err().expect("timeout should occur");
+        let tls_err: TlsError = err.into();
+        assert!(matches!(tls_err, TlsError::ConnectionTimeout { .. }));
+    }
 }

@@ -327,9 +327,105 @@ mod tests {
     }
 
     #[test]
+    fn test_validation_missing_target_fields() {
+        let data = json!({
+            "target": {
+                "hostname": "example.com"
+            },
+            "timestamp": "2024-01-01T00:00:00Z",
+            "scan_version": "1.0.0"
+        });
+
+        let result = CipherRunSchema::validate(&data);
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        assert!(errors.iter().any(|e| e.contains("port")));
+        assert!(errors.iter().any(|e| e.contains("ip")));
+    }
+
+    #[test]
     fn test_protocol_schema() {
         let schema = CipherRunSchema::get_protocol_schema();
         assert!(schema.is_object());
         assert!(schema.get("properties").is_some());
+    }
+
+    #[test]
+    fn test_vulnerability_schema_required_fields() {
+        let schema = CipherRunSchema::get_vulnerability_schema();
+        let required = schema
+            .get("required")
+            .and_then(|v| v.as_array())
+            .expect("required should be array");
+        let required_values: Vec<&str> = required.iter().filter_map(|v| v.as_str()).collect();
+        assert!(required_values.contains(&"vuln_type"));
+        assert!(required_values.contains(&"vulnerable"));
+        assert!(required_values.contains(&"severity"));
+    }
+
+    #[test]
+    fn test_schema_contains_title() {
+        let schema = CipherRunSchema::get_schema();
+        let title = schema.get("title").and_then(|v| v.as_str());
+        assert_eq!(title, Some("CipherRun Scan Results"));
+    }
+
+    #[test]
+    fn test_validation_non_object_root() {
+        let data = json!("not-an-object");
+        let result = CipherRunSchema::validate(&data);
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        assert!(errors.iter().any(|e| e.contains("Root must be an object")));
+    }
+
+    #[test]
+    fn test_export_schema_writes_file() {
+        let path = std::env::temp_dir().join("cipherrun-schema.json");
+        CipherRunSchema::export_schema(path.to_str().unwrap()).expect("export should succeed");
+        let contents = std::fs::read_to_string(&path).expect("read should succeed");
+        assert!(contents.contains("CipherRun Scan Results"));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_protocol_schema_includes_tls12() {
+        let schema = CipherRunSchema::get_protocol_schema();
+        let enum_values = schema
+            .get("properties")
+            .and_then(|p| p.get("protocol"))
+            .and_then(|p| p.get("enum"))
+            .and_then(|v| v.as_array())
+            .unwrap();
+        assert!(enum_values.iter().any(|v| v == "TLS 1.2"));
+    }
+
+    #[test]
+    fn test_validation_target_not_object() {
+        let data = json!({
+            "target": "example.com",
+            "timestamp": "2024-01-01T00:00:00Z",
+            "scan_version": "1.0.0"
+        });
+
+        let result = CipherRunSchema::validate(&data);
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.contains("Target must be an object"))
+        );
+    }
+
+    #[test]
+    fn test_validation_result_helpers() {
+        let ok = ValidationResult::success();
+        assert!(ok.valid);
+        assert!(ok.errors.is_empty());
+
+        let fail = ValidationResult::failure(vec!["err".to_string()]);
+        assert!(!fail.valid);
+        assert_eq!(fail.errors.len(), 1);
     }
 }

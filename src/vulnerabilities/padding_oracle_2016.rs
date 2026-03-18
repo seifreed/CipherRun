@@ -19,6 +19,21 @@ use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio::time::{Instant, timeout};
 
+/// Padding oracle timing analysis result
+#[derive(Debug, Clone)]
+pub struct PaddingOracleTimingResult {
+    /// Average response time for valid padding (ms)
+    pub valid_avg_ms: f64,
+    /// Average response time for invalid padding (ms)
+    pub invalid_avg_ms: f64,
+    /// Whether a padding oracle was detected
+    pub oracle_detected: bool,
+    /// Whether the result is inconclusive (insufficient samples, high variance)
+    pub inconclusive: bool,
+    /// Details about the analysis
+    pub details: String,
+}
+
 /// OpenSSL Padding Oracle 2016 vulnerability tester (CVE-2016-2107)
 pub struct PaddingOracle2016Tester<'a> {
     target: &'a Target,
@@ -58,23 +73,29 @@ impl<'a> PaddingOracle2016Tester<'a> {
         }
 
         // Step 2: Perform timing analysis to detect padding oracle
-        let (valid_avg, invalid_avg, oracle_detected) = self.perform_timing_analysis().await?;
+        let timing_result = self.perform_timing_analysis().await?;
 
-        let vulnerable = cbc_supported && oracle_detected;
+        let vulnerable = cbc_supported && timing_result.oracle_detected;
 
-        let details = if vulnerable {
+        let details = if timing_result.inconclusive {
             format!(
-                "VULNERABLE to CVE-2016-2107 Padding Oracle - Timing difference detected: valid={:.2}ms, invalid={:.2}ms (diff={:.2}ms)",
-                valid_avg,
-                invalid_avg,
-                (valid_avg - invalid_avg).abs()
+                "INCONCLUSIVE: AES-CBC supported but timing analysis uncertain. {}. \
+                 Manual testing recommended as padding oracle may exist.",
+                timing_result.details
+            )
+        } else if vulnerable {
+            format!(
+                "VULNERABLE to CVE-2016-2107 Padding Oracle - Timing difference detected: valid={:.2}ms, invalid={:.2}ms. {}",
+                timing_result.valid_avg_ms,
+                timing_result.invalid_avg_ms,
+                timing_result.details
             )
         } else if cbc_supported {
             format!(
-                "AES-CBC supported but no clear timing oracle detected - valid={:.2}ms, invalid={:.2}ms (diff={:.2}ms)",
-                valid_avg,
-                invalid_avg,
-                (valid_avg - invalid_avg).abs()
+                "AES-CBC supported but no clear timing oracle detected - valid={:.2}ms, invalid={:.2}ms. {}",
+                timing_result.valid_avg_ms,
+                timing_result.invalid_avg_ms,
+                timing_result.details
             )
         } else {
             "Not vulnerable - AES-CBC not supported".to_string()
@@ -83,10 +104,10 @@ impl<'a> PaddingOracle2016Tester<'a> {
         Ok(PaddingOracle2016Result {
             vulnerable,
             cbc_supported,
-            timing_oracle_detected: oracle_detected,
+            timing_oracle_detected: timing_result.oracle_detected,
             details,
-            average_valid_timing_ms: valid_avg,
-            average_invalid_timing_ms: invalid_avg,
+            average_valid_timing_ms: timing_result.valid_avg_ms,
+            average_invalid_timing_ms: timing_result.invalid_avg_ms,
         })
     }
 
@@ -133,13 +154,17 @@ impl<'a> PaddingOracle2016Tester<'a> {
     /// 1. Send multiple requests with valid padding
     /// 2. Send multiple requests with invalid padding
     /// 3. Measure response times for each
-    /// 4. If timing difference > threshold (10ms), oracle exists
-    async fn perform_timing_analysis(&self) -> Result<(f64, f64, bool)> {
-        const SAMPLES: usize = 10;
-        const TIMING_THRESHOLD_MS: f64 = 10.0; // 10ms difference indicates oracle
+    /// 4. Use statistical analysis to detect timing differences
+    ///
+    /// Returns (valid_avg, invalid_avg, oracle_detected, inconclusive)
+    async fn perform_timing_analysis(&self) -> Result<PaddingOracleTimingResult> {
+        const SAMPLES: usize = 25; // Increased from 10 for better statistical significance
+        const MIN_SAMPLES: usize = 15; // Minimum samples needed for reliable detection
+        const TIMING_THRESHOLD_MS: f64 = 15.0; // 15ms - more realistic for network jitter
+        const COEFFICIENT_OF_VARIATION_MAX: f64 = 0.4; // Max acceptable CV for reliable timing
 
-        let mut valid_timings = Vec::new();
-        let mut invalid_timings = Vec::new();
+        let mut valid_timings = Vec::with_capacity(SAMPLES);
+        let mut invalid_timings = Vec::with_capacity(SAMPLES);
 
         // Collect timing samples
         for _ in 0..SAMPLES {
@@ -154,23 +179,89 @@ impl<'a> PaddingOracle2016Tester<'a> {
             }
 
             // Small delay between tests to avoid rate limiting
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            tokio::time::sleep(Duration::from_millis(150)).await;
         }
 
-        // Need at least some successful samples
-        if valid_timings.is_empty() || invalid_timings.is_empty() {
-            return Ok((0.0, 0.0, false));
+        // Need sufficient samples for meaningful statistics
+        if valid_timings.len() < MIN_SAMPLES || invalid_timings.len() < MIN_SAMPLES {
+            return Ok(PaddingOracleTimingResult {
+                valid_avg_ms: 0.0,
+                invalid_avg_ms: 0.0,
+                oracle_detected: false,
+                inconclusive: true,
+                details: format!(
+                    "Insufficient timing samples (valid: {}, invalid: {}, need: {}). \
+                     Network conditions prevented reliable timing measurement.",
+                    valid_timings.len(), invalid_timings.len(), MIN_SAMPLES
+                ),
+            });
         }
 
-        // Calculate averages
+        // Calculate averages and standard deviations
         let valid_avg = valid_timings.iter().sum::<f64>() / valid_timings.len() as f64;
         let invalid_avg = invalid_timings.iter().sum::<f64>() / invalid_timings.len() as f64;
 
-        // Check if timing difference exceeds threshold
-        let timing_diff = (valid_avg - invalid_avg).abs();
-        let oracle_detected = timing_diff > TIMING_THRESHOLD_MS;
+        let valid_variance: f64 = valid_timings.iter()
+            .map(|t| (t - valid_avg).powi(2))
+            .sum::<f64>() / valid_timings.len() as f64;
+        let valid_stddev = valid_variance.sqrt();
 
-        Ok((valid_avg, invalid_avg, oracle_detected))
+        let invalid_variance: f64 = invalid_timings.iter()
+            .map(|t| (t - invalid_avg).powi(2))
+            .sum::<f64>() / invalid_timings.len() as f64;
+        let invalid_stddev = invalid_variance.sqrt();
+
+        // Calculate coefficient of variation to assess timing reliability
+        let valid_cv = if valid_avg > 0.0 { valid_stddev / valid_avg } else { f64::MAX };
+        let invalid_cv = if invalid_avg > 0.0 { invalid_stddev / invalid_avg } else { f64::MAX };
+
+        // Check if timing measurements are reliable
+        let timing_reliable = valid_cv < COEFFICIENT_OF_VARIATION_MAX 
+            && invalid_cv < COEFFICIENT_OF_VARIATION_MAX;
+
+        // Calculate timing difference
+        let timing_diff = (valid_avg - invalid_avg).abs();
+
+        // Statistical significance check: difference should be > 2 * combined_stddev
+        let combined_stddev = (valid_variance + invalid_variance).sqrt();
+        let statistically_significant = timing_diff > 2.0 * combined_stddev + TIMING_THRESHOLD_MS;
+
+        // Oracle detected only if:
+        // 1. Timing measurements are reliable (low variance)
+        // 2. Timing difference exceeds threshold
+        // 3. Difference is statistically significant
+        let oracle_detected = timing_reliable && timing_diff > TIMING_THRESHOLD_MS && statistically_significant;
+
+        let details = if !timing_reliable {
+            format!(
+                "Timing measurements unreliable (CV valid: {:.2}, invalid: {:.2}). \
+                 High variance suggests network jitter. Diff: {:.2}ms. \
+                 Manual testing recommended.",
+                valid_cv, invalid_cv, timing_diff
+            )
+        } else if oracle_detected {
+            format!(
+                "Padding oracle DETECTED: timing difference {:.2}ms exceeds threshold ({:.1}ms). \
+                 Valid padding avg: {:.2}ms (σ={:.2}ms), Invalid padding avg: {:.2}ms (σ={:.2}ms). \
+                 Statistical significance confirmed.",
+                timing_diff, TIMING_THRESHOLD_MS,
+                valid_avg, valid_stddev, invalid_avg, invalid_stddev
+            )
+        } else {
+            format!(
+                "No padding oracle detected: timing difference {:.2}ms below threshold ({:.1}ms). \
+                 Valid padding avg: {:.2}ms, Invalid padding avg: {:.2}ms.",
+                timing_diff, TIMING_THRESHOLD_MS, valid_avg, invalid_avg
+            )
+        };
+
+        Ok(PaddingOracleTimingResult {
+            valid_avg_ms: valid_avg,
+            invalid_avg_ms: invalid_avg,
+            oracle_detected,
+            inconclusive: !timing_reliable,
+            details,
+        })
     }
 
     /// Send encrypted application data with valid or invalid padding
@@ -349,6 +440,23 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_application_data_length_field_matches_payload() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+        let tester = PaddingOracle2016Tester::new(&target);
+
+        for valid_padding in [true, false] {
+            let data = tester.build_application_data(valid_padding);
+            let record_len = ((data[3] as usize) << 8) | (data[4] as usize);
+            assert_eq!(record_len, data.len() - 5);
+        }
+    }
+
     #[tokio::test]
     #[ignore] // Requires network access
     async fn test_padding_oracle_modern_server() {
@@ -378,5 +486,49 @@ mod tests {
         assert!(result.cbc_supported);
         assert!(result.timing_oracle_detected);
         assert!(result.average_valid_timing_ms > result.average_invalid_timing_ms);
+    }
+
+    #[test]
+    fn test_result_debug_contains_details() {
+        let result = PaddingOracle2016Result {
+            vulnerable: false,
+            cbc_supported: false,
+            timing_oracle_detected: false,
+            details: "No oracle detected".to_string(),
+            average_valid_timing_ms: 0.0,
+            average_invalid_timing_ms: 0.0,
+        };
+
+        let debug = format!("{:?}", result);
+        assert!(debug.contains("No oracle detected"));
+    }
+
+    #[test]
+    fn test_result_not_vulnerable_fields() {
+        let result = PaddingOracle2016Result {
+            vulnerable: false,
+            cbc_supported: false,
+            timing_oracle_detected: false,
+            details: "Not vulnerable".to_string(),
+            average_valid_timing_ms: 0.0,
+            average_invalid_timing_ms: 0.0,
+        };
+
+        assert!(!result.vulnerable);
+        assert!(!result.cbc_supported);
+        assert!(!result.timing_oracle_detected);
+    }
+
+    #[test]
+    fn test_result_details_contains_not_vulnerable() {
+        let result = PaddingOracle2016Result {
+            vulnerable: false,
+            cbc_supported: false,
+            timing_oracle_detected: false,
+            details: "Not vulnerable - CBC ciphers not supported".to_string(),
+            average_valid_timing_ms: 0.0,
+            average_invalid_timing_ms: 0.0,
+        };
+        assert!(result.details.contains("Not vulnerable"));
     }
 }

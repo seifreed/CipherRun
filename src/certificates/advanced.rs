@@ -438,11 +438,105 @@ fn extract_certificate_info(cert: &X509) -> CertificateInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use openssl::asn1::Asn1Time;
+    use openssl::hash::MessageDigest;
+    use openssl::pkey::PKey;
+    use openssl::rsa::Rsa;
+    use openssl::x509::extension::SubjectAlternativeName;
+    use openssl::x509::{X509Builder, X509NameBuilder};
 
     #[test]
     fn test_extract_certificate_info() {
-        // This test would require a valid X509 certificate
-        // Skipping for now as it requires integration testing
+        let rsa = Rsa::generate(2048).unwrap();
+        let pkey = PKey::from_rsa(rsa).unwrap();
+
+        let mut name = X509NameBuilder::new().unwrap();
+        name.append_entry_by_text("CN", "example.com").unwrap();
+        let name = name.build();
+
+        let mut builder = X509Builder::new().unwrap();
+        builder.set_subject_name(&name).unwrap();
+        builder.set_issuer_name(&name).unwrap();
+        builder.set_pubkey(&pkey).unwrap();
+        builder
+            .set_not_before(&Asn1Time::days_from_now(0).unwrap())
+            .unwrap();
+        builder
+            .set_not_after(&Asn1Time::days_from_now(365).unwrap())
+            .unwrap();
+
+        let mut san = SubjectAlternativeName::new();
+        san.dns("example.com");
+        let san_ext = san.build(&builder.x509v3_context(None, None)).unwrap();
+        builder.append_extension(san_ext).unwrap();
+
+        builder.sign(&pkey, MessageDigest::sha256()).unwrap();
+        let cert = builder.build();
+
+        let info = extract_certificate_info(&cert);
+        assert!(info.subject.contains("CN=example.com"));
+        assert!(info.issuer.contains("CN=example.com"));
+        assert!(
+            info.san_entries
+                .iter()
+                .any(|entry| entry.contains("DNS:example.com"))
+        );
+        assert!(info.fingerprint.contains(':'));
+    }
+
+    #[test]
+    fn test_extract_certificate_info_without_san() {
+        let rsa = Rsa::generate(2048).unwrap();
+        let pkey = PKey::from_rsa(rsa).unwrap();
+
+        let mut name = X509NameBuilder::new().unwrap();
+        name.append_entry_by_text("CN", "no-san.example").unwrap();
+        let name = name.build();
+
+        let mut builder = X509Builder::new().unwrap();
+        builder.set_subject_name(&name).unwrap();
+        builder.set_issuer_name(&name).unwrap();
+        builder.set_pubkey(&pkey).unwrap();
+        builder
+            .set_not_before(&Asn1Time::days_from_now(0).unwrap())
+            .unwrap();
+        builder
+            .set_not_after(&Asn1Time::days_from_now(30).unwrap())
+            .unwrap();
+
+        builder.sign(&pkey, MessageDigest::sha256()).unwrap();
+        let cert = builder.build();
+
+        let info = extract_certificate_info(&cert);
+        assert!(info.san_entries.is_empty());
+        assert!(info.subject.contains("CN=no-san.example"));
+    }
+
+    #[test]
+    fn test_extract_certificate_info_includes_serial() {
+        let rsa = Rsa::generate(2048).unwrap();
+        let pkey = PKey::from_rsa(rsa).unwrap();
+
+        let mut name = X509NameBuilder::new().unwrap();
+        name.append_entry_by_text("CN", "serial.example").unwrap();
+        let name = name.build();
+
+        let mut builder = X509Builder::new().unwrap();
+        builder.set_subject_name(&name).unwrap();
+        builder.set_issuer_name(&name).unwrap();
+        builder.set_pubkey(&pkey).unwrap();
+        builder
+            .set_not_before(&Asn1Time::days_from_now(0).unwrap())
+            .unwrap();
+        builder
+            .set_not_after(&Asn1Time::days_from_now(30).unwrap())
+            .unwrap();
+
+        builder.sign(&pkey, MessageDigest::sha256()).unwrap();
+        let cert = builder.build();
+
+        let info = extract_certificate_info(&cert);
+        assert!(!info.fingerprint.is_empty());
     }
 
     #[test]
@@ -474,5 +568,55 @@ mod tests {
         let score = (matches as f64) / (test_results.len() as f64) * 100.0;
 
         assert_eq!(score, 50.0);
+    }
+
+    #[test]
+    fn test_certificate_compression_serde_roundtrip() {
+        let analysis = CertificateCompressionAnalysis {
+            compression_supported: true,
+            compression_algorithms: vec!["brotli".to_string()],
+            original_size: Some(2048),
+            compressed_size: Some(512),
+            compression_ratio: Some(0.25),
+            details: "test".to_string(),
+        };
+
+        let json = serde_json::to_string(&analysis).expect("serialize");
+        let decoded: CertificateCompressionAnalysis =
+            serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(
+            decoded.compression_supported,
+            analysis.compression_supported
+        );
+        assert_eq!(
+            decoded.compression_algorithms,
+            analysis.compression_algorithms
+        );
+        assert_eq!(decoded.original_size, analysis.original_size);
+        assert_eq!(decoded.compressed_size, analysis.compressed_size);
+    }
+
+    #[test]
+    fn test_cipher_order_enforcement_serde_roundtrip() {
+        let analysis = CipherOrderEnforcementAnalysis {
+            server_enforces_order: true,
+            test_results: vec![CipherOrderEnforcementTest {
+                test_name: "basic".to_string(),
+                client_order: vec!["A".to_string()],
+                server_selected: "A".to_string(),
+                expected_if_server_preference: "A".to_string(),
+                expected_if_client_preference: "A".to_string(),
+                matches_server_preference: true,
+            }],
+            consistency_score: 100.0,
+            details: "ok".to_string(),
+        };
+
+        let json = serde_json::to_string(&analysis).expect("serialize");
+        let decoded: CipherOrderEnforcementAnalysis =
+            serde_json::from_str(&json).expect("deserialize");
+        assert!(decoded.server_enforces_order);
+        assert_eq!(decoded.test_results.len(), 1);
+        assert_eq!(decoded.consistency_score, 100.0);
     }
 }

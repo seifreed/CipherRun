@@ -207,6 +207,25 @@ pub fn get_probes(hostname: &str, port: u16) -> Vec<JarmProbe> {
     ]
 }
 
+#[cfg(test)]
+mod tests_extra {
+    use super::*;
+
+    #[test]
+    fn test_get_probes_configuration_basics() {
+        let probes = get_probes("example.com", 443);
+        assert_eq!(probes.len(), 10);
+
+        let first = &probes[0].options;
+        assert_eq!(first.hostname, "example.com");
+        assert_eq!(first.port, 443);
+        assert_eq!(first.version, TlsVersion::TLS12);
+        assert_eq!(first.cipher_order, CipherOrder::Forward);
+        assert_eq!(first.alpn, AlpnMode::Alpn);
+        assert_eq!(first.v13_mode, V13Mode::Support12Only);
+    }
+}
+
 /// Build a single JARM probe
 fn build_probe(options: JarmProbeOptions) -> JarmProbe {
     let packet = build_client_hello(&options);

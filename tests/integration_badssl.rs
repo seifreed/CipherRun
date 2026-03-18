@@ -271,12 +271,12 @@ async fn test_heartbleed_not_vulnerable() {
     let result = tester.test().await;
 
     match result {
-        Ok(is_vulnerable) => {
+        Ok(heartbleed_result) => {
             assert!(
-                !is_vulnerable,
+                !heartbleed_result.vulnerable,
                 "badssl.com should NOT be vulnerable to Heartbleed"
             );
-            println!("✓ Heartbleed test passed - not vulnerable");
+            println!("Heartbleed test passed - not vulnerable");
         }
         Err(e) => {
             println!("Heartbleed test error: {}", e);

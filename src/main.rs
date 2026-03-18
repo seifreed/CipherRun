@@ -11,16 +11,26 @@
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU General Public License for more details.
 
-use anyhow::Result;
 use cipherrun::Args;
-use cipherrun::commands::CommandRouter;
+use cipherrun::commands::{CommandExit, CommandRouter};
 use cipherrun::utils::PathExt;
 use clap::Parser;
+use std::process::ExitCode;
 use tracing::{Level, info};
 use tracing_subscriber::FmtSubscriber;
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> ExitCode {
+    match run_cli().await {
+        Ok(exit) => ExitCode::from(exit.code().clamp(0, 255) as u8),
+        Err(err) => {
+            eprintln!("Error: {}", err);
+            ExitCode::from(1)
+        }
+    }
+}
+
+async fn run_cli() -> anyhow::Result<CommandExit> {
     // Install rustls crypto provider (required for rustls 0.23+)
     rustls::crypto::ring::default_provider()
         .install_default()
@@ -39,10 +49,7 @@ async fn main() -> Result<()> {
     let mut args = Args::parse();
 
     // Validate CLI arguments for conflicting flags
-    if let Err(e) = args.validate() {
-        eprintln!("Error: {}", e);
-        std::process::exit(1);
-    }
+    args.validate()?;
 
     // Handle --version (display version and exit)
     if args.version {
@@ -50,7 +57,7 @@ async fn main() -> Result<()> {
         println!("Fast, Modular TLS/SSL Security Scanner");
         println!("Copyright (C) 2025 Marc Rivero (@seifreed)");
         println!("Licensed under GPL-3.0");
-        return Ok(());
+        return Ok(CommandExit::success());
     }
 
     // Handle --api-config-example (generate API config example and exit)
@@ -61,15 +68,15 @@ async fn main() -> Result<()> {
             "✓ Example API configuration saved to: {}",
             config_path.display()
         );
-        return Ok(());
+        return Ok(CommandExit::success());
     }
 
     // Handle --list-compliance (list available frameworks and exit)
     if args.compliance.list_frameworks {
-        use cipherrun::compliance::FrameworkLoader;
+        use cipherrun::compliance::BuiltinFrameworkSource;
 
         println!("Available Compliance Frameworks:\n");
-        let frameworks = FrameworkLoader::list_builtin_frameworks();
+        let frameworks = BuiltinFrameworkSource::list_frameworks();
 
         for (id, description) in frameworks {
             println!("  {} - {}", id, description);
@@ -77,7 +84,7 @@ async fn main() -> Result<()> {
 
         println!("\nUsage: cipherrun --compliance <FRAMEWORK_ID> <TARGET>");
         println!("Example: cipherrun --compliance pci-dss-v4 example.com:443");
-        return Ok(());
+        return Ok(CommandExit::success());
     }
 
     // Handle --db-config-example (generate example config and exit)
@@ -88,7 +95,7 @@ async fn main() -> Result<()> {
             "✓ Example database configuration saved to: {}",
             config_path.display()
         );
-        return Ok(());
+        return Ok(CommandExit::success());
     }
 
     // Handle --no-colour / --no-color (disable colored output)
@@ -114,20 +121,15 @@ async fn main() -> Result<()> {
             );
         }
 
-        return Ok(());
+        return Ok(CommandExit::success());
     }
 
     // Validate routing before creating command
-    if let Err(e) = CommandRouter::validate_routing(&args) {
-        eprintln!("Error: {}", e);
-        std::process::exit(1);
-    }
+    CommandRouter::validate_routing(&args)?;
 
     // Route to appropriate command and execute
     let command = CommandRouter::route(args)?;
 
     info!("Executing command: {}", command.name());
-    command.execute().await?;
-
-    Ok(())
+    command.execute().await.map_err(Into::into)
 }

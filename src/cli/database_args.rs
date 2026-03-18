@@ -43,3 +43,44 @@ pub struct DatabaseArgs {
     )]
     pub config_example: Option<PathBuf>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[derive(Parser)]
+    struct TestCli {
+        #[command(flatten)]
+        args: DatabaseArgs,
+    }
+
+    #[test]
+    fn test_database_args_defaults_from_clap() {
+        let parsed = TestCli::parse_from(["test"]);
+        let args = parsed.args;
+
+        assert!(args.config.is_none());
+        assert!(!args.store_results);
+        assert!(args.history.is_none());
+        assert_eq!(args.history_limit, 10);
+        assert!(args.cleanup_days.is_none());
+        assert!(!args.init);
+        assert!(args.config_example.is_none());
+    }
+
+    #[test]
+    fn test_database_args_history_limit() {
+        let parsed = TestCli::parse_from([
+            "test",
+            "--history",
+            "example.com:443",
+            "--history-limit",
+            "25",
+        ]);
+        let args = parsed.args;
+
+        assert_eq!(args.history.as_deref(), Some("example.com:443"));
+        assert_eq!(args.history_limit, 25);
+    }
+}

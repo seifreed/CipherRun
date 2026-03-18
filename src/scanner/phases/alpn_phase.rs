@@ -12,7 +12,7 @@
 //
 // Dependencies:
 // - AlpnTester (domain logic for ALPN testing)
-// - Args (CLI configuration)
+// - ScanRequest (scan configuration)
 // - Target (server information)
 //
 // ALPN protocols tested:
@@ -24,8 +24,9 @@
 // - WebRTC (webrtc)
 
 use super::{ScanContext, ScanPhase};
+use crate::Result;
+use crate::application::ScanRequest;
 use crate::protocols::alpn::AlpnTester;
-use crate::{Args, Result};
 use async_trait::async_trait;
 
 /// ALPN protocol negotiation phase
@@ -34,7 +35,7 @@ use async_trait::async_trait;
 /// via the ALPN TLS extension. ALPN allows efficient protocol negotiation
 /// without additional round trips, commonly used for HTTP/2 and HTTP/3.
 ///
-/// Configuration sources (from Args):
+/// Configuration sources (from ScanRequest):
 /// - Full scan mode (--all) enables ALPN testing
 /// - Target information (hostname, port, resolved IPs)
 pub struct AlpnPhase;
@@ -58,7 +59,7 @@ impl ScanPhase for AlpnPhase {
         "Testing ALPN Protocol Negotiation"
     }
 
-    fn should_run(&self, args: &Args) -> bool {
+    fn should_run(&self, args: &ScanRequest) -> bool {
         // Run if:
         // - Full scan mode (--all)
         args.scan.all
@@ -94,16 +95,16 @@ mod tests {
         let phase = AlpnPhase::new();
 
         // Test with --all flag
-        let mut args = Args::default();
+        let mut args = ScanRequest::default();
         args.scan.all = true;
         assert!(phase.should_run(&args));
 
         // Test without --all flag
-        let args = Args::default();
+        let args = ScanRequest::default();
         assert!(!phase.should_run(&args));
 
         // Test with target but no --all
-        let mut args = Args::default();
+        let mut args = ScanRequest::default();
         args.target = Some("example.com".to_string());
         assert!(!phase.should_run(&args));
     }

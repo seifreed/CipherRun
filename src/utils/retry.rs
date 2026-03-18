@@ -4,11 +4,11 @@
 // transient network failures. It distinguishes between retriable errors (e.g., connection
 // timeouts, connection resets) and non-retriable errors (e.g., connection refused, DNS failures).
 
-use anyhow::Result;
-use std::sync::Arc;
-use std::future::Future;
-use std::time::Duration;
 use crate::utils::adaptive::AdaptiveController;
+use anyhow::Result;
+use std::future::Future;
+use std::sync::Arc;
+use std::time::Duration;
 
 /// Configuration for retry behavior with exponential backoff.
 ///
@@ -390,6 +390,8 @@ mod tests {
     fn test_retry_config_presets() {
         let no_retry = RetryConfig::no_retry();
         assert_eq!(no_retry.max_retries, 0);
+        assert_eq!(no_retry.initial_backoff, Duration::from_millis(0));
+        assert_eq!(no_retry.max_backoff, Duration::from_millis(0));
 
         let fast = RetryConfig::fast();
         assert_eq!(fast.max_retries, 1);
@@ -398,6 +400,22 @@ mod tests {
         let robust = RetryConfig::robust();
         assert_eq!(robust.max_retries, 5);
         assert_eq!(robust.initial_backoff, Duration::from_millis(200));
+    }
+
+    #[test]
+    fn test_retry_config_with_adaptive() {
+        let adaptive = Arc::new(AdaptiveController::new(
+            Duration::from_secs(1),
+            Duration::from_secs(2),
+            Duration::from_millis(50),
+            Duration::from_millis(200),
+            3,
+            4,
+        ));
+
+        let config = RetryConfig::default().with_adaptive(adaptive.clone());
+        assert!(config.adaptive.is_some());
+        assert_eq!(config.max_retries, 3);
     }
 
     #[test]
@@ -464,6 +482,39 @@ mod tests {
         // Unknown error - default to non-retriable
         let unknown_err = anyhow::anyhow!("Unknown error");
         assert!(!is_retriable(&unknown_err));
+    }
+
+    #[test]
+    fn test_is_timeout_error_variants() {
+        let io_err = anyhow::Error::new(Error::new(ErrorKind::TimedOut, "timeout"));
+        assert!(is_timeout_error(&io_err));
+
+        let msg_err = anyhow::anyhow!("Deadline exceeded");
+        assert!(is_timeout_error(&msg_err));
+
+        let other_err = anyhow::anyhow!("Connection refused");
+        assert!(!is_timeout_error(&other_err));
+    }
+
+    #[test]
+    fn test_is_retriable_message_patterns() {
+        let net_unreachable = anyhow::anyhow!("Network unreachable");
+        assert!(is_retriable(&net_unreachable));
+
+        let perm_denied = anyhow::anyhow!("Permission denied");
+        assert!(!is_retriable(&perm_denied));
+    }
+
+    #[test]
+    fn test_is_retriable_io_error_refused() {
+        let err = anyhow::Error::new(Error::new(ErrorKind::ConnectionRefused, "refused"));
+        assert!(!is_retriable(&err));
+    }
+
+    #[test]
+    fn test_is_retriable_invalid_dns_name() {
+        let err = anyhow::anyhow!("invalid dns name");
+        assert!(!is_retriable(&err));
     }
 
     #[tokio::test]

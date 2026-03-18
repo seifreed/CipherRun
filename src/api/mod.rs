@@ -1,10 +1,12 @@
 // API Module - REST API Server for CipherRun
 
+pub mod adapters;
 pub mod config;
 pub mod jobs;
 pub mod middleware;
 pub mod models;
 pub mod openapi;
+pub mod presenters;
 pub mod routes;
 pub mod server;
 pub mod state;

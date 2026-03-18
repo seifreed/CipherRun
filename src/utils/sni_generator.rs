@@ -154,9 +154,23 @@ mod tests {
     }
 
     #[test]
+    fn test_generate_multiple_zero_count() {
+        let snis = SniGenerator::generate_multiple(0);
+        assert!(snis.is_empty());
+    }
+
+    #[test]
     fn test_generate_with_pattern() {
         let sni = SniGenerator::generate_with_pattern("{subdomain}.example.com");
         assert!(sni.ends_with(".example.com"));
+        assert!(SniGenerator::is_valid_hostname(&sni));
+    }
+
+    #[test]
+    fn test_generate_with_pattern_replaces_placeholders() {
+        let sni = SniGenerator::generate_with_pattern("{subdomain}.{domain}.{tld}-{random}");
+        assert!(!sni.contains('{'));
+        assert!(sni.contains('.'));
         assert!(SniGenerator::is_valid_hostname(&sni));
     }
 
@@ -193,5 +207,45 @@ mod tests {
 
         // Should generate different SNIs (with very high probability)
         assert_ne!(sni1, sni2);
+    }
+
+    #[test]
+    fn test_is_valid_hostname_rejects_long_labels_and_hosts() {
+        let long_label = "a".repeat(64);
+        let hostname = format!("{}.com", long_label);
+        assert!(!SniGenerator::is_valid_hostname(&hostname));
+
+        let long_host = format!("{}.com", "a".repeat(260));
+        assert!(!SniGenerator::is_valid_hostname(&long_host));
+    }
+
+    #[test]
+    fn test_is_valid_hostname_rejects_invalid_characters() {
+        assert!(!SniGenerator::is_valid_hostname("bad_name.example"));
+        assert!(!SniGenerator::is_valid_hostname("bad$name.example"));
+    }
+
+    #[test]
+    fn test_generate_multiple_zero() {
+        let snis = SniGenerator::generate_multiple(0);
+        assert!(snis.is_empty());
+    }
+
+    #[test]
+    fn test_is_valid_hostname_rejects_trailing_dot() {
+        assert!(!SniGenerator::is_valid_hostname("example.com."));
+    }
+
+    #[test]
+    fn test_generate_with_pattern_no_placeholders() {
+        let pattern = "static.example.com";
+        let sni = SniGenerator::generate_with_pattern(pattern);
+        assert_eq!(sni, pattern);
+        assert!(SniGenerator::is_valid_hostname(&sni));
+    }
+
+    #[test]
+    fn test_is_valid_hostname_allows_numeric() {
+        assert!(SniGenerator::is_valid_hostname("a1-2.example"));
     }
 }

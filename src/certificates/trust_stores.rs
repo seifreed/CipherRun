@@ -512,6 +512,12 @@ mod tests {
     }
 
     #[test]
+    fn test_trust_store_display() {
+        assert_eq!(format!("{}", TrustStore::Mozilla), "Mozilla");
+        assert_eq!(format!("{}", TrustStore::Windows), "Windows");
+    }
+
+    #[test]
     fn test_validator_creation() {
         let validator = TrustStoreValidator::new();
         assert!(validator.is_ok());

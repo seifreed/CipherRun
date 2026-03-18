@@ -107,6 +107,19 @@ impl std::fmt::Display for StarttlsProtocol {
     }
 }
 
+#[cfg(test)]
+mod tests_extra {
+    use super::*;
+
+    #[test]
+    fn test_starttls_protocol_display_and_ports() {
+        assert_eq!(StarttlsProtocol::SMTP.to_string(), "SMTP");
+        assert_eq!(StarttlsProtocol::IMAPS.default_port(), 993);
+        assert!(StarttlsProtocol::IMAPS.is_implicit_tls());
+        assert!(!StarttlsProtocol::IMAP.is_implicit_tls());
+    }
+}
+
 /// STARTTLS negotiation trait
 #[async_trait]
 pub trait StarttlsNegotiator: Send + Sync {
@@ -191,11 +204,50 @@ mod tests {
         assert!(StarttlsProtocol::SMTPS.is_implicit_tls());
         assert!(!StarttlsProtocol::IMAP.is_implicit_tls());
         assert!(StarttlsProtocol::IMAPS.is_implicit_tls());
+        assert!(StarttlsProtocol::NNTPS.is_implicit_tls());
     }
 
     #[test]
     fn test_protocol_names() {
         assert_eq!(StarttlsProtocol::SMTP.name(), "SMTP");
         assert_eq!(StarttlsProtocol::POSTGRES.name(), "PostgreSQL");
+    }
+
+    #[test]
+    fn test_protocol_display() {
+        assert_eq!(StarttlsProtocol::Telnet.to_string(), "Telnet");
+        assert_eq!(StarttlsProtocol::LMTP.to_string(), "LMTP");
+    }
+
+    #[test]
+    fn test_get_negotiator_protocols() {
+        let hostname = "example.com".to_string();
+
+        let smtp = get_negotiator(StarttlsProtocol::SMTP, hostname.clone());
+        assert_eq!(smtp.protocol(), StarttlsProtocol::SMTP);
+
+        let imap = get_negotiator(StarttlsProtocol::IMAP, hostname.clone());
+        assert_eq!(imap.protocol(), StarttlsProtocol::IMAP);
+
+        let pop3 = get_negotiator(StarttlsProtocol::POP3, hostname.clone());
+        assert_eq!(pop3.protocol(), StarttlsProtocol::POP3);
+
+        let lmtp = get_negotiator(StarttlsProtocol::LMTP, hostname.clone());
+        assert_eq!(lmtp.protocol(), StarttlsProtocol::LMTP);
+
+        let postgres = get_negotiator(StarttlsProtocol::POSTGRES, hostname);
+        assert_eq!(postgres.protocol(), StarttlsProtocol::POSTGRES);
+    }
+
+    #[test]
+    fn test_starttls_test_result_fields() {
+        let result = StarttlsTestResult {
+            protocol: StarttlsProtocol::SMTP,
+            port: 25,
+            starttls_supported: true,
+            error: None,
+        };
+        assert!(result.starttls_supported);
+        assert!(result.error.is_none());
     }
 }

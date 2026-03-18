@@ -224,6 +224,11 @@ impl Parser {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use openssl::asn1::Asn1Time;
+    use openssl::hash::MessageDigest;
+    use openssl::pkey::PKey;
+    use openssl::rsa::Rsa;
+    use openssl::x509::{X509Builder, X509NameBuilder};
 
     #[test]
     fn test_parser_creation() {
@@ -240,5 +245,100 @@ mod tests {
         let precert_type = CertType::PreCertificate;
         let json2 = serde_json::to_string(&precert_type).expect("test assertion should succeed");
         assert!(json2.contains("PreCertificate"));
+    }
+
+    fn build_leaf_input(cert_der: &[u8]) -> String {
+        let mut leaf = Vec::new();
+        leaf.push(0u8); // version
+        leaf.push(0u8); // leaf type
+        leaf.extend_from_slice(&0u64.to_be_bytes()); // timestamp ms
+        leaf.extend_from_slice(&0u16.to_be_bytes()); // entry type X509
+
+        let len = cert_der.len() as u32;
+        leaf.push(((len >> 16) & 0xff) as u8);
+        leaf.push(((len >> 8) & 0xff) as u8);
+        leaf.push((len & 0xff) as u8);
+        leaf.extend_from_slice(cert_der);
+
+        base64::engine::general_purpose::STANDARD.encode(leaf)
+    }
+
+    #[test]
+    fn test_parse_entry_success() {
+        let rsa = Rsa::generate(2048).unwrap();
+        let pkey = PKey::from_rsa(rsa).unwrap();
+
+        let mut name = X509NameBuilder::new().unwrap();
+        name.append_entry_by_text("CN", "example.com").unwrap();
+        let name = name.build();
+
+        let mut builder = X509Builder::new().unwrap();
+        builder.set_subject_name(&name).unwrap();
+        builder.set_issuer_name(&name).unwrap();
+        builder.set_pubkey(&pkey).unwrap();
+        builder
+            .set_not_before(&Asn1Time::days_from_now(0).unwrap())
+            .unwrap();
+        builder
+            .set_not_after(&Asn1Time::days_from_now(365).unwrap())
+            .unwrap();
+        builder.sign(&pkey, MessageDigest::sha256()).unwrap();
+        let cert = builder.build();
+        let cert_der = cert.to_der().unwrap();
+
+        let entry = CtLogEntryResponse {
+            leaf_input: build_leaf_input(&cert_der),
+            extra_data: String::new(),
+        };
+
+        let parser = Parser::new("test-log".to_string());
+        let parsed = parser.parse_entry(&entry, 42).unwrap();
+
+        assert_eq!(parsed.index, 42);
+        assert_eq!(parsed.cert_type, CertType::X509Certificate);
+        assert!(parsed.certificate.subject_cn.is_some());
+        assert_eq!(parsed.certificate.der, cert_der);
+    }
+
+    #[test]
+    fn test_parse_entry_invalid_version() {
+        let mut leaf = vec![1u8, 0u8];
+        leaf.extend_from_slice(&0u64.to_be_bytes());
+        leaf.extend_from_slice(&0u16.to_be_bytes());
+        leaf.extend_from_slice(&[0, 0, 0]);
+        let entry = CtLogEntryResponse {
+            leaf_input: base64::engine::general_purpose::STANDARD.encode(leaf),
+            extra_data: String::new(),
+        };
+
+        let parser = Parser::new("test-log".to_string());
+        assert!(parser.parse_entry(&entry, 0).is_err());
+    }
+
+    #[test]
+    fn test_parse_entry_length_exceeds() {
+        let mut leaf = vec![0u8, 0u8];
+        leaf.extend_from_slice(&0u64.to_be_bytes());
+        leaf.extend_from_slice(&0u16.to_be_bytes());
+        leaf.extend_from_slice(&[0x00, 0x00, 0x10]); // length 16
+        leaf.extend_from_slice(&[0x01, 0x02, 0x03]); // only 3 bytes present
+        let entry = CtLogEntryResponse {
+            leaf_input: base64::engine::general_purpose::STANDARD.encode(leaf),
+            extra_data: String::new(),
+        };
+
+        let parser = Parser::new("test-log".to_string());
+        assert!(parser.parse_entry(&entry, 0).is_err());
+    }
+
+    #[test]
+    fn test_parse_entry_invalid_base64() {
+        let entry = CtLogEntryResponse {
+            leaf_input: "not-base64!!".to_string(),
+            extra_data: String::new(),
+        };
+
+        let parser = Parser::new("test-log".to_string());
+        assert!(parser.parse_entry(&entry, 0).is_err());
     }
 }

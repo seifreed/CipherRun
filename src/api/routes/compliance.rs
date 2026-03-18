@@ -2,9 +2,12 @@
 
 use crate::api::{
     models::error::{ApiError, ApiErrorResponse},
+    presenters::{compliance::present_compliance_report, target_input::scan_request_from_target},
     state::AppState,
 };
-use crate::compliance::{ComplianceStatus, engine::ComplianceEngine, loader::FrameworkLoader};
+use crate::application::{ComplianceFrameworkSource, ScanAssessment};
+use crate::application::use_cases::EvaluateCompliance;
+use crate::compliance::BuiltinFrameworkSource;
 use crate::scanner::Scanner;
 use axum::{
     Json,
@@ -158,7 +161,7 @@ pub async fn check_compliance(
         .ok_or_else(|| ApiError::BadRequest("Target parameter is required".to_string()))?;
 
     // Load compliance framework
-    let framework = FrameworkLoader::load_builtin(&framework_id).map_err(|e| {
+    let framework = BuiltinFrameworkSource.load_framework(&framework_id).map_err(|e| {
         if e.to_string().contains("Unknown framework") {
             ApiError::NotFound(format!("Unknown compliance framework: {}", framework_id))
         } else {
@@ -166,24 +169,9 @@ pub async fn check_compliance(
         }
     })?;
 
-    // Parse target (hostname:port)
-    let parts: Vec<&str> = target.split(':').collect();
-    let hostname = parts.first().ok_or_else(|| {
-        ApiError::BadRequest("Invalid target format. Expected hostname:port".to_string())
-    })?;
-    let port = parts
-        .get(1)
-        .and_then(|p| p.parse::<u16>().ok())
-        .unwrap_or(443);
+    let request = scan_request_from_target(target)?;
 
-    // Perform TLS scan - Create Args struct for Scanner
-    let args = crate::Args {
-        target: Some(format!("{}:{}", hostname, port)),
-        port: Some(port),
-        ..Default::default()
-    };
-
-    let scanner = Scanner::new(args)
+    let scanner = Scanner::new(request)
         .map_err(|e| ApiError::Internal(format!("Failed to create scanner: {}", e)))?;
 
     let scan_results = scanner
@@ -192,92 +180,96 @@ pub async fn check_compliance(
         .map_err(|e| ApiError::Internal(format!("Scan failed: {}", e)))?;
 
     // Create compliance engine and evaluate
-    let engine = ComplianceEngine::new(framework.clone());
-    let report = engine
-        .evaluate(&scan_results)
+    let assessment = ScanAssessment::from_scan_results(&scan_results);
+    let report = EvaluateCompliance::execute_assessment(&framework, &assessment)
         .map_err(|e| ApiError::Internal(format!("Compliance evaluation failed: {}", e)))?;
 
-    // Convert report to response
-    let status = match report.overall_status {
-        ComplianceStatus::Pass => "pass",
-        ComplianceStatus::Fail => "fail",
-        ComplianceStatus::Warning => "warning",
-    };
+    Ok(Json(present_compliance_report(
+        &framework,
+        target,
+        &report,
+        query.detailed,
+    )))
+}
 
-    let summary = ComplianceSummary {
-        total: report.summary.total,
-        passed: report.summary.passed,
-        failed: report.summary.failed,
-        warnings: report.summary.warnings,
-        compliance_percentage: if report.summary.total > 0 {
-            (report.summary.passed as f64 / report.summary.total as f64) * 100.0
-        } else {
-            0.0
-        },
-    };
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::config::ApiConfig;
+    use crate::api::jobs::{InMemoryJobQueue, ScanExecutor};
+    use crate::api::middleware::rate_limit::PerKeyRateLimiter;
+    use crate::api::state::{ApiStats, AppState};
+    use axum::extract::{Path, Query, State};
+    use std::sync::Arc;
+    use std::time::Instant;
+    use tokio::sync::RwLock;
 
-    // Build requirement results if detailed flag is set
-    let requirements = if query.detailed {
-        Some(
-            report
-                .requirements
-                .iter()
-                .map(|req| {
-                    let status_str = match req.status {
-                        crate::compliance::RequirementStatus::Pass => "pass",
-                        crate::compliance::RequirementStatus::Fail => "fail",
-                        crate::compliance::RequirementStatus::Warning => "warning",
-                        crate::compliance::RequirementStatus::NotApplicable => "not_applicable",
-                    };
+    fn build_state() -> Arc<AppState> {
+        let config = Arc::new(ApiConfig::default());
+        let job_queue = Arc::new(InMemoryJobQueue::new(10));
+        let executor = Arc::new(ScanExecutor::new(job_queue.clone(), 1));
+        let progress_tx = executor.progress_broadcaster();
 
-                    let severity_str = match req.severity {
-                        crate::compliance::Severity::Critical => "critical",
-                        crate::compliance::Severity::High => "high",
-                        crate::compliance::Severity::Medium => "medium",
-                        crate::compliance::Severity::Low => "low",
-                        crate::compliance::Severity::Info => "info",
-                    };
+        Arc::new(AppState {
+            config,
+            job_queue,
+            executor,
+            progress_tx,
+            start_time: Instant::now(),
+            stats: Arc::new(RwLock::new(ApiStats::default())),
+            rate_limiter: Arc::new(PerKeyRateLimiter::new(100)),
+            db_pool: None,
+            policy_dir: None,
+        })
+    }
 
-                    let violations = if !req.violations.is_empty() {
-                        Some(
-                            req.violations
-                                .iter()
-                                .map(|v| ViolationDetail {
-                                    rule_type: v.violation_type.clone(),
-                                    message: v.description.clone(),
-                                    evidence: Some(v.evidence.clone()),
-                                })
-                                .collect(),
-                        )
-                    } else {
-                        None
-                    };
+    #[tokio::test]
+    async fn test_check_compliance_missing_target() {
+        let state = build_state();
+        let query = ComplianceQuery {
+            target: None,
+            format: "json".to_string(),
+            detailed: false,
+        };
 
-                    RequirementResult {
-                        id: req.requirement_id.clone(),
-                        name: req.name.clone(),
-                        category: req.category.clone(),
-                        status: status_str.to_string(),
-                        severity: severity_str.to_string(),
-                        violation_count: req.violations.len(),
-                        violations,
-                        remediation: Some(req.remediation.clone()),
-                    }
-                })
-                .collect(),
+        let err = check_compliance(State(state), Path("pci-dss-v4".to_string()), Query(query))
+            .await
+            .expect_err("missing target should error");
+
+        assert!(matches!(err, ApiError::BadRequest(_)));
+    }
+
+    #[tokio::test]
+    async fn test_check_compliance_unknown_framework() {
+        let state = build_state();
+        let query = ComplianceQuery {
+            target: Some("example.com:443".to_string()),
+            format: "json".to_string(),
+            detailed: false,
+        };
+
+        let err = check_compliance(
+            State(state),
+            Path("unknown-framework".to_string()),
+            Query(query),
         )
-    } else {
-        None
-    };
+        .await
+        .expect_err("unknown framework should error");
 
-    Ok(Json(ComplianceCheckResponse {
-        framework_id: framework.id,
-        framework_name: framework.name,
-        framework_version: framework.version,
-        target: target.clone(),
-        status: status.to_string(),
-        summary,
-        requirements,
-        evaluated_at: report.scan_timestamp.to_rfc3339(),
-    }))
+        assert!(matches!(err, ApiError::NotFound(_)));
+    }
+
+    #[test]
+    fn test_default_format_is_json() {
+        assert_eq!(default_format(), "json");
+    }
+
+    #[test]
+    fn test_compliance_query_defaults() {
+        let query: ComplianceQuery =
+            serde_json::from_str("{}").expect("test assertion should succeed");
+        assert!(query.target.is_none());
+        assert_eq!(query.format, "json");
+        assert!(!query.detailed);
+    }
 }

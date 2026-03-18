@@ -302,6 +302,11 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_quoted_none() {
+        assert_eq!(ClientDatabase::extract_quoted("no quotes"), None);
+    }
+
+    #[test]
     fn test_load_database() {
         let db = ClientDatabase::load();
         assert!(db.is_ok());
@@ -318,5 +323,40 @@ mod tests {
         for client in current {
             assert!(client.current);
         }
+    }
+
+    #[test]
+    fn test_extract_quoted_with_escaped_quotes() {
+        let line = r#""Hello \"World\"""#;
+        assert_eq!(
+            ClientDatabase::extract_quoted(line),
+            Some("Hello \"World\"".to_string())
+        );
+    }
+
+    #[test]
+    fn test_by_service_and_lookup_by_id() {
+        let data = r#"
+names+=(
+"Client A"
+)
+short+=(
+"client_a"
+)
+service+=(
+"HTTP,FTP"
+)
+"#;
+
+        let db = ClientDatabase::parse(data).expect("test assertion should succeed");
+        let by_http = db.by_service("http");
+        assert_eq!(by_http.len(), 1);
+        assert_eq!(by_http[0].short_id, "client_a");
+
+        let by_ftp = db.by_service("FTP");
+        assert_eq!(by_ftp.len(), 1);
+
+        let profile = db.get_by_id("client_a").expect("client should exist");
+        assert_eq!(profile.name, "Client A");
     }
 }

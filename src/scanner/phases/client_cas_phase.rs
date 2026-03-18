@@ -12,7 +12,7 @@
 //
 // Dependencies:
 // - ClientCAsTester (domain logic for CA list extraction)
-// - Args (CLI configuration)
+// - ScanRequest (scan configuration)
 // - Target (server information)
 //
 // Information extracted:
@@ -22,8 +22,9 @@
 // - Whether client certificates are requested vs. required
 
 use super::{ScanContext, ScanPhase};
+use crate::Result;
+use crate::application::ScanRequest;
 use crate::protocols::client_cas::ClientCAsTester;
-use crate::{Args, Result};
 use async_trait::async_trait;
 
 /// Client CAs enumeration phase
@@ -33,7 +34,7 @@ use async_trait::async_trait;
 /// only available when the server requests or requires client certificates
 /// during the TLS handshake.
 ///
-/// Configuration sources (from Args):
+/// Configuration sources (from ScanRequest):
 /// - Client CA enumeration flag (--show-client-cas)
 /// - Target information (hostname, port, resolved IPs)
 pub struct ClientCasPhase;
@@ -57,7 +58,7 @@ impl ScanPhase for ClientCasPhase {
         "Extracting Client CAs List"
     }
 
-    fn should_run(&self, args: &Args) -> bool {
+    fn should_run(&self, args: &ScanRequest) -> bool {
         // Run if:
         // - Explicit client CA enumeration requested (--show-client-cas)
         args.scan.show_client_cas
@@ -90,16 +91,16 @@ mod tests {
         let phase = ClientCasPhase::new();
 
         // Test with --show-client-cas flag
-        let mut args = Args::default();
+        let mut args = ScanRequest::default();
         args.scan.show_client_cas = true;
         assert!(phase.should_run(&args));
 
         // Test without --show-client-cas flag
-        let args = Args::default();
+        let args = ScanRequest::default();
         assert!(!phase.should_run(&args));
 
         // Test with --all flag (should not enable client CA enumeration)
-        let mut args = Args::default();
+        let mut args = ScanRequest::default();
         args.scan.all = true;
         assert!(!phase.should_run(&args));
     }

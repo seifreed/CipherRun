@@ -36,12 +36,12 @@ pub fn generate_csv(results: &ScanResults) -> Result<String> {
 
     // Vulnerabilities
     output.push_str("=== VULNERABILITIES ===\n");
-    output.push_str("Type,Vulnerable,Severity,CVE,Details\n");
+    output.push_str("Type,Status,Severity,CVE,Details\n");
     for vuln in &results.vulnerabilities {
         output.push_str(&format!(
             "{:?},{},{:?},{},{}\n",
             vuln.vuln_type,
-            vuln.vulnerable,
+            vuln.status_csv_value(),
             vuln.severity,
             vuln.cve.as_deref().unwrap_or("N/A"),
             vuln.details.replace(',', ";").replace('\n', " ")
@@ -220,14 +220,14 @@ pub fn generate_vulnerabilities_csv(results: &ScanResults) -> Result<String> {
     let mut wtr = Writer::from_writer(vec![]);
 
     // Write header
-    wtr.write_record(["Type", "Severity", "Vulnerable", "CVE", "Details"])?;
+    wtr.write_record(["Type", "Severity", "Status", "CVE", "Details"])?;
 
     // Write data
     for vuln in &results.vulnerabilities {
         wtr.write_record(&[
             format!("{:?}", vuln.vuln_type),
             format!("{:?}", vuln.severity),
-            format!("{}", vuln.vulnerable),
+            vuln.status_csv_value().to_string(),
             vuln.cve.as_deref().unwrap_or("N/A").to_string(),
             vuln.details.replace(',', ";"),
         ])?;
@@ -240,6 +240,18 @@ pub fn generate_vulnerabilities_csv(results: &ScanResults) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::client_sim::simulator::ClientSimulationResult;
+    use crate::http::headers::{HeaderIssue, IssueSeverity, IssueType};
+    use crate::http::headers_advanced::{
+        BannerDetection, CookieAnalysis, CookieInfo, DateTimeCheck, Grade as HeaderGrade,
+        HstsAnalysis, ReverseProxyDetection,
+    };
+    use crate::http::tester::{HeaderAnalysisResult, SecurityGrade};
+    use crate::protocols::{Protocol, ProtocolTestResult};
+    use crate::rating::RatingResult;
+    use crate::scanner::{AdvancedResults, HttpResults, RatingResults};
+    use crate::vulnerabilities::{Severity, VulnerabilityResult, VulnerabilityType};
+    use std::collections::HashMap;
 
     #[test]
     fn test_csv_generation() {
@@ -255,9 +267,347 @@ mod tests {
     }
 
     #[test]
+    fn test_csv_generation_includes_protocols_section() {
+        let results = ScanResults {
+            target: "example.com:443".to_string(),
+            scan_time_ms: 1000,
+            ..Default::default()
+        };
+
+        let csv = generate_csv(&results).expect("test assertion should succeed");
+        assert!(csv.contains("=== PROTOCOLS ==="));
+    }
+
+    #[test]
+    fn test_csv_includes_optional_sections() {
+        let mut results = ScanResults {
+            target: "example.com:443".to_string(),
+            scan_time_ms: 1500,
+            protocols: vec![ProtocolTestResult {
+                protocol: Protocol::TLS12,
+                supported: true,
+                preferred: true,
+                ciphers_count: 3,
+                handshake_time_ms: Some(45),
+                heartbeat_enabled: Some(true),
+                session_resumption_caching: Some(false),
+                session_resumption_tickets: Some(true),
+                secure_renegotiation: Some(true),
+            }],
+            vulnerabilities: vec![VulnerabilityResult {
+                vuln_type: VulnerabilityType::Heartbleed,
+                vulnerable: false,
+                inconclusive: false,
+                details: "No issues, all good\nnewline".to_string(),
+                cve: Some("CVE-2014-0160".to_string()),
+                cwe: None,
+                severity: Severity::Low,
+            }],
+            ..Default::default()
+        };
+
+        let mut headers = HashMap::new();
+        headers.insert(
+            "strict-transport-security".to_string(),
+            "max-age=63072000; includeSubDomains; preload".to_string(),
+        );
+
+        let header_result = HeaderAnalysisResult {
+            headers,
+            issues: vec![HeaderIssue {
+                header_name: "Content-Security-Policy".to_string(),
+                severity: IssueSeverity::High,
+                issue_type: IssueType::Missing,
+                description: "CSP missing".to_string(),
+                recommendation: "Add CSP".to_string(),
+                preload_status: None,
+            }],
+            score: 75,
+            grade: SecurityGrade::B,
+            hsts_analysis: Some(HstsAnalysis {
+                enabled: true,
+                max_age: Some(63_072_000),
+                include_subdomains: true,
+                preload: true,
+                details: "Strong policy".to_string(),
+                grade: HeaderGrade::A,
+            }),
+            hpkp_analysis: None,
+            cookie_analysis: Some(CookieAnalysis {
+                cookies: vec![CookieInfo {
+                    name: "session".to_string(),
+                    secure: true,
+                    httponly: true,
+                    samesite: Some("Lax".to_string()),
+                    domain: Some("example.com".to_string()),
+                    path: Some("/".to_string()),
+                    expires: None,
+                }],
+                secure_count: 1,
+                httponly_count: 1,
+                samesite_count: 1,
+                insecure_count: 0,
+                details: "Cookies are secure".to_string(),
+                grade: HeaderGrade::A,
+            }),
+            datetime_check: Some(DateTimeCheck {
+                server_date: Some("Tue, 01 Jan 2026 00:00:00 GMT".to_string()),
+                skew_seconds: Some(5),
+                synchronized: true,
+                details: "Clock OK".to_string(),
+            }),
+            banner_detection: Some(BannerDetection {
+                server: Some("nginx".to_string()),
+                powered_by: Some("Rust".to_string()),
+                application: Some("CipherRun".to_string()),
+                framework: Some("axum".to_string()),
+                version_exposed: true,
+                details: "Version exposed".to_string(),
+                grade: HeaderGrade::C,
+            }),
+            reverse_proxy_detection: Some(ReverseProxyDetection {
+                detected: true,
+                via_header: Some("1.1 proxy".to_string()),
+                x_forwarded_for: true,
+                x_real_ip: false,
+                x_forwarded_proto: true,
+                proxy_type: Some("CDN".to_string()),
+                details: "Proxy detected".to_string(),
+            }),
+            http_status_code: Some(200),
+            redirect_location: None,
+            redirect_chain: Vec::new(),
+            server_hostname: Some("example.com".to_string()),
+        };
+
+        results.http = Some(HttpResults {
+            http_headers: Some(header_result),
+        });
+
+        results.rating = Some(RatingResults {
+            ssl_rating: Some(RatingResult {
+                grade: crate::rating::Grade::B,
+                score: 80,
+                certificate_score: 90,
+                protocol_score: 85,
+                key_exchange_score: 78,
+                cipher_strength_score: 82,
+                warnings: vec!["Warn".to_string()],
+            }),
+        });
+
+        results.advanced = Some(AdvancedResults {
+            client_simulations: Some(vec![ClientSimulationResult {
+                client_name: "Firefox".to_string(),
+                client_id: "fx".to_string(),
+                success: true,
+                protocol: Some(Protocol::TLS13),
+                cipher: Some("TLS_AES_128_GCM_SHA256".to_string()),
+                error: None,
+                handshake_time_ms: Some(12),
+                alpn: Some("h2".to_string()),
+                key_exchange: Some("ECDHE".to_string()),
+                forward_secrecy: true,
+                certificate_type: Some("RSA 2048".to_string()),
+            }]),
+            ..Default::default()
+        });
+
+        let csv = generate_csv(&results).expect("test assertion should succeed");
+        assert!(csv.contains("HTTP SECURITY HEADERS"));
+        assert!(csv.contains("HSTS ANALYSIS"));
+        assert!(csv.contains("COOKIE SECURITY"));
+        assert!(csv.contains("DATE/TIME CHECK"));
+        assert!(csv.contains("SERVER BANNERS"));
+        assert!(csv.contains("REVERSE PROXY DETECTION"));
+        assert!(csv.contains("SSL LABS RATING"));
+        assert!(csv.contains("CLIENT COMPATIBILITY"));
+    }
+
+    #[test]
+    fn test_csv_omits_reverse_proxy_section_when_not_detected() {
+        let mut results = ScanResults::default();
+        let header_result = HeaderAnalysisResult {
+            headers: HashMap::new(),
+            issues: Vec::new(),
+            score: 100,
+            grade: SecurityGrade::A,
+            hsts_analysis: None,
+            hpkp_analysis: None,
+            cookie_analysis: None,
+            datetime_check: None,
+            banner_detection: None,
+            reverse_proxy_detection: Some(ReverseProxyDetection {
+                detected: false,
+                via_header: None,
+                x_forwarded_for: false,
+                x_real_ip: false,
+                x_forwarded_proto: false,
+                proxy_type: None,
+                details: "None".to_string(),
+            }),
+            http_status_code: None,
+            redirect_location: None,
+            redirect_chain: Vec::new(),
+            server_hostname: None,
+        };
+
+        results.http = Some(HttpResults {
+            http_headers: Some(header_result),
+        });
+
+        let csv = generate_csv(&results).expect("test assertion should succeed");
+        assert!(!csv.contains("REVERSE PROXY DETECTION"));
+    }
+
+    #[test]
+    fn test_write_csv_file_round_trip() {
+        let results = ScanResults {
+            target: "example.com:443".to_string(),
+            scan_time_ms: 1000,
+            ..Default::default()
+        };
+        let path = std::env::temp_dir().join("cipherrun_test_output.csv");
+        write_csv_file(&results, path.to_str().unwrap()).expect("write should succeed");
+        let contents = std::fs::read_to_string(&path).expect("read should succeed");
+        assert!(contents.contains("SCAN SUMMARY"));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
     fn test_vulnerabilities_csv() {
         let results = ScanResults::default();
         let csv = generate_vulnerabilities_csv(&results).expect("test assertion should succeed");
-        assert!(csv.contains("Type,Severity,Vulnerable,CVE,Details"));
+        assert!(csv.contains("Type,Severity,Status,CVE,Details"));
+    }
+
+    #[test]
+    fn test_vulnerabilities_csv_sanitizes_commas() {
+        let results = ScanResults {
+            vulnerabilities: vec![VulnerabilityResult {
+                vuln_type: VulnerabilityType::DROWN,
+                vulnerable: true,
+                inconclusive: false,
+                details: "Has,comma".to_string(),
+                cve: None,
+                cwe: None,
+                severity: Severity::High,
+            }],
+            ..Default::default()
+        };
+        let csv = generate_vulnerabilities_csv(&results).expect("test assertion should succeed");
+        assert!(csv.contains("Has;comma"));
+    }
+
+    #[test]
+    fn test_vulnerabilities_csv_includes_na_cve() {
+        let results = ScanResults {
+            vulnerabilities: vec![VulnerabilityResult {
+                vuln_type: VulnerabilityType::DROWN,
+                vulnerable: false,
+                inconclusive: false,
+                details: "None".to_string(),
+                cve: None,
+                cwe: None,
+                severity: Severity::Low,
+            }],
+            ..Default::default()
+        };
+        let csv = generate_vulnerabilities_csv(&results).expect("test assertion should succeed");
+        assert!(csv.contains("N/A"));
+    }
+
+    #[test]
+    fn test_generate_csv_replaces_newlines_in_details() {
+        let results = ScanResults {
+            target: "example.com:443".to_string(),
+            scan_time_ms: 10,
+            vulnerabilities: vec![VulnerabilityResult {
+                vuln_type: VulnerabilityType::Heartbleed,
+                vulnerable: false,
+                inconclusive: false,
+                details: "line1\nline2".to_string(),
+                cve: None,
+                cwe: None,
+                severity: Severity::Low,
+            }],
+            ..Default::default()
+        };
+
+        let csv = generate_csv(&results).expect("test assertion should succeed");
+        assert!(csv.contains("line1 line2"));
+        assert!(csv.contains("Heartbleed,not_vulnerable,Low"));
+    }
+
+    #[test]
+    fn test_generate_csv_client_simulation_defaults_to_na() {
+        let mut results = ScanResults::default();
+        results.target = "example.com:443".to_string();
+        results.scan_time_ms = 5;
+        results.advanced = Some(AdvancedResults {
+            client_simulations: Some(vec![ClientSimulationResult {
+                client_name: "TestClient".to_string(),
+                client_id: "tc".to_string(),
+                success: false,
+                protocol: None,
+                cipher: None,
+                error: Some("fail".to_string()),
+                handshake_time_ms: None,
+                alpn: None,
+                key_exchange: None,
+                forward_secrecy: false,
+                certificate_type: None,
+            }]),
+            ..Default::default()
+        });
+
+        let csv = generate_csv(&results).expect("test assertion should succeed");
+        assert!(csv.contains("CLIENT COMPATIBILITY"));
+        assert!(csv.contains("N/A"));
+    }
+
+    #[test]
+    fn test_vulnerabilities_csv_includes_type_name() {
+        let results = ScanResults {
+            vulnerabilities: vec![VulnerabilityResult {
+                vuln_type: VulnerabilityType::Heartbleed,
+                vulnerable: true,
+                inconclusive: false,
+                details: "issue".to_string(),
+                cve: None,
+                cwe: None,
+                severity: Severity::High,
+            }],
+            ..Default::default()
+        };
+
+        let csv = generate_vulnerabilities_csv(&results).expect("test assertion should succeed");
+        assert!(csv.contains("Heartbleed"));
+    }
+
+    #[test]
+    fn test_generate_csv_preserves_inconclusive_status() {
+        let results = ScanResults {
+            vulnerabilities: vec![VulnerabilityResult {
+                vuln_type: VulnerabilityType::GREASE,
+                vulnerable: false,
+                inconclusive: true,
+                details: "Heuristic only".to_string(),
+                cve: None,
+                cwe: None,
+                severity: Severity::Info,
+            }],
+            ..Default::default()
+        };
+
+        let csv = generate_csv(&results).expect("test assertion should succeed");
+        assert!(csv.contains("GREASE,inconclusive,Info"));
+    }
+
+    #[test]
+    fn test_vulnerabilities_csv_empty_has_header() {
+        let results = ScanResults::default();
+        let csv = generate_vulnerabilities_csv(&results).expect("test assertion should succeed");
+        assert!(csv.contains("Type,Severity,Status,CVE,Details"));
     }
 }

@@ -62,3 +62,44 @@ impl Default for ConnectionArgs {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[derive(Parser)]
+    struct TestCli {
+        #[command(flatten)]
+        args: ConnectionArgs,
+    }
+
+    #[test]
+    fn test_connection_args_defaults_from_clap() {
+        let parsed = TestCli::parse_from(["test"]);
+        let args = parsed.args;
+
+        assert!(args.socket_timeout.is_none());
+        assert!(args.connect_timeout.is_none());
+        assert!(args.sleep.is_none());
+        assert!(args.delay.is_none());
+        assert_eq!(args.max_retries, 3);
+        assert_eq!(args.retry_backoff_ms, 100);
+        assert_eq!(args.max_backoff_ms, 5000);
+        assert!(!args.no_retry);
+    }
+
+    #[test]
+    fn test_connection_args_no_retry_flag() {
+        let parsed = TestCli::parse_from(["test", "--no-retry"]);
+        let args = parsed.args;
+        assert!(args.no_retry);
+    }
+
+    #[test]
+    fn test_connection_args_max_retries_zero() {
+        let parsed = TestCli::parse_from(["test", "--max-retries", "0"]);
+        let args = parsed.args;
+        assert_eq!(args.max_retries, 0);
+    }
+}

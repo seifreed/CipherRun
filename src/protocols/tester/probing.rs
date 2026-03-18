@@ -1,0 +1,332 @@
+use super::{Protocol, ProtocolTestResult, ProtocolTester};
+use crate::Result;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::time::timeout;
+
+impl ProtocolTester {
+    pub async fn test_all_protocols(&self) -> Result<Vec<ProtocolTestResult>> {
+        use futures::stream::{self, StreamExt};
+
+        let protocols_to_test = self.protocol_filter.clone().unwrap_or_else(Protocol::all);
+
+        let results: Vec<ProtocolTestResult> = stream::iter(protocols_to_test)
+            .map(|protocol| async move { self.test_protocol(protocol).await })
+            .buffer_unordered(6)
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(results)
+    }
+
+    pub async fn test_protocol(&self, protocol: Protocol) -> Result<ProtocolTestResult> {
+        let start = std::time::Instant::now();
+
+        let supported = if self.test_all_ips {
+            self.test_protocol_all_ips(protocol).await?
+        } else {
+            let addr = self.target.socket_addrs()[0];
+            self.test_protocol_on_ip(protocol, addr).await?
+        };
+
+        let handshake_time_ms = if supported {
+            Some(start.elapsed().as_millis() as u64)
+        } else {
+            None
+        };
+
+        let heartbeat_enabled =
+            if supported && !matches!(protocol, Protocol::SSLv2 | Protocol::QUIC) {
+                self.detect_heartbeat_extension(protocol).await.ok()
+            } else {
+                None
+            };
+
+        let (session_resumption_caching, session_resumption_tickets) =
+            if supported && !matches!(protocol, Protocol::SSLv2 | Protocol::QUIC) {
+                match self.detect_session_resumption(protocol).await {
+                    Ok((caching, tickets)) => (caching, tickets),
+                    Err(_) => (None, None),
+                }
+            } else {
+                (None, None)
+            };
+
+        let secure_renegotiation =
+            if supported && !matches!(protocol, Protocol::SSLv2 | Protocol::QUIC) {
+                self.detect_secure_renegotiation(protocol).await.ok()
+            } else {
+                None
+            };
+
+        Ok(ProtocolTestResult {
+            protocol,
+            supported,
+            preferred: false,
+            ciphers_count: 0,
+            handshake_time_ms,
+            heartbeat_enabled,
+            session_resumption_caching,
+            session_resumption_tickets,
+            secure_renegotiation,
+        })
+    }
+
+    pub(super) async fn test_protocol_all_ips(&self, protocol: Protocol) -> Result<bool> {
+        let addrs = self.target.socket_addrs();
+
+        if addrs.is_empty() {
+            return Ok(false);
+        }
+
+        tracing::info!(
+            "Testing {} IPs for hostname {} (protocol: {})",
+            addrs.len(),
+            self.target.hostname,
+            protocol
+        );
+
+        let mut all_support = true;
+        let mut any_tested = false;
+        let mut per_ip_results = Vec::new();
+
+        for (idx, addr) in addrs.iter().enumerate() {
+            any_tested = true;
+            let ip_supports = self.test_protocol_on_ip(protocol, *addr).await?;
+
+            tracing::debug!(
+                "IP {} ({}/{}): {} {} - {}",
+                addr.ip(),
+                idx + 1,
+                addrs.len(),
+                protocol,
+                if ip_supports { "supported" } else { "NOT supported" },
+                if ip_supports { "✓" } else { "✗" }
+            );
+
+            per_ip_results.push((addr.ip(), ip_supports));
+
+            if !ip_supports {
+                all_support = false;
+            }
+        }
+
+        let inconsistent =
+            per_ip_results.iter().any(|(_, s)| *s) && per_ip_results.iter().any(|(_, s)| !*s);
+
+        if inconsistent {
+            tracing::warn!(
+                "WARNING: Inconsistent {} support across IPs for {}",
+                protocol,
+                self.target.hostname
+            );
+            for (ip, supported) in &per_ip_results {
+                tracing::warn!(
+                    "  {} {} - {}",
+                    ip,
+                    protocol,
+                    if *supported { "SUPPORTED" } else { "NOT SUPPORTED" }
+                );
+            }
+        }
+
+        Ok(any_tested && all_support)
+    }
+
+    pub(super) async fn test_protocol_on_ip(
+        &self,
+        protocol: Protocol,
+        addr: std::net::SocketAddr,
+    ) -> Result<bool> {
+        match protocol {
+            Protocol::SSLv2 => self.test_sslv2_on_ip(addr).await,
+            Protocol::SSLv3 | Protocol::TLS10 | Protocol::TLS11 | Protocol::TLS12 => {
+                self.test_tls_with_openssl_on_ip(protocol, addr).await
+            }
+            Protocol::TLS13 => self.test_tls13_on_ip(addr).await,
+            Protocol::QUIC => self.test_quic_on_ip(addr).await,
+        }
+    }
+
+    pub(super) async fn test_sslv2_on_ip(&self, addr: std::net::SocketAddr) -> Result<bool> {
+        let stream_result = crate::utils::network::connect_with_timeout(
+            addr,
+            self.connect_timeout,
+            self.retry_config.as_ref(),
+        )
+        .await;
+
+        match stream_result {
+            Ok(mut stream) => {
+                if self.use_rdp
+                    && crate::protocols::rdp::RdpPreamble::send(&mut stream)
+                        .await
+                        .is_err()
+                {
+                    return Ok(false);
+                }
+
+                if let Some(starttls_proto) = self.starttls_protocol {
+                    let negotiator = crate::starttls::protocols::get_negotiator(
+                        starttls_proto,
+                        self.target.hostname.clone(),
+                    );
+                    if negotiator.negotiate_starttls(&mut stream).await.is_err() {
+                        return Ok(false);
+                    }
+                }
+
+                let client_hello = self.build_sslv2_client_hello();
+                let mut response = vec![0u8; 1024];
+
+                match timeout(self.read_timeout, async {
+                    stream.write_all(&client_hello).await?;
+                    stream.read(&mut response).await
+                })
+                .await
+                {
+                    Ok(Ok(n)) if n > 0 => Ok(response[0] & 0x80 == 0x80),
+                    _ => Ok(false),
+                }
+            }
+            _ => Ok(false),
+        }
+    }
+
+    pub(super) fn build_sslv2_client_hello(&self) -> Vec<u8> {
+        let mut hello = vec![0x80, 0x00, 0x01, 0x00, 0x02];
+        hello.push(0x00);
+        hello.push(0x06);
+        hello.push(0x00);
+        hello.push(0x00);
+        hello.push(0x00);
+        hello.push(0x10);
+        hello.extend_from_slice(&[0x01, 0x00, 0x80]);
+        hello.extend_from_slice(&[0x02, 0x00, 0x80]);
+        hello.extend_from_slice(&[0x03, 0x00, 0x80]);
+        hello.extend_from_slice(&[
+            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
+            0x0f, 0x10,
+        ]);
+        let len = hello.len() - 2;
+        hello[1] = len as u8;
+        hello
+    }
+
+    pub(super) async fn test_tls_with_openssl_on_ip(
+        &self,
+        protocol: Protocol,
+        addr: std::net::SocketAddr,
+    ) -> Result<bool> {
+        use openssl::ssl::{SslConnector, SslMethod, SslVersion, SslVerifyMode};
+
+        let mut stream = match crate::utils::network::connect_with_timeout(
+            addr,
+            self.connect_timeout,
+            self.retry_config.as_ref(),
+        )
+        .await
+        {
+            Ok(s) => s,
+            Err(_) => return Ok(false),
+        };
+
+        if let Some(starttls_proto) = self.starttls_protocol {
+            let negotiator = crate::starttls::protocols::get_negotiator(
+                starttls_proto,
+                self.target.hostname.clone(),
+            );
+            if negotiator.negotiate_starttls(&mut stream).await.is_err() {
+                return Ok(false);
+            }
+        }
+
+        let std_stream = stream.into_std()?;
+        std_stream.set_nonblocking(false)?;
+
+        let mut builder = SslConnector::builder(SslMethod::tls())?;
+        builder.set_verify(SslVerifyMode::NONE);
+
+        let (min_version, max_version) = match protocol {
+            Protocol::SSLv3 => (SslVersion::SSL3, SslVersion::SSL3),
+            Protocol::TLS10 => (SslVersion::TLS1, SslVersion::TLS1),
+            Protocol::TLS11 => (SslVersion::TLS1_1, SslVersion::TLS1_1),
+            Protocol::TLS12 => (SslVersion::TLS1_2, SslVersion::TLS1_2),
+            _ => return Ok(false),
+        };
+
+        builder.set_min_proto_version(Some(min_version))?;
+        builder.set_max_proto_version(Some(max_version))?;
+
+        if self.enable_bugs_mode {
+            use openssl::ssl::SslOptions;
+            builder.set_options(SslOptions::ALL);
+        }
+
+        let connector = builder.build();
+        let sni_host = self.sni_hostname.as_ref().unwrap_or(&self.target.hostname);
+
+        match connector.connect(sni_host, std_stream) {
+            Ok(_) => Ok(true),
+            Err(_) => Ok(false),
+        }
+    }
+
+    pub(super) async fn test_tls13_on_ip(&self, addr: std::net::SocketAddr) -> Result<bool> {
+        use rustls::{ClientConfig, RootCertStore};
+        use std::sync::Arc;
+        use tokio_rustls::TlsConnector;
+
+        let mut stream = match crate::utils::network::connect_with_timeout(
+            addr,
+            self.connect_timeout,
+            self.retry_config.as_ref(),
+        )
+        .await
+        {
+            Ok(s) => s,
+            Err(_) => return Ok(false),
+        };
+
+        if let Some(starttls_proto) = self.starttls_protocol {
+            let negotiator = crate::starttls::protocols::get_negotiator(
+                starttls_proto,
+                self.target.hostname.clone(),
+            );
+            if negotiator.negotiate_starttls(&mut stream).await.is_err() {
+                return Ok(false);
+            }
+        }
+
+        let connector = if let Some(ref mtls_config) = self.mtls_config {
+            match mtls_config.build_tls_connector() {
+                Ok(c) => c,
+                Err(_) => return Ok(false),
+            }
+        } else {
+            let mut root_store = RootCertStore::empty();
+            root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+
+            let config = ClientConfig::builder()
+                .with_root_certificates(root_store)
+                .with_no_client_auth();
+
+            TlsConnector::from(Arc::new(config))
+        };
+
+        let sni_host = self.sni_hostname.as_ref().unwrap_or(&self.target.hostname);
+        let domain = rustls_pki_types::ServerName::try_from(sni_host.as_str())
+            .map_err(|_| anyhow::anyhow!("Invalid DNS name"))?
+            .to_owned();
+
+        match timeout(self.read_timeout, connector.connect(domain, stream)).await {
+            Ok(Ok(_)) => Ok(true),
+            _ => Ok(false),
+        }
+    }
+
+    pub(super) async fn test_quic_on_ip(&self, _addr: std::net::SocketAddr) -> Result<bool> {
+        Ok(false)
+    }
+}

@@ -1,0 +1,29 @@
+use crate::db::{CipherRunDatabase, ScanRecord, ScanRepository};
+
+impl CipherRunDatabase {
+    /// Get scan history for a hostname
+    pub async fn get_scan_history(
+        &self,
+        hostname: &str,
+        port: u16,
+        limit: i64,
+    ) -> crate::Result<Vec<ScanRecord>> {
+        self.scan_repo
+            .get_scans_by_hostname(hostname, port, limit)
+            .await
+    }
+
+    /// Get latest scan for a hostname
+    pub async fn get_latest_scan(
+        &self,
+        hostname: &str,
+        port: u16,
+    ) -> crate::Result<Option<ScanRecord>> {
+        self.scan_repo.get_latest_scan(hostname, port).await
+    }
+
+    /// Cleanup old scans based on retention policy
+    pub async fn cleanup_old_scans(&self, days: i64) -> crate::Result<u64> {
+        self.scan_repo.delete_old_scans(days).await
+    }
+}

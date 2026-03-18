@@ -235,4 +235,64 @@ mod tests {
                 .is_some()
         );
     }
+
+    #[test]
+    fn test_get_exceptions_for_target_includes_global() {
+        let exceptions = vec![
+            PolicyException {
+                domain: None,
+                rules: vec!["protocols.prohibited".to_string()],
+                reason: "Global".to_string(),
+                expires: None,
+                approved_by: "Admin".to_string(),
+                ticket: None,
+            },
+            PolicyException {
+                domain: Some("example.com".to_string()),
+                rules: vec!["protocols.required".to_string()],
+                reason: "Scoped".to_string(),
+                expires: None,
+                approved_by: "Admin".to_string(),
+                ticket: None,
+            },
+        ];
+
+        let matcher = ExceptionMatcher::new(exceptions);
+        let matched = matcher.get_exceptions_for_target("example.com:443");
+        assert_eq!(matched.len(), 2);
+    }
+
+    #[test]
+    fn test_format_exception_contains_fields() {
+        let exception = PolicyException {
+            domain: Some("example.com".to_string()),
+            rules: vec!["protocols.prohibited".to_string()],
+            reason: "Legacy".to_string(),
+            expires: Some("2099-12-31".to_string()),
+            approved_by: "CISO".to_string(),
+            ticket: Some("SEC-42".to_string()),
+        };
+
+        let formatted = ExceptionMatcher::format_exception(&exception);
+        assert!(formatted.contains("example.com"));
+        assert!(formatted.contains("SEC-42"));
+        assert!(formatted.contains("Expires"));
+    }
+
+    #[test]
+    fn test_format_exception_without_domain() {
+        let exception = PolicyException {
+            domain: None,
+            rules: vec!["protocols.required".to_string()],
+            reason: "Global".to_string(),
+            expires: None,
+            approved_by: "Admin".to_string(),
+            ticket: None,
+        };
+
+        let formatted = ExceptionMatcher::format_exception(&exception);
+        assert!(formatted.contains("Rules:"));
+        assert!(formatted.contains("Reason:"));
+        assert!(!formatted.contains("Domain:"));
+    }
 }

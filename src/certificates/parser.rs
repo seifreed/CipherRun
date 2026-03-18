@@ -771,6 +771,30 @@ mod tests {
         assert!(EV_POLICY_OIDS.len() > 20); // Should have many known EV OIDs
     }
 
+    #[test]
+    fn test_certificate_chain_helpers() {
+        let leaf = CertificateInfo {
+            subject: "CN=leaf".to_string(),
+            is_ca: false,
+            ..Default::default()
+        };
+        let intermediate = CertificateInfo {
+            subject: "CN=intermediate".to_string(),
+            is_ca: true,
+            ..Default::default()
+        };
+
+        let chain = CertificateChain {
+            certificates: vec![leaf.clone(), intermediate.clone()],
+            chain_length: 2,
+            chain_size_bytes: 0,
+        };
+
+        assert_eq!(chain.leaf().unwrap().subject, "CN=leaf");
+        assert_eq!(chain.intermediates().len(), 1);
+        assert!(chain.is_complete());
+    }
+
     #[tokio::test]
     #[ignore] // Requires network access
     async fn test_pin_sha256_calculation() {
@@ -896,5 +920,64 @@ mod tests {
             "Test certificate Pin SHA256: {}",
             pin.expect("Pin should be present")
         );
+    }
+
+    #[test]
+    fn test_duration_format_helpers() {
+        let (y, m, d) = calculate_duration_parts(800);
+        assert_eq!((y, m, d), (2, 2, 10));
+
+        let phrase = format_time_phrase(1, 0, 0, false);
+        assert!(phrase.contains("expires in 1 year"));
+
+        let phrase = format_time_phrase(0, 2, 5, true);
+        assert!(phrase.contains("expired 2 months and 5 days ago"));
+
+        let today = format_expiry_countdown(&Utc::now().to_rfc3339()).unwrap();
+        assert!(today.contains("expires today") || today.contains("expired today"));
+    }
+
+    #[test]
+    fn test_parse_certificate_basic_fields() {
+        use openssl::asn1::Asn1Time;
+        use openssl::hash::MessageDigest as OpensslMessageDigest;
+        use openssl::pkey::PKey;
+        use openssl::rsa::Rsa;
+        use openssl::x509::extension::SubjectAlternativeName;
+        use openssl::x509::{X509Builder, X509NameBuilder};
+
+        let rsa = Rsa::generate(2048).unwrap();
+        let pkey = PKey::from_rsa(rsa).unwrap();
+
+        let mut name = X509NameBuilder::new().unwrap();
+        name.append_entry_by_text("CN", "example.com").unwrap();
+        let name = name.build();
+
+        let mut builder = X509Builder::new().unwrap();
+        builder.set_subject_name(&name).unwrap();
+        builder.set_issuer_name(&name).unwrap();
+        builder.set_pubkey(&pkey).unwrap();
+        builder
+            .set_not_before(&Asn1Time::days_from_now(0).unwrap())
+            .unwrap();
+        builder
+            .set_not_after(&Asn1Time::days_from_now(30).unwrap())
+            .unwrap();
+
+        let mut san = SubjectAlternativeName::new();
+        san.dns("example.com");
+        san.dns("www.example.com");
+        let san_ext = san.build(&builder.x509v3_context(None, None)).unwrap();
+        builder.append_extension(san_ext).unwrap();
+
+        builder.sign(&pkey, OpensslMessageDigest::sha256()).unwrap();
+        let cert = builder.build();
+        let der = cert.to_der().unwrap();
+
+        let info = CertificateParser::parse_certificate(&der).unwrap();
+        assert!(info.subject.contains("CN=example.com"));
+        assert!(info.issuer.contains("CN=example.com"));
+        assert!(info.san.iter().any(|s| s.contains("example.com")));
+        assert!(info.fingerprint_sha256.is_some());
     }
 }

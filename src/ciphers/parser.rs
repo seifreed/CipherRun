@@ -374,4 +374,95 @@ mod tests {
         assert!(csv.contains("TLS 1.2,c030"));
         assert!(csv.contains("ECDHE-RSA-AES256-GCM-SHA384"));
     }
+
+    #[test]
+    fn test_format_list_markers() {
+        let cipher = CipherSuite {
+            hexcode: "c02f".to_string(),
+            openssl_name: "ECDHE-RSA-AES128-GCM-SHA256".to_string(),
+            iana_name: "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256".to_string(),
+            protocol: "TLSv1.2".to_string(),
+            key_exchange: "ECDHE".to_string(),
+            authentication: "RSA".to_string(),
+            encryption: "AES128-GCM".to_string(),
+            mac: "AEAD".to_string(),
+            bits: 128,
+            export: false,
+        };
+
+        let output = CipherListFormatter::format_list(&[cipher], Protocol::TLS12, false);
+        assert!(output.contains("FS"));
+        assert!(output.contains("AEAD"));
+    }
+
+    #[test]
+    fn test_protocol_cipher_summary_display_server_preference() {
+        let cipher = CipherSuite {
+            hexcode: "c02f".to_string(),
+            openssl_name: "ECDHE-RSA-AES128-GCM-SHA256".to_string(),
+            iana_name: "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256".to_string(),
+            protocol: "TLSv1.2".to_string(),
+            key_exchange: "ECDHE".to_string(),
+            authentication: "RSA".to_string(),
+            encryption: "AES128-GCM".to_string(),
+            mac: "AEAD".to_string(),
+            bits: 128,
+            export: false,
+        };
+
+        let mut summary = ProtocolCipherSummary {
+            protocol: Protocol::TLS12,
+            supported_ciphers: vec![cipher.clone()],
+            server_ordered: true,
+            server_preference: vec!["c02f".to_string()],
+            preferred_cipher: Some(cipher),
+            counts: Default::default(),
+            avg_handshake_time_ms: None,
+        };
+        summary.counts.total = 1;
+
+        let output = summary.to_string();
+        assert!(output.contains("Server Cipher Order: YES"));
+    }
+
+    #[test]
+    fn test_format_cipher_detailed_includes_bits_and_flags() {
+        let cipher = CipherSuite {
+            hexcode: "1301".to_string(),
+            openssl_name: "TLS_AES_128_GCM_SHA256".to_string(),
+            iana_name: "TLS_AES_128_GCM_SHA256".to_string(),
+            protocol: "TLSv1.3".to_string(),
+            key_exchange: "ECDHE".to_string(),
+            authentication: "RSA".to_string(),
+            encryption: "AESGCM".to_string(),
+            mac: "AEAD".to_string(),
+            bits: 128,
+            export: false,
+        };
+
+        let formatted = CipherFormatter::format_cipher_detailed(&cipher, false);
+        assert!(formatted.contains("Kx=ECDHE"));
+        assert!(formatted.contains("128bits"));
+        assert!(formatted.contains("FS"));
+        assert!(formatted.contains("AEAD"));
+    }
+
+    #[test]
+    fn test_format_cipher_detailed_omits_mac_for_aead() {
+        let cipher = CipherSuite {
+            hexcode: "1302".to_string(),
+            openssl_name: "TLS_AES_256_GCM_SHA384".to_string(),
+            iana_name: "TLS_AES_256_GCM_SHA384".to_string(),
+            protocol: "TLSv1.3".to_string(),
+            key_exchange: "ECDHE".to_string(),
+            authentication: "RSA".to_string(),
+            encryption: "AESGCM".to_string(),
+            mac: "AEAD".to_string(),
+            bits: 256,
+            export: false,
+        };
+
+        let formatted = CipherFormatter::format_cipher_detailed(&cipher, false);
+        assert!(!formatted.contains("Mac="));
+    }
 }

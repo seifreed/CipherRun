@@ -260,4 +260,62 @@ mod tests {
         assert!(html.contains("<html>"));
         assert!(html.contains("Red"));
     }
+
+    #[test]
+    fn test_convert_file_rejects_null_byte() {
+        let aha = Aha::new();
+        let result = aha.convert_file("bad\0path", "out.html");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_convert_file_rejects_dangerous_char() {
+        let aha = Aha::new();
+        let result = aha.convert_file("bad|path", "out.html");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_convert_file_rejects_dangerous_output_path() {
+        let aha = Aha::new();
+        let result = aha.convert_file("input.ansi", "out|put.html");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_convert_file_missing_input() {
+        let aha = Aha::new();
+        let result = aha.convert_file("does_not_exist.ansi", "out.html");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_aha_is_available_with_missing_binary() {
+        let aha = Aha::with_path("missing-aha-binary".to_string());
+        assert!(!aha.is_available());
+    }
+
+    #[test]
+    fn test_aha_options_default_values() {
+        let options = AhaOptions::default();
+        assert!(!options.no_header);
+        assert!(!options.black);
+        assert!(options.title.is_none());
+        assert!(options.stylesheet.is_none());
+    }
+
+    #[test]
+    fn test_html_escape_quotes_and_ampersand() {
+        let text = "A&B \"quote\"";
+        let escaped = html_escape(text);
+        assert!(escaped.contains("&amp;"));
+        assert!(escaped.contains("&quot;"));
+    }
+
+    #[test]
+    fn test_strip_ansi_codes_passthrough() {
+        let plain = "Plain text";
+        let stripped = strip_ansi_codes(plain);
+        assert_eq!(stripped, plain);
+    }
 }

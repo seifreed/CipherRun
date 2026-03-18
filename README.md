@@ -114,7 +114,7 @@ Terminal, JSON, CSV, HTML, XML
 
 ---
 
-## Architecture (High Level)
+## Architecture
 
 - **Scanner Engine**: Async Tokio-based probes
 - **Protocols**: SSLv2 → TLS 1.3
@@ -122,6 +122,8 @@ Terminal, JSON, CSV, HTML, XML
 - **Fingerprinting**: JA3/JA3S/JARM
 - **Compliance**: 7 frameworks
 - **Database**: SQL migrations + analytics
+
+For architectural rules, layer boundaries, and contribution guidance, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 

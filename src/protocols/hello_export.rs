@@ -1,7 +1,7 @@
 // Client/Server Hello Raw Data Export Module
 // Exports raw handshake data in various formats for analysis
 
-use base64::{Engine as _, engine::general_purpose};
+use base64::{engine::general_purpose, Engine as _};
 use serde::{Deserialize, Serialize};
 
 /// Hello exporter for raw handshake data
@@ -293,6 +293,19 @@ mod tests {
     }
 
     #[test]
+    fn test_identify_record_type_unknown_additional() {
+        // Data with record type 0x00 - this should return Unknown(0x00), not None
+        // The identify_record_type function returns Some(TlsRecordType::Unknown) for any byte
+        let data = vec![0x00, 0x03, 0x01];
+        let result = HelloExporter::identify_record_type(&data);
+        assert!(
+            result.is_some(),
+            "Should return Some for any record type byte"
+        );
+        assert_eq!(result, Some(TlsRecordType::Unknown(0x00)));
+    }
+
+    #[test]
     fn test_extract_tls_version() {
         let data = vec![0x16, 0x03, 0x03]; // TLS 1.2
         let version = HelloExporter::extract_tls_version(&data);
@@ -322,5 +335,47 @@ mod tests {
         assert_eq!(export.server_hello.length, 5);
         assert!(!export.client_hello.hex.is_empty());
         assert!(!export.server_hello.hex.is_empty());
+    }
+
+    #[test]
+    fn test_export_binary_uses_lossy() {
+        let data = vec![0xff, 0x00, b'A'];
+        let output = HelloExporter::export_client_hello(&data, ExportFormat::Binary);
+        assert!(output.contains('A'));
+        assert!(!output.is_empty());
+    }
+
+    #[test]
+    fn test_identify_handshake_type_unknown() {
+        let data = vec![0x16, 0x03, 0x03, 0x00, 0x05, 0xaa];
+        assert_eq!(
+            HelloExporter::identify_handshake_type(&data),
+            Some(HandshakeType::Unknown(0xaa))
+        );
+    }
+
+    #[test]
+    fn test_identify_record_type_unknown() {
+        let data = vec![0x99, 0x03, 0x03];
+        assert_eq!(
+            HelloExporter::identify_record_type(&data),
+            Some(TlsRecordType::Unknown(0x99))
+        );
+    }
+
+    #[test]
+    fn test_export_client_hello_hex_contains_prefix() {
+        let data = vec![0x16, 0x03, 0x01, 0x00, 0x01];
+        let output = HelloExporter::export_client_hello(&data, ExportFormat::Hex);
+        // hex::encode produces lowercase hex without 0x prefix
+        // 0x16 becomes "16" in hex output
+        assert!(
+            output.contains("16"),
+            "Hex output should contain '16' (for 0x16 byte)"
+        );
+        assert!(
+            output.starts_with("160301"),
+            "First bytes should be 16 03 01"
+        );
     }
 }

@@ -7,10 +7,13 @@ pub mod evaluator;
 pub mod exceptions;
 pub mod parser;
 pub mod rules;
+pub mod source;
 pub mod violation;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+
+pub use source::FilesystemPolicySource;
 
 /// Policy action to take when a rule is violated
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -380,6 +383,7 @@ impl PolicyResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::policy::violation::PolicyViolation;
 
     #[test]
     fn test_policy_action_is_failure() {
@@ -408,5 +412,127 @@ mod tests {
 
         let result = PolicyResult::new(policy, Vec::new());
         assert!(!result.has_violations());
+    }
+
+    #[test]
+    fn test_policy_result_formatters() {
+        let policy = Policy {
+            name: "Example Policy".to_string(),
+            version: "1.0".to_string(),
+            description: None,
+            organization: None,
+            effective_date: None,
+            extends: None,
+            protocols: None,
+            ciphers: None,
+            certificates: None,
+            vulnerabilities: None,
+            rating: None,
+            compliance: None,
+            exceptions: Vec::new(),
+        };
+
+        let violations = vec![
+            PolicyViolation::new(
+                "protocols.prohibited",
+                "TLS 1.0 disabled",
+                PolicyAction::Fail,
+                "TLS 1.0 is enabled, which is not allowed",
+            )
+            .with_evidence("Protocol list includes TLS 1.0")
+            .with_remediation("Disable TLS 1.0"),
+            PolicyViolation::new(
+                "ciphers.require_forward_secrecy",
+                "Forward secrecy required",
+                PolicyAction::Warn,
+                "One cipher lacks forward secrecy",
+            ),
+        ];
+
+        let mut result = PolicyResult::new(policy, violations);
+        result.target = "example.com:443".to_string();
+        result.exceptions_applied = vec!["temp exception".to_string()];
+
+        let json = result
+            .format("json")
+            .expect("test assertion should succeed");
+        assert!(json.contains("Example Policy"));
+
+        let csv = result.format("csv").expect("test assertion should succeed");
+        assert!(csv.contains("Rule Path"));
+        assert!(csv.contains("protocols.prohibited"));
+
+        let terminal = result
+            .format("terminal")
+            .expect("test assertion should succeed");
+        assert!(terminal.contains("Policy Evaluation"));
+        assert!(terminal.contains("Violations"));
+        assert!(terminal.contains("Exceptions Applied"));
+    }
+
+    #[test]
+    fn test_policy_action_is_warning() {
+        assert!(PolicyAction::Warn.is_warning());
+        assert!(!PolicyAction::Fail.is_warning());
+        assert!(!PolicyAction::Info.is_warning());
+    }
+
+    #[test]
+    fn test_policy_result_csv_escapes_quotes() {
+        let policy = Policy {
+            name: "CSV Policy".to_string(),
+            version: "1.0".to_string(),
+            description: None,
+            organization: None,
+            effective_date: None,
+            extends: None,
+            protocols: None,
+            ciphers: None,
+            certificates: None,
+            vulnerabilities: None,
+            rating: None,
+            compliance: None,
+            exceptions: Vec::new(),
+        };
+
+        let violations = vec![
+            PolicyViolation::new(
+                "rules.example",
+                "Example Rule",
+                PolicyAction::Fail,
+                "Quote \"here\"",
+            )
+            .with_evidence("Evidence \"quoted\"")
+            .with_remediation("Fix \"now\""),
+        ];
+
+        let result = PolicyResult::new(policy, violations);
+        let csv = result.format("csv").expect("test assertion should succeed");
+        assert!(csv.contains("\"Quote \"\"here\"\"\""));
+        assert!(csv.contains("\"Evidence \"\"quoted\"\"\""));
+        assert!(csv.contains("\"Fix \"\"now\"\"\""));
+    }
+
+    #[test]
+    fn test_policy_result_csv_header_only_when_no_violations() {
+        let policy = Policy {
+            name: "Empty Policy".to_string(),
+            version: "1.0".to_string(),
+            description: None,
+            organization: None,
+            effective_date: None,
+            extends: None,
+            protocols: None,
+            ciphers: None,
+            certificates: None,
+            vulnerabilities: None,
+            rating: None,
+            compliance: None,
+            exceptions: Vec::new(),
+        };
+
+        let result = PolicyResult::new(policy, Vec::new());
+        let csv = result.format("csv").expect("test assertion should succeed");
+        assert!(csv.starts_with("Rule Path,Rule Name,Action,Description,Evidence,Remediation"));
     }
 }

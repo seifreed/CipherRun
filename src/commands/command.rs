@@ -5,6 +5,29 @@
 use crate::Result;
 use async_trait::async_trait;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CommandExit {
+    code: i32,
+}
+
+impl CommandExit {
+    pub const fn success() -> Self {
+        Self { code: 0 }
+    }
+
+    pub const fn failure(code: i32) -> Self {
+        Self { code }
+    }
+
+    pub const fn code(self) -> i32 {
+        self.code
+    }
+
+    pub const fn is_success(self) -> bool {
+        self.code == 0
+    }
+}
+
 /// Command trait - Defines the interface for all command implementations
 ///
 /// This trait follows the Command Pattern to encapsulate different
@@ -30,14 +53,41 @@ pub trait Command: Send + Sync {
     /// Execute the command asynchronously
     ///
     /// # Returns
-    /// - `Ok(())` if the command executed successfully
+    /// - `Ok(CommandExit)` with the desired process exit code if the command completed
     /// - `Err(anyhow::Error)` if the command failed
     ///
     /// # Errors
     /// Implementation-specific errors should be wrapped in TlsError
     /// with appropriate context to aid debugging
-    async fn execute(&self) -> Result<()>;
+    async fn execute(&self) -> Result<CommandExit>;
 
     /// Get a human-readable name for this command (for logging/debugging)
     fn name(&self) -> &'static str;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use async_trait::async_trait;
+
+    struct DummyCommand;
+
+    #[async_trait]
+    impl Command for DummyCommand {
+        async fn execute(&self) -> Result<CommandExit> {
+            Ok(CommandExit::success())
+        }
+
+        fn name(&self) -> &'static str {
+            "DummyCommand"
+        }
+    }
+
+    #[tokio::test]
+    async fn test_command_trait_execute_and_name() {
+        let cmd = DummyCommand;
+        assert_eq!(cmd.name(), "DummyCommand");
+        let exit = cmd.execute().await.expect("command should succeed");
+        assert!(exit.is_success());
+    }
 }

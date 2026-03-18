@@ -2,7 +2,7 @@
 // Copyright (C) 2025 Marc Rivero (@seifreed)
 // Licensed under GPL-3.0
 
-use super::Command;
+use super::{Command, CommandExit};
 use crate::{Args, Result, TlsError};
 use async_trait::async_trait;
 use tracing::info;
@@ -26,7 +26,7 @@ impl ApiServerCommand {
 
 #[async_trait]
 impl Command for ApiServerCommand {
-    async fn execute(&self) -> Result<()> {
+    async fn execute(&self) -> Result<CommandExit> {
         use crate::api::{ApiConfig, ApiServer};
 
         info!("Starting CipherRun in API server mode");
@@ -51,10 +51,23 @@ impl Command for ApiServerCommand {
         let server = ApiServer::new(config)?;
         server.run().await?;
 
-        Ok(())
+        Ok(CommandExit::success())
     }
 
     fn name(&self) -> &'static str {
         "ApiServerCommand"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Args;
+
+    #[test]
+    fn test_api_server_command_name() {
+        let args = Args::default();
+        let cmd = ApiServerCommand::new(args);
+        assert_eq!(cmd.name(), "ApiServerCommand");
     }
 }

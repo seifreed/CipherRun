@@ -1,25 +1,16 @@
 // Client CAs List - Extract acceptable CAs for client authentication
 
+mod model;
+mod parser;
+
+pub use model::{ClientCA, ClientCAsResult};
+
 use crate::Result;
 use crate::utils::network::Target;
-use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::time::timeout;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ClientCA {
-    pub distinguished_name: String,
-    pub organization: Option<String>,
-    pub common_name: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ClientCAsResult {
-    pub cas: Vec<ClientCA>,
-    pub requires_client_auth: bool,
-}
 
 pub struct ClientCAsTester {
     target: Target,
@@ -33,11 +24,11 @@ impl ClientCAsTester {
     pub async fn enumerate_client_cas(&self) -> Result<ClientCAsResult> {
         let addr = self.target.socket_addrs()[0];
         let connect_timeout = Duration::from_secs(10);
-        let read_timeout = Duration::from_secs(5);
+        let overall_read_timeout = Duration::from_secs(10);
+        let read_timeout = Duration::from_secs(2);
 
-        // Try to connect and trigger CertificateRequest
         let mut stream = match timeout(connect_timeout, TcpStream::connect(addr)).await {
-            Ok(Ok(s)) => s,
+            Ok(Ok(stream)) => stream,
             _ => {
                 return Ok(ClientCAsResult {
                     cas: Vec::new(),
@@ -46,32 +37,23 @@ impl ClientCAsTester {
             }
         };
 
-        // Build ClientHello without client certificate
         let mut builder =
             crate::protocols::handshake::ClientHelloBuilder::new(crate::protocols::Protocol::TLS12);
-
-        // Add common cipher that requires authentication
-        builder.add_cipher(0xc030); // ECDHE-RSA-AES256-GCM-SHA384
+        builder.add_cipher(0xc030);
 
         if let Ok(client_hello) = builder.build_with_defaults(Some(&self.target.hostname)) {
-            // Send ClientHello and read server response
-            if let Ok(response) = timeout(read_timeout, async {
+            if let Ok(response) = timeout(overall_read_timeout, async {
                 stream.write_all(&client_hello).await?;
-
-                // Read ServerHello and subsequent messages
-                let mut response = vec![0u8; 16384]; // Larger buffer for certificates
-                let n = stream.read(&mut response).await?;
-
-                Ok::<Vec<u8>, anyhow::Error>(response[..n].to_vec())
+                self.read_tls_handshake_bytes(&mut stream, read_timeout).await
             })
             .await
                 && let Ok(data) = response
             {
-                // Parse TLS messages looking for CertificateRequest (type 13)
-                let cas = self.parse_certificate_request(&data);
+                let cert_request = self.find_certificate_request(&data);
+                let cas = cert_request.clone().unwrap_or_default();
 
                 return Ok(ClientCAsResult {
-                    requires_client_auth: !cas.is_empty(),
+                    requires_client_auth: cert_request.is_some(),
                     cas,
                 });
             }
@@ -83,158 +65,228 @@ impl ClientCAsTester {
         })
     }
 
-    fn parse_certificate_request(&self, data: &[u8]) -> Vec<ClientCA> {
-        let mut cas = Vec::new();
-        let mut pos = 0;
+    async fn read_tls_handshake_bytes(
+        &self,
+        stream: &mut TcpStream,
+        read_timeout: Duration,
+    ) -> Result<Vec<u8>> {
+        let mut response = Vec::new();
+        let mut chunk = vec![0u8; 4096];
 
-        // Walk through TLS records
-        while pos + 5 < data.len() {
-            // Check for Handshake record (0x16)
-            if data[pos] != 0x16 {
-                pos += 1;
-                continue;
-            }
-
-            // Get record length
-            let record_len = u16::from_be_bytes([data[pos + 3], data[pos + 4]]) as usize;
-            pos += 5;
-
-            if pos + record_len > data.len() {
-                break;
-            }
-
-            let record_data = &data[pos..pos + record_len];
-
-            // Look for CertificateRequest message (type 13)
-            if !record_data.is_empty() && record_data[0] == 13 {
-                // Parse CertificateRequest
-                if let Some(parsed_cas) = self.parse_ca_list(record_data) {
-                    cas.extend(parsed_cas);
+        loop {
+            match timeout(read_timeout, stream.read(&mut chunk)).await {
+                Ok(Ok(0)) => break,
+                Ok(Ok(n)) => {
+                    response.extend_from_slice(&chunk[..n]);
+                    if self.find_certificate_request(&response).is_some() {
+                        break;
+                    }
                 }
+                Ok(Err(err)) => return Err(err.into()),
+                Err(_) => break,
             }
-
-            pos += record_len;
         }
 
-        cas
+        Ok(response)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn build_dn(cn: &str, org: &str) -> Vec<u8> {
+        let mut dn = Vec::new();
+
+        dn.extend_from_slice(&[0x06, 0x03, 0x55, 0x04, 0x03, 0x0c]);
+        dn.push(cn.len() as u8);
+        dn.extend_from_slice(cn.as_bytes());
+
+        dn.extend_from_slice(&[0x06, 0x03, 0x55, 0x04, 0x0a, 0x0c]);
+        dn.push(org.len() as u8);
+        dn.extend_from_slice(org.as_bytes());
+
+        dn
     }
 
-    fn parse_ca_list(&self, data: &[u8]) -> Option<Vec<ClientCA>> {
-        // CertificateRequest structure:
-        // - Handshake type (1 byte): 13
-        // - Length (3 bytes)
-        // - Certificate types length (1 byte)
-        // - Certificate types (variable)
-        // - Signature algorithms length (2 bytes)
-        // - Signature algorithms (variable)
-        // - Certificate authorities length (2 bytes)
-        // - Certificate authorities (variable)
+    fn build_certificate_request(dn: &[u8]) -> Vec<u8> {
+        let mut body = Vec::new();
+        body.push(0);
+        body.extend_from_slice(&[0x00, 0x00]);
 
-        if data.len() < 10 {
-            return None;
-        }
+        let ca_list_len = dn.len() as u16 + 2;
+        body.extend_from_slice(&ca_list_len.to_be_bytes());
+        body.extend_from_slice(&(dn.len() as u16).to_be_bytes());
+        body.extend_from_slice(dn);
 
-        let mut pos = 4; // Skip message type and length
-
-        // Skip certificate types
-        if pos >= data.len() {
-            return None;
-        }
-        let cert_types_len = data[pos] as usize;
-        pos += 1 + cert_types_len;
-
-        // Skip signature algorithms (TLS 1.2+)
-        if pos + 2 > data.len() {
-            return None;
-        }
-        let sig_algs_len = u16::from_be_bytes([data[pos], data[pos + 1]]) as usize;
-        pos += 2 + sig_algs_len;
-
-        // Parse certificate authorities
-        if pos + 2 > data.len() {
-            return None;
-        }
-
-        let ca_list_len = u16::from_be_bytes([data[pos], data[pos + 1]]) as usize;
-        pos += 2;
-
-        if pos + ca_list_len > data.len() {
-            return None;
-        }
-
-        let mut cas = Vec::new();
-        let ca_data = &data[pos..pos + ca_list_len];
-        let mut ca_pos = 0;
-
-        // Parse each DN
-        while ca_pos + 2 < ca_data.len() {
-            let dn_len = u16::from_be_bytes([ca_data[ca_pos], ca_data[ca_pos + 1]]) as usize;
-            ca_pos += 2;
-
-            if ca_pos + dn_len > ca_data.len() {
-                break;
-            }
-
-            let dn_data = &ca_data[ca_pos..ca_pos + dn_len];
-
-            // Parse DN (simplified - just extract as hex for now)
-            let dn_hex = hex::encode(dn_data);
-
-            // Try to extract common name and organization (basic parsing)
-            let (cn, org) = self.extract_dn_fields(dn_data);
-
-            cas.push(ClientCA {
-                distinguished_name: dn_hex,
-                common_name: cn,
-                organization: org,
-            });
-
-            ca_pos += dn_len;
-        }
-
-        Some(cas)
+        let body_len = body.len() as u32;
+        let mut handshake = vec![
+            13,
+            ((body_len >> 16) & 0xff) as u8,
+            ((body_len >> 8) & 0xff) as u8,
+            (body_len & 0xff) as u8,
+        ];
+        handshake.extend_from_slice(&body);
+        handshake
     }
 
-    fn extract_dn_fields(&self, dn_data: &[u8]) -> (Option<String>, Option<String>) {
-        // Very basic DN parsing - in production would use x509_parser
-        // This is a simplified version that looks for printable strings
+    #[test]
+    fn test_extract_dn_fields() {
+        let tester = ClientCAsTester::new(
+            Target::with_ips(
+                "example.test".to_string(),
+                443,
+                vec!["127.0.0.1".parse().expect("valid IP")],
+            )
+            .expect("test assertion should succeed"),
+        );
 
-        let mut cn = None;
-        let mut org = None;
+        let dn = build_dn("Example CN", "Example Org");
+        let (cn, org) = tester.extract_dn_fields(&dn);
+        assert_eq!(cn.as_deref(), Some("Example CN"));
+        assert_eq!(org.as_deref(), Some("Example Org"));
+    }
 
-        // Look for PrintableString or UTF8String
-        for i in 0..dn_data.len().saturating_sub(10) {
-            // Common Name (2.5.4.3)
-            if dn_data[i..].len() > 8
-                && dn_data[i..i + 3] == [0x06, 0x03, 0x55]
-                && (dn_data[i+3..i+6] == [0x04, 0x03, 0x0c] || // UTF8String
-                   dn_data[i+3..i+6] == [0x04, 0x03, 0x13])
-            {
-                // PrintableString
-                let len = dn_data[i + 6] as usize;
-                if i + 7 + len <= dn_data.len()
-                    && let Ok(s) = std::str::from_utf8(&dn_data[i + 7..i + 7 + len])
-                {
-                    cn = Some(s.to_string());
-                }
-            }
+    #[test]
+    fn test_parse_ca_list() {
+        let tester = ClientCAsTester::new(
+            Target::with_ips(
+                "example.test".to_string(),
+                443,
+                vec!["127.0.0.1".parse().expect("valid IP")],
+            )
+            .expect("test assertion should succeed"),
+        );
 
-            // Organization (2.5.4.10)
-            if dn_data[i..].len() > 8
-                && dn_data[i..i + 3] == [0x06, 0x03, 0x55]
-                && (dn_data[i+3..i+6] == [0x04, 0x0a, 0x0c] || // UTF8String
-                   dn_data[i+3..i+6] == [0x04, 0x0a, 0x13])
-            {
-                // PrintableString
-                let len = dn_data[i + 6] as usize;
-                if i + 7 + len <= dn_data.len()
-                    && let Ok(s) = std::str::from_utf8(&dn_data[i + 7..i + 7 + len])
-                {
-                    org = Some(s.to_string());
-                }
-            }
-        }
+        let dn = build_dn("CN1", "ORG1");
+        let handshake = build_certificate_request(&dn);
 
-        (cn, org)
+        let cas = tester
+            .parse_ca_list(&handshake)
+            .expect("test assertion should succeed");
+        assert_eq!(cas.len(), 1);
+        assert_eq!(cas[0].common_name.as_deref(), Some("CN1"));
+        assert_eq!(cas[0].organization.as_deref(), Some("ORG1"));
+    }
+
+    #[test]
+    fn test_extract_dn_fields_empty() {
+        let tester = ClientCAsTester::new(
+            Target::with_ips(
+                "example.test".to_string(),
+                443,
+                vec!["127.0.0.1".parse().expect("valid IP")],
+            )
+            .expect("test assertion should succeed"),
+        );
+
+        let (cn, org) = tester.extract_dn_fields(&[]);
+        assert!(cn.is_none());
+        assert!(org.is_none());
+    }
+
+    #[test]
+    fn test_parse_certificate_request() {
+        let tester = ClientCAsTester::new(
+            Target::with_ips(
+                "example.test".to_string(),
+                443,
+                vec!["127.0.0.1".parse().expect("valid IP")],
+            )
+            .expect("test assertion should succeed"),
+        );
+
+        let dn = build_dn("CN2", "ORG2");
+        let handshake = build_certificate_request(&dn);
+
+        let record_len = handshake.len() as u16;
+        let mut record = vec![0x16, 0x03, 0x03];
+        record.extend_from_slice(&record_len.to_be_bytes());
+        record.extend_from_slice(&handshake);
+
+        let cas = tester.parse_certificate_request(&record);
+        assert_eq!(cas.len(), 1);
+        assert_eq!(cas[0].common_name.as_deref(), Some("CN2"));
+    }
+
+    #[test]
+    fn test_parse_certificate_request_after_other_handshake_messages() {
+        let tester = ClientCAsTester::new(
+            Target::with_ips(
+                "example.test".to_string(),
+                443,
+                vec!["127.0.0.1".parse().expect("valid IP")],
+            )
+            .expect("test assertion should succeed"),
+        );
+
+        let dn = build_dn("CN3", "ORG3");
+
+        let server_hello = vec![2, 0, 0, 0];
+        let cert_request = build_certificate_request(&dn);
+
+        let first_record_len = server_hello.len() as u16;
+        let mut first_record = vec![0x16, 0x03, 0x03];
+        first_record.extend_from_slice(&first_record_len.to_be_bytes());
+        first_record.extend_from_slice(&server_hello);
+
+        let second_record_len = cert_request.len() as u16;
+        let mut second_record = vec![0x16, 0x03, 0x03];
+        second_record.extend_from_slice(&second_record_len.to_be_bytes());
+        second_record.extend_from_slice(&cert_request);
+
+        let mut combined = first_record;
+        combined.extend_from_slice(&second_record);
+
+        let cas = tester.parse_certificate_request(&combined);
+        assert_eq!(cas.len(), 1);
+        assert_eq!(cas[0].common_name.as_deref(), Some("CN3"));
+        assert_eq!(cas[0].organization.as_deref(), Some("ORG3"));
+    }
+
+    #[test]
+    fn test_parse_ca_list_too_short() {
+        let tester = ClientCAsTester::new(
+            Target::with_ips(
+                "example.test".to_string(),
+                443,
+                vec!["127.0.0.1".parse().expect("valid IP")],
+            )
+            .expect("test assertion should succeed"),
+        );
+
+        let cas = tester.parse_ca_list(&[13, 0, 0, 0]);
+        assert!(cas.is_none());
+    }
+
+    #[test]
+    fn test_parse_certificate_request_skips_non_handshake() {
+        let tester = ClientCAsTester::new(
+            Target::with_ips(
+                "example.test".to_string(),
+                443,
+                vec!["127.0.0.1".parse().expect("valid IP")],
+            )
+            .expect("test assertion should succeed"),
+        );
+
+        let record = vec![0x15, 0x03, 0x03, 0x00, 0x02, 0x01, 0x00];
+        let cas = tester.parse_certificate_request(&record);
+        assert!(cas.is_empty());
+    }
+
+    #[test]
+    fn test_parse_ca_list_empty_returns_none() {
+        let tester = ClientCAsTester::new(
+            Target::with_ips(
+                "example.test".to_string(),
+                443,
+                vec!["127.0.0.1".parse().expect("valid IP")],
+            )
+            .expect("test assertion should succeed"),
+        );
+
+        let cas = tester.parse_ca_list(&[]);
+        assert!(cas.is_none());
     }
 }

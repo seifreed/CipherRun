@@ -11,7 +11,7 @@
 //
 // Dependencies:
 // - HeaderAnalyzer (domain logic for HTTP header analysis)
-// - Args (CLI configuration for custom headers, user agent)
+// - ScanRequest (scan configuration for custom headers, user agent)
 // - Target (server information)
 //
 // Security headers analyzed:
@@ -25,8 +25,9 @@
 // - Set-Cookie flags (Secure, HttpOnly, SameSite)
 
 use super::{ScanContext, ScanPhase};
+use crate::Result;
+use crate::application::ScanRequest;
 use crate::http::tester::HeaderAnalyzer;
-use crate::{Args, Result};
 use async_trait::async_trait;
 
 /// HTTP security headers analysis phase
@@ -35,7 +36,7 @@ use async_trait::async_trait;
 /// security controls. This phase makes an HTTPS request to the target
 /// and evaluates the response headers.
 ///
-/// Configuration sources (from Args):
+/// Configuration sources (from ScanRequest):
 /// - Custom headers (--header "Name: Value")
 /// - User agent override (--sneaky mode)
 /// - Header testing enable/disable (--headers)
@@ -111,7 +112,7 @@ impl ScanPhase for HttpHeadersPhase {
         "Analyzing HTTP Security Headers"
     }
 
-    fn should_run(&self, args: &Args) -> bool {
+    fn should_run(&self, args: &ScanRequest) -> bool {
         // Run if:
         // - Explicit header analysis requested (--headers)
         // - Full scan mode (--all)
@@ -143,27 +144,37 @@ mod tests {
     use super::*;
     use std::sync::Arc;
 
+    fn build_context(args: ScanRequest) -> ScanContext {
+        let target = crate::utils::network::Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .expect("test assertion should succeed");
+        ScanContext::new(target, Arc::new(args), None)
+    }
+
     #[test]
     fn test_http_headers_phase_should_run() {
         let phase = HttpHeadersPhase::new();
 
         // Test with --headers flag
-        let mut args = Args::default();
+        let mut args = ScanRequest::default();
         args.scan.headers = true;
         assert!(phase.should_run(&args));
 
         // Test with --all flag
-        let mut args = Args::default();
+        let mut args = ScanRequest::default();
         args.scan.all = true;
         assert!(phase.should_run(&args));
 
         // Test with target specified (default scan, should NOT run)
-        let mut args = Args::default();
+        let mut args = ScanRequest::default();
         args.target = Some("example.com".to_string());
         assert!(!phase.should_run(&args));
 
         // Test with no relevant flags
-        let args = Args::default();
+        let args = ScanRequest::default();
         assert!(!phase.should_run(&args));
     }
 
@@ -171,5 +182,23 @@ mod tests {
     fn test_http_headers_phase_name() {
         let phase = HttpHeadersPhase::new();
         assert_eq!(phase.name(), "Analyzing HTTP Security Headers");
+    }
+
+    #[test]
+    fn test_http_headers_phase_configure_analyzer_custom_headers() {
+        let mut args = ScanRequest::default();
+        args.http.custom_headers = vec!["X-Test: value".to_string(), "BrokenHeader".to_string()];
+        let context = build_context(args);
+        let phase = HttpHeadersPhase::new();
+        let _analyzer = phase.configure_analyzer(&context);
+    }
+
+    #[test]
+    fn test_http_headers_phase_configure_analyzer_sneaky() {
+        let mut args = ScanRequest::default();
+        args.http.sneaky = true;
+        let context = build_context(args);
+        let phase = HttpHeadersPhase::new();
+        let _analyzer = phase.configure_analyzer(&context);
     }
 }

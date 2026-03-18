@@ -76,27 +76,9 @@ const HTML_TEMPLATE: &str = r#"<!DOCTYPE html>
                     <tr>
                         <td>{{protocol}}</td>
                         <td>{{#if supported}}<span class="status-success">Supported</span>{{else}}<span class="status-fail">Not Supported</span>{{/if}}</td>
-                        <td>
-                            {{#if secure_renegotiation}}
-                                <span class="status-success">Supported</span>
-                            {{else}}
-                                {{#if supported}}<span class="status-fail">Not supported</span>{{else}}-{{/if}}
-                            {{/if}}
-                        </td>
-                        <td>
-                            {{#if session_resumption_caching}}
-                                <span class="status-success">Yes</span>
-                            {{else}}
-                                {{#if supported}}<span class="status-fail">No (IDs empty)</span>{{else}}-{{/if}}
-                            {{/if}}
-                        </td>
-                        <td>
-                            {{#if session_resumption_tickets}}
-                                <span class="status-success">Yes</span>
-                            {{else}}
-                                {{#if supported}}<span class="status-fail">No</span>{{else}}-{{/if}}
-                            {{/if}}
-                        </td>
+                        <td>{{{secure_renegotiation_html}}}</td>
+                        <td>{{{session_resumption_caching_html}}}</td>
+                        <td>{{{session_resumption_tickets_html}}}</td>
                     </tr>
                 {{/each}}
                 </tbody>
@@ -112,7 +94,17 @@ const HTML_TEMPLATE: &str = r#"<!DOCTYPE html>
                 {{#each vulnerabilities}}
                     <tr>
                         <td>{{vuln_type}}</td>
-                        <td>{{#if vulnerable}}<span class="status-fail">VULNERABLE</span>{{else}}<span class="status-success">Not Vulnerable</span>{{/if}}</td>
+                        <td>
+                            {{#if vulnerable}}
+                                <span class="status-fail">VULNERABLE</span>
+                            {{else}}
+                                {{#if inconclusive}}
+                                    <span class="status-warn">INCONCLUSIVE</span>
+                                {{else}}
+                                    <span class="status-success">Not Vulnerable</span>
+                                {{/if}}
+                            {{/if}}
+                        </td>
                         <td><span class="severity-{{severity}}">{{severity}}</span></td>
                         <td>{{details}}</td>
                     </tr>
@@ -149,10 +141,29 @@ pub fn generate_html_report(results: &ScanResults) -> Result<String> {
         "protocols": results.protocols.iter().map(|p| json!({
             "protocol": format!("{}", p.protocol),
             "supported": p.supported,
+            "secure_renegotiation_html": render_optional_protocol_status(
+                p.supported,
+                p.secure_renegotiation,
+                "Supported",
+                "Not supported",
+            ),
+            "session_resumption_caching_html": render_optional_protocol_status(
+                p.supported,
+                p.session_resumption_caching,
+                "Yes",
+                "No (IDs empty)",
+            ),
+            "session_resumption_tickets_html": render_optional_protocol_status(
+                p.supported,
+                p.session_resumption_tickets,
+                "Yes",
+                "No",
+            ),
         })).collect::<Vec<_>>(),
         "vulnerabilities": results.vulnerabilities.iter().map(|v| json!({
             "vuln_type": format!("{:?}", v.vuln_type),
             "vulnerable": v.vulnerable,
+            "inconclusive": v.inconclusive,
             "severity": format!("{:?}", v.severity).to_lowercase(),
             "details": v.details,
         })).collect::<Vec<_>>(),
@@ -160,6 +171,20 @@ pub fn generate_html_report(results: &ScanResults) -> Result<String> {
 
     let html = handlebars.render_template(HTML_TEMPLATE, &data)?;
     Ok(html)
+}
+
+fn render_optional_protocol_status(
+    protocol_supported: bool,
+    value: Option<bool>,
+    true_label: &str,
+    false_label: &str,
+) -> String {
+    match value {
+        Some(true) => format!("<span class=\"status-success\">{}</span>", true_label),
+        Some(false) => format!("<span class=\"status-fail\">{}</span>", false_label),
+        None if protocol_supported => "<span class=\"status-warn\">Inconclusive</span>".to_string(),
+        None => "-".to_string(),
+    }
 }
 
 /// Write HTML report to file
@@ -172,6 +197,9 @@ pub fn write_html_file(results: &ScanResults, path: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::rating::{Grade, RatingResult};
+    use crate::scanner::RatingResults;
+    use crate::vulnerabilities::{Severity, VulnerabilityResult, VulnerabilityType};
 
     #[test]
     fn test_html_generation() {
@@ -184,5 +212,114 @@ mod tests {
         let html = generate_html_report(&results).expect("test assertion should succeed");
         assert!(html.contains("CipherRun Security Scan Report"));
         assert!(html.contains("example.com:443"));
+    }
+
+    #[test]
+    fn test_html_grade_class_formatting() {
+        let mut results = ScanResults::default();
+        results.target = "example.com:443".to_string();
+        results.scan_time_ms = 10;
+        results.rating = Some(RatingResults {
+            ssl_rating: Some(RatingResult {
+                grade: Grade::APlus,
+                score: 95,
+                certificate_score: 95,
+                protocol_score: 95,
+                key_exchange_score: 95,
+                cipher_strength_score: 95,
+                warnings: Vec::new(),
+            }),
+        });
+
+        let html = generate_html_report(&results).expect("test assertion should succeed");
+        assert!(html.contains("grade-A-plus"));
+    }
+
+    #[test]
+    fn test_html_includes_vulnerabilities() {
+        let mut results = ScanResults::default();
+        results.target = "example.com:443".to_string();
+        results.vulnerabilities = vec![VulnerabilityResult {
+            vuln_type: VulnerabilityType::Heartbleed,
+            vulnerable: true,
+            inconclusive: false,
+            details: "Test detail".to_string(),
+            cve: Some("CVE-2014-0160".to_string()),
+            cwe: None,
+            severity: Severity::High,
+        }];
+
+        let html = generate_html_report(&results).expect("test assertion should succeed");
+        assert!(html.contains("VULNERABLE"));
+        assert!(html.contains("severity-high"));
+        assert!(html.contains("Test detail"));
+    }
+
+    #[test]
+    fn test_html_protocol_none_is_inconclusive() {
+        let mut results = ScanResults::default();
+        results.target = "example.com:443".to_string();
+        results.protocols = vec![crate::protocols::ProtocolTestResult {
+            protocol: crate::protocols::Protocol::TLS12,
+            supported: true,
+            preferred: false,
+            ciphers_count: 0,
+            handshake_time_ms: None,
+            heartbeat_enabled: None,
+            session_resumption_caching: None,
+            session_resumption_tickets: None,
+            secure_renegotiation: None,
+        }];
+
+        let html = generate_html_report(&results).expect("test assertion should succeed");
+        assert!(html.contains("Inconclusive"));
+    }
+
+    #[test]
+    fn test_write_html_file_round_trip() {
+        let results = ScanResults {
+            target: "example.com:443".to_string(),
+            scan_time_ms: 1,
+            ..Default::default()
+        };
+        let path = std::env::temp_dir().join("cipherrun-report.html");
+        write_html_file(&results, path.to_str().unwrap()).expect("write should succeed");
+        let contents = std::fs::read_to_string(&path).expect("read should succeed");
+        assert!(contents.contains("CipherRun Security Scan Report"));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_html_omits_vulnerabilities_when_empty() {
+        let mut results = ScanResults::default();
+        results.target = "example.com:443".to_string();
+        results.scan_time_ms = 1;
+        results.vulnerabilities = Vec::new();
+
+        let html = generate_html_report(&results).expect("test assertion should succeed");
+        assert!(!html.contains("<h2>Vulnerabilities</h2>"));
+    }
+
+    #[test]
+    fn test_html_includes_protocol_section_even_when_empty() {
+        let mut results = ScanResults::default();
+        results.target = "example.com:443".to_string();
+        results.scan_time_ms = 1;
+        results.protocols = Vec::new();
+
+        let html = generate_html_report(&results).expect("test assertion should succeed");
+        assert!(html.contains("<h2>Supported Protocols</h2>"));
+    }
+
+    #[test]
+    fn test_html_contains_head_and_body() {
+        let results = ScanResults {
+            target: "example.com:443".to_string(),
+            scan_time_ms: 1,
+            ..Default::default()
+        };
+        let html = generate_html_report(&results).expect("test assertion should succeed");
+        assert!(html.contains("<head>"));
+        assert!(html.contains("<body>"));
     }
 }

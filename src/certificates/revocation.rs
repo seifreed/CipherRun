@@ -39,6 +39,19 @@ pub enum RevocationMethod {
     None,
 }
 
+/// OCSP Stapling detection result
+#[derive(Debug, Clone)]
+pub struct OcspStaplingResult {
+    /// Whether OCSP stapling is supported by the server
+    pub stapling_supported: bool,
+    /// Whether a stapled OCSP response was provided
+    pub stapled_response_present: bool,
+    /// Whether the stapled response is valid (if present)
+    pub stapled_response_valid: Option<bool>,
+    /// Details about the detection
+    pub details: String,
+}
+
 /// Certificate revocation checker
 pub struct RevocationChecker {
     check_timeout: Duration,
@@ -420,19 +433,200 @@ impl RevocationChecker {
         Ok(RevocationStatus::Good)
     }
 
-    /// Check OCSP stapling support (requires TLS connection analysis)
-    /// Check if OCSP stapling is enabled by analyzing TLS handshake
+    /// Check OCSP stapling support by analyzing TLS handshake data
     ///
-    /// Note: This is a stub implementation. Full OCSP stapling detection
-    /// would require parsing the ServerHello and Certificate Status messages
-    /// from the TLS handshake to determine if the server provided a stapled
-    /// OCSP response (RFC 6066 Section 8).
-    pub fn check_ocsp_stapling(&self, _tls_connection: &[u8]) -> bool {
-        // TODO: Implement full OCSP stapling detection by:
-        // 1. Parsing TLS ServerHello for status_request extension
-        // 2. Looking for Certificate Status message (type 22) in handshake
-        // 3. Validating the stapled OCSP response
-        false
+    /// This function parses the TLS handshake to detect:
+    /// 1. status_request extension (0x0005) in ServerHello - indicates server CAN staple
+    /// 2. Certificate Status message (type 22) - indicates server DID staple
+    ///
+    /// # Arguments
+    /// * `tls_handshake_data` - Raw bytes from the TLS handshake (ServerHello and subsequent messages)
+    ///
+    /// # Returns
+    /// * `OcspStaplingResult` with detection results
+    pub fn check_ocsp_stapling(&self, tls_handshake_data: &[u8]) -> OcspStaplingResult {
+        let mut result = OcspStaplingResult {
+            stapling_supported: false,
+            stapled_response_present: false,
+            stapled_response_valid: None,
+            details: String::new(),
+        };
+
+        // TLS Handshake message types
+        const HANDSHAKE_TYPE_SERVER_HELLO: u8 = 0x02;
+        const HANDSHAKE_TYPE_CERTIFICATE: u8 = 0x0B;
+        const HANDSHAKE_TYPE_CERTIFICATE_STATUS: u8 = 0x16; // 22 decimal
+
+        // Extension type for status_request (OCSP stapling)
+        const EXTENSION_STATUS_REQUEST: u16 = 0x0005;
+
+        // Parse through the handshake data looking for ServerHello
+        let mut offset = 0;
+        while offset + 5 <= tls_handshake_data.len() {
+            // TLS record header: type (1) + version (2) + length (2)
+            let record_type = tls_handshake_data[offset];
+            
+            // Skip non-handshake records
+            if record_type != 0x16 { // Handshake
+                offset += 1;
+                continue;
+            }
+
+            if offset + 5 > tls_handshake_data.len() {
+                break;
+            }
+
+            // Get record length
+            let record_len = ((tls_handshake_data[offset + 3] as usize) << 8)
+                | (tls_handshake_data[offset + 4] as usize);
+
+            if offset + 5 + record_len > tls_handshake_data.len() {
+                break;
+            }
+
+            let handshake_start = offset + 5;
+            let handshake_end = handshake_start + record_len;
+            let handshake_data = &tls_handshake_data[handshake_start..handshake_end.min(tls_handshake_data.len())];
+
+            // Parse handshake messages within this record
+            let mut msg_offset = 0;
+            while msg_offset + 4 <= handshake_data.len() {
+                let msg_type = handshake_data[msg_offset];
+                let msg_len = ((handshake_data[msg_offset + 1] as usize) << 16)
+                    | ((handshake_data[msg_offset + 2] as usize) << 8)
+                    | (handshake_data[msg_offset + 3] as usize);
+
+                if msg_offset + 4 + msg_len > handshake_data.len() {
+                    break;
+                }
+
+                match msg_type {
+                    HANDSHAKE_TYPE_SERVER_HELLO => {
+                        // Check for status_request extension in ServerHello
+                        if let Some(has_extension) = Self::parse_server_hello_extensions(
+                            &handshake_data[msg_offset + 4..msg_offset + 4 + msg_len],
+                            EXTENSION_STATUS_REQUEST,
+                        ) {
+                            result.stapling_supported = has_extension;
+                            if has_extension {
+                                result.details.push_str("Server advertised OCSP stapling support (status_request extension). ");
+                            }
+                        }
+                    }
+                    HANDSHAKE_TYPE_CERTIFICATE_STATUS => {
+                        // Certificate Status message indicates stapled OCSP response
+                        result.stapled_response_present = true;
+                        result.details.push_str("Stapled OCSP response found (Certificate Status message). ");
+
+                        // Try to validate the response structure
+                        if msg_len >= 3 {
+                            let response_len = ((handshake_data[msg_offset + 4] as usize) << 16)
+                                | ((handshake_data[msg_offset + 5] as usize) << 8)
+                                | (handshake_data[msg_offset + 6] as usize);
+
+                            if response_len > 0 && response_len + 3 <= msg_len {
+                                result.stapled_response_valid = Some(true);
+                                result.details.push_str(&format!(
+                                    "OCSP response length: {} bytes. ",
+                                    response_len
+                                ));
+                            } else {
+                                result.stapled_response_valid = Some(false);
+                                result.details.push_str("Invalid OCSP response structure. ");
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+
+                msg_offset += 4 + msg_len;
+            }
+
+            offset = handshake_end;
+        }
+
+        // Finalize result
+        if result.details.is_empty() {
+            result.details = "No OCSP stapling detected in TLS handshake".to_string();
+        }
+
+        if result.stapling_supported && !result.stapled_response_present {
+            result.details.push_str("(Note: Server supports stapling but did not provide stapled response - may be intentional or first connection)");
+        }
+
+        result
+    }
+
+    /// Parse ServerHello to find specific extension
+    fn parse_server_hello_extensions(server_hello: &[u8], extension_type: u16) -> Option<bool> {
+        // ServerHello structure: version (2) + random (32) + session_id_len (1) + 
+        // session_id (variable) + cipher_suites_len (2) + cipher_suites (variable) +
+        // compression_method (1) + extensions_len (2) + extensions (variable)
+
+        let mut offset = 0;
+
+        // Version (2 bytes)
+        if offset + 2 > server_hello.len() {
+            return None;
+        }
+        offset += 2;
+
+        // Random (32 bytes)
+        if offset + 32 > server_hello.len() {
+            return None;
+        }
+        offset += 32;
+
+        // Session ID length
+        if offset + 1 > server_hello.len() {
+            return None;
+        }
+        let session_id_len = server_hello[offset] as usize;
+        offset += 1;
+
+        // Session ID
+        if offset + session_id_len > server_hello.len() {
+            return None;
+        }
+        offset += session_id_len;
+
+        // Cipher suite (2 bytes)
+        if offset + 2 > server_hello.len() {
+            return None;
+        }
+        offset += 2;
+
+        // Compression method (1 byte)
+        if offset + 1 > server_hello.len() {
+            return None;
+        }
+        offset += 1;
+
+        // Extensions length (2 bytes)
+        if offset + 2 > server_hello.len() {
+            return None;
+        }
+        let extensions_len = ((server_hello[offset] as usize) << 8) | (server_hello[offset + 1] as usize);
+        offset += 2;
+
+        // Parse extensions
+        let extensions_end = offset + extensions_len;
+        if extensions_end > server_hello.len() {
+            return None;
+        }
+
+        while offset + 4 <= extensions_end {
+            let ext_type = ((server_hello[offset] as u16) << 8) | (server_hello[offset + 1] as u16);
+            let ext_len = ((server_hello[offset + 2] as usize) << 8) | (server_hello[offset + 3] as usize);
+
+            if ext_type == extension_type {
+                return Some(true);
+            }
+
+            offset += 4 + ext_len;
+        }
+
+        Some(false)
     }
 }
 
@@ -501,5 +695,129 @@ mod tests {
             .expect("test assertion should succeed");
         assert_eq!(result.status, RevocationStatus::NotChecked);
         assert_eq!(result.method, RevocationMethod::None);
+    }
+
+    #[test]
+    fn test_revocation_result_summary_and_problematic() {
+        let good = RevocationResult {
+            status: RevocationStatus::Good,
+            method: RevocationMethod::OCSP,
+            details: "ok".to_string(),
+            ocsp_stapling: false,
+            must_staple: false,
+        };
+        assert!(good.summary().contains("not revoked"));
+        assert!(!good.is_problematic());
+
+        let revoked = RevocationResult {
+            status: RevocationStatus::Revoked,
+            method: RevocationMethod::CRL,
+            details: "revoked".to_string(),
+            ocsp_stapling: false,
+            must_staple: false,
+        };
+        assert!(revoked.summary().contains("REVOKED"));
+        assert!(revoked.is_problematic());
+
+        let error = RevocationResult {
+            status: RevocationStatus::Error,
+            method: RevocationMethod::OCSP,
+            details: "error".to_string(),
+            ocsp_stapling: false,
+            must_staple: false,
+        };
+        assert!(error.summary().contains("Error"));
+        assert!(error.is_problematic());
+    }
+
+    #[test]
+    fn test_revocation_result_summary_not_checked() {
+        let result = RevocationResult {
+            status: RevocationStatus::NotChecked,
+            method: RevocationMethod::None,
+            details: "not checked".to_string(),
+            ocsp_stapling: false,
+            must_staple: false,
+        };
+        assert!(result.summary().contains("not checked"));
+        assert!(!result.is_problematic());
+    }
+
+    #[test]
+    fn test_ocsp_stapling_empty_data() {
+        let checker = RevocationChecker::new(true);
+        let result = checker.check_ocsp_stapling(&[]);
+        assert!(!result.stapling_supported);
+        assert!(!result.stapled_response_present);
+        assert!(result.details.contains("No OCSP stapling"));
+    }
+
+    #[test]
+    fn test_ocsp_stapling_result_structure() {
+        let result = OcspStaplingResult {
+            stapling_supported: true,
+            stapled_response_present: true,
+            stapled_response_valid: Some(true),
+            details: "Test details".to_string(),
+        };
+        assert!(result.stapling_supported);
+        assert!(result.stapled_response_present);
+        assert!(result.stapled_response_valid.unwrap_or(false));
+    }
+
+    #[test]
+    fn test_extract_urls_empty_der() {
+        let checker = RevocationChecker::new(true);
+        let cert = CertificateInfo {
+            subject: "CN=example.com".to_string(),
+            issuer: "CN=CA".to_string(),
+            serial_number: "123".to_string(),
+            not_before: "2024-01-01".to_string(),
+            not_after: "2025-01-01".to_string(),
+            expiry_countdown: None,
+            signature_algorithm: "sha256WithRSAEncryption".to_string(),
+            public_key_algorithm: "rsaEncryption".to_string(),
+            public_key_size: Some(2048),
+            rsa_exponent: None,
+            san: vec![],
+            is_ca: false,
+            key_usage: vec![],
+            extended_key_usage: vec![],
+            extended_validation: false,
+            ev_oids: vec![],
+            pin_sha256: None,
+            fingerprint_sha256: None,
+            debian_weak_key: None,
+            aia_url: None,
+            certificate_transparency: None,
+            der_bytes: vec![],
+        };
+
+        assert!(checker.extract_ocsp_url(&cert).unwrap().is_none());
+        assert!(checker.extract_crl_url(&cert).unwrap().is_none());
+        assert!(!checker.check_must_staple(&cert).unwrap());
+    }
+
+    #[test]
+    fn test_extract_urls_invalid_der_returns_error() {
+        let checker = RevocationChecker::new(false);
+        let mut cert = CertificateInfo::default();
+        cert.der_bytes = vec![0x01, 0x02, 0x03];
+
+        let err = checker.extract_ocsp_url(&cert).unwrap_err();
+        assert!(format!("{err}").contains("Failed to parse certificate"));
+
+        let err = checker.extract_crl_url(&cert).unwrap_err();
+        assert!(format!("{err}").contains("Failed to parse certificate"));
+    }
+
+    #[test]
+    fn test_check_must_staple_invalid_der_returns_error() {
+        let checker = RevocationChecker::new(false);
+        let mut cert = CertificateInfo::default();
+        cert.der_bytes = vec![0x30, 0x01, 0x00];
+
+        let err = checker.check_must_staple(&cert).unwrap_err();
+        assert!(format!("{err}").contains("Failed to parse certificate"));
     }
 }

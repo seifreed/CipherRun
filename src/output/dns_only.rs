@@ -172,4 +172,84 @@ mod tests {
             Some("example.com".to_string())
         );
     }
+
+    #[test]
+    fn test_format_output_empty_when_no_domains() {
+        let cert = CertificateInfo::default();
+        let output = DnsOnlyMode::format_output(&cert);
+        assert!(output.is_empty());
+    }
+
+    #[test]
+    fn test_extract_domains_dedup_and_normalize() {
+        let cert = CertificateInfo {
+            subject: "CN=Example.com,O=Org,C=US".to_string(),
+            san: vec![
+                "DNS:*.example.com".to_string(),
+                "www.example.com".to_string(),
+                "EXAMPLE.com".to_string(),
+            ],
+            ..Default::default()
+        };
+
+        let mut domains = DnsOnlyMode::extract_domains(&cert);
+        domains.sort();
+        assert_eq!(
+            domains,
+            vec!["example.com".to_string(), "www.example.com".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_format_output_multiple_domains() {
+        let cert = CertificateInfo {
+            subject: "CN=api.example.com,O=Org,C=US".to_string(),
+            san: vec!["www.example.com".to_string()],
+            ..Default::default()
+        };
+
+        let output = DnsOnlyMode::format_output(&cert);
+        let lines: Vec<&str> = output.lines().collect();
+        assert_eq!(lines.len(), 2);
+        assert!(lines.contains(&"api.example.com"));
+        assert!(lines.contains(&"www.example.com"));
+    }
+
+    #[test]
+    fn test_extract_domains_from_san_only() {
+        let cert = CertificateInfo {
+            subject: "".to_string(),
+            san: vec!["DNS:EXAMPLE.COM".to_string()],
+            ..Default::default()
+        };
+
+        let domains = DnsOnlyMode::extract_domains(&cert);
+        assert_eq!(domains, vec!["example.com".to_string()]);
+    }
+
+    #[test]
+    fn test_extract_domains_sorted_output() {
+        let cert = CertificateInfo {
+            subject: "CN=c.example.com,O=Org".to_string(),
+            san: vec!["b.example.com".to_string(), "a.example.com".to_string()],
+            ..Default::default()
+        };
+
+        let domains = DnsOnlyMode::extract_domains(&cert);
+        assert_eq!(
+            domains,
+            vec![
+                "a.example.com".to_string(),
+                "b.example.com".to_string(),
+                "c.example.com".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_format_output_empty_when_no_domains_returns_empty() {
+        let cert = CertificateInfo::default();
+        let output = DnsOnlyMode::format_output(&cert);
+        assert!(output.is_empty());
+    }
 }

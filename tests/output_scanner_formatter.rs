@@ -2,13 +2,15 @@ use std::collections::HashMap;
 
 use cipherrun::Args;
 use cipherrun::certificates::parser::{CertificateChain, CertificateInfo};
-use cipherrun::certificates::validator::{IssueSeverity, IssueType, ValidationIssue, ValidationResult};
-use cipherrun::ciphers::tester::{CipherCounts, ProtocolCipherSummary};
+use cipherrun::certificates::validator::{
+    IssueSeverity, IssueType, ValidationIssue, ValidationResult,
+};
 use cipherrun::ciphers::CipherSuite;
+use cipherrun::ciphers::tester::{CipherCounts, ProtocolCipherSummary};
 use cipherrun::output::ScannerFormatter;
 use cipherrun::protocols::{Protocol, ProtocolTestResult};
-use cipherrun::rating::grader::Grade;
 use cipherrun::rating::RatingResult;
+use cipherrun::rating::grader::Grade;
 use cipherrun::scanner::CertificateAnalysisResult;
 use cipherrun::vulnerabilities::{Severity, VulnerabilityResult, VulnerabilityType};
 

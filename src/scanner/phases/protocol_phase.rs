@@ -10,12 +10,13 @@
 //
 // Dependencies:
 // - ProtocolTester (domain logic for protocol testing)
-// - Args (CLI configuration)
+// - ScanRequest (scan configuration)
 // - Target (server information)
 
 use super::{ScanContext, ScanPhase};
+use crate::Result;
+use crate::application::ScanRequest;
 use crate::protocols::tester::ProtocolTester;
-use crate::{Args, Result};
 use async_trait::async_trait;
 
 /// Protocol testing phase
@@ -24,7 +25,7 @@ use async_trait::async_trait;
 /// This phase must execute before CipherPhase since cipher testing requires
 /// knowing which protocols are available.
 ///
-/// Configuration sources (from Args):
+/// Configuration sources (from ScanRequest):
 /// - STARTTLS protocol selection (--starttls-smtp, --starttls-imap, etc.)
 /// - Protocol filters (--ssl2, --ssl3, --tls10, --tls11, --tls12, --tls13)
 /// - SNI hostname override (--sni-name)
@@ -124,7 +125,7 @@ impl ScanPhase for ProtocolPhase {
         "Testing SSL/TLS Protocols"
     }
 
-    fn should_run(&self, args: &Args) -> bool {
+    fn should_run(&self, args: &ScanRequest) -> bool {
         // Run if:
         // - Explicit protocol testing requested (--protocols)
         // - Full scan mode (--all)
@@ -151,33 +152,64 @@ mod tests {
     use super::*;
     use std::sync::Arc;
 
+    fn build_context(args: ScanRequest) -> ScanContext {
+        let target = crate::utils::network::Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .expect("test assertion should succeed");
+        ScanContext::new(target, Arc::new(args), None)
+    }
+
     #[test]
     fn test_protocol_phase_should_run() {
         let phase = ProtocolPhase::new();
 
         // Test with --protocols flag
-        let mut args = Args::default();
+        let mut args = ScanRequest::default();
         args.scan.protocols = true;
         assert!(phase.should_run(&args));
 
         // Test with --all flag
-        let mut args = Args::default();
+        let mut args = ScanRequest::default();
         args.scan.all = true;
         assert!(phase.should_run(&args));
 
         // Test with target specified (default scan)
-        let mut args = Args::default();
+        let mut args = ScanRequest::default();
         args.target = Some("example.com".to_string());
         assert!(phase.should_run(&args));
 
         // Test with no relevant flags
-        let args = Args::default();
+        let args = ScanRequest::default();
         assert!(!phase.should_run(&args));
     }
 
     #[test]
     fn test_protocol_phase_name() {
         let phase = ProtocolPhase::new();
+        assert_eq!(phase.name(), "Testing SSL/TLS Protocols");
+    }
+
+    #[test]
+    fn test_protocol_phase_configure_tester_branches() {
+        let mut args = ScanRequest::default();
+        args.starttls.smtp = true;
+        args.starttls.rdp = true;
+        args.tls.bugs = true;
+        args.tls.sni_name = Some("sni.example".to_string());
+        args.scan.tls12 = true;
+        args.network.test_all_ips = true;
+
+        let context = build_context(args);
+        let phase = ProtocolPhase::new();
+        let _tester = phase.configure_tester(&context);
+    }
+
+    #[test]
+    fn test_protocol_phase_default_name() {
+        let phase: ProtocolPhase = Default::default();
         assert_eq!(phase.name(), "Testing SSL/TLS Protocols");
     }
 }

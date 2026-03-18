@@ -199,3 +199,51 @@ impl From<anyhow::Error> for ApiError {
         ApiError::Internal(err.to_string())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_api_error_status_and_code() {
+        let err = ApiError::NotFound("missing".to_string());
+        assert_eq!(err.status_code(), StatusCode::NOT_FOUND);
+        assert_eq!(err.error_code(), "NOT_FOUND");
+
+        let err = ApiError::RateLimited("slow".to_string());
+        assert_eq!(err.status_code(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(err.error_code(), "RATE_LIMITED");
+    }
+
+    #[test]
+    fn test_api_error_response_builders() {
+        let resp = ApiErrorResponse::bad_request("oops");
+        assert_eq!(resp.status, 400);
+        assert_eq!(resp.error, "BAD_REQUEST");
+        assert_eq!(resp.message, "oops");
+
+        let resp = ApiErrorResponse::unauthorized("nope").with_details("detail".to_string());
+        assert_eq!(resp.status, 401);
+        assert_eq!(resp.error, "UNAUTHORIZED");
+        assert_eq!(resp.details.as_deref(), Some("detail"));
+    }
+
+    #[test]
+    fn test_api_error_timeout_mapping() {
+        let err = ApiError::Timeout("slow".to_string());
+        assert_eq!(err.status_code(), StatusCode::REQUEST_TIMEOUT);
+        assert_eq!(err.error_code(), "TIMEOUT");
+
+        let resp = ApiErrorResponse::internal("oops");
+        assert_eq!(resp.status, 500);
+        assert_eq!(resp.error, "INTERNAL_ERROR");
+    }
+
+    #[test]
+    fn test_rate_limited_builder() {
+        let resp = ApiErrorResponse::rate_limited("slow down");
+        assert_eq!(resp.status, 429);
+        assert_eq!(resp.error, "RATE_LIMITED");
+        assert_eq!(resp.message, "slow down");
+    }
+}

@@ -258,6 +258,16 @@ mod tests {
     }
 
     #[test]
+    fn test_primary_resolver_is_first() {
+        let resolvers = vec!["8.8.8.8".to_string(), "1.1.1.1:53".to_string()];
+        let resolver = CustomResolver::new(resolvers).expect("test assertion should succeed");
+        assert_eq!(
+            resolver.primary_resolver().unwrap(),
+            SocketAddr::new("8.8.8.8".parse().unwrap(), 53)
+        );
+    }
+
+    #[test]
     fn test_empty_resolvers() {
         let resolvers: Vec<String> = vec![];
         let result = CustomResolver::new(resolvers);
@@ -274,6 +284,33 @@ mod tests {
     }
 
     #[test]
+    fn test_invalid_port() {
+        let resolvers = vec!["8.8.8.8:notaport".to_string()];
+        let result = CustomResolver::new(resolvers);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_ipv6_with_port() {
+        let resolvers = vec!["[2001:db8::1]:5353".to_string()];
+        let resolver = CustomResolver::new(resolvers).expect("test assertion should succeed");
+
+        assert_eq!(resolver.count(), 1);
+        let expected = SocketAddr::from_str("[2001:db8::1]:5353").unwrap();
+        assert_eq!(resolver.primary_resolver().unwrap(), expected);
+    }
+
+    #[test]
+    fn test_resolvers_access() {
+        let resolvers = vec!["8.8.8.8".to_string(), "1.1.1.1:53".to_string()];
+        let resolver = CustomResolver::new(resolvers).expect("test assertion should succeed");
+
+        let list = resolver.resolvers();
+        assert_eq!(list.len(), 2);
+        assert!(list.iter().any(|addr| addr.ip().to_string() == "8.8.8.8"));
+    }
+
+    #[test]
     fn test_with_timeout() {
         let resolvers = vec!["8.8.8.8".to_string()];
         let resolver = CustomResolver::new(resolvers)
@@ -281,5 +318,63 @@ mod tests {
             .with_timeout(std::time::Duration::from_secs(10));
 
         assert_eq!(resolver.query_timeout, std::time::Duration::from_secs(10));
+    }
+
+    #[test]
+    fn test_delay_returns_timeout() {
+        let resolvers = vec!["8.8.8.8".to_string()];
+        let resolver = CustomResolver::new(resolvers)
+            .unwrap()
+            .with_timeout(std::time::Duration::from_secs(5));
+
+        assert_eq!(resolver.delay(), std::time::Duration::from_secs(5));
+    }
+
+    #[test]
+    fn test_parse_ipv6_without_port_defaults_53() {
+        let resolvers = vec!["2001:db8::1".to_string()];
+        let resolver = CustomResolver::new(resolvers).expect("test assertion should succeed");
+
+        assert_eq!(resolver.count(), 1);
+        let expected = SocketAddr::new("2001:db8::1".parse().unwrap(), 53);
+        assert_eq!(resolver.primary_resolver().unwrap(), expected);
+    }
+
+    #[test]
+    fn test_parse_trims_whitespace() {
+        let resolvers = vec![" 1.1.1.1:53 ".to_string()];
+        let resolver = CustomResolver::new(resolvers).expect("test assertion should succeed");
+        assert_eq!(resolver.count(), 1);
+    }
+
+    #[test]
+    fn test_empty_string_resolver_is_error() {
+        let resolvers = vec!["".to_string()];
+        let result = CustomResolver::new(resolvers);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_default_delay_is_five_seconds() {
+        let resolver = CustomResolver::new(vec!["8.8.8.8".to_string()])
+            .expect("test assertion should succeed");
+        assert_eq!(resolver.delay(), Duration::from_secs(5));
+    }
+
+    #[test]
+    fn test_resolver_order_preserved() {
+        let resolver = CustomResolver::new(vec!["1.1.1.1".to_string(), "8.8.8.8".to_string()])
+            .expect("test assertion should succeed");
+
+        let list = resolver.resolvers();
+        assert_eq!(list[0].ip().to_string(), "1.1.1.1");
+        assert_eq!(list[1].ip().to_string(), "8.8.8.8");
+    }
+
+    #[test]
+    fn test_count_matches_resolvers_len() {
+        let resolver = CustomResolver::new(vec!["8.8.8.8".to_string()])
+            .expect("test assertion should succeed");
+        assert_eq!(resolver.count(), resolver.resolvers().len());
     }
 }

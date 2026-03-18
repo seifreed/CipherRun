@@ -26,9 +26,11 @@ impl CcsInjectionTester {
 
     /// Test for CCS Injection vulnerability
     pub async fn test(&self) -> Result<CcsTestResult> {
-        let vulnerable = self.test_ccs_injection().await?;
+        let (vulnerable, inconclusive) = self.test_ccs_injection().await?;
 
-        let details = if vulnerable {
+        let details = if inconclusive {
+            "CCS Injection test inconclusive - connection timeout or handshake failure prevented reliable testing".to_string()
+        } else if vulnerable {
             "Vulnerable to CCS Injection (CVE-2014-0224) - Server accepts early CCS messages"
                 .to_string()
         } else {
@@ -38,11 +40,12 @@ impl CcsInjectionTester {
         Ok(CcsTestResult {
             vulnerable,
             details,
+            inconclusive,
         })
     }
 
     /// Test CCS injection by sending early ChangeCipherSpec
-    async fn test_ccs_injection(&self) -> Result<bool> {
+    async fn test_ccs_injection(&self) -> Result<(bool, bool)> {
         let addr = self.target.socket_addrs()[0];
 
         match timeout(Duration::from_secs(5), TcpStream::connect(addr)).await {
@@ -53,11 +56,17 @@ impl CcsInjectionTester {
 
                 // Read ServerHello
                 let mut buffer = vec![0u8; 4096];
-                let n = timeout(Duration::from_secs(3), stream.read(&mut buffer)).await??;
-
-                if n == 0 {
-                    return Ok(false);
-                }
+                let _n = match timeout(Duration::from_secs(3), stream.read(&mut buffer)).await {
+                    Ok(Ok(n)) if n > 0 => n,
+                    Ok(Ok(_)) => {
+                        // Zero bytes read - connection closed by server
+                        return Ok((false, true));
+                    }
+                    Ok(Err(_)) | Err(_) => {
+                        // Read error or timeout during ServerHello read
+                        return Ok((false, true));
+                    }
+                };
 
                 // Send premature ChangeCipherSpec (before key exchange)
                 let ccs = vec![
@@ -78,16 +87,26 @@ impl CcsInjectionTester {
                         // Check for Alert or normal handshake continuation
                         if response[0] == CONTENT_TYPE_ALERT {
                             // Alert - not vulnerable
-                            Ok(false)
+                            Ok((false, false))
                         } else {
                             // Continues handshake - vulnerable
-                            Ok(true)
+                            Ok((true, false))
                         }
                     }
-                    _ => Ok(false),
+                    Ok(Ok(_)) => {
+                        // Zero bytes after CCS - connection closed, likely not vulnerable but inconclusive
+                        Ok((false, true))
+                    }
+                    Ok(Err(_)) | Err(_) => {
+                        // Timeout or error - inconclusive
+                        Ok((false, true))
+                    }
                 }
             }
-            _ => Ok(false),
+            Ok(Err(_)) | Err(_) => {
+                // Connection failed - inconclusive
+                Ok((false, true))
+            }
         }
     }
 
@@ -104,12 +123,14 @@ impl CcsInjectionTester {
 pub struct CcsTestResult {
     pub vulnerable: bool,
     pub details: String,
+    pub inconclusive: bool,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::constants::{CONTENT_TYPE_HANDSHAKE, HANDSHAKE_TYPE_CLIENT_HELLO};
+    use std::net::TcpListener;
 
     #[test]
     fn test_client_hello_build() {
@@ -129,11 +150,95 @@ mod tests {
     }
 
     #[test]
+    fn test_client_hello_version_bytes() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["93.184.216.34".parse().unwrap()],
+        )
+        .unwrap();
+
+        let tester = CcsInjectionTester::new(target);
+        let hello = tester.build_client_hello();
+
+        assert_eq!(hello[1], 0x03);
+        assert_eq!(hello[2], 0x01);
+    }
+
+    #[test]
+    fn test_client_hello_non_empty() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["93.184.216.34".parse().unwrap()],
+        )
+        .unwrap();
+
+        let tester = CcsInjectionTester::new(target);
+        let hello = tester.build_client_hello();
+        assert!(!hello.is_empty());
+    }
+
+    #[test]
     fn test_ccs_result_creation() {
         let result = CcsTestResult {
             vulnerable: false,
             details: "Test".to_string(),
+            inconclusive: false,
         };
         assert!(!result.vulnerable);
+    }
+
+    #[test]
+    fn test_ccs_result_debug_contains_details() {
+        let result = CcsTestResult {
+            vulnerable: true,
+            details: "Details".to_string(),
+            inconclusive: false,
+        };
+
+        let debug = format!("{:?}", result);
+        assert!(debug.contains("Details"));
+    }
+
+    #[test]
+    fn test_ccs_result_not_vulnerable_details() {
+        let result = CcsTestResult {
+            vulnerable: false,
+            details: "Not vulnerable - Server rejects early CCS messages".to_string(),
+            inconclusive: false,
+        };
+        assert!(!result.vulnerable);
+        assert!(result.details.contains("Not vulnerable"));
+    }
+
+    #[test]
+    fn test_ccs_result_details_passthrough() {
+        let result = CcsTestResult {
+            vulnerable: false,
+            details: "Not vulnerable".to_string(),
+            inconclusive: false,
+        };
+        assert!(result.details.contains("Not vulnerable"));
+    }
+
+    #[tokio::test]
+    async fn test_ccs_injection_inactive_target_not_vulnerable() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+
+        let tester = CcsInjectionTester::new(target);
+        let result = tester.test().await.unwrap();
+        assert!(!result.vulnerable);
+        // Connection to inactive port should be marked as inconclusive
+        assert!(result.inconclusive);
     }
 }

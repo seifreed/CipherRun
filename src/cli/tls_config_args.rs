@@ -78,3 +78,47 @@ pub struct TlsConfigArgs {
     #[arg(long = "reverse-ptr-sni", alias = "rps")]
     pub reverse_ptr_sni: bool,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[derive(Parser)]
+    struct TestCli {
+        #[command(flatten)]
+        args: TlsConfigArgs,
+    }
+
+    #[test]
+    fn test_tls_config_args_defaults_from_clap() {
+        let parsed = TestCli::parse_from(["test"]);
+        let args = parsed.args;
+
+        assert!(args.openssl_path.is_none());
+        assert!(args.openssl_timeout.is_none());
+        assert!(!args.ssl_native);
+        assert!(!args.bugs);
+        assert!(!args.local);
+        assert!(!args.phone_out);
+        assert!(!args.hardfail);
+        assert!(args.add_ca.is_none());
+        assert!(args.mtls_cert.is_none());
+        assert!(args.client_key.is_none());
+        assert!(args.client_key_password.is_none());
+        assert!(args.client_certs.is_none());
+        assert!(args.sni_name.is_none());
+        assert!(!args.random_sni);
+        assert!(!args.reverse_ptr_sni);
+    }
+
+    #[test]
+    fn test_tls_config_args_sni_flags() {
+        let parsed = TestCli::parse_from(["test", "--sni-name", "example.com", "--random-sni"]);
+        let args = parsed.args;
+
+        assert_eq!(args.sni_name.as_deref(), Some("example.com"));
+        assert!(args.random_sni);
+        assert!(!args.reverse_ptr_sni);
+    }
+}

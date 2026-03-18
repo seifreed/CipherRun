@@ -143,6 +143,7 @@ impl StarttlsTester {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::IpAddr;
 
     #[test]
     fn test_tester_creation() {
@@ -154,5 +155,96 @@ mod tests {
         .unwrap();
         let tester = StarttlsTester::new(target);
         assert_eq!(tester.connect_timeout, Duration::from_secs(10));
+    }
+
+    #[test]
+    fn test_tester_default_timeouts() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            110,
+            vec!["93.184.216.34".parse().unwrap()],
+        )
+        .unwrap();
+        let tester = StarttlsTester::new(target);
+        assert!(tester.connect_timeout.as_secs() > 0);
+    }
+
+    #[tokio::test]
+    async fn test_protocol_implicit_tls_returns_error() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            993,
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .unwrap();
+        let tester = StarttlsTester::new(target);
+        let result = tester.test_protocol(StarttlsProtocol::IMAPS).await;
+        assert!(!result.starttls_supported);
+        assert!(result.error.unwrap_or_default().contains("Implicit TLS"));
+    }
+
+    #[tokio::test]
+    async fn test_protocol_unimplemented_returns_error() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            389,
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .unwrap();
+        let tester = StarttlsTester::new(target);
+        let result = tester.test_protocol(StarttlsProtocol::LDAP).await;
+        assert!(!result.starttls_supported);
+        assert!(
+            result
+                .error
+                .unwrap_or_default()
+                .contains("not yet implemented")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_protocol_unimplemented_returns_default_port() {
+        let target = Target::with_ips(
+            "127.0.0.1".to_string(),
+            6667,
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .unwrap();
+        let tester = StarttlsTester::new(target);
+        let result = tester.test_protocol(StarttlsProtocol::IRC).await;
+        assert!(!result.starttls_supported);
+        assert_eq!(result.port, StarttlsProtocol::IRC.default_port());
+    }
+
+    #[tokio::test]
+    async fn test_protocol_implicit_tls_uses_default_port() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            465,
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .unwrap();
+        let tester = StarttlsTester::new(target);
+        let result = tester.test_protocol(StarttlsProtocol::SMTPS).await;
+        assert!(!result.starttls_supported);
+        assert_eq!(result.port, 465);
+    }
+
+    #[tokio::test]
+    async fn test_protocol_connection_failure_sets_error() {
+        let target = Target::with_ips(
+            "127.0.0.1".to_string(),
+            143,
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .unwrap();
+        let tester = StarttlsTester {
+            target,
+            connect_timeout: Duration::from_millis(50),
+        };
+
+        let result = tester.test_protocol(StarttlsProtocol::IMAP).await;
+        assert!(!result.starttls_supported);
+        assert!(result.error.is_some());
     }
 }

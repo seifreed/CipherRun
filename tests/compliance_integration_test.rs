@@ -2,11 +2,16 @@
 
 #![allow(clippy::field_reassign_with_default)]
 
+use cipherrun::application::ScanAssessment;
 use cipherrun::compliance::{
     ComplianceEngine, ComplianceStatus, FrameworkLoader, Reporter, RequirementStatus,
 };
 use cipherrun::protocols::{Protocol, ProtocolTestResult};
 use cipherrun::scanner::ScanResults;
+
+fn assessment(results: &ScanResults) -> ScanAssessment {
+    ScanAssessment::from_scan_results(results)
+}
 
 #[test]
 fn test_load_all_builtin_frameworks() {
@@ -73,7 +78,7 @@ fn test_pci_dss_pass_scenario() {
 
     // Evaluate compliance
     let engine = ComplianceEngine::new(framework);
-    let report = engine.evaluate(&results).unwrap();
+    let report = engine.evaluate(&assessment(&results)).unwrap();
 
     // Should pass protocol requirements at minimum
     assert!(report.summary.total > 0);
@@ -118,7 +123,7 @@ fn test_pci_dss_fail_scenario() {
 
     // Evaluate compliance
     let engine = ComplianceEngine::new(framework);
-    let report = engine.evaluate(&results).unwrap();
+    let report = engine.evaluate(&assessment(&results)).unwrap();
 
     // Should fail due to TLS 1.0
     assert_eq!(report.overall_status, ComplianceStatus::Fail);
@@ -167,7 +172,7 @@ fn test_mozilla_modern_tls13_only() {
     ];
 
     let engine = ComplianceEngine::new(framework);
-    let report = engine.evaluate(&results).unwrap();
+    let report = engine.evaluate(&assessment(&results)).unwrap();
 
     // Mozilla Modern requires TLS 1.3 ONLY - TLS 1.2 should cause failure
     assert_eq!(report.overall_status, ComplianceStatus::Fail);
@@ -207,7 +212,7 @@ fn test_mozilla_intermediate_tls12_allowed() {
     ];
 
     let engine = ComplianceEngine::new(framework);
-    let report = engine.evaluate(&results).unwrap();
+    let report = engine.evaluate(&assessment(&results)).unwrap();
 
     // Should pass protocol requirements (TLS 1.2 is allowed in Intermediate)
     // Note: May still have warnings for other requirements
@@ -240,7 +245,7 @@ fn test_report_json_serialization() {
     }];
 
     let engine = ComplianceEngine::new(framework);
-    let report = engine.evaluate(&results).unwrap();
+    let report = engine.evaluate(&assessment(&results)).unwrap();
 
     // Test JSON serialization
     let json = Reporter::to_json(&report, false).unwrap();
@@ -272,7 +277,7 @@ fn test_report_csv_generation() {
     }];
 
     let engine = ComplianceEngine::new(framework);
-    let report = engine.evaluate(&results).unwrap();
+    let report = engine.evaluate(&assessment(&results)).unwrap();
 
     // Test CSV generation
     let csv = Reporter::to_csv(&report).unwrap();
@@ -299,7 +304,7 @@ fn test_report_html_generation() {
     }];
 
     let engine = ComplianceEngine::new(framework);
-    let report = engine.evaluate(&results).unwrap();
+    let report = engine.evaluate(&assessment(&results)).unwrap();
 
     // Test HTML generation
     let html = Reporter::to_html(&report).unwrap();
@@ -327,7 +332,7 @@ fn test_report_terminal_output() {
     }];
 
     let engine = ComplianceEngine::new(framework);
-    let report = engine.evaluate(&results).unwrap();
+    let report = engine.evaluate(&assessment(&results)).unwrap();
 
     // Test terminal output
     let terminal = Reporter::to_terminal(&report);
@@ -391,7 +396,7 @@ fn test_compliance_summary_calculation() {
     ];
 
     let engine = ComplianceEngine::new(framework);
-    let report = engine.evaluate(&results).unwrap();
+    let report = engine.evaluate(&assessment(&results)).unwrap();
 
     // Verify summary counts add up
     assert_eq!(

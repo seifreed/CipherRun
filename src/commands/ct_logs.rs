@@ -2,7 +2,7 @@
 // Copyright (C) 2025 Marc Rivero (@seifreed)
 // Licensed under GPL-3.0
 
-use super::Command;
+use super::{Command, CommandExit};
 use crate::{Args, Result};
 use async_trait::async_trait;
 use tracing::info;
@@ -26,7 +26,7 @@ impl CtLogsCommand {
 
 #[async_trait]
 impl Command for CtLogsCommand {
-    async fn execute(&self) -> Result<()> {
+    async fn execute(&self) -> Result<CommandExit> {
         use crate::ct_logs::{CtConfig, CtStreamer};
         use std::collections::HashMap;
 
@@ -67,10 +67,23 @@ impl Command for CtLogsCommand {
         let mut streamer = CtStreamer::new(config).await?;
         streamer.start().await?;
 
-        Ok(())
+        Ok(CommandExit::success())
     }
 
     fn name(&self) -> &'static str {
         "CtLogsCommand"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Args;
+
+    #[test]
+    fn test_ct_logs_command_name() {
+        let args = Args::default();
+        let cmd = CtLogsCommand::new(args);
+        assert_eq!(cmd.name(), "CtLogsCommand");
     }
 }

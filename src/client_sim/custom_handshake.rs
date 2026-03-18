@@ -550,12 +550,117 @@ fn format_cipher_name(cipher: u16) -> String {
 mod tests {
     use super::*;
 
+    fn sample_profile(highest_protocol: Option<&str>) -> ClientProfile {
+        ClientProfile {
+            name: "Test Client".to_string(),
+            short_id: "test".to_string(),
+            cipher_string: None,
+            tls13_ciphers: None,
+            uses_sni: true,
+            warning: None,
+            handshake_bytes: None,
+            protocol_flags: vec![],
+            tls_version: None,
+            lowest_protocol: None,
+            highest_protocol: highest_protocol.map(|s| s.to_string()),
+            services: vec![],
+            min_dh_bits: None,
+            max_dh_bits: None,
+            min_rsa_bits: None,
+            max_rsa_bits: None,
+            min_ecdsa_bits: None,
+            curves: vec![],
+            requires_sha2: false,
+            current: true,
+        }
+    }
+
+    fn build_server_hello(
+        cipher: u16,
+        alpn: Option<&str>,
+        selected_version: Option<u16>,
+        key_share_group: Option<u16>,
+    ) -> Vec<u8> {
+        let mut body = Vec::new();
+        body.push(0x02); // ServerHello
+        body.extend_from_slice(&[0x00, 0x00, 0x00]); // Handshake length placeholder
+        body.extend_from_slice(&[0x03, 0x03]); // TLS 1.2 in legacy_version
+        body.extend_from_slice(&[0u8; 32]); // Random
+        body.push(0x00); // Session ID length
+        body.extend_from_slice(&cipher.to_be_bytes());
+        body.push(0x00); // Compression method
+
+        let mut extensions = Vec::new();
+        if let Some(proto) = alpn {
+            let proto_bytes = proto.as_bytes();
+            let list_len = proto_bytes.len() + 1;
+            let ext_len = 2 + list_len;
+            extensions.extend_from_slice(&0x0010u16.to_be_bytes());
+            extensions.extend_from_slice(&(ext_len as u16).to_be_bytes());
+            extensions.extend_from_slice(&(list_len as u16).to_be_bytes());
+            extensions.push(proto_bytes.len() as u8);
+            extensions.extend_from_slice(proto_bytes);
+        }
+
+        if let Some(version) = selected_version {
+            extensions.extend_from_slice(&0x002bu16.to_be_bytes());
+            extensions.extend_from_slice(&2u16.to_be_bytes());
+            extensions.extend_from_slice(&version.to_be_bytes());
+        }
+
+        if let Some(group) = key_share_group {
+            extensions.extend_from_slice(&0x0033u16.to_be_bytes());
+            extensions.extend_from_slice(&2u16.to_be_bytes());
+            extensions.extend_from_slice(&group.to_be_bytes());
+        }
+
+        body.extend_from_slice(&(extensions.len() as u16).to_be_bytes());
+        body.extend_from_slice(&extensions);
+
+        let hs_len = body.len() - 4;
+        body[1] = ((hs_len >> 16) & 0xff) as u8;
+        body[2] = ((hs_len >> 8) & 0xff) as u8;
+        body[3] = (hs_len & 0xff) as u8;
+
+        let mut record = vec![0x16, 0x03, 0x03, 0x00, 0x00];
+        let record_len = body.len();
+        record[3] = ((record_len >> 8) & 0xff) as u8;
+        record[4] = (record_len & 0xff) as u8;
+        record.extend_from_slice(&body);
+        record
+    }
+
     #[test]
     fn test_sni_extension() {
         let ext = TlsExtension::server_name("example.com");
         assert_eq!(ext.extension_type, 0x0000);
         let encoded = ext.encode();
         assert!(encoded.len() > 4);
+    }
+
+    #[test]
+    fn test_extension_encodings() {
+        let groups = TlsExtension::supported_groups(&[0x001d, 0x0017]);
+        let groups_encoded = groups.encode();
+        assert_eq!(groups.extension_type, 0x000a);
+        assert_eq!(groups_encoded[4], 0x00);
+        assert_eq!(groups_encoded[5], 0x04);
+
+        let sigs = TlsExtension::signature_algorithms(&[(0x04, 0x03), (0x08, 0x04)]);
+        let sigs_encoded = sigs.encode();
+        assert_eq!(sigs.extension_type, 0x000d);
+        assert_eq!(sigs_encoded[4], 0x00);
+        assert_eq!(sigs_encoded[5], 0x04);
+
+        let alpn = TlsExtension::alpn(&["h2", "http/1.1"]);
+        let alpn_encoded = alpn.encode();
+        assert_eq!(alpn.extension_type, 0x0010);
+        assert!(alpn_encoded.len() > 8);
+
+        let versions = TlsExtension::supported_versions(&[0x0304, 0x0303]);
+        let versions_encoded = versions.encode();
+        assert_eq!(versions.extension_type, 0x002b);
+        assert_eq!(versions_encoded[4], 0x04);
     }
 
     #[test]
@@ -569,5 +674,40 @@ mod tests {
         assert_eq!(hello[0], 0x16); // Handshake record
         assert_eq!(hello[5], 0x01); // ClientHello
         assert!(hello.len() > 50);
+    }
+
+    #[test]
+    fn test_client_hello_from_profile_tls13() {
+        let profile = sample_profile(Some("tls1_3"));
+        let hello = ClientHelloBuilder::from_profile(&profile, "example.com").build();
+
+        assert_eq!(hello[0], 0x16); // Handshake
+        assert_eq!(hello[5], 0x01); // ClientHello
+        assert!(hello.windows(2).any(|w| w == [0x00, 0x2b])); // supported_versions
+        assert!(hello.windows(2).any(|w| w == [0x00, 0x10])); // ALPN
+    }
+
+    #[test]
+    fn test_parse_server_hello_extended_with_alpn() {
+        let data = build_server_hello(0x1301, Some("h2"), Some(0x0304), Some(0x001d));
+        let info = parse_server_hello_extended(&data).expect("test assertion should succeed");
+
+        assert_eq!(info.protocol, Protocol::TLS13);
+        assert_eq!(info.cipher, "TLS_AES_128_GCM_SHA256");
+        assert_eq!(info.alpn.as_deref(), Some("h2"));
+        assert_eq!(info.key_exchange_group, Some(0x001d));
+    }
+
+    #[test]
+    fn test_parse_server_hello_extended_missing() {
+        let err = parse_server_hello_extended(&[0x00, 0x01, 0x02]).unwrap_err();
+        let message = format!("{err}");
+        assert!(message.contains("ServerHello") || message.contains("handshake"));
+    }
+
+    #[test]
+    fn test_format_cipher_name_unknown() {
+        let name = format_cipher_name(0x1234);
+        assert_eq!(name, "0x1234");
     }
 }

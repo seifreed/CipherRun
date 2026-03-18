@@ -413,3 +413,80 @@ impl ProgressMessage {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_scan_status_serialization_lowercase() {
+        let status = ScanStatus::Queued;
+        let json = serde_json::to_string(&status).expect("test assertion should succeed");
+        assert_eq!(json, "\"queued\"");
+    }
+
+    #[test]
+    fn test_progress_message_helpers() {
+        let msg = ProgressMessage::new("scan1", 10, "starting");
+        assert_eq!(msg.msg_type, "progress");
+        assert_eq!(msg.scan_id, "scan1");
+        assert_eq!(msg.progress, 10);
+        assert_eq!(msg.stage, "starting");
+
+        let done = ProgressMessage::completed("scan2");
+        assert_eq!(done.msg_type, "completed");
+        assert_eq!(done.progress, 100);
+
+        let failed = ProgressMessage::failed("scan3", "boom");
+        assert_eq!(failed.msg_type, "failed");
+        assert_eq!(failed.progress, 0);
+        assert_eq!(failed.details.as_deref(), Some("boom"));
+    }
+
+    #[test]
+    fn test_health_response_roundtrip() {
+        let resp = HealthResponse {
+            status: "ok".to_string(),
+            version: "0.1.0".to_string(),
+            uptime_seconds: 10,
+            active_scans: 2,
+            queued_scans: 1,
+            database: Some("connected".to_string()),
+        };
+
+        let json = serde_json::to_string(&resp).expect("serialize");
+        let decoded: HealthResponse = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(decoded.status, "ok");
+        assert_eq!(decoded.database.as_deref(), Some("connected"));
+    }
+
+    #[test]
+    fn test_stats_response_roundtrip() {
+        let resp = StatsResponse {
+            total_scans: 10,
+            completed_scans: 8,
+            failed_scans: 2,
+            avg_scan_duration_seconds: 1.5,
+            scans_last_24h: 4,
+            scans_last_7d: 9,
+            top_domains: Vec::new(),
+            api_usage: ApiUsageStats {
+                requests_last_hour: 3,
+                requests_last_day: 25,
+                avg_response_time_ms: 120.0,
+            },
+        };
+
+        let json = serde_json::to_string(&resp).expect("serialize");
+        let decoded: StatsResponse = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(decoded.total_scans, 10);
+        assert_eq!(decoded.api_usage.requests_last_day, 25);
+    }
+
+    #[test]
+    fn test_scan_status_deserialization() {
+        let status: ScanStatus =
+            serde_json::from_str("\"completed\"").expect("test assertion should succeed");
+        assert_eq!(status, ScanStatus::Completed);
+    }
+}

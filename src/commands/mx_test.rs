@@ -2,7 +2,7 @@
 // Copyright (C) 2025 Marc Rivero (@seifreed)
 // Licensed under GPL-3.0
 
-use super::Command;
+use super::{Command, CommandExit};
 use crate::{Args, Result, TlsError};
 use async_trait::async_trait;
 
@@ -26,7 +26,7 @@ impl MxTestCommand {
 
 #[async_trait]
 impl Command for MxTestCommand {
-    async fn execute(&self) -> Result<()> {
+    async fn execute(&self) -> Result<CommandExit> {
         use crate::utils::mx::MxTester;
 
         let mx_domain = self
@@ -71,10 +71,29 @@ impl Command for MxTestCommand {
             println!("✓ Results exported to JSON: {}", json_file.display());
         }
 
-        Ok(())
+        Ok(CommandExit::success())
     }
 
     fn name(&self) -> &'static str {
         "MxTestCommand"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_mx_test_command_name() {
+        let cmd = MxTestCommand::new(Args::default());
+        assert_eq!(cmd.name(), "MxTestCommand");
+    }
+
+    #[tokio::test]
+    async fn test_mx_test_command_requires_domain() {
+        let args = Args::default();
+        let cmd = MxTestCommand::new(args);
+        let err = cmd.execute().await.unwrap_err();
+        assert!(format!("{err}").contains("MX domain is required"));
     }
 }

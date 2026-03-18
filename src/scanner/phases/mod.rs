@@ -37,12 +37,13 @@ pub use protocol_phase::ProtocolPhase;
 pub use signature_phase::SignaturePhase;
 pub use vulnerability_phase::VulnerabilityPhase;
 
+use crate::Result;
+use crate::application::ScanRequest;
+use crate::constants::{DEFAULT_CONNECT_TIMEOUT, DEFAULT_SOCKET_TIMEOUT};
 use crate::scanner::ScanResults;
+use crate::utils::adaptive::AdaptiveController;
 use crate::utils::mtls::MtlsConfig;
 use crate::utils::network::Target;
-use crate::utils::adaptive::AdaptiveController;
-use crate::constants::{DEFAULT_CONNECT_TIMEOUT, DEFAULT_SOCKET_TIMEOUT};
-use crate::{Args, Result};
 use async_trait::async_trait;
 use std::sync::Arc;
 
@@ -143,7 +144,7 @@ pub trait ScanPhase: Send + Sync {
     /// Phases can be conditionally enabled based on flags like:
     /// - --protocols, --all, --vulnerabilities
     /// - Presence of target (default scan)
-    fn should_run(&self, args: &Args) -> bool;
+    fn should_run(&self, args: &ScanRequest) -> bool;
 
     /// Execute the phase and update the scan context
     ///
@@ -164,7 +165,7 @@ pub trait ScanPhase: Send + Sync {
 /// - Clean separation between configuration and results
 ///
 /// Design decisions:
-/// - Arc<Args> for zero-copy sharing across phases
+/// - Arc<ScanRequest> for zero-copy sharing across phases
 /// - Owned Target for phase-specific modifications (e.g., IP override)
 /// - Owned ScanResults for incremental accumulation
 /// - Optional MtlsConfig for mTLS-enabled connections
@@ -176,7 +177,7 @@ pub struct ScanContext {
     pub results: ScanResults,
 
     /// CLI arguments (immutable, shared across phases)
-    pub args: Arc<Args>,
+    pub args: Arc<ScanRequest>,
 
     /// Optional mTLS configuration for client authentication
     pub mtls_config: Option<MtlsConfig>,
@@ -192,7 +193,7 @@ impl ScanContext {
     /// * `target` - Target server to scan
     /// * `args` - CLI arguments wrapped in Arc for efficient sharing
     /// * `mtls_config` - Optional reference to mTLS configuration
-    pub fn new(target: Target, args: Arc<Args>, mtls_config: Option<MtlsConfig>) -> Self {
+    pub fn new(target: Target, args: Arc<ScanRequest>, mtls_config: Option<MtlsConfig>) -> Self {
         let target_str = format!("{}:{}", target.hostname, target.port);
         let base_connect_timeout = std::time::Duration::from_secs(
             args.connection
@@ -310,7 +311,7 @@ impl PhaseOrchestrator {
     /// Returns the final accumulated scan results
     pub async fn execute(&self, mut context: ScanContext) -> Result<ScanResults> {
         for phase in &self.phases {
-            if phase.should_run(&context.args) {
+            if phase.should_run(context.args.as_ref()) {
                 if let Some(ref reporter) = self.reporter {
                     reporter.on_phase_start(phase.name());
                 }
@@ -423,5 +424,18 @@ mod tests {
     fn test_orchestrator_default_no_reporter() {
         let orchestrator = PhaseOrchestrator::new();
         assert!(orchestrator.reporter.is_none());
+    }
+
+    #[test]
+    fn test_scan_context_initializes_target_string() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .expect("test assertion should succeed");
+        let args = Arc::new(ScanRequest::default());
+        let context = ScanContext::new(target, args, None);
+        assert_eq!(context.results.target, "example.com:443");
     }
 }

@@ -149,3 +149,37 @@ impl ApiConfig {
         self.api_keys.remove(key)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default_config_generates_key() {
+        let config = ApiConfig::default();
+        assert!(!config.api_keys.is_empty());
+
+        let (key, permission) = config.api_keys.iter().next().unwrap();
+        assert_eq!(*permission, Permission::User);
+        assert_eq!(config.validate_key(key), Some(Permission::User));
+    }
+
+    #[test]
+    fn test_add_and_remove_key() {
+        let mut config = ApiConfig::default();
+        config.add_key("test-key".to_string(), Permission::Admin);
+
+        assert_eq!(config.validate_key("test-key"), Some(Permission::Admin));
+        assert_eq!(config.remove_key("test-key"), Some(Permission::Admin));
+        assert_eq!(config.validate_key("test-key"), None);
+    }
+
+    #[test]
+    fn test_create_example_writes_file() {
+        let path = std::env::temp_dir().join("cipherrun-api-config.toml");
+        ApiConfig::create_example(path.to_str().unwrap()).expect("write should succeed");
+        let contents = std::fs::read_to_string(&path).expect("read should succeed");
+        assert!(contents.contains("host"));
+        let _ = std::fs::remove_file(path);
+    }
+}

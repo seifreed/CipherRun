@@ -2,6 +2,7 @@
 
 #![allow(clippy::field_reassign_with_default)]
 
+use cipherrun::application::CertificateFilters;
 use cipherrun::certificates::parser::{CertificateChain, CertificateInfo};
 use cipherrun::certificates::revocation::{RevocationMethod, RevocationResult, RevocationStatus};
 use cipherrun::certificates::status::CertificateStatus;
@@ -122,11 +123,13 @@ fn test_filter_expired_certificates() {
     );
 
     // Test filter matching
-    let mut args = Args::default();
-    args.cert_filters.filter_expired = true;
+    let filters = CertificateFilters {
+        expired: true,
+        ..Default::default()
+    };
 
     assert!(
-        cert_status.matches_filter(&args),
+        cert_status.matches_filter(&filters),
         "Expired certificate should match expired filter"
     );
 }
@@ -162,11 +165,13 @@ fn test_filter_self_signed_certificates() {
     );
 
     // Test filter matching
-    let mut args = Args::default();
-    args.cert_filters.filter_self_signed = true;
+    let filters = CertificateFilters {
+        self_signed: true,
+        ..Default::default()
+    };
 
     assert!(
-        cert_status.matches_filter(&args),
+        cert_status.matches_filter(&filters),
         "Self-signed certificate should match self-signed filter"
     );
 }
@@ -202,11 +207,13 @@ fn test_filter_mismatched_certificates() {
     );
 
     // Test filter matching
-    let mut args = Args::default();
-    args.cert_filters.filter_mismatched = true;
+    let filters = CertificateFilters {
+        mismatched: true,
+        ..Default::default()
+    };
 
     assert!(
-        cert_status.matches_filter(&args),
+        cert_status.matches_filter(&filters),
         "Mismatched certificate should match mismatched filter"
     );
 }
@@ -243,11 +250,13 @@ fn test_filter_revoked_certificates() {
     );
 
     // Test filter matching
-    let mut args = Args::default();
-    args.cert_filters.filter_revoked = true;
+    let filters = CertificateFilters {
+        revoked: true,
+        ..Default::default()
+    };
 
     assert!(
-        cert_status.matches_filter(&args),
+        cert_status.matches_filter(&filters),
         "Revoked certificate should match revoked filter"
     );
 }
@@ -282,11 +291,13 @@ fn test_filter_untrusted_certificates() {
     );
 
     // Test filter matching
-    let mut args = Args::default();
-    args.cert_filters.filter_untrusted = true;
+    let filters = CertificateFilters {
+        untrusted: true,
+        ..Default::default()
+    };
 
     assert!(
-        cert_status.matches_filter(&args),
+        cert_status.matches_filter(&filters),
         "Untrusted certificate should match untrusted filter"
     );
 }
@@ -324,27 +335,33 @@ fn test_multiple_filters_or_logic() {
         CertificateStatus::from_validation_result(&validation, "bad.com", &cert, None);
 
     // Test with only expired filter
-    let mut args = Args::default();
-    args.cert_filters.filter_expired = true;
+    let filters = CertificateFilters {
+        expired: true,
+        ..Default::default()
+    };
     assert!(
-        cert_status.matches_filter(&args),
+        cert_status.matches_filter(&filters),
         "Should match with expired filter"
     );
 
     // Test with only self-signed filter
-    args = Args::default();
-    args.cert_filters.filter_self_signed = true;
+    let filters = CertificateFilters {
+        self_signed: true,
+        ..Default::default()
+    };
     assert!(
-        cert_status.matches_filter(&args),
+        cert_status.matches_filter(&filters),
         "Should match with self-signed filter"
     );
 
     // Test with both filters (OR logic)
-    args = Args::default();
-    args.cert_filters.filter_expired = true;
-    args.cert_filters.filter_self_signed = true;
+    let filters = CertificateFilters {
+        expired: true,
+        self_signed: true,
+        ..Default::default()
+    };
     assert!(
-        cert_status.matches_filter(&args),
+        cert_status.matches_filter(&filters),
         "Should match with either filter"
     );
 }
@@ -363,10 +380,10 @@ fn test_no_filters_active_shows_all() {
     let cert_status =
         CertificateStatus::from_validation_result(&validation, "example.com", &cert, None);
 
-    let args = Args::default(); // No filters active
+    let filters = CertificateFilters::default(); // No filters active
 
     assert!(
-        cert_status.matches_filter(&args),
+        cert_status.matches_filter(&filters),
         "Should match when no filters are active"
     );
 }
@@ -387,11 +404,13 @@ fn test_valid_certificate_filtered_out_when_filters_active() {
         CertificateStatus::from_validation_result(&validation, "valid.com", &cert, None);
 
     // When expired filter is active, valid cert should NOT match
-    let mut args = Args::default();
-    args.cert_filters.filter_expired = true;
+    let filters = CertificateFilters {
+        expired: true,
+        ..Default::default()
+    };
 
     assert!(
-        !cert_status.matches_filter(&args),
+        !cert_status.matches_filter(&filters),
         "Valid certificate should not match expired filter"
     );
 }
@@ -429,26 +448,28 @@ fn test_mass_scanner_filtering() {
     let valid_result = create_mock_scan_result("valid.com:443", valid_cert, valid_validation, None);
 
     // Test filtering with expired filter
-    let mut args = Args::default();
-    args.cert_filters.filter_expired = true;
+    let filters = CertificateFilters {
+        expired: true,
+        ..Default::default()
+    };
 
     let results_with_filter = vec![
         ("expired.com:443".to_string(), Ok(expired_result.clone())),
         ("valid.com:443".to_string(), Ok(valid_result.clone())),
     ];
 
-    let filtered = MassScanner::filter_results(&args, results_with_filter);
+    let filtered = MassScanner::filter_results(&filters, results_with_filter);
 
     assert_eq!(filtered.len(), 1, "Should only return expired certificate");
     assert_eq!(filtered[0].0, "expired.com:443");
 
     // Test with no filters (should return all)
-    let args_no_filter = Args::default();
+    let filters_no_filter = CertificateFilters::default();
     let results_no_filter = vec![
         ("expired.com:443".to_string(), Ok(expired_result)),
         ("valid.com:443".to_string(), Ok(valid_result)),
     ];
-    let unfiltered = MassScanner::filter_results(&args_no_filter, results_no_filter);
+    let unfiltered = MassScanner::filter_results(&filters_no_filter, results_no_filter);
 
     assert_eq!(
         unfiltered.len(),

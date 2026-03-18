@@ -239,4 +239,33 @@ mod tests {
         let channels = config.enabled_channels();
         assert_eq!(channels, vec!["email"]);
     }
+
+    #[test]
+    fn test_enabled_channels_multiple() {
+        let mut config = MonitorConfig::default();
+        config.monitor.alerts.email = Some(EmailConfig {
+            enabled: true,
+            smtp_server: "smtp.example.com".to_string(),
+            smtp_port: 587,
+            from_address: "alerts@example.com".to_string(),
+            to_addresses: vec!["admin@example.com".to_string()],
+            username: "user".to_string(),
+            password: "pass".to_string(),
+            use_tls: true,
+        });
+        config.monitor.alerts.slack = Some(SlackConfig {
+            enabled: true,
+            webhook_url: "https://example.com".to_string(),
+        });
+
+        let channels = config.enabled_channels();
+        assert!(channels.contains(&"email".to_string()));
+        assert!(channels.contains(&"slack".to_string()));
+    }
+
+    #[test]
+    fn test_deduplication_default_window() {
+        let dedup = DeduplicationConfig::default();
+        assert_eq!(dedup.window_hours, 24);
+    }
 }

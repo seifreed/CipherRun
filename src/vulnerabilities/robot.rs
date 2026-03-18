@@ -42,6 +42,9 @@ impl RobotTester {
             RobotStatus::NotVulnerable => {
                 "Not vulnerable - No RSA padding oracle detected".to_string()
             }
+            RobotStatus::Inconclusive => {
+                "ROBOT test inconclusive - transport or handshake failures prevented a reliable oracle comparison".to_string()
+            }
         };
 
         Ok(RobotTestResult {
@@ -60,21 +63,41 @@ impl RobotTester {
         let response2 = self.send_invalid_rsa_ciphertext(1).await?;
         let response3 = self.send_invalid_rsa_ciphertext(2).await?;
 
-        // Analyze responses
-        if response1 == response2 && response2 == response3 {
-            // All responses identical - not vulnerable
-            Ok(RobotStatus::NotVulnerable)
-        } else if response1 != response2 || response2 != response3 {
-            // Different responses - vulnerable to timing oracle
-            Ok(RobotStatus::Vulnerable)
-        } else {
-            // Weak oracle - further testing needed
-            Ok(RobotStatus::WeakOracle)
+        let (Some(response1), Some(response2), Some(response3)) = (response1, response2, response3)
+        else {
+            return Ok(RobotStatus::Inconclusive);
+        };
+
+        // Analyze responses for padding oracle detection
+        // Count unique responses to determine oracle strength
+        let unique_responses = {
+            let mut set = std::collections::HashSet::new();
+            set.insert(&response1);
+            set.insert(&response2);
+            set.insert(&response3);
+            set.len()
+        };
+
+        match unique_responses {
+            1 => {
+                // All responses identical - no observable oracle
+                Ok(RobotStatus::NotVulnerable)
+            }
+            3 => {
+                // All three responses different - strong oracle detected
+                Ok(RobotStatus::Vulnerable)
+            }
+            2 => {
+                // Two identical, one different - weak oracle
+                // Further testing needed to determine exploitability
+                Ok(RobotStatus::WeakOracle)
+            }
+            _ => Ok(RobotStatus::Inconclusive),
         }
     }
 
     /// Send ClientKeyExchange with invalid RSA ciphertext
-    async fn send_invalid_rsa_ciphertext(&self, variant: u8) -> Result<Vec<u8>> {
+    async fn send_invalid_rsa_ciphertext(&self, variant: u8) -> Result<Option<Vec<u8>>> {
         let addr = self.target.socket_addrs()[0];
 
         match timeout(Duration::from_secs(5), TcpStream::connect(addr)).await {
@@ -109,14 +132,14 @@ impl RobotTester {
                 // Read server's response
                 let mut response = vec![0u8; 1024];
                 match timeout(Duration::from_secs(2), stream.read(&mut response)).await {
-                    Ok(Ok(n)) => {
+                    Ok(Ok(n)) if n > 0 => {
                         response.truncate(n);
-                        Ok(response)
+                        Ok(Some(response))
                     }
-                    _ => Ok(Vec::new()),
+                    _ => Ok(None),
                 }
             }
-            _ => Ok(Vec::new()),
+            _ => Ok(None),
         }
     }
 
@@ -198,6 +221,7 @@ pub enum RobotStatus {
     Vulnerable,
     WeakOracle,
     NotVulnerable,
+    Inconclusive,
 }
 
 /// ROBOT test result
@@ -211,6 +235,7 @@ pub struct RobotTestResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::IpAddr;
 
     #[test]
     fn test_robot_status() {
@@ -226,5 +251,98 @@ mod tests {
             details: "Test".to_string(),
         };
         assert!(result.vulnerable);
+    }
+
+    #[test]
+    fn test_build_invalid_client_key_exchange_variants() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .unwrap();
+        let tester = RobotTester::new(target);
+
+        let msg0 = tester.build_invalid_client_key_exchange(0);
+        let msg1 = tester.build_invalid_client_key_exchange(1);
+        let msg2 = tester.build_invalid_client_key_exchange(2);
+
+        assert_eq!(msg0.len(), msg1.len());
+        assert_eq!(msg1.len(), msg2.len());
+        assert!(msg0.len() >= 128);
+        assert_ne!(msg0, msg1);
+    }
+
+    #[test]
+    fn test_build_finished_structure() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .unwrap();
+        let tester = RobotTester::new(target);
+        let msg = tester.build_finished();
+        assert_eq!(msg[0], CONTENT_TYPE_HANDSHAKE);
+        assert_eq!(msg[5], HANDSHAKE_TYPE_FINISHED);
+    }
+
+    #[test]
+    fn test_build_client_hello_non_empty() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .unwrap();
+        let tester = RobotTester::new(target);
+        let hello = tester.build_client_hello();
+        assert!(!hello.is_empty());
+        assert_eq!(hello[0], CONTENT_TYPE_HANDSHAKE);
+    }
+
+    #[test]
+    fn test_invalid_client_key_exchange_payload_patterns() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .unwrap();
+        let tester = RobotTester::new(target);
+
+        let msg0 = tester.build_invalid_client_key_exchange(0);
+        let msg1 = tester.build_invalid_client_key_exchange(1);
+        let msg2 = tester.build_invalid_client_key_exchange(2);
+
+        let payload0 = &msg0[msg0.len() - 128..];
+        let payload1 = &msg1[msg1.len() - 128..];
+        let payload2 = &msg2[msg2.len() - 128..];
+
+        assert!(payload0.iter().all(|b| *b == 0x00));
+        assert!(payload1.iter().all(|b| *b == 0xff));
+        assert_ne!(payload0, payload2);
+    }
+
+    #[test]
+    fn test_robot_result_details() {
+        let result = RobotTestResult {
+            vulnerable: false,
+            status: RobotStatus::NotVulnerable,
+            details: "Not vulnerable".to_string(),
+        };
+        assert!(!result.vulnerable);
+        assert!(result.details.contains("Not vulnerable"));
+    }
+
+    #[test]
+    fn test_robot_result_debug_contains_status() {
+        let result = RobotTestResult {
+            vulnerable: true,
+            status: RobotStatus::Vulnerable,
+            details: "Details".to_string(),
+        };
+        let debug = format!("{:?}", result);
+        assert!(debug.contains("Vulnerable"));
     }
 }

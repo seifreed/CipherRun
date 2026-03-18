@@ -1,42 +1,33 @@
-use std::sync::Arc;
+use axum::{Router, routing::get};
 
-use axum::{routing::get, Router};
-use tower::ServiceExt;
-
-use cipherrun::api::config::ApiConfig;
 use cipherrun::api::routes::{health, stats};
-use cipherrun::api::state::AppState;
+
+mod common;
 
 #[tokio::test]
 async fn test_health_route_no_db() {
-    let config = ApiConfig::default();
-    let state = Arc::new(AppState::new(config).unwrap());
+    let state = common::api::test_api_state();
 
     let app = Router::new()
         .route("/health", get(health::health_check))
         .with_state(state);
 
-    let response = app
-        .oneshot(axum::http::Request::builder().uri("/health").body(axum::body::Body::empty()).unwrap())
-        .await
-        .unwrap();
-
-    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    assert_eq!(
+        common::api::send_status(&app, common::api::request("GET", "/health")).await,
+        axum::http::StatusCode::OK
+    );
 }
 
 #[tokio::test]
 async fn test_stats_route_no_db() {
-    let config = ApiConfig::default();
-    let state = Arc::new(AppState::new(config).unwrap());
+    let state = common::api::test_api_state();
 
     let app = Router::new()
         .route("/stats", get(stats::get_stats))
         .with_state(state);
 
-    let response = app
-        .oneshot(axum::http::Request::builder().uri("/stats").body(axum::body::Body::empty()).unwrap())
-        .await
-        .unwrap();
-
-    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    assert_eq!(
+        common::api::send_status(&app, common::api::request("GET", "/stats")).await,
+        axum::http::StatusCode::OK
+    );
 }

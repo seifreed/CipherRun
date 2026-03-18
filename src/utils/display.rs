@@ -149,4 +149,54 @@ mod tests {
         let _ = config.error_color("test");
         let _ = config.warning_color("test");
     }
+
+    #[test]
+    fn test_cipher_name_formatting_fallback() {
+        let config = DisplayConfig {
+            colorblind_mode: false,
+            show_rfc_names: false,
+            show_openssl_names: false,
+            show_each: false,
+        };
+
+        let name =
+            config.format_cipher_name("ECDHE-RSA-AES128-SHA", "TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA");
+        assert_eq!(name, "ECDHE-RSA-AES128-SHA");
+    }
+
+    #[test]
+    fn test_from_args_default_mapping() {
+        let config = DisplayConfig::from_args(false, None, true);
+        assert!(config.show_rfc_names);
+        assert!(config.show_openssl_names);
+        assert!(config.show_each);
+    }
+
+    #[test]
+    fn test_info_color_non_colorblind() {
+        let config = DisplayConfig::from_args(false, None, false);
+        let colored = config.info_color("info");
+        assert!(!colored.to_string().is_empty());
+    }
+
+    #[test]
+    fn test_critical_color_colorblind() {
+        let config = DisplayConfig::from_args(true, None, false);
+        let colored = config.critical_color("critical");
+        assert!(!colored.to_string().is_empty());
+    }
+
+    #[test]
+    fn test_warning_color_colorblind() {
+        let config = DisplayConfig::from_args(true, None, false);
+        let colored = config.warning_color("warn");
+        assert!(!colored.to_string().is_empty());
+    }
+
+    #[test]
+    fn test_error_color_non_colorblind() {
+        let config = DisplayConfig::from_args(false, None, false);
+        let colored = config.error_color("err");
+        assert!(!colored.to_string().is_empty());
+    }
 }

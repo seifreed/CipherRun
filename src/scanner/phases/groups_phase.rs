@@ -11,7 +11,7 @@
 //
 // Dependencies:
 // - GroupTester (domain logic for group enumeration)
-// - Args (CLI configuration)
+// - ScanRequest (scan configuration)
 // - Target (server information)
 //
 // Groups tested:
@@ -21,8 +21,9 @@
 // - Finite field DH groups (ffdhe2048, ffdhe3072, ffdhe4096)
 
 use super::{ScanContext, ScanPhase};
+use crate::Result;
+use crate::application::ScanRequest;
 use crate::protocols::groups::GroupTester;
-use crate::{Args, Result};
 use async_trait::async_trait;
 
 /// Key exchange groups enumeration phase
@@ -32,7 +33,7 @@ use async_trait::async_trait;
 /// helps assess the cryptographic strength of the key exchange mechanism
 /// and forward secrecy capabilities.
 ///
-/// Configuration sources (from Args):
+/// Configuration sources (from ScanRequest):
 /// - Group enumeration flag (--show-groups)
 /// - Group exclusion flag (--no-groups)
 /// - Target information (hostname, port, resolved IPs)
@@ -57,7 +58,7 @@ impl ScanPhase for GroupsPhase {
         "Enumerating Key Exchange Groups"
     }
 
-    fn should_run(&self, args: &Args) -> bool {
+    fn should_run(&self, args: &ScanRequest) -> bool {
         // Run if:
         // - Explicit group enumeration requested (--show-groups)
         // - AND not explicitly disabled (--no-groups)
@@ -91,22 +92,22 @@ mod tests {
         let phase = GroupsPhase::new();
 
         // Test with --show-groups flag
-        let mut args = Args::default();
+        let mut args = ScanRequest::default();
         args.scan.show_groups = true;
         assert!(phase.should_run(&args));
 
         // Test with --show-groups but also --no-groups (disabled)
-        let mut args = Args::default();
+        let mut args = ScanRequest::default();
         args.scan.show_groups = true;
         args.scan.no_groups = true;
         assert!(!phase.should_run(&args));
 
         // Test without --show-groups flag
-        let args = Args::default();
+        let args = ScanRequest::default();
         assert!(!phase.should_run(&args));
 
         // Test with --all flag (should not enable group enumeration)
-        let mut args = Args::default();
+        let mut args = ScanRequest::default();
         args.scan.all = true;
         assert!(!phase.should_run(&args));
     }

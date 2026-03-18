@@ -36,3 +36,44 @@ pub struct HttpArgs {
     #[arg(long = "sneaky")]
     pub sneaky: bool,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[derive(Parser)]
+    struct TestCli {
+        #[command(flatten)]
+        args: HttpArgs,
+    }
+
+    #[test]
+    fn test_http_args_defaults_from_clap() {
+        let parsed = TestCli::parse_from(["test"]);
+        let args = parsed.args;
+
+        assert!(args.basicauth.is_none());
+        assert!(args.user_agent.is_none());
+        assert!(args.custom_headers.is_empty());
+        assert!(!args.assume_http);
+        assert!(!args.ids_friendly);
+        assert!(!args.sneaky);
+    }
+
+    #[test]
+    fn test_http_args_custom_headers_multiple() {
+        let parsed = TestCli::parse_from([
+            "test",
+            "--reqheader",
+            "X-Test: 1",
+            "--reqheader",
+            "X-Other: 2",
+        ]);
+        let args = parsed.args;
+
+        assert_eq!(args.custom_headers.len(), 2);
+        assert!(args.custom_headers.iter().any(|h| h.contains("X-Test")));
+        assert!(args.custom_headers.iter().any(|h| h.contains("X-Other")));
+    }
+}

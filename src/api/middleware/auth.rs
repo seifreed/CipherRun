@@ -83,3 +83,41 @@ pub fn get_permission(req: &Request) -> Option<Permission> {
 pub fn get_auth_extension(req: &Request) -> Option<AuthExtension> {
     req.extensions().get::<AuthExtension>().cloned()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::config::Permission;
+    use axum::body::Body;
+    use axum::http::Request as HttpRequest;
+
+    #[test]
+    fn test_get_permission_and_auth_extension() {
+        let mut req = HttpRequest::builder()
+            .uri("/")
+            .body(Body::empty())
+            .expect("request build");
+
+        let auth = AuthExtension {
+            permission: Permission::User,
+            api_key: "key".to_string(),
+        };
+        req.extensions_mut().insert(auth.clone());
+
+        let permission = get_permission(&req).expect("permission exists");
+        assert_eq!(permission, Permission::User);
+
+        let ext = get_auth_extension(&req).expect("auth ext exists");
+        assert_eq!(ext.api_key, "key");
+    }
+
+    #[test]
+    fn test_get_permission_none_when_missing() {
+        let req = HttpRequest::builder()
+            .uri("/")
+            .body(Body::empty())
+            .expect("request build");
+        assert!(get_permission(&req).is_none());
+        assert!(get_auth_extension(&req).is_none());
+    }
+}

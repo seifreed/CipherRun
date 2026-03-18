@@ -191,6 +191,15 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_curve_line_x448_bits() {
+        let line = "0x00,0x1e - X448  X448";
+        let curve = CurvesDatabase::parse_line(line).expect("test assertion should succeed");
+        assert_eq!(curve.bits, Some(448));
+        assert!(!curve.post_quantum);
+        assert!(!curve.hybrid);
+    }
+
+    #[test]
     fn test_post_quantum_detection() {
         assert!(CurvesDatabase::is_post_quantum("MLKEM768"));
         assert!(CurvesDatabase::is_hybrid("X25519MLKEM768"));
@@ -212,5 +221,21 @@ mod tests {
         for curve in recommended {
             assert!(curve.bits.unwrap_or(0) >= 256);
         }
+    }
+
+    #[test]
+    fn test_parse_curve_line_invalid() {
+        let err = CurvesDatabase::parse_line("invalid")
+            .err()
+            .expect("should fail");
+        assert!(err.to_string().contains("Invalid format"));
+    }
+
+    #[test]
+    fn test_get_by_id_normalizes_case() {
+        let data = "0x00,0x1d - X25519  Curve25519";
+        let db = CurvesDatabase::parse(data).expect("test assertion should succeed");
+        assert!(db.get_by_id("001D").is_some());
+        assert!(db.get_by_id("001d").is_some());
     }
 }

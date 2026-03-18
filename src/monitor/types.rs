@@ -96,6 +96,15 @@ mod tests {
     }
 
     #[test]
+    fn test_scan_status_display_additional() {
+        assert_eq!(ScanStatus::ConnectionError.to_string(), "Connection Error");
+        assert_eq!(
+            ScanStatus::CertificateError.to_string(),
+            "Certificate Error"
+        );
+    }
+
+    #[test]
     fn test_monitored_domain_serialization() {
         let domain = MonitoredDomain {
             hostname: "example.com".to_string(),
@@ -114,5 +123,23 @@ mod tests {
             serde_json::from_str(&json).expect("test assertion should succeed");
         assert_eq!(deserialized.hostname, "example.com");
         assert_eq!(deserialized.port, 443);
+    }
+
+    #[test]
+    fn test_scan_history_serialization() {
+        let history = ScanHistory {
+            id: Some(1),
+            hostname: "example.com".to_string(),
+            port: 443,
+            scan_time: Utc::now(),
+            status: ScanStatus::Success,
+            certificate_serial: None,
+            certificate_issuer: None,
+            certificate_expiry: None,
+            error_message: None,
+        };
+
+        let json = serde_json::to_string(&history).expect("test assertion should succeed");
+        assert!(json.contains("example.com"));
     }
 }

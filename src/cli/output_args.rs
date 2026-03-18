@@ -115,3 +115,65 @@ pub struct OutputArgs {
     #[arg(long = "warnings", value_name = "MODE")]
     pub warnings: Option<String>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[derive(Parser)]
+    struct TestCli {
+        #[command(flatten)]
+        args: OutputArgs,
+    }
+
+    #[test]
+    fn test_output_args_defaults_from_clap() {
+        let parsed = TestCli::parse_from(["test"]);
+        let args = parsed.args;
+
+        assert!(args.json.is_none());
+        assert!(args.json_multi_ip.is_none());
+        assert!(!args.json_pretty);
+        assert!(args.csv.is_none());
+        assert!(args.html.is_none());
+        assert!(args.xml.is_none());
+        assert!(args.output_all.is_none());
+        assert!(args.outprefix.is_none());
+        assert!(!args.quiet);
+        assert!(!args.wide);
+        assert_eq!(args.verbose, 0);
+        assert_eq!(args.color, 2);
+        assert!(!args.no_colour);
+        assert!(!args.no_color);
+        assert!(!args.colorblind);
+        assert!(args.logfile.is_none());
+        assert!(!args.append);
+        assert!(!args.overwrite);
+        assert!(!args.hints);
+        assert!(!args.iana_names);
+        assert!(args.cipher_mapping.is_none());
+        assert!(!args.show_cipher_ids);
+        assert!(!args.show_each);
+        assert!(!args.show_times);
+        assert!(args.warnings.is_none());
+    }
+
+    #[test]
+    fn test_output_args_no_color_flags() {
+        let parsed = TestCli::parse_from(["test", "--no-color"]);
+        let args = parsed.args;
+
+        assert!(args.no_color);
+        assert!(!args.no_colour);
+    }
+
+    #[test]
+    fn test_output_args_no_colour_alias() {
+        let parsed = TestCli::parse_from(["test", "--no-colour"]);
+        let args = parsed.args;
+
+        assert!(args.no_colour);
+        assert!(!args.no_color);
+    }
+}

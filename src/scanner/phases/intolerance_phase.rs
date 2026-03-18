@@ -12,7 +12,7 @@
 //
 // Dependencies:
 // - IntoleranceTester (domain logic for intolerance testing)
-// - Args (CLI configuration)
+// - ScanRequest (scan configuration)
 // - Target (server information)
 //
 // Intolerance types tested:
@@ -23,8 +23,9 @@
 // - Cipher suite intolerance (rejects large cipher lists)
 
 use super::{ScanContext, ScanPhase};
+use crate::Result;
+use crate::application::ScanRequest;
 use crate::protocols::intolerance::IntoleranceTester;
-use crate::{Args, Result};
 use async_trait::async_trait;
 
 /// TLS intolerance testing phase
@@ -34,7 +35,7 @@ use async_trait::async_trait;
 /// reject valid TLS handshakes, causing compatibility problems with modern
 /// clients.
 ///
-/// Configuration sources (from Args):
+/// Configuration sources (from ScanRequest):
 /// - Full scan mode (--all) enables intolerance testing
 /// - Target information (hostname, port, resolved IPs)
 pub struct IntolerancePhase;
@@ -58,7 +59,7 @@ impl ScanPhase for IntolerancePhase {
         "Testing TLS Intolerance"
     }
 
-    fn should_run(&self, args: &Args) -> bool {
+    fn should_run(&self, args: &ScanRequest) -> bool {
         // Run if:
         // - Full scan mode (--all)
         args.scan.all
@@ -92,16 +93,16 @@ mod tests {
         let phase = IntolerancePhase::new();
 
         // Test with --all flag
-        let mut args = Args::default();
+        let mut args = ScanRequest::default();
         args.scan.all = true;
         assert!(phase.should_run(&args));
 
         // Test without --all flag
-        let args = Args::default();
+        let args = ScanRequest::default();
         assert!(!phase.should_run(&args));
 
         // Test with target but no --all
-        let mut args = Args::default();
+        let mut args = ScanRequest::default();
         args.target = Some("example.com".to_string());
         assert!(!phase.should_run(&args));
     }

@@ -209,6 +209,8 @@ pub struct LogjamTestResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::{IpAddr, SocketAddr};
+    use tokio::net::TcpListener;
 
     #[test]
     fn test_logjam_result_not_vulnerable() {
@@ -235,5 +237,62 @@ mod tests {
         };
         assert!(result.vulnerable);
         assert!(result.export_dh_supported);
+    }
+
+    #[test]
+    fn test_logjam_result_debug_contains_details() {
+        let result = LogjamTestResult {
+            vulnerable: false,
+            export_dh_supported: false,
+            weak_dh_params: false,
+            dhe_ciphers: vec![],
+            details: "Not vulnerable - DHE not supported".to_string(),
+        };
+
+        let debug = format!("{:?}", result);
+        assert!(debug.contains("Not vulnerable"));
+    }
+
+    #[test]
+    fn test_logjam_result_details_export_grade() {
+        let result = LogjamTestResult {
+            vulnerable: true,
+            export_dh_supported: true,
+            weak_dh_params: false,
+            dhe_ciphers: vec![],
+            details: "Vulnerable to LOGJAM (CVE-2015-4000): Export-grade DH supported".to_string(),
+        };
+        assert!(result.vulnerable);
+        assert!(result.details.contains("Export-grade"));
+    }
+
+    async fn spawn_dummy_server(max_accepts: usize) -> SocketAddr {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let mut remaining = max_accepts;
+            while remaining > 0 {
+                if let Ok((socket, _)) = listener.accept().await {
+                    drop(socket);
+                }
+                remaining -= 1;
+            }
+        });
+        addr
+    }
+
+    #[tokio::test]
+    async fn test_logjam_not_vulnerable_on_dummy_server() {
+        let addr = spawn_dummy_server(30).await;
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            addr.port(),
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .unwrap();
+
+        let tester = LogjamTester::new(target);
+        let result = tester.test().await.unwrap();
+        assert!(!result.vulnerable);
     }
 }

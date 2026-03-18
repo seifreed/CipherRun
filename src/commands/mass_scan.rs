@@ -2,7 +2,7 @@
 // Copyright (C) 2025 Marc Rivero (@seifreed)
 // Licensed under GPL-3.0
 
-use super::Command;
+use super::{Command, CommandExit};
 use crate::{Args, Result, TlsError};
 use async_trait::async_trait;
 use colored::Colorize;
@@ -29,8 +29,8 @@ impl MassScanCommand {
 
 #[async_trait]
 impl Command for MassScanCommand {
-    async fn execute(&self) -> Result<()> {
-        use crate::scanner::mass::MassScanner;
+    async fn execute(&self) -> Result<CommandExit> {
+        use crate::scanner::mass::{MassScanConfig, MassScanner};
 
         let input_file = self
             .args
@@ -44,7 +44,16 @@ impl Command for MassScanCommand {
             message: "Invalid input file path".to_string(),
         })?;
 
-        let mass_scanner = MassScanner::from_file(self.args.clone(), input_file_str)?;
+        let scan_request = self.args.to_scan_request();
+        let certificate_filters = self.args.to_certificate_filters();
+        let mass_scanner = MassScanner::from_file(
+            scan_request,
+            MassScanConfig {
+                max_parallel: self.args.network.max_parallel,
+                certificate_filters: certificate_filters.clone(),
+            },
+            input_file_str,
+        )?;
 
         info!(
             "Loaded {} targets from {}",
@@ -59,31 +68,14 @@ impl Command for MassScanCommand {
         };
 
         // Apply certificate filters if active
-        let filtered_results = MassScanner::filter_results(&self.args, results);
+        let filtered_results = MassScanner::filter_results(&certificate_filters, results);
 
         // Display filter status if filters were applied
-        if self.args.has_certificate_filters() {
-            let mut filter_names = Vec::new();
-            if self.args.cert_filters.filter_expired {
-                filter_names.push("expired");
-            }
-            if self.args.cert_filters.filter_self_signed {
-                filter_names.push("self-signed");
-            }
-            if self.args.cert_filters.filter_mismatched {
-                filter_names.push("mismatched");
-            }
-            if self.args.cert_filters.filter_revoked {
-                filter_names.push("revoked");
-            }
-            if self.args.cert_filters.filter_untrusted {
-                filter_names.push("untrusted");
-            }
-
+        if certificate_filters.has_filters() {
             println!(
                 "\n{} Applied certificate filters: {}",
                 "".cyan(),
-                filter_names.join(", ")
+                certificate_filters.active_filter_names().join(", ")
             );
             println!(
                 "{} Showing {} of {} targets that match filter criteria\n",
@@ -115,10 +107,29 @@ impl Command for MassScanCommand {
             );
         }
 
-        Ok(())
+        Ok(CommandExit::success())
     }
 
     fn name(&self) -> &'static str {
         "MassScanCommand"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_mass_scan_command_name() {
+        let cmd = MassScanCommand::new(Args::default());
+        assert_eq!(cmd.name(), "MassScanCommand");
+    }
+
+    #[tokio::test]
+    async fn test_mass_scan_requires_input_file() {
+        let args = Args::default();
+        let cmd = MassScanCommand::new(args);
+        let err = cmd.execute().await.unwrap_err();
+        assert!(format!("{err}").contains("Input file is required"));
     }
 }

@@ -213,6 +213,16 @@ mod tests {
     }
 
     #[test]
+    fn test_npn_result_details_contains_text() {
+        let result = NpnTestResult {
+            supported: true,
+            protocols: vec!["h2".to_string()],
+            details: "NPN supported".to_string(),
+        };
+        assert!(result.details.contains("NPN"));
+    }
+
+    #[test]
     fn test_client_hello_with_npn() {
         let target = Target::with_ips(
             "example.com".to_string(),
@@ -231,5 +241,82 @@ mod tests {
         // Check for NPN extension (0x3374)
         let has_npn = hello.windows(2).any(|w| w == [0x33, 0x74]);
         assert!(has_npn);
+    }
+
+    #[test]
+    fn test_parse_npn_response_with_protocols() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["93.184.216.34".parse().unwrap()],
+        )
+        .unwrap();
+        let tester = NpnTester::new(target);
+
+        let mut response = vec![0x01, 0x02, 0x03];
+        response.extend_from_slice(&[0x33, 0x74, 0x00, 0x0c]); // NPN ext, len=12
+        response.push(0x02);
+        response.extend_from_slice(b"h2");
+        response.push(0x08);
+        response.extend_from_slice(b"http/1.1");
+
+        let protocols = tester
+            .parse_npn_response(&response)
+            .expect("test assertion should succeed");
+        assert_eq!(protocols, vec!["h2".to_string(), "http/1.1".to_string()]);
+    }
+
+    #[test]
+    fn test_parse_npn_response_invalid_length() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["93.184.216.34".parse().unwrap()],
+        )
+        .unwrap();
+        let tester = NpnTester::new(target);
+
+        let response = vec![0x33, 0x74, 0xff, 0xff];
+        let protocols = tester
+            .parse_npn_response(&response)
+            .expect("test assertion should succeed");
+        assert!(protocols.is_empty());
+    }
+
+    #[test]
+    fn test_parse_npn_response_without_extension() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["93.184.216.34".parse().unwrap()],
+        )
+        .unwrap();
+        let tester = NpnTester::new(target);
+
+        let response = vec![0x01, 0x02, 0x03, 0x04];
+        let protocols = tester
+            .parse_npn_response(&response)
+            .expect("test assertion should succeed");
+        assert!(protocols.is_empty());
+    }
+
+    #[test]
+    fn test_parse_npn_response_truncated_protocol() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["93.184.216.34".parse().unwrap()],
+        )
+        .unwrap();
+        let tester = NpnTester::new(target);
+
+        let mut response = vec![0x33, 0x74, 0x00, 0x02]; // len=2
+        response.push(0x03); // proto_len=3 but only 1 byte remains
+        response.push(b'h');
+
+        let protocols = tester
+            .parse_npn_response(&response)
+            .expect("test assertion should succeed");
+        assert!(protocols.is_empty());
     }
 }

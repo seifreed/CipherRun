@@ -9,6 +9,7 @@ pub mod framework;
 pub mod loader;
 pub mod reporter;
 pub mod rule;
+pub mod source;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -19,6 +20,7 @@ pub use framework::{ComplianceFramework, Requirement};
 pub use loader::FrameworkLoader;
 pub use reporter::Reporter;
 pub use rule::{Rule, RuleType};
+pub use source::BuiltinFrameworkSource;
 
 /// Overall compliance status for a scan
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -62,3 +62,66 @@ pub struct NetworkArgs {
     )]
     pub max_concurrent_ciphers: usize,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[derive(Parser)]
+    struct TestCli {
+        #[command(flatten)]
+        args: NetworkArgs,
+    }
+
+    #[test]
+    fn test_network_args_defaults_from_clap() {
+        let parsed = TestCli::parse_from(["test"]);
+        let args = parsed.args;
+
+        assert!(!args.ipv4_only);
+        assert!(!args.ipv6_only);
+        assert!(args.proxy.is_none());
+        assert!(args.resolvers.is_empty());
+        assert!(!args.test_all_ips);
+        assert!(!args.first_ip_only);
+        assert!(!args.scan_all_ips);
+        assert!(!args.parallel);
+        assert_eq!(args.max_parallel, 20);
+        assert_eq!(args.max_concurrent_ciphers, 10);
+    }
+
+    #[test]
+    fn test_network_args_custom_values() {
+        let parsed = TestCli::parse_from([
+            "test",
+            "--resolvers",
+            "8.8.8.8,1.1.1.1",
+            "--max-parallel",
+            "7",
+            "--max-concurrent-ciphers",
+            "3",
+            "--parallel",
+            "--first-ip-only",
+        ]);
+        let args = parsed.args;
+
+        assert_eq!(
+            args.resolvers,
+            vec!["8.8.8.8".to_string(), "1.1.1.1".to_string()]
+        );
+        assert_eq!(args.max_parallel, 7);
+        assert_eq!(args.max_concurrent_ciphers, 3);
+        assert!(args.parallel);
+        assert!(args.first_ip_only);
+    }
+
+    #[test]
+    fn test_network_args_ip_version_flags() {
+        let parsed = TestCli::parse_from(["test", "-4", "-6"]);
+        let args = parsed.args;
+
+        assert!(args.ipv4_only);
+        assert!(args.ipv6_only);
+    }
+}

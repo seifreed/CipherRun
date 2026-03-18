@@ -23,3 +23,29 @@ pub use detector::{ChangeDetector, ChangeEvent, ChangeSeverity, ChangeType};
 pub use inventory::{AlertThresholds, CertificateInventory, MonitoredDomain};
 pub use scheduler::SchedulingEngine;
 pub use types::{ScanHistory, ScanStatus};
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_monitor_reexports_basic() {
+        let thresholds = AlertThresholds::default();
+        assert!(thresholds.on_change);
+        assert_eq!(ScanStatus::Success.to_string(), "Success");
+    }
+
+    #[test]
+    fn test_monitor_reexports_change_event() {
+        let event = ChangeEvent {
+            change_type: ChangeType::IssuerChange,
+            severity: ChangeSeverity::Low,
+            description: "Issuer changed".to_string(),
+            previous_value: Some("Old".to_string()),
+            current_value: Some("New".to_string()),
+            detected_at: chrono::Utc::now(),
+        };
+
+        assert_eq!(event.severity, ChangeSeverity::Low);
+    }
+}

@@ -31,3 +31,37 @@ pub struct MonitoringArgs {
     #[arg(long = "test-alert")]
     pub test_alert: bool,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[derive(Parser)]
+    struct TestCli {
+        #[command(flatten)]
+        args: MonitoringArgs,
+    }
+
+    #[test]
+    fn test_monitoring_args_defaults_from_clap() {
+        let parsed = TestCli::parse_from(["test"]);
+        let args = parsed.args;
+
+        assert!(!args.enable);
+        assert!(args.config.is_none());
+        assert!(args.domains_file.is_none());
+        assert!(args.domain.is_none());
+        assert!(!args.test_alert);
+    }
+
+    #[test]
+    fn test_monitoring_args_enable_and_domain() {
+        let parsed =
+            TestCli::parse_from(["test", "--monitor", "--monitor-domain", "example.com:443"]);
+        let args = parsed.args;
+
+        assert!(args.enable);
+        assert_eq!(args.domain.as_deref(), Some("example.com:443"));
+    }
+}

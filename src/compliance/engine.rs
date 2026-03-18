@@ -1,10 +1,10 @@
 // Compliance engine - Orchestrates compliance evaluation
 
+use crate::application::ScanAssessment;
 use crate::compliance::{
     ComplianceChecker, ComplianceFramework, ComplianceReport, Requirement, RequirementResult,
     RequirementStatus, Severity, Violation,
 };
-use crate::scanner::ScanResults;
 use anyhow::Result;
 
 /// Compliance engine that evaluates scan results against a framework
@@ -19,7 +19,7 @@ impl ComplianceEngine {
     }
 
     /// Evaluate scan results against the framework
-    pub fn evaluate(&self, results: &ScanResults) -> Result<ComplianceReport> {
+    pub fn evaluate(&self, results: &ScanAssessment) -> Result<ComplianceReport> {
         let mut report = ComplianceReport::new(&self.framework, results.target.clone());
 
         for requirement in &self.framework.requirements {
@@ -60,7 +60,7 @@ impl ComplianceEngine {
     fn evaluate_requirement(
         &self,
         requirement: &Requirement,
-        results: &ScanResults,
+        results: &ScanAssessment,
     ) -> Result<Vec<Violation>> {
         let mut violations = Vec::new();
 
@@ -74,11 +74,10 @@ impl ComplianceEngine {
                 "CertificateValidation" => ComplianceChecker::check_cert_validation(rule, results)?,
                 "CertificateExpiration" => ComplianceChecker::check_cert_expiration(rule, results)?,
                 "Vulnerability" => ComplianceChecker::check_vulnerabilities(rule, results)?,
-                _ => {
-                    // Unknown rule type - log warning and skip
-                    eprintln!("Warning: Unknown rule type: {}", rule.rule_type);
-                    vec![]
+                _ => return Err(crate::TlsError::ConfigError {
+                    message: format!("Unknown compliance rule type: {}", rule.rule_type),
                 }
+                .into()),
             };
 
             violations.extend(rule_violations);
@@ -138,7 +137,7 @@ mod tests {
         let engine = ComplianceEngine::new(framework);
 
         #[allow(clippy::field_reassign_with_default)]
-        let mut results = ScanResults::default();
+        let mut results = ScanAssessment::default();
         results.target = "test.com:443".to_string();
         results.protocols = vec![
             ProtocolTestResult {
@@ -215,7 +214,7 @@ mod tests {
         let engine = ComplianceEngine::new(framework);
 
         #[allow(clippy::field_reassign_with_default)]
-        let mut results = ScanResults::default();
+        let mut results = ScanAssessment::default();
         results.target = "test.com:443".to_string();
         results.protocols = vec![ProtocolTestResult {
             protocol: Protocol::TLS12,

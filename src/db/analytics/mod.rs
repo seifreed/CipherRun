@@ -19,3 +19,17 @@ pub use trend_analyzer::{
     CipherStrengthTrend, ProtocolTrend, RatingTrend, TrendAnalyzer, TrendDirection,
     VulnerabilityTrend,
 };
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_analytics_reexports_basic() {
+        let severity = ChangeSeverity::High;
+        assert_eq!(format!("{:?}", severity), "High");
+
+        let direction = TrendDirection::Improving;
+        assert_eq!(direction, TrendDirection::Improving);
+    }
+}

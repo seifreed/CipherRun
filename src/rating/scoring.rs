@@ -628,6 +628,7 @@ mod tests {
         let vulnerabilities = vec![crate::vulnerabilities::VulnerabilityResult {
             vuln_type: crate::vulnerabilities::VulnerabilityType::TLSFallback,
             vulnerable: true, // This should NOT affect grade anymore
+            inconclusive: false,
             details: "TLS_FALLBACK_SCSV not supported".to_string(),
             cve: Some("CVE-2014-8730".to_string()),
             cwe: Some("CWE-757".to_string()),
@@ -685,5 +686,87 @@ mod tests {
             Grade::AMinus,
             "Grade should be A- without TLS 1.3"
         );
+    }
+
+    #[test]
+    fn test_certificate_score_with_issues() {
+        use crate::certificates::validator::{IssueSeverity, IssueType, ValidationIssue};
+
+        let cert = ValidationResult {
+            valid: true,
+            issues: vec![
+                ValidationIssue {
+                    severity: IssueSeverity::Critical,
+                    issue_type: IssueType::SelfSigned,
+                    description: "self-signed".to_string(),
+                },
+                ValidationIssue {
+                    severity: IssueSeverity::Low,
+                    issue_type: IssueType::MissingExtension,
+                    description: "missing ext".to_string(),
+                },
+            ],
+            trust_chain_valid: true,
+            hostname_match: true,
+            not_expired: true,
+            signature_valid: true,
+            trusted_ca: None,
+            platform_trust: None,
+        };
+
+        let score = RatingCalculator::calculate_certificate_score(Some(&cert));
+        assert_eq!(score, 55);
+    }
+
+    #[test]
+    fn test_key_exchange_score_penalty_for_low_fs() {
+        use crate::ciphers::tester::{CipherCounts, ProtocolCipherSummary};
+        use std::collections::HashMap;
+
+        let summary = ProtocolCipherSummary {
+            protocol: Protocol::TLS12,
+            supported_ciphers: Vec::new(),
+            server_ordered: false,
+            server_preference: Vec::new(),
+            preferred_cipher: None,
+            counts: CipherCounts {
+                total: 10,
+                forward_secrecy: 4,
+                ..Default::default()
+            },
+            avg_handshake_time_ms: None,
+        };
+
+        let mut ciphers = HashMap::new();
+        ciphers.insert(Protocol::TLS12, summary);
+
+        let score = RatingCalculator::calculate_key_exchange_score(&ciphers);
+        assert_eq!(score, 80);
+    }
+
+    #[test]
+    fn test_cipher_strength_score_export_ciphers_zero() {
+        use crate::ciphers::tester::{CipherCounts, ProtocolCipherSummary};
+        use std::collections::HashMap;
+
+        let summary = ProtocolCipherSummary {
+            protocol: Protocol::TLS12,
+            supported_ciphers: Vec::new(),
+            server_ordered: false,
+            server_preference: Vec::new(),
+            preferred_cipher: None,
+            counts: CipherCounts {
+                total: 1,
+                export_ciphers: 1,
+                ..Default::default()
+            },
+            avg_handshake_time_ms: None,
+        };
+
+        let mut ciphers = HashMap::new();
+        ciphers.insert(Protocol::TLS12, summary);
+
+        let score = RatingCalculator::calculate_cipher_strength_score(&ciphers);
+        assert_eq!(score, 0);
     }
 }

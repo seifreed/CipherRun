@@ -2,7 +2,8 @@
 // Copyright (C) 2025 Marc Rivero (@seifreed)
 // Licensed under GPL-3.0
 
-use super::Command;
+use super::{Command, CommandExit};
+use crate::application::HostPortInput;
 use crate::{Args, Result};
 use async_trait::async_trait;
 
@@ -21,11 +22,8 @@ impl DatabaseCommand {
     pub fn new(args: Args) -> Self {
         Self { args }
     }
-}
 
-#[async_trait]
-impl Command for DatabaseCommand {
-    async fn execute(&self) -> Result<()> {
+    async fn open_database(&self) -> Result<crate::db::CipherRunDatabase> {
         use crate::db::CipherRunDatabase;
 
         let db_config_path = self
@@ -36,14 +34,16 @@ impl Command for DatabaseCommand {
             .map(|p| p.to_str().unwrap_or("database.toml"))
             .unwrap_or("database.toml");
 
-        let db = CipherRunDatabase::from_config_file(db_config_path).await?;
+        CipherRunDatabase::from_config_file(db_config_path).await
+    }
 
-        // Initialize database
+    fn print_init_notice(&self) {
         if self.args.database.init {
             println!("✓ Database initialized successfully");
         }
+    }
 
-        // Cleanup old scans
+    async fn cleanup_old_scans(&self, db: &crate::db::CipherRunDatabase) -> Result<()> {
         if let Some(days) = self.args.database.cleanup_days {
             let deleted = db.cleanup_old_scans(days).await?;
             println!(
@@ -52,40 +52,74 @@ impl Command for DatabaseCommand {
             );
         }
 
-        // Query scan history
-        if let Some(history_target) = &self.args.database.history {
-            let parts: Vec<&str> = history_target.split(':').collect();
-            let hostname = parts.first().unwrap_or(&"").to_string();
-            let port: u16 = parts.get(1).and_then(|p| p.parse().ok()).unwrap_or(443);
+        Ok(())
+    }
 
+    fn parse_history_target(&self, history_target: &str) -> (String, u16) {
+        let parsed = HostPortInput::parse_with_default_port(history_target, 443);
+        (parsed.hostname, parsed.port)
+    }
+
+    fn render_history(&self, hostname: &str, port: u16, scans: &[crate::db::models::ScanRecord]) {
+        println!("\nScan History for {}:{}", hostname, port);
+        println!("{}", "=".repeat(80));
+
+        if scans.is_empty() {
+            println!("No scan history found");
+            return;
+        }
+
+        for scan in scans {
+            println!(
+                "  {} - Grade: {} | Score: {} | Duration: {}ms",
+                scan.scan_timestamp.format("%Y-%m-%d %H:%M:%S"),
+                scan.overall_grade.as_deref().unwrap_or("N/A"),
+                scan.overall_score.unwrap_or(0),
+                scan.scan_duration_ms.unwrap_or(0)
+            );
+        }
+    }
+
+    async fn show_history(&self, db: &crate::db::CipherRunDatabase) -> Result<()> {
+        if let Some(history_target) = &self.args.database.history {
+            let (hostname, port) = self.parse_history_target(history_target);
             let scans = db
                 .get_scan_history(&hostname, port, self.args.database.history_limit)
                 .await?;
-
-            println!("\nScan History for {}:{}", hostname, port);
-            println!("{}", "=".repeat(80));
-
-            if scans.is_empty() {
-                println!("No scan history found");
-            } else {
-                for scan in scans {
-                    println!(
-                        "  {} - Grade: {} | Score: {} | Duration: {}ms",
-                        scan.scan_timestamp.format("%Y-%m-%d %H:%M:%S"),
-                        scan.overall_grade.as_deref().unwrap_or("N/A"),
-                        scan.overall_score.unwrap_or(0),
-                        scan.scan_duration_ms.unwrap_or(0)
-                    );
-                }
-            }
+            self.render_history(&hostname, port, &scans);
         }
+
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl Command for DatabaseCommand {
+    async fn execute(&self) -> Result<CommandExit> {
+        let db = self.open_database().await?;
+        self.print_init_notice();
+        self.cleanup_old_scans(&db).await?;
+        self.show_history(&db).await?;
 
         db.close().await;
 
-        Ok(())
+        Ok(CommandExit::success())
     }
 
     fn name(&self) -> &'static str {
         "DatabaseCommand"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Args;
+
+    #[test]
+    fn test_database_command_name() {
+        let args = Args::default();
+        let cmd = DatabaseCommand::new(args);
+        assert_eq!(cmd.name(), "DatabaseCommand");
     }
 }

@@ -77,4 +77,41 @@ mod tests {
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
         );
     }
+
+    #[test]
+    fn test_smtp_hostname_toggle() {
+        let sneaky = SneakyConfig::new(true);
+        assert_eq!(sneaky.smtp_hostname(), SNEAKY_SMTP_HOSTNAME);
+
+        let normal = SneakyConfig::new(false);
+        assert_eq!(normal.smtp_hostname(), "localhost");
+    }
+
+    #[test]
+    fn test_generic_hostname_toggle() {
+        let sneaky = SneakyConfig::new(true);
+        assert_eq!(sneaky.generic_hostname(), SNEAKY_GENERIC_HOSTNAME);
+
+        let normal = SneakyConfig::new(false);
+        assert_eq!(normal.generic_hostname(), "localhost");
+    }
+
+    #[test]
+    fn test_default_config_is_disabled() {
+        let config = SneakyConfig::default();
+        assert!(!config.is_enabled());
+        assert_eq!(config.generic_hostname(), "localhost");
+    }
+
+    #[test]
+    fn test_normal_user_agent_contains_chrome() {
+        let config = SneakyConfig::new(false);
+        assert!(config.user_agent().contains("Chrome"));
+    }
+
+    #[test]
+    fn test_sneaky_user_agent_contains_firefox() {
+        let config = SneakyConfig::new(true);
+        assert!(config.user_agent().contains("Firefox"));
+    }
 }

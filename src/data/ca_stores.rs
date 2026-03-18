@@ -170,4 +170,21 @@ mod tests {
             assert!(!cert.der.is_empty());
         }
     }
+
+    #[test]
+    fn test_get_store_by_name_aliases() {
+        let stores = CA_STORES.as_ref();
+        assert!(stores.get_store("microsoft").is_some());
+        assert!(stores.get_store("jdk").is_some());
+    }
+
+    #[test]
+    fn test_all_stores_and_total_count() {
+        let stores = CA_STORES.as_ref();
+        let all = stores.all_stores();
+        assert_eq!(all.len(), 6);
+
+        let summed: usize = all.iter().map(|store| store.certificates.len()).sum();
+        assert_eq!(stores.total_certificates(), summed);
+    }
 }

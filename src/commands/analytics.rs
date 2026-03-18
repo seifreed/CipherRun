@@ -2,7 +2,8 @@
 // Copyright (C) 2025 Marc Rivero (@seifreed)
 // Licensed under GPL-3.0
 
-use super::Command;
+use super::{Command, CommandExit};
+use crate::application::{CompareScanIds, HostPortDaysInput};
 use crate::{Args, Result, TlsError};
 use async_trait::async_trait;
 
@@ -22,15 +23,9 @@ impl AnalyticsCommand {
     pub fn new(args: Args) -> Self {
         Self { args }
     }
-}
 
-#[async_trait]
-impl Command for AnalyticsCommand {
-    async fn execute(&self) -> Result<()> {
+    async fn open_database(&self) -> Result<std::sync::Arc<crate::db::CipherRunDatabase>> {
         use crate::db::CipherRunDatabase;
-        use crate::db::analytics::{
-            ChangeTracker, DashboardGenerator, ScanComparator, TrendAnalyzer,
-        };
         use std::sync::Arc;
 
         let db_config_path = self
@@ -41,168 +36,270 @@ impl Command for AnalyticsCommand {
             .map(|p| p.to_str().unwrap_or("database.toml"))
             .unwrap_or("database.toml");
 
-        let db = Arc::new(CipherRunDatabase::from_config_file(db_config_path).await?);
+        Ok(Arc::new(
+            CipherRunDatabase::from_config_file(db_config_path).await?,
+        ))
+    }
 
-        // Handle --compare
-        if let Some(compare_str) = &self.args.compare {
-            let parts: Vec<&str> = compare_str.split(':').collect();
-            if parts.len() != 2 {
+    fn parse_compare_ids(&self, raw: &str) -> Result<Option<(i64, i64)>> {
+        match CompareScanIds::parse(raw) {
+            Ok(parsed) => Ok(Some((parsed.left, parsed.right))),
+            Err(TlsError::InvalidInput { message })
+                if message == "Expected format SCAN_ID_1:SCAN_ID_2" =>
+            {
                 eprintln!("Error: --compare requires format SCAN_ID_1:SCAN_ID_2");
-                return Ok(());
+                Ok(None)
             }
-
-            let scan_id_1: i64 = parts[0].parse().map_err(|_| TlsError::InvalidInput {
-                message: format!("Invalid scan ID: {}", parts[0]),
-            })?;
-            let scan_id_2: i64 = parts[1].parse().map_err(|_| TlsError::InvalidInput {
-                message: format!("Invalid scan ID: {}", parts[1]),
-            })?;
-
-            let comparator = ScanComparator::new(db.clone());
-            let comparison = comparator.compare_scans(scan_id_1, scan_id_2).await?;
-
-            // Output format: JSON if --json flag is set, otherwise terminal
-            let format = if self.args.output.json.is_some() || self.args.output.json_pretty {
-                "json"
-            } else {
-                "terminal"
-            };
-
-            let output = comparator.format_comparison(&comparison, format)?;
-
-            if let Some(json_path) = &self.args.output.json {
-                std::fs::write(json_path, &output)?;
-                println!("✓ Comparison saved to: {}", json_path.display());
-            } else {
-                println!("{}", output);
-            }
+            Err(err) => Err(err),
         }
+    }
 
-        // Handle --changes
-        if let Some(changes_str) = &self.args.changes {
-            let parts: Vec<&str> = changes_str.split(':').collect();
-            if parts.len() != 3 {
-                eprintln!("Error: --changes requires format HOSTNAME:PORT:DAYS");
-                return Ok(());
+    fn parse_host_port_days(
+        &self,
+        raw: &str,
+        flag_name: &str,
+    ) -> Result<Option<HostPortDaysInput>> {
+        match HostPortDaysInput::parse(raw) {
+            Ok(parsed) => Ok(Some(parsed)),
+            Err(TlsError::InvalidInput { message })
+                if message == "Expected format HOSTNAME:PORT:DAYS" =>
+            {
+                eprintln!("Error: --{} requires format HOSTNAME:PORT:DAYS", flag_name);
+                Ok(None)
             }
-
-            let hostname = parts[0].to_string();
-            let port: u16 = parts[1]
-                .parse()
-                .map_err(|_| anyhow::anyhow!("Invalid port: {}", parts[1]))?;
-            let days: i64 = parts[2]
-                .parse()
-                .map_err(|_| anyhow::anyhow!("Invalid days: {}", parts[2]))?;
-
-            let tracker = ChangeTracker::new(db.clone());
-            let changes = tracker.detect_changes(&hostname, port, days).await?;
-
-            if self.args.output.json.is_some() || self.args.output.json_pretty {
-                let json = if self.args.output.json_pretty {
-                    serde_json::to_string_pretty(&changes)?
-                } else {
-                    serde_json::to_string(&changes)?
-                };
-
-                if let Some(json_path) = &self.args.output.json {
-                    std::fs::write(json_path, &json)?;
-                    println!("✓ Changes saved to: {}", json_path.display());
-                } else {
-                    println!("{}", json);
-                }
-            } else {
-                let report = tracker.generate_change_report(&changes);
-                println!("{}", report);
-            }
+            Err(err) => Err(err),
         }
+    }
 
-        // Handle --trends
-        if let Some(trends_str) = &self.args.trends {
-            let parts: Vec<&str> = trends_str.split(':').collect();
-            if parts.len() != 3 {
-                eprintln!("Error: --trends requires format HOSTNAME:PORT:DAYS");
-                return Ok(());
-            }
+    fn prefers_json_output(&self) -> bool {
+        self.args.output.json.is_some() || self.args.output.json_pretty
+    }
 
-            let hostname = parts[0].to_string();
-            let port: u16 = parts[1].parse().map_err(|_| TlsError::InvalidInput {
-                message: format!("Invalid port: {}", parts[1]),
-            })?;
-            let days: i64 = parts[2].parse().map_err(|_| TlsError::InvalidInput {
-                message: format!("Invalid days: {}", parts[2]),
-            })?;
-
-            let analyzer = TrendAnalyzer::new(db.clone());
-
-            if self.args.output.json.is_some() || self.args.output.json_pretty {
-                // Generate all trends and output as JSON
-                let rating_trend = analyzer.analyze_rating_trend(&hostname, port, days).await?;
-                let vuln_trend = analyzer
-                    .analyze_vulnerability_trend(&hostname, port, days)
-                    .await?;
-                let protocol_trend = analyzer
-                    .analyze_protocol_trend(&hostname, port, days)
-                    .await?;
-
-                let trends = serde_json::json!({
-                    "rating_trend": rating_trend,
-                    "vulnerability_trend": vuln_trend,
-                    "protocol_trend": protocol_trend,
-                });
-
-                let json = if self.args.output.json_pretty {
-                    serde_json::to_string_pretty(&trends)?
-                } else {
-                    serde_json::to_string(&trends)?
-                };
-
-                if let Some(json_path) = &self.args.output.json {
-                    std::fs::write(json_path, &json)?;
-                    println!("✓ Trends saved to: {}", json_path.display());
-                } else {
-                    println!("{}", json);
-                }
-            } else {
-                let report = analyzer
-                    .generate_trend_report(&hostname, port, days)
-                    .await?;
-                println!("{}", report);
-            }
-        }
-
-        // Handle --dashboard
-        if let Some(dashboard_str) = &self.args.dashboard {
-            let parts: Vec<&str> = dashboard_str.split(':').collect();
-            if parts.len() != 3 {
-                eprintln!("Error: --dashboard requires format HOSTNAME:PORT:DAYS");
-                return Ok(());
-            }
-
-            let hostname = parts[0].to_string();
-            let port: u16 = parts[1].parse().map_err(|_| TlsError::InvalidInput {
-                message: format!("Invalid port: {}", parts[1]),
-            })?;
-            let days: i64 = parts[2].parse().map_err(|_| TlsError::InvalidInput {
-                message: format!("Invalid days: {}", parts[2]),
-            })?;
-
-            let generator = DashboardGenerator::new(db.clone());
-            let dashboard = generator.generate_dashboard(&hostname, port, days).await?;
-
-            let json = generator.to_json(&dashboard, self.args.output.json_pretty)?;
-
-            if let Some(json_path) = &self.args.output.json {
-                std::fs::write(json_path, &json)?;
-                println!("✓ Dashboard data saved to: {}", json_path.display());
-            } else {
-                println!("{}", json);
-            }
+    fn print_or_save_output(&self, output: &str, success_message: &str) -> Result<()> {
+        if let Some(json_path) = &self.args.output.json {
+            std::fs::write(json_path, output)?;
+            println!("✓ {} {}", success_message, json_path.display());
+        } else {
+            println!("{}", output);
         }
 
         Ok(())
     }
 
+    fn to_json<T: serde::Serialize>(&self, value: &T) -> Result<String> {
+        if self.args.output.json_pretty {
+            Ok(serde_json::to_string_pretty(value)?)
+        } else {
+            Ok(serde_json::to_string(value)?)
+        }
+    }
+
+    async fn handle_compare(&self, compare_str: &str) -> Result<CommandExit> {
+        use crate::db::analytics::ScanComparator;
+
+        let Some((scan_id_1, scan_id_2)) = self.parse_compare_ids(compare_str)? else {
+            return Ok(CommandExit::success());
+        };
+
+        let db = self.open_database().await?;
+        let comparator = ScanComparator::new(db);
+        let comparison = comparator.compare_scans(scan_id_1, scan_id_2).await?;
+        let format = if self.prefers_json_output() {
+            "json"
+        } else {
+            "terminal"
+        };
+        let output = comparator.format_comparison(&comparison, format)?;
+
+        self.print_or_save_output(&output, "Comparison saved to:")?;
+        Ok(CommandExit::success())
+    }
+
+    async fn handle_changes(&self, changes_str: &str) -> Result<CommandExit> {
+        use crate::db::analytics::ChangeTracker;
+
+        let Some(input) = self.parse_host_port_days(changes_str, "changes")? else {
+            return Ok(CommandExit::success());
+        };
+
+        let db = self.open_database().await?;
+        let tracker = ChangeTracker::new(db);
+        let changes = tracker
+            .detect_changes(&input.hostname, input.port, input.days)
+            .await?;
+
+        if self.prefers_json_output() {
+            let json = self.to_json(&changes)?;
+            self.print_or_save_output(&json, "Changes saved to:")?;
+        } else {
+            let report = tracker.generate_change_report(&changes);
+            println!("{}", report);
+        }
+
+        Ok(CommandExit::success())
+    }
+
+    async fn handle_trends(&self, trends_str: &str) -> Result<CommandExit> {
+        use crate::db::analytics::TrendAnalyzer;
+
+        let Some(input) = self.parse_host_port_days(trends_str, "trends")? else {
+            return Ok(CommandExit::success());
+        };
+
+        let db = self.open_database().await?;
+        let analyzer = TrendAnalyzer::new(db);
+
+        if self.prefers_json_output() {
+            let rating_trend = analyzer
+                .analyze_rating_trend(&input.hostname, input.port, input.days)
+                .await?;
+            let vuln_trend = analyzer
+                .analyze_vulnerability_trend(&input.hostname, input.port, input.days)
+                .await?;
+            let protocol_trend = analyzer
+                .analyze_protocol_trend(&input.hostname, input.port, input.days)
+                .await?;
+
+            let trends = serde_json::json!({
+                "rating_trend": rating_trend,
+                "vulnerability_trend": vuln_trend,
+                "protocol_trend": protocol_trend,
+            });
+
+            let json = self.to_json(&trends)?;
+            self.print_or_save_output(&json, "Trends saved to:")?;
+        } else {
+            let report = analyzer
+                .generate_trend_report(&input.hostname, input.port, input.days)
+                .await?;
+            println!("{}", report);
+        }
+
+        Ok(CommandExit::success())
+    }
+
+    async fn handle_dashboard(&self, dashboard_str: &str) -> Result<CommandExit> {
+        use crate::db::analytics::DashboardGenerator;
+
+        let Some(input) = self.parse_host_port_days(dashboard_str, "dashboard")? else {
+            return Ok(CommandExit::success());
+        };
+
+        let db = self.open_database().await?;
+        let generator = DashboardGenerator::new(db);
+        let dashboard = generator
+            .generate_dashboard(&input.hostname, input.port, input.days)
+            .await?;
+        let json = generator.to_json(&dashboard, self.args.output.json_pretty)?;
+        self.print_or_save_output(&json, "Dashboard data saved to:")?;
+
+        Ok(CommandExit::success())
+    }
+}
+
+#[async_trait]
+impl Command for AnalyticsCommand {
+    async fn execute(&self) -> Result<CommandExit> {
+        if let Some(compare_str) = &self.args.compare {
+            return self.handle_compare(compare_str).await;
+        }
+
+        if let Some(changes_str) = &self.args.changes {
+            return self.handle_changes(changes_str).await;
+        }
+
+        if let Some(trends_str) = &self.args.trends {
+            return self.handle_trends(trends_str).await;
+        }
+
+        if let Some(dashboard_str) = &self.args.dashboard {
+            return self.handle_dashboard(dashboard_str).await;
+        }
+
+        Ok(CommandExit::success())
+    }
+
     fn name(&self) -> &'static str {
         "AnalyticsCommand"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    #[test]
+    fn test_analytics_command_name() {
+        let mut args = Args::default();
+        args.compare = None;
+        let cmd = AnalyticsCommand::new(args);
+        assert_eq!(cmd.name(), "AnalyticsCommand");
+    }
+
+    static DB_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    fn create_temp_db_config() -> PathBuf {
+        let counter = DB_COUNTER.fetch_add(1, Ordering::SeqCst);
+        #[cfg(unix)]
+        let db_path = PathBuf::from(format!("/tmp/cipherrun-analytics-test{}.db", counter));
+        #[cfg(not(unix))]
+        let db_path = std::env::temp_dir().join(format!("cipherrun-analytics-test{}.db", counter));
+        let _ = std::fs::remove_file(&db_path);
+
+        let config_path = {
+            #[cfg(unix)]
+            {
+                PathBuf::from(format!("/tmp/cipherrun-analytics-test{}.toml", counter))
+            }
+            #[cfg(not(unix))]
+            {
+                std::env::temp_dir().join(format!("cipherrun-analytics-test{}.toml", counter))
+            }
+        };
+
+        let config = format!(
+            "[database]\n\
+type = \"sqlite\"\n\
+path = \"{}\"\n",
+            db_path.display()
+        );
+        std::fs::write(&config_path, config).expect("test assertion should succeed");
+        config_path
+    }
+
+    #[tokio::test]
+    async fn test_analytics_compare_invalid_format() {
+        let mut args = Args::default();
+        args.database.config = Some(create_temp_db_config());
+        args.compare = Some("only-one-id".to_string());
+
+        let cmd = AnalyticsCommand::new(args);
+        cmd.execute()
+            .await
+            .expect("invalid compare format should not fail");
+    }
+
+    #[tokio::test]
+    async fn test_analytics_changes_invalid_format() {
+        let mut args = Args::default();
+        args.database.config = Some(create_temp_db_config());
+        args.changes = Some("missing:parts".to_string());
+
+        let cmd = AnalyticsCommand::new(args);
+        cmd.execute()
+            .await
+            .expect("invalid changes format should not fail");
+    }
+
+    #[tokio::test]
+    async fn test_analytics_trends_invalid_port() {
+        let mut args = Args::default();
+        args.database.config = Some(create_temp_db_config());
+        args.trends = Some("example.com:notaport:7".to_string());
+
+        let cmd = AnalyticsCommand::new(args);
+        assert!(cmd.execute().await.is_err());
     }
 }

@@ -1,62 +1,17 @@
 // Session Resumption Testing - Complete Session Resume Analysis
 // Tests session IDs, session tickets (RFC 5077), and resumption behavior
 
+mod model;
+mod performance;
+
+pub use model::{
+    ResumptionSupport, SessionIdTest, SessionResumptionResult, SessionTicketTest,
+};
+
+use crate::Result;
 use crate::utils::network::Target;
-use crate::{Result, tls_bail};
-use openssl::ssl::{SslConnector, SslMethod, SslSessionCacheMode};
-use serde::{Deserialize, Serialize};
-use tokio::net::TcpStream;
-use tokio::time::{Duration, timeout};
-
-/// Session resumption test results
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SessionResumptionResult {
-    pub session_id_reuse: SessionIdTest,
-    pub session_ticket: SessionTicketTest,
-    pub resumption_support: ResumptionSupport,
-    pub performance_gain: Option<f64>, // Percentage improvement
-    pub details: String,
-}
-
-/// Session ID reuse test
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SessionIdTest {
-    pub supported: bool,
-    pub session_id_length: Option<usize>,
-    pub reuse_successful: bool,
-    pub connections_tested: usize,
-    pub reuse_count: usize,
-}
-
-/// Session ticket (RFC 5077) test
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SessionTicketTest {
-    pub supported: bool,
-    pub ticket_lifetime: Option<u32>, // seconds
-    pub ticket_size: Option<usize>,
-    pub reuse_successful: bool,
-    pub new_ticket_on_resume: bool,
-}
-
-/// Resumption support level
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ResumptionSupport {
-    Full,          // Both session ID and tickets
-    SessionIdOnly, // Only session ID
-    TicketOnly,    // Only session tickets
-    None,          // No resumption support
-}
-
-impl ResumptionSupport {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            ResumptionSupport::Full => "Full (Session ID + Tickets)",
-            ResumptionSupport::SessionIdOnly => "Session ID Only",
-            ResumptionSupport::TicketOnly => "Session Tickets Only",
-            ResumptionSupport::None => "None",
-        }
-    }
-}
+use openssl::ssl::{SslConnector, SslMethod, SslSession, SslSessionCacheMode, SslStream};
+use std::time::Duration;
 
 /// Session resumption tester
 pub struct SessionResumptionTester {
@@ -73,18 +28,18 @@ impl SessionResumptionTester {
         let session_id = self.test_session_id_reuse().await?;
         let session_ticket = self.test_session_ticket().await?;
 
-        let resumption_support = if session_id.supported && session_ticket.supported {
+        let resumption_support = if session_id.reuse_successful && session_ticket.reuse_successful {
             ResumptionSupport::Full
-        } else if session_id.supported {
+        } else if session_id.reuse_successful {
             ResumptionSupport::SessionIdOnly
-        } else if session_ticket.supported {
+        } else if session_ticket.reuse_successful {
             ResumptionSupport::TicketOnly
         } else {
             ResumptionSupport::None
         };
 
         let performance_gain = if session_id.reuse_successful || session_ticket.reuse_successful {
-            Some(self.measure_performance_gain().await.unwrap_or(0.0))
+            self.measure_performance_gain().await.ok()
         } else {
             None
         };
@@ -106,42 +61,66 @@ impl SessionResumptionTester {
         })
     }
 
+    fn build_connector(&self) -> Result<SslConnector> {
+        let mut builder = SslConnector::builder(SslMethod::tls())?;
+        builder.set_session_cache_mode(SslSessionCacheMode::CLIENT);
+        Ok(builder.build())
+    }
+
+    fn establish_session_sync(&self) -> Result<Option<SslSession>> {
+        use std::net::TcpStream as StdTcpStream;
+
+        let addr = self.target.socket_addrs()[0];
+        let stream = StdTcpStream::connect_timeout(&addr, Duration::from_secs(10))?;
+        stream.set_nonblocking(false)?;
+
+        let connector = self.build_connector()?;
+        let ssl_stream = connector.connect(&self.target.hostname, stream)?;
+        Ok(ssl_stream.ssl().session().map(|session| session.to_owned()))
+    }
+
+    fn resume_with_session_sync(&self, session: &SslSession) -> Result<bool> {
+        use std::net::TcpStream as StdTcpStream;
+
+        let addr = self.target.socket_addrs()[0];
+        let stream = StdTcpStream::connect_timeout(&addr, Duration::from_secs(10))?;
+        stream.set_nonblocking(false)?;
+
+        let connector = self.build_connector()?;
+        let mut ssl = connector.configure()?.into_ssl(&self.target.hostname)?;
+        unsafe {
+            ssl.set_session(session)?;
+        }
+        let mut ssl_stream = SslStream::new(ssl, stream)?;
+        ssl_stream
+            .connect()
+            .map_err(|err| anyhow::anyhow!("TLS resume handshake failed: {err}"))?;
+        Ok(ssl_stream.ssl().session_reused())
+    }
+
+    async fn establish_session(&self) -> Result<Option<SslSession>> {
+        let target = self.target.clone();
+        tokio::task::spawn_blocking(move || {
+            let tester = SessionResumptionTester { target };
+            tester.establish_session_sync()
+        })
+        .await
+        .map_err(|err| anyhow::anyhow!("Session establish join error: {err}"))?
+    }
+
+    async fn try_resume_with_session(&self, session: SslSession) -> Result<bool> {
+        let target = self.target.clone();
+        tokio::task::spawn_blocking(move || {
+            let tester = SessionResumptionTester { target };
+            tester.resume_with_session_sync(&session)
+        })
+        .await
+        .map_err(|err| anyhow::anyhow!("Session resume join error: {err}"))?
+    }
+
     /// Test session ID reuse
     async fn test_session_id_reuse(&self) -> Result<SessionIdTest> {
-        let addr = self.target.socket_addrs()[0];
-        let connect_timeout = Duration::from_secs(10);
-
-        // First connection - establish session
-        let stream = timeout(connect_timeout, TcpStream::connect(&addr))
-            .await
-            .map_err(|_| anyhow::anyhow!("Connection timeout"))??;
-
-        let std_stream = stream.into_std()?;
-
-        let mut builder = SslConnector::builder(SslMethod::tls())?;
-
-        // Enable session caching
-        builder.set_session_cache_mode(SslSessionCacheMode::CLIENT);
-
-        let connector = builder.build();
-
-        // Initial connection
-        let ssl_stream = connector.connect(&self.target.hostname, std_stream)?;
-
-        // Get session and extract data before dropping
-        let (session_id_length, has_session_id) = {
-            if let Some(session) = ssl_stream.ssl().session() {
-                let len = session.id().len();
-                (len, len > 0)
-            } else {
-                tls_bail!("No session established");
-            }
-        };
-
-        // Close first connection
-        drop(ssl_stream);
-
-        if !has_session_id {
+        let Some(session) = self.establish_session().await? else {
             return Ok(SessionIdTest {
                 supported: false,
                 session_id_length: None,
@@ -149,26 +128,36 @@ impl SessionResumptionTester {
                 connections_tested: 1,
                 reuse_count: 0,
             });
+        };
+
+        let session_id_length = session.id().len();
+
+        if session_id_length == 0 {
+            return Ok(SessionIdTest {
+                supported: false,
+                session_id_length: Some(0),
+                reuse_successful: false,
+                connections_tested: 1,
+                reuse_count: 0,
+            });
         }
 
-        // Try to resume with session - multiple attempts
         let mut reuse_count = 0;
         let connections_tested = 5;
 
         for _ in 0..connections_tested {
-            if let Ok(resumed) = self.try_resume_with_session().await
+            if let Ok(resumed) = self.try_resume_with_session(session.clone()).await
                 && resumed
             {
                 reuse_count += 1;
             }
-            // Small delay between attempts
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
 
         let reuse_successful = reuse_count > 0;
 
         Ok(SessionIdTest {
-            supported: true,
+            supported: reuse_successful,
             session_id_length: Some(session_id_length),
             reuse_successful,
             connections_tested,
@@ -176,66 +165,9 @@ impl SessionResumptionTester {
         })
     }
 
-    async fn try_resume_with_session(&self) -> Result<bool> {
-        let addr = self.target.socket_addrs()[0];
-        let connect_timeout = Duration::from_secs(10);
-
-        let stream = timeout(connect_timeout, TcpStream::connect(&addr))
-            .await
-            .map_err(|_| anyhow::anyhow!("Connection timeout"))??;
-
-        let std_stream = stream.into_std()?;
-
-        let mut builder = SslConnector::builder(SslMethod::tls())?;
-        builder.set_session_cache_mode(SslSessionCacheMode::CLIENT);
-
-        let connector = builder.build();
-
-        match connector.connect(&self.target.hostname, std_stream) {
-            Ok(ssl_stream) => {
-                // Check if session was reused
-                let reused = ssl_stream.ssl().session_reused();
-                Ok(reused)
-            }
-            Err(_) => Ok(false),
-        }
-    }
-
     /// Test session ticket (RFC 5077)
     async fn test_session_ticket(&self) -> Result<SessionTicketTest> {
-        let addr = self.target.socket_addrs()[0];
-        let connect_timeout = Duration::from_secs(10);
-
-        // First connection - check for ticket
-        let stream = timeout(connect_timeout, TcpStream::connect(&addr))
-            .await
-            .map_err(|_| anyhow::anyhow!("Connection timeout"))??;
-
-        let std_stream = stream.into_std()?;
-
-        let mut builder = SslConnector::builder(SslMethod::tls())?;
-
-        // Enable session tickets
-        builder.set_session_cache_mode(SslSessionCacheMode::CLIENT);
-
-        let connector = builder.build();
-
-        let ssl_stream = connector.connect(&self.target.hostname, std_stream)?;
-
-        // Check if we got a session ticket
-        // Session ticket is indicated by having a session but no session ID
-        let has_ticket = {
-            if let Some(session) = ssl_stream.ssl().session() {
-                session.id().is_empty()
-            } else {
-                false
-            }
-        };
-
-        // Close first connection
-        drop(ssl_stream);
-
-        if !has_ticket {
+        let Some(session) = self.establish_session().await? else {
             return Ok(SessionTicketTest {
                 supported: false,
                 ticket_lifetime: None,
@@ -243,145 +175,35 @@ impl SessionResumptionTester {
                 reuse_successful: false,
                 new_ticket_on_resume: false,
             });
-        }
-
-        // Try to resume with ticket
-        let reuse_successful = self.try_resume_with_ticket().await.unwrap_or(false);
-
-        Ok(SessionTicketTest {
-            supported: true,
-            ticket_lifetime: None, // Can't get ticket lifetime from rust-openssl
-            ticket_size: None,     // Can't easily get ticket size from rust-openssl
-            reuse_successful,
-            new_ticket_on_resume: false, // Would need to check on resume
-        })
-    }
-
-    async fn try_resume_with_ticket(&self) -> Result<bool> {
-        let addr = self.target.socket_addrs()[0];
-        let connect_timeout = Duration::from_secs(10);
-
-        let stream = timeout(connect_timeout, TcpStream::connect(&addr))
-            .await
-            .map_err(|_| anyhow::anyhow!("Connection timeout"))??;
-
-        let std_stream = stream.into_std()?;
-
-        let mut builder = SslConnector::builder(SslMethod::tls())?;
-        builder.set_session_cache_mode(SslSessionCacheMode::CLIENT);
-
-        let connector = builder.build();
-
-        match connector.connect(&self.target.hostname, std_stream) {
-            Ok(ssl_stream) => {
-                let reused = ssl_stream.ssl().session_reused();
-                Ok(reused)
-            }
-            Err(_) => Ok(false),
-        }
-    }
-
-    /// Measure performance gain from session resumption
-    async fn measure_performance_gain(&self) -> Result<f64> {
-        use std::time::Instant;
-
-        // Measure full handshake time
-        let full_handshake_times: Vec<f64> = (0..5)
-            .filter_map(|_| {
-                let start = Instant::now();
-                if self.perform_full_handshake_sync().is_ok() {
-                    Some(start.elapsed().as_secs_f64())
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        if full_handshake_times.is_empty() {
-            return Ok(0.0);
-        }
-
-        let avg_full = full_handshake_times.iter().sum::<f64>() / full_handshake_times.len() as f64;
-
-        // Measure resumed handshake time
-        let resumed_handshake_times: Vec<f64> = (0..5)
-            .filter_map(|_| {
-                let start = Instant::now();
-                if self.perform_resumed_handshake_sync().is_ok() {
-                    Some(start.elapsed().as_secs_f64())
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        if resumed_handshake_times.is_empty() {
-            return Ok(0.0);
-        }
-
-        let avg_resumed =
-            resumed_handshake_times.iter().sum::<f64>() / resumed_handshake_times.len() as f64;
-
-        // Calculate improvement percentage
-        let improvement = if avg_full > 0.0 {
-            ((avg_full - avg_resumed) / avg_full) * 100.0
-        } else {
-            0.0
         };
 
-        Ok(improvement)
-    }
+        let ticket_hint = session.id().is_empty();
+        let reuse_successful = if ticket_hint {
+            self.try_resume_with_session(session.clone())
+                .await
+                .unwrap_or(false)
+        } else {
+            false
+        };
 
-    fn perform_full_handshake_sync(&self) -> Result<()> {
-        // Synchronous version for timing
-        use std::net::TcpStream as StdTcpStream;
-
-        let addr = self.target.socket_addrs()[0];
-        let stream = StdTcpStream::connect(addr)?;
-
-        let builder = SslConnector::builder(SslMethod::tls())?;
-        let connector = builder.build();
-
-        let _ssl_stream = connector.connect(&self.target.hostname, stream)?;
-
-        Ok(())
-    }
-
-    fn perform_resumed_handshake_sync(&self) -> Result<()> {
-        // Synchronous version for timing
-        use std::net::TcpStream as StdTcpStream;
-
-        let addr = self.target.socket_addrs()[0];
-
-        // Establish initial connection
-        let stream1 = StdTcpStream::connect(addr)?;
-        let mut builder1 = SslConnector::builder(SslMethod::tls())?;
-        builder1.set_session_cache_mode(SslSessionCacheMode::CLIENT);
-        let connector1 = builder1.build();
-        let ssl_stream1 = connector1.connect(&self.target.hostname, stream1)?;
-
-        // Get session
-        let _session = ssl_stream1
-            .ssl()
-            .session()
-            .ok_or_else(|| anyhow::anyhow!("No session"))?;
-
-        drop(ssl_stream1);
-
-        // Resume connection
-        let stream2 = StdTcpStream::connect(addr)?;
-        let mut builder2 = SslConnector::builder(SslMethod::tls())?;
-        builder2.set_session_cache_mode(SslSessionCacheMode::CLIENT);
-        let connector2 = builder2.build();
-        let _ssl_stream2 = connector2.connect(&self.target.hostname, stream2)?;
-
-        Ok(())
+        Ok(SessionTicketTest {
+            supported: reuse_successful,
+            ticket_lifetime: None,
+            ticket_size: None,
+            reuse_successful,
+            new_ticket_on_resume: false,
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::{IpAddr, SocketAddr};
+    use std::sync::Arc;
+    use std::sync::Once;
+    use tokio::net::TcpListener;
+    use tokio_rustls::TlsAcceptor;
 
     #[test]
     fn test_resumption_support_display() {
@@ -395,5 +217,135 @@ mod tests {
             "Session Tickets Only"
         );
         assert_eq!(ResumptionSupport::None.as_str(), "None");
+    }
+
+    #[test]
+    fn test_session_resumption_result_details_contains_counts() {
+        let result = SessionResumptionResult {
+            session_id_reuse: SessionIdTest {
+                supported: true,
+                session_id_length: Some(32),
+                reuse_successful: true,
+                connections_tested: 3,
+                reuse_count: 2,
+            },
+            session_ticket: SessionTicketTest {
+                supported: false,
+                ticket_lifetime: None,
+                ticket_size: None,
+                reuse_successful: false,
+                new_ticket_on_resume: false,
+            },
+            resumption_support: ResumptionSupport::SessionIdOnly,
+            performance_gain: None,
+            details:
+                "Session resumption: Session ID Only. Session ID reuse: 2/3. Ticket reuse: false"
+                    .to_string(),
+        };
+        assert!(result.details.contains("2/3"));
+        assert!(matches!(
+            result.resumption_support,
+            ResumptionSupport::SessionIdOnly
+        ));
+    }
+
+    fn install_crypto_provider() {
+        static ONCE: Once = Once::new();
+        ONCE.call_once(|| {
+            let _ = rustls::crypto::ring::default_provider().install_default();
+        });
+    }
+
+    async fn spawn_tls_server(max_accepts: usize) -> (SocketAddr, std::path::PathBuf) {
+        let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
+        let cert_der = cert.cert.der().clone();
+        let key_der = rustls::pki_types::PrivateKeyDer::Pkcs8(
+            rustls::pki_types::PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der()),
+        );
+
+        let config = rustls::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(vec![cert_der], key_der)
+            .unwrap();
+
+        let acceptor = TlsAcceptor::from(Arc::new(config));
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let tmp = std::env::temp_dir();
+        let cert_path = tmp.join(format!(
+            "cipherrun_test_cert_{}_{}.pem",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&cert_path, cert.cert.pem()).unwrap();
+        unsafe {
+            std::env::set_var("SSL_CERT_FILE", &cert_path);
+        }
+
+        tokio::spawn(async move {
+            let mut remaining = max_accepts;
+            while remaining > 0 {
+                if let Ok((stream, _)) = listener.accept().await {
+                    let acceptor = acceptor.clone();
+                    let _ = acceptor.accept(stream).await;
+                }
+                remaining -= 1;
+            }
+        });
+
+        (addr, cert_path)
+    }
+
+    #[tokio::test]
+    async fn test_session_resumption_against_local_tls() {
+        install_crypto_provider();
+        let (addr, cert_path) = spawn_tls_server(40).await;
+
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            addr.port(),
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .unwrap();
+
+        let tester = SessionResumptionTester::new(target);
+        let result = tester.test().await.unwrap();
+
+        assert!(result.session_id_reuse.connections_tested > 0);
+        assert!(!result.details.is_empty());
+
+        let _ = std::fs::remove_file(cert_path);
+    }
+
+    #[test]
+    fn test_session_resumption_result_defaults() {
+        let result = SessionResumptionResult {
+            session_id_reuse: SessionIdTest {
+                supported: false,
+                session_id_length: None,
+                reuse_successful: false,
+                connections_tested: 0,
+                reuse_count: 0,
+            },
+            session_ticket: SessionTicketTest {
+                supported: false,
+                ticket_lifetime: None,
+                ticket_size: None,
+                reuse_successful: false,
+                new_ticket_on_resume: false,
+            },
+            resumption_support: ResumptionSupport::None,
+            performance_gain: None,
+            details: "No resumption".to_string(),
+        };
+
+        assert!(!result.session_id_reuse.supported);
+        assert!(!result.session_ticket.supported);
+        assert!(result.details.contains("No resumption"));
     }
 }

@@ -133,22 +133,28 @@ impl CtVerifier {
         }
 
         // Read total length (big-endian u16)
-        let _total_len = u16::from_be_bytes([sct_list[0], sct_list[1]]);
+        let total_len = u16::from_be_bytes([sct_list[0], sct_list[1]]) as usize;
+
+        // Validate that we have enough data for the declared length
+        // The total_len represents the number of bytes that follow the 2-byte length field
+        if total_len + 2 > sct_list.len() {
+            // Return 0 for malformed data instead of erroring
+            // This allows graceful handling of invalid SCT lists
+            return Ok(0);
+        }
 
         let mut count = 0;
         let mut pos = 2;
+        let end_pos = 2 + total_len;
 
-        // Parse each SCT entry
-        while pos + 2 <= sct_list.len() {
+        // Parse each SCT entry within the declared length
+        while pos + 2 <= end_pos {
             // Each SCT starts with 2-byte length
-            if pos + 2 > sct_list.len() {
-                break;
-            }
-
             let sct_len = u16::from_be_bytes([sct_list[pos], sct_list[pos + 1]]) as usize;
             pos += 2;
 
-            if pos + sct_len > sct_list.len() {
+            if pos + sct_len > end_pos {
+                // Malformed: SCT extends past declared list length
                 break;
             }
 
@@ -237,6 +243,73 @@ mod tests {
     }
 
     #[test]
+    fn test_count_scts_in_list() {
+        let verifier = CtVerifier::new(false);
+        let sct_list = vec![
+            0x00, 0x0c, // total length
+            0x00, 0x03, 0x01, 0x02, 0x03, // entry 1
+            0x00, 0x05, 0x04, 0x05, 0x06, 0x07, 0x08, // entry 2
+        ];
+        let count = verifier
+            .count_scts_in_list(&sct_list)
+            .expect("test assertion should succeed");
+        assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn test_count_scts_in_list_invalid_length() {
+        let verifier = CtVerifier::new(false);
+        // SCT list format: 2-byte total length + SCT entries
+        // This test has a mismatch: declared length (4 bytes) but actual data is shorter
+        // 0x00 0x04 = 4 bytes declared, but only 3 bytes follow (00 05 01)
+        // The function should gracefully handle this malformed data by returning 0
+        let sct_list = vec![0x00, 0x04, 0x00, 0x05, 0x01];
+        let count = verifier.count_scts_in_list(&sct_list).unwrap();
+        // For malformed SCT list with length mismatch, we return 0 (graceful degradation)
+        assert_eq!(count, 0, "Malformed SCT list should return 0 count");
+    }
+
+    #[tokio::test]
+    async fn test_verify_without_sct() {
+        let verifier = CtVerifier::new(false);
+        let cert = rcgen::generate_simple_self_signed(["example.com".to_string()])
+            .expect("test assertion should succeed");
+
+        let cert_info = CertificateInfo {
+            subject: "CN=example.com".to_string(),
+            issuer: "CN=example.com".to_string(),
+            serial_number: "01".to_string(),
+            not_before: "2024-01-01 00:00:00 +0000".to_string(),
+            not_after: "2025-01-01 00:00:00 +0000".to_string(),
+            expiry_countdown: None,
+            signature_algorithm: "sha256".to_string(),
+            public_key_algorithm: "rsaEncryption".to_string(),
+            public_key_size: Some(2048),
+            rsa_exponent: None,
+            san: vec!["example.com".to_string()],
+            is_ca: false,
+            key_usage: vec![],
+            extended_key_usage: vec![],
+            extended_validation: false,
+            ev_oids: vec![],
+            pin_sha256: None,
+            fingerprint_sha256: None,
+            debian_weak_key: None,
+            aia_url: None,
+            certificate_transparency: None,
+            der_bytes: cert.cert.der().as_ref().to_vec(),
+        };
+
+        let result = verifier
+            .verify(&cert_info)
+            .await
+            .expect("test assertion should succeed");
+        assert!(!result.has_sct);
+        assert_eq!(result.sct_count, 0);
+        assert!(!result.compliant);
+    }
+
+    #[test]
     fn test_sct_source() {
         let source = SctSource::X509Extension;
         assert!(matches!(source, SctSource::X509Extension));
@@ -256,5 +329,22 @@ mod tests {
         let compliance = verifier.check_policy_compliance(&result, 24);
         assert!(compliance.chrome_compliant);
         assert!(compliance.safari_compliant);
+    }
+
+    #[test]
+    fn test_policy_compliance_requires_three_for_long_validity() {
+        let verifier = CtVerifier::new(false);
+        let result = CtVerificationResult {
+            has_sct: true,
+            sct_count: 2,
+            sct_sources: vec![SctSource::X509Extension],
+            compliant: false,
+            details: vec![],
+        };
+
+        let compliance = verifier.check_policy_compliance(&result, 60);
+        assert!(!compliance.chrome_compliant);
+        assert!(compliance.safari_compliant);
+        assert_eq!(compliance.required_scts, 3);
     }
 }

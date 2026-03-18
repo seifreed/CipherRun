@@ -310,4 +310,19 @@ mod tests {
             assert!(cipher.has_forward_secrecy());
         }
     }
+
+    #[test]
+    fn test_parse_line_invalid_format() {
+        let line = "invalid line";
+        let err = CipherDatabase::parse_line(line).err().expect("should fail");
+        assert!(err.to_string().contains("Invalid format"));
+    }
+
+    #[test]
+    fn test_extract_bits_special_cases() {
+        assert_eq!(CipherDatabase::extract_bits("3DES"), 168);
+        assert_eq!(CipherDatabase::extract_bits("DES"), 56);
+        assert_eq!(CipherDatabase::extract_bits("RC4"), 128);
+        assert_eq!(CipherDatabase::extract_bits("NULL"), 0);
+    }
 }

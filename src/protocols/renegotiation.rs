@@ -224,6 +224,18 @@ mod tests {
     }
 
     #[test]
+    fn test_renegotiation_result_insecure_details() {
+        let result = RenegotiationTestResult {
+            support: RenegotiationSupport::InsecureRenegotiation,
+            secure_extension: false,
+            vulnerable: true,
+            details: "VULNERABLE: Insecure renegotiation enabled".to_string(),
+        };
+        assert!(result.vulnerable);
+        assert!(result.details.contains("VULNERABLE"));
+    }
+
+    #[test]
     fn test_client_hello_with_renegotiation_info() {
         let target = Target::with_ips(
             "example.com".to_string(),
@@ -239,5 +251,60 @@ mod tests {
         // Check for renegotiation_info extension (0xff01)
         let has_reneg_info = hello.windows(2).any(|w| w == [0xff, 0x01]);
         assert!(has_reneg_info);
+    }
+
+    #[test]
+    fn test_has_renegotiation_info_extension_detects_absent() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["93.184.216.34".parse().unwrap()],
+        )
+        .unwrap();
+        let tester = RenegotiationTester::new(&target);
+        let response = vec![0x01, 0x02, 0x03, 0x04];
+        assert!(!tester.has_renegotiation_info_extension(&response));
+    }
+
+    #[test]
+    fn test_has_renegotiation_info_extension_detects_present() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["93.184.216.34".parse().unwrap()],
+        )
+        .unwrap();
+        let tester = RenegotiationTester::new(&target);
+        let response = vec![0x00, 0xff, 0x01, 0x00];
+        assert!(tester.has_renegotiation_info_extension(&response));
+    }
+
+    #[test]
+    fn test_client_hello_record_length_matches() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["93.184.216.34".parse().unwrap()],
+        )
+        .unwrap();
+        let tester = RenegotiationTester::new(&target);
+        let hello = tester.build_client_hello();
+        assert!(hello.len() > 10);
+
+        let rec_len = u16::from_be_bytes([hello[3], hello[4]]) as usize;
+        assert_eq!(rec_len, hello.len() - 5);
+    }
+
+    #[test]
+    fn test_has_renegotiation_info_extension_partial_bytes() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["93.184.216.34".parse().unwrap()],
+        )
+        .unwrap();
+        let tester = RenegotiationTester::new(&target);
+        let response = vec![0xff];
+        assert!(!tester.has_renegotiation_info_extension(&response));
     }
 }

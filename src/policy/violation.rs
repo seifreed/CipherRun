@@ -62,4 +62,31 @@ mod tests {
         assert!(violation.evidence.is_some());
         assert!(violation.remediation.is_some());
     }
+
+    #[test]
+    fn test_policy_violation_without_optional_fields() {
+        let violation = PolicyViolation::new(
+            "rules.example",
+            "Example Rule",
+            PolicyAction::Warn,
+            "Example description",
+        );
+
+        assert!(violation.evidence.is_none());
+        assert!(violation.remediation.is_none());
+    }
+
+    #[test]
+    fn test_policy_violation_with_remediation_only() {
+        let violation = PolicyViolation::new(
+            "rules.example",
+            "Example Rule",
+            PolicyAction::Info,
+            "Example description",
+        )
+        .with_remediation("Fix later");
+
+        assert!(violation.evidence.is_none());
+        assert_eq!(violation.remediation.as_deref(), Some("Fix later"));
+    }
 }

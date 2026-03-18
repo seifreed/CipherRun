@@ -55,6 +55,9 @@ impl PathExt for PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::OsString;
+    #[cfg(unix)]
+    use std::os::unix::ffi::OsStringExt;
 
     #[test]
     fn test_path_to_str_anyhow_valid() {
@@ -72,5 +75,26 @@ mod tests {
     fn test_path_with_spaces() {
         let path = Path::new("/path/with spaces/file.txt");
         assert_eq!(path.to_str_anyhow().unwrap(), "/path/with spaces/file.txt");
+    }
+
+    #[test]
+    fn test_relative_path_to_str_anyhow() {
+        let path = Path::new("relative/path.txt");
+        assert_eq!(path.to_str_anyhow().unwrap(), "relative/path.txt");
+    }
+
+    #[test]
+    fn test_pathbuf_relative_to_str_anyhow() {
+        let path = PathBuf::from("relative/path.txt");
+        assert_eq!(path.to_str_anyhow().unwrap(), "relative/path.txt");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_path_to_str_anyhow_invalid_utf8() {
+        let invalid = OsString::from_vec(vec![0xff, 0xfe, 0xfd]);
+        let path = PathBuf::from(invalid);
+        let err = path.to_str_anyhow().unwrap_err();
+        assert!(err.to_string().contains("Invalid file path"));
     }
 }

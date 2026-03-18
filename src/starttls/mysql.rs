@@ -117,4 +117,211 @@ mod tests {
         let negotiator = MysqlNegotiator::new();
         assert_eq!(negotiator.protocol(), StarttlsProtocol::MYSQL);
     }
+
+    #[tokio::test]
+    async fn test_mysql_packet_roundtrip() {
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test assertion should succeed");
+        let addr = listener
+            .local_addr()
+            .expect("test assertion should succeed");
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+
+            let payload = vec![0x01, 0x02, 0x03, 0x04];
+            let len = payload.len() as u32;
+            let header = [
+                (len & 0xff) as u8,
+                ((len >> 8) & 0xff) as u8,
+                ((len >> 16) & 0xff) as u8,
+                0x00,
+            ];
+
+            socket.write_all(&header).await.unwrap();
+            socket.write_all(&payload).await.unwrap();
+
+            let mut recv_header = [0u8; 4];
+            socket.read_exact(&mut recv_header).await.unwrap();
+            let recv_len = u32::from_le_bytes([recv_header[0], recv_header[1], recv_header[2], 0]);
+            let mut recv_payload = vec![0u8; recv_len as usize];
+            socket.read_exact(&mut recv_payload).await.unwrap();
+
+            (payload, recv_payload, recv_header[3])
+        });
+
+        let mut stream = TcpStream::connect(addr)
+            .await
+            .expect("test assertion should succeed");
+
+        let payload = MysqlNegotiator::read_packet(&mut stream)
+            .await
+            .expect("test assertion should succeed");
+        assert_eq!(payload, vec![0x01, 0x02, 0x03, 0x04]);
+
+        let send_payload = vec![0xaa, 0xbb, 0xcc];
+        MysqlNegotiator::send_packet(&mut stream, &send_payload, 7)
+            .await
+            .expect("test assertion should succeed");
+
+        let (_sent_payload, recv_payload, seq) = server.await.unwrap();
+        assert_eq!(recv_payload, send_payload);
+        assert_eq!(seq, 7);
+    }
+
+    #[tokio::test]
+    async fn test_mysql_negotiate_starttls_success() {
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test assertion should succeed");
+        let addr = listener
+            .local_addr()
+            .expect("test assertion should succeed");
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+
+            let handshake = vec![0x01, 0x02, 0x00, 0x08];
+            let len = handshake.len() as u32;
+            let header = [
+                (len & 0xff) as u8,
+                ((len >> 8) & 0xff) as u8,
+                ((len >> 16) & 0xff) as u8,
+                0x00,
+            ];
+            socket.write_all(&header).await.unwrap();
+            socket.write_all(&handshake).await.unwrap();
+
+            let mut recv_header = [0u8; 4];
+            socket.read_exact(&mut recv_header).await.unwrap();
+            let recv_len = u32::from_le_bytes([recv_header[0], recv_header[1], recv_header[2], 0]);
+            let mut recv_payload = vec![0u8; recv_len as usize];
+            socket.read_exact(&mut recv_payload).await.unwrap();
+
+            recv_payload
+        });
+
+        let mut stream = TcpStream::connect(addr)
+            .await
+            .expect("test assertion should succeed");
+        let negotiator = MysqlNegotiator::new();
+        negotiator
+            .negotiate_starttls(&mut stream)
+            .await
+            .expect("test assertion should succeed");
+
+        let payload = server.await.unwrap();
+        assert!(payload.len() >= 32);
+        let client_caps = u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]);
+        assert_eq!(client_caps & 0x0800, 0x0800);
+    }
+
+    #[tokio::test]
+    async fn test_mysql_negotiate_starttls_no_ssl() {
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test assertion should succeed");
+        let addr = listener
+            .local_addr()
+            .expect("test assertion should succeed");
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+
+            let handshake = vec![0x01, 0x02, 0x00, 0x00];
+            let len = handshake.len() as u32;
+            let header = [
+                (len & 0xff) as u8,
+                ((len >> 8) & 0xff) as u8,
+                ((len >> 16) & 0xff) as u8,
+                0x00,
+            ];
+            socket.write_all(&header).await.unwrap();
+            socket.write_all(&handshake).await.unwrap();
+        });
+
+        let mut stream = TcpStream::connect(addr)
+            .await
+            .expect("test assertion should succeed");
+        let negotiator = MysqlNegotiator::new();
+        let result = negotiator.negotiate_starttls(&mut stream).await;
+        assert!(result.is_err());
+
+        let _ = server.await;
+    }
+
+    #[tokio::test]
+    async fn test_mysql_negotiate_starttls_invalid_handshake() {
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test assertion should succeed");
+        let addr = listener
+            .local_addr()
+            .expect("test assertion should succeed");
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+
+            let handshake = vec![0x01, 0x02];
+            let len = handshake.len() as u32;
+            let header = [
+                (len & 0xff) as u8,
+                ((len >> 8) & 0xff) as u8,
+                ((len >> 16) & 0xff) as u8,
+                0x00,
+            ];
+            socket.write_all(&header).await.unwrap();
+            socket.write_all(&handshake).await.unwrap();
+        });
+
+        let mut stream = TcpStream::connect(addr)
+            .await
+            .expect("test assertion should succeed");
+        let negotiator = MysqlNegotiator::new();
+        let result = negotiator.negotiate_starttls(&mut stream).await;
+        assert!(result.is_err());
+
+        let _ = server.await;
+    }
+
+    #[tokio::test]
+    async fn test_mysql_send_packet_zero_length() {
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test assertion should succeed");
+        let addr = listener
+            .local_addr()
+            .expect("test assertion should succeed");
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut header = [0u8; 4];
+            socket.read_exact(&mut header).await.unwrap();
+            header
+        });
+
+        let mut stream = TcpStream::connect(addr)
+            .await
+            .expect("test assertion should succeed");
+        MysqlNegotiator::send_packet(&mut stream, &[], 9)
+            .await
+            .expect("test assertion should succeed");
+
+        let header = server.await.unwrap();
+        assert_eq!(header[0], 0x00);
+        assert_eq!(header[1], 0x00);
+        assert_eq!(header[2], 0x00);
+        assert_eq!(header[3], 9);
+    }
 }
