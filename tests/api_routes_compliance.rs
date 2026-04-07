@@ -9,7 +9,7 @@ async fn test_compliance_missing_target_returns_400() {
     let state = common::api::test_api_state();
 
     let app = Router::new()
-        .route("/compliance/:framework", get(compliance::check_compliance))
+        .route("/compliance/{framework}", get(compliance::check_compliance))
         .with_state(state);
 
     assert_eq!(

@@ -1,7 +1,5 @@
 use crate::Result;
-use crate::application::PersistedScan;
-use crate::application::{ScanResultsStore, ScanResultsStoreFactory};
-use crate::scanner::ScanResults;
+use crate::application::{PersistedScan, ScanResults, ScanResultsStore, ScanResultsStoreFactory};
 /// Application use case for persisting scan results.
 pub struct StoreScanResults;
 

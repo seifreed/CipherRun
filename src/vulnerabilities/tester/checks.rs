@@ -27,28 +27,36 @@ impl VulnerabilityScanner {
     pub async fn test_rc4(&self) -> Result<VulnerabilityResult> {
         let summaries = self.collect_protocol_cipher_summaries().await?;
         Ok(super::cipher_checks::evaluate_rc4(
-            summaries.iter().map(|(protocol, summary)| (*protocol, summary)),
+            summaries
+                .iter()
+                .map(|(protocol, summary)| (*protocol, summary)),
         ))
     }
 
     pub async fn test_3des(&self) -> Result<VulnerabilityResult> {
         let summaries = self.collect_protocol_cipher_summaries().await?;
         Ok(super::cipher_checks::evaluate_3des(
-            summaries.iter().map(|(protocol, summary)| (*protocol, summary)),
+            summaries
+                .iter()
+                .map(|(protocol, summary)| (*protocol, summary)),
         ))
     }
 
     pub async fn test_null_ciphers(&self) -> Result<VulnerabilityResult> {
         let summaries = self.collect_protocol_cipher_summaries().await?;
         Ok(super::cipher_checks::evaluate_null(
-            summaries.iter().map(|(protocol, summary)| (*protocol, summary)),
+            summaries
+                .iter()
+                .map(|(protocol, summary)| (*protocol, summary)),
         ))
     }
 
     pub async fn test_export_ciphers(&self) -> Result<VulnerabilityResult> {
         let summaries = self.collect_protocol_cipher_summaries().await?;
         Ok(super::cipher_checks::evaluate_export(
-            summaries.iter().map(|(protocol, summary)| (*protocol, summary)),
+            summaries
+                .iter()
+                .map(|(protocol, summary)| (*protocol, summary)),
         ))
     }
 
@@ -107,7 +115,10 @@ impl VulnerabilityScanner {
                     vuln_type,
                     vulnerable: variant_result.vulnerable,
                     inconclusive: !variant_result.vulnerable
-                        && variant_result.details.to_ascii_lowercase().contains("inconclusive"),
+                        && variant_result
+                            .details
+                            .to_ascii_lowercase()
+                            .contains("inconclusive"),
                     details: variant_result.details,
                     cve: Some(variant_result.variant.cve().to_string()),
                     cwe: Some("CWE-310".to_string()),
@@ -132,7 +143,10 @@ impl VulnerabilityScanner {
             });
         }
 
-        let cipher_summary = self.cipher_tester.test_protocol_ciphers(Protocol::TLS10).await?;
+        let cipher_summary = self
+            .cipher_tester
+            .test_protocol_ciphers(Protocol::TLS10)
+            .await?;
         Ok(super::cipher_checks::evaluate_beast(Some(&cipher_summary)))
     }
 
@@ -220,6 +234,176 @@ impl VulnerabilityScanner {
             cwe: Some("CWE-119".to_string()),
             severity: if result.vulnerable {
                 Severity::Critical
+            } else {
+                Severity::Info
+            },
+        })
+    }
+
+    pub async fn test_ccs(&self) -> Result<VulnerabilityResult> {
+        use crate::vulnerabilities::ccs::CcsInjectionTester;
+
+        let tester = CcsInjectionTester::new(self.target.clone());
+        let result = tester.test().await?;
+
+        Ok(VulnerabilityResult {
+            vuln_type: VulnerabilityType::CCSInjection,
+            vulnerable: result.vulnerable,
+            inconclusive: result.inconclusive,
+            details: result.details,
+            cve: Some("CVE-2014-0224".to_string()),
+            cwe: Some("CWE-310".to_string()),
+            severity: if result.vulnerable {
+                Severity::High
+            } else {
+                Severity::Info
+            },
+        })
+    }
+
+    pub async fn test_ticketbleed(&self) -> Result<VulnerabilityResult> {
+        use crate::vulnerabilities::ticketbleed::TicketbleedTester;
+
+        let tester = TicketbleedTester::new(self.target.clone());
+        let result = tester.test().await?;
+
+        Ok(VulnerabilityResult {
+            vuln_type: VulnerabilityType::Ticketbleed,
+            vulnerable: result.vulnerable,
+            inconclusive: false,
+            details: result.details,
+            cve: Some("CVE-2016-9244".to_string()),
+            cwe: Some("CWE-200".to_string()),
+            severity: if result.vulnerable {
+                Severity::High
+            } else {
+                Severity::Info
+            },
+        })
+    }
+
+    pub async fn test_robot(&self) -> Result<VulnerabilityResult> {
+        use crate::vulnerabilities::robot::{RobotStatus, RobotTester};
+
+        let tester = RobotTester::new(self.target.clone());
+        let result = tester.test().await?;
+
+        Ok(VulnerabilityResult {
+            vuln_type: VulnerabilityType::ROBOT,
+            vulnerable: result.vulnerable,
+            inconclusive: matches!(result.status, RobotStatus::Inconclusive),
+            details: result.details,
+            cve: Some("CVE-2017-17382".to_string()),
+            cwe: Some("CWE-203".to_string()),
+            severity: if result.vulnerable {
+                Severity::High
+            } else {
+                Severity::Info
+            },
+        })
+    }
+
+    pub async fn test_breach(&self) -> Result<VulnerabilityResult> {
+        use crate::vulnerabilities::breach::BreachTester;
+
+        let tester = BreachTester::new(self.target.clone());
+        let result = tester.test().await?;
+
+        Ok(VulnerabilityResult {
+            vuln_type: VulnerabilityType::BREACH,
+            vulnerable: result.vulnerable,
+            inconclusive: false,
+            details: result.details,
+            cve: Some("CVE-2013-3587".to_string()),
+            cwe: Some("CWE-200".to_string()),
+            severity: if result.vulnerable {
+                Severity::Medium
+            } else {
+                Severity::Info
+            },
+        })
+    }
+
+    pub async fn test_sweet32(&self) -> Result<VulnerabilityResult> {
+        use crate::vulnerabilities::sweet32::Sweet32Tester;
+
+        let tester = Sweet32Tester::new(self.target.clone());
+        let result = tester.test().await?;
+
+        Ok(VulnerabilityResult {
+            vuln_type: VulnerabilityType::SWEET32,
+            vulnerable: result.vulnerable,
+            inconclusive: false,
+            details: result.details,
+            cve: Some("CVE-2016-2183".to_string()),
+            cwe: Some("CWE-327".to_string()),
+            severity: if result.vulnerable {
+                Severity::Medium
+            } else {
+                Severity::Info
+            },
+        })
+    }
+
+    pub async fn test_freak(&self) -> Result<VulnerabilityResult> {
+        use crate::vulnerabilities::freak::FreakTester;
+
+        let tester = FreakTester::new(self.target.clone());
+        let result = tester.test().await?;
+
+        Ok(VulnerabilityResult {
+            vuln_type: VulnerabilityType::FREAK,
+            vulnerable: result.vulnerable,
+            inconclusive: false,
+            details: result.details,
+            cve: Some("CVE-2015-0204".to_string()),
+            cwe: Some("CWE-327".to_string()),
+            severity: if result.vulnerable {
+                Severity::High
+            } else {
+                Severity::Info
+            },
+        })
+    }
+
+    pub async fn test_logjam(&self) -> Result<VulnerabilityResult> {
+        use crate::vulnerabilities::logjam::LogjamTester;
+
+        let tester = LogjamTester::new(self.target.clone());
+        let result = tester.test().await?;
+
+        Ok(VulnerabilityResult {
+            vuln_type: VulnerabilityType::LOGJAM,
+            vulnerable: result.vulnerable,
+            inconclusive: false,
+            details: result.details,
+            cve: Some("CVE-2015-4000".to_string()),
+            cwe: Some("CWE-326".to_string()),
+            severity: if result.vulnerable {
+                Severity::High
+            } else {
+                Severity::Info
+            },
+        })
+    }
+
+    pub async fn test_lucky13(&self) -> Result<VulnerabilityResult> {
+        use crate::vulnerabilities::lucky13::Lucky13Tester;
+
+        let tester = Lucky13Tester::new(self.target.clone());
+        let result = tester.test().await?;
+
+        Ok(VulnerabilityResult {
+            vuln_type: VulnerabilityType::LUCKY13,
+            vulnerable: result.vulnerable || result.partially_vulnerable,
+            inconclusive: result.inconclusive,
+            details: result.details,
+            cve: Some("CVE-2013-0169".to_string()),
+            cwe: Some("CWE-208".to_string()),
+            severity: if result.vulnerable {
+                Severity::Medium
+            } else if result.partially_vulnerable {
+                Severity::Low
             } else {
                 Severity::Info
             },
@@ -328,5 +512,265 @@ impl VulnerabilityScanner {
         }
 
         Ok(summaries)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::ciphers::CipherSuite;
+    use crate::ciphers::tester::{CipherCounts, ProtocolCipherSummary};
+    use crate::protocols::Protocol;
+    use crate::vulnerabilities::{Severity, VulnerabilityType};
+
+    fn make_cipher(encryption: &str, bits: u16, export: bool) -> CipherSuite {
+        CipherSuite {
+            hexcode: "002F".to_string(),
+            openssl_name: format!("TEST-{}", encryption),
+            iana_name: format!("TLS_TEST_{}", encryption),
+            protocol: "TLSv1.2".to_string(),
+            key_exchange: "RSA".to_string(),
+            authentication: "RSA".to_string(),
+            encryption: encryption.to_string(),
+            mac: "SHA256".to_string(),
+            bits,
+            export,
+        }
+    }
+
+    fn empty_summary(protocol: Protocol) -> ProtocolCipherSummary {
+        ProtocolCipherSummary {
+            protocol,
+            supported_ciphers: Vec::new(),
+            server_ordered: false,
+            server_preference: Vec::new(),
+            preferred_cipher: None,
+            counts: CipherCounts::default(),
+            avg_handshake_time_ms: None,
+        }
+    }
+
+    fn summary_with_ciphers(
+        protocol: Protocol,
+        ciphers: Vec<CipherSuite>,
+        counts: CipherCounts,
+    ) -> ProtocolCipherSummary {
+        ProtocolCipherSummary {
+            protocol,
+            supported_ciphers: ciphers,
+            server_ordered: false,
+            server_preference: Vec::new(),
+            preferred_cipher: None,
+            counts,
+            avg_handshake_time_ms: None,
+        }
+    }
+
+    // --- evaluate_rc4 ---
+
+    #[test]
+    fn evaluate_rc4_empty_summaries() {
+        let result = super::super::cipher_checks::evaluate_rc4(std::iter::empty());
+        assert!(!result.vulnerable);
+        assert_eq!(result.vuln_type, VulnerabilityType::RC4);
+        assert_eq!(result.severity, Severity::Info);
+    }
+
+    #[test]
+    fn evaluate_rc4_no_rc4_ciphers() {
+        let summary = empty_summary(Protocol::TLS12);
+        let result =
+            super::super::cipher_checks::evaluate_rc4(std::iter::once((Protocol::TLS12, &summary)));
+        assert!(!result.vulnerable);
+    }
+
+    #[test]
+    fn evaluate_rc4_with_rc4_cipher() {
+        let ciphers = vec![make_cipher("RC4-SHA", 128, false)];
+        let summary = summary_with_ciphers(Protocol::TLS12, ciphers, CipherCounts::default());
+        let result =
+            super::super::cipher_checks::evaluate_rc4(std::iter::once((Protocol::TLS12, &summary)));
+        assert!(result.vulnerable);
+        assert_eq!(result.severity, Severity::Medium);
+        assert!(result.details.contains("RC4"));
+    }
+
+    // --- evaluate_3des ---
+
+    #[test]
+    fn evaluate_3des_empty_summaries() {
+        let result = super::super::cipher_checks::evaluate_3des(std::iter::empty());
+        assert!(!result.vulnerable);
+        assert_eq!(result.severity, Severity::Info);
+    }
+
+    #[test]
+    fn evaluate_3des_with_des_cipher() {
+        let ciphers = vec![make_cipher("3DES-CBC", 168, false)];
+        let summary = summary_with_ciphers(Protocol::TLS12, ciphers, CipherCounts::default());
+        let result = super::super::cipher_checks::evaluate_3des(std::iter::once((
+            Protocol::TLS12,
+            &summary,
+        )));
+        assert!(result.vulnerable);
+        assert_eq!(result.severity, Severity::Medium);
+    }
+
+    #[test]
+    fn evaluate_3des_without_des() {
+        let ciphers = vec![make_cipher("AES128-GCM", 128, false)];
+        let summary = summary_with_ciphers(Protocol::TLS12, ciphers, CipherCounts::default());
+        let result = super::super::cipher_checks::evaluate_3des(std::iter::once((
+            Protocol::TLS12,
+            &summary,
+        )));
+        assert!(!result.vulnerable);
+    }
+
+    // --- evaluate_null ---
+
+    #[test]
+    fn evaluate_null_empty_summaries() {
+        let result = super::super::cipher_checks::evaluate_null(std::iter::empty());
+        assert!(!result.vulnerable);
+        assert_eq!(result.vuln_type, VulnerabilityType::NullCipher);
+    }
+
+    #[test]
+    fn evaluate_null_with_null_ciphers() {
+        let counts = CipherCounts {
+            total: 1,
+            null_ciphers: 1,
+            ..Default::default()
+        };
+        let summary = summary_with_ciphers(Protocol::TLS12, Vec::new(), counts);
+        let result = super::super::cipher_checks::evaluate_null(std::iter::once((
+            Protocol::TLS12,
+            &summary,
+        )));
+        assert!(result.vulnerable);
+        assert_eq!(result.severity, Severity::Critical);
+    }
+
+    #[test]
+    fn evaluate_null_without_null_ciphers() {
+        let summary = empty_summary(Protocol::TLS12);
+        let result = super::super::cipher_checks::evaluate_null(std::iter::once((
+            Protocol::TLS12,
+            &summary,
+        )));
+        assert!(!result.vulnerable);
+    }
+
+    // --- evaluate_export ---
+
+    #[test]
+    fn evaluate_export_empty_summaries() {
+        let result = super::super::cipher_checks::evaluate_export(std::iter::empty());
+        assert!(!result.vulnerable);
+        assert_eq!(result.vuln_type, VulnerabilityType::FREAK);
+    }
+
+    #[test]
+    fn evaluate_export_with_export_ciphers() {
+        let counts = CipherCounts {
+            total: 1,
+            export_ciphers: 1,
+            ..Default::default()
+        };
+        let summary = summary_with_ciphers(Protocol::TLS10, Vec::new(), counts);
+        let result = super::super::cipher_checks::evaluate_export(std::iter::once((
+            Protocol::TLS10,
+            &summary,
+        )));
+        assert!(result.vulnerable);
+        assert_eq!(result.severity, Severity::High);
+    }
+
+    // --- evaluate_beast ---
+
+    #[test]
+    fn evaluate_beast_no_summary() {
+        let result = super::super::cipher_checks::evaluate_beast(None);
+        assert!(!result.vulnerable);
+        assert_eq!(result.vuln_type, VulnerabilityType::BEAST);
+        assert_eq!(result.severity, Severity::Info);
+    }
+
+    #[test]
+    fn evaluate_beast_with_cbc_ciphers() {
+        let ciphers = vec![make_cipher("AES128-CBC", 128, false)];
+        let summary = summary_with_ciphers(Protocol::TLS10, ciphers, CipherCounts::default());
+        let result = super::super::cipher_checks::evaluate_beast(Some(&summary));
+        assert!(result.vulnerable);
+        assert_eq!(result.severity, Severity::Medium);
+        assert!(result.details.contains("CBC"));
+    }
+
+    #[test]
+    fn evaluate_beast_without_cbc_ciphers() {
+        let ciphers = vec![make_cipher("AES128-GCM", 128, false)];
+        let summary = summary_with_ciphers(Protocol::TLS10, ciphers, CipherCounts::default());
+        let result = super::super::cipher_checks::evaluate_beast(Some(&summary));
+        assert!(!result.vulnerable);
+    }
+
+    // --- evaluate across multiple protocols ---
+
+    #[test]
+    fn evaluate_rc4_across_multiple_protocols() {
+        let s1 = empty_summary(Protocol::TLS10);
+        let ciphers = vec![make_cipher("RC4-MD5", 128, false)];
+        let s2 = summary_with_ciphers(Protocol::TLS12, ciphers, CipherCounts::default());
+        let summaries = vec![(Protocol::TLS10, &s1), (Protocol::TLS12, &s2)];
+        let result = super::super::cipher_checks::evaluate_rc4(summaries);
+        assert!(result.vulnerable);
+        assert!(result.details.contains("TLS 1.2"));
+    }
+
+    // --- VulnerabilityResult helper methods ---
+
+    #[test]
+    fn vulnerability_result_status_label_vulnerable() {
+        let result = crate::vulnerabilities::VulnerabilityResult {
+            vuln_type: VulnerabilityType::Heartbleed,
+            vulnerable: true,
+            inconclusive: false,
+            details: String::new(),
+            cve: None,
+            cwe: None,
+            severity: Severity::Critical,
+        };
+        assert_eq!(result.status_label(), "Vulnerable");
+        assert_eq!(result.status_csv_value(), "vulnerable");
+    }
+
+    #[test]
+    fn vulnerability_result_status_label_not_vulnerable() {
+        let result = crate::vulnerabilities::VulnerabilityResult {
+            vuln_type: VulnerabilityType::Heartbleed,
+            vulnerable: false,
+            inconclusive: false,
+            details: String::new(),
+            cve: None,
+            cwe: None,
+            severity: Severity::Info,
+        };
+        assert_eq!(result.status_label(), "Not Vulnerable");
+        assert_eq!(result.status_csv_value(), "not_vulnerable");
+    }
+
+    #[test]
+    fn vulnerability_result_status_label_inconclusive() {
+        let result = crate::vulnerabilities::VulnerabilityResult {
+            vuln_type: VulnerabilityType::ROBOT,
+            vulnerable: false,
+            inconclusive: true,
+            details: String::new(),
+            cve: None,
+            cwe: None,
+            severity: Severity::Info,
+        };
+        assert_eq!(result.status_label(), "Inconclusive");
+        assert_eq!(result.status_csv_value(), "inconclusive");
     }
 }

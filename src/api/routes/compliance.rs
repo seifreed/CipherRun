@@ -1,14 +1,13 @@
 // Compliance Routes
 
 use crate::api::{
+    adapters::compliance as compliance_adapter,
     models::error::{ApiError, ApiErrorResponse},
-    presenters::{compliance::present_compliance_report, target_input::scan_request_from_target},
+    presenters::compliance::present_compliance_report,
     state::AppState,
 };
-use crate::application::{ComplianceFrameworkSource, ScanAssessment};
-use crate::application::use_cases::EvaluateCompliance;
 use crate::compliance::BuiltinFrameworkSource;
-use crate::scanner::Scanner;
+use crate::scanner::DefaultScannerPort;
 use axum::{
     Json,
     extract::{Path, Query, State},
@@ -160,29 +159,14 @@ pub async fn check_compliance(
         .as_ref()
         .ok_or_else(|| ApiError::BadRequest("Target parameter is required".to_string()))?;
 
-    // Load compliance framework
-    let framework = BuiltinFrameworkSource.load_framework(&framework_id).map_err(|e| {
-        if e.to_string().contains("Unknown framework") {
-            ApiError::NotFound(format!("Unknown compliance framework: {}", framework_id))
-        } else {
-            ApiError::Internal(format!("Failed to load framework: {}", e))
-        }
-    })?;
+    // Load compliance framework via adapter
+    let framework = compliance_adapter::load_framework(&BuiltinFrameworkSource, &framework_id)?;
 
-    let request = scan_request_from_target(target)?;
-
-    let scanner = Scanner::new(request)
-        .map_err(|e| ApiError::Internal(format!("Failed to create scanner: {}", e)))?;
-
-    let scan_results = scanner
-        .run()
-        .await
-        .map_err(|e| ApiError::Internal(format!("Scan failed: {}", e)))?;
-
-    // Create compliance engine and evaluate
-    let assessment = ScanAssessment::from_scan_results(&scan_results);
-    let report = EvaluateCompliance::execute_assessment(&framework, &assessment)
-        .map_err(|e| ApiError::Internal(format!("Compliance evaluation failed: {}", e)))?;
+    // Run scan and evaluate compliance via adapter
+    let scanner = DefaultScannerPort;
+    let evaluator = crate::compliance::engine::DefaultComplianceEvaluator;
+    let (_assessment, report) =
+        compliance_adapter::run_compliance_check(&scanner, &evaluator, &framework, target).await?;
 
     Ok(Json(present_compliance_report(
         &framework,

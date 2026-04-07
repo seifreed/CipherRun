@@ -1,9 +1,9 @@
 // Trend Analyzer
 // Statistical analysis of security posture over time
 
+use crate::db::CipherRunDatabase;
 use crate::db::connection::DatabasePool;
-use crate::db::{CipherRunDatabase, ScanRecord};
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -65,264 +65,9 @@ impl TrendAnalyzer {
         Self { db }
     }
 
-    /// Analyze rating trend over time
-    pub async fn analyze_rating_trend(
-        &self,
-        hostname: &str,
-        port: u16,
-        days: i64,
-    ) -> crate::Result<RatingTrend> {
-        let scans = self.db.get_scan_history(hostname, port, 100).await?;
-
-        let cutoff = Utc::now() - Duration::days(days);
-        let filtered_scans: Vec<&ScanRecord> = scans
-            .iter()
-            .filter(|s| s.scan_timestamp >= cutoff)
-            .collect();
-
-        if filtered_scans.is_empty() {
-            return Err(crate::TlsError::DatabaseError(
-                "No scans found in the specified time range".to_string(),
-            ));
-        }
-
-        let mut data_points = Vec::new();
-        let mut scores = Vec::new();
-
-        for scan in &filtered_scans {
-            if let Some(score) = scan.overall_score {
-                let score_u8 = score.clamp(0, 100) as u8;
-                data_points.push((scan.scan_timestamp, score_u8));
-                scores.push(score_u8);
-            }
-        }
-
-        if scores.is_empty() {
-            return Err(crate::TlsError::DatabaseError(
-                "No rating scores found".to_string(),
-            ));
-        }
-
-        let mean = Self::calculate_mean(&scores);
-        let median = Self::calculate_median(&mut scores.clone());
-        let std_dev = Self::calculate_std_dev(&scores, mean);
-        let direction = Self::determine_trend_direction(&data_points);
-        let forecast = Self::forecast_linear(&data_points);
-
-        Ok(RatingTrend {
-            data_points,
-            mean,
-            median,
-            std_dev,
-            direction,
-            forecast,
-        })
-    }
-
-    /// Analyze vulnerability trend over time
-    pub async fn analyze_vulnerability_trend(
-        &self,
-        hostname: &str,
-        port: u16,
-        days: i64,
-    ) -> crate::Result<VulnerabilityTrend> {
-        let scans = self.db.get_scan_history(hostname, port, 100).await?;
-
-        let cutoff = Utc::now() - Duration::days(days);
-        let filtered_scans: Vec<&ScanRecord> = scans
-            .iter()
-            .filter(|s| s.scan_timestamp >= cutoff)
-            .collect();
-
-        if filtered_scans.is_empty() {
-            return Err(crate::TlsError::DatabaseError(
-                "No scans found in the specified time range".to_string(),
-            ));
-        }
-
-        let mut data_points = Vec::new();
-        let mut counts = Vec::new();
-        let mut severity_distribution: HashMap<String, usize> = HashMap::new();
-
-        for scan in &filtered_scans {
-            if let Some(scan_id) = scan.scan_id {
-                let vulns = self.get_vulnerabilities(scan_id).await?;
-                let count = vulns.len();
-                data_points.push((scan.scan_timestamp, count));
-                counts.push(count);
-
-                for vuln in vulns {
-                    *severity_distribution
-                        .entry(vuln.severity.clone())
-                        .or_insert(0) += 1;
-                }
-            }
-        }
-
-        let mean = if counts.is_empty() {
-            0.0
-        } else {
-            counts.iter().sum::<usize>() as f64 / counts.len() as f64
-        };
-
-        let median = if counts.is_empty() {
-            0
-        } else {
-            let mut sorted = counts.clone();
-            sorted.sort_unstable();
-            sorted[sorted.len() / 2]
-        };
-
-        let direction = Self::determine_usize_trend_direction(&data_points);
-
-        Ok(VulnerabilityTrend {
-            data_points,
-            mean,
-            median,
-            severity_distribution,
-            direction,
-        })
-    }
-
-    /// Analyze protocol adoption trend over time
-    pub async fn analyze_protocol_trend(
-        &self,
-        hostname: &str,
-        port: u16,
-        days: i64,
-    ) -> crate::Result<ProtocolTrend> {
-        let scans = self.db.get_scan_history(hostname, port, 100).await?;
-
-        let cutoff = Utc::now() - Duration::days(days);
-        let filtered_scans: Vec<&ScanRecord> = scans
-            .iter()
-            .filter(|s| s.scan_timestamp >= cutoff)
-            .collect();
-
-        if filtered_scans.is_empty() {
-            return Err(crate::TlsError::DatabaseError(
-                "No scans found in the specified time range".to_string(),
-            ));
-        }
-
-        let mut tls13_adoption = Vec::new();
-        let mut tls12_usage = Vec::new();
-        let mut legacy_protocols = Vec::new();
-
-        for scan in &filtered_scans {
-            if let Some(scan_id) = scan.scan_id {
-                let protocols = self.get_protocols(scan_id).await?;
-
-                let has_tls13 = protocols
-                    .iter()
-                    .any(|p| p.protocol_name.contains("TLS 1.3") && p.enabled);
-                let has_tls12 = protocols
-                    .iter()
-                    .any(|p| p.protocol_name.contains("TLS 1.2") && p.enabled);
-
-                tls13_adoption.push((scan.scan_timestamp, has_tls13));
-                tls12_usage.push((scan.scan_timestamp, has_tls12));
-
-                let legacy: Vec<String> = protocols
-                    .iter()
-                    .filter(|p| {
-                        p.enabled
-                            && (p.protocol_name.contains("SSLv")
-                                || p.protocol_name.contains("TLS 1.0")
-                                || p.protocol_name.contains("TLS 1.1"))
-                    })
-                    .map(|p| p.protocol_name.clone())
-                    .collect();
-
-                legacy_protocols.push((scan.scan_timestamp, legacy));
-            }
-        }
-
-        let summary =
-            Self::generate_protocol_summary(&tls13_adoption, &tls12_usage, &legacy_protocols);
-
-        Ok(ProtocolTrend {
-            tls13_adoption,
-            tls12_usage,
-            legacy_protocols,
-            summary,
-        })
-    }
-
-    /// Analyze cipher strength trend over time
-    pub async fn analyze_cipher_strength_trend(
-        &self,
-        hostname: &str,
-        port: u16,
-        days: i64,
-    ) -> crate::Result<CipherStrengthTrend> {
-        let scans = self.db.get_scan_history(hostname, port, 100).await?;
-
-        let cutoff = Utc::now() - Duration::days(days);
-        let filtered_scans: Vec<&ScanRecord> = scans
-            .iter()
-            .filter(|s| s.scan_timestamp >= cutoff)
-            .collect();
-
-        if filtered_scans.is_empty() {
-            return Err(crate::TlsError::DatabaseError(
-                "No scans found in the specified time range".to_string(),
-            ));
-        }
-
-        let mut data_points = Vec::new();
-        let mut weak_counts = Vec::new();
-        let mut strong_counts = Vec::new();
-
-        for scan in &filtered_scans {
-            if let Some(scan_id) = scan.scan_id {
-                let ciphers = self.get_ciphers(scan_id).await?;
-
-                let weak = ciphers
-                    .iter()
-                    .filter(|c| {
-                        c.strength == "weak" || c.strength == "export" || c.strength == "null"
-                    })
-                    .count();
-                let medium = ciphers.iter().filter(|c| c.strength == "medium").count();
-                let strong = ciphers
-                    .iter()
-                    .filter(|c| c.strength == "strong" || c.strength == "high")
-                    .count();
-
-                weak_counts.push(weak);
-                strong_counts.push(strong);
-
-                data_points.push((
-                    scan.scan_timestamp,
-                    CipherStrengthData {
-                        weak,
-                        medium,
-                        strong,
-                    },
-                ));
-            }
-        }
-
-        let weak_trend = Self::determine_usize_trend_direction(
-            &data_points
-                .iter()
-                .map(|(ts, data)| (*ts, data.weak))
-                .collect::<Vec<_>>(),
-        );
-
-        let strong_trend = Self::determine_usize_trend_direction(
-            &data_points
-                .iter()
-                .map(|(ts, data)| (*ts, data.strong))
-                .collect::<Vec<_>>(),
-        );
-
-        Ok(CipherStrengthTrend {
-            data_points,
-            weak_count_trend: weak_trend,
-            strong_count_trend: strong_trend,
-        })
+    /// Accessor for the database, used by sub-module impl blocks
+    pub(crate) fn db(&self) -> &CipherRunDatabase {
+        &self.db
     }
 
     /// Generate comprehensive trend report
@@ -452,27 +197,27 @@ impl TrendAnalyzer {
 
     // Statistical helper methods
 
-    fn calculate_mean(values: &[u8]) -> f64 {
+    pub(crate) fn calculate_mean(values: &[u8]) -> f64 {
         if values.is_empty() {
             return 0.0;
         }
         values.iter().map(|&v| v as f64).sum::<f64>() / values.len() as f64
     }
 
-    fn calculate_median(values: &mut [u8]) -> u8 {
+    pub(crate) fn calculate_median(values: &mut [u8]) -> u8 {
         if values.is_empty() {
             return 0;
         }
         values.sort_unstable();
         let mid = values.len() / 2;
-        if values.len() % 2 == 0 {
+        if values.len().is_multiple_of(2) {
             ((values[mid - 1] as u16 + values[mid] as u16) / 2) as u8
         } else {
             values[mid]
         }
     }
 
-    fn calculate_std_dev(values: &[u8], mean: f64) -> f64 {
+    pub(crate) fn calculate_std_dev(values: &[u8], mean: f64) -> f64 {
         if values.len() <= 1 {
             return 0.0;
         }
@@ -487,7 +232,7 @@ impl TrendAnalyzer {
         variance.sqrt()
     }
 
-    fn determine_trend_direction(data_points: &[(DateTime<Utc>, u8)]) -> TrendDirection {
+    pub(crate) fn determine_trend_direction(data_points: &[(DateTime<Utc>, u8)]) -> TrendDirection {
         if data_points.len() < 2 {
             return TrendDirection::Stable;
         }
@@ -519,7 +264,9 @@ impl TrendAnalyzer {
         }
     }
 
-    fn determine_usize_trend_direction(data_points: &[(DateTime<Utc>, usize)]) -> TrendDirection {
+    pub(crate) fn determine_usize_trend_direction(
+        data_points: &[(DateTime<Utc>, usize)],
+    ) -> TrendDirection {
         if data_points.len() < 2 {
             return TrendDirection::Stable;
         }
@@ -552,7 +299,7 @@ impl TrendAnalyzer {
         }
     }
 
-    fn forecast_linear(data_points: &[(DateTime<Utc>, u8)]) -> Option<u8> {
+    pub(crate) fn forecast_linear(data_points: &[(DateTime<Utc>, u8)]) -> Option<u8> {
         if data_points.len() < 2 {
             return None;
         }
@@ -583,60 +330,9 @@ impl TrendAnalyzer {
         Some(forecast.clamp(0.0, 100.0).round() as u8)
     }
 
-    fn generate_protocol_summary(
-        tls13: &[(DateTime<Utc>, bool)],
-        tls12: &[(DateTime<Utc>, bool)],
-        legacy: &[(DateTime<Utc>, Vec<String>)],
-    ) -> String {
-        let mut summary = String::new();
-
-        let tls13_count = tls13.iter().filter(|(_, enabled)| *enabled).count();
-        let tls13_percentage = if !tls13.is_empty() {
-            (tls13_count as f64 / tls13.len() as f64) * 100.0
-        } else {
-            0.0
-        };
-
-        summary.push_str(&format!(
-            "TLS 1.3 adoption: {:.1}% ({}/{} scans)\n",
-            tls13_percentage,
-            tls13_count,
-            tls13.len()
-        ));
-
-        let tls12_count = tls12.iter().filter(|(_, enabled)| *enabled).count();
-        let tls12_percentage = if !tls12.is_empty() {
-            (tls12_count as f64 / tls12.len() as f64) * 100.0
-        } else {
-            0.0
-        };
-
-        summary.push_str(&format!(
-            "TLS 1.2 usage: {:.1}% ({}/{} scans)\n",
-            tls12_percentage,
-            tls12_count,
-            tls12.len()
-        ));
-
-        let legacy_count = legacy
-            .iter()
-            .filter(|(_, protocols)| !protocols.is_empty())
-            .count();
-        if legacy_count > 0 {
-            summary.push_str(&format!(
-                "Legacy protocols detected in {} scans\n",
-                legacy_count
-            ));
-        } else {
-            summary.push_str("No legacy protocols detected\n");
-        }
-
-        summary
-    }
-
     // Database helper methods
 
-    async fn get_vulnerabilities(
+    pub(crate) async fn get_vulnerabilities(
         &self,
         scan_id: i64,
     ) -> crate::Result<Vec<crate::db::VulnerabilityRecord>> {
@@ -666,7 +362,10 @@ impl TrendAnalyzer {
         }
     }
 
-    async fn get_protocols(&self, scan_id: i64) -> crate::Result<Vec<crate::db::ProtocolRecord>> {
+    pub(crate) async fn get_protocols(
+        &self,
+        scan_id: i64,
+    ) -> crate::Result<Vec<crate::db::ProtocolRecord>> {
         use crate::db::ProtocolRecord;
 
         match self.db.pool() {
@@ -693,7 +392,10 @@ impl TrendAnalyzer {
         }
     }
 
-    async fn get_ciphers(&self, scan_id: i64) -> crate::Result<Vec<crate::db::CipherRecord>> {
+    pub(crate) async fn get_ciphers(
+        &self,
+        scan_id: i64,
+    ) -> crate::Result<Vec<crate::db::CipherRecord>> {
         use crate::db::CipherRecord;
 
         match self.db.pool() {
@@ -725,6 +427,7 @@ impl TrendAnalyzer {
 mod tests {
     use super::*;
     use crate::db::{BindValue, CipherRunDatabase, DatabaseConfig};
+    use chrono::{Duration, Utc};
     use std::path::PathBuf;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -809,18 +512,6 @@ mod tests {
         let points = vec![(Utc::now(), 60), (Utc::now(), 70), (Utc::now(), 80)];
         let forecast = TrendAnalyzer::forecast_linear(&points).unwrap();
         assert!(forecast >= 80);
-    }
-
-    #[test]
-    fn test_generate_protocol_summary() {
-        let tls13 = vec![(Utc::now(), true), (Utc::now(), false)];
-        let tls12 = vec![(Utc::now(), true), (Utc::now(), true)];
-        let legacy = vec![(Utc::now(), vec!["SSLv3".to_string()])];
-
-        let summary = TrendAnalyzer::generate_protocol_summary(&tls13, &tls12, &legacy);
-        assert!(summary.contains("TLS 1.3 adoption"));
-        assert!(summary.contains("TLS 1.2 usage"));
-        assert!(summary.contains("Legacy protocols detected"));
     }
 
     static DB_COUNTER: AtomicU64 = AtomicU64::new(0);

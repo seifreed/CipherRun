@@ -5,11 +5,9 @@ use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 
-#[allow(dead_code)]
 pub(crate) struct TlsConnectionPool {
     pool: Arc<Mutex<Vec<TcpStream>>>,
     addr: SocketAddr,
-    max_size: usize,
     connect_timeout: Duration,
     retry_config: Option<crate::utils::retry::RetryConfig>,
 }
@@ -24,7 +22,6 @@ impl TlsConnectionPool {
         Self {
             pool: Arc::new(Mutex::new(Vec::with_capacity(max_size))),
             addr,
-            max_size,
             connect_timeout,
             retry_config,
         }
@@ -49,20 +46,6 @@ impl TlsConnectionPool {
             self.retry_config.as_ref(),
         )
         .await
-        .map_err(|e| crate::TlsError::Other(format!("Connection failed: {}", e)).into())
-    }
-
-    #[allow(dead_code)]
-    pub(crate) async fn release(&self, stream: TcpStream) {
-        let mut pool = self.pool.lock().await;
-        if pool.len() < self.max_size {
-            pool.push(stream);
-            tracing::trace!("Connection returned to the pool (size: {})", pool.len());
-        }
-    }
-
-    #[allow(dead_code)]
-    pub(crate) async fn size(&self) -> usize {
-        self.pool.lock().await.len()
+        .map_err(|e| crate::TlsError::Other(format!("Connection failed: {}", e)))
     }
 }

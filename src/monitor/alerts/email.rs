@@ -1,7 +1,8 @@
 // Email Alert Channel - Using lettre
 
+use super::formatting;
 use crate::Result;
-use crate::monitor::alerts::{Alert, AlertChannel, AlertType};
+use crate::monitor::alerts::{Alert, AlertChannel, AlertDetails, AlertType};
 use crate::monitor::config::EmailConfig;
 use async_trait::async_trait;
 use lettre::message::{MultiPart, SinglePart, header};
@@ -58,66 +59,10 @@ impl EmailChannel {
 
     /// Format alert as HTML
     fn format_html_body(&self, alert: &Alert) -> String {
-        let severity_color = match alert.severity {
-            crate::monitor::detector::ChangeSeverity::Critical => "#dc3545",
-            crate::monitor::detector::ChangeSeverity::High => "#fd7e14",
-            crate::monitor::detector::ChangeSeverity::Medium => "#ffc107",
-            crate::monitor::detector::ChangeSeverity::Low => "#0dcaf0",
-            crate::monitor::detector::ChangeSeverity::Info => "#6c757d",
-        };
+        let severity_color = formatting::severity_color(&alert.severity);
 
-        let details_html = match &alert.alert_type {
-            AlertType::CertificateChange { changes } => {
-                let changes_html = changes
-                    .iter()
-                    .map(|change| {
-                        format!(
-                            "<li><strong>{:?}</strong>: {}</li>",
-                            change.change_type, change.description
-                        )
-                    })
-                    .collect::<Vec<_>>()
-                    .join("");
-
-                format!("<h3>Certificate Changes</h3><ul>{}</ul>", changes_html)
-            }
-            AlertType::ExpiryWarning { days_remaining } => {
-                format!(
-                    "<h3>Certificate Expiry Warning</h3><p>Certificate expires in <strong>{}</strong> days.</p>",
-                    days_remaining
-                )
-            }
-            AlertType::ValidationFailure { reason } => {
-                format!("<h3>Certificate Validation Failed</h3><p>{}</p>", reason)
-            }
-            AlertType::ScanFailure { error } => {
-                format!("<h3>Scan Failed</h3><p>{}</p>", error)
-            }
-        };
-
-        let cert_details = if let Some(ref serial) = alert.details.certificate_serial {
-            format!(
-                "<h3>Certificate Details</h3>
-                <ul>
-                    <li><strong>Serial:</strong> {}</li>
-                    <li><strong>Issuer:</strong> {}</li>
-                    <li><strong>Expiry:</strong> {}</li>
-                </ul>",
-                serial,
-                alert
-                    .details
-                    .certificate_issuer
-                    .as_deref()
-                    .unwrap_or("Unknown"),
-                alert
-                    .details
-                    .certificate_expiry
-                    .as_deref()
-                    .unwrap_or("Unknown")
-            )
-        } else {
-            String::new()
-        };
+        let details_html = alert_type_html(&alert.alert_type);
+        let cert_details = certificate_details_html(&alert.details);
 
         format!(
             r#"<!DOCTYPE html>
@@ -276,6 +221,63 @@ impl AlertChannel for EmailChannel {
         .await??;
 
         Ok(())
+    }
+}
+
+/// Build HTML for the alert type details section.
+fn alert_type_html(alert_type: &AlertType) -> String {
+    match alert_type {
+        AlertType::CertificateChange { changes } => {
+            let changes_html = changes
+                .iter()
+                .map(|change| {
+                    format!(
+                        "<li><strong>{:?}</strong>: {}</li>",
+                        change.change_type, change.description
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("");
+
+            format!("<h3>Certificate Changes</h3><ul>{}</ul>", changes_html)
+        }
+        AlertType::ExpiryWarning { days_remaining } => {
+            format!(
+                "<h3>Certificate Expiry Warning</h3><p>Certificate expires in <strong>{}</strong> days.</p>",
+                days_remaining
+            )
+        }
+        AlertType::ValidationFailure { reason } => {
+            format!("<h3>Certificate Validation Failed</h3><p>{}</p>", reason)
+        }
+        AlertType::ScanFailure { error } => {
+            format!("<h3>Scan Failed</h3><p>{}</p>", error)
+        }
+    }
+}
+
+/// Build HTML for certificate details (serial, issuer, expiry).
+fn certificate_details_html(details: &AlertDetails) -> String {
+    if let Some(ref serial) = details.certificate_serial {
+        format!(
+            "<h3>Certificate Details</h3>
+                <ul>
+                    <li><strong>Serial:</strong> {}</li>
+                    <li><strong>Issuer:</strong> {}</li>
+                    <li><strong>Expiry:</strong> {}</li>
+                </ul>",
+            serial,
+            details
+                .certificate_issuer
+                .as_deref()
+                .unwrap_or("Unknown"),
+            details
+                .certificate_expiry
+                .as_deref()
+                .unwrap_or("Unknown")
+        )
+    } else {
+        String::new()
     }
 }
 

@@ -80,7 +80,7 @@ impl<'a> ScanExporter<'a> {
 
         if has_multi_ip_json_target
             && let Some(json_path) = plan.json_multi_ip
-            && let Some(ref report) = plan.results.multi_ip_report
+            && let Some(ref report) = plan.results.scan_metadata.multi_ip_report
         {
             use crate::output::json::generate_multi_ip_json;
             let json = generate_multi_ip_json(report, plan.json_pretty)?;

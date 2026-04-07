@@ -13,8 +13,16 @@ pub(crate) fn format_status_indicator(value: bool) -> ColoredString {
 }
 
 pub(crate) fn truncate_with_ellipsis(s: &str, max_len: usize) -> String {
-    if s.len() > max_len {
-        format!("{}...", &s[..max_len.saturating_sub(3)])
+    if s.len() > max_len && max_len > 3 {
+        let target = max_len - 3;
+        // Find a safe UTF-8 char boundary at or before `target`
+        let boundary = s
+            .char_indices()
+            .map(|(i, _)| i)
+            .take_while(|&i| i <= target)
+            .last()
+            .unwrap_or(0);
+        format!("{}...", &s[..boundary])
     } else {
         s.to_string()
     }

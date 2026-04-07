@@ -5,13 +5,12 @@
 // by observing changes in compression ratios when injecting known data.
 
 use crate::Result;
+use crate::constants::TLS_HANDSHAKE_TIMEOUT;
 use crate::protocols::Protocol;
 use crate::protocols::handshake::ClientHelloBuilder;
 use crate::utils::network::Target;
-use crate::utils::{VulnSslConfig, test_vuln_ssl_connection};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
 use tokio::time::timeout;
 
 /// CRIME vulnerability tester
@@ -53,47 +52,152 @@ impl<'a> CrimeTester<'a> {
     }
 
     /// Test if TLS compression is enabled
+    ///
+    /// Checks whether TLS-level compression (DEFLATE) was negotiated.
+    /// Modern OpenSSL disables compression by default due to CRIME vulnerability.
+    /// This test attempts to negotiate compression and checks if it was enabled.
     async fn test_tls_compression(&self) -> Result<bool> {
-        // Try to enable compression in OpenSSL
-        // Note: Modern OpenSSL disables compression by default
-        // The current_compression() API is not available in rust-openssl
-        // We conservatively return false (compression disabled)
-        let connected = test_vuln_ssl_connection(self.target, VulnSslConfig::default())
-            .await
-            .map_err(crate::TlsError::from)?;
+        // Modern OpenSSL (1.1.0+) disables compression by default.
+        // OpenSSL 3.x removes it entirely. Most servers will have compression disabled.
+        //
+        // For legacy systems, we attempt to detect compression via the handshake.
+        // We send a ClientHello offering DEFLATE compression and check if the
+        // server accepts it by looking at the compression method in ServerHello.
 
-        if connected {
-            // Check if compression was negotiated
-            // We conservatively return false (compression disabled)
-            Ok(false)
-        } else {
-            Ok(false)
+        let addr = self.target.socket_addrs()[0];
+
+        let mut stream =
+            match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None)
+                .await
+            {
+                Ok(s) => s,
+                Err(_) => return Ok(false),
+            };
+
+        // Send ClientHello with compression method DEFLATE (0x01)
+        let client_hello = self.build_client_hello_with_compression();
+        stream.write_all(&client_hello).await?;
+
+        // Read ServerHello
+        let mut buffer = vec![0u8; 4096];
+        match timeout(Duration::from_secs(3), stream.read(&mut buffer)).await {
+            Ok(Ok(n)) if n > 11 => {
+                if buffer[0] == 0x16 && buffer[5] == 0x02 && n > 43 {
+                    let session_id_len = buffer[43] as usize;
+                    if session_id_len > 32 {
+                        return Ok(false);
+                    }
+                    let cipher_offset = 44 + session_id_len;
+                    if n > cipher_offset + 2 {
+                        let compression_method = buffer[cipher_offset + 2];
+                        tracing::debug!("Server compression method: {}", compression_method);
+                        return Ok(compression_method == 0x01);
+                    }
+                }
+                Ok(false)
+            }
+            _ => Ok(false),
         }
     }
 
+    /// Build ClientHello offering DEFLATE compression
+    fn build_client_hello_with_compression(&self) -> Vec<u8> {
+        let mut builder = ClientHelloBuilder::new(Protocol::TLS12);
+        builder.for_rsa_key_exchange().with_compression(true);
+        builder.build().unwrap_or_else(|_| Vec::new())
+    }
+
     /// Test if SPDY compression is enabled
+    ///
+    /// SPDY uses header compression (DEFLATE-based) which is vulnerable to CRIME.
+    /// HTTP/2 uses HPACK which is specifically designed to resist CRIME-style attacks,
+    /// so HTTP/2 is NOT flagged as vulnerable.
+    ///
+    /// Detection approach: Parse the ServerHello extensions to find NPN (0x3374),
+    /// then check if any negotiated protocol is SPDY (not h2/HTTP2).
     async fn test_spdy_compression(&self) -> Result<bool> {
         let addr = self.target.socket_addrs()[0];
 
-        match timeout(Duration::from_secs(5), TcpStream::connect(addr)).await {
-            Ok(Ok(mut stream)) => {
-                // Send ClientHello with NPN extension advertising SPDY support
-                let client_hello = self.build_client_hello_with_npn();
-                stream.write_all(&client_hello).await?;
+        let mut stream =
+            match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None)
+                .await
+            {
+                Ok(s) => s,
+                Err(_) => return Ok(false),
+            };
 
-                // Read ServerHello
-                let mut buffer = vec![0u8; 8192];
-                match timeout(Duration::from_secs(3), stream.read(&mut buffer)).await {
-                    Ok(Ok(n)) if n > 0 => {
-                        // Check if server selected SPDY in NPN
-                        // This is a simplified check - real implementation would parse TLS extensions
-                        let spdy_selected = buffer[..n]
-                            .windows(4)
-                            .any(|w| w == b"spdy" || w == b"h2-1" || w == b"h2c-");
-                        Ok(spdy_selected)
-                    }
-                    _ => Ok(false),
+        // Send ClientHello with NPN extension advertising SPDY support
+        let client_hello = self.build_client_hello_with_npn();
+        stream.write_all(&client_hello).await?;
+
+        // Read ServerHello
+        let mut buffer = vec![0u8; 8192];
+        match timeout(Duration::from_secs(3), stream.read(&mut buffer)).await {
+            Ok(Ok(n)) if n > 43 => {
+                // Parse ServerHello structurally to find NPN extension
+                let data = &buffer[..n];
+
+                // Verify it's a handshake ServerHello
+                if data[0] != 0x16 || data.len() < 6 || data[5] != 0x02 {
+                    return Ok(false);
                 }
+
+                // Parse to extensions: skip record header (5) + handshake header (4)
+                // + version (2) + random (32) + session_id
+                let sid_offset = 43;
+                if sid_offset >= n {
+                    return Ok(false);
+                }
+                let sid_len = data[sid_offset] as usize;
+                // cipher suite (2) + compression (1) + extensions_length (2)
+                let ext_len_offset = sid_offset + 1 + sid_len + 2 + 1;
+                if ext_len_offset + 2 > n {
+                    return Ok(false);
+                }
+
+                let ext_total =
+                    u16::from_be_bytes([data[ext_len_offset], data[ext_len_offset + 1]]) as usize;
+                let ext_start = ext_len_offset + 2;
+                let ext_end = (ext_start + ext_total).min(n);
+
+                // Walk extensions structurally looking for NPN (0x3374)
+                let mut pos = ext_start;
+                while pos + 4 <= ext_end {
+                    let ext_type = u16::from_be_bytes([data[pos], data[pos + 1]]);
+                    let ext_len = u16::from_be_bytes([data[pos + 2], data[pos + 3]]) as usize;
+                    pos += 4;
+                    if pos + ext_len > ext_end {
+                        break;
+                    }
+
+                    if ext_type == 0x3374 {
+                        // Parse NPN protocol list within this extension
+                        let mut proto_pos = pos;
+                        let proto_end = pos + ext_len;
+                        while proto_pos < proto_end {
+                            let proto_len = data[proto_pos] as usize;
+                            proto_pos += 1;
+                            if proto_pos + proto_len > proto_end {
+                                break;
+                            }
+                            if let Ok(proto) =
+                                std::str::from_utf8(&data[proto_pos..proto_pos + proto_len])
+                            {
+                                // Only flag SPDY protocols as CRIME-vulnerable
+                                // HTTP/2 (h2, h2c) uses HPACK which is CRIME-resistant
+                                if proto.starts_with("spdy/") {
+                                    return Ok(true);
+                                }
+                            }
+                            proto_pos += proto_len;
+                        }
+                        break;
+                    }
+
+                    pos += ext_len;
+                }
+
+                Ok(false)
             }
             _ => Ok(false),
         }
@@ -196,6 +300,27 @@ mod tests {
 
         // NPN extension type is 0x3374
         assert!(hello.windows(2).any(|w| w == [0x33, 0x74]));
+    }
+
+    #[test]
+    fn test_client_hello_with_compression() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["93.184.216.34".parse().unwrap()],
+        )
+        .unwrap();
+
+        let tester = CrimeTester::new(&target);
+        let hello = tester.build_client_hello_with_compression();
+
+        assert!(hello.len() > 50);
+        assert_eq!(hello[0], 0x16); // Handshake
+        assert_eq!(hello[5], 0x01); // ClientHello
+
+        // Check for compression methods (should include DEFLATE = 0x01)
+        let has_deflate = hello.windows(2).any(|w| w == [0x02, 0x01]);
+        assert!(has_deflate, "ClientHello should offer DEFLATE compression");
     }
 
     #[tokio::test]

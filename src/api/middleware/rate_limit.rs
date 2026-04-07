@@ -15,13 +15,16 @@ use dashmap::DashMap;
 use governor::{
     Quota, RateLimiter as GovernorRateLimiter,
     clock::{Clock, DefaultClock},
+    middleware::StateInformationMiddleware,
     state::{InMemoryState, NotKeyed},
 };
 use std::num::NonZeroU32;
 use std::sync::Arc;
 
-/// Type alias for the governor rate limiter
-type Limiter = Arc<GovernorRateLimiter<NotKeyed, InMemoryState, DefaultClock>>;
+/// Type alias for the governor rate limiter with state information middleware
+/// This allows us to get remaining capacity information after each check
+type Limiter =
+    Arc<GovernorRateLimiter<NotKeyed, InMemoryState, DefaultClock, StateInformationMiddleware>>;
 
 /// Per-key rate limiter storage
 pub struct PerKeyRateLimiter {
@@ -54,41 +57,48 @@ impl PerKeyRateLimiter {
     }
 
     /// Get or create a rate limiter for a specific API key
+    /// Uses DashMap::entry() for atomic get-or-insert to avoid TOCTOU races
     fn get_or_create_limiter(
         &self,
         key: &str,
-    ) -> Arc<GovernorRateLimiter<NotKeyed, InMemoryState, DefaultClock>> {
-        if let Some(limiter) = self.limiters.get(key) {
-            return limiter.clone();
-        }
-
-        // Create new limiter for this key
-        let limiter = Arc::new(GovernorRateLimiter::direct(self.default_quota));
-        self.limiters.insert(key.to_string(), limiter.clone());
-        limiter
+    ) -> Arc<GovernorRateLimiter<NotKeyed, InMemoryState, DefaultClock, StateInformationMiddleware>>
+    {
+        self.limiters
+            .entry(key.to_string())
+            .or_insert_with(|| {
+                Arc::new(
+                    GovernorRateLimiter::direct(self.default_quota)
+                        .with_middleware::<StateInformationMiddleware>(),
+                )
+            })
+            .clone()
     }
 
     /// Check rate limit for a specific key and return rate limit info
+    ///
+    /// Uses Governor as the single source of truth for rate limiting decisions.
+    /// Remaining is calculated from Governor's StateInformationMiddleware which
+    /// provides accurate remaining capacity without race conditions.
     pub fn check(&self, key: &str) -> RateLimitResult {
         let limiter = self.get_or_create_limiter(key);
 
         // Try to consume a token from the rate limiter
-        let snapshot = limiter.check();
+        // With StateInformationMiddleware, check() returns StateSnapshot on success
+        let result = limiter.check();
 
-        match snapshot {
-            Ok(_) => {
-                // Request allowed
-                // Note: We cannot accurately calculate remaining capacity without
-                // consuming additional tokens. Governor doesn't expose this information.
-                // We'll report a conservative estimate (limit - 1) since we just consumed one.
-                let remaining = self.requests_per_minute.saturating_sub(1);
+        match result {
+            Ok(snapshot) => {
+                // Get remaining capacity from Governor's state, capped to the
+                // advertised rate limit to avoid reporting more than the limit
+                let remaining = snapshot
+                    .remaining_burst_capacity()
+                    .min(self.requests_per_minute);
 
-                // Calculate reset time - use system time since QuantaInstant isn't directly convertible
-                let now = std::time::SystemTime::now()
+                let reset_at = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
-                    .as_secs();
-                let reset_at = now + self.window_seconds;
+                    .as_secs()
+                    + self.window_seconds;
 
                 RateLimitResult::Allowed {
                     limit: self.requests_per_minute,
@@ -98,10 +108,11 @@ impl PerKeyRateLimiter {
             }
             Err(not_until) => {
                 // Request denied - calculate when it will be allowed
-                let wait_duration = not_until.wait_time_from(DefaultClock::default().now());
+                let clock = DefaultClock::default();
+                let wait_duration = not_until.wait_time_from(clock.now());
                 let retry_after = wait_duration.as_secs().max(1);
 
-                // Calculate reset timestamp
+                // Calculate reset timestamp from Governor's actual wait time
                 let reset_at = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
@@ -119,24 +130,35 @@ impl PerKeyRateLimiter {
     }
 
     /// Cleanup expired entries (should be called periodically)
+    ///
+    /// Removes entries when the map grows too large. Since DashMap doesn't
+    /// maintain insertion order, we remove a portion of entries to keep
+    /// memory usage bounded. This is a simple cleanup strategy - for more
+    /// sophisticated cleanup, consider using an LRU cache instead.
     pub fn cleanup(&self) {
-        // Remove entries if map grows too large
-        if self.limiters.len() > 10000 {
-            // Clear oldest half
+        const MAX_ENTRIES: usize = 10000;
+        const REMOVE_RATIO: usize = 2; // Remove 1/2 of entries when over limit
+
+        if self.limiters.len() > MAX_ENTRIES {
+            // Calculate how many entries to remove
+            let to_remove = self.limiters.len() / REMOVE_RATIO;
+
+            // Collect keys to remove (arbitrary selection since DashMap is unordered)
             let keys_to_remove: Vec<String> = self
                 .limiters
                 .iter()
-                .take(self.limiters.len() / 2)
+                .take(to_remove)
                 .map(|entry| entry.key().clone())
                 .collect();
 
-            for key in keys_to_remove {
-                self.limiters.remove(&key);
+            for key in &keys_to_remove {
+                self.limiters.remove(key);
             }
 
             tracing::info!(
-                "Rate limiter cleanup: removed {} entries",
-                self.limiters.len() / 2
+                "Rate limiter cleanup: removed {} entries, {} remaining",
+                keys_to_remove.len(),
+                self.limiters.len()
             );
         }
     }
@@ -157,33 +179,6 @@ pub enum RateLimitResult {
         retry_after: u64,
         reset_at: u64,
     },
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_rate_limiter_allows_first_request() {
-        let limiter = PerKeyRateLimiter::new(100);
-        match limiter.check("key") {
-            RateLimitResult::Allowed { limit, .. } => {
-                assert_eq!(limit, 100);
-            }
-            RateLimitResult::Limited { .. } => panic!("expected allowed"),
-        }
-    }
-
-    #[test]
-    fn test_rate_limiter_zero_defaults() {
-        let limiter = PerKeyRateLimiter::new(0);
-        match limiter.check("key") {
-            RateLimitResult::Allowed { limit, .. } => {
-                assert_eq!(limit, 100);
-            }
-            RateLimitResult::Limited { .. } => panic!("expected allowed"),
-        }
-    }
 }
 
 /// Rate limiting middleware function
@@ -302,6 +297,33 @@ impl Clone for PerKeyRateLimiter {
             default_quota: self.default_quota,
             requests_per_minute: self.requests_per_minute,
             window_seconds: self.window_seconds,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_rate_limiter_allows_first_request() {
+        let limiter = PerKeyRateLimiter::new(100);
+        match limiter.check("key") {
+            RateLimitResult::Allowed { limit, .. } => {
+                assert_eq!(limit, 100);
+            }
+            RateLimitResult::Limited { .. } => panic!("expected allowed"),
+        }
+    }
+
+    #[test]
+    fn test_rate_limiter_zero_defaults() {
+        let limiter = PerKeyRateLimiter::new(0);
+        match limiter.check("key") {
+            RateLimitResult::Allowed { limit, .. } => {
+                assert_eq!(limit, 100);
+            }
+            RateLimitResult::Limited { .. } => panic!("expected allowed"),
         }
     }
 }

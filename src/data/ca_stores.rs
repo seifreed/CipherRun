@@ -1,16 +1,33 @@
 // CA Stores Loader - Loads PEM certificate stores
 
 use anyhow::Result;
-use lazy_static::lazy_static;
 use std::sync::Arc;
 use x509_parser::prelude::*;
 
-lazy_static! {
-    /// Global CA stores loaded at startup
-    pub static ref CA_STORES: Arc<CAStores> = Arc::new(
-        CAStores::load().expect("Failed to load CA stores")
-    );
+/// Global CA stores loaded at startup
+///
+/// Uses OnceLock for safe initialization with proper error handling.
+static CA_STORES_INNER: std::sync::OnceLock<Arc<CAStores>> = std::sync::OnceLock::new();
+
+/// Get the global CA stores
+///
+/// Returns the stores if already initialized, or initializes it on first call.
+/// Initialization errors are logged and an empty store is used as fallback.
+pub fn ca_stores() -> Arc<CAStores> {
+    CA_STORES_INNER
+        .get_or_init(|| match CAStores::load() {
+            Ok(stores) => Arc::new(stores),
+            Err(e) => {
+                tracing::error!("Failed to load CA stores: {}. Using empty stores.", e);
+                Arc::new(CAStores::empty())
+            }
+        })
+        .clone()
 }
+
+/// Legacy static for backward compatibility
+/// Delegates to `ca_stores()` to avoid loading data twice into memory
+pub static CA_STORES: std::sync::LazyLock<Arc<CAStores>> = std::sync::LazyLock::new(ca_stores);
 
 /// A single CA certificate
 #[derive(Debug, Clone)]
@@ -96,6 +113,36 @@ impl CAStores {
             microsoft: CAStore::from_pem("Microsoft", include_str!("../../data/Microsoft.pem"))?,
             java: CAStore::from_pem("Java", include_str!("../../data/Java.pem"))?,
         })
+    }
+
+    /// Create empty stores (fallback for loading errors)
+    pub fn empty() -> Self {
+        Self {
+            mozilla: CAStore {
+                name: "Mozilla".to_string(),
+                certificates: Vec::new(),
+            },
+            apple: CAStore {
+                name: "Apple".to_string(),
+                certificates: Vec::new(),
+            },
+            android: CAStore {
+                name: "Android".to_string(),
+                certificates: Vec::new(),
+            },
+            linux: CAStore {
+                name: "Linux".to_string(),
+                certificates: Vec::new(),
+            },
+            microsoft: CAStore {
+                name: "Microsoft".to_string(),
+                certificates: Vec::new(),
+            },
+            java: CAStore {
+                name: "Java".to_string(),
+                certificates: Vec::new(),
+            },
+        }
     }
 
     /// Get all stores as a slice

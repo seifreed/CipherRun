@@ -7,14 +7,13 @@
 use crate::Result;
 use crate::constants::{
     CONTENT_TYPE_CHANGE_CIPHER_SPEC, CONTENT_TYPE_HANDSHAKE, HANDSHAKE_TYPE_CLIENT_KEY_EXCHANGE,
-    HANDSHAKE_TYPE_FINISHED, VERSION_TLS_1_0,
+    HANDSHAKE_TYPE_FINISHED, TLS_HANDSHAKE_TIMEOUT, VERSION_TLS_1_0,
 };
 use crate::protocols::Protocol;
 use crate::protocols::handshake::ClientHelloBuilder;
 use crate::utils::network::Target;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
 use tokio::time::timeout;
 
 /// ROBOT vulnerability tester
@@ -55,89 +54,126 @@ impl RobotTester {
     }
 
     /// Test for ROBOT padding oracle
+    ///
+    /// Uses multiple test vectors to detect Bleichenbacher-style padding oracles.
+    /// Testing methodology based on ROBOT attack research which found that different
+    /// error codes or timing differences can reveal oracle behavior.
     async fn test_robot_oracle(&self) -> Result<RobotStatus> {
-        let _addr = self.target.socket_addrs()[0];
+        // Test with multiple different invalid RSA paddings
+        // ROBOT research shows that 3+ test vectors can reveal oracle behavior
+        // but we should use timing analysis as well for robust detection
+        const TEST_VECTORS: usize = 5;
+        const MIN_SAMPLES: usize = 3;
 
-        // Test with three different invalid RSA paddings
-        let response1 = self.send_invalid_rsa_ciphertext(0).await?;
-        let response2 = self.send_invalid_rsa_ciphertext(1).await?;
-        let response3 = self.send_invalid_rsa_ciphertext(2).await?;
+        let mut responses: Vec<Option<Vec<u8>>> = Vec::with_capacity(TEST_VECTORS);
 
-        let (Some(response1), Some(response2), Some(response3)) = (response1, response2, response3)
-        else {
+        for i in 0..TEST_VECTORS {
+            let response = self.send_invalid_rsa_ciphertext(i as u8).await?;
+            responses.push(response);
+
+            // Small delay to avoid rate limiting
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+
+        // Count successful responses
+        let successful_responses: Vec<_> = responses.iter().filter_map(|r| r.as_ref()).collect();
+
+        if successful_responses.len() < MIN_SAMPLES {
+            // Not enough successful responses - inconclusive
             return Ok(RobotStatus::Inconclusive);
-        };
+        }
 
         // Analyze responses for padding oracle detection
-        // Count unique responses to determine oracle strength
-        let unique_responses = {
-            let mut set = std::collections::HashSet::new();
-            set.insert(&response1);
-            set.insert(&response2);
-            set.insert(&response3);
-            set.len()
-        };
+        // Count unique response patterns (by error codes and lengths)
+        let mut response_patterns: std::collections::HashSet<Vec<u8>> =
+            std::collections::HashSet::new();
+        let mut error_codes: std::collections::HashSet<u8> = std::collections::HashSet::new();
+        let mut response_lengths: std::collections::HashSet<usize> =
+            std::collections::HashSet::new();
 
-        match unique_responses {
-            1 => {
-                // All responses identical - no observable oracle
-                Ok(RobotStatus::NotVulnerable)
+        for response in &successful_responses {
+            // Extract alert error code if present (TLS alert format: 0x15 0x03 0x03 0x00 0x02 <level> <description>)
+            if response.len() >= 7 && response[0] == 0x15 {
+                let error_code = response[6];
+                error_codes.insert(error_code);
             }
-            3 => {
-                // All three responses different - strong oracle detected
-                Ok(RobotStatus::Vulnerable)
-            }
-            2 => {
-                // Two identical, one different - weak oracle
-                // Further testing needed to determine exploitability
-                Ok(RobotStatus::WeakOracle)
-            }
-            _ => Ok(RobotStatus::Inconclusive),
+            response_lengths.insert(response.len());
+
+            // Create a pattern from first N bytes for comparison
+            let pattern_len = response.len().min(32);
+            response_patterns.insert(response[..pattern_len].to_vec());
         }
+
+        // Detection logic:
+        // 1. Different error codes indicate oracle (server distinguishes padding errors)
+        // 2. Different response lengths may indicate oracle behavior
+        // 3. Different response patterns indicate observable differences
+
+        let unique_error_codes = error_codes.len();
+        let unique_patterns = response_patterns.len();
+
+        // Strong oracle: Different error codes or many unique response patterns
+        if unique_error_codes > 1 || unique_patterns >= 3 {
+            return Ok(RobotStatus::Vulnerable);
+        }
+
+        // Weak oracle: Two distinct response patterns indicate observable differences.
+        // Response length alone is NOT a reliable oracle indicator — network fragmentation,
+        // error message variation, and TCP buffering can cause length differences without
+        // revealing padding validity. Only use pattern diversity as signal.
+        if unique_patterns == 2 {
+            return Ok(RobotStatus::WeakOracle);
+        }
+
+        // All responses identical - no observable oracle
+        Ok(RobotStatus::NotVulnerable)
     }
 
     /// Send ClientKeyExchange with invalid RSA ciphertext
     async fn send_invalid_rsa_ciphertext(&self, variant: u8) -> Result<Option<Vec<u8>>> {
         let addr = self.target.socket_addrs()[0];
 
-        match timeout(Duration::from_secs(5), TcpStream::connect(addr)).await {
-            Ok(Ok(mut stream)) => {
-                // Send ClientHello
-                let client_hello = self.build_client_hello();
-                stream.write_all(&client_hello).await?;
+        let mut stream =
+            match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None)
+                .await
+            {
+                Ok(s) => s,
+                Err(_) => return Ok(None),
+            };
 
-                // Read ServerHello, Certificate, ServerHelloDone
-                let mut buffer = vec![0u8; 8192];
-                timeout(Duration::from_secs(3), stream.read(&mut buffer)).await??;
+        // Send ClientHello
+        let client_hello = self.build_client_hello();
+        stream.write_all(&client_hello).await?;
 
-                // Send ClientKeyExchange with invalid padding
-                let client_key_exchange = self.build_invalid_client_key_exchange(variant);
-                stream.write_all(&client_key_exchange).await?;
+        // Read ServerHello, Certificate, ServerHelloDone
+        let mut buffer = vec![0u8; 8192];
+        timeout(Duration::from_secs(3), stream.read(&mut buffer)).await??;
 
-                // Send ChangeCipherSpec
-                let ccs = vec![
-                    CONTENT_TYPE_CHANGE_CIPHER_SPEC, // 0x14
-                    0x03,
-                    0x03, // TLS 1.2 version
-                    0x00,
-                    0x01, // Length: 1 byte
-                    0x01, // CCS message
-                ];
-                stream.write_all(&ccs).await?;
+        // Send ClientKeyExchange with invalid padding
+        let client_key_exchange = self.build_invalid_client_key_exchange(variant);
+        stream.write_all(&client_key_exchange).await?;
 
-                // Send Finished (will be invalid)
-                let finished = self.build_finished();
-                stream.write_all(&finished).await?;
+        // Send ChangeCipherSpec
+        let ccs = vec![
+            CONTENT_TYPE_CHANGE_CIPHER_SPEC, // 0x14
+            0x03,
+            0x03, // TLS 1.2 version
+            0x00,
+            0x01, // Length: 1 byte
+            0x01, // CCS message
+        ];
+        stream.write_all(&ccs).await?;
 
-                // Read server's response
-                let mut response = vec![0u8; 1024];
-                match timeout(Duration::from_secs(2), stream.read(&mut response)).await {
-                    Ok(Ok(n)) if n > 0 => {
-                        response.truncate(n);
-                        Ok(Some(response))
-                    }
-                    _ => Ok(None),
-                }
+        // Send Finished (will be invalid)
+        let finished = self.build_finished();
+        stream.write_all(&finished).await?;
+
+        // Read server's response
+        let mut response = vec![0u8; 1024];
+        match timeout(Duration::from_secs(2), stream.read(&mut response)).await {
+            Ok(Ok(n)) if n > 0 => {
+                response.truncate(n);
+                Ok(Some(response))
             }
             _ => Ok(None),
         }
@@ -166,7 +202,7 @@ impl RobotTester {
             0x80, // Encrypted PMS length (128 bytes for 1024-bit RSA)
         ];
 
-        // Invalid RSA ciphertext (different variants)
+        // Invalid RSA ciphertext (different variants for oracle detection)
         match variant {
             0 => {
                 // All zeros
@@ -176,10 +212,22 @@ impl RobotTester {
                 // All ones
                 msg.extend_from_slice(&[0xff; 128]);
             }
-            _ => {
-                // Pattern
+            2 => {
+                // Sequential pattern
                 for i in 0..128 {
                     msg.push((i & 0xff) as u8);
+                }
+            }
+            3 => {
+                // Alternating pattern
+                for i in 0..128 {
+                    msg.push(if i % 2 == 0 { 0xAA } else { 0x55 });
+                }
+            }
+            _ => {
+                // Random-looking pattern (deterministic based on variant)
+                for i in 0..128 {
+                    msg.push(((i as u16 * 179 + variant as u16 * 37) & 0xff) as u8);
                 }
             }
         }

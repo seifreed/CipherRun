@@ -1,9 +1,28 @@
 // IMAP STARTTLS Negotiator
 
 use super::protocols::{StarttlsNegotiator, StarttlsProtocol};
+use super::text_protocol::{
+    CapabilityCommand, CapabilityConfig, CapabilityResponseStyle, GreetingStyle, SuccessCheck,
+    TextProtocolConfig,
+};
 use crate::Result;
 use async_trait::async_trait;
-use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWriteExt, BufReader};
+
+const CONFIG: TextProtocolConfig = TextProtocolConfig {
+    protocol_name: "IMAP",
+    protocol: StarttlsProtocol::IMAP,
+    greeting: GreetingStyle::Prefix("* OK"),
+    capability: Some(CapabilityConfig {
+        command: CapabilityCommand::Static(b"a001 CAPABILITY\r\n"),
+        starttls_marker: "STARTTLS",
+        response_style: CapabilityResponseStyle::UntilTagged {
+            ok_prefix: "a001 OK",
+            error_prefixes: &["a001 NO", "a001 BAD"],
+        },
+    }),
+    starttls_command: b"a002 STARTTLS\r\n",
+    success: SuccessCheck::Prefix("a002 OK"),
+};
 
 /// IMAP STARTTLS negotiator
 pub struct ImapNegotiator;
@@ -12,80 +31,12 @@ impl ImapNegotiator {
     pub fn new() -> Self {
         Self
     }
-
-    /// Read IMAP response line
-    async fn read_response<S>(reader: &mut BufReader<&mut S>) -> Result<String>
-    where
-        S: AsyncRead + Unpin,
-    {
-        let mut line = String::new();
-        reader.read_line(&mut line).await?;
-        Ok(line)
-    }
 }
 
 #[async_trait]
 impl StarttlsNegotiator for ImapNegotiator {
     async fn negotiate_starttls(&self, stream: &mut tokio::net::TcpStream) -> Result<()> {
-        let mut reader = BufReader::new(stream);
-
-        // 1. Read server greeting (* OK)
-        let greeting = Self::read_response(&mut reader).await?;
-        if !greeting.starts_with("* OK") {
-            return Err(crate::error::TlsError::StarttlsError {
-                protocol: "IMAP".to_string(),
-                details: format!("Greeting failed: {}", greeting),
-            });
-        }
-
-        // 2. Send CAPABILITY command to check STARTTLS support
-        reader.get_mut().write_all(b"a001 CAPABILITY\r\n").await?;
-        reader.get_mut().flush().await?;
-
-        // 3. Read CAPABILITY response
-        let mut starttls_supported = false;
-        loop {
-            let line = Self::read_response(&mut reader).await?;
-
-            if line.to_uppercase().contains("STARTTLS") {
-                starttls_supported = true;
-            }
-
-            // Command completion (a001 OK ...)
-            if line.starts_with("a001 OK") {
-                break;
-            }
-
-            if line.starts_with("a001 NO") || line.starts_with("a001 BAD") {
-                return Err(crate::error::TlsError::StarttlsError {
-                    protocol: "IMAP".to_string(),
-                    details: "CAPABILITY command failed".to_string(),
-                });
-            }
-        }
-
-        if !starttls_supported {
-            return Err(crate::error::TlsError::StarttlsError {
-                protocol: "IMAP".to_string(),
-                details: "Server does not support STARTTLS".to_string(),
-            });
-        }
-
-        // 4. Send STARTTLS command
-        reader.get_mut().write_all(b"a002 STARTTLS\r\n").await?;
-        reader.get_mut().flush().await?;
-
-        // 5. Read STARTTLS response
-        let response = Self::read_response(&mut reader).await?;
-        if !response.starts_with("a002 OK") {
-            return Err(crate::error::TlsError::StarttlsError {
-                protocol: "IMAP".to_string(),
-                details: format!("STARTTLS failed: {}", response),
-            });
-        }
-
-        // STARTTLS negotiation successful
-        Ok(())
+        super::text_protocol::negotiate(&CONFIG, "", stream).await
     }
 
     fn protocol(&self) -> StarttlsProtocol {
@@ -106,6 +57,8 @@ impl Default for ImapNegotiator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::starttls::response;
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio::net::TcpListener;
     use tokio::net::TcpStream;
     use tokio::task::JoinHandle;
@@ -233,7 +186,7 @@ mod tests {
         });
 
         let mut reader = BufReader::new(&mut client);
-        let line = ImapNegotiator::read_response(&mut reader)
+        let line = response::read_line(&mut reader)
             .await
             .expect("test assertion should succeed");
         assert!(line.starts_with("* OK"));

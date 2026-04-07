@@ -46,7 +46,7 @@ impl AsnCidrParser {
 
         let client = reqwest::Client::builder()
             .user_agent("CipherRun/1.0")
-            .timeout(std::time::Duration::from_secs(30))
+            .timeout(crate::constants::HTTP_CLIENT_TIMEOUT)
             .build()
             .map_err(|e| TlsError::ConfigError {
                 message: format!("Failed to create HTTP client: {}", e),

@@ -255,7 +255,7 @@ pub fn simple_hex_dump(data: &[u8], cols: usize) -> String {
 pub fn hex_to_bytes(hex: &str) -> Result<Vec<u8>> {
     let hex = hex.replace([' ', '\n'], "");
 
-    if hex.len() % 2 != 0 {
+    if !hex.len().is_multiple_of(2) {
         return Err(crate::error::TlsError::ParseError {
             message: "Hex string must have even length".to_string(),
         });

@@ -70,6 +70,24 @@ pub struct AdvancedResults {
     pub ct_log_index: Option<u64>,
 }
 
+/// Scan metadata - Multi-IP scan information and connection metadata
+///
+/// Groups multi-IP scan metadata, SNI info, and probe status for ISP compliance.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ScanMetadata {
+    pub pre_handshake_used: bool,
+    pub scanned_ips: Vec<crate::utils::anycast::IpScanResult>,
+    pub sni_used: Option<String>,
+    pub sni_generation_method: Option<SniMethod>,
+    pub probe_status: crate::scanner::probe_status::ProbeStatus,
+    pub inconsistencies: Option<Vec<crate::scanner::inconsistency::Inconsistency>>,
+
+    /// Full multi-IP scan report (only populated for multi-IP scans)
+    /// This is used by the command layer for JSON export of per-IP results.
+    #[serde(skip)]
+    pub multi_ip_report: Option<crate::scanner::multi_ip::MultiIpScanReport>,
+}
+
 /// Scan results - Main struct with ISP-compliant composition
 ///
 /// Uses composition of sub-structs for Interface Segregation Principle compliance.
@@ -102,18 +120,9 @@ pub struct ScanResults {
     // Advanced/Optional results
     pub advanced: Option<AdvancedResults>,
 
-    // Multi-IP scan metadata
-    pub pre_handshake_used: bool,
-    pub scanned_ips: Vec<crate::utils::anycast::IpScanResult>,
-    pub sni_used: Option<String>,
-    pub sni_generation_method: Option<SniMethod>,
-    pub probe_status: crate::scanner::probe_status::ProbeStatus,
-    pub inconsistencies: Option<Vec<crate::scanner::inconsistency::Inconsistency>>,
-
-    /// Full multi-IP scan report (only populated for multi-IP scans)
-    /// This is used by the command layer for JSON export of per-IP results.
-    #[serde(skip)]
-    pub multi_ip_report: Option<crate::scanner::multi_ip::MultiIpScanReport>,
+    // Scan metadata (multi-IP, SNI, probe status)
+    #[serde(flatten)]
+    pub scan_metadata: ScanMetadata,
 }
 
 impl ScanResults {
@@ -214,6 +223,24 @@ impl ScanResults {
             .and_then(|a| a.load_balancer_info.as_ref())
     }
 
+    /// Returns true when later phases clearly established a working network path.
+    pub fn has_connection_evidence(&self) -> bool {
+        !self.protocols.is_empty()
+            || !self.ciphers.is_empty()
+            || self.certificate_chain.is_some()
+            || self.http_headers().is_some()
+            || !self.vulnerabilities.is_empty()
+            || self.ja3_fingerprint().is_some()
+            || self.ja3s_fingerprint().is_some()
+            || self.jarm_fingerprint().is_some()
+            || self.client_simulations().is_some()
+            || self.signature_algorithms().is_some()
+            || self.key_exchange_groups().is_some()
+            || self.client_cas().is_some()
+            || self.intolerance().is_some()
+            || self.alpn_result().is_some()
+    }
+
     /// Ensure fingerprints sub-struct exists and return mutable reference
     pub fn fingerprints_mut(&mut self) -> &mut FingerprintResults {
         self.fingerprints
@@ -273,5 +300,22 @@ impl ScanResults {
         }
 
         Ok(csv)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scan_metadata_serializes_flat() {
+        let results = ScanResults::default();
+        let json = serde_json::to_value(&results).unwrap();
+        // Fields from ScanMetadata should appear at the root level (not nested)
+        assert!(json.get("pre_handshake_used").is_some());
+        assert!(json.get("probe_status").is_some());
+        assert!(json.get("scanned_ips").is_some());
+        // There should be no "scan_metadata" wrapper key
+        assert!(json.get("scan_metadata").is_none());
     }
 }

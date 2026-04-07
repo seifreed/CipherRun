@@ -1,8 +1,9 @@
 // Network utilities - DNS resolution, socket helpers, etc.
 
 use anyhow::{Context, Result};
-use hickory_resolver::TokioAsyncResolver;
+use hickory_resolver::TokioResolver;
 use hickory_resolver::config::*;
+use hickory_resolver::name_server::TokioConnectionProvider;
 use openssl::ssl::{SslConnector, SslMethod, SslStream, SslVersion};
 use std::net::{IpAddr, SocketAddr, TcpStream as StdTcpStream};
 use std::time::Duration;
@@ -76,9 +77,16 @@ impl Target {
     }
 
     /// Returns the primary IP address (guaranteed to exist after construction)
+    ///
+    /// # Panics
+    /// This method will panic if the Target was constructed improperly (empty IP list).
+    /// This should never happen with Target::parse() or Target::with_ips() which
+    /// enforce non-empty IP addresses.
     pub fn primary_ip(&self) -> IpAddr {
-        // Safe because we enforce non-empty in constructors
-        self.ip_addresses[0]
+        // Use first() for clearer intent and better error message if invariant is violated
+        *self.ip_addresses.first().expect(
+            "Target must have at least one IP address (constructors enforce this invariant)",
+        )
     }
 }
 
@@ -106,7 +114,11 @@ pub async fn resolve_hostname(hostname: &str) -> Result<Vec<IpAddr>> {
 
     // Cache miss - perform DNS lookup
     tracing::debug!("DNS cache miss for {}, performing lookup", hostname);
-    let resolver = TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default());
+    let resolver = TokioResolver::builder_with_config(
+        ResolverConfig::default(),
+        TokioConnectionProvider::default(),
+    )
+    .build();
 
     let response = resolver
         .lookup_ip(hostname)
@@ -208,7 +220,7 @@ pub fn parse_port(port_str: &str) -> Result<u16> {
 pub fn is_starttls_port(port: u16) -> bool {
     matches!(
         port,
-        21 | 25 | 110 | 119 | 143 | 389 | 5222 | 5269 | 5432 | 3306
+        21 | 25 | 110 | 119 | 143 | 389 | 587 | 2525 | 5222 | 5269 | 5432 | 3306
     )
 }
 
@@ -588,7 +600,7 @@ mod tests {
     fn test_starttls_port_and_protocol_mappings() {
         assert!(is_starttls_port(21));
         assert!(is_starttls_port(389));
-        assert!(!is_starttls_port(587));
+        assert!(is_starttls_port(587));
         assert_eq!(default_starttls_protocol(21), Some("ftp"));
         assert_eq!(default_starttls_protocol(389), Some("ldap"));
         assert_eq!(default_starttls_protocol(465), None);

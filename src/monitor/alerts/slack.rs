@@ -1,9 +1,10 @@
 // Slack Alert Channel - Webhook integration
 
+use super::formatting;
 use crate::Result;
+use crate::constants::ALERT_SEND_TIMEOUT;
 use crate::monitor::alerts::{Alert, AlertChannel, AlertType};
 use crate::monitor::config::SlackConfig;
-use crate::monitor::detector::ChangeSeverity;
 use async_trait::async_trait;
 use serde_json::json;
 
@@ -16,29 +17,17 @@ pub struct SlackChannel {
 impl SlackChannel {
     /// Create new Slack channel
     pub fn new(config: SlackConfig) -> Self {
-        Self {
-            config,
-            client: reqwest::Client::new(),
-        }
+        let client = reqwest::Client::builder()
+            .timeout(ALERT_SEND_TIMEOUT)
+            .build()
+            .expect("Failed to build HTTP client with timeout");
+        Self { config, client }
     }
 
     /// Format alert as Slack message
     fn format_message(&self, alert: &Alert) -> serde_json::Value {
-        let color = match alert.severity {
-            ChangeSeverity::Critical => "#dc3545",
-            ChangeSeverity::High => "#fd7e14",
-            ChangeSeverity::Medium => "#ffc107",
-            ChangeSeverity::Low => "#0dcaf0",
-            ChangeSeverity::Info => "#6c757d",
-        };
-
-        let emoji = match alert.severity {
-            ChangeSeverity::Critical => ":rotating_light:",
-            ChangeSeverity::High => ":warning:",
-            ChangeSeverity::Medium => ":large_orange_diamond:",
-            ChangeSeverity::Low => ":information_source:",
-            ChangeSeverity::Info => ":white_check_mark:",
-        };
+        let color = formatting::severity_color(&alert.severity);
+        let emoji = formatting::severity_emoji(&alert.severity);
 
         let mut fields = vec![
             json!({
@@ -237,7 +226,7 @@ mod tests {
     #[test]
     fn test_format_message_with_changes() {
         use crate::monitor::alerts::AlertDetails;
-        use crate::monitor::detector::{ChangeEvent, ChangeType};
+        use crate::monitor::detector::{ChangeEvent, ChangeSeverity, ChangeType};
         use chrono::Utc;
 
         let config = create_test_config();

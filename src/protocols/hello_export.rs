@@ -1,7 +1,7 @@
 // Client/Server Hello Raw Data Export Module
 // Exports raw handshake data in various formats for analysis
 
-use base64::{engine::general_purpose, Engine as _};
+use base64::{Engine as _, engine::general_purpose};
 use serde::{Deserialize, Serialize};
 
 /// Hello exporter for raw handshake data

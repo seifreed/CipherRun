@@ -27,7 +27,7 @@ async fn start_ws_server() -> (
 
     let app = Router::new()
         .route("/ws", get(handle_websocket))
-        .route("/ws/:scan_id", get(scan_ws))
+        .route("/ws/{scan_id}", get(scan_ws))
         .with_state(state);
 
     let listener = TcpListener::bind("127.0.0.1:0")

@@ -1,4 +1,4 @@
-use crate::scanner::ScanResults;
+use crate::application::ScanResults;
 use chrono::{DateTime, Utc};
 
 #[derive(Debug, Clone)]

@@ -68,7 +68,8 @@ impl CipherPhase {
     fn configure_tester(&self, context: &ScanContext) -> CipherTester {
         let target = context.target();
         let adaptive = context.adaptive.clone();
-        let mut tester = CipherTester::new(target);
+        let mut tester =
+            CipherTester::new(target).test_all(context.args.should_enumerate_all_ciphers());
 
         // Apply adaptive timeouts
         tester = tester
@@ -167,14 +168,7 @@ impl ScanPhase for CipherPhase {
     }
 
     fn should_run(&self, args: &ScanRequest) -> bool {
-        // Run if:
-        // - Cipher testing not explicitly disabled (--no-ciphersuites)
-        // - AND one of:
-        //   - Explicit cipher testing requested (--each-cipher)
-        //   - Full scan mode (--all)
-        //   - Default scan (target specified without other flags)
-        !args.scan.no_ciphersuites
-            && (args.scan.each_cipher || args.scan.all || args.target.is_some())
+        args.should_run_cipher_phase()
     }
 
     async fn execute(&self, context: &mut ScanContext) -> Result<()> {
@@ -218,10 +212,12 @@ mod tests {
         args.scan.all = true;
         assert!(phase.should_run(&args));
 
-        // Test with target specified (default scan)
-        let mut args = ScanRequest::default();
-        args.target = Some("example.com".to_string());
-        assert!(phase.should_run(&args));
+        // Target alone should not imply baseline scanning
+        let args = ScanRequest {
+            target: Some("example.com".to_string()),
+            ..Default::default()
+        };
+        assert!(!phase.should_run(&args));
 
         // Test with --no-ciphersuites (should not run)
         let mut args = ScanRequest::default();
@@ -249,7 +245,7 @@ mod tests {
         )
         .unwrap();
         let args = Arc::new(ScanRequest::default());
-        let mut context = ScanContext::new(target, args, None);
+        let mut context = ScanContext::new(target, args, None, None);
 
         let phase = CipherPhase::new();
         phase.execute(&mut context).await.expect("should succeed");
@@ -265,15 +261,17 @@ mod tests {
         )
         .unwrap();
 
-        let mut args = ScanRequest::default();
-        args.target = Some("example.com".to_string());
+        let mut args = ScanRequest {
+            target: Some("example.com".to_string()),
+            ..Default::default()
+        };
         args.connection.sleep = Some(5);
         args.connection.max_retries = 2;
         args.starttls.smtp = true;
         args.starttls.rdp = true;
         args.network.test_all_ips = true;
 
-        let context = ScanContext::new(target, Arc::new(args), None);
+        let context = ScanContext::new(target, Arc::new(args), None, None);
         let phase = CipherPhase::new();
         let tester = phase.configure_tester(&context);
 

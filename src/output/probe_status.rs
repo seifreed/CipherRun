@@ -100,6 +100,10 @@ mod tests {
         );
         assert!(!status.success);
         assert_eq!(status.status_symbol(), "✗");
-        assert!(status.format_terminal("example.com").contains("connection refused"));
+        assert!(
+            status
+                .format_terminal("example.com")
+                .contains("connection refused")
+        );
     }
 }

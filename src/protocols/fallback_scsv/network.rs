@@ -4,7 +4,6 @@ use crate::Result;
 use crate::constants::CONTENT_TYPE_ALERT;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
 use tokio::time::timeout;
 
 impl FallbackScsvTester<'_> {
@@ -49,12 +48,12 @@ impl FallbackScsvTester<'_> {
             }
         }
 
-        if inconclusive {
-            Ok(ScsvSupport::inconclusive())
-        } else if all_support {
-            Ok(ScsvSupport::supported())
-        } else {
+        if !all_support {
             Ok(ScsvSupport::not_supported())
+        } else if inconclusive {
+            Ok(ScsvSupport::inconclusive())
+        } else {
+            Ok(ScsvSupport::supported())
         }
     }
 
@@ -63,8 +62,9 @@ impl FallbackScsvTester<'_> {
         test_version: u16,
         addr: std::net::SocketAddr,
     ) -> Result<ScsvSupport> {
-        match timeout(Duration::from_secs(5), TcpStream::connect(addr)).await {
-            Ok(Ok(mut stream)) => {
+        match crate::utils::network::connect_with_timeout(addr, Duration::from_secs(5), None).await
+        {
+            Ok(mut stream) => {
                 let client_hello_no_scsv = self.build_client_hello_with_scsv(test_version, false);
 
                 tracing::debug!(
@@ -84,8 +84,10 @@ impl FallbackScsvTester<'_> {
                     return Ok(ScsvSupport::inconclusive());
                 }
 
-                let stream = timeout(Duration::from_secs(5), TcpStream::connect(addr)).await;
-                let Ok(Ok(mut stream)) = stream else {
+                let stream =
+                    crate::utils::network::connect_with_timeout(addr, Duration::from_secs(5), None)
+                        .await;
+                let Ok(mut stream) = stream else {
                     tracing::debug!("SCSV test: Failed to reconnect for SCSV test");
                     return Ok(ScsvSupport::inconclusive());
                 };
@@ -109,8 +111,10 @@ impl FallbackScsvTester<'_> {
                             buffer[0]
                         );
 
-                        let bytes_hex: Vec<String> =
-                            buffer[..n].iter().map(|byte| format!("{:02x}", byte)).collect();
+                        let bytes_hex: Vec<String> = buffer[..n]
+                            .iter()
+                            .map(|byte| format!("{:02x}", byte))
+                            .collect();
                         tracing::debug!("SCSV test: full response bytes: {}", bytes_hex.join(" "));
 
                         if n > 6 && buffer[0] == CONTENT_TYPE_ALERT {

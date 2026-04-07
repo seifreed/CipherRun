@@ -4,7 +4,7 @@ use crate::application::scan_execution::post_processing::{
 use crate::application::scan_execution::section_views::{
     ScanExportView, ScanFeatureView, ScanFingerprintView, ScanPrimaryTlsView,
 };
-use crate::scanner::ScanResults;
+use crate::application::ScanResults;
 
 pub struct ScanCliView<'a> {
     pub(crate) results: &'a ScanResults,
@@ -134,7 +134,7 @@ impl<'a> ScanCliView<'a> {
     }
 
     pub fn has_multi_ip_export_data(&self) -> bool {
-        self.results.multi_ip_report.is_some()
+        self.results.scan_metadata.multi_ip_report.is_some()
     }
 
     pub fn post_processing(&self) -> &ScanPostProcessingView<'a> {

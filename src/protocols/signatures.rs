@@ -29,7 +29,6 @@ impl SignatureTester {
         use crate::protocols::Protocol;
         use std::time::Duration;
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        use tokio::net::TcpStream;
         use tokio::time::timeout;
 
         // Try to connect and read server's supported signature algorithms
@@ -40,7 +39,9 @@ impl SignatureTester {
         let mut detected_sigs = Vec::new();
 
         // Connect and send ClientHello with signature_algorithms extension
-        if let Ok(Ok(mut stream)) = timeout(connect_timeout, TcpStream::connect(addr)).await {
+        if let Ok(mut stream) =
+            crate::utils::network::connect_with_timeout(addr, connect_timeout, None).await
+        {
             // Build ClientHello with all signature algorithms
             let mut builder = crate::protocols::handshake::ClientHelloBuilder::new(Protocol::TLS12);
 
@@ -59,9 +60,11 @@ impl SignatureTester {
                     if n > 0 && response[0] == 0x16 {
                         // Parse signature algorithms from ServerHello extensions
                         // This is simplified - full parsing would extract from extensions
-                        Ok::<_, anyhow::Error>(response)
+                        Ok::<_, crate::error::TlsError>(response)
                     } else {
-                        anyhow::bail!("Invalid response")
+                        Err(crate::error::TlsError::UnexpectedResponse {
+                            details: "Invalid response".into(),
+                        })
                     }
                 })
                 .await

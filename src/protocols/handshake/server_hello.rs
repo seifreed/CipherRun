@@ -6,7 +6,8 @@ pub struct ServerHelloParser;
 
 impl ServerHelloParser {
     pub fn parse(data: &[u8]) -> Result<ServerHello> {
-        if data.len() < 6 {
+        // Minimum ServerHello: 5 (record header) + 4 (handshake header) + 2 (version) + 32 (random) = 43 bytes
+        if data.len() < 43 {
             crate::tls_bail!("ServerHello too short");
         }
 
@@ -15,6 +16,9 @@ impl ServerHelloParser {
         if data[0] != CONTENT_TYPE_HANDSHAKE {
             crate::tls_bail!("Not a handshake record");
         }
+        // Compute record boundary from the TLS record header length field
+        let record_len = u16::from_be_bytes([data[3], data[4]]) as usize;
+        let record_end = (5 + record_len).min(data.len());
         offset += 5;
 
         if data[offset] != HANDSHAKE_TYPE_SERVER_HELLO {
@@ -30,14 +34,31 @@ impl ServerHelloParser {
         random.copy_from_slice(&data[offset..offset + 32]);
         offset += 32;
 
+        // Session ID length with bounds check
+        if offset >= data.len() {
+            crate::tls_bail!("ServerHello truncated before session_id_len");
+        }
         let session_id_len = data[offset] as usize;
         offset += 1;
+
+        // Validate session_id_len before using it
+        if offset + session_id_len > data.len() {
+            crate::tls_bail!("ServerHello session_id extends beyond data");
+        }
         let session_id = data[offset..offset + session_id_len].to_vec();
         offset += session_id_len;
 
+        // Cipher suite (2 bytes)
+        if offset + 2 > data.len() {
+            crate::tls_bail!("ServerHello truncated before cipher_suite");
+        }
         let cipher_suite = u16::from_be_bytes([data[offset], data[offset + 1]]);
         offset += 2;
 
+        // Compression method (1 byte)
+        if offset >= data.len() {
+            crate::tls_bail!("ServerHello truncated before compression");
+        }
         let compression = data[offset];
         offset += 1;
 
@@ -46,19 +67,19 @@ impl ServerHelloParser {
         let mut heartbeat_enabled = None;
         let mut secure_renegotiation = None;
 
-        if offset < data.len() {
+        if offset + 2 <= data.len() {
             let ext_len = u16::from_be_bytes([data[offset], data[offset + 1]]) as usize;
             offset += 2;
 
-            let ext_end = offset + ext_len;
-            while offset < ext_end && offset + 4 <= data.len() {
+            let ext_end = (offset + ext_len).min(record_end).min(data.len());
+            while offset < ext_end && offset + 4 <= ext_end {
                 let ext_type = u16::from_be_bytes([data[offset], data[offset + 1]]);
                 offset += 2;
 
                 let ext_data_len = u16::from_be_bytes([data[offset], data[offset + 1]]) as usize;
                 offset += 2;
 
-                if offset + ext_data_len <= data.len() {
+                if offset + ext_data_len <= ext_end {
                     let ext_data = data[offset..offset + ext_data_len].to_vec();
 
                     if ext_type == 0x0005 {
@@ -75,6 +96,8 @@ impl ServerHelloParser {
 
                     extensions.push(Extension::new(ext_type, ext_data));
                     offset += ext_data_len;
+                } else {
+                    break; // Extension data overflows — stop parsing
                 }
             }
         }
@@ -126,7 +149,9 @@ impl ServerHello {
     }
 
     pub fn get_extension(&self, ext_type: u16) -> Option<&Extension> {
-        self.extensions.iter().find(|e| e.extension_type == ext_type)
+        self.extensions
+            .iter()
+            .find(|e| e.extension_type == ext_type)
     }
 
     pub fn supports_ocsp_stapling(&self) -> Option<bool> {
@@ -148,14 +173,17 @@ mod tests {
 
     #[test]
     fn test_server_hello_ocsp_stapling_detected() {
-        let mut server_hello = vec![0x16, 0x03, 0x03, 0x00, 0x4A, 0x02, 0x00, 0x00, 0x46, 0x03, 0x03];
+        let mut server_hello = vec![
+            0x16, 0x03, 0x03, 0x00, 0x4A, 0x02, 0x00, 0x00, 0x46, 0x03, 0x03,
+        ];
         server_hello.extend_from_slice(&[0u8; 32]);
         server_hello.push(0x00);
         server_hello.extend_from_slice(&[0xc0, 0x2f]);
         server_hello.push(0x00);
         server_hello.extend_from_slice(&[0x00, 0x05, 0x00, 0x05, 0x00, 0x01, 0x00]);
 
-        let parsed = ServerHelloParser::parse(&server_hello).expect("test assertion should succeed");
+        let parsed =
+            ServerHelloParser::parse(&server_hello).expect("test assertion should succeed");
         assert_eq!(parsed.ocsp_stapling_detected, Some(true));
         assert!(parsed.supports_ocsp_stapling().unwrap());
         assert!(parsed.has_extension(0x0005));
@@ -163,14 +191,18 @@ mod tests {
 
     #[test]
     fn test_server_hello_no_ocsp_stapling() {
-        let mut server_hello = vec![0x16, 0x03, 0x03, 0x00, 0x4A, 0x02, 0x00, 0x00, 0x46, 0x03, 0x03];
+        let mut server_hello = vec![
+            0x16, 0x03, 0x03, 0x00, 0x4A, 0x02, 0x00, 0x00, 0x46, 0x03, 0x03,
+        ];
         server_hello.extend_from_slice(&[0u8; 32]);
         server_hello.push(0x00);
         server_hello.extend_from_slice(&[0xc0, 0x2f]);
         server_hello.push(0x00);
-        server_hello.extend_from_slice(&[0x00, 0x08, 0x00, 0x00, 0x00, 0x04, 0x00, 0x02, 0x00, 0x00]);
+        server_hello
+            .extend_from_slice(&[0x00, 0x08, 0x00, 0x00, 0x00, 0x04, 0x00, 0x02, 0x00, 0x00]);
 
-        let parsed = ServerHelloParser::parse(&server_hello).expect("test assertion should succeed");
+        let parsed =
+            ServerHelloParser::parse(&server_hello).expect("test assertion should succeed");
         assert_eq!(parsed.ocsp_stapling_detected, Some(false));
         assert!(!parsed.supports_ocsp_stapling().unwrap());
         assert!(!parsed.has_extension(0x0005));
@@ -178,13 +210,16 @@ mod tests {
 
     #[test]
     fn test_server_hello_no_extensions() {
-        let mut server_hello = vec![0x16, 0x03, 0x03, 0x00, 0x44, 0x02, 0x00, 0x00, 0x40, 0x03, 0x03];
+        let mut server_hello = vec![
+            0x16, 0x03, 0x03, 0x00, 0x44, 0x02, 0x00, 0x00, 0x40, 0x03, 0x03,
+        ];
         server_hello.extend_from_slice(&[0u8; 32]);
         server_hello.push(0x00);
         server_hello.extend_from_slice(&[0xc0, 0x2f]);
         server_hello.push(0x00);
 
-        let parsed = ServerHelloParser::parse(&server_hello).expect("test assertion should succeed");
+        let parsed =
+            ServerHelloParser::parse(&server_hello).expect("test assertion should succeed");
         assert_eq!(parsed.ocsp_stapling_detected, None);
         assert!(parsed.supports_ocsp_stapling().is_none());
         assert_eq!(parsed.heartbeat_enabled, None);
@@ -193,14 +228,17 @@ mod tests {
 
     #[test]
     fn test_server_hello_heartbeat_detected() {
-        let mut server_hello = vec![0x16, 0x03, 0x03, 0x00, 0x4A, 0x02, 0x00, 0x00, 0x46, 0x03, 0x03];
+        let mut server_hello = vec![
+            0x16, 0x03, 0x03, 0x00, 0x4A, 0x02, 0x00, 0x00, 0x46, 0x03, 0x03,
+        ];
         server_hello.extend_from_slice(&[0u8; 32]);
         server_hello.push(0x00);
         server_hello.extend_from_slice(&[0xc0, 0x2f]);
         server_hello.push(0x00);
         server_hello.extend_from_slice(&[0x00, 0x05, 0x00, 0x0f, 0x00, 0x01, 0x01]);
 
-        let parsed = ServerHelloParser::parse(&server_hello).expect("test assertion should succeed");
+        let parsed =
+            ServerHelloParser::parse(&server_hello).expect("test assertion should succeed");
         assert_eq!(parsed.heartbeat_enabled, Some(true));
         assert!(parsed.supports_heartbeat().unwrap());
         assert!(parsed.has_extension(0x000f));
@@ -208,28 +246,37 @@ mod tests {
 
     #[test]
     fn test_server_hello_no_heartbeat() {
-        let mut server_hello = vec![0x16, 0x03, 0x03, 0x00, 0x4A, 0x02, 0x00, 0x00, 0x46, 0x03, 0x03];
+        let mut server_hello = vec![
+            0x16, 0x03, 0x03, 0x00, 0x4A, 0x02, 0x00, 0x00, 0x46, 0x03, 0x03,
+        ];
         server_hello.extend_from_slice(&[0u8; 32]);
         server_hello.push(0x00);
         server_hello.extend_from_slice(&[0xc0, 0x2f]);
         server_hello.push(0x00);
-        server_hello.extend_from_slice(&[0x00, 0x08, 0x00, 0x0b, 0x00, 0x04, 0x01, 0x00, 0x00, 0x00]);
+        server_hello
+            .extend_from_slice(&[0x00, 0x08, 0x00, 0x0b, 0x00, 0x04, 0x01, 0x00, 0x00, 0x00]);
 
-        let parsed = ServerHelloParser::parse(&server_hello).expect("test assertion should succeed");
+        let parsed =
+            ServerHelloParser::parse(&server_hello).expect("test assertion should succeed");
         assert_eq!(parsed.heartbeat_enabled, Some(false));
         assert!(!parsed.has_extension(0x000f));
     }
 
     #[test]
     fn test_server_hello_heartbeat_and_ocsp() {
-        let mut server_hello = vec![0x16, 0x03, 0x03, 0x00, 0x4f, 0x02, 0x00, 0x00, 0x4b, 0x03, 0x03];
+        let mut server_hello = vec![
+            0x16, 0x03, 0x03, 0x00, 0x4f, 0x02, 0x00, 0x00, 0x4b, 0x03, 0x03,
+        ];
         server_hello.extend_from_slice(&[0u8; 32]);
         server_hello.push(0x00);
         server_hello.extend_from_slice(&[0xc0, 0x2f]);
         server_hello.push(0x00);
-        server_hello.extend_from_slice(&[0x00, 0x0a, 0x00, 0x05, 0x00, 0x01, 0x00, 0x00, 0x0f, 0x00, 0x01, 0x01]);
+        server_hello.extend_from_slice(&[
+            0x00, 0x0a, 0x00, 0x05, 0x00, 0x01, 0x00, 0x00, 0x0f, 0x00, 0x01, 0x01,
+        ]);
 
-        let parsed = ServerHelloParser::parse(&server_hello).expect("test assertion should succeed");
+        let parsed =
+            ServerHelloParser::parse(&server_hello).expect("test assertion should succeed");
         assert_eq!(parsed.ocsp_stapling_detected, Some(true));
         assert_eq!(parsed.heartbeat_enabled, Some(true));
         assert!(parsed.supports_ocsp_stapling().unwrap());

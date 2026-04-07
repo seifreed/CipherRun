@@ -12,12 +12,100 @@ use crate::application::ScanRequest;
 use crate::ciphers::tester::CipherTester;
 use crate::protocols::{Protocol, tester::ProtocolTester};
 use crate::utils::network::Target;
+use std::collections::HashSet;
+
+#[derive(Debug, Clone, Default)]
+struct SelectedVulnerabilityChecks {
+    enabled: HashSet<VulnerabilityType>,
+}
+
+impl SelectedVulnerabilityChecks {
+    fn from_request(args: &ScanRequest) -> Self {
+        let mut enabled = HashSet::new();
+        if args.scan.heartbleed {
+            enabled.insert(VulnerabilityType::Heartbleed);
+        }
+        if args.scan.ccs {
+            enabled.insert(VulnerabilityType::CCSInjection);
+        }
+        if args.scan.ticketbleed {
+            enabled.insert(VulnerabilityType::Ticketbleed);
+        }
+        if args.scan.robot {
+            enabled.insert(VulnerabilityType::ROBOT);
+        }
+        if args.scan.renegotiation {
+            enabled.insert(VulnerabilityType::Renegotiation);
+        }
+        if args.scan.crime {
+            enabled.insert(VulnerabilityType::CRIME);
+        }
+        if args.scan.breach {
+            enabled.insert(VulnerabilityType::BREACH);
+        }
+        if args.scan.poodle {
+            enabled.insert(VulnerabilityType::POODLE);
+        }
+        if args.scan.fallback {
+            enabled.insert(VulnerabilityType::TLSFallback);
+        }
+        if args.scan.sweet32 {
+            enabled.insert(VulnerabilityType::SWEET32);
+        }
+        if args.scan.beast {
+            enabled.insert(VulnerabilityType::BEAST);
+        }
+        if args.scan.lucky13 {
+            enabled.insert(VulnerabilityType::LUCKY13);
+        }
+        if args.scan.freak {
+            enabled.insert(VulnerabilityType::FREAK);
+        }
+        if args.scan.logjam {
+            enabled.insert(VulnerabilityType::LOGJAM);
+        }
+        if args.scan.drown {
+            enabled.insert(VulnerabilityType::DROWN);
+        }
+        if args.scan.early_data {
+            enabled.insert(VulnerabilityType::EarlyDataReplay);
+        }
+        Self { enabled }
+    }
+
+    fn any(&self) -> bool {
+        !self.enabled.is_empty()
+    }
+
+    fn count(&self) -> usize {
+        self.enabled
+            .iter()
+            .map(|v| {
+                if matches!(v, VulnerabilityType::POODLE) {
+                    5
+                } else {
+                    1
+                }
+            })
+            .sum()
+    }
+
+    fn is_enabled(&self, vtype: &VulnerabilityType) -> bool {
+        self.enabled.contains(vtype)
+    }
+}
+
+const FULL_SCAN_TEST_COUNT: usize = 27;
+const FAST_SCAN_TEST_COUNT: usize = 17;
 
 /// Main vulnerability scanner
 pub struct VulnerabilityScanner {
     target: Target,
     protocol_tester: ProtocolTester,
     cipher_tester: CipherTester,
+    broad_scan: bool,
+    fast_mode: bool,
+    selected_checks: SelectedVulnerabilityChecks,
     skip_fallback: bool,
     skip_compression: bool,
     skip_heartbleed: bool,
@@ -33,6 +121,9 @@ impl VulnerabilityScanner {
             target,
             protocol_tester,
             cipher_tester,
+            broad_scan: true,
+            fast_mode: false,
+            selected_checks: SelectedVulnerabilityChecks::default(),
             skip_fallback: false,
             skip_compression: false,
             skip_heartbleed: false,
@@ -53,6 +144,9 @@ impl VulnerabilityScanner {
             target,
             protocol_tester,
             cipher_tester,
+            broad_scan: args.scan.vulnerabilities || args.scan.full,
+            fast_mode: args.scan.fast,
+            selected_checks: SelectedVulnerabilityChecks::from_request(args),
             skip_fallback: args.scan.no_fallback,
             skip_compression: args.scan.no_compression,
             skip_heartbleed: args.scan.no_heartbleed,
@@ -97,18 +191,26 @@ impl VulnerabilityScanner {
     }
 
     fn planned_test_count(&self) -> usize {
-        let mut planned = 12usize;
-        if !self.skip_renegotiation {
-            planned += 1;
+        if !self.broad_scan && self.selected_checks.any() {
+            return self.selected_checks.count();
         }
-        if !self.skip_fallback {
-            planned += 1;
+
+        let mut planned = if self.fast_mode {
+            FAST_SCAN_TEST_COUNT
+        } else {
+            FULL_SCAN_TEST_COUNT
+        };
+        if self.skip_renegotiation {
+            planned = planned.saturating_sub(1);
         }
-        if !self.skip_compression {
-            planned += 1;
+        if self.skip_fallback {
+            planned = planned.saturating_sub(1);
         }
-        if !self.skip_heartbleed {
-            planned += 1;
+        if self.skip_compression {
+            planned = planned.saturating_sub(1);
+        }
+        if self.skip_heartbleed {
+            planned = planned.saturating_sub(1);
         }
         planned
     }
@@ -155,10 +257,16 @@ impl std::fmt::Display for VulnerabilitySummary {
         }
 
         if self.total_inconclusive > 0 {
-            writeln!(f, "  Review inconclusive checks before treating the scan as a clean pass.")?;
+            writeln!(
+                f,
+                "  Review inconclusive checks before treating the scan as a clean pass."
+            )?;
         }
         if self.total_not_executed > 0 {
-            writeln!(f, "  Some checks were skipped or failed before producing a result.")?;
+            writeln!(
+                f,
+                "  Some checks were skipped or failed before producing a result."
+            )?;
         }
 
         Ok(())
@@ -270,10 +378,34 @@ mod tests {
             ),
         );
 
-        assert!(scanner.test_rc4_cached(&cache).await.expect("ok").vulnerable);
-        assert!(scanner.test_3des_cached(&cache).await.expect("ok").vulnerable);
-        assert!(scanner.test_null_ciphers_cached(&cache).await.expect("ok").vulnerable);
-        assert!(scanner.test_export_ciphers_cached(&cache).await.expect("ok").vulnerable);
+        assert!(
+            scanner
+                .test_rc4_cached(&cache)
+                .await
+                .expect("ok")
+                .vulnerable
+        );
+        assert!(
+            scanner
+                .test_3des_cached(&cache)
+                .await
+                .expect("ok")
+                .vulnerable
+        );
+        assert!(
+            scanner
+                .test_null_ciphers_cached(&cache)
+                .await
+                .expect("ok")
+                .vulnerable
+        );
+        assert!(
+            scanner
+                .test_export_ciphers_cached(&cache)
+                .await
+                .expect("ok")
+                .vulnerable
+        );
     }
 
     #[tokio::test]
@@ -298,7 +430,13 @@ mod tests {
             ),
         );
 
-        assert!(scanner.test_beast_cached(&cache).await.expect("ok").vulnerable);
+        assert!(
+            scanner
+                .test_beast_cached(&cache)
+                .await
+                .expect("ok")
+                .vulnerable
+        );
     }
 
     #[test]
@@ -368,9 +506,9 @@ mod tests {
         scanner.skip_renegotiation = true;
 
         let summary = scanner.summarize_execution(&[]);
-        assert_eq!(summary.total_expected, 12);
+        assert_eq!(summary.total_expected, 23);
         assert_eq!(summary.total_tested, 0);
-        assert_eq!(summary.total_not_executed, 12);
+        assert_eq!(summary.total_not_executed, 23);
     }
 
     #[test]
@@ -390,14 +528,34 @@ mod tests {
         scanner.skip_heartbleed = true;
         scanner.skip_renegotiation = true;
 
-        assert!(scanner.test_fallback_if_enabled().await.expect("ok").is_none());
-        assert!(scanner.test_compression_if_enabled().await.expect("ok").is_none());
-        assert!(scanner.test_heartbleed_if_enabled().await.expect("ok").is_none());
-        assert!(scanner
-            .test_renegotiation_if_enabled()
-            .await
-            .expect("ok")
-            .is_none());
+        assert!(
+            scanner
+                .test_fallback_if_enabled()
+                .await
+                .expect("ok")
+                .is_none()
+        );
+        assert!(
+            scanner
+                .test_compression_if_enabled()
+                .await
+                .expect("ok")
+                .is_none()
+        );
+        assert!(
+            scanner
+                .test_heartbleed_if_enabled()
+                .await
+                .expect("ok")
+                .is_none()
+        );
+        assert!(
+            scanner
+                .test_renegotiation_if_enabled()
+                .await
+                .expect("ok")
+                .is_none()
+        );
     }
 
     #[tokio::test]
@@ -413,7 +571,10 @@ mod tests {
     #[tokio::test]
     async fn test_drown_detection() {
         let scanner = VulnerabilityScanner::new(dummy_target());
-        let result = scanner.test_drown().await.expect("test assertion should succeed");
+        let result = scanner
+            .test_drown()
+            .await
+            .expect("test assertion should succeed");
         assert_eq!(result.vuln_type, VulnerabilityType::DROWN);
     }
 
@@ -429,7 +590,13 @@ mod tests {
                 crate::ciphers::tester::CipherCounts::default(),
             ),
         );
-        assert!(scanner.test_rc4_cached(&cache).await.expect("ok").vulnerable);
+        assert!(
+            scanner
+                .test_rc4_cached(&cache)
+                .await
+                .expect("ok")
+                .vulnerable
+        );
     }
 
     #[test]
@@ -450,5 +617,31 @@ mod tests {
         assert!(rendered.contains("Planned Checks"));
         assert!(rendered.contains("Critical"));
         assert!(rendered.contains("High"));
+    }
+
+    #[test]
+    fn test_with_args_uses_selective_mode_for_specific_flag() {
+        let mut request = ScanRequest::default();
+        request.scan.all = true;
+        request.scan.heartbleed = true;
+
+        let scanner = VulnerabilityScanner::with_args(dummy_target(), &request);
+        assert!(!scanner.broad_scan);
+        assert!(
+            scanner
+                .selected_checks
+                .is_enabled(&VulnerabilityType::Heartbleed)
+        );
+        assert_eq!(scanner.planned_test_count(), 1);
+    }
+
+    #[test]
+    fn test_with_args_keeps_broad_mode_for_full_scan() {
+        let mut request = ScanRequest::default();
+        request.scan.full = true;
+
+        let scanner = VulnerabilityScanner::with_args(dummy_target(), &request);
+        assert!(scanner.broad_scan);
+        assert_eq!(scanner.planned_test_count(), 27);
     }
 }

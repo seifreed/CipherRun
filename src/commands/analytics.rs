@@ -232,8 +232,10 @@ mod tests {
 
     #[test]
     fn test_analytics_command_name() {
-        let mut args = Args::default();
-        args.compare = None;
+        let args = Args {
+            compare: None,
+            ..Default::default()
+        };
         let cmd = AnalyticsCommand::new(args);
         assert_eq!(cmd.name(), "AnalyticsCommand");
     }

@@ -60,8 +60,18 @@ impl StrictRevocationChecker {
             .await
         {
             Ok(result) => {
-                // Check if the result indicates an error
-                if self.hard_fail_mode && result.status == RevocationStatus::Error {
+                // Hard-fail on revoked certificates (most critical)
+                if self.hard_fail_mode && matches!(result.status, RevocationStatus::Revoked) {
+                    return Err(crate::TlsError::InvalidHandshake {
+                        details: format!(
+                            "Hard fail mode: certificate is revoked: {}",
+                            result.details
+                        ),
+                    });
+                }
+
+                // Hard-fail on definite errors (check failed)
+                if self.hard_fail_mode && matches!(result.status, RevocationStatus::Error) {
                     return Err(crate::TlsError::InvalidHandshake {
                         details: format!(
                             "Hard fail mode: revocation check failed with error: {}",
@@ -70,9 +80,16 @@ impl StrictRevocationChecker {
                     });
                 }
 
+                // Hard-fail on unknown status (OCSP/CRL unreachable)
+                if self.hard_fail_mode && matches!(result.status, RevocationStatus::Unknown) {
+                    return Err(crate::TlsError::InvalidHandshake {
+                        details: "Hard fail mode: revocation status unknown - OCSP/CRL check inconclusive".to_string(),
+                    });
+                }
+
                 Ok(StrictRevocationResult {
                     base_result: result,
-                    hard_fail_applied: false,
+                    hard_fail_mode_enabled: self.hard_fail_mode,
                     error_details: None,
                 })
             }
@@ -90,9 +107,10 @@ impl StrictRevocationChecker {
                             method: super::revocation::RevocationMethod::None,
                             details: format!("Revocation check error (soft fail): {}", e),
                             ocsp_stapling: false,
+                            ocsp_stapling_details: None,
                             must_staple: false,
                         },
-                        hard_fail_applied: false,
+                        hard_fail_mode_enabled: false,
                         error_details: Some(e.to_string()),
                     })
                 }
@@ -136,9 +154,10 @@ impl StrictRevocationChecker {
                             method: super::revocation::RevocationMethod::None,
                             details: format!("Chain check error (soft fail): {}", e),
                             ocsp_stapling: false,
+                            ocsp_stapling_details: None,
                             must_staple: false,
                         },
-                        hard_fail_applied: false,
+                        hard_fail_mode_enabled: false,
                         error_details: Some(e.to_string()),
                     });
                 }
@@ -164,8 +183,8 @@ impl StrictRevocationChecker {
 pub struct StrictRevocationResult {
     /// The base revocation result
     pub base_result: RevocationResult,
-    /// Whether hard-fail was applied
-    pub hard_fail_applied: bool,
+    /// Whether hard-fail mode was enabled during this check
+    pub hard_fail_mode_enabled: bool,
     /// Error details if hard-fail was triggered
     pub error_details: Option<String>,
 }
@@ -272,9 +291,10 @@ mod tests {
                 method: super::super::revocation::RevocationMethod::OCSP,
                 details: "Test".to_string(),
                 ocsp_stapling: false,
+                ocsp_stapling_details: None,
                 must_staple: false,
             },
-            hard_fail_applied: false,
+            hard_fail_mode_enabled: false,
             error_details: None,
         };
 
@@ -292,9 +312,10 @@ mod tests {
                 method: super::super::revocation::RevocationMethod::OCSP,
                 details: "Certificate is revoked".to_string(),
                 ocsp_stapling: false,
+                ocsp_stapling_details: None,
                 must_staple: false,
             },
-            hard_fail_applied: false,
+            hard_fail_mode_enabled: false,
             error_details: None,
         };
 

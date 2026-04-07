@@ -134,6 +134,16 @@ impl ClientHelloCapture {
         let cipher_suites_len = u16::from_be_bytes([data[cursor], data[cursor + 1]]) as usize;
         cursor += 2;
 
+        // Validate cipher suites length is even (each cipher suite is 2 bytes)
+        if !cipher_suites_len.is_multiple_of(2) {
+            return Err(TlsError::ParseError {
+                message: format!(
+                    "Invalid cipher suites length: {} (must be even, each cipher is 2 bytes)",
+                    cipher_suites_len
+                ),
+            });
+        }
+
         if data.len() < cursor + cipher_suites_len {
             return Err(TlsError::ParseError {
                 message: "Data too short for cipher suites".to_string(),
@@ -194,7 +204,7 @@ impl ClientHelloCapture {
             let extensions_end = cursor + extensions_len;
 
             while cursor < extensions_end {
-                if cursor + 4 > data.len() {
+                if cursor + 4 > extensions_end {
                     break;
                 }
 
@@ -204,7 +214,7 @@ impl ClientHelloCapture {
                 let extension_len = u16::from_be_bytes([data[cursor], data[cursor + 1]]) as usize;
                 cursor += 2;
 
-                if cursor + extension_len > data.len() {
+                if cursor + extension_len > extensions_end {
                     break;
                 }
 
@@ -316,9 +326,9 @@ impl ClientHelloCapture {
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::new();
 
-        // TLS Record Header
+        // TLS Record Header — always use TLS 1.0 (0x0301) for record layer compatibility
         bytes.push(CONTENT_TYPE_HANDSHAKE);
-        bytes.extend_from_slice(&self.version.to_be_bytes());
+        bytes.extend_from_slice(&0x0301u16.to_be_bytes());
 
         // Placeholder for record length (will update later)
         let record_len_pos = bytes.len();

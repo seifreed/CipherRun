@@ -6,7 +6,8 @@ use super::VulnerabilityResult;
 ///
 /// Merge rules:
 /// - If new is vulnerable but existing is not: replace existing entirely
-/// - If both are vulnerable: take worse severity and merge details, preserve inconclusive if either is inconclusive
+/// - If both are vulnerable: take worse severity and merge details
+/// - If one is confirmed vulnerable and the other is inconclusive: confirmed result wins
 /// - If new is not vulnerable: only update details if more informative (e.g., "Inconclusive")
 pub fn merge_vulnerability_result(existing: &mut VulnerabilityResult, new: &VulnerabilityResult) {
     // Case 1: New result is vulnerable, existing is not - replace entirely
@@ -20,9 +21,18 @@ pub fn merge_vulnerability_result(existing: &mut VulnerabilityResult, new: &Vuln
         if new.severity > existing.severity {
             existing.severity = new.severity;
         }
-        // Preserve inconclusive status if either result was inconclusive
-        // This indicates uncertainty about the vulnerability details
-        existing.inconclusive = existing.inconclusive || new.inconclusive;
+        // If one result is confirmed (not inconclusive) and the other is inconclusive,
+        // the confirmed result should take precedence - clear inconclusive flag
+        if !new.inconclusive {
+            // New result is confirmed - use it as the authoritative result
+            existing.inconclusive = false;
+        } else if !existing.inconclusive {
+            // Existing result is confirmed - keep it as authoritative
+            // (inconclusive already false, no action needed)
+        } else {
+            // Both are inconclusive - preserve the inconclusive status
+            existing.inconclusive = true;
+        }
         if !existing.details.contains(&new.details) {
             existing.details = format!("{}; {}", existing.details, new.details);
         }
@@ -159,12 +169,78 @@ mod tests {
         merge_vulnerability_result(&mut existing, &new);
 
         assert!(existing.vulnerable);
-        // Should preserve inconclusive status since one result was inconclusive
+        // When we have a confirmed result (inconclusive=false), it should override
+        // the inconclusive status - confirmed findings take precedence
         assert!(
-            existing.inconclusive,
-            "Inconclusive status should be preserved when merging with inconclusive result"
+            !existing.inconclusive,
+            "Confirmed result should override inconclusive status"
         );
         assert!(existing.details.contains("timing test inconclusive"));
         assert!(existing.details.contains("Vulnerability confirmed"));
+    }
+
+    #[test]
+    fn test_merge_confirmed_overrides_inconclusive() {
+        // Test that a confirmed vulnerable result overrides an inconclusive one
+        let mut existing = VulnerabilityResult {
+            vuln_type: VulnerabilityType::Heartbleed,
+            vulnerable: true,
+            inconclusive: true,
+            details: "Timing test was inconclusive".to_string(),
+            cve: None,
+            cwe: None,
+            severity: Severity::Medium,
+        };
+        let new = VulnerabilityResult {
+            vuln_type: VulnerabilityType::Heartbleed,
+            vulnerable: true,
+            inconclusive: false,
+            details: "Confirmed vulnerability".to_string(),
+            cve: None,
+            cwe: None,
+            severity: Severity::High,
+        };
+
+        merge_vulnerability_result(&mut existing, &new);
+
+        assert!(existing.vulnerable);
+        // Confirmed result should clear inconclusive status
+        assert!(
+            !existing.inconclusive,
+            "Confirmed vulnerable should clear inconclusive"
+        );
+        assert_eq!(existing.severity, Severity::High);
+    }
+
+    #[test]
+    fn test_merge_both_inconclusive_stays_inconclusive() {
+        // When both results are inconclusive, preserve the status
+        let mut existing = VulnerabilityResult {
+            vuln_type: VulnerabilityType::Heartbleed,
+            vulnerable: true,
+            inconclusive: true,
+            details: "First test inconclusive".to_string(),
+            cve: None,
+            cwe: None,
+            severity: Severity::Medium,
+        };
+        let new = VulnerabilityResult {
+            vuln_type: VulnerabilityType::Heartbleed,
+            vulnerable: true,
+            inconclusive: true,
+            details: "Second test also inconclusive".to_string(),
+            cve: None,
+            cwe: None,
+            severity: Severity::Medium,
+        };
+
+        merge_vulnerability_result(&mut existing, &new);
+
+        assert!(existing.vulnerable);
+        // Both inconclusive = stay inconclusive
+        assert!(
+            existing.inconclusive,
+            "Should stay inconclusive when both are inconclusive"
+        );
     }
 }

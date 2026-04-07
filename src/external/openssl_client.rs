@@ -142,9 +142,28 @@ impl OpenSslClient {
             cmd.arg(cipher);
         }
 
-        // Add TLS version
+        // Add TLS version (whitelisted to prevent argument injection)
         if let Some(ref version) = options.tls_version {
-            cmd.arg(version); // e.g., "-tls1_2", "-tls1_3"
+            const VALID_TLS_VERSIONS: &[&str] = &[
+                "-ssl3",
+                "-tls1",
+                "-tls1_1",
+                "-tls1_2",
+                "-tls1_3",
+                "-no_ssl3",
+                "-no_tls1",
+                "-no_tls1_1",
+                "-no_tls1_2",
+                "-no_tls1_3",
+            ];
+            if VALID_TLS_VERSIONS.contains(&version.as_str()) {
+                cmd.arg(version);
+            } else {
+                return Err(crate::error::TlsError::Other(format!(
+                    "Invalid TLS version flag: {}",
+                    version
+                )));
+            }
         }
 
         // Add showcerts
@@ -324,16 +343,21 @@ fn parse_connection_info(stdout: &str) -> ConnectionInfo {
     let mut cipher = String::new();
     let mut verify_result = String::new();
     let mut session_details = String::new();
+    let mut in_ssl_session = false;
 
     for line in stdout.lines() {
-        if line.contains("Protocol") && line.contains(":") {
-            protocol = line.split(':').nth(1).unwrap_or("").trim().to_string();
+        if line.starts_with("SSL-Session:") {
+            in_ssl_session = true;
+            session_details = line.trim().to_string();
         } else if line.contains("Cipher") && line.contains(":") {
-            cipher = line.split(':').nth(1).unwrap_or("").trim().to_string();
+            // Prefer cipher from within SSL-Session block; accept first match otherwise
+            if in_ssl_session || cipher.is_empty() {
+                cipher = line.split(':').nth(1).unwrap_or("").trim().to_string();
+            }
+        } else if line.contains("Protocol") && line.contains(":") {
+            protocol = line.split(':').nth(1).unwrap_or("").trim().to_string();
         } else if line.contains("Verify return code:") {
             verify_result = line.trim().to_string();
-        } else if line.starts_with("SSL-Session:") {
-            session_details = line.trim().to_string();
         }
     }
 
@@ -429,27 +453,35 @@ MIIDXTCCAkWgAwIBAgIJAKJ
     fn test_run_rejects_invalid_inputs() {
         let client = OpenSslClient::new();
 
-        let mut options = OpenSslClientOptions::default();
-        options.host = "bad host\n".to_string();
-        let err = client.run(&options).err().expect("should fail");
+        let options = OpenSslClientOptions {
+            host: "bad host\n".to_string(),
+            ..Default::default()
+        };
+        let err = client.run(&options).expect_err("should fail");
         assert!(err.to_string().contains("Invalid hostname"));
 
-        let mut options = OpenSslClientOptions::default();
-        options.host = "example.com".to_string();
-        options.port = 0;
-        let err = client.run(&options).err().expect("should fail");
+        let options = OpenSslClientOptions {
+            host: "example.com".to_string(),
+            port: 0,
+            ..Default::default()
+        };
+        let err = client.run(&options).expect_err("should fail");
         assert!(err.to_string().contains("Invalid port"));
 
-        let mut options = OpenSslClientOptions::default();
-        options.host = "example.com".to_string();
-        options.cipher = Some("AES128-SHA;rm".to_string());
-        let err = client.run(&options).err().expect("should fail");
+        let options = OpenSslClientOptions {
+            host: "example.com".to_string(),
+            cipher: Some("AES128-SHA;rm".to_string()),
+            ..Default::default()
+        };
+        let err = client.run(&options).expect_err("should fail");
         assert!(err.to_string().contains("Invalid cipher"));
 
-        let mut options = OpenSslClientOptions::default();
-        options.host = "example.com".to_string();
-        options.starttls = Some("invalid".to_string());
-        let err = client.run(&options).err().expect("should fail");
+        let options = OpenSslClientOptions {
+            host: "example.com".to_string(),
+            starttls: Some("invalid".to_string()),
+            ..Default::default()
+        };
+        let err = client.run(&options).expect_err("should fail");
         assert!(err.to_string().contains("Invalid STARTTLS"));
     }
 

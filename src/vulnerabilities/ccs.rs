@@ -5,13 +5,15 @@
 // by injecting a ChangeCipherSpec message early in the handshake process.
 
 use crate::Result;
-use crate::constants::{CONTENT_TYPE_ALERT, CONTENT_TYPE_CHANGE_CIPHER_SPEC, VERSION_TLS_1_2};
+use crate::constants::{
+    CONTENT_TYPE_ALERT, CONTENT_TYPE_CHANGE_CIPHER_SPEC, CONTENT_TYPE_HANDSHAKE,
+    TLS_HANDSHAKE_TIMEOUT, VERSION_TLS_1_0,
+};
 use crate::protocols::Protocol;
 use crate::protocols::handshake::ClientHelloBuilder;
 use crate::utils::network::Target;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
 use tokio::time::timeout;
 
 /// CCS Injection vulnerability tester
@@ -48,8 +50,8 @@ impl CcsInjectionTester {
     async fn test_ccs_injection(&self) -> Result<(bool, bool)> {
         let addr = self.target.socket_addrs()[0];
 
-        match timeout(Duration::from_secs(5), TcpStream::connect(addr)).await {
-            Ok(Ok(mut stream)) => {
+        match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None).await {
+            Ok(mut stream) => {
                 // Send TLS ClientHello
                 let client_hello = self.build_client_hello();
                 stream.write_all(&client_hello).await?;
@@ -69,41 +71,69 @@ impl CcsInjectionTester {
                 };
 
                 // Send premature ChangeCipherSpec (before key exchange)
+                // Use the same TLS version as the ClientHello (TLS 1.0)
+                // CCS Injection affects TLS 1.0 and earlier where the CCS
+                // is processed before the handshake is complete
                 let ccs = vec![
                     CONTENT_TYPE_CHANGE_CIPHER_SPEC, // 0x14
-                    (VERSION_TLS_1_2 >> 8) as u8,    // 0x03
-                    (VERSION_TLS_1_2 & 0xff) as u8,  // 0x03
+                    (VERSION_TLS_1_0 >> 8) as u8,    // 0x03 - TLS version major
+                    (VERSION_TLS_1_0 & 0xff) as u8,  // 0x01 - TLS version minor (TLS 1.0)
                     0x00,
                     0x01, // Length: 1 byte
                     0x01, // CCS message
                 ];
                 stream.write_all(&ccs).await?;
 
-                // Try to read response
-                let mut response = vec![0u8; 1024];
-                match timeout(Duration::from_secs(2), stream.read(&mut response)).await {
-                    Ok(Ok(n)) if n > 0 => {
-                        // If server responds positively, it's vulnerable
-                        // Check for Alert or normal handshake continuation
-                        if response[0] == CONTENT_TYPE_ALERT {
-                            // Alert - not vulnerable
-                            Ok((false, false))
-                        } else {
-                            // Continues handshake - vulnerable
-                            Ok((true, false))
+                // Read responses after sending premature CCS.
+                // The server may still be sending handshake messages
+                // (Certificate, ServerKeyExchange, ServerHelloDone) as part of the
+                // original handshake -- these are NOT responses to our CCS.
+                // We loop to consume all handshake continuation messages before
+                // evaluating the actual CCS/Alert response.
+                let mut reads_remaining: u8 = 5;
+                loop {
+                    let mut response = vec![0u8; 1024];
+                    match timeout(Duration::from_secs(2), stream.read(&mut response)).await {
+                        Ok(Ok(n)) if n > 0 => {
+                            if response[0] == CONTENT_TYPE_ALERT {
+                                // Alert = server rejected our premature CCS → not vulnerable
+                                break Ok((false, false));
+                            } else if response[0] == CONTENT_TYPE_CHANGE_CIPHER_SPEC {
+                                // Server sent CCS in response to our premature CCS.
+                                // This is the actual indicator of CVE-2014-0224.
+                                break Ok((true, false));
+                            } else if response[0] == CONTENT_TYPE_HANDSHAKE && n >= 6 {
+                                let handshake_type = response[5];
+                                // 0x0B = Certificate, 0x0C = ServerKeyExchange, 0x0E = ServerHelloDone
+                                // These are normal handshake continuation, NOT a response to CCS.
+                                if matches!(handshake_type, 0x0B | 0x0C | 0x0D | 0x0E | 0x02) {
+                                    reads_remaining -= 1;
+                                    if reads_remaining == 0 {
+                                        // Too many handshake messages without CCS/Alert
+                                        break Ok((false, false));
+                                    }
+                                    continue;
+                                } else {
+                                    // Unexpected handshake message after CCS — inconclusive
+                                    break Ok((false, true));
+                                }
+                            } else {
+                                // Unknown response type — inconclusive
+                                break Ok((false, true));
+                            }
                         }
-                    }
-                    Ok(Ok(_)) => {
-                        // Zero bytes after CCS - connection closed, likely not vulnerable but inconclusive
-                        Ok((false, true))
-                    }
-                    Ok(Err(_)) | Err(_) => {
-                        // Timeout or error - inconclusive
-                        Ok((false, true))
+                        Ok(Ok(_)) => {
+                            // Zero bytes — connection closed, not vulnerable
+                            break Ok((false, false));
+                        }
+                        Ok(Err(_)) | Err(_) => {
+                            // Timeout or error — inconclusive
+                            break Ok((false, true));
+                        }
                     }
                 }
             }
-            Ok(Err(_)) | Err(_) => {
+            Err(_) => {
                 // Connection failed - inconclusive
                 Ok((false, true))
             }

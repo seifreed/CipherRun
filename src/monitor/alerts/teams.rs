@@ -1,6 +1,7 @@
 // Microsoft Teams Alert Channel - Webhook integration
 
 use crate::Result;
+use crate::constants::ALERT_SEND_TIMEOUT;
 use crate::monitor::alerts::{Alert, AlertChannel, AlertType};
 use crate::monitor::config::TeamsConfig;
 use crate::monitor::detector::ChangeSeverity;
@@ -16,20 +17,21 @@ pub struct TeamsChannel {
 impl TeamsChannel {
     /// Create new Teams channel
     pub fn new(config: TeamsConfig) -> Self {
-        Self {
-            config,
-            client: reqwest::Client::new(),
-        }
+        let client = reqwest::Client::builder()
+            .timeout(ALERT_SEND_TIMEOUT)
+            .build()
+            .expect("Failed to build HTTP client with timeout");
+        Self { config, client }
     }
 
     /// Format alert as Teams Adaptive Card message
     fn format_message(&self, alert: &Alert) -> serde_json::Value {
         let theme_color = match alert.severity {
-            ChangeSeverity::Critical => "attention",
-            ChangeSeverity::High => "warning",
-            ChangeSeverity::Medium => "accent",
-            ChangeSeverity::Low => "good",
-            ChangeSeverity::Info => "default",
+            ChangeSeverity::Critical => "CC0000",
+            ChangeSeverity::High => "FF8C00",
+            ChangeSeverity::Medium => "FFD700",
+            ChangeSeverity::Low => "28A745",
+            ChangeSeverity::Info => "17A2B8",
         };
 
         let mut facts = vec![

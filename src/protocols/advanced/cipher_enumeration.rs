@@ -1,12 +1,11 @@
+use super::analysis::analyze_cipher_details;
 use super::{
     CipherDetails, CipherPerProtocolAnalysis, ProtocolAdvancedTester, ProtocolCipherSupport,
     TlsTruncationAnalysis,
 };
-use super::analysis::analyze_cipher_details;
 use crate::Result;
 use openssl::ssl::{SslConnector, SslMethod, SslVersion};
-use tokio::net::TcpStream;
-use tokio::time::{Duration, timeout};
+use tokio::time::Duration;
 
 const TEST_CIPHERS: &[&str] = &[
     "TLS_AES_256_GCM_SHA384",
@@ -97,9 +96,8 @@ impl ProtocolAdvancedTester {
         let addr = self.target.socket_addrs()[0];
         let connect_timeout = Duration::from_secs(10);
 
-        let stream = timeout(connect_timeout, TcpStream::connect(&addr))
-            .await
-            .map_err(|_| anyhow::anyhow!("Connection timeout"))??;
+        let stream =
+            crate::utils::network::connect_with_timeout(addr, connect_timeout, None).await?;
 
         let std_stream = stream.into_std()?;
 
@@ -129,9 +127,8 @@ impl ProtocolAdvancedTester {
         let addr = self.target.socket_addrs()[0];
         let connect_timeout = Duration::from_secs(10);
 
-        let stream = timeout(connect_timeout, TcpStream::connect(&addr))
-            .await
-            .map_err(|_| anyhow::anyhow!("Connection timeout"))??;
+        let stream =
+            crate::utils::network::connect_with_timeout(addr, connect_timeout, None).await?;
 
         let std_stream = stream.into_std()?;
 

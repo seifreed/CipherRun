@@ -1,9 +1,28 @@
 // POP3 STARTTLS Negotiator
 
 use super::protocols::{StarttlsNegotiator, StarttlsProtocol};
+use super::text_protocol::{
+    CapabilityCommand, CapabilityConfig, CapabilityResponseStyle, GreetingStyle, SuccessCheck,
+    TextProtocolConfig,
+};
 use crate::Result;
 use async_trait::async_trait;
-use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWriteExt, BufReader};
+
+const CONFIG: TextProtocolConfig = TextProtocolConfig {
+    protocol_name: "POP3",
+    protocol: StarttlsProtocol::POP3,
+    greeting: GreetingStyle::Prefix("+OK"),
+    capability: Some(CapabilityConfig {
+        command: CapabilityCommand::Static(b"CAPA\r\n"),
+        starttls_marker: "STLS",
+        response_style: CapabilityResponseStyle::DotTerminated {
+            first_line_prefix: Some("+OK"),
+            first_line_status: None,
+        },
+    }),
+    starttls_command: b"STLS\r\n",
+    success: SuccessCheck::Prefix("+OK"),
+};
 
 /// POP3 STARTTLS negotiator
 pub struct Pop3Negotiator;
@@ -12,82 +31,12 @@ impl Pop3Negotiator {
     pub fn new() -> Self {
         Self
     }
-
-    /// Read POP3 response line
-    async fn read_response<S>(reader: &mut BufReader<&mut S>) -> Result<String>
-    where
-        S: AsyncRead + Unpin,
-    {
-        let mut line = String::new();
-        reader.read_line(&mut line).await?;
-        Ok(line)
-    }
 }
 
 #[async_trait]
 impl StarttlsNegotiator for Pop3Negotiator {
     async fn negotiate_starttls(&self, stream: &mut tokio::net::TcpStream) -> Result<()> {
-        let mut reader = BufReader::new(stream);
-
-        // 1. Read server greeting (+OK)
-        let greeting = Self::read_response(&mut reader).await?;
-        if !greeting.starts_with("+OK") {
-            return Err(crate::error::TlsError::StarttlsError {
-                protocol: "POP3".to_string(),
-                details: format!("Greeting failed: {}", greeting),
-            });
-        }
-
-        // 2. Send CAPA command to check capabilities
-        reader.get_mut().write_all(b"CAPA\r\n").await?;
-        reader.get_mut().flush().await?;
-
-        // 3. Read CAPA response
-        let mut starttls_supported = false;
-        let response = Self::read_response(&mut reader).await?;
-        if !response.starts_with("+OK") {
-            return Err(crate::error::TlsError::StarttlsError {
-                protocol: "POP3".to_string(),
-                details: "CAPA command failed".to_string(),
-            });
-        }
-
-        // Read capability lines until "."
-        loop {
-            let line = Self::read_response(&mut reader).await?;
-            let line = line.trim();
-
-            if line == "." {
-                break;
-            }
-
-            if line.eq_ignore_ascii_case("STLS") {
-                starttls_supported = true;
-            }
-        }
-
-        if !starttls_supported {
-            return Err(crate::error::TlsError::StarttlsError {
-                protocol: "POP3".to_string(),
-                details: "Server does not support STLS".to_string(),
-            });
-        }
-
-        // 4. Send STLS command (POP3 uses STLS not STARTTLS)
-        reader.get_mut().write_all(b"STLS\r\n").await?;
-        reader.get_mut().flush().await?;
-
-        // 5. Read STLS response
-        let response = Self::read_response(&mut reader).await?;
-        if !response.starts_with("+OK") {
-            return Err(crate::error::TlsError::StarttlsError {
-                protocol: "POP3".to_string(),
-                details: format!("STLS failed: {}", response),
-            });
-        }
-
-        // STARTTLS negotiation successful
-        Ok(())
+        super::text_protocol::negotiate(&CONFIG, "", stream).await
     }
 
     fn protocol(&self) -> StarttlsProtocol {
@@ -108,6 +57,8 @@ impl Default for Pop3Negotiator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::starttls::response;
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio::net::TcpListener;
     use tokio::net::TcpStream;
     use tokio::task::JoinHandle;
@@ -230,7 +181,7 @@ mod tests {
         });
 
         let mut reader = BufReader::new(&mut client);
-        let line = Pop3Negotiator::read_response(&mut reader)
+        let line = response::read_line(&mut reader)
             .await
             .expect("test assertion should succeed");
         assert!(line.starts_with("+OK"));

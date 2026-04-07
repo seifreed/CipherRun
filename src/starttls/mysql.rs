@@ -33,6 +33,19 @@ impl MysqlNegotiator {
         let length = u32::from_le_bytes([header[0], header[1], header[2], 0]);
         let _sequence = header[3];
 
+        // Guard against unbounded memory allocation from malicious servers
+        // MySQL max packet size is 16MB (0xFFFFFF), but we use a lower limit for safety
+        const MAX_MYSQL_PACKET_SIZE: u32 = 16 * 1024 * 1024; // 16MB
+        if length > MAX_MYSQL_PACKET_SIZE {
+            return Err(crate::error::TlsError::StarttlsError {
+                protocol: "MySQL".to_string(),
+                details: format!(
+                    "Packet too large: {} bytes (max {})",
+                    length, MAX_MYSQL_PACKET_SIZE
+                ),
+            });
+        }
+
         let mut payload = vec![0u8; length as usize];
         stream.read_exact(&mut payload).await?;
 
@@ -63,16 +76,34 @@ impl StarttlsNegotiator for MysqlNegotiator {
         // Read initial handshake packet from server
         let handshake = Self::read_packet(stream).await?;
 
-        // Check if server supports SSL
-        // Capability flags are at offset 2-3 (2 bytes) or 2-5 (4 bytes for newer versions)
-        if handshake.len() < 4 {
+        // Parse MySQL Handshake v10 to find capability flags.
+        // Layout: protocol_version(1) + server_version(NUL-terminated) +
+        //         connection_id(4) + auth_plugin_data_part_1(8) + filler(1) +
+        //         capability_flags_lower(2)
+        if handshake.is_empty() || handshake[0] != 0x0a {
             return Err(crate::error::TlsError::StarttlsError {
                 protocol: "MySQL".to_string(),
-                details: "Invalid handshake packet".to_string(),
+                details: "Not a MySQL Handshake v10 packet".to_string(),
             });
         }
 
-        let capabilities = u16::from_le_bytes([handshake[2], handshake[3]]);
+        // Find end of null-terminated server version string
+        let version_end = handshake[1..].iter().position(|&b| b == 0).ok_or_else(|| {
+            crate::error::TlsError::StarttlsError {
+                protocol: "MySQL".to_string(),
+                details: "Malformed handshake: no null terminator in version string".to_string(),
+            }
+        })?;
+        // Capability flags offset: 1 (protocol) + version_end + 1 (null) + 4 (conn_id) + 8 (auth) + 1 (filler)
+        let cap_offset = 1 + version_end + 1 + 4 + 8 + 1;
+        if cap_offset + 2 > handshake.len() {
+            return Err(crate::error::TlsError::StarttlsError {
+                protocol: "MySQL".to_string(),
+                details: "Handshake packet too short for capability flags".to_string(),
+            });
+        }
+
+        let capabilities = u16::from_le_bytes([handshake[cap_offset], handshake[cap_offset + 1]]);
         const CLIENT_SSL: u16 = 0x0800;
 
         if capabilities & CLIENT_SSL == 0 {
@@ -186,7 +217,17 @@ mod tests {
         let server = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.unwrap();
 
-            let handshake = vec![0x01, 0x02, 0x00, 0x08];
+            // Build a minimal valid MySQL Handshake v10 packet:
+            // protocol_version(1) + version_string("5\0") + conn_id(4) +
+            // auth_data(8) + filler(1) + capability_flags(2, with CLIENT_SSL)
+            let mut handshake = Vec::new();
+            handshake.push(0x0a); // protocol version 10
+            handshake.extend_from_slice(b"5\0"); // version string "5" + null
+            handshake.extend_from_slice(&[0x01, 0x00, 0x00, 0x00]); // conn_id
+            handshake.extend_from_slice(&[0x00; 8]); // auth_plugin_data_part_1
+            handshake.push(0x00); // filler
+            handshake.extend_from_slice(&[0x00, 0x08]); // capability_flags: 0x0800 (CLIENT_SSL)
+
             let len = handshake.len() as u32;
             let header = [
                 (len & 0xff) as u8,
@@ -235,7 +276,15 @@ mod tests {
         let server = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.unwrap();
 
-            let handshake = vec![0x01, 0x02, 0x00, 0x00];
+            // Build a minimal valid MySQL Handshake v10 without CLIENT_SSL
+            let mut handshake = Vec::new();
+            handshake.push(0x0a); // protocol version 10
+            handshake.extend_from_slice(b"5\0"); // version string "5" + null
+            handshake.extend_from_slice(&[0x01, 0x00, 0x00, 0x00]); // conn_id
+            handshake.extend_from_slice(&[0x00; 8]); // auth_plugin_data_part_1
+            handshake.push(0x00); // filler
+            handshake.extend_from_slice(&[0x00, 0x00]); // capability_flags: no SSL
+
             let len = handshake.len() as u32;
             let header = [
                 (len & 0xff) as u8,

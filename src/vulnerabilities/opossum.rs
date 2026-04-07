@@ -2,10 +2,10 @@
 // CVE-2022-25640, CVE-2022-25638, CVE-2022-25639
 
 use crate::Result;
+use crate::constants::TLS_HANDSHAKE_TIMEOUT;
 use crate::utils::network::Target;
 use rustls::{ClientConfig, RootCertStore};
 use std::sync::Arc;
-use tokio::net::TcpStream;
 use tokio::time::{Duration, timeout};
 
 /// Test for Opossum vulnerability (March 2022)
@@ -48,6 +48,18 @@ impl OpossumTester {
     }
 
     /// Test for Opossum vulnerability
+    ///
+    /// NOTE: CVE-2022-0778 is a client-side vulnerability in OpenSSL's BN_mod_sqrt()
+    /// triggered by parsing a malformed certificate. A remote scanner cannot reliably
+    /// detect this because:
+    /// 1. We connect as a client using rustls (not affected by OpenSSL bugs)
+    /// 2. The vulnerability is in parsing certificates with malformed EC parameters,
+    ///    which requires sending a crafted certificate TO the server (mutual TLS)
+    /// 3. Network timeouts are indistinguishable from parsing hangs
+    ///
+    /// This test performs a best-effort heuristic: it connects with a permissive
+    /// TLS client and checks if the server's certificate parsing behavior is abnormal.
+    /// Results should be treated as indicative, not definitive.
     pub async fn test(&self) -> Result<OpossumTestResult> {
         let version_status = self.test_openssl_version().await?;
         let parsing_status = self.test_certificate_parsing().await?;
@@ -55,7 +67,8 @@ impl OpossumTester {
         let status = if matches!(version_status, OpossumStatus::Vulnerable)
             || matches!(parsing_status, OpossumStatus::Vulnerable)
         {
-            OpossumStatus::Vulnerable
+            // Downgrade to Inconclusive: remote detection is unreliable for this CVE
+            OpossumStatus::Inconclusive
         } else if matches!(version_status, OpossumStatus::Inconclusive)
             || matches!(parsing_status, OpossumStatus::Inconclusive)
         {
@@ -66,20 +79,24 @@ impl OpossumTester {
 
         let details = match status {
             OpossumStatus::Vulnerable => {
-                "Behavior consistent with an Opossum-like parsing hang".to_string()
+                // This branch is now unreachable, but kept for completeness
+                "Behavior consistent with an Opossum-like parsing hang (requires manual verification)".to_string()
             }
             OpossumStatus::Inconclusive => {
-                "Opossum test inconclusive - timeout alone is not treated as proof of vulnerability"
+                "Opossum test inconclusive - CVE-2022-0778 is a client-side parsing vulnerability \
+                 that cannot be reliably detected via remote scanning. Manual verification of \
+                 OpenSSL version (< 1.1.1n / 1.0.2ze / 3.0.2) is recommended."
                     .to_string()
             }
-            OpossumStatus::NotVulnerable => {
-                "No Opossum-like parsing hang observed".to_string()
-            }
+            OpossumStatus::NotVulnerable => "No Opossum-like parsing hang observed".to_string(),
         };
 
         Ok(OpossumTestResult {
-            vulnerable: matches!(status, OpossumStatus::Vulnerable),
-            inconclusive: matches!(status, OpossumStatus::Inconclusive),
+            vulnerable: false, // Never report as definitively vulnerable via remote scan
+            inconclusive: matches!(
+                status,
+                OpossumStatus::Inconclusive | OpossumStatus::Vulnerable
+            ),
             status,
             details,
         })
@@ -87,14 +104,17 @@ impl OpossumTester {
 
     /// Test OpenSSL version detection
     async fn test_openssl_version(&self) -> Result<OpossumStatus> {
-        let addr = format!("{}:{}", self.target.hostname, self.target.port);
+        let addr = self.target.socket_addrs()[0];
         let hostname = self.target.hostname.clone();
 
         // Connect and try to extract OpenSSL version from server
-        let stream = match timeout(Duration::from_secs(5), TcpStream::connect(&addr)).await {
-            Ok(Ok(s)) => s,
-            _ => return Ok(OpossumStatus::Inconclusive),
-        };
+        let stream =
+            match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None)
+                .await
+            {
+                Ok(s) => s,
+                Err(_) => return Ok(OpossumStatus::Inconclusive),
+            };
 
         // Create a rustls client config
         let mut root_store = RootCertStore::empty();
@@ -106,7 +126,9 @@ impl OpossumTester {
 
         let connector = tokio_rustls::TlsConnector::from(Arc::new(config));
         let server_name = rustls::pki_types::ServerName::try_from(hostname.clone())
-            .map_err(|_| anyhow::anyhow!("Invalid DNS name"))?
+            .map_err(|_| crate::error::TlsError::ParseError {
+                message: "Invalid DNS name".into(),
+            })?
             .to_owned();
 
         // Connect with timeout to detect hanging
@@ -120,23 +142,24 @@ impl OpossumTester {
                 // Connection succeeded, not vulnerable to hanging
                 Ok(OpossumStatus::NotVulnerable)
             }
-            Ok(Err(_)) => {
-                Ok(OpossumStatus::Inconclusive)
-            }
-            Err(_) => {
-                Ok(OpossumStatus::Inconclusive)
-            }
+            Ok(Err(_)) => Ok(OpossumStatus::Inconclusive),
+            Err(_) => Ok(OpossumStatus::Inconclusive),
         }
     }
 
     /// Test certificate parsing for malformed EC parameters
     async fn test_certificate_parsing(&self) -> Result<OpossumStatus> {
-        let addr = format!("{}:{}", self.target.hostname, self.target.port);
         let hostname = self.target.hostname.clone();
 
-        let stream = match timeout(Duration::from_secs(5), TcpStream::connect(&addr)).await {
-            Ok(Ok(s)) => s,
-            _ => return Ok(OpossumStatus::Inconclusive),
+        let stream = match crate::utils::network::connect_with_timeout(
+            self.target.socket_addrs()[0],
+            TLS_HANDSHAKE_TIMEOUT,
+            None,
+        )
+        .await
+        {
+            Ok(s) => s,
+            Err(_) => return Ok(OpossumStatus::Inconclusive),
         };
 
         // Try to parse server's certificate with timeout
@@ -152,7 +175,9 @@ impl OpossumTester {
 
         let connector = tokio_rustls::TlsConnector::from(Arc::new(config));
         let server_name = rustls::pki_types::ServerName::try_from(hostname.clone())
-            .map_err(|_| anyhow::anyhow!("Invalid DNS name"))?
+            .map_err(|_| crate::error::TlsError::ParseError {
+                message: "Invalid DNS name".into(),
+            })?
             .to_owned();
 
         // Attempt connection with shorter timeout for parsing issues
@@ -165,7 +190,13 @@ impl OpossumTester {
             Ok(Ok(_)) => Ok(OpossumStatus::NotVulnerable),
             Ok(Err(_)) => Ok(OpossumStatus::Inconclusive),
             Err(_) => {
-                if self.control_handshake_completes_without_hang(&addr, &hostname).await? {
+                if self
+                    .control_handshake_completes_without_hang(
+                        self.target.socket_addrs()[0],
+                        &hostname,
+                    )
+                    .await?
+                {
                     Ok(OpossumStatus::Vulnerable)
                 } else {
                     Ok(OpossumStatus::Inconclusive)
@@ -176,13 +207,23 @@ impl OpossumTester {
 
     async fn control_handshake_completes_without_hang(
         &self,
-        addr: &str,
+        addr: std::net::SocketAddr,
         hostname: &str,
     ) -> Result<bool> {
-        let stream = match timeout(Duration::from_secs(5), TcpStream::connect(addr)).await {
-            Ok(Ok(s)) => s,
-            _ => return Ok(false),
-        };
+        // Control test: Verify the server is reachable and can complete a
+        // normal handshake without hanging. This distinguishes between:
+        // 1. Network timeout during test (server unreachable) -> returns false
+        // 2. Parsing hang during test (Opossum vulnerability) -> control returns true
+        //
+        // If the control handshake ALSO fails/times out, we know the network
+        // is the issue, not the certificate parsing.
+        let stream =
+            match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None)
+                .await
+            {
+                Ok(s) => s,
+                Err(_) => return Ok(false),
+            };
 
         let mut root_store = RootCertStore::empty();
         root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
@@ -192,13 +233,29 @@ impl OpossumTester {
 
         let connector = tokio_rustls::TlsConnector::from(Arc::new(config));
         let server_name = rustls::pki_types::ServerName::try_from(hostname.to_string())
-            .map_err(|_| anyhow::anyhow!("Invalid DNS name"))?
+            .map_err(|_| crate::error::TlsError::ParseError {
+                message: "Invalid DNS name".into(),
+            })?
             .to_owned();
 
-        match timeout(Duration::from_secs(5), connector.connect(server_name, stream)).await {
-            Ok(Ok(_)) => Ok(true),
-            Ok(Err(_)) => Ok(true),
-            Err(_) => Ok(false),
+        // Control handshake result interpretation:
+        // - Ok(Ok(_)): Normal connection completed -> server is reachable and NOT vulnerable
+        // - Ok(Err(_)): Connection error (TLS error, etc.) -> still reachable, NOT vulnerable
+        // - Err(_): Timeout -> network unreachable for control test
+        //
+        // We return Ok(true) for BOTH success and TLS error cases because:
+        // - If the server responds at all (even with TLS error), it's reachable
+        // - A TLS error means the handshake started but failed, NOT hung in parsing
+        // - Only a TIMEOUT in the control test indicates network issues
+        match timeout(
+            TLS_HANDSHAKE_TIMEOUT,
+            connector.connect(server_name, stream),
+        )
+        .await
+        {
+            Ok(Ok(_)) => Ok(true),  // Handshake succeeded - server reachable
+            Ok(Err(_)) => Ok(true), // TLS error - server reachable, just TLS issue
+            Err(_) => Ok(false),    // Timeout - network unreachable
         }
     }
 }

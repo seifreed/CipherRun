@@ -22,7 +22,7 @@ impl ServerHelloNetworkCapture {
     pub fn new(target: Target) -> Self {
         Self {
             target,
-            timeout: Duration::from_secs(10),
+            timeout: crate::constants::DEFAULT_CONNECT_TIMEOUT,
         }
     }
 
@@ -64,13 +64,28 @@ impl ServerHelloNetworkCapture {
             .write_all(&client_hello)
             .map_err(|e| TlsError::IoError { source: e })?;
 
-        // Read ServerHello response
-        let mut buffer = vec![0u8; 16384]; // 16KB buffer
-        let bytes_read = stream
-            .read(&mut buffer)
+        // Read TLS record header (5 bytes: content_type + version + length)
+        let mut header = [0u8; 5];
+        stream
+            .read_exact(&mut header)
             .map_err(|e| TlsError::IoError { source: e })?;
 
-        buffer.truncate(bytes_read);
+        let record_len = u16::from_be_bytes([header[3], header[4]]) as usize;
+        if record_len > 16384 {
+            return Err(TlsError::ParseError {
+                message: format!("TLS record too large: {} bytes", record_len),
+            });
+        }
+
+        // Read the full TLS record payload
+        let mut payload = vec![0u8; record_len];
+        stream
+            .read_exact(&mut payload)
+            .map_err(|e| TlsError::IoError { source: e })?;
+
+        let mut buffer = Vec::with_capacity(5 + record_len);
+        buffer.extend_from_slice(&header);
+        buffer.extend_from_slice(&payload);
 
         // Parse ServerHello
         ServerHelloCapture::parse(&buffer)
@@ -98,18 +113,11 @@ impl ServerHelloNetworkCapture {
         // ClientHello
         client_hello.extend_from_slice(&[0x03, 0x03]); // Legacy version: TLS 1.2
 
-        // Random (32 bytes) - use proper random
-        use std::time::SystemTime;
-        let now = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap_or_else(|_| std::time::Duration::from_secs(0))
-            .as_secs() as u32;
+        // Random (32 bytes) - use cryptographically secure random
+        // TLS 1.3 requires random bytes for security
+        use rand::Rng;
         let mut random = [0u8; 32];
-        random[0..4].copy_from_slice(&now.to_be_bytes());
-        // Fill rest with some pseudo-random data
-        for (i, byte) in random.iter_mut().enumerate().skip(4) {
-            *byte = ((i * 7 + now as usize) % 256) as u8;
-        }
+        rand::rng().fill_bytes(&mut random);
         client_hello.extend_from_slice(&random);
 
         // Session ID (empty for initial handshake)
@@ -141,85 +149,7 @@ impl ServerHelloNetworkCapture {
         // Extensions
         let extensions_start = client_hello.len();
         client_hello.extend_from_slice(&[0x00, 0x00]); // Placeholder for extensions length
-
-        // Extension: server_name (SNI)
-        let server_name = self.target.hostname.as_bytes();
-        let sni_extension = Self::build_sni_extension(server_name);
-        client_hello.extend_from_slice(&sni_extension);
-
-        // Extension: supported_groups
-        client_hello.extend_from_slice(&[
-            0x00, 0x0A, // Extension type: supported_groups
-            0x00, 0x0C, // Extension length: 12
-            0x00, 0x0A, // Groups length: 10
-            0x00, 0x1D, // x25519
-            0x00, 0x17, // secp256r1
-            0x00, 0x18, // secp384r1
-            0x00, 0x19, // secp521r1
-            0x00, 0x1E, // x448
-        ]);
-
-        // Extension: signature_algorithms
-        client_hello.extend_from_slice(&[
-            0x00, 0x0D, // Extension type: signature_algorithms
-            0x00, 0x14, // Extension length: 20
-            0x00, 0x12, // Algorithms length: 18
-            0x04, 0x03, // ecdsa_secp256r1_sha256
-            0x05, 0x03, // ecdsa_secp384r1_sha384
-            0x06, 0x03, // ecdsa_secp521r1_sha512
-            0x08, 0x04, // rsa_pss_rsae_sha256
-            0x08, 0x05, // rsa_pss_rsae_sha384
-            0x08, 0x06, // rsa_pss_rsae_sha512
-            0x04, 0x01, // rsa_pkcs1_sha256
-            0x05, 0x01, // rsa_pkcs1_sha384
-            0x06, 0x01, // rsa_pkcs1_sha512
-        ]);
-
-        // Extension: ec_point_formats
-        client_hello.extend_from_slice(&[
-            0x00, 0x0B, // Extension type: ec_point_formats
-            0x00, 0x02, // Extension length: 2
-            0x01, // Formats length: 1
-            0x00, // uncompressed
-        ]);
-
-        // Extension: supported_versions (TLS 1.3)
-        client_hello.extend_from_slice(&[
-            0x00, 0x2B, // Extension type: supported_versions
-            0x00, 0x05, // Extension length: 5
-            0x04, // Versions length: 4
-            0x03, 0x04, // TLS 1.3
-            0x03, 0x03, // TLS 1.2
-        ]);
-
-        // Extension: key_share (TLS 1.3)
-        client_hello.extend_from_slice(&[
-            0x00, 0x33, // Extension type: key_share
-            0x00, 0x26, // Extension length: 38
-            0x00, 0x24, // Client shares length: 36
-            // Key share entry: x25519
-            0x00, 0x1D, // Group: x25519
-            0x00,
-            0x20, // Key exchange length: 32
-                  // Public key (32 bytes of pseudo-random data)
-        ]);
-        for i in 0..32 {
-            client_hello.push(((i * 13 + now as usize) % 256) as u8);
-        }
-
-        // Extension: psk_key_exchange_modes (TLS 1.3)
-        client_hello.extend_from_slice(&[
-            0x00, 0x2D, // Extension type: psk_key_exchange_modes
-            0x00, 0x02, // Extension length: 2
-            0x01, // Modes length: 1
-            0x01, // psk_dhe_ke
-        ]);
-
-        // Extension: extended_master_secret
-        client_hello.extend_from_slice(&[
-            0x00, 0x17, // Extension type: extended_master_secret
-            0x00, 0x00, // Extension length: 0
-        ]);
+        Self::build_extensions(&mut client_hello, &self.target.hostname);
 
         // Update extensions length
         let extensions_len = (client_hello.len() - extensions_start - 2) as u16;
@@ -237,6 +167,86 @@ impl ServerHelloNetworkCapture {
         client_hello[length_pos..length_pos + 2].copy_from_slice(&record_len.to_be_bytes());
 
         client_hello
+    }
+
+    /// Append all TLS extensions to the ClientHello buffer.
+    fn build_extensions(client_hello: &mut Vec<u8>, hostname: &str) {
+        use rand::Rng;
+
+        // SNI
+        let sni_extension = Self::build_sni_extension(hostname.as_bytes());
+        client_hello.extend_from_slice(&sni_extension);
+
+        // supported_groups
+        client_hello.extend_from_slice(&[
+            0x00, 0x0A, // Extension type
+            0x00, 0x0C, // Extension length: 12
+            0x00, 0x0A, // Groups length: 10
+            0x00, 0x1D, // x25519
+            0x00, 0x17, // secp256r1
+            0x00, 0x18, // secp384r1
+            0x00, 0x19, // secp521r1
+            0x00, 0x1E, // x448
+        ]);
+
+        // signature_algorithms
+        client_hello.extend_from_slice(&[
+            0x00, 0x0D, // Extension type
+            0x00, 0x14, // Extension length: 20
+            0x00, 0x12, // Algorithms length: 18
+            0x04, 0x03, // ecdsa_secp256r1_sha256
+            0x05, 0x03, // ecdsa_secp384r1_sha384
+            0x06, 0x03, // ecdsa_secp521r1_sha512
+            0x08, 0x04, // rsa_pss_rsae_sha256
+            0x08, 0x05, // rsa_pss_rsae_sha384
+            0x08, 0x06, // rsa_pss_rsae_sha512
+            0x04, 0x01, // rsa_pkcs1_sha256
+            0x05, 0x01, // rsa_pkcs1_sha384
+            0x06, 0x01, // rsa_pkcs1_sha512
+        ]);
+
+        // ec_point_formats
+        client_hello.extend_from_slice(&[
+            0x00, 0x0B, // Extension type
+            0x00, 0x02, // Extension length: 2
+            0x01,       // Formats length: 1
+            0x00,       // uncompressed
+        ]);
+
+        // supported_versions (TLS 1.3)
+        client_hello.extend_from_slice(&[
+            0x00, 0x2B, // Extension type
+            0x00, 0x05, // Extension length: 5
+            0x04,       // Versions length: 4
+            0x03, 0x04, // TLS 1.3
+            0x03, 0x03, // TLS 1.2
+        ]);
+
+        // key_share (TLS 1.3) — x25519 with 32 random bytes
+        client_hello.extend_from_slice(&[
+            0x00, 0x33, // Extension type
+            0x00, 0x26, // Extension length: 38
+            0x00, 0x24, // Client shares length: 36
+            0x00, 0x1D, // Group: x25519
+            0x00, 0x20, // Key exchange length: 32
+        ]);
+        let mut key_share = [0u8; 32];
+        rand::rng().fill_bytes(&mut key_share);
+        client_hello.extend_from_slice(&key_share);
+
+        // psk_key_exchange_modes (TLS 1.3)
+        client_hello.extend_from_slice(&[
+            0x00, 0x2D, // Extension type
+            0x00, 0x02, // Extension length: 2
+            0x01,       // Modes length: 1
+            0x01,       // psk_dhe_ke
+        ]);
+
+        // extended_master_secret
+        client_hello.extend_from_slice(&[
+            0x00, 0x17, // Extension type
+            0x00, 0x00, // Extension length: 0
+        ]);
     }
 
     /// Build SNI extension

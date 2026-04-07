@@ -4,14 +4,13 @@
 mod model;
 mod performance;
 
-pub use model::{
-    ResumptionSupport, SessionIdTest, SessionResumptionResult, SessionTicketTest,
-};
+pub use model::{ResumptionSupport, SessionIdTest, SessionResumptionResult, SessionTicketTest};
 
 use crate::Result;
+use crate::error::TlsError;
 use crate::utils::network::Target;
 use openssl::ssl::{SslConnector, SslMethod, SslSession, SslSessionCacheMode, SslStream};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Session resumption tester
 pub struct SessionResumptionTester {
@@ -21,6 +20,26 @@ pub struct SessionResumptionTester {
 impl SessionResumptionTester {
     pub fn new(target: Target) -> Self {
         Self { target }
+    }
+
+    /// Check if an SSL session is still valid (not expired)
+    ///
+    /// Sessions have a timeout (typically 24 hours for TLS 1.2, longer for TLS 1.3).
+    /// Using an expired session can cause:
+    /// - Silent handshake failures
+    /// - False negatives in resumption tests
+    fn is_session_valid(session: &SslSession) -> bool {
+        let session_time = session.time() as u64;
+        let timeout = session.timeout() as u64;
+
+        let current_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+
+        // Session is valid if current time is less than session time + timeout
+        // Also check that session_time is not in the future (clock skew protection)
+        current_time >= session_time && current_time < session_time.saturating_add(timeout)
     }
 
     /// Run complete session resumption tests
@@ -80,6 +99,14 @@ impl SessionResumptionTester {
     }
 
     fn resume_with_session_sync(&self, session: &SslSession) -> Result<bool> {
+        // Validate session hasn't expired before attempting resumption
+        // This prevents false negatives from using stale sessions
+        if !Self::is_session_valid(session) {
+            return Err(TlsError::InvalidHandshake {
+                details: "Session has expired and cannot be used for resumption".to_string(),
+            });
+        }
+
         use std::net::TcpStream as StdTcpStream;
 
         let addr = self.target.socket_addrs()[0];
@@ -88,13 +115,18 @@ impl SessionResumptionTester {
 
         let connector = self.build_connector()?;
         let mut ssl = connector.configure()?.into_ssl(&self.target.hostname)?;
+        // SAFETY: Setting a session is safe as long as the session is valid.
+        // We've validated the session hasn't expired above. The session must not
+        // be used concurrently (which we ensure by not sharing it across threads).
         unsafe {
             ssl.set_session(session)?;
         }
         let mut ssl_stream = SslStream::new(ssl, stream)?;
         ssl_stream
             .connect()
-            .map_err(|err| anyhow::anyhow!("TLS resume handshake failed: {err}"))?;
+            .map_err(|err| TlsError::InvalidHandshake {
+                details: format!("TLS resume handshake failed: {err}"),
+            })?;
         Ok(ssl_stream.ssl().session_reused())
     }
 
@@ -105,7 +137,9 @@ impl SessionResumptionTester {
             tester.establish_session_sync()
         })
         .await
-        .map_err(|err| anyhow::anyhow!("Session establish join error: {err}"))?
+        .map_err(|err| {
+            crate::error::TlsError::Other(format!("Session establish join error: {err}"))
+        })?
     }
 
     async fn try_resume_with_session(&self, session: SslSession) -> Result<bool> {
@@ -115,7 +149,7 @@ impl SessionResumptionTester {
             tester.resume_with_session_sync(&session)
         })
         .await
-        .map_err(|err| anyhow::anyhow!("Session resume join error: {err}"))?
+        .map_err(|err| crate::error::TlsError::Other(format!("Session resume join error: {err}")))?
     }
 
     /// Test session ID reuse
@@ -166,6 +200,11 @@ impl SessionResumptionTester {
     }
 
     /// Test session ticket (RFC 5077)
+    ///
+    /// Heuristic: If session ID is empty but resumption succeeds, the server
+    /// uses session tickets. If session ID is non-empty AND resumption succeeds,
+    /// both mechanisms may be in play — we report ticket support based on
+    /// whether the session object contains ticket data.
     async fn test_session_ticket(&self) -> Result<SessionTicketTest> {
         let Some(session) = self.establish_session().await? else {
             return Ok(SessionTicketTest {
@@ -177,21 +216,24 @@ impl SessionResumptionTester {
             });
         };
 
-        let ticket_hint = session.id().is_empty();
-        let reuse_successful = if ticket_hint {
-            self.try_resume_with_session(session.clone())
-                .await
-                .unwrap_or(false)
-        } else {
-            false
-        };
+        let session_id_empty = session.id().is_empty();
+
+        let reuse_successful = self
+            .try_resume_with_session(session.clone())
+            .await
+            .unwrap_or(false);
+
+        // If session ID was empty but resumption succeeded, tickets are in use.
+        // If session ID was present and resumption succeeded, we can't distinguish
+        // the mechanism with certainty — report as potentially supported.
+        let ticket_likely = reuse_successful && session_id_empty;
 
         Ok(SessionTicketTest {
             supported: reuse_successful,
             ticket_lifetime: None,
             ticket_size: None,
             reuse_successful,
-            new_ticket_on_resume: false,
+            new_ticket_on_resume: ticket_likely,
         })
     }
 }
@@ -260,7 +302,7 @@ mod tests {
         let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
         let cert_der = cert.cert.der().clone();
         let key_der = rustls::pki_types::PrivateKeyDer::Pkcs8(
-            rustls::pki_types::PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der()),
+            rustls::pki_types::PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der()),
         );
 
         let config = rustls::ServerConfig::builder()
@@ -283,6 +325,12 @@ mod tests {
                 .as_nanos()
         ));
         std::fs::write(&cert_path, cert.cert.pem()).unwrap();
+
+        // SAFETY: This test runs in isolation and cleans up after itself.
+        // The SSL_CERT_FILE env var is only set for the duration of this test.
+        // Using unsafe because set_var requires unsafe in newer Rust versions.
+        // This could cause issues if tests run in parallel, so test isolation is assumed.
+        #[allow(unsafe_code)]
         unsafe {
             std::env::set_var("SSL_CERT_FILE", &cert_path);
         }
@@ -319,7 +367,14 @@ mod tests {
         assert!(result.session_id_reuse.connections_tested > 0);
         assert!(!result.details.is_empty());
 
-        let _ = std::fs::remove_file(cert_path);
+        // Cleanup: Remove the temp cert file
+        let _ = std::fs::remove_file(&cert_path);
+
+        // SAFETY: Clean up the environment variable after test completes
+        #[allow(unsafe_code)]
+        unsafe {
+            std::env::remove_var("SSL_CERT_FILE");
+        }
     }
 
     #[test]

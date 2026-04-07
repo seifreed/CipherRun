@@ -3,6 +3,7 @@ use super::{
     ScannerFormatter, format_client_sim_summary, format_http_grade, format_ssl_grade,
 };
 use crate::http::tester::HeaderAnalysisResult;
+use crate::output::probe_status::ProbeStatusTerminalExt;
 use colored::*;
 
 impl<'a> ScannerFormatter<'a> {
@@ -26,6 +27,7 @@ impl<'a> ScannerFormatter<'a> {
             "Vulnerabilities: {} checks performed",
             results.vulnerabilities.len()
         );
+        self.display_probe_summary(results);
 
         self.display_client_sim_summary(results.client_simulations());
         self.display_rating_summary(results.ssl_rating());
@@ -67,6 +69,21 @@ impl<'a> ScannerFormatter<'a> {
             let successful = clients.iter().filter(|c| c.success).count();
             let status_str = format_client_sim_summary(successful, clients.len());
             println!("Client Sims:     {}", status_str);
+        }
+    }
+
+    fn display_probe_summary(&self, results: &crate::scanner::ScanResults) {
+        if !(self.args.scan.probe_status || results.scan_metadata.pre_handshake_used) {
+            return;
+        }
+
+        println!(
+            "Probe Status:    {}",
+            results.scan_metadata.probe_status.format_terminal(&results.target)
+        );
+
+        if results.scan_metadata.pre_handshake_used {
+            println!("Pre-Handshake:   {}", "Y Enabled".green());
         }
     }
 

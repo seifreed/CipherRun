@@ -114,15 +114,15 @@ fn test_ja3_padding_extension_filtering() {
             (0, vec![]),                   // server_name
             (10, build_groups(&[0x001d])), // supported_groups
             (11, vec![1, 0]),              // ec_point_formats
-            (21, vec![0; 100]),            // padding (should be filtered)
+            (21, vec![0; 100]),            // padding (must be kept per JA3 spec)
             (13, vec![]),                  // signature_algorithms
         ],
     );
 
     let ja3 = Ja3Fingerprint::from_client_hello(&client_hello);
 
-    // Padding extension (21) should be filtered
-    assert!(!ja3.extensions.contains(&21));
+    // Padding extension (21) must be included per JA3 specification
+    assert!(ja3.extensions.contains(&21));
 }
 
 #[test]

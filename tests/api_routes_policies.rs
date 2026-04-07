@@ -14,8 +14,8 @@ async fn test_policies_no_policy_dir_returns_500() {
 
     let app = Router::new()
         .route("/policies", post(policies::create_policy))
-        .route("/policies/:id", get(policies::get_policy))
-        .route("/policies/:id/evaluate", post(policies::evaluate_policy))
+        .route("/policies/{id}", get(policies::get_policy))
+        .route("/policies/{id}/evaluate", post(policies::evaluate_policy))
         .with_state(state);
 
     let request = PolicyRequest {

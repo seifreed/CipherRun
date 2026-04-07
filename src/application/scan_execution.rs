@@ -1,3 +1,7 @@
+// NOTE: These view models are presentation-layer concerns housed in application/
+// for convenience. They hold borrowed references to domain types and provide
+// rendering-decision logic consumed by the commands/ layer. If a dedicated
+// presentation layer is introduced, these should move there.
 mod cli_view;
 mod post_processing;
 mod report;
@@ -51,6 +55,4 @@ mod section_views;
 pub use cli_view::ScanCliView;
 pub use post_processing::{ScanNoticeView, ScanPostProcessingView, ScanPostView};
 pub use report::ScanExecutionReport;
-pub use section_views::{
-    ScanExportView, ScanFeatureView, ScanFingerprintView, ScanPrimaryTlsView,
-};
+pub use section_views::{ScanExportView, ScanFeatureView, ScanFingerprintView, ScanPrimaryTlsView};

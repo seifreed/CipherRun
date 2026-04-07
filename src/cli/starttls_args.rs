@@ -106,23 +106,29 @@ mod tests {
 
     #[test]
     fn test_starttls_protocol_smtp() {
-        let mut args = StarttlsArgs::default();
-        args.smtp = true;
+        let args = StarttlsArgs {
+            smtp: true,
+            ..Default::default()
+        };
         assert_eq!(args.starttls_protocol(), Some(StarttlsProtocol::SMTP));
     }
 
     #[test]
     fn test_starttls_protocol_xmpp_server() {
-        let mut args = StarttlsArgs::default();
-        args.xmpp_server = true;
+        let args = StarttlsArgs {
+            xmpp_server: true,
+            ..Default::default()
+        };
         assert_eq!(args.starttls_protocol(), Some(StarttlsProtocol::XMPP));
     }
 
     #[test]
     fn test_starttls_protocol_precedence() {
-        let mut args = StarttlsArgs::default();
-        args.imap = true;
-        args.smtp = true;
+        let args = StarttlsArgs {
+            imap: true,
+            smtp: true,
+            ..Default::default()
+        };
         assert_eq!(args.starttls_protocol(), Some(StarttlsProtocol::SMTP));
     }
 

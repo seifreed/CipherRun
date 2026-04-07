@@ -3,7 +3,7 @@
 use crate::api::{
     models::error::ApiError,
     models::response::{ApiUsageStats, DomainStats, StatsResponse},
-    presenters::stats::present_stats_response,
+    presenters::stats::{StatsParams, present_stats_response},
     state::AppState,
 };
 use axum::{Json, extract::State};
@@ -23,7 +23,9 @@ use std::sync::Arc;
         ("api_key" = [])
     )
 )]
-pub async fn get_stats(State(state): State<Arc<AppState>>) -> Result<Json<StatsResponse>, ApiError> {
+pub async fn get_stats(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<StatsResponse>, ApiError> {
     let stats = state.get_stats().await;
 
     // Calculate average scan duration
@@ -49,16 +51,32 @@ pub async fn get_stats(State(state): State<Arc<AppState>>) -> Result<Json<StatsR
         avg_response_time_ms: avg_response_time,
     };
 
-    Ok(Json(present_stats_response(
-        stats.total_scans,
-        stats.completed_scans,
-        stats.failed_scans,
+    Ok(Json(present_stats_response(StatsParams {
+        total_scans: stats.total_scans,
+        completed_scans: stats.completed_scans,
+        failed_scans: stats.failed_scans,
         avg_scan_duration_seconds,
-        stats.scans_last_24h(),
-        stats.scans_last_7d(),
+        scans_last_24h: stats.scans_last_24h(),
+        scans_last_7d: stats.scans_last_7d(),
         top_domains,
         api_usage,
-    )))
+    })))
+}
+
+/// Query top domains from database
+async fn get_top_domains_from_db(
+    db: &crate::db::connection::DatabasePool,
+    limit: i64,
+) -> crate::Result<Vec<DomainStats>> {
+    let rows = db.get_top_domains(limit).await?;
+    Ok(rows
+        .into_iter()
+        .map(|(domain, count, last_scan)| DomainStats {
+            domain,
+            scan_count: count as u64,
+            last_scan,
+        })
+        .collect())
 }
 
 #[cfg(test)]
@@ -173,73 +191,5 @@ mod tests {
         assert!(response.top_domains.len() >= 2);
         assert_eq!(response.top_domains[0].domain, "alpha.example");
         assert_eq!(response.top_domains[0].scan_count, 2);
-    }
-}
-
-/// Query top domains from database
-async fn get_top_domains_from_db(
-    db: &crate::db::connection::DatabasePool,
-    limit: i64,
-) -> crate::Result<Vec<DomainStats>> {
-    use crate::db::connection::DatabasePool;
-    use sqlx::Row;
-
-    match db {
-        DatabasePool::Postgres(pool) => {
-            let rows = sqlx::query(
-                r#"
-                SELECT target_hostname, COUNT(*) as scan_count,
-                       MAX(scan_timestamp) as last_scan
-                FROM scans
-                WHERE scan_timestamp > NOW() - INTERVAL '30 days'
-                GROUP BY target_hostname
-                ORDER BY scan_count DESC
-                LIMIT $1
-                "#,
-            )
-            .bind(limit)
-            .fetch_all(pool)
-            .await
-            .map_err(|e| {
-                crate::TlsError::DatabaseError(format!("Failed to query top domains: {}", e))
-            })?;
-
-            Ok(rows
-                .into_iter()
-                .map(|row| DomainStats {
-                    domain: row.get("target_hostname"),
-                    scan_count: row.get::<i64, _>("scan_count") as u64,
-                    last_scan: row.get("last_scan"),
-                })
-                .collect())
-        }
-        DatabasePool::Sqlite(pool) => {
-            let rows = sqlx::query(
-                r#"
-                SELECT target_hostname, COUNT(*) as scan_count,
-                       MAX(scan_timestamp) as last_scan
-                FROM scans
-                WHERE scan_timestamp > datetime('now', '-30 days')
-                GROUP BY target_hostname
-                ORDER BY scan_count DESC
-                LIMIT ?
-                "#,
-            )
-            .bind(limit)
-            .fetch_all(pool)
-            .await
-            .map_err(|e| {
-                crate::TlsError::DatabaseError(format!("Failed to query top domains: {}", e))
-            })?;
-
-            Ok(rows
-                .into_iter()
-                .map(|row| DomainStats {
-                    domain: row.get("target_hostname"),
-                    scan_count: row.get::<i64, _>("scan_count") as u64,
-                    last_scan: row.get("last_scan"),
-                })
-                .collect())
-        }
     }
 }

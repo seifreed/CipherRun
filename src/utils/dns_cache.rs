@@ -64,6 +64,9 @@ impl DnsCache {
     ///
     /// Returns cached IP addresses if entry exists and is not expired.
     /// Uses read lock for concurrent access without blocking writers.
+    ///
+    /// Note: Expired entries remain in cache until cleanup_expired() is called.
+    /// This is a trade-off to avoid write lock contention on every get.
     pub async fn get(&self, hostname: &str) -> Option<Vec<IpAddr>> {
         let cache = self.cache.read().await;
 
@@ -77,11 +80,40 @@ impl DnsCache {
         None
     }
 
+    /// Get and optionally cleanup if cache is too large
+    ///
+    /// This is a convenience method that triggers cleanup when cache size
+    /// exceeds a threshold. Use get() for pure lookups without cleanup.
+    pub async fn get_with_cleanup(&self, hostname: &str) -> Option<Vec<IpAddr>> {
+        const CLEANUP_THRESHOLD: usize = 10000;
+
+        // Check if we should trigger cleanup
+        let needs_cleanup = {
+            let cache = self.cache.read().await;
+            cache.len() > CLEANUP_THRESHOLD
+        }; // Read lock is dropped here
+
+        if needs_cleanup {
+            self.cleanup_expired().await;
+        }
+
+        self.get(hostname).await
+    }
+
     /// Insert hostname and IP addresses into cache
     ///
     /// Overwrites existing entries. Uses write lock to ensure consistency.
+    /// Triggers cleanup when cache exceeds size threshold.
     pub async fn insert(&self, hostname: String, ip_addresses: Vec<IpAddr>) {
+        const MAX_CACHE_SIZE: usize = 50000;
+
         let mut cache = self.cache.write().await;
+
+        // Evict expired entries if cache is getting large
+        if cache.len() >= MAX_CACHE_SIZE {
+            let ttl = self.ttl;
+            cache.retain(|_, entry| entry.timestamp.elapsed() < ttl);
+        }
 
         cache.insert(
             hostname,

@@ -16,6 +16,8 @@ use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 
+type ScanTask = (String, tokio::task::JoinHandle<(String, Result<ScanResults>)>);
+
 /// Mass scanner for scanning multiple targets
 ///
 /// Performance optimization: Uses Arc<ScanRequest> to avoid expensive cloning
@@ -138,87 +140,127 @@ impl MassScanner {
         let max_parallel = self.config.max_parallel;
         let total = self.targets.len();
 
-        // Notify callback of scan start
         if let Some(ref callback) = self.callback {
             callback.on_parallel_scan_start(total, max_parallel);
         }
 
-        // Create progress bars
-        let multi_progress = Arc::new(MultiProgress::new());
-        let main_pb = multi_progress.add(ProgressBar::new(total as u64));
-        main_pb.set_style(
-            ProgressStyle::default_bar()
-                .template("[{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} {msg}")
-                .expect("Invalid template")
-                .progress_chars("=>-"),
-        );
-
-        // Create semaphore to limit concurrent scans
+        let (multi_progress, main_pb) = Self::create_scan_progress_bars(total);
         let semaphore = Arc::new(Semaphore::new(max_parallel));
-
-        // Spawn tasks for all targets
-        let mut tasks = Vec::new();
-
-        for target in &self.targets {
-            let target = target.clone();
-            let semaphore = Arc::clone(&semaphore);
-            // Performance optimization: Use Arc::clone instead of expensive Args clone
-            let request = Arc::clone(&self.request);
-            let multi_progress = Arc::clone(&multi_progress);
-
-            let task = tokio::spawn(async move {
-                // Acquire semaphore permit - use expect since closed semaphore is fatal
-                let _permit = semaphore
-                    .acquire()
-                    .await
-                    .expect("Semaphore closed unexpectedly");
-
-                // Create progress bar for this target
-                let pb = multi_progress.add(ProgressBar::new_spinner());
-                pb.set_style(
-                    ProgressStyle::default_spinner()
-                        .template("{spinner:.green} {msg}")
-                        .expect("Invalid template"),
-                );
-                pb.set_message(format!("Scanning {}", target));
-
-                // Perform scan
-                let scanner = MassScanner::create_scanner(&request, &target);
-                let result = match scanner {
-                    Ok(s) => s.run().await,
-                    Err(e) => Err(e),
-                };
-
-                pb.finish_and_clear();
-                (target, result)
-            });
-
-            tasks.push(task);
-        }
-
-        // Collect results
-        let mut results = Vec::new();
-        for task in tasks {
-            let (target, result) = task.await?;
-            main_pb.inc(1);
-
-            // Notify callback of progress
-            if let Some(ref callback) = self.callback {
-                callback.on_parallel_progress(results.len() + 1, total, &target);
-            }
-
-            main_pb.set_message(format!("Completed: {}", target));
-            results.push((target, result));
-        }
+        let tasks = self.spawn_scan_tasks(&semaphore, &multi_progress);
+        let results = self.collect_scan_results(tasks, &main_pb, total).await;
 
         main_pb.finish_with_message("All scans completed");
-
-        // Notify callback of completion
         if let Some(ref callback) = self.callback {
             callback.on_all_scans_complete();
         }
 
         Ok(results)
+    }
+
+    fn create_scan_progress_bars(total: usize) -> (Arc<MultiProgress>, ProgressBar) {
+        let multi_progress = Arc::new(MultiProgress::new());
+        let main_pb = multi_progress.add(ProgressBar::new(total as u64));
+        main_pb.set_style(
+            ProgressStyle::default_bar()
+                .template("[{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} {msg}")
+                .expect("hardcoded progress bar template is valid")
+                .progress_chars("=>-"),
+        );
+        (multi_progress, main_pb)
+    }
+
+    fn spawn_scan_tasks(
+        &self,
+        semaphore: &Arc<Semaphore>,
+        multi_progress: &Arc<MultiProgress>,
+    ) -> Vec<ScanTask> {
+        let mut tasks = Vec::new();
+
+        for target in &self.targets {
+            let target_for_task = target.clone();
+            let target_for_tracking = target.clone();
+            let semaphore = Arc::clone(semaphore);
+            let request = Arc::clone(&self.request);
+            let multi_progress = Arc::clone(multi_progress);
+
+            let task = tokio::spawn(async move {
+                let _permit = match semaphore.acquire().await {
+                    Ok(permit) => permit,
+                    Err(_) => {
+                        return (
+                            target_for_task,
+                            Err(crate::error::TlsError::ParseError {
+                                message: "Scanner shutdown - semaphore closed".to_string(),
+                            }),
+                        );
+                    }
+                };
+
+                let pb = multi_progress.add(ProgressBar::new_spinner());
+                pb.set_style(
+                    ProgressStyle::default_spinner()
+                        .template("{spinner:.green} {msg}")
+                        .expect("hardcoded spinner template is valid"),
+                );
+                pb.set_message(format!("Scanning {}", target_for_task));
+
+                let result: Result<_> = match MassScanner::create_scanner(&request, &target_for_task)
+                {
+                    Ok(s) => s.run().await,
+                    Err(e) => Err(e),
+                };
+
+                pb.finish_and_clear();
+                (target_for_task, result)
+            });
+
+            tasks.push((target_for_tracking, task));
+        }
+
+        tasks
+    }
+
+    async fn collect_scan_results(
+        &self,
+        tasks: Vec<ScanTask>,
+        main_pb: &ProgressBar,
+        total: usize,
+    ) -> Vec<(String, Result<ScanResults>)> {
+        let mut results = Vec::new();
+
+        for (target_name, task) in tasks {
+            let (target, result) = match task.await {
+                Ok(r) => r,
+                Err(join_err) => {
+                    tracing::error!(
+                        "Scan task panicked for target {}: {}",
+                        target_name,
+                        join_err
+                    );
+                    main_pb.inc(1);
+                    if let Some(ref callback) = self.callback {
+                        callback.on_parallel_progress(results.len() + 1, total, &target_name);
+                    }
+                    results.push((
+                        target_name.clone(),
+                        Err(crate::error::TlsError::ParseError {
+                            message: format!("Scan task panicked: {}", join_err),
+                        }),
+                    ));
+                    main_pb.set_message(format!("Failed: {}", target_name));
+                    continue;
+                }
+            };
+
+            main_pb.inc(1);
+            if let Some(ref callback) = self.callback {
+                callback.on_parallel_progress(results.len() + 1, total, &target);
+            }
+            main_pb.set_message(format!("Completed: {}", target));
+            results.push((target, result));
+        }
+
+        results
     }
 
     /// Scan a single target
@@ -303,18 +345,26 @@ impl MassScanner {
 
     /// Generate summary report
     pub fn generate_summary(results: &[(String, Result<ScanResults>)]) -> String {
-        let mut summary = String::new();
-        summary.push('\n');
-        summary.push_str(&"=".repeat(80));
-        summary.push_str(&format!("\n{}\n", "MASS SCAN SUMMARY".cyan().bold()));
-        summary.push_str(&"=".repeat(80));
-        summary.push_str("\n\n");
-
         let total = results.len();
         let successful = results.iter().filter(|(_, r)| r.is_ok()).count();
         let failed = total - successful;
 
-        summary.push_str(&format!(
+        let mut summary = Self::format_summary_header(total, successful, failed);
+        summary.push_str(&Self::format_grade_distribution(results));
+        summary.push_str(&Self::format_individual_results(results));
+        summary.push_str(&"=".repeat(80));
+        summary.push('\n');
+        summary
+    }
+
+    fn format_summary_header(total: usize, successful: usize, failed: usize) -> String {
+        let mut header = String::new();
+        header.push('\n');
+        header.push_str(&"=".repeat(80));
+        header.push_str(&format!("\n{}\n", "MASS SCAN SUMMARY".cyan().bold()));
+        header.push_str(&"=".repeat(80));
+        header.push_str("\n\n");
+        header.push_str(&format!(
             "{}: {} | {}: {} | {}: {}\n\n",
             "Total".bold(),
             total,
@@ -323,8 +373,10 @@ impl MassScanner {
             "Failed".red().bold(),
             failed
         ));
+        header
+    }
 
-        // Grade distribution
+    fn format_grade_distribution(results: &[(String, Result<ScanResults>)]) -> String {
         let mut grade_counts = std::collections::HashMap::new();
         for (_, result) in results {
             if let Ok(scan_result) = result
@@ -334,20 +386,24 @@ impl MassScanner {
             }
         }
 
-        if !grade_counts.is_empty() {
-            summary.push_str(&format!("{}\n", "SSL Labs Grade Distribution:".bold()));
-            let mut grades: Vec<_> = grade_counts.iter().collect();
-            grades.sort_by(|a, b| b.1.cmp(a.1));
-            for (grade, count) in grades {
-                summary.push_str(&format!("  {}: {}\n", grade, count));
-            }
-            summary.push('\n');
+        if grade_counts.is_empty() {
+            return String::new();
         }
 
-        // Individual results
-        summary.push_str(&format!("{}\n", "Individual Results:".bold()));
-        summary.push_str(&"-".repeat(80));
-        summary.push('\n');
+        let mut section = format!("{}\n", "SSL Labs Grade Distribution:".bold());
+        let mut grades: Vec<_> = grade_counts.iter().collect();
+        grades.sort_by(|a, b| b.1.cmp(a.1));
+        for (grade, count) in grades {
+            section.push_str(&format!("  {}: {}\n", grade, count));
+        }
+        section.push('\n');
+        section
+    }
+
+    fn format_individual_results(results: &[(String, Result<ScanResults>)]) -> String {
+        let mut section = format!("{}\n", "Individual Results:".bold());
+        section.push_str(&"-".repeat(80));
+        section.push('\n');
 
         for (target, result) in results {
             match result {
@@ -375,7 +431,7 @@ impl MassScanner {
                         .filter(|v| v.vulnerable)
                         .count();
 
-                    summary.push_str(&format!(
+                    section.push_str(&format!(
                         "{:<40} | Grade: {:<4} | Cert: {} | Vulns: {}\n",
                         target.green(),
                         grade,
@@ -388,7 +444,7 @@ impl MassScanner {
                     ));
                 }
                 Err(e) => {
-                    summary.push_str(&format!(
+                    section.push_str(&format!(
                         "{:<40} | {}: {}\n",
                         target.red(),
                         "ERROR".red().bold(),
@@ -398,10 +454,7 @@ impl MassScanner {
             }
         }
 
-        summary.push_str(&"=".repeat(80));
-        summary.push('\n');
-
-        summary
+        section
     }
 
     /// Export all results to JSON
@@ -452,7 +505,6 @@ mod tests {
     use crate::rating::scoring::RatingResult;
     use crate::scanner::RatingResults;
     use crate::vulnerabilities::{Severity, VulnerabilityResult, VulnerabilityType};
-    use std::path::PathBuf;
     use tempfile::tempdir;
 
     fn build_scan_with_expired_cert(expired: bool) -> ScanResults {
@@ -561,12 +613,12 @@ mod tests {
             &path,
             "example.com:443\n# comment\n\n  mail.example.com:25  \n",
         )
-        .unwrap();
+        .expect("test file should be created");
 
         let scanner = MassScanner::from_file(
             ScanRequest::default(),
             MassScanConfig::default(),
-            path.to_str().unwrap(),
+            path.to_str().expect("test path should be valid UTF-8"),
         )
         .expect("should parse targets");
         assert_eq!(scanner.targets.len(), 2);
@@ -578,17 +630,17 @@ mod tests {
 
     #[test]
     fn test_mass_scanner_from_file_empty_fails() {
-        let mut path = PathBuf::from(std::env::temp_dir());
+        let mut path = std::env::temp_dir();
         path.push("cipherrun_targets_empty.txt");
-        std::fs::write(&path, "  \n# only comment\n").unwrap();
+        std::fs::write(&path, "  \n# only comment\n").expect("test file should be created");
 
         let err = MassScanner::from_file(
             ScanRequest::default(),
             MassScanConfig::default(),
-            path.to_str().unwrap(),
+            path.to_str().expect("test path should be valid UTF-8"),
         )
         .err()
-        .unwrap();
+        .expect("result should be an error");
         let msg = err.to_string();
         assert!(msg.contains("No targets found"));
 
@@ -602,7 +654,7 @@ mod tests {
             ("one".to_string(), Ok(ScanResults::default())),
             (
                 "two".to_string(),
-                Err(crate::error::TlsError::Other("fail".to_string()).into()),
+                Err(crate::error::TlsError::Other("fail".to_string())),
             ),
         ];
         let filtered = MassScanner::filter_results(&filters, results);
@@ -624,7 +676,7 @@ mod tests {
             ("valid".to_string(), Ok(build_scan_with_expired_cert(false))),
             (
                 "error".to_string(),
-                Err(crate::error::TlsError::Other("fail".to_string()).into()),
+                Err(crate::error::TlsError::Other("fail".to_string())),
             ),
         ];
         let filtered = MassScanner::filter_results(&filters, results);
@@ -669,7 +721,7 @@ mod tests {
             ("ok.example:443".to_string(), Ok(ok_scan)),
             (
                 "fail.example:443".to_string(),
-                Err(crate::error::TlsError::Other("fail".to_string()).into()),
+                Err(crate::error::TlsError::Other("fail".to_string())),
             ),
             (
                 "ok2.example:443".to_string(),
@@ -690,7 +742,7 @@ mod tests {
         let path = dir.path().join("mass_scan.json");
 
         let results = vec![("example.com:443".to_string(), Ok(ScanResults::default()))];
-        MassScanner::export_all_json(&results, path.to_str().unwrap(), true)
+        MassScanner::export_all_json(&results, path.to_str().expect("test path should be valid UTF-8"), true)
             .expect("test assertion should succeed");
 
         let contents = std::fs::read_to_string(&path).expect("test assertion should succeed");
@@ -702,15 +754,15 @@ mod tests {
     fn test_from_file_with_only_comments_returns_error() {
         let dir = tempdir().expect("test assertion should succeed");
         let path = dir.path().join("targets.txt");
-        std::fs::write(&path, "# comment only\n\n   \n").expect("write should succeed");
+        std::fs::write(&path, "# comment only\n\n   \n").expect("test file should be created");
 
         let err = MassScanner::from_file(
             ScanRequest::default(),
             MassScanConfig::default(),
-            path.to_str().unwrap(),
+            path.to_str().expect("test path should be valid UTF-8"),
         )
         .err()
-        .expect("should error");
+        .expect("result should be an error");
         assert!(err.to_string().contains("No targets found"));
     }
 }

@@ -1,12 +1,20 @@
-use super::{RatingResults, ScanResults, builders, phases};
+use super::{RatingResults, ScanMetadata, ScanResults, builders, phases};
 use crate::Result;
 use crate::application::ScanRequest;
-use crate::rating::{RatingCalculator, RatingResult};
+use crate::protocols::pre_handshake::{PreHandshakeScanResult, PreHandshakeScanner};
+use crate::rating::{RatingCalculator, RatingResult, grader::Grade};
+use crate::scanner::probe_status::{ErrorType, ProbeStatus};
 use crate::utils::mtls::MtlsConfig;
 use crate::utils::network::Target;
 use parking_lot::RwLock;
+use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
+use tokio::net::TcpStream;
+use tokio::time::timeout;
+
+/// Sentinel IP used as placeholder before async DNS resolution in `initialize()`.
+const PLACEHOLDER_IP: IpAddr = IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0));
 
 /// Main scanner struct
 ///
@@ -21,6 +29,11 @@ pub struct Scanner {
     target: Arc<RwLock<Target>>,
     mtls_config: Option<MtlsConfig>,
     pub(super) reporter: Arc<dyn phases::ScanProgressReporter>,
+}
+
+struct PreflightCapture {
+    probe_status: ProbeStatus,
+    pre_handshake: Option<PreHandshakeScanResult>,
 }
 
 impl Scanner {
@@ -44,14 +57,17 @@ impl Scanner {
         reporter: Arc<dyn phases::ScanProgressReporter>,
     ) -> Result<Self> {
         request.validate_for_scan()?;
-        let target_str = request
-            .target
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("No target specified"))?;
+        let target_str =
+            request
+                .target
+                .as_ref()
+                .ok_or_else(|| crate::error::TlsError::InvalidInput {
+                    message: "No target specified".into(),
+                })?;
 
         // Use a placeholder target with sentinel IP (0.0.0.0) since DNS resolution requires async.
         // The actual IPs are resolved in initialize() which is called by run() before any scanning.
-        let placeholder_ip: std::net::IpAddr = "0.0.0.0".parse().unwrap();
+        let placeholder_ip = PLACEHOLDER_IP;
         let target = Target::with_ips(
             target_str.to_string(),
             request.port.unwrap_or(443),
@@ -82,11 +98,13 @@ impl Scanner {
 
     /// Initialize target with DNS resolution
     pub async fn initialize(&self) -> Result<()> {
-        let target_str = self
-            .request
-            .target
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("No target specified"))?;
+        let target_str =
+            self.request
+                .target
+                .as_ref()
+                .ok_or_else(|| crate::error::TlsError::InvalidInput {
+                    message: "No target specified".into(),
+                })?;
 
         let parsed_target = Target::parse(target_str).await?;
         *self.target.write() = parsed_target;
@@ -107,13 +125,23 @@ impl Scanner {
     pub async fn run_with_phases(&self) -> Result<ScanResults> {
         let start_time = Instant::now();
 
-        let placeholder_ip: std::net::IpAddr = "0.0.0.0".parse().unwrap();
+        let placeholder_ip = PLACEHOLDER_IP;
         let needs_init = {
             let target = self.target.read();
             target.ip_addresses.len() == 1 && target.ip_addresses[0] == placeholder_ip
         };
-        if needs_init {
-            self.initialize().await?;
+        if needs_init && let Err(error) = self.initialize().await {
+            if self.request.scan.probe_status {
+                return Ok(self.build_probe_only_results(
+                    ProbeStatus::failure_string(
+                        error.to_string(),
+                        ErrorType::from_tls_error(&error),
+                    ),
+                    start_time.elapsed().as_millis() as u64,
+                    false,
+                ));
+            }
+            return Err(error);
         }
 
         let should_run_multi_ip = {
@@ -125,16 +153,34 @@ impl Scanner {
             return self.run_multi_ip_scan().await;
         }
 
-        let context = builders::build_scan_context(
+        let preflight = self.collect_preflight_capture().await?;
+
+        let mut context = builders::build_scan_context(
             self.get_target_owned(),
             self.request.clone(),
             self.mtls_config.clone(),
+            preflight
+                .as_ref()
+                .and_then(|capture| capture.pre_handshake.clone()),
         );
+        if let Some(preflight) = &preflight {
+            context.results.scan_metadata.probe_status = preflight.probe_status.clone();
+            context.results.scan_metadata.pre_handshake_used = preflight.pre_handshake.is_some();
+        }
         let orchestrator = builders::build_phase_orchestrator(self.reporter.clone());
 
-        let mut results = orchestrator.execute(context).await?;
+        let results = orchestrator.execute(context).await?;
 
-        if self.request.scan.all || self.request.has_target() {
+        Ok(self.finalize_scan_results(results, start_time, &preflight))
+    }
+
+    fn finalize_scan_results(
+        &self,
+        mut results: ScanResults,
+        start_time: Instant,
+        preflight: &Option<PreflightCapture>,
+    ) -> ScanResults {
+        if self.request.should_calculate_rating() {
             let rating_result = self.calculate_rating(&results);
             results.rating = Some(RatingResults {
                 ssl_rating: Some(rating_result),
@@ -142,8 +188,12 @@ impl Scanner {
         }
 
         results.scan_time_ms = start_time.elapsed().as_millis() as u64;
+        if let Some(preflight) = preflight {
+            results.scan_metadata.probe_status = self.reconcile_probe_status(&preflight.probe_status, &results);
+            results.scan_metadata.pre_handshake_used = preflight.pre_handshake.is_some();
+        }
 
-        Ok(results)
+        results
     }
 
     /// Run complete scan and return results
@@ -154,11 +204,201 @@ impl Scanner {
     fn calculate_rating(&self, results: &ScanResults) -> RatingResult {
         let cert_validation = results.certificate_chain.as_ref().map(|c| &c.validation);
 
-        RatingCalculator::calculate(
+        let mut rating = RatingCalculator::calculate(
             &results.protocols,
             &results.ciphers,
             cert_validation,
             &results.vulnerabilities,
+        );
+
+        // If certificate data is missing on a full scan, override to Grade T
+        // (cannot verify trust without certificate information)
+        if cert_validation.is_none() {
+            rating.grade = Grade::T;
+        }
+
+        rating
+    }
+
+    fn preflight_timeout(&self) -> Duration {
+        Duration::from_secs(
+            self.request
+                .connection
+                .connect_timeout
+                .or(self.request.connection.socket_timeout)
+                .unwrap_or(10),
         )
+    }
+
+    async fn collect_preflight_capture(&self) -> Result<Option<PreflightCapture>> {
+        if !self.request.should_collect_preflight_data() {
+            return Ok(None);
+        }
+
+        let timeout_duration = self.preflight_timeout();
+        let target = self.get_target_owned();
+
+        if self.request.scan.pre_handshake || self.request.scan.ocsp {
+            let scanner = PreHandshakeScanner::new(target).with_timeout(timeout_duration);
+            match scanner.scan_pre_handshake().await {
+                Ok(pre_handshake) => {
+                    return Ok(Some(PreflightCapture {
+                        probe_status: ProbeStatus::success(Duration::from_millis(
+                            pre_handshake.handshake_time_ms,
+                        )),
+                        pre_handshake: Some(pre_handshake),
+                    }));
+                }
+                Err(error) => {
+                    tracing::debug!("Preflight pre-handshake capture failed: {}", error);
+                    if self.request.scan.probe_status {
+                        return Ok(Some(PreflightCapture {
+                            probe_status: ProbeStatus::failure_string(
+                                error.to_string(),
+                                ErrorType::from_tls_error(&error),
+                            ),
+                            pre_handshake: None,
+                        }));
+                    }
+                }
+            }
+        }
+
+        if self.request.scan.probe_status {
+            return Ok(Some(PreflightCapture {
+                probe_status: self.probe_connectivity(timeout_duration).await,
+                pre_handshake: None,
+            }));
+        }
+
+        Ok(None)
+    }
+
+    async fn probe_connectivity(&self, timeout_duration: Duration) -> ProbeStatus {
+        let target = self.get_target_owned();
+        let Some(socket_addr) = target.socket_addrs().into_iter().next() else {
+            return ProbeStatus::failure_string(
+                "No resolved IP address available".to_string(),
+                ErrorType::DnsFailure,
+            );
+        };
+
+        let start = Instant::now();
+        match timeout(timeout_duration, TcpStream::connect(socket_addr)).await {
+            Ok(Ok(stream)) => {
+                drop(stream);
+                ProbeStatus::success(start.elapsed())
+            }
+            Ok(Err(error)) => {
+                ProbeStatus::failure_string(error.to_string(), ErrorType::NetworkError)
+            }
+            Err(_) => ProbeStatus::failure_string(
+                format!("Connection timeout after {:?}", timeout_duration),
+                ErrorType::Timeout,
+            ),
+        }
+    }
+
+    fn build_probe_only_results(
+        &self,
+        probe_status: ProbeStatus,
+        scan_time_ms: u64,
+        pre_handshake_used: bool,
+    ) -> ScanResults {
+        let target = self.get_target_owned();
+
+        ScanResults {
+            target: format!("{}:{}", target.hostname, target.port),
+            scan_time_ms,
+            scan_metadata: ScanMetadata {
+                probe_status,
+                pre_handshake_used,
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    fn reconcile_probe_status(
+        &self,
+        preflight: &ProbeStatus,
+        results: &ScanResults,
+    ) -> ProbeStatus {
+        if preflight.success || !results.has_connection_evidence() {
+            return preflight.clone();
+        }
+
+        ProbeStatus {
+            success: true,
+            error: Some(
+                "Preflight probe failed but later scan phases completed successfully".to_string(),
+            ),
+            error_type: Some(ErrorType::Warning),
+            connection_time_ms: preflight.connection_time_ms,
+            attempts: preflight.attempts.max(1),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocols::{Protocol, ProtocolTestResult};
+
+    fn test_scanner() -> Scanner {
+        Scanner::new(ScanRequest {
+            target: Some("example.com:443".to_string()),
+            scan: crate::application::scan_request::ScanRequestScan {
+                probe_status: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .expect("scanner should build")
+    }
+
+    #[test]
+    fn reconcile_probe_status_keeps_successful_preflight() {
+        let scanner = test_scanner();
+        let preflight = ProbeStatus::success(Duration::from_millis(15));
+        let reconciled = scanner.reconcile_probe_status(&preflight, &ScanResults::default());
+
+        assert!(reconciled.success);
+        assert_eq!(reconciled.connection_time_ms, Some(15));
+    }
+
+    #[test]
+    fn reconcile_probe_status_upgrades_failure_when_later_phases_succeed() {
+        let scanner = test_scanner();
+        let preflight =
+            ProbeStatus::failure_string("Connection refused".to_string(), ErrorType::NetworkError);
+        let mut results = ScanResults::default();
+        results.protocols.push(ProtocolTestResult {
+            protocol: Protocol::TLS12,
+            supported: true,
+            preferred: true,
+            ciphers_count: 1,
+            handshake_time_ms: Some(5),
+            heartbeat_enabled: None,
+            session_resumption_caching: None,
+            session_resumption_tickets: None,
+            secure_renegotiation: None,
+        });
+
+        let reconciled = scanner.reconcile_probe_status(&preflight, &results);
+
+        assert!(reconciled.success);
+        assert_eq!(reconciled.error_type, Some(ErrorType::Warning));
+    }
+
+    #[test]
+    fn reconcile_probe_status_preserves_failure_without_network_evidence() {
+        let scanner = test_scanner();
+        let preflight =
+            ProbeStatus::failure_string("Connection refused".to_string(), ErrorType::NetworkError);
+        let reconciled = scanner.reconcile_probe_status(&preflight, &ScanResults::default());
+
+        assert!(!reconciled.success);
+        assert_eq!(reconciled.error_type, Some(ErrorType::NetworkError));
     }
 }

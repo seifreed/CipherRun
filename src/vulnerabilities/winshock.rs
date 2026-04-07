@@ -6,12 +6,12 @@
 // specially crafted TLS packets during the handshake phase.
 
 use crate::Result;
+use crate::constants::TLS_HANDSHAKE_TIMEOUT;
 use crate::protocols::Protocol;
 use crate::protocols::handshake::ClientHelloBuilder;
 use crate::utils::network::Target;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
 use tokio::time::timeout;
 
 /// Winshock vulnerability tester
@@ -54,39 +54,41 @@ impl WinshockTester {
 
         let addr = self.target.socket_addrs()[0];
 
-        match timeout(Duration::from_secs(5), TcpStream::connect(addr)).await {
-            Ok(Ok(stream)) => {
-                let std_stream = stream.into_std()?;
-                std_stream.set_nonblocking(false)?;
+        let stream =
+            match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None)
+                .await
+            {
+                Ok(s) => s,
+                Err(_) => return Ok(false),
+            };
 
-                let connector = SslConnector::builder(SslMethod::tls())?.build();
+        let std_stream = stream.into_std()?;
+        std_stream.set_nonblocking(false)?;
 
-                match connector.connect(&self.target.hostname, std_stream) {
-                    Ok(ssl_stream) => {
-                        // Check cipher and version patterns typical of Schannel
-                        let cipher = ssl_stream
-                            .ssl()
-                            .current_cipher()
-                            .map(|c| c.name().to_string())
-                            .unwrap_or_default();
+        let connector = SslConnector::builder(SslMethod::tls())?.build();
 
-                        // Schannel has specific cipher preferences
-                        let schannel_ciphers = [
-                            "ECDHE-RSA-AES256-SHA384",
-                            "ECDHE-RSA-AES128-SHA256",
-                            "AES256-SHA256",
-                            "AES128-SHA256",
-                        ];
+        match connector.connect(&self.target.hostname, std_stream) {
+            Ok(ssl_stream) => {
+                // Check cipher and version patterns typical of Schannel
+                let cipher = ssl_stream
+                    .ssl()
+                    .current_cipher()
+                    .map(|c| c.name().to_string())
+                    .unwrap_or_default();
 
-                        let likely_schannel =
-                            schannel_ciphers.iter().any(|&sc| cipher.contains(sc));
+                // Schannel has specific cipher preferences
+                let schannel_ciphers = [
+                    "ECDHE-RSA-AES256-SHA384",
+                    "ECDHE-RSA-AES128-SHA256",
+                    "AES256-SHA256",
+                    "AES128-SHA256",
+                ];
 
-                        Ok(likely_schannel)
-                    }
-                    Err(_) => Ok(false),
-                }
+                let likely_schannel = schannel_ciphers.iter().any(|&sc| cipher.contains(sc));
+
+                Ok(likely_schannel)
             }
-            _ => Ok(false),
+            Err(_) => Ok(false),
         }
     }
 
@@ -94,63 +96,70 @@ impl WinshockTester {
     async fn test_malformed_handshake(&self) -> Result<bool> {
         let addr = self.target.socket_addrs()[0];
 
-        match timeout(Duration::from_secs(5), TcpStream::connect(addr)).await {
-            Ok(Ok(mut stream)) => {
-                // Send normal ClientHello first
-                let client_hello = self.build_client_hello();
-                stream.write_all(&client_hello).await?;
+        let mut stream =
+            match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None)
+                .await
+            {
+                Ok(s) => s,
+                Err(_) => return Ok(false),
+            };
 
-                // Read ServerHello
-                let mut buffer = vec![0u8; 8192];
-                match timeout(Duration::from_secs(3), stream.read(&mut buffer)).await {
+        // Send normal ClientHello first
+        let client_hello = self.build_client_hello();
+        stream.write_all(&client_hello).await?;
+
+        // Read ServerHello
+        let mut buffer = vec![0u8; 8192];
+        match timeout(Duration::from_secs(3), stream.read(&mut buffer)).await {
+            Ok(Ok(n)) if n > 0 => {
+                // Send malformed ClientKeyExchange that triggers Winshock
+                let malformed_cke = self.build_malformed_client_key_exchange();
+                stream.write_all(&malformed_cke).await?;
+
+                // Try to read response
+                let mut response = vec![0u8; 1024];
+                match timeout(Duration::from_secs(2), stream.read(&mut response)).await {
                     Ok(Ok(n)) if n > 0 => {
-                        // Send malformed ClientKeyExchange that triggers Winshock
-                        let malformed_cke = self.build_malformed_client_key_exchange();
-                        stream.write_all(&malformed_cke).await?;
+                        // Server responded - check for specific error patterns
+                        // A vulnerable server may return specific error codes
+                        // or close connection gracefully after processing
+                        let response_str = String::from_utf8_lossy(&response[..n]);
 
-                        // Try to read response
-                        let mut response = vec![0u8; 1024];
-                        match timeout(Duration::from_secs(2), stream.read(&mut response)).await {
-                            Ok(Ok(n)) if n > 0 => {
-                                // Server responded - check for specific error patterns
-                                // A vulnerable server may return specific error codes
-                                // or close connection gracefully after processing
-                                let response_str = String::from_utf8_lossy(&response[..n]);
-                                
-                                // Check for specific Windows/Schannel error indicators
-                                // Not vulnerable if server returns proper error
-                                if response_str.contains("alert") || response_str.contains("handshake failure") {
-                                    Ok(false) // Proper error handling
-                                } else {
-                                    // Server continued normally - may or may not be vulnerable
-                                    // Winshock causes memory corruption, need more evidence
-                                    Ok(false)
-                                }
-                            }
-                            Ok(Ok(_)) => {
-                                // Empty response - connection closed without error
-                                Ok(false)
-                            }
-                            Ok(Err(e)) => {
-                                // Connection error - analyze the error type
-                                let error_str = e.to_string();
-                                // Connection reset could indicate vulnerability, but also
-                                // network issues. We should NOT mark ALL errors as vulnerable.
-                                // Mark as NOT vulnerable to avoid false positives.
-                                // Manual verification needed for suspicious connection resets.
-                                if error_str.contains("reset by peer") || error_str.contains("connection reset") {
-                                    // Potential vulnerability - but too many false positives
-                                    // Mark as not vulnerable and recommend manual testing
-                                    Ok(false)
-                                } else {
-                                    // Timeout, DNS errors, etc. - not vulnerability indicators
-                                    Ok(false)
-                                }
-                            }
-                            Err(_) => Ok(false), // Timeout
+                        // Check for specific Windows/Schannel error indicators
+                        // Not vulnerable if server returns proper error
+                        if response_str.contains("alert")
+                            || response_str.contains("handshake failure")
+                        {
+                            Ok(false) // Proper error handling
+                        } else {
+                            // Server continued normally - may or may not be vulnerable
+                            // Winshock causes memory corruption, need more evidence
+                            Ok(false)
                         }
                     }
-                    _ => Ok(false),
+                    Ok(Ok(_)) => {
+                        // Empty response - connection closed without error
+                        Ok(false)
+                    }
+                    Ok(Err(e)) => {
+                        // Connection error - analyze the error type
+                        let error_str = e.to_string();
+                        // Connection reset could indicate vulnerability, but also
+                        // network issues. We should NOT mark ALL errors as vulnerable.
+                        // Mark as NOT vulnerable to avoid false positives.
+                        // Manual verification needed for suspicious connection resets.
+                        if error_str.contains("reset by peer")
+                            || error_str.contains("connection reset")
+                        {
+                            // Potential vulnerability - but too many false positives
+                            // Mark as not vulnerable and recommend manual testing
+                            Ok(false)
+                        } else {
+                            // Timeout, DNS errors, etc. - not vulnerability indicators
+                            Ok(false)
+                        }
+                    }
+                    Err(_) => Ok(false), // Timeout
                 }
             }
             _ => Ok(false),

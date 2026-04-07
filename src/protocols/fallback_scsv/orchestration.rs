@@ -31,7 +31,9 @@ impl FallbackScsvTester<'_> {
     ) -> Result<FallbackScsvTestResult> {
         if supported_protocols.len() <= 1 {
             let max_protocol = self.max_supported_protocol.ok_or_else(|| {
-                anyhow::anyhow!("max_supported_protocol is None when it should be Some")
+                crate::error::TlsError::Other(
+                    "max_supported_protocol is None when it should be Some".into(),
+                )
             })?;
             let protocol_name = max_protocol.name();
             let has_tls13 = matches!(max_protocol, Protocol::TLS13);
@@ -111,9 +113,11 @@ impl FallbackScsvTester<'_> {
         &self,
         supported_protocols: &[Protocol],
     ) -> Result<ScsvSupport> {
-        let max_protocol = self
-            .max_supported_protocol
-            .expect("max_supported_protocol must be set before calling this method");
+        let max_protocol = self.max_supported_protocol.ok_or_else(|| {
+            crate::error::TlsError::Other(
+                "max_supported_protocol must be set before calling this method".into(),
+            )
+        })?;
 
         let fallback_protocol = match max_protocol {
             Protocol::SSLv3 => {

@@ -2,16 +2,48 @@
 
 use crate::ciphers::CipherSuite;
 use anyhow::Result;
-use lazy_static::lazy_static;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-lazy_static! {
-    /// Global cipher database loaded at startup
-    pub static ref CIPHER_DB: Arc<CipherDatabase> = Arc::new(
-        CipherDatabase::load().expect("Failed to load cipher database")
-    );
+/// Global cipher database loaded at startup
+///
+/// Uses OnceLock for safe initialization with proper error handling.
+static CIPHER_DB_INNER: std::sync::OnceLock<Arc<CipherDatabase>> = std::sync::OnceLock::new();
+
+/// Get the global cipher database
+///
+/// Returns the database if already initialized, or initializes it on first call.
+/// Initialization errors are logged and an empty database is used as fallback.
+pub fn cipher_db() -> Arc<CipherDatabase> {
+    CIPHER_DB_INNER
+        .get_or_init(|| match CipherDatabase::load() {
+            Ok(db) => Arc::new(db),
+            Err(e) => {
+                tracing::error!(
+                    "Failed to load cipher database: {}. Using empty database.",
+                    e
+                );
+                Arc::new(CipherDatabase::empty())
+            }
+        })
+        .clone()
 }
+
+/// Check if the cipher database is healthy (loaded successfully with entries)
+///
+/// Returns true if the database is loaded and contains cipher entries.
+/// Returns false if loading failed or database is empty.
+pub fn cipher_db_is_healthy() -> bool {
+    CIPHER_DB_INNER
+        .get()
+        .map(|db| db.is_healthy())
+        .unwrap_or(false)
+}
+
+/// Legacy static for backward compatibility
+/// Delegates to `cipher_db()` to avoid loading data twice into memory
+pub static CIPHER_DB: std::sync::LazyLock<Arc<CipherDatabase>> =
+    std::sync::LazyLock::new(cipher_db);
 
 /// Database of all cipher suites
 pub struct CipherDatabase {
@@ -28,6 +60,15 @@ impl CipherDatabase {
     pub fn load() -> Result<Self> {
         let data = include_str!("../../data/cipher-mapping.txt");
         Self::parse(data)
+    }
+
+    /// Create an empty database (fallback for loading errors)
+    pub fn empty() -> Self {
+        Self {
+            by_hexcode: HashMap::new(),
+            by_openssl_name: HashMap::new(),
+            by_iana_name: HashMap::new(),
+        }
     }
 
     /// Parse cipher-mapping.txt format
@@ -139,6 +180,7 @@ impl CipherDatabase {
         // Try to find number in parentheses
         if let Some(start) = enc.find('(')
             && let Some(end) = enc.find(')')
+            && end > start
         {
             let num_str = &enc[start + 1..end];
             if let Ok(bits) = num_str.parse::<u16>() {
@@ -160,8 +202,12 @@ impl CipherDatabase {
             return 0;
         }
 
-        // Default
-        128
+        // Default - unknown encryption, don't assume security
+        tracing::warn!(
+            "Unknown encryption algorithm, cannot determine bit strength: {}",
+            enc
+        );
+        0
     }
 
     /// Get cipher by hexcode (reference)
@@ -205,17 +251,22 @@ impl CipherDatabase {
         self.by_hexcode.values().filter(|c| c.export).collect()
     }
 
+    /// Check if database is healthy (loaded successfully and has entries)
+    pub fn is_healthy(&self) -> bool {
+        !self.by_hexcode.is_empty()
+    }
+
+    /// Get cipher count
+    pub fn count(&self) -> usize {
+        self.by_hexcode.len()
+    }
+
     /// Get NULL ciphers
     pub fn null_ciphers(&self) -> Vec<&CipherSuite> {
         self.by_hexcode
             .values()
             .filter(|c| c.encryption.contains("NULL"))
             .collect()
-    }
-
-    /// Get cipher count
-    pub fn count(&self) -> usize {
-        self.by_hexcode.len()
     }
 
     /// Get all ciphers as a vector (cloned)
@@ -234,7 +285,7 @@ impl CipherDatabase {
                     && c.bits >= 128
                     && !c.encryption.contains("RC4")
                     && !c.encryption.contains("DES")
-                    && !c.encryption.contains("MD5")
+                    && !c.mac.contains("MD5")
             })
             .cloned()
             .collect()
@@ -314,7 +365,7 @@ mod tests {
     #[test]
     fn test_parse_line_invalid_format() {
         let line = "invalid line";
-        let err = CipherDatabase::parse_line(line).err().expect("should fail");
+        let err = CipherDatabase::parse_line(line).expect_err("should fail");
         assert!(err.to_string().contains("Invalid format"));
     }
 

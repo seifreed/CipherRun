@@ -1,5 +1,6 @@
 use crate::api::models::error::ApiError;
 use crate::application::{HostPortInput, ScanRequest};
+use crate::constants::PORT_HTTPS;
 
 pub fn scan_request_from_target(target: &str) -> Result<ScanRequest, ApiError> {
     if target.trim().is_empty() {
@@ -8,7 +9,7 @@ pub fn scan_request_from_target(target: &str) -> Result<ScanRequest, ApiError> {
         ));
     }
 
-    let parsed = HostPortInput::parse_with_default_port(target, 443);
+    let parsed = HostPortInput::parse_with_default_port(target, PORT_HTTPS);
     if parsed.hostname.trim().is_empty() {
         return Err(ApiError::BadRequest(
             "Invalid target format. Expected hostname:port".to_string(),

@@ -584,6 +584,7 @@ mod tests {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn make_scan(
         protocol: Protocol,
         supported: bool,
@@ -594,8 +595,10 @@ mod tests {
         tickets: Option<bool>,
         alpn_protocols: Option<Vec<String>>,
     ) -> ScanResults {
-        let mut scan = ScanResults::default();
-        scan.target = "example.test:443".to_string();
+        let mut scan = ScanResults {
+            target: "example.test:443".to_string(),
+            ..Default::default()
+        };
 
         scan.protocols.push(ProtocolTestResult {
             protocol,

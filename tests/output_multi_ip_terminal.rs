@@ -54,9 +54,11 @@ fn build_cipher_summary(protocol: Protocol) -> ProtocolCipherSummary {
 }
 
 fn build_scan_results() -> ScanResults {
-    let mut results = ScanResults::default();
-    results.target = "example.com:443".to_string();
-    results.scan_time_ms = 250;
+    let mut results = ScanResults {
+        target: "example.com:443".to_string(),
+        scan_time_ms: 250,
+        ..Default::default()
+    };
     results.protocols = vec![ProtocolTestResult {
         protocol: Protocol::TLS13,
         supported: true,
@@ -244,8 +246,8 @@ fn test_multi_ip_report_display() {
         certificate_consistent: false,
         inconsistencies: inconsistencies.clone(),
         alpn_protocols: vec!["h2".to_string()],
-        session_resumption_caching: true,
-        session_resumption_tickets: false,
+        session_resumption_caching: Some(true),
+        session_resumption_tickets: Some(false),
     };
 
     let report = MultiIpScanReport {

@@ -302,6 +302,7 @@ async fn test_vulnerability_storage() {
         .push(cipherrun::vulnerabilities::VulnerabilityResult {
             vuln_type: cipherrun::vulnerabilities::VulnerabilityType::Heartbleed,
             vulnerable: true,
+            inconclusive: false,
             details: "Server vulnerable to Heartbleed".to_string(),
             cve: Some("CVE-2014-0160".to_string()),
             cwe: None,
@@ -313,6 +314,7 @@ async fn test_vulnerability_storage() {
         .push(cipherrun::vulnerabilities::VulnerabilityResult {
             vuln_type: cipherrun::vulnerabilities::VulnerabilityType::POODLE,
             vulnerable: false,
+            inconclusive: false,
             details: "Not vulnerable to POODLE".to_string(),
             cve: Some("CVE-2014-3566".to_string()),
             cwe: None,

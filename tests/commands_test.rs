@@ -269,47 +269,39 @@ fn test_router_priority_8_scan_with_target() {
 // ============================================================================
 
 #[test]
-fn test_router_api_server_overrides_monitor() {
-    assert_eq!(
-        route_name(build_args(|args| {
-            args.api_server.enable = true;
-            args.monitoring.enable = true;
-        })),
-        "ApiServerCommand"
-    );
+fn test_router_rejects_api_server_and_monitor() {
+    let err = CommandRouter::route(build_args(|args| {
+        args.api_server.enable = true;
+        args.monitoring.enable = true;
+    }));
+    assert!(err.is_err());
 }
 
 #[test]
-fn test_router_monitor_overrides_ct_logs() {
-    assert_eq!(
-        route_name(build_args(|args| {
-            args.monitoring.enable = true;
-            args.ct_logs.enable = true;
-        })),
-        "MonitorCommand"
-    );
+fn test_router_rejects_monitor_and_ct_logs() {
+    let err = CommandRouter::route(build_args(|args| {
+        args.monitoring.enable = true;
+        args.ct_logs.enable = true;
+    }));
+    assert!(err.is_err());
 }
 
 #[test]
-fn test_router_ct_logs_overrides_analytics() {
-    assert_eq!(
-        route_name(build_args(|args| {
-            args.ct_logs.enable = true;
-            args.compare = Some("1:2".to_string());
-        })),
-        "CtLogsCommand"
-    );
+fn test_router_rejects_ct_logs_and_analytics() {
+    let err = CommandRouter::route(build_args(|args| {
+        args.ct_logs.enable = true;
+        args.compare = Some("1:2".to_string());
+    }));
+    assert!(err.is_err());
 }
 
 #[test]
-fn test_router_analytics_overrides_database() {
-    assert_eq!(
-        route_name(build_args(|args| {
-            args.compare = Some("1:2".to_string());
-            args.database.init = true;
-        })),
-        "AnalyticsCommand"
-    );
+fn test_router_rejects_analytics_and_database() {
+    let err = CommandRouter::route(build_args(|args| {
+        args.compare = Some("1:2".to_string());
+        args.database.init = true;
+    }));
+    assert!(err.is_err());
 }
 
 #[test]
@@ -324,14 +316,12 @@ fn test_router_mx_overrides_scan() {
 }
 
 #[test]
-fn test_router_mass_scan_overrides_scan() {
-    assert_eq!(
-        route_name(build_args(|args| {
-            args.input_file = Some(PathBuf::from("targets.txt"));
-            args.target = Some("example.com:443".to_string());
-        })),
-        "MassScanCommand"
-    );
+fn test_router_rejects_mass_scan_and_target() {
+    let err = CommandRouter::route(build_args(|args| {
+        args.input_file = Some(PathBuf::from("targets.txt"));
+        args.target = Some("example.com:443".to_string());
+    }));
+    assert!(err.is_err());
 }
 
 // ============================================================================

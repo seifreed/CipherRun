@@ -196,9 +196,10 @@ impl From<std::str::Utf8Error> for TlsError {
 
 impl From<tokio::time::error::Elapsed> for TlsError {
     fn from(_err: tokio::time::error::Elapsed) -> Self {
-        TlsError::ConnectionTimeout {
-            duration: std::time::Duration::from_secs(0), // Timeout duration unknown
-            addr: std::net::SocketAddr::from(([0, 0, 0, 0], 0)),
+        // tokio::time::error::Elapsed does not carry the original timeout duration,
+        // so we use a sentinel value to indicate "unknown duration"
+        TlsError::Timeout {
+            duration: std::time::Duration::MAX,
         }
     }
 }
@@ -385,14 +386,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_timeout_conversion_to_connection_timeout() {
+    async fn test_timeout_conversion_to_timeout() {
         let result = tokio::time::timeout(Duration::from_millis(1), async {
             tokio::time::sleep(Duration::from_millis(10)).await;
         })
         .await;
 
-        let err = result.err().expect("timeout should occur");
+        let err = result.expect_err("timeout should occur");
         let tls_err: TlsError = err.into();
-        assert!(matches!(tls_err, TlsError::ConnectionTimeout { .. }));
+        assert!(matches!(tls_err, TlsError::Timeout { .. }));
     }
 }

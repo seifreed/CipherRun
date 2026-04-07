@@ -26,7 +26,9 @@ impl ProtocolTester {
 
     pub(super) async fn detect_secure_renegotiation(&self, protocol: Protocol) -> Result<bool> {
         match self.fetch_server_hello(protocol).await? {
-            Some(server_hello) => Ok(server_hello.supports_secure_renegotiation().unwrap_or(false)),
+            Some(server_hello) => Ok(server_hello
+                .supports_secure_renegotiation()
+                .unwrap_or(false)),
             None => Ok(false),
         }
     }
@@ -68,7 +70,10 @@ impl ProtocolTester {
 
         let mut builder = ClientHelloBuilder::new(protocol);
         builder.add_ciphers(&[0xc030, 0xc02f, 0x009e, 0x0035]);
-        let sni_hostname = self.sni_hostname.as_deref().unwrap_or(&self.target.hostname);
+        let sni_hostname = self
+            .sni_hostname
+            .as_deref()
+            .unwrap_or(&self.target.hostname);
         let client_hello = builder.build_with_defaults(Some(sni_hostname))?;
 
         let response = match timeout(self.read_timeout, async {

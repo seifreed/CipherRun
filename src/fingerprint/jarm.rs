@@ -85,10 +85,23 @@ impl JarmDatabase {
     }
 
     /// Load builtin database
+    ///
+    /// Returns a JarmDatabase loaded from the embedded JSON file.
+    /// The builtin database is compiled into the binary and should always parse correctly.
+    /// If parsing fails (should never happen with embedded data), returns an empty database.
     pub fn builtin() -> Self {
         let builtin_json = include_str!("../../data/jarm_signatures.json");
-        let signatures: Vec<JarmSignature> =
-            serde_json::from_str(builtin_json).expect("Failed to parse builtin JARM database");
+        let signatures: Vec<JarmSignature> = match serde_json::from_str(builtin_json) {
+            Ok(sigs) => sigs,
+            Err(e) => {
+                // This should never happen with embedded data, but handle gracefully
+                tracing::error!(
+                    "Failed to parse builtin JARM database: {}. Using empty database.",
+                    e
+                );
+                Vec::new()
+            }
+        };
 
         let mut db = Self::new();
         for sig in signatures {
@@ -181,6 +194,8 @@ impl JarmFingerprinter {
             .await
             .is_err()
         {
+            // Attempt graceful shutdown before returning
+            let _ = stream.shutdown().await;
             return Ok("|||".to_string());
         }
 
@@ -188,9 +203,18 @@ impl JarmFingerprinter {
         let mut buffer = vec![0u8; 1484];
         let n = match timeout(self.timeout, stream.read(&mut buffer)).await {
             Ok(Ok(n)) => n,
-            Ok(Err(_)) => return Ok("|||".to_string()),
-            Err(_) => return Ok("|||".to_string()),
+            Ok(Err(_)) => {
+                let _ = stream.shutdown().await;
+                return Ok("|||".to_string());
+            }
+            Err(_) => {
+                let _ = stream.shutdown().await;
+                return Ok("|||".to_string());
+            }
         };
+
+        // Explicitly close stream to release resources
+        let _ = stream.shutdown().await;
 
         buffer.truncate(n);
 
@@ -247,53 +271,103 @@ fn parse_server_hello(data: &[u8], _probe: &JarmProbe) -> Result<String> {
 }
 
 /// Extract extension information from ServerHello
+///
+/// `offset` is the session ID length (data[43]), used to compute positions:
+///   cipher:     offset + 44 .. offset + 46
+///   compress:   offset + 46
+///   ext_len:    offset + 47 .. offset + 49
+///   ext_data:   offset + 49 ..
 fn extract_extension_info(data: &[u8], offset: usize, server_hello_length: usize) -> String {
-    if data.len() < 85 || data.len() < offset + 53 {
+    // Need at least: offset + 49 (extensions length) + 4 (one minimal extension)
+    if data.len() < offset + 53 {
         return "|".to_string();
     }
 
-    if data[offset + 47] == 11 {
+    // Check if the server sent no extensions by reading the full 2-byte extension length.
+    // Previously this only checked data[offset + 47] == 0x0b, which collided with valid
+    // extension lengths 0x0B00-0x0BFF (2816-3071 bytes).
+    let potential_ext_len = u16::from_be_bytes([data[offset + 47], data[offset + 48]]);
+    if potential_ext_len == 0 {
+        return "|".to_string();
+    }
+    // If the high byte looks like a Certificate handshake type (0x0b) AND the claimed
+    // extension length exceeds available data, the server likely sent no extensions
+    // and the next handshake record follows immediately.
+    if data[offset + 47] == 0x0b
+        && (offset + 49).saturating_add(potential_ext_len as usize) > data.len()
+    {
         return "|".to_string();
     }
 
-    if offset + 42 >= server_hello_length {
+    // Check extensions fit within the TLS record (record content starts at byte 5)
+    if offset + 49 > 5 + server_hello_length {
         return "|".to_string();
     }
 
     // Check for malformed responses
-    if (offset + 53 <= data.len() && data[offset + 50..offset + 53] == [0x0e, 0xac, 0x0b])
-        || (85 <= data.len() && data[82..85] == [0x0f, 0xf0, 0x0b])
-    {
+    if offset + 53 <= data.len() && data[offset + 50..offset + 53] == [0x0e, 0xac, 0x0b] {
+        return "|".to_string();
+    }
+    // Secondary malformed check at fixed offset (original JARM reference)
+    if data.len() >= 85 && data[82..85] == [0x0f, 0xf0, 0x0b] {
         return "|".to_string();
     }
 
     let ecnt_start = offset + 49;
     let elen = u16::from_be_bytes([data[offset + 47], data[offset + 48]]) as usize;
-    let emax = elen + ecnt_start;
+
+    // Limit extension length to prevent integer overflow and excessive iteration
+    // Maximum reasonable extension length is 16KB (typical TLS max)
+    const MAX_EXTENSION_LENGTH: usize = 16384;
+    if elen > MAX_EXTENSION_LENGTH {
+        tracing::warn!(
+            "Extension length {} exceeds maximum at offset {}, potential malicious response",
+            elen,
+            offset
+        );
+        return "|".to_string();
+    }
+
+    // Check for overflow in emax calculation
+    let emax = match ecnt_start.checked_add(elen) {
+        Some(sum) => sum,
+        None => {
+            tracing::debug!("Extension length overflow");
+            return "|".to_string();
+        }
+    };
 
     let mut etypes = Vec::new();
     let mut evals = Vec::new();
     let mut ecnt = ecnt_start;
 
+    // Improved bounds checking in extension iteration
     while ecnt < emax && ecnt + 4 <= data.len() {
         // Extension type (2 bytes)
         let ext_type = [data[ecnt], data[ecnt + 1]];
-        etypes.push(ext_type);
 
         // Extension length (2 bytes)
         let ext_len = u16::from_be_bytes([data[ecnt + 2], data[ecnt + 3]]) as usize;
 
-        // Extension value
-        if ecnt + 4 + ext_len <= data.len() {
-            if ext_len == 0 {
-                evals.push(Vec::new());
-            } else {
-                evals.push(data[ecnt + 4..ecnt + 4 + ext_len].to_vec());
+        // Check bounds for extension value
+        // Use <= because next_cnt == data.len() is a valid end-of-data position
+        let next_cnt = match ecnt.checked_add(4).and_then(|n| n.checked_add(ext_len)) {
+            Some(n) if n <= data.len() => n,
+            _ => {
+                // Bounds exceeded - truncated response
+                tracing::trace!("Extension bounds exceeded at {}", ecnt);
+                break;
             }
-            ecnt += ext_len + 4;
+        };
+
+        // Push type and value together to keep vectors aligned
+        etypes.push(ext_type);
+        if ext_len == 0 {
+            evals.push(Vec::new());
         } else {
-            break;
+            evals.push(data[ecnt + 4..ecnt + 4 + ext_len].to_vec());
         }
+        ecnt = next_cnt;
     }
 
     // Extract ALPN (extension type 0x0010)
@@ -312,10 +386,13 @@ fn extract_extension_type(ext: &[u8], etypes: &[[u8; 2]], evals: &[Vec<u8>]) -> 
             let eval = &evals[i];
 
             // ALPN extension (0x0010)
+            // Format: [2-byte list_len][1-byte proto_len][proto_name...]...
             if ext == [0x00, 0x10] && eval.len() >= 4 {
-                // ALPN format: 2-byte length, then protocols
-                // Return the actual protocol string
-                return String::from_utf8_lossy(&eval[3..]).to_string();
+                let proto_len = eval[2] as usize;
+                let proto_end = 3 + proto_len;
+                if proto_end <= eval.len() {
+                    return String::from_utf8_lossy(&eval[3..proto_end]).to_string();
+                }
             }
 
             return hex::encode(eval);
@@ -328,6 +405,9 @@ fn extract_extension_type(ext: &[u8], etypes: &[[u8; 2]], evals: &[Vec<u8>]) -> 
 /// Zero hash (all probes failed)
 const ZERO_HASH: &str = "00000000000000000000000000000000000000000000000000000000000000";
 
+/// Expected number of JARM probes per the specification
+const JARM_PROBE_COUNT: usize = 10;
+
 /// Convert raw hash to fuzzy JARM hash
 fn raw_hash_to_fuzzy_hash(raw: &str) -> String {
     // All probes failed
@@ -338,7 +418,19 @@ fn raw_hash_to_fuzzy_hash(raw: &str) -> String {
     let mut fhash = String::new();
     let mut alpex = String::new();
 
-    for handshake in raw.split(',') {
+    let handshakes: Vec<&str> = raw.split(',').collect();
+
+    // JARM specification requires exactly 10 probe responses
+    if handshakes.len() != JARM_PROBE_COUNT {
+        tracing::warn!(
+            "JARM fingerprint requires {} probe responses, got {}",
+            JARM_PROBE_COUNT,
+            handshakes.len()
+        );
+        return ZERO_HASH.to_string();
+    }
+
+    for handshake in handshakes {
         let comp: Vec<&str> = handshake.split('|').collect();
         if comp.len() != 4 {
             return ZERO_HASH.to_string();
@@ -447,16 +539,15 @@ fn extract_cipher_bytes(cipher_hex: &str) -> String {
         _ => return "00".to_string(),
     };
 
-    // Find index in cipher list
-    let mut count = 1;
-    for known_cipher in CIPHER_LIST_ORDER {
+    // Find index in cipher list (1-based), return "00" if not found
+    for (i, known_cipher) in CIPHER_LIST_ORDER.iter().enumerate() {
         if known_cipher == &cipher_bytes {
-            break;
+            return format!("{:02x}", i + 1);
         }
-        count += 1;
     }
 
-    format!("{:02x}", count)
+    // Cipher not found in list
+    "00".to_string()
 }
 
 /// Extract version byte (convert to character)

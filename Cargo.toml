@@ -52,28 +52,26 @@ rustls = { version = "0.23", features = ["ring"] }
 rustls-pemfile = "2.2"
 rustls-pki-types = "1.10"
 tokio-rustls = "0.26"
-webpki-roots = "0.26"
+webpki-roots = "1.0"
 openssl = { version = "0.10", features = ["vendored"] }
 native-tls = "0.2"
 
 # Networking
-socket2 = "0.5"
-hickory-resolver = "0.24"
-ipnetwork = "0.20"
+hickory-resolver = "0.25"
+ipnetwork = "0.21"
 quinn = "0.11.9"
 
 # HTTP client
-reqwest = { version = "0.12", features = ["blocking", "json", "rustls-tls"] }
+reqwest = { version = "0.13", features = ["blocking", "json", "rustls"] }
 hyper = { version = "1.5", features = ["full"] }
 
 # Cryptography
 ring = "0.17"
-x509-parser = "0.16"
-der-parser = "9.0"
+x509-parser = "0.18"
 pem = "3.0"
-sha2 = "0.10"
-sha1 = "0.10"
-md5 = "0.7"
+sha2 = "0.11"
+sha1 = "0.11"
+md5 = "0.8"
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
@@ -82,43 +80,41 @@ serde_yaml = "0.9"
 csv = "1.3"
 
 # API Server (Axum)
-axum = { version = "0.7", features = ["ws", "macros"] }
+axum = { version = "0.8", features = ["ws", "macros"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["cors", "compression-full", "trace"] }
 utoipa = { version = "5.2", features = ["axum_extras", "chrono", "uuid"] }
-utoipa-swagger-ui = { version = "8.0", features = ["axum"] }
+utoipa-swagger-ui = { version = "9.0", features = ["axum"] }
 uuid = { version = "1.11", features = ["v4", "serde"] }
 
 # Rate limiting
-governor = "0.6"
+governor = "0.10"
 dashmap = "6.1"
 
 # CLI
 clap = { version = "4.5", features = ["derive", "cargo", "env"] }
-indicatif = "0.17"
-console = "0.15"
+indicatif = "0.18"
 
 # Terminal output
-colored = "2.1"
+colored = "3.0"
 prettytable-rs = "0.10"
 termcolor = "1.4"
 
 # Error handling
 anyhow = "1.0"
-thiserror = "1.0"
+thiserror = "2.0"
 
 # Utilities
 lazy_static = "1.5"
+subtle = "2.6"
 regex = "1.10"
 chrono = { version = "0.4", features = ["serde"] }
 base64 = "0.22"
 hex = "0.4"
-nom = "7.1"
-bytes = "1.8"
+bytes = "1.11"
 url = "2.5"
 urlencoding = "2.1"
-rand = "0.8"
-x25519-dalek = "2.0"
+rand = "0.10"
 
 # Logging
 tracing = "0.1"
@@ -138,8 +134,8 @@ walkdir = "2.5"
 tempfile = "3.13"
 
 # Database
-sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "sqlite", "chrono", "json", "migrate"] }
-toml = "0.8"
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres", "sqlite", "chrono", "json", "migrate", "derive", "macros"] }
+toml = "1.0"
 
 # Email
 lettre = { version = "0.11", features = ["tokio1-native-tls"] }
@@ -148,14 +144,14 @@ lettre = { version = "0.11", features = ["tokio1-native-tls"] }
 futures = "0.3"
 
 # Certificate Transparency
-bloomfilter = "1.0"
+bloomfilter = "3.0"
 
 [dev-dependencies]
-criterion = "0.5"
+criterion = "0.8"
 mockito = "1.5"
 proptest = "1.5"
-rcgen = "0.13"
-tokio-tungstenite = "0.21"
+rcgen = "0.14"
+tokio-tungstenite = "0.29"
 
 # Kani formal verification
 # Configuration for running `cargo kani` proofs

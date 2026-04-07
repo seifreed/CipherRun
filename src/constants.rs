@@ -463,13 +463,45 @@ pub const DEFAULT_SOCKET_TIMEOUT: Duration = Duration::from_secs(10);
 /// Faster failure detection during cipher enumeration.
 pub const CIPHER_TEST_READ_TIMEOUT: Duration = Duration::from_secs(3);
 
-/// HTTP request timeout for external API calls (30 seconds)
-///
-/// Used for fetching CT logs, CRLs, and other HTTP-based operations.
-pub const HTTP_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+/// Timeout for TLS handshake operations (vulnerability probes, protocol tests)
+pub const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Timeout for HTTP requests to external services
+pub const HTTP_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Timeout for sending alerts (Slack, PagerDuty, Teams, email)
+pub const ALERT_SEND_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Short timeout for quick probes and fast-fail scenarios (3 seconds)
 pub const SHORT_TIMEOUT: Duration = Duration::from_secs(3);
+
+// =============================================================================
+// Operational Timeouts
+// =============================================================================
+
+/// Database connection pool acquire timeout (30 seconds)
+pub const DB_ACQUIRE_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// SQLite busy timeout for write lock contention (5 seconds)
+pub const DB_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// DNS query timeout for custom resolvers (5 seconds)
+pub const DNS_QUERY_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// HSTS preload cache duration (1 hour)
+pub const HSTS_CACHE_DURATION: Duration = Duration::from_secs(3600);
+
+/// HSTS preload rate limit between requests (1 second)
+pub const HSTS_RATE_LIMIT_INTERVAL: Duration = Duration::from_secs(1);
+
+/// Monitor daemon polling interval (10 seconds)
+pub const MONITOR_POLL_INTERVAL: Duration = Duration::from_secs(10);
+
+/// HTTP client timeout for external API requests (30 seconds)
+pub const HTTP_CLIENT_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Stats hourly window for pruning old entries (1 hour)
+pub const STATS_HOURLY_WINDOW: Duration = Duration::from_secs(3600);
 
 // =============================================================================
 // Protocol Versions

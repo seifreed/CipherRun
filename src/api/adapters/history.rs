@@ -3,7 +3,7 @@ use crate::application::{ScanHistoryEntry, ScanHistoryPort, ScanHistoryQuery};
 use crate::db::ScanHistoryService;
 
 pub async fn load_scan_history(
-    reader: &(impl ScanHistoryPort + Sync),
+    reader: &impl ScanHistoryPort,
     query: &ScanHistoryQuery,
 ) -> Result<Vec<ScanHistoryEntry>, ApiError> {
     reader

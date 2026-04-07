@@ -18,28 +18,6 @@ pub struct WsState {
     pub progress_tx: broadcast::Sender<ProgressMessage>,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::api::models::response::ProgressMessage;
-
-    #[tokio::test]
-    async fn test_ws_state_broadcast_sends_progress() {
-        let (tx, mut rx) = broadcast::channel(8);
-        let state = WsState {
-            progress_tx: tx.clone(),
-        };
-
-        let msg = ProgressMessage::new("scan1", 5, "stage");
-        state.progress_tx.send(msg.clone()).expect("send ok");
-
-        let received = rx.recv().await.expect("recv ok");
-        assert_eq!(received.scan_id, "scan1");
-        assert_eq!(received.progress, 5);
-        assert_eq!(received.stage, "stage");
-    }
-}
-
 /// Handle WebSocket upgrade
 pub async fn handle_websocket(ws: WebSocketUpgrade, State(state): State<Arc<WsState>>) -> Response {
     ws.on_upgrade(move |socket| websocket_handler(socket, state))
@@ -67,7 +45,7 @@ async fn websocket_handler(socket: WebSocket, state: Arc<WsState>) {
             };
 
             // Send as text message
-            if sender.send(Message::Text(json)).await.is_err() {
+            if sender.send(Message::Text(json.into())).await.is_err() {
                 debug!("Client disconnected");
                 break;
             }
@@ -141,7 +119,7 @@ pub async fn scan_websocket_handler(socket: WebSocket, scan_id: String, state: A
     });
 
     if let Ok(json) = serde_json::to_string(&init_msg) {
-        let _ = sender.send(Message::Text(json)).await;
+        let _ = sender.send(Message::Text(json.into())).await;
     }
 
     // Spawn task to send progress updates for this specific scan
@@ -163,7 +141,7 @@ pub async fn scan_websocket_handler(socket: WebSocket, scan_id: String, state: A
             };
 
             // Send as text message
-            if sender.send(Message::Text(json)).await.is_err() {
+            if sender.send(Message::Text(json.into())).await.is_err() {
                 debug!("Client disconnected");
                 break;
             }
@@ -211,4 +189,26 @@ pub async fn scan_websocket_handler(socket: WebSocket, scan_id: String, state: A
     }
 
     info!("WebSocket connection closed for scan: {}", scan_id);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::models::response::ProgressMessage;
+
+    #[tokio::test]
+    async fn test_ws_state_broadcast_sends_progress() {
+        let (tx, mut rx) = broadcast::channel(8);
+        let state = WsState {
+            progress_tx: tx.clone(),
+        };
+
+        let msg = ProgressMessage::new("scan1", 5, "stage");
+        state.progress_tx.send(msg.clone()).expect("send ok");
+
+        let received = rx.recv().await.expect("recv ok");
+        assert_eq!(received.scan_id, "scan1");
+        assert_eq!(received.progress, 5);
+        assert_eq!(received.stage, "stage");
+    }
 }

@@ -21,8 +21,8 @@ const HTML_TEMPLATE: &str = r#"<!DOCTYPE html>
         .header h1 { color: white; }
         .grade-box { display: inline-block; padding: 20px 40px; font-size: 3em; font-weight: bold; border-radius: 8px; margin: 20px 0; }
         .grade-A-plus, .grade-A { background: #27ae60; color: white; }
-        .grade-A-minus, .grade-B { background: #3498db; color: white; }
-        .grade-C { background: #f39c12; color: white; }
+        .grade-A-minus, .grade-B-plus, .grade-B { background: #3498db; color: white; }
+        .grade-B-minus, .grade-C { background: #f39c12; color: white; }
         .grade-D, .grade-E, .grade-F { background: #e74c3c; color: white; }
         .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; margin: 20px 0; }
         .summary-card { background: #f8f9fa; padding: 20px; border-radius: 8px; border-left: 4px solid #3498db; }
@@ -33,6 +33,7 @@ const HTML_TEMPLATE: &str = r#"<!DOCTYPE html>
         tr:hover { background: #f8f9fa; }
         .status-success { color: #27ae60; font-weight: bold; }
         .status-fail { color: #e74c3c; font-weight: bold; }
+        .status-warn { color: #f39c12; font-weight: bold; }
         .severity-critical { background: #c0392b; color: white; padding: 4px 8px; border-radius: 4px; }
         .severity-high { background: #e74c3c; color: white; padding: 4px 8px; border-radius: 4px; }
         .severity-medium { background: #f39c12; color: white; padding: 4px 8px; border-radius: 4px; }
@@ -123,21 +124,32 @@ const HTML_TEMPLATE: &str = r#"<!DOCTYPE html>
 
 /// Generate HTML report from scan results
 pub fn generate_html_report(results: &ScanResults) -> Result<String> {
-    let mut handlebars = Handlebars::new();
-    handlebars.register_escape_fn(handlebars::no_escape);
+    let handlebars = Handlebars::new();
+    // Default escape function handles HTML escaping for {{double-brace}} fields.
+    // Fields needing raw HTML use {{{triple-brace}}} in the template.
 
     let data = json!({
         "target": results.target,
         "scan_time_ms": results.scan_time_ms,
         "timestamp": chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC").to_string(),
-        "rating": results.ssl_rating().map(|r| json!({
-            "grade": format!("{}", r.grade).replace("+", "-plus").replace("-", "-minus"),
-            "score": r.score,
-            "certificate_score": r.certificate_score,
-            "protocol_score": r.protocol_score,
-            "key_exchange_score": r.key_exchange_score,
-            "cipher_strength_score": r.cipher_strength_score,
-        })),
+        "rating": results.ssl_rating().map(|r| {
+            let grade_str = format!("{}", r.grade);
+            let grade_class = match grade_str.as_str() {
+                "A+" => "A-plus",
+                "A-" => "A-minus",
+                "B+" => "B-plus",
+                "B-" => "B-minus",
+                other => other,
+            };
+            json!({
+                "grade": grade_class,
+                "score": r.score,
+                "certificate_score": r.certificate_score,
+                "protocol_score": r.protocol_score,
+                "key_exchange_score": r.key_exchange_score,
+                "cipher_strength_score": r.cipher_strength_score,
+            })
+        }),
         "protocols": results.protocols.iter().map(|p| json!({
             "protocol": format!("{}", p.protocol),
             "supported": p.supported,
@@ -216,20 +228,22 @@ mod tests {
 
     #[test]
     fn test_html_grade_class_formatting() {
-        let mut results = ScanResults::default();
-        results.target = "example.com:443".to_string();
-        results.scan_time_ms = 10;
-        results.rating = Some(RatingResults {
-            ssl_rating: Some(RatingResult {
-                grade: Grade::APlus,
-                score: 95,
-                certificate_score: 95,
-                protocol_score: 95,
-                key_exchange_score: 95,
-                cipher_strength_score: 95,
-                warnings: Vec::new(),
+        let results = ScanResults {
+            target: "example.com:443".to_string(),
+            scan_time_ms: 10,
+            rating: Some(RatingResults {
+                ssl_rating: Some(RatingResult {
+                    grade: Grade::APlus,
+                    score: 95,
+                    certificate_score: 95,
+                    protocol_score: 95,
+                    key_exchange_score: 95,
+                    cipher_strength_score: 95,
+                    warnings: Vec::new(),
+                }),
             }),
-        });
+            ..Default::default()
+        };
 
         let html = generate_html_report(&results).expect("test assertion should succeed");
         assert!(html.contains("grade-A-plus"));
@@ -237,17 +251,19 @@ mod tests {
 
     #[test]
     fn test_html_includes_vulnerabilities() {
-        let mut results = ScanResults::default();
-        results.target = "example.com:443".to_string();
-        results.vulnerabilities = vec![VulnerabilityResult {
-            vuln_type: VulnerabilityType::Heartbleed,
-            vulnerable: true,
-            inconclusive: false,
-            details: "Test detail".to_string(),
-            cve: Some("CVE-2014-0160".to_string()),
-            cwe: None,
-            severity: Severity::High,
-        }];
+        let results = ScanResults {
+            target: "example.com:443".to_string(),
+            vulnerabilities: vec![VulnerabilityResult {
+                vuln_type: VulnerabilityType::Heartbleed,
+                vulnerable: true,
+                inconclusive: false,
+                details: "Test detail".to_string(),
+                cve: Some("CVE-2014-0160".to_string()),
+                cwe: None,
+                severity: Severity::High,
+            }],
+            ..Default::default()
+        };
 
         let html = generate_html_report(&results).expect("test assertion should succeed");
         assert!(html.contains("VULNERABLE"));
@@ -257,19 +273,21 @@ mod tests {
 
     #[test]
     fn test_html_protocol_none_is_inconclusive() {
-        let mut results = ScanResults::default();
-        results.target = "example.com:443".to_string();
-        results.protocols = vec![crate::protocols::ProtocolTestResult {
-            protocol: crate::protocols::Protocol::TLS12,
-            supported: true,
-            preferred: false,
-            ciphers_count: 0,
-            handshake_time_ms: None,
-            heartbeat_enabled: None,
-            session_resumption_caching: None,
-            session_resumption_tickets: None,
-            secure_renegotiation: None,
-        }];
+        let results = ScanResults {
+            target: "example.com:443".to_string(),
+            protocols: vec![crate::protocols::ProtocolTestResult {
+                protocol: crate::protocols::Protocol::TLS12,
+                supported: true,
+                preferred: false,
+                ciphers_count: 0,
+                handshake_time_ms: None,
+                heartbeat_enabled: None,
+                session_resumption_caching: None,
+                session_resumption_tickets: None,
+                secure_renegotiation: None,
+            }],
+            ..Default::default()
+        };
 
         let html = generate_html_report(&results).expect("test assertion should succeed");
         assert!(html.contains("Inconclusive"));
@@ -291,10 +309,12 @@ mod tests {
 
     #[test]
     fn test_html_omits_vulnerabilities_when_empty() {
-        let mut results = ScanResults::default();
-        results.target = "example.com:443".to_string();
-        results.scan_time_ms = 1;
-        results.vulnerabilities = Vec::new();
+        let results = ScanResults {
+            target: "example.com:443".to_string(),
+            scan_time_ms: 1,
+            vulnerabilities: Vec::new(),
+            ..Default::default()
+        };
 
         let html = generate_html_report(&results).expect("test assertion should succeed");
         assert!(!html.contains("<h2>Vulnerabilities</h2>"));
@@ -302,10 +322,12 @@ mod tests {
 
     #[test]
     fn test_html_includes_protocol_section_even_when_empty() {
-        let mut results = ScanResults::default();
-        results.target = "example.com:443".to_string();
-        results.scan_time_ms = 1;
-        results.protocols = Vec::new();
+        let results = ScanResults {
+            target: "example.com:443".to_string(),
+            scan_time_ms: 1,
+            protocols: Vec::new(),
+            ..Default::default()
+        };
 
         let html = generate_html_report(&results).expect("test assertion should succeed");
         assert!(html.contains("<h2>Supported Protocols</h2>"));

@@ -234,6 +234,7 @@ fn test_filter_revoked_certificates() {
         method: RevocationMethod::OCSP,
         details: "Certificate revoked".to_string(),
         ocsp_stapling: false,
+        ocsp_stapling_details: None,
         must_staple: false,
     };
 

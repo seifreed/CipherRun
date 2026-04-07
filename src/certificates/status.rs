@@ -157,21 +157,37 @@ impl CertificateStatus {
                 return false; // Match found, not mismatched
             }
 
-            // Check wildcard match
+            // Check wildcard match (only matches exactly one subdomain level)
             if let Some(san_domain) = san.strip_prefix("*.")
-                && hostname_lower.ends_with(san_domain)
+                && !san_domain.is_empty()
+                && san_domain.contains('.')
             {
-                return false; // Wildcard match found
+                let domain_suffix = format!(".{}", san_domain.to_lowercase());
+                if hostname_lower.ends_with(&domain_suffix) {
+                    let prefix = &hostname_lower[..hostname_lower.len() - domain_suffix.len()];
+                    if !prefix.is_empty() && !prefix.contains('.') {
+                        return false; // Wildcard match found
+                    }
+                }
             }
         }
 
-        // Check Common Name in subject
-        if cert
-            .subject
-            .to_lowercase()
-            .contains(&format!("cn={}", hostname_lower))
-        {
-            return false; // CN match found
+        // Check Common Name in subject (exact match with DN boundary)
+        let subject_lower = cert.subject.to_lowercase();
+        let cn_prefix = format!("cn={}", hostname_lower);
+        if let Some(pos) = subject_lower.find(&cn_prefix) {
+            let before_ok = pos == 0
+                || subject_lower[..pos].ends_with(", ")
+                || subject_lower[..pos].ends_with(',')
+                || subject_lower[..pos].ends_with('/')
+                || subject_lower[..pos].ends_with(' ');
+            let after = pos + cn_prefix.len();
+            let after_ok = after == subject_lower.len()
+                || subject_lower[after..].starts_with(',')
+                || subject_lower[after..].starts_with('/');
+            if before_ok && after_ok {
+                return false; // CN match found
+            }
         }
 
         // No matches found - it's mismatched

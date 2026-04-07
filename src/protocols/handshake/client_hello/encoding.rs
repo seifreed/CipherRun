@@ -65,7 +65,12 @@ impl ClientHelloBuilder {
         buf.put_u16(0);
 
         let hello_start = buf.len();
-        (length_pos, handshake_start, handshake_length_pos, hello_start)
+        (
+            length_pos,
+            handshake_start,
+            handshake_length_pos,
+            hello_start,
+        )
     }
 
     fn write_client_hello_body(&self, buf: &mut BytesMut) {

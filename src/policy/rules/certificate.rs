@@ -1,6 +1,7 @@
 // Certificate policy rules
 
 use crate::Result;
+use crate::certificates::validator::parse_cert_date;
 use crate::policy::violation::PolicyViolation;
 use crate::policy::{CertificatePolicy, PolicyAction};
 use crate::scanner::CertificateAnalysisResult;
@@ -75,14 +76,25 @@ impl<'a> CertificateRule<'a> {
         if let Some(max_days) = self.policy.max_days_until_expiry
             && let Some(cert) = leaf_cert
         {
-            // Parse not_after date and calculate days remaining
-            if let Ok(not_after) =
-                chrono::NaiveDateTime::parse_from_str(&cert.not_after, "%Y-%m-%d %H:%M:%S %Z")
-            {
-                let now = Utc::now().naive_utc();
+            // Parse not_after date using the shared certificate date parser,
+            // which supports OpenSSL format ("Jan 01 00:00:00 2024 GMT")
+            // and ISO format ("2024-01-01 00:00:00 +00:00").
+            if let Some(not_after) = parse_cert_date(&cert.not_after) {
+                let now = Utc::now();
                 let days_remaining = (not_after - now).num_days();
 
-                if days_remaining < max_days {
+                if days_remaining < 0 {
+                    violations.push(
+                        PolicyViolation::new(
+                            "certificates.max_days_until_expiry",
+                            "Certificate Expiry Check",
+                            self.policy.action,
+                            format!("Certificate expired {} days ago", -days_remaining),
+                        )
+                        .with_evidence(format!("Valid until: {}", cert.not_after))
+                        .with_remediation("Renew certificate immediately - it has already expired"),
+                    );
+                } else if days_remaining < max_days {
                     violations.push(
                         PolicyViolation::new(
                             "certificates.max_days_until_expiry",

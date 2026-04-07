@@ -37,8 +37,9 @@ impl CipherPreferenceAnalyzer {
             .is_some_and(|c| self.reversed.first() == Some(&c));
         let follows_rotated = match (&self.third_choice, &self.rotated) {
             (Some(third), Some(offered)) => offered.first() == Some(third),
-            (None, _) => true,
-            _ => false,
+            (None, None) => true, // Test not performed (e.g. only 2 ciphers) — don't penalize
+            (None, Some(_)) => false, // Ciphers were offered but server didn't respond — can't confirm
+            (Some(_), None) => false, // Malformed test data
         };
 
         follows_original && follows_reversed && follows_rotated
@@ -46,7 +47,9 @@ impl CipherPreferenceAnalyzer {
 
     pub(crate) fn all_choices_same(&self) -> bool {
         match self.third_choice {
-            Some(third) => self.first_choice == self.second_choice && self.second_choice == Some(third),
+            Some(third) => {
+                self.first_choice == self.second_choice && self.second_choice == Some(third)
+            }
             None => self.first_choice == self.second_choice,
         }
     }
@@ -90,21 +93,45 @@ impl CipherPreferenceAnalyzer {
         }
 
         tracing::debug!(
-            "Server cipher preference unclear (mixed behavior detected, assuming server preference)"
+            "Server cipher preference unclear (mixed behavior detected, defaulting to unknown)"
         );
-        true
+        false
     }
 
+    /// Build an approximate server preference order.
+    ///
+    /// **Important:** Only positions 1-3 are determined by server probing.
+    /// Remaining positions are in arbitrary client-offered order and do NOT
+    /// reflect the server's actual preference. Full server preference detection
+    /// would require iterative elimination probing.
     pub(crate) fn build_preference_order(&self, supported_ciphers: &[CipherSuite]) -> Vec<String> {
         let mut preference_order = Vec::new();
 
-        if let Some(chosen) = self.first_choice {
-            preference_order.push(format!("{:04x}", chosen));
+        // Place known server preferences first (from our probe results)
+        if let Some(first) = self.first_choice {
+            preference_order.push(format!("{:04x}", first));
+        }
+        if let Some(second) = self.second_choice {
+            let hex = format!("{:04x}", second);
+            if !preference_order.contains(&hex) {
+                preference_order.push(hex);
+            }
+        }
+        if let Some(third) = self.third_choice {
+            let hex = format!("{:04x}", third);
+            if !preference_order.contains(&hex) {
+                preference_order.push(hex);
+            }
+        }
 
-            for cipher in supported_ciphers {
-                if !preference_order.iter().any(|h| h == &cipher.hexcode) {
-                    preference_order.push(cipher.hexcode.clone());
-                }
+        // Append remaining supported ciphers (order is client-provided, not server preference)
+        for cipher in supported_ciphers {
+            let hex = cipher.hexcode.to_lowercase();
+            if !preference_order
+                .iter()
+                .any(|h| h.eq_ignore_ascii_case(&hex))
+            {
+                preference_order.push(cipher.hexcode.to_lowercase());
             }
         }
 

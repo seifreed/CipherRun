@@ -56,7 +56,7 @@ async fn test_history_route_empty() {
     let state = sqlite_state().await;
 
     let app = Router::new()
-        .route("/history/:domain", get(history::get_history))
+        .route("/history/{domain}", get(history::get_history))
         .with_state(state);
 
     assert_eq!(

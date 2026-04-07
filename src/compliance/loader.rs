@@ -1,14 +1,15 @@
 // Framework loader - Parses compliance frameworks from YAML content
 
 use crate::compliance::ComplianceFramework;
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 /// Framework loader for loading compliance frameworks from YAML files
 pub struct FrameworkLoader;
 
 impl FrameworkLoader {
     pub fn load_from_string(yaml_content: &str) -> Result<ComplianceFramework> {
-        let framework: ComplianceFramework = serde_yaml::from_str(yaml_content)?;
+        let framework: ComplianceFramework = serde_yaml::from_str(yaml_content)
+            .context("Failed to deserialize compliance framework YAML")?;
         Ok(framework)
     }
 
@@ -18,7 +19,8 @@ impl FrameworkLoader {
 
     pub fn load_builtin(framework_id: &str) -> Result<ComplianceFramework> {
         use crate::application::ComplianceFrameworkSource;
-        crate::compliance::source::BuiltinFrameworkSource.load_framework(framework_id)
+        crate::compliance::source::BuiltinFrameworkSource
+            .load_framework(framework_id)
             .map_err(Into::into)
     }
 

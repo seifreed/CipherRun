@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use subtle::ConstantTimeEq;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiConfig {
@@ -99,18 +100,18 @@ impl Default for ApiConfig {
 ///
 /// SECURITY: Uses system random number generator for unpredictable keys
 fn generate_secure_api_key() -> String {
-    use rand::Rng;
+    use rand::RngExt;
 
     const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ\
                              abcdefghijklmnopqrstuvwxyz\
                              0123456789-_";
     const KEY_LENGTH: usize = 32;
 
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
 
     let key: String = (0..KEY_LENGTH)
         .map(|_| {
-            let idx = rng.gen_range(0..CHARSET.len());
+            let idx = rng.random_range(0..CHARSET.len());
             CHARSET[idx] as char
         })
         .collect();
@@ -135,8 +136,40 @@ impl ApiConfig {
     }
 
     /// Validate API key and return permission level
+    ///
+    /// # Security
+    /// Uses constant-time comparison to prevent timing attacks (CWE-208).
+    /// All key comparisons take the same amount of time regardless of:
+    /// - How many characters match
+    /// - Whether the key exists in the map
+    /// - The position of the first mismatch
     pub fn validate_key(&self, key: &str) -> Option<Permission> {
-        self.api_keys.get(key).copied()
+        let mut result: Option<Permission> = None;
+
+        for (stored_key, permission) in &self.api_keys {
+            let key_bytes = key.as_bytes();
+            let stored_bytes = stored_key.as_bytes();
+
+            // Pad both slices to the same length so ct_eq always runs on equal-length inputs,
+            // preventing timing side-channel that leaks key length information
+            let max_len = key_bytes.len().max(stored_bytes.len()).max(1);
+            let mut padded_key = vec![0u8; max_len];
+            let mut padded_stored = vec![0u8; max_len];
+            padded_key[..key_bytes.len()].copy_from_slice(key_bytes);
+            padded_stored[..stored_bytes.len()].copy_from_slice(stored_bytes);
+
+            // Constant-time: combine length and content checks with bitwise AND (not boolean)
+            let lengths_match: subtle::Choice = key_bytes.len().ct_eq(&stored_bytes.len());
+            let bytes_match: subtle::Choice = padded_key.ct_eq(&padded_stored);
+            let is_match: bool = (lengths_match & bytes_match).into();
+
+            if is_match {
+                result = Some(*permission);
+                // DO NOT break early - continue checking all keys
+            }
+        }
+
+        result
     }
 
     /// Add API key

@@ -74,10 +74,12 @@ impl ComplianceEngine {
                 "CertificateValidation" => ComplianceChecker::check_cert_validation(rule, results)?,
                 "CertificateExpiration" => ComplianceChecker::check_cert_expiration(rule, results)?,
                 "Vulnerability" => ComplianceChecker::check_vulnerabilities(rule, results)?,
-                _ => return Err(crate::TlsError::ConfigError {
-                    message: format!("Unknown compliance rule type: {}", rule.rule_type),
+                _ => {
+                    return Err(crate::TlsError::ConfigError {
+                        message: format!("Unknown compliance rule type: {}", rule.rule_type),
+                    }
+                    .into());
                 }
-                .into()),
             };
 
             violations.extend(rule_violations);
@@ -89,6 +91,20 @@ impl ComplianceEngine {
     /// Get the framework being used
     pub fn framework(&self) -> &ComplianceFramework {
         &self.framework
+    }
+}
+
+/// Default implementation of ComplianceEvaluatorPort using ComplianceEngine.
+pub struct DefaultComplianceEvaluator;
+
+impl crate::application::ComplianceEvaluatorPort for DefaultComplianceEvaluator {
+    fn evaluate(
+        &self,
+        framework: &ComplianceFramework,
+        assessment: &ScanAssessment,
+    ) -> crate::Result<ComplianceReport> {
+        let engine = ComplianceEngine::new(framework.clone());
+        Ok(engine.evaluate(assessment)?)
     }
 }
 
@@ -136,33 +152,34 @@ mod tests {
 
         let engine = ComplianceEngine::new(framework);
 
-        #[allow(clippy::field_reassign_with_default)]
-        let mut results = ScanAssessment::default();
-        results.target = "test.com:443".to_string();
-        results.protocols = vec![
-            ProtocolTestResult {
-                protocol: Protocol::SSLv2,
-                supported: true,
-                preferred: false,
-                ciphers_count: 0,
-                heartbeat_enabled: None,
-                handshake_time_ms: None,
-                session_resumption_caching: None,
-                session_resumption_tickets: None,
-                secure_renegotiation: None,
-            },
-            ProtocolTestResult {
-                protocol: Protocol::TLS12,
-                supported: true,
-                preferred: false,
-                ciphers_count: 0,
-                heartbeat_enabled: None,
-                handshake_time_ms: None,
-                session_resumption_caching: None,
-                session_resumption_tickets: None,
-                secure_renegotiation: None,
-            },
-        ];
+        let results = ScanAssessment {
+            target: "test.com:443".to_string(),
+            protocols: vec![
+                ProtocolTestResult {
+                    protocol: Protocol::SSLv2,
+                    supported: true,
+                    preferred: false,
+                    ciphers_count: 0,
+                    heartbeat_enabled: None,
+                    handshake_time_ms: None,
+                    session_resumption_caching: None,
+                    session_resumption_tickets: None,
+                    secure_renegotiation: None,
+                },
+                ProtocolTestResult {
+                    protocol: Protocol::TLS12,
+                    supported: true,
+                    preferred: false,
+                    ciphers_count: 0,
+                    heartbeat_enabled: None,
+                    handshake_time_ms: None,
+                    session_resumption_caching: None,
+                    session_resumption_tickets: None,
+                    secure_renegotiation: None,
+                },
+            ],
+            ..Default::default()
+        };
 
         let report = engine
             .evaluate(&results)
@@ -213,20 +230,21 @@ mod tests {
 
         let engine = ComplianceEngine::new(framework);
 
-        #[allow(clippy::field_reassign_with_default)]
-        let mut results = ScanAssessment::default();
-        results.target = "test.com:443".to_string();
-        results.protocols = vec![ProtocolTestResult {
-            protocol: Protocol::TLS12,
-            supported: true,
-            preferred: false,
-            ciphers_count: 0,
-            heartbeat_enabled: None,
-            handshake_time_ms: None,
-            session_resumption_caching: None,
-            session_resumption_tickets: None,
-            secure_renegotiation: None,
-        }];
+        let results = ScanAssessment {
+            target: "test.com:443".to_string(),
+            protocols: vec![ProtocolTestResult {
+                protocol: Protocol::TLS12,
+                supported: true,
+                preferred: false,
+                ciphers_count: 0,
+                heartbeat_enabled: None,
+                handshake_time_ms: None,
+                session_resumption_caching: None,
+                session_resumption_tickets: None,
+                secure_renegotiation: None,
+            }],
+            ..Default::default()
+        };
 
         let report = engine
             .evaluate(&results)

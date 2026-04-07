@@ -102,6 +102,13 @@ async fn run_sqlite_migrations_manual(
             .filter(|c| c.is_numeric())
             .collect::<String>();
 
+        if version_str.is_empty() {
+            return Err(crate::TlsError::DatabaseError(format!(
+                "Migration filename '{}' does not start with a numeric version",
+                filename
+            )));
+        }
+
         let version: i64 = version_str.parse().map_err(|_| {
             crate::TlsError::DatabaseError(format!(
                 "Failed to parse migration version from {}",
@@ -134,15 +141,16 @@ async fn run_sqlite_migrations_manual(
             ))
         })?;
 
-        // Execute the SQL (sqlx will handle multiple statements)
-        for statement in sql_content.split(';').filter(|s| !s.trim().is_empty()) {
-            sqlx::query(statement).execute(pool).await.map_err(|e| {
+        // Execute the full SQL content as-is (handles semicolons in strings/comments correctly)
+        sqlx::raw_sql(&sql_content)
+            .execute(pool)
+            .await
+            .map_err(|e| {
                 crate::TlsError::DatabaseError(format!(
                     "Failed to execute migration {}: {}",
                     filename, e
                 ))
             })?;
-        }
 
         // Record migration as applied
         let checksum_placeholder = vec![0u8; 16]; // Placeholder for checksum
@@ -166,22 +174,84 @@ async fn run_sqlite_migrations_manual(
 pub async fn revert_migration(pool: &DatabasePool) -> crate::Result<()> {
     let migrations_path = Path::new("migrations");
 
-    let migrator = Migrator::new(migrations_path)
-        .await
-        .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to create migrator: {}", e)))?;
-
     match pool {
         DatabasePool::Postgres(pg_pool) => {
+            let migrator = Migrator::new(migrations_path).await.map_err(|e| {
+                crate::TlsError::DatabaseError(format!("Failed to create migrator: {}", e))
+            })?;
             migrator.undo(pg_pool, 1).await.map_err(|e| {
                 crate::TlsError::DatabaseError(format!("PostgreSQL migration revert failed: {}", e))
             })?;
         }
         DatabasePool::Sqlite(sqlite_pool) => {
-            migrator.undo(sqlite_pool, 1).await.map_err(|e| {
-                crate::TlsError::DatabaseError(format!("SQLite migration revert failed: {}", e))
-            })?;
+            revert_sqlite_migration_manual(sqlite_pool, migrations_path).await?;
         }
     }
+
+    Ok(())
+}
+
+/// Manually revert the last SQLite migration
+///
+/// This is needed because forward SQLite migrations use placeholder checksums,
+/// which causes sqlx's `Migrator::undo()` to fail with checksum mismatch errors.
+async fn revert_sqlite_migration_manual(
+    pool: &sqlx::SqlitePool,
+    migrations_path: &Path,
+) -> crate::Result<()> {
+    // Find the last applied migration
+    let row: Option<(i64, String)> = sqlx::query_as(
+        "SELECT version, description FROM _sqlx_migrations WHERE success = true ORDER BY version DESC LIMIT 1",
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| {
+        crate::TlsError::DatabaseError(format!("Failed to query migrations table: {}", e))
+    })?;
+
+    let (version, description) = match row {
+        Some(r) => r,
+        None => {
+            return Err(crate::TlsError::DatabaseError(
+                "No migrations to revert".to_string(),
+            ));
+        }
+    };
+
+    // Look for a .down.sql file matching the migration
+    // Try deriving from the description (which stores the original filename)
+    let down_filename = description.replace(".sql", ".down.sql");
+    let down_path = migrations_path.join(&down_filename);
+
+    if down_path.exists() {
+        let sql_content = fs::read_to_string(&down_path).map_err(|e| {
+            crate::TlsError::DatabaseError(format!(
+                "Failed to read down migration {}: {}",
+                down_filename, e
+            ))
+        })?;
+
+        sqlx::raw_sql(&sql_content)
+            .execute(pool)
+            .await
+            .map_err(|e| {
+                crate::TlsError::DatabaseError(format!(
+                    "Failed to execute down migration {}: {}",
+                    down_filename, e
+                ))
+            })?;
+    }
+
+    // Remove the migration record
+    sqlx::query("DELETE FROM _sqlx_migrations WHERE version = ?")
+        .bind(version)
+        .execute(pool)
+        .await
+        .map_err(|e| {
+            crate::TlsError::DatabaseError(format!("Failed to remove migration record: {}", e))
+        })?;
+
+    tracing::info!("Reverted migration: {} (version {})", description, version);
 
     Ok(())
 }

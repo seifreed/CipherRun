@@ -38,7 +38,7 @@ fn test_jarm_database_loading() {
     let sigs = db.all_signatures();
 
     // Should have multiple signatures
-    assert!(sigs.len() > 0);
+    assert!(!sigs.is_empty());
 
     // Should include known signatures
     let cloudflare = db.lookup("27d40d40d29d40d1dc42d43d00041d4689ee210389f4f6b4b5b1b93f92252d");
@@ -194,7 +194,7 @@ fn test_jarm_threat_detection() {
         .collect();
 
     // Should have several threat signatures
-    assert!(malware_sigs.len() > 0);
+    assert!(!malware_sigs.is_empty());
 
     // Check specific malware signatures exist
     for sig in malware_sigs {
@@ -237,7 +237,7 @@ fn test_jarm_load_balancer_detection() {
         .collect();
 
     // Should have load balancer signatures
-    assert!(lb_sigs.len() > 0);
+    assert!(!lb_sigs.is_empty());
 }
 
 #[test]
@@ -251,7 +251,7 @@ fn test_jarm_waf_detection() {
         .collect();
 
     // Should have WAF signatures
-    assert!(waf_sigs.len() > 0);
+    assert!(!waf_sigs.is_empty());
 }
 
 #[test]
@@ -312,7 +312,7 @@ fn test_jarm_probe_packet_structure() {
         // Should have TLS version in bytes 1-2
         let version = u16::from_be_bytes([packet[1], packet[2]]);
         assert!(
-            version >= 0x0300 && version <= 0x0304,
+            (0x0300..=0x0304).contains(&version),
             "Probe {} has invalid TLS version: 0x{:04x}",
             i,
             version

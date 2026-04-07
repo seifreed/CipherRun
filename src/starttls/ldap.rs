@@ -63,7 +63,10 @@ impl StarttlsNegotiator for LdapNegotiator {
         if n >= 10 {
             // Check if response contains ExtendedResponse (tag 0x78)
             // and resultCode = 0 (success)
-            if response[5] == 0x78 && response[7..9].contains(&0x00) {
+            // LDAP ExtendedResponse structure:
+            // [0x30, len, 0x02, 0x01, msgid, 0x78, len, 0x0a, 0x01, resultCode]
+            // resultCode (success = 0x00) is at offset 9
+            if response[5] == 0x78 && response[7..10].contains(&0x00) {
                 return Ok(());
             }
         }
@@ -130,13 +133,15 @@ mod tests {
 
         // The test may succeed or fail depending on timing, but we check for expected behavior
         // Either the response was properly received and parsed, or we got an error
-        if result.is_err() {
-            let err = result.unwrap_err();
+        if let Err(err) = result {
             // If we got an error, it should be a specific STARTTLS error
             let err_str = err.to_string();
             assert!(
-                err_str.contains("STARTTLS") || err_str.contains("LDAP") || err_str.contains("connection"),
-                "Unexpected error: {}", err_str
+                err_str.contains("STARTTLS")
+                    || err_str.contains("LDAP")
+                    || err_str.contains("connection"),
+                "Unexpected error: {}",
+                err_str
             );
         }
 
@@ -168,7 +173,8 @@ mod tests {
                 || err_str.contains("STARTTLS")
                 || err_str.contains("LDAP")
                 || err_str.contains("Connection"),
-            "Unexpected error message: {}", err_str
+            "Unexpected error message: {}",
+            err_str
         );
 
         server.await.unwrap();

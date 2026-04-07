@@ -1,16 +1,38 @@
 // Client Simulation Data Parser - Parses client-simulation.txt
 
 use anyhow::Result;
-use lazy_static::lazy_static;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-lazy_static! {
-    /// Global client database loaded at startup
-    pub static ref CLIENT_DB: Arc<ClientDatabase> = Arc::new(
-        ClientDatabase::load().expect("Failed to load client database")
-    );
+/// Global client database loaded at startup
+///
+/// Uses OnceLock for safe initialization with proper error handling.
+/// If loading fails, the error is captured and returned on first access.
+static CLIENT_DB_INNER: std::sync::OnceLock<Arc<ClientDatabase>> = std::sync::OnceLock::new();
+
+/// Get the global client database
+///
+/// Returns the database if already initialized, or initializes it on first call.
+/// Initialization errors are cached and returned on subsequent calls.
+pub fn client_db() -> Arc<ClientDatabase> {
+    CLIENT_DB_INNER
+        .get_or_init(|| match ClientDatabase::load() {
+            Ok(db) => Arc::new(db),
+            Err(e) => {
+                tracing::error!(
+                    "Failed to load client database: {}. Using empty database.",
+                    e
+                );
+                Arc::new(ClientDatabase::empty())
+            }
+        })
+        .clone()
 }
+
+/// Legacy static for backward compatibility
+/// Delegates to `client_db()` to avoid loading data twice into memory
+pub static CLIENT_DB: std::sync::LazyLock<Arc<ClientDatabase>> =
+    std::sync::LazyLock::new(client_db);
 
 /// Client handshake profile
 #[derive(Debug, Clone)]
@@ -70,6 +92,14 @@ impl ClientDatabase {
     pub fn load() -> Result<Self> {
         let data = include_str!("../../data/client-simulation.txt");
         Self::parse(data)
+    }
+
+    /// Create an empty database (fallback for loading errors)
+    pub fn empty() -> Self {
+        Self {
+            clients: Vec::new(),
+            by_id: HashMap::new(),
+        }
     }
 
     /// Parse client-simulation.txt format (bash array format)
@@ -317,7 +347,7 @@ mod tests {
 
     #[test]
     fn test_current_clients_filter() {
-        let db = CLIENT_DB.as_ref();
+        let db = client_db();
         let current = db.current_clients();
 
         for client in current {

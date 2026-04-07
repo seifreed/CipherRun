@@ -4,11 +4,10 @@ mod defaults;
 mod encoding;
 
 use crate::constants::{
-    COMPRESSION_DEFLATE, COMPRESSION_NULL, EXTENSION_ALPN,
-    EXTENSION_EC_POINT_FORMATS, EXTENSION_ENCRYPT_THEN_MAC, EXTENSION_EXTENDED_MASTER_SECRET,
-    EXTENSION_KEY_SHARE, EXTENSION_RENEGOTIATION_INFO, EXTENSION_SERVER_NAME,
-    EXTENSION_SESSION_TICKET, EXTENSION_SIGNATURE_ALGORITHMS, EXTENSION_SUPPORTED_GROUPS,
-    EXTENSION_SUPPORTED_VERSIONS,
+    COMPRESSION_DEFLATE, COMPRESSION_NULL, EXTENSION_ALPN, EXTENSION_EC_POINT_FORMATS,
+    EXTENSION_ENCRYPT_THEN_MAC, EXTENSION_EXTENDED_MASTER_SECRET, EXTENSION_KEY_SHARE,
+    EXTENSION_RENEGOTIATION_INFO, EXTENSION_SERVER_NAME, EXTENSION_SESSION_TICKET,
+    EXTENSION_SIGNATURE_ALGORITHMS, EXTENSION_SUPPORTED_GROUPS, EXTENSION_SUPPORTED_VERSIONS,
 };
 use crate::protocols::{Extension, Protocol};
 use bytes::{BufMut, BytesMut};
@@ -31,8 +30,8 @@ impl ClientHelloBuilder {
             .unwrap_or_else(|_| std::time::Duration::from_secs(0))
             .as_secs() as u32;
         random[0..4].copy_from_slice(&timestamp.to_be_bytes());
-        use rand::RngCore;
-        rand::thread_rng().fill_bytes(&mut random[4..]);
+        use rand::Rng;
+        rand::rng().fill_bytes(&mut random[4..]);
 
         Self {
             protocol,
@@ -124,6 +123,19 @@ impl ClientHelloBuilder {
         self
     }
 
+    pub fn add_session_ticket_with_data(&mut self, ticket_data: &[u8]) -> &mut Self {
+        self.extensions.push(Extension::new(
+            EXTENSION_SESSION_TICKET,
+            ticket_data.to_vec(),
+        ));
+        self
+    }
+
+    pub fn set_session_id(&mut self, session_id: &[u8]) -> &mut Self {
+        self.session_id = session_id.to_vec();
+        self
+    }
+
     pub fn add_encrypt_then_mac(&mut self) -> &mut Self {
         self.extensions
             .push(Extension::new(EXTENSION_ENCRYPT_THEN_MAC, vec![]));
@@ -155,8 +167,11 @@ impl ClientHelloBuilder {
 
     pub fn add_supported_versions(&mut self, versions: &[u16]) -> &mut Self {
         let mut data = BytesMut::new();
-        data.put_u8((versions.len() * 2) as u8);
-        for version in versions {
+        let max_versions = 127; // 127 * 2 = 254 bytes, fits in u8
+        let versions_to_write = &versions[..versions.len().min(max_versions)];
+        let versions_byte_len = versions_to_write.len() * 2;
+        data.put_u8(versions_byte_len as u8);
+        for version in versions_to_write {
             data.put_u16(*version);
         }
         self.extensions
@@ -167,21 +182,27 @@ impl ClientHelloBuilder {
     pub fn add_key_share(&mut self, group: u16) -> &mut Self {
         let mut data = BytesMut::new();
         let public_key = if group == 0x001d {
-            use rand::rngs::OsRng;
-            use x25519_dalek::{EphemeralSecret, PublicKey};
-
-            let secret = EphemeralSecret::random_from_rng(OsRng);
-            let public = PublicKey::from(&secret);
-            public.as_bytes().to_vec()
+            // Use ring for X25519 key generation to avoid rand_core version conflicts
+            use ring::agreement;
+            use ring::rand::SystemRandom;
+            let rng = SystemRandom::new();
+            let private_key =
+                agreement::EphemeralPrivateKey::generate(&agreement::X25519, &rng)
+                    .expect("X25519 key generation requires system entropy");
+            private_key
+                .compute_public_key()
+                .expect("X25519 public key derivation is infallible")
+                .as_ref()
+                .to_vec()
         } else if group == 0x0017 {
-            use rand::RngCore;
+            use rand::Rng;
             let mut key = vec![0u8; 65];
-            rand::thread_rng().fill_bytes(&mut key);
+            rand::rng().fill_bytes(&mut key);
             key
         } else {
-            use rand::RngCore;
+            use rand::Rng;
             let mut key = vec![0u8; 32];
-            rand::thread_rng().fill_bytes(&mut key);
+            rand::rng().fill_bytes(&mut key);
             key
         };
 

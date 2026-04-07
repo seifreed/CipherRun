@@ -1,6 +1,7 @@
 // Scan Routes
 
 use crate::api::{
+    adapters::scan as scan_adapter,
     jobs::ScanJob,
     models::{
         error::{ApiError, ApiErrorResponse},
@@ -76,21 +77,11 @@ pub async fn create_scan(
     // Create scan job with validated target
     let job = ScanJob::new(final_target.clone(), request.options, request.webhook_url);
 
-    let scan_id = job.id.clone();
-
-    // Enqueue job
-    state
-        .job_queue
-        .enqueue(job)
-        .await
-        .map_err(|e| ApiError::ServiceUnavailable(format!("Failed to queue scan: {}", e)))?;
+    // Enqueue via adapter
+    let scan_id =
+        scan_adapter::enqueue_scan(state.job_queue.as_ref(), job).await?;
     state.record_scan().await;
-    let queued_job = state
-        .job_queue
-        .get_job(&scan_id)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?
-        .ok_or_else(|| ApiError::Internal("Queued scan was not found".to_string()))?;
+    let queued_job = scan_adapter::get_scan(state.job_queue.as_ref(), &scan_id).await?;
 
     Ok(Json(present_queued_scan(&queued_job, final_target)))
 }
@@ -117,13 +108,8 @@ pub async fn get_scan_status(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<ScanStatusResponse>, ApiError> {
-    // Get job from queue
-    let job = state
-        .job_queue
-        .get_job(&id)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?
-        .ok_or_else(|| ApiError::NotFound(format!("Scan {} not found", id)))?;
+    // Get job via adapter
+    let job = scan_adapter::get_scan(state.job_queue.as_ref(), &id).await?;
 
     Ok(Json(present_scan_status(job)))
 }
@@ -151,13 +137,8 @@ pub async fn get_scan_results(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    // Get job from queue
-    let job = state
-        .job_queue
-        .get_job(&id)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?
-        .ok_or_else(|| ApiError::NotFound(format!("Scan {} not found", id)))?;
+    // Get job via adapter
+    let job = scan_adapter::get_scan(state.job_queue.as_ref(), &id).await?;
 
     // Check if scan is completed
     if !matches!(job.status, ScanStatus::Completed) {

@@ -23,7 +23,8 @@ pub(crate) fn format_revocation_status(status: &RevocationStatus) -> ColoredStri
 pub(crate) fn get_cert_type(index: usize, chain_length: usize) -> &'static str {
     match index {
         0 => "Leaf Certificate",
-        n if n == chain_length - 1 => "Root CA",
+        n if n == chain_length - 1 && chain_length > 2 => "Root/Top CA",
+        n if n == chain_length - 1 => "Issuer CA",
         _ => "Intermediate CA",
     }
 }

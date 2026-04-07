@@ -30,33 +30,33 @@ impl ApiServer {
         let api_routes = Router::new()
             // Scan routes
             .route("/scan", post(routes::scans::create_scan))
-            .route("/scan/:id", get(routes::scans::get_scan_status))
-            .route("/scan/:id", delete(routes::scans::cancel_scan))
-            .route("/scan/:id/results", get(routes::scans::get_scan_results))
-            .route("/scan/:id/stream", get(routes::scans::websocket_handler))
+            .route("/scan/{id}", get(routes::scans::get_scan_status))
+            .route("/scan/{id}", delete(routes::scans::cancel_scan))
+            .route("/scan/{id}/results", get(routes::scans::get_scan_results))
+            .route("/scan/{id}/stream", get(routes::scans::websocket_handler))
             // Certificate routes
             .route(
                 "/certificates",
                 get(routes::certificates::list_certificates),
             )
             .route(
-                "/certificates/:fingerprint",
+                "/certificates/{fingerprint}",
                 get(routes::certificates::get_certificate),
             )
             // Compliance routes
             .route(
-                "/compliance/:framework",
+                "/compliance/{framework}",
                 get(routes::compliance::check_compliance),
             )
             // Policy routes
             .route("/policies", post(routes::policies::create_policy))
-            .route("/policies/:id", get(routes::policies::get_policy))
+            .route("/policies/{id}", get(routes::policies::get_policy))
             .route(
-                "/policies/:id/evaluate",
+                "/policies/{id}/evaluate",
                 post(routes::policies::evaluate_policy),
             )
             // History routes
-            .route("/history/:domain", get(routes::history::get_history))
+            .route("/history/{domain}", get(routes::history::get_history))
             // Stats routes
             .route("/stats", get(routes::stats::get_stats))
             // Health check

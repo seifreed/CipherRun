@@ -163,6 +163,6 @@ mod tests {
         let doc = ApiDoc::openapi();
         assert!(doc.servers.is_some());
         let servers = doc.servers.unwrap();
-        assert!(servers.len() >= 1);
+        assert!(!servers.is_empty());
     }
 }

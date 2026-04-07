@@ -1,16 +1,37 @@
 // Elliptic Curves Parser - Parses curves-mapping.txt
 
 use anyhow::Result;
-use lazy_static::lazy_static;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-lazy_static! {
-    /// Global curves database loaded at startup
-    pub static ref CURVES_DB: Arc<CurvesDatabase> = Arc::new(
-        CurvesDatabase::load().expect("Failed to load curves database")
-    );
+/// Global curves database loaded at startup
+///
+/// Uses OnceLock for safe initialization with proper error handling.
+static CURVES_DB_INNER: std::sync::OnceLock<Arc<CurvesDatabase>> = std::sync::OnceLock::new();
+
+/// Get the global curves database
+///
+/// Returns the database if already initialized, or initializes it on first call.
+/// Initialization errors are logged and an empty database is used as fallback.
+pub fn curves_db() -> Arc<CurvesDatabase> {
+    CURVES_DB_INNER
+        .get_or_init(|| match CurvesDatabase::load() {
+            Ok(db) => Arc::new(db),
+            Err(e) => {
+                tracing::error!(
+                    "Failed to load curves database: {}. Using empty database.",
+                    e
+                );
+                Arc::new(CurvesDatabase::empty())
+            }
+        })
+        .clone()
 }
+
+/// Legacy static for backward compatibility
+/// Delegates to `curves_db()` to avoid loading data twice into memory
+pub static CURVES_DB: std::sync::LazyLock<Arc<CurvesDatabase>> =
+    std::sync::LazyLock::new(curves_db);
 
 /// Elliptic curve information
 #[derive(Debug, Clone)]
@@ -44,6 +65,14 @@ impl CurvesDatabase {
         Self::parse(data)
     }
 
+    /// Create an empty database (fallback for loading errors)
+    pub fn empty() -> Self {
+        Self {
+            by_id: HashMap::new(),
+            by_name: HashMap::new(),
+        }
+    }
+
     /// Parse curves-mapping.txt format
     /// Format: 0xHH,0xHH - ShortName  FullName
     pub fn parse(data: &str) -> Result<Self> {
@@ -58,7 +87,7 @@ impl CurvesDatabase {
 
             if let Ok(curve) = Self::parse_line(line) {
                 by_id.insert(curve.id.clone(), curve.clone());
-                by_name.insert(curve.short_name.clone(), curve.clone());
+                by_name.insert(curve.short_name.to_lowercase(), curve.clone());
             }
         }
 
@@ -130,10 +159,11 @@ impl CurvesDatabase {
             || name.to_lowercase().contains("ntru")
     }
 
-    /// Check if hybrid curve
+    /// Check if hybrid curve (case-insensitive)
     fn is_hybrid(name: &str) -> bool {
-        (name.contains("MLKEM") || name.contains("Kyber"))
-            && (name.contains("X25519") || name.contains("SecP"))
+        let lower = name.to_lowercase();
+        (lower.contains("mlkem") || lower.contains("kyber"))
+            && (lower.contains("x25519") || lower.contains("secp"))
     }
 
     /// Get curve by ID
@@ -143,7 +173,7 @@ impl CurvesDatabase {
 
     /// Get curve by name
     pub fn get_by_name(&self, name: &str) -> Option<&EllipticCurve> {
-        self.by_name.get(name)
+        self.by_name.get(&name.to_lowercase())
     }
 
     /// Get all curves
@@ -225,9 +255,7 @@ mod tests {
 
     #[test]
     fn test_parse_curve_line_invalid() {
-        let err = CurvesDatabase::parse_line("invalid")
-            .err()
-            .expect("should fail");
+        let err = CurvesDatabase::parse_line("invalid").expect_err("should fail");
         assert!(err.to_string().contains("Invalid format"));
     }
 

@@ -8,10 +8,17 @@ use crate::api::{
 };
 use crate::db::DatabasePool;
 use anyhow::Result;
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::broadcast;
+
+/// Maximum number of timestamps to keep in memory
+const MAX_TIMESTAMPS: usize = 100_000;
+
+/// Maximum number of hourly stats entries
+const MAX_HOURLY_ENTRIES: usize = 10_000;
 
 /// Shared application state
 pub struct AppState {
@@ -61,11 +68,11 @@ pub struct ApiStats {
     /// Total scan duration (for averaging)
     pub total_scan_duration_ms: u64,
 
-    /// Requests in last hour (timestamp, count)
-    pub requests_last_hour: Vec<(Instant, u64)>,
+    /// Requests in last hour (timestamp, count) - bounded collection
+    pub requests_last_hour: VecDeque<(Instant, u64)>,
 
-    /// Request timestamps for rolling-window stats
-    pub request_timestamps: Vec<Instant>,
+    /// Request timestamps for rolling-window stats - bounded collection
+    pub request_timestamps: VecDeque<Instant>,
 
     /// Total response time for averaging
     pub total_response_time_ms: u64,
@@ -73,8 +80,8 @@ pub struct ApiStats {
     /// Total responses counted for averaging
     pub total_responses: u64,
 
-    /// Scan timestamps for rolling-window stats
-    pub scan_timestamps: Vec<Instant>,
+    /// Scan timestamps for rolling-window stats - bounded collection
+    pub scan_timestamps: VecDeque<Instant>,
 }
 
 impl ApiStats {
@@ -84,22 +91,26 @@ impl ApiStats {
 
         // Update hourly stats
         let now = Instant::now();
-        self.requests_last_hour.push((now, 1));
-        self.request_timestamps.push(now);
+        self.requests_last_hour.push_back((now, 1));
+        self.request_timestamps.push_back(now);
 
         // Clean up old entries (older than 1 hour). Guard against underflow on some platforms.
-        if let Some(one_hour_ago) = now.checked_sub(std::time::Duration::from_secs(3600)) {
+        if let Some(one_hour_ago) = now.checked_sub(crate::constants::STATS_HOURLY_WINDOW) {
             self.requests_last_hour.retain(|(t, _)| *t > one_hour_ago);
         }
         self.prune_request_timestamps(now);
+
+        // Enforce memory bounds
+        self.enforce_bounds();
     }
 
     /// Increment scan counter
     pub fn increment_scans(&mut self) {
         self.total_scans += 1;
         let now = Instant::now();
-        self.scan_timestamps.push(now);
+        self.scan_timestamps.push_back(now);
         self.prune_scan_timestamps(now);
+        self.enforce_bounds();
     }
 
     /// Record completed scan
@@ -128,8 +139,15 @@ impl ApiStats {
     }
 
     /// Get requests in last hour
+    ///
+    /// Filters by time to avoid counting stale entries that haven't been pruned yet
     pub fn requests_in_last_hour(&self) -> u64 {
-        self.requests_last_hour.iter().map(|(_, c)| c).sum()
+        let now = Instant::now();
+        self.requests_last_hour
+            .iter()
+            .filter(|(t, _)| now.duration_since(*t).as_secs() <= 3600)
+            .map(|(_, c)| c)
+            .sum()
     }
 
     /// Get average response time in milliseconds
@@ -176,6 +194,23 @@ impl ApiStats {
         self.request_timestamps
             .retain(|ts| now.duration_since(*ts).as_secs() <= 24 * 60 * 60);
     }
+
+    /// Enforce memory bounds on timestamp collections
+    fn enforce_bounds(&mut self) {
+        // Prune by time first, then enforce size limits
+        if self.requests_last_hour.len() > MAX_HOURLY_ENTRIES {
+            let drain_count = self.requests_last_hour.len() - MAX_HOURLY_ENTRIES;
+            self.requests_last_hour.drain(0..drain_count);
+        }
+        if self.request_timestamps.len() > MAX_TIMESTAMPS {
+            let drain_count = self.request_timestamps.len() - MAX_TIMESTAMPS;
+            self.request_timestamps.drain(0..drain_count);
+        }
+        if self.scan_timestamps.len() > MAX_TIMESTAMPS {
+            let drain_count = self.scan_timestamps.len() - MAX_TIMESTAMPS;
+            self.scan_timestamps.drain(0..drain_count);
+        }
+    }
 }
 
 impl AppState {
@@ -189,11 +224,10 @@ impl AppState {
             Arc::new(InMemoryJobQueue::new(config.job_queue_capacity));
 
         // Create executor
-        let executor = Arc::new(ScanExecutor::new(
-            job_queue.clone(),
-            config.max_concurrent_scans,
-        )
-        .with_stats(stats.clone()));
+        let executor = Arc::new(
+            ScanExecutor::new(job_queue.clone(), config.max_concurrent_scans)
+                .with_stats(stats.clone()),
+        );
 
         // Get progress broadcaster
         let progress_tx = executor.progress_broadcaster();

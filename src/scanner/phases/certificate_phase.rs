@@ -107,9 +107,10 @@ impl CertificatePhase {
         context: &ScanContext,
         chain: &CertificateChain,
     ) -> Option<RevocationResult> {
-        // Only check revocation if phone-out is enabled
-        // Phone-out means the scanner is allowed to make external network calls
-        if !context.args.tls.phone_out {
+        // Revocation details can come from two sources:
+        // - direct OCSP/CRL lookups when phone-out is enabled
+        // - stapling analysis when --ocsp requested and pre-handshake data exists
+        if !context.args.tls.phone_out && !context.args.scan.ocsp {
             return None;
         }
 
@@ -124,11 +125,19 @@ impl CertificatePhase {
         };
 
         // Perform revocation check
-        let checker = RevocationChecker::new(true);
-        checker
+        let checker = RevocationChecker::new(context.args.tls.phone_out);
+        let mut revocation = checker
             .check_revocation_status(leaf_cert, issuer_cert)
             .await
-            .ok()
+            .ok()?;
+
+        if let Some(pre_handshake) = context.pre_handshake.as_ref() {
+            let stapling = checker.check_ocsp_stapling(&pre_handshake.handshake_data);
+            revocation.ocsp_stapling = stapling.stapled_response_present;
+            revocation.ocsp_stapling_details = Some(stapling);
+        }
+
+        Some(revocation)
     }
 }
 
@@ -145,10 +154,7 @@ impl ScanPhase for CertificatePhase {
     }
 
     fn should_run(&self, args: &ScanRequest) -> bool {
-        // Run if:
-        // - Full scan mode (--all)
-        // - Default scan (target specified without other flags)
-        args.scan.all || args.target.is_some()
+        args.should_run_certificate_phase()
     }
 
     async fn execute(&self, context: &mut ScanContext) -> Result<()> {
@@ -186,10 +192,12 @@ mod tests {
         args.scan.all = true;
         assert!(phase.should_run(&args));
 
-        // Test with target specified (default scan)
-        let mut args = ScanRequest::default();
-        args.target = Some("example.com".to_string());
-        assert!(phase.should_run(&args));
+        // Target alone should not imply baseline scanning
+        let args = ScanRequest {
+            target: Some("example.com".to_string()),
+            ..Default::default()
+        };
+        assert!(!phase.should_run(&args));
 
         // Test with no relevant flags
         let args = ScanRequest::default();
@@ -211,7 +219,7 @@ mod tests {
         )
         .unwrap();
         let args = Arc::new(ScanRequest::default());
-        let context = ScanContext::new(target, args, None);
+        let context = ScanContext::new(target, args, None, None);
 
         let chain = CertificateChain {
             certificates: vec![crate::certificates::parser::CertificateInfo::default()],

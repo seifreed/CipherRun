@@ -1,5 +1,7 @@
 // Cipher tester façade. Public API, data contracts, configuration and tests stay here.
 
+#[path = "tester/classification.rs"]
+mod classification;
 #[path = "tester/connection_pool.rs"]
 mod connection_pool;
 #[path = "tester/handshake_io.rs"]
@@ -8,6 +10,8 @@ mod handshake_io;
 mod orchestration;
 #[path = "tester/preference.rs"]
 mod preference;
+#[path = "tester/server_preference.rs"]
+mod server_preference;
 
 use std::collections::HashMap;
 use std::sync::Arc;

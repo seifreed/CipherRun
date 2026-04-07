@@ -27,7 +27,7 @@ impl ScanAssessment {
             .map(|protocol| protocol.protocol)
             .collect();
 
-        for inconsistency in results.inconsistencies.iter().flatten() {
+        for inconsistency in results.scan_metadata.inconsistencies.iter().flatten() {
             if let InconsistencyDetails::Protocols { protocol, .. } = inconsistency.details {
                 any_supported_protocols.insert(protocol);
             }
@@ -74,21 +74,28 @@ mod tests {
     fn maps_protocols_supported_on_any_backend_from_inconsistencies() {
         let results = ScanResults {
             target: "example.com:443".to_string(),
-            inconsistencies: Some(vec![Inconsistency {
-                inconsistency_type: InconsistencyType::ProtocolSupport,
-                severity: Severity::Low,
-                description: "TLS 1.0 inconsistent".to_string(),
-                ips_affected: Vec::new(),
-                details: InconsistencyDetails::Protocols {
-                    protocol: Protocol::TLS10,
-                    ips_with_support: Vec::new(),
-                    ips_without_support: Vec::new(),
-                },
-            }]),
+            scan_metadata: crate::scanner::ScanMetadata {
+                inconsistencies: Some(vec![Inconsistency {
+                    inconsistency_type: InconsistencyType::ProtocolSupport,
+                    severity: Severity::Low,
+                    description: "TLS 1.0 inconsistent".to_string(),
+                    ips_affected: Vec::new(),
+                    details: InconsistencyDetails::Protocols {
+                        protocol: Protocol::TLS10,
+                        ips_with_support: Vec::new(),
+                        ips_without_support: Vec::new(),
+                    },
+                }]),
+                ..Default::default()
+            },
             ..Default::default()
         };
 
         let assessment = ScanAssessment::from_scan_results(&results);
-        assert!(assessment.any_supported_protocols.contains(&Protocol::TLS10));
+        assert!(
+            assessment
+                .any_supported_protocols
+                .contains(&Protocol::TLS10)
+        );
     }
 }

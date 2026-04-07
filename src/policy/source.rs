@@ -7,7 +7,7 @@ pub struct FilesystemPolicySource;
 
 impl PolicyDocumentSource for FilesystemPolicySource {
     fn read_to_string(&self, path: &Path) -> crate::Result<String> {
-        std::fs::read_to_string(path).map_err(|source| crate::TlsError::IoError { source }.into())
+        std::fs::read_to_string(path).map_err(|source| crate::TlsError::IoError { source })
     }
 }
 

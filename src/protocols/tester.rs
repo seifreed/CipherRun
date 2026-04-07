@@ -125,7 +125,10 @@ impl ProtocolTester {
             Protocol::SSLv3,
             Protocol::SSLv2,
         ] {
-            if results.iter().any(|r| r.protocol == protocol && r.supported) {
+            if results
+                .iter()
+                .any(|r| r.protocol == protocol && r.supported)
+            {
                 return Ok(Some(protocol));
             }
         }
@@ -252,10 +255,26 @@ mod tests {
             .await
             .expect("test assertion should succeed");
 
-        assert!(results.iter().any(|r| r.protocol == Protocol::TLS12 && r.supported));
-        assert!(results.iter().any(|r| r.protocol == Protocol::TLS13 && r.supported));
-        assert!(results.iter().any(|r| r.protocol == Protocol::SSLv2 && !r.supported));
-        assert!(results.iter().any(|r| r.protocol == Protocol::SSLv3 && !r.supported));
+        assert!(
+            results
+                .iter()
+                .any(|r| r.protocol == Protocol::TLS12 && r.supported)
+        );
+        assert!(
+            results
+                .iter()
+                .any(|r| r.protocol == Protocol::TLS13 && r.supported)
+        );
+        assert!(
+            results
+                .iter()
+                .any(|r| r.protocol == Protocol::SSLv2 && !r.supported)
+        );
+        assert!(
+            results
+                .iter()
+                .any(|r| r.protocol == Protocol::SSLv3 && !r.supported)
+        );
     }
 
     #[tokio::test]
@@ -315,9 +334,7 @@ mod tests {
             .expect("listener should bind");
         let addr = listener.local_addr().expect("local addr should exist");
 
-        tokio::spawn(async move {
-            if let Ok((_stream, _)) = listener.accept().await {}
-        });
+        tokio::spawn(async move { if let Ok((_stream, _)) = listener.accept().await {} });
 
         addr
     }

@@ -2,10 +2,26 @@
 // RFC 5804
 
 use super::protocols::{StarttlsNegotiator, StarttlsProtocol};
+use super::text_protocol::{
+    CapabilityCommand, CapabilityConfig, CapabilityResponseStyle, GreetingStyle, SuccessCheck,
+    TextProtocolConfig,
+};
 use crate::Result;
 use async_trait::async_trait;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
+
+const CONFIG: TextProtocolConfig = TextProtocolConfig {
+    protocol_name: "Sieve",
+    protocol: StarttlsProtocol::SIEVE,
+    greeting: GreetingStyle::None,
+    capability: Some(CapabilityConfig {
+        command: CapabilityCommand::None,
+        starttls_marker: "STARTTLS",
+        response_style: CapabilityResponseStyle::UntilPrefix("OK"),
+    }),
+    starttls_command: b"STARTTLS\r\n",
+    success: SuccessCheck::Prefix("OK"),
+};
 
 /// Sieve STARTTLS negotiator
 pub struct SieveNegotiator;
@@ -20,54 +36,12 @@ impl SieveNegotiator {
     pub fn new() -> Self {
         Self
     }
-
-    async fn read_response(reader: &mut BufReader<&mut TcpStream>) -> Result<String> {
-        let mut response = String::new();
-        reader.read_line(&mut response).await?;
-        Ok(response)
-    }
 }
 
 #[async_trait]
 impl StarttlsNegotiator for SieveNegotiator {
     async fn negotiate_starttls(&self, stream: &mut TcpStream) -> Result<()> {
-        let mut reader = BufReader::new(stream);
-
-        // Read server capabilities (starts with "IMPLEMENTATION")
-        let mut starttls_supported = false;
-        loop {
-            let response = Self::read_response(&mut reader).await?;
-
-            if response.starts_with("OK") {
-                break;
-            }
-
-            if response.to_uppercase().contains("STARTTLS") {
-                starttls_supported = true;
-            }
-        }
-
-        if !starttls_supported {
-            return Err(crate::error::TlsError::StarttlsError {
-                protocol: "Sieve".to_string(),
-                details: "Server does not support STARTTLS".to_string(),
-            });
-        }
-
-        // Send STARTTLS command
-        reader.get_mut().write_all(b"STARTTLS\r\n").await?;
-        reader.get_mut().flush().await?;
-
-        // Read STARTTLS response (OK = ready to start TLS)
-        let response = Self::read_response(&mut reader).await?;
-        if !response.starts_with("OK") {
-            return Err(crate::error::TlsError::StarttlsError {
-                protocol: "Sieve".to_string(),
-                details: format!("STARTTLS failed: {}", response),
-            });
-        }
-
-        Ok(())
+        super::text_protocol::negotiate(&CONFIG, "", stream).await
     }
 
     fn protocol(&self) -> StarttlsProtocol {
@@ -78,8 +52,9 @@ impl StarttlsNegotiator for SieveNegotiator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::starttls::response;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-    use tokio::net::TcpListener;
+    use tokio::net::{TcpListener, TcpStream};
 
     #[test]
     fn test_sieve_negotiator_creation() {
@@ -89,7 +64,7 @@ mod tests {
 
     #[test]
     fn test_sieve_negotiator_default() {
-        let negotiator = SieveNegotiator::default();
+        let negotiator = SieveNegotiator;
         assert_eq!(negotiator.protocol(), StarttlsProtocol::SIEVE);
     }
 
@@ -97,7 +72,7 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("test assertion should succeed");
-        let port = listener.local_addr().unwrap().port();
+        let port = listener.local_addr().expect("test listener should have local addr").port();
 
         let lines = lines.iter().map(|l| l.to_string()).collect::<Vec<_>>();
         let starttls_response = starttls_response.to_string();
@@ -180,7 +155,7 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("test assertion should succeed");
-        let port = listener.local_addr().unwrap().port();
+        let port = listener.local_addr().expect("test listener should have local addr").port();
 
         tokio::spawn(async move {
             if let Ok((mut socket, _)) = listener.accept().await {
@@ -192,7 +167,7 @@ mod tests {
             .await
             .expect("test assertion should succeed");
         let mut reader = BufReader::new(&mut stream);
-        let line = SieveNegotiator::read_response(&mut reader)
+        let line = response::read_line(&mut reader)
             .await
             .expect("test assertion should succeed");
         assert!(line.starts_with("OK"));

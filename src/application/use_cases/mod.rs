@@ -7,5 +7,5 @@ pub mod store_scan_results;
 pub use evaluate_compliance::EvaluateCompliance;
 pub use evaluate_policy::EvaluatePolicy;
 pub use run_scan::RunScan;
-pub use scan_workflow::{ScanWorkflow, ScanWorkflowInput};
+pub use scan_workflow::{ScanWorkflow, ScanWorkflowInput, ScanWorkflowServices};
 pub use store_scan_results::StoreScanResults;

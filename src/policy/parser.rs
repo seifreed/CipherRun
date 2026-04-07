@@ -16,8 +16,7 @@ impl PolicyDocumentSource for NoopPolicyDocumentSource {
     fn read_to_string(&self, _path: &Path) -> Result<String> {
         Err(crate::TlsError::ConfigError {
             message: "No policy document source configured for this loader".to_string(),
-        }
-        .into())
+        })
     }
 }
 
@@ -29,7 +28,10 @@ pub struct PolicyLoader<'a> {
 
 impl<'a> PolicyLoader<'a> {
     /// Create a new policy loader with a base path and document source.
-    pub fn from_source(base_path: impl Into<PathBuf>, source: &'a dyn PolicyDocumentSource) -> Self {
+    pub fn from_source(
+        base_path: impl Into<PathBuf>,
+        source: &'a dyn PolicyDocumentSource,
+    ) -> Self {
         Self {
             base_path: base_path.into(),
             source,
@@ -181,9 +183,7 @@ impl<'a> PolicyLoader<'a> {
         // Validate rating policy
         if let Some(ref rating_policy) = policy.rating {
             if let Some(ref min_grade) = rating_policy.min_grade {
-                let valid_grades = [
-                    "A+", "A", "A-", "B", "C", "D", "E", "F", "T", "M",
-                ];
+                let valid_grades = ["A+", "A", "A-", "B", "C", "D", "E", "F", "T", "M"];
                 if !valid_grades.contains(&min_grade.as_str()) {
                     return Err(crate::TlsError::ConfigError {
                         message: format!(
@@ -221,11 +221,11 @@ impl<'a> PolicyLoader<'a> {
             // Validate date format if expires is set
             if let Some(ref expires) = exception.expires {
                 use chrono::NaiveDate;
-                NaiveDate::parse_from_str(expires, "%Y-%m-%d").map_err(|_| {
+                NaiveDate::parse_from_str(expires, "%Y-%m-%d").map_err(|e| {
                     crate::TlsError::ConfigError {
                         message: format!(
-                            "Invalid exception expiry date '{}'. Must be in YYYY-MM-DD format",
-                            expires
+                            "Invalid exception expiry date '{}': {} (expected YYYY-MM-DD)",
+                            expires, e
                         ),
                     }
                 })?;

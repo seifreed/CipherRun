@@ -6,9 +6,15 @@ impl ClientCAsTester {
         let mut pos = 0;
         let mut handshake_bytes = Vec::new();
 
-        while pos + 5 < data.len() {
+        while pos + 5 <= data.len() {
             if data[pos] != 0x16 {
-                pos += 1;
+                // Skip non-handshake records by reading the full record header + length
+                if pos + 5 <= data.len() {
+                    let record_len = u16::from_be_bytes([data[pos + 3], data[pos + 4]]) as usize;
+                    pos += 5 + record_len;
+                } else {
+                    break;
+                }
                 continue;
             }
 
@@ -88,7 +94,7 @@ impl ClientCAsTester {
         let ca_data = &data[pos..pos + ca_list_len];
         let mut ca_pos = 0;
 
-        while ca_pos + 2 < ca_data.len() {
+        while ca_pos + 2 <= ca_data.len() {
             let dn_len = u16::from_be_bytes([ca_data[ca_pos], ca_data[ca_pos + 1]]) as usize;
             ca_pos += 2;
 
@@ -116,8 +122,15 @@ impl ClientCAsTester {
         let mut cn = None;
         let mut org = None;
 
-        for i in 0..dn_data.len().saturating_sub(10) {
-            if dn_data[i..].len() > 8
+        // Need at least 10 bytes: 3 for OID prefix + 3 for OID type + 1 for length + 3 min data
+        // But we access up to i + 6, so we need i + 6 < dn_data.len()
+        for i in 0..dn_data.len().saturating_sub(9) {
+            // Explicit bounds check for array slicing
+            if i + 6 >= dn_data.len() {
+                break;
+            }
+
+            if dn_data[i..].len() >= 9  // Need at least 9 bytes: 3 (OID) + 3 (type) + 1 (len) + 2+ (value)
                 && dn_data[i..i + 3] == [0x06, 0x03, 0x55]
                 && (dn_data[i + 3..i + 6] == [0x04, 0x03, 0x0c]
                     || dn_data[i + 3..i + 6] == [0x04, 0x03, 0x13])
@@ -130,7 +143,11 @@ impl ClientCAsTester {
                 }
             }
 
-            if dn_data[i..].len() > 8
+            if i + 6 >= dn_data.len() {
+                break;
+            }
+
+            if dn_data[i..].len() >= 9
                 && dn_data[i..i + 3] == [0x06, 0x03, 0x55]
                 && (dn_data[i + 3..i + 6] == [0x04, 0x0a, 0x0c]
                     || dn_data[i + 3..i + 6] == [0x04, 0x0a, 0x13])

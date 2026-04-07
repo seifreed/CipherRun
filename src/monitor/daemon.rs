@@ -8,10 +8,9 @@ use crate::monitor::detector::ChangeDetector;
 use crate::monitor::inventory::{CertificateInventory, MonitoredDomain};
 use crate::monitor::scheduler::SchedulingEngine;
 use crate::utils::network::Target;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration as StdDuration;
 use tokio::sync::{Mutex, Semaphore};
 use tokio::time::interval;
 
@@ -83,7 +82,7 @@ impl MonitorDaemon {
         );
 
         // Main monitoring loop
-        let mut tick_interval = interval(StdDuration::from_secs(10)); // Check every 10 seconds
+        let mut tick_interval = interval(crate::constants::MONITOR_POLL_INTERVAL);
 
         while self.running.load(Ordering::SeqCst) {
             tick_interval.tick().await;
@@ -116,9 +115,13 @@ impl MonitorDaemon {
         let domains_to_check: Vec<MonitoredDomain> = enabled_domains.into_iter().cloned().collect();
         drop(inventory);
 
-        // Get domains due for scanning
+        // Get domains due for scanning and mark them in-progress atomically
+        // to prevent concurrent scan cycles from picking up the same domains
         let mut scheduler = self.scheduler.lock().await;
         let due_domains = scheduler.get_domains_to_scan(&domains_to_check);
+        for domain in &due_domains {
+            scheduler.mark_scan_in_progress(domain);
+        }
         let due_count = due_domains.len();
         drop(scheduler);
 
@@ -129,26 +132,45 @@ impl MonitorDaemon {
         tracing::info!("Scanning {} domains", due_count);
 
         // Scan domains concurrently (limited by semaphore)
+        // Acquire permits BEFORE spawning tasks to truly limit concurrency.
+        // This ensures no more than max_concurrent_scans run simultaneously.
         let mut tasks = Vec::new();
 
         for domain in due_domains {
-            let domain_clone = domain.clone(); // Necessary: move into async task
-            let inventory_clone = Arc::clone(&self.inventory); // Arc clone is cheap
+            let domain_clone = domain.clone();
+            let inventory_clone = Arc::clone(&self.inventory);
             let alert_manager_clone = Arc::clone(&self.alert_manager);
             let detector_clone = Arc::clone(&self.detector);
             let semaphore_clone = Arc::clone(&self.scan_semaphore);
+            let scheduler_clone = Arc::clone(&self.scheduler);
 
             let task = tokio::spawn(async move {
-                // Acquire semaphore permit
-                let _permit = semaphore_clone.acquire().await.ok();
+                // Acquire semaphore permit - abort scan if semaphore is closed
+                let _permit = match semaphore_clone.acquire().await {
+                    Ok(permit) => permit,
+                    Err(_) => {
+                        tracing::warn!(
+                            "Semaphore closed, skipping scan for {}",
+                            domain_clone.identifier()
+                        );
+                        return Ok(());
+                    }
+                };
 
-                Self::scan_domain_static(
+                let result = Self::scan_domain_static(
                     &domain_clone,
                     inventory_clone,
                     alert_manager_clone,
                     detector_clone,
                 )
-                .await
+                .await;
+
+                // Always clear in-progress and schedule next scan
+                // (on failure, this allows the domain to be retried next cycle)
+                let mut scheduler = scheduler_clone.lock().await;
+                scheduler.mark_scan_completed(&domain_clone);
+
+                result
             });
 
             tasks.push(task);
@@ -156,8 +178,10 @@ impl MonitorDaemon {
 
         // Wait for all scans to complete
         for task in tasks {
-            if let Err(e) = task.await {
-                tracing::error!("Scan task failed: {}", e);
+            match task.await {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => tracing::error!("Scan error: {}", e),
+                Err(e) => tracing::error!("Scan task panicked: {}", e),
             }
         }
 
@@ -202,8 +226,13 @@ impl MonitorDaemon {
             Err(e) => {
                 tracing::error!("Failed to get certificate for {}: {}", identifier, e);
 
-                // Send scan failure alert
-                if domain.alert_thresholds.on_change {
+                // Send scan failure alert if any monitoring threshold is enabled
+                if domain.alert_thresholds.on_change
+                    || domain.alert_thresholds.expiry_1d
+                    || domain.alert_thresholds.expiry_7d
+                    || domain.alert_thresholds.expiry_14d
+                    || domain.alert_thresholds.expiry_30d
+                {
                     let alert = Alert::scan_failure(
                         identifier.clone(),
                         format!("Failed to retrieve certificate: {}", e),
@@ -218,14 +247,16 @@ impl MonitorDaemon {
             }
         };
 
-        // Get previous certificate from inventory
-        let mut inventory_guard = inventory.lock().await;
-        let previous_cert = inventory_guard
-            .get_domain(&identifier)
-            .and_then(|d| d.last_certificate.as_ref())
-            .cloned();
+        // Get previous certificate from inventory (brief lock)
+        let previous_cert = {
+            let inventory_guard = inventory.lock().await;
+            inventory_guard
+                .get_domain(&identifier)
+                .and_then(|d| d.last_certificate.as_ref())
+                .cloned()
+        };
 
-        // Detect changes
+        // Detect changes and send alerts WITHOUT holding the lock
         if let Some(prev) = previous_cert {
             let changes = detector.detect_changes(&prev, &current_cert);
 
@@ -251,16 +282,20 @@ impl MonitorDaemon {
             }
         }
 
-        // Check expiry warnings
-        Self::check_expiry_warnings(
+        // Check expiry warnings (don't propagate alert errors to avoid skipping inventory update)
+        if let Err(e) = Self::check_expiry_warnings(
             &identifier,
             &current_cert,
             &domain.alert_thresholds,
             &alert_manager,
         )
-        .await?;
+        .await
+        {
+            tracing::error!("Failed to check expiry warnings for {}: {}", identifier, e);
+        }
 
-        // Update inventory
+        // Re-acquire lock to update inventory
+        let mut inventory_guard = inventory.lock().await;
         if let Some(domain_mut) = inventory_guard.get_domain_mut(&identifier) {
             domain_mut.update_scan(Some(current_cert));
         }
@@ -277,26 +312,89 @@ impl MonitorDaemon {
         thresholds: &crate::monitor::types::AlertThresholds,
         alert_manager: &AlertManager,
     ) -> Result<()> {
-        // Parse expiry date
-        let expiry = match chrono::DateTime::parse_from_str(
-            &format!("{} +0000", cert.not_after),
-            "%Y-%m-%d %H:%M:%S %Z %z",
-        ) {
+        use chrono::NaiveDateTime;
+
+        // Parse expiry date - support multiple formats used by different certificate sources
+        // Formats observed: RFC3339, "YYYY-MM-DD HH:MM:SS UTC", "YYYY-MM-DD HH:MM:SS GMT"
+        let expiry = match chrono::DateTime::parse_from_rfc3339(&cert.not_after) {
             Ok(dt) => dt.with_timezone(&Utc),
             Err(_) => {
-                // Try alternative parsing
-                return Ok(());
+                // Try parsing as "YYYY-MM-DD HH:MM:SS UTC" or similar formats
+                let not_after_str = &cert.not_after;
+                match NaiveDateTime::parse_from_str(not_after_str, "%Y-%m-%d %H:%M:%S UTC")
+                    .map(|dt| DateTime::from_naive_utc_and_offset(dt, Utc))
+                {
+                    Ok(dt) => dt,
+                    Err(_) => {
+                        // Try with cleaned format (remove UTC/GMT suffix)
+                        let cleaned = not_after_str.replace(" UTC", "").replace(" GMT", "");
+                        match NaiveDateTime::parse_from_str(&cleaned, "%Y-%m-%d %H:%M:%S")
+                            .map(|dt| DateTime::from_naive_utc_and_offset(dt, Utc))
+                        {
+                            Ok(dt) => dt,
+                            Err(e) => {
+                                tracing::warn!(
+                                    "Failed to parse certificate expiry date for {}: {} (input was: {})",
+                                    identifier,
+                                    e,
+                                    cert.not_after
+                                );
+                                // Alert on unparseable date if expiry warnings are enabled
+                                if thresholds.expiry_1d
+                                    || thresholds.expiry_7d
+                                    || thresholds.expiry_14d
+                                    || thresholds.expiry_30d
+                                {
+                                    let alert = Alert::scan_failure(
+                                        identifier.to_string(),
+                                        format!(
+                                            "Certificate has unparseable expiry date: {}",
+                                            cert.not_after
+                                        ),
+                                    );
+                                    let _ = alert_manager.send_alert(&alert).await;
+                                }
+                                return Ok(());
+                            }
+                        }
+                    }
+                }
             }
         };
 
         let now = Utc::now();
         let days_remaining = (expiry - now).num_days();
 
-        // Check thresholds
+        // Already expired certificates — generate critical alert (only if any expiry threshold enabled)
+        if days_remaining < 0 {
+            let any_expiry_threshold = thresholds.expiry_1d
+                || thresholds.expiry_7d
+                || thresholds.expiry_14d
+                || thresholds.expiry_30d;
+            if !any_expiry_threshold {
+                return Ok(());
+            }
+
+            let details = AlertDetails {
+                certificate_serial: Some(cert.serial_number.clone()),
+                certificate_issuer: Some(cert.issuer.clone()),
+                certificate_expiry: Some(cert.not_after.clone()),
+                previous_serial: None,
+                scan_time: Utc::now(),
+            };
+
+            let alert = Alert::expiry_warning(identifier.to_string(), days_remaining, details);
+            alert_manager.send_alert(&alert).await?;
+            return Ok(());
+        }
+
+        // Check thresholds with cumulative matching: each threshold covers its
+        // full range so that enabling expiry_30d alerts for ALL certs expiring
+        // within 30 days, not just those between 15-30 days.
         let should_alert = (days_remaining <= 1 && thresholds.expiry_1d)
-            || (days_remaining <= 7 && days_remaining > 1 && thresholds.expiry_7d)
-            || (days_remaining <= 14 && days_remaining > 7 && thresholds.expiry_14d)
-            || (days_remaining <= 30 && days_remaining > 14 && thresholds.expiry_30d);
+            || (days_remaining <= 7 && thresholds.expiry_7d)
+            || (days_remaining <= 14 && thresholds.expiry_14d)
+            || (days_remaining <= 30 && thresholds.expiry_30d);
 
         if should_alert {
             let details = AlertDetails {
@@ -324,10 +422,20 @@ impl MonitorDaemon {
             {
                 use tokio::signal::unix::{SignalKind, signal};
 
-                let mut sigterm =
-                    signal(SignalKind::terminate()).expect("Failed to setup SIGTERM handler");
-                let mut sigint =
-                    signal(SignalKind::interrupt()).expect("Failed to setup SIGINT handler");
+                let mut sigterm = match signal(SignalKind::terminate()) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        tracing::error!("Failed to setup SIGTERM handler: {}", e);
+                        return;
+                    }
+                };
+                let mut sigint = match signal(SignalKind::interrupt()) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        tracing::error!("Failed to setup SIGINT handler: {}", e);
+                        return;
+                    }
+                };
 
                 tokio::select! {
                     _ = sigterm.recv() => {
@@ -343,9 +451,10 @@ impl MonitorDaemon {
 
             #[cfg(not(unix))]
             {
-                tokio::signal::ctrl_c()
-                    .await
-                    .expect("Failed to setup Ctrl+C handler");
+                if let Err(e) = tokio::signal::ctrl_c().await {
+                    tracing::error!("Failed to setup Ctrl+C handler: {}", e);
+                    return;
+                }
 
                 tracing::info!("Received Ctrl+C");
                 running.store(false, Ordering::SeqCst);

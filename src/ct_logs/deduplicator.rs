@@ -19,7 +19,8 @@ impl Deduplicator {
     /// * `expected_items` - Expected number of unique items (used for sizing)
     /// * `false_positive_rate` - Acceptable false positive rate (e.g., 0.0001 for 0.01%)
     pub fn new(expected_items: usize, false_positive_rate: f64) -> Self {
-        let bloom = Bloom::new_for_fp_rate(expected_items, false_positive_rate);
+        let bloom = Bloom::new_for_fp_rate(expected_items, false_positive_rate)
+            .expect("Failed to create bloom filter");
 
         Self {
             bloom,
@@ -80,7 +81,7 @@ impl Deduplicator {
 
         // For simplicity, we'll return the configured rate
         // In practice, the actual rate will be close to this for expected_items
-        let bitmap_bits = self.bloom.number_of_bits() as f64;
+        let bitmap_bits = self.bloom.len() as f64;
         let num_hashes = self.bloom.number_of_hash_functions() as f64;
         let items_inserted = self.unique_count() as f64;
 
@@ -96,7 +97,7 @@ impl Deduplicator {
     /// Get memory usage estimate in bytes
     pub fn memory_usage_bytes(&self) -> usize {
         // Bloom filter bitmap size + struct overhead
-        ((self.bloom.number_of_bits() / 8) as usize) + std::mem::size_of::<Self>()
+        ((self.bloom.len() / 8) as usize) + std::mem::size_of::<Self>()
     }
 }
 

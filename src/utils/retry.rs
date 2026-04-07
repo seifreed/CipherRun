@@ -439,8 +439,7 @@ mod tests {
         )));
 
         // ENETDOWN (error 50) - Network is down - should be retriable
-        assert!(is_io_error_retriable(&Error::new(
-            ErrorKind::Other,
+        assert!(is_io_error_retriable(&Error::other(
             "Network is down (os error 50)"
         )));
 

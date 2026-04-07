@@ -5,8 +5,6 @@
 use crate::Result;
 use crate::utils::network::Target;
 use std::time::Duration;
-use tokio::net::TcpStream;
-use tokio::time::timeout;
 
 /// RC4 cipher tester
 pub struct Rc4Tester {
@@ -81,8 +79,9 @@ impl Rc4Tester {
 
         let addr = self.target.socket_addrs()[0];
 
-        match timeout(Duration::from_secs(3), TcpStream::connect(addr)).await {
-            Ok(Ok(stream)) => {
+        match crate::utils::network::connect_with_timeout(addr, Duration::from_secs(3), None).await
+        {
+            Ok(stream) => {
                 let std_stream = stream.into_std()?;
                 std_stream.set_nonblocking(false)?;
 
@@ -117,8 +116,9 @@ impl Rc4Tester {
 
         let addr = self.target.socket_addrs()[0];
 
-        match timeout(Duration::from_secs(5), TcpStream::connect(addr)).await {
-            Ok(Ok(stream)) => {
+        match crate::utils::network::connect_with_timeout(addr, Duration::from_secs(5), None).await
+        {
+            Ok(stream) => {
                 let std_stream = stream.into_std()?;
                 std_stream.set_nonblocking(false)?;
 

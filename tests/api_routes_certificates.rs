@@ -11,7 +11,7 @@ async fn test_certificates_no_db_returns_500() {
     let app = Router::new()
         .route("/certificates", get(certificates::list_certificates))
         .route(
-            "/certificates/:fingerprint",
+            "/certificates/{fingerprint}",
             get(certificates::get_certificate),
         )
         .with_state(state);

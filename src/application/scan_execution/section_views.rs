@@ -1,4 +1,5 @@
-use crate::scanner::{CertificateAnalysisResult, ScanResults};
+use crate::application::ScanResults;
+use crate::scanner::CertificateAnalysisResult;
 
 pub struct ScanPrimaryTlsView<'a> {
     pub(crate) results: &'a ScanResults,

@@ -124,7 +124,11 @@ impl MultiIpProgressCallback for TerminalMultiIpProgress {
                 "{} {} configuration inconsistenc{} detected",
                 "⚠".yellow().bold(),
                 inconsistencies.len(),
-                if inconsistencies.len() == 1 { "y" } else { "ies" }
+                if inconsistencies.len() == 1 {
+                    "y"
+                } else {
+                    "ies"
+                }
             );
         } else {
             println!(

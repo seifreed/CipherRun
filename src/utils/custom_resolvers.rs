@@ -67,7 +67,7 @@ impl CustomResolver {
 
         Ok(Self {
             resolvers: parsed_resolvers,
-            query_timeout: Duration::from_secs(5),
+            query_timeout: crate::constants::DNS_QUERY_TIMEOUT,
         })
     }
 

@@ -61,6 +61,7 @@ pub enum SecurityGrade {
 #[derive(Debug, Clone)]
 struct ResponseMetadata {
     headers: HashMap<String, String>,
+    set_cookie_values: Vec<String>,
     status_code: u16,
     redirect_location: Option<String>,
     server_hostname: Option<String>,
@@ -122,13 +123,8 @@ impl HeaderAnalyzer {
         // Parse HPKP
         let hpkp_analysis = Some(headers_advanced::parse_hpkp(&metadata.headers));
 
-        // Parse cookies - extract Set-Cookie headers
-        let set_cookie_headers: Vec<String> = metadata
-            .headers
-            .iter()
-            .filter(|(k, _)| k.eq_ignore_ascii_case("set-cookie"))
-            .map(|(_, v)| v.clone())
-            .collect();
+        // Parse cookies - use individually collected Set-Cookie headers
+        let set_cookie_headers = metadata.set_cookie_values;
         let cookie_analysis = if !set_cookie_headers.is_empty() {
             Some(headers_advanced::parse_cookies(&set_cookie_headers))
         } else {
@@ -219,16 +215,29 @@ impl HeaderAnalyzer {
             .and_then(|v| v.to_str().ok())
             .map(|s| s.to_string());
 
-        // Collect all headers
+        // Collect Set-Cookie headers separately (RFC 7230 prohibits comma-joining them)
+        let mut set_cookie_values: Vec<String> = Vec::new();
+        // Collect all other headers, preserving duplicates by joining with comma
+        // (RFC 7230 Section 3.2.2: multiple values can be combined with commas)
         let mut headers = HashMap::new();
         for (name, value) in response.headers().iter() {
             if let Ok(value_str) = value.to_str() {
-                headers.insert(name.to_string(), value_str.to_string());
+                if name.as_str().eq_ignore_ascii_case("set-cookie") {
+                    set_cookie_values.push(value_str.to_string());
+                }
+                headers
+                    .entry(name.to_string())
+                    .and_modify(|existing: &mut String| {
+                        existing.push_str(", ");
+                        existing.push_str(value_str);
+                    })
+                    .or_insert_with(|| value_str.to_string());
             }
         }
 
         Ok(ResponseMetadata {
             headers,
+            set_cookie_values,
             status_code,
             redirect_location,
             server_hostname,
@@ -333,7 +342,7 @@ mod tests {
 
         let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
         let cert_der = rustls_pki_types::CertificateDer::from(cert.cert.der().as_ref().to_vec());
-        let key_der = rustls_pki_types::PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der());
+        let key_der = rustls_pki_types::PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der());
         let key = rustls_pki_types::PrivateKeyDer::Pkcs8(key_der);
 
         let config = rustls::ServerConfig::builder()
@@ -343,14 +352,14 @@ mod tests {
         let acceptor = TlsAcceptor::from(std::sync::Arc::new(config));
 
         tokio::spawn(async move {
-            if let Ok((stream, _)) = listener.accept().await {
-                if let Ok(mut tls_stream) = acceptor.accept(stream).await {
-                    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-                    let mut buffer = [0u8; 4096];
-                    let _ = tls_stream.read(&mut buffer).await;
-                    let _ = tls_stream.write_all(response.as_bytes()).await;
-                    let _ = tls_stream.shutdown().await;
-                }
+            if let Ok((stream, _)) = listener.accept().await
+                && let Ok(mut tls_stream) = acceptor.accept(stream).await
+            {
+                use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                let mut buffer = [0u8; 4096];
+                let _ = tls_stream.read(&mut buffer).await;
+                let _ = tls_stream.write_all(response.as_bytes()).await;
+                let _ = tls_stream.shutdown().await;
             }
         });
 

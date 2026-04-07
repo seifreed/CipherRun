@@ -35,10 +35,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let target = Target::parse(&target_str).await?;
 
     // Test ALPN
-    println!(
-        "\n{}",
-        "Testing ALPN (Application-Layer Protocol Negotiation)..."
-    );
+    println!("\nTesting ALPN (Application-Layer Protocol Negotiation)...");
     let alpn_tester = AlpnTester::new(target.clone());
 
     match alpn_tester.get_comprehensive_report().await {
@@ -75,10 +72,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Test NPN
     println!("\n{}", "=".repeat(60));
-    println!(
-        "\n{}",
-        "Testing NPN (Next Protocol Negotiation - Deprecated)..."
-    );
+    println!("\nTesting NPN (Next Protocol Negotiation - Deprecated)...");
     let npn_tester = NpnTester::new(target);
 
     match npn_tester.test().await {

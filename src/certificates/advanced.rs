@@ -6,8 +6,7 @@ use crate::utils::network::Target;
 use openssl::ssl::{SslConnector, SslMethod, SslVersion};
 use openssl::x509::X509;
 use serde::{Deserialize, Serialize};
-use tokio::net::TcpStream;
-use tokio::time::{Duration, timeout};
+use tokio::time::Duration;
 
 /// Multiple certificates analysis
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -138,9 +137,8 @@ impl CertificateAdvancedTester {
         let addr = self.target.socket_addrs()[0];
         let connect_timeout = Duration::from_secs(10);
 
-        let stream = timeout(connect_timeout, TcpStream::connect(&addr))
-            .await
-            .map_err(|_| anyhow::anyhow!("Connection timeout"))??;
+        let stream =
+            crate::utils::network::connect_with_timeout(addr, connect_timeout, None).await?;
 
         let std_stream = stream.into_std()?;
 
@@ -155,7 +153,7 @@ impl CertificateAdvancedTester {
         let cert = ssl_stream
             .ssl()
             .peer_certificate()
-            .ok_or_else(|| anyhow::anyhow!("No certificate presented"))?;
+            .ok_or_else(|| crate::error::TlsError::Other("No certificate presented".into()))?;
 
         Ok(extract_certificate_info(&cert))
     }
@@ -168,9 +166,8 @@ impl CertificateAdvancedTester {
         let addr = self.target.socket_addrs()[0];
         let connect_timeout = Duration::from_secs(10);
 
-        let stream = timeout(connect_timeout, TcpStream::connect(&addr))
-            .await
-            .map_err(|_| anyhow::anyhow!("Connection timeout"))??;
+        let stream =
+            crate::utils::network::connect_with_timeout(addr, connect_timeout, None).await?;
 
         let std_stream = stream.into_std()?;
 
@@ -342,9 +339,8 @@ impl CertificateAdvancedTester {
         let addr = self.target.socket_addrs()[0];
         let connect_timeout = Duration::from_secs(10);
 
-        let stream = timeout(connect_timeout, TcpStream::connect(&addr))
-            .await
-            .map_err(|_| anyhow::anyhow!("Connection timeout"))??;
+        let stream =
+            crate::utils::network::connect_with_timeout(addr, connect_timeout, None).await?;
 
         let std_stream = stream.into_std()?;
 
@@ -358,14 +354,18 @@ impl CertificateAdvancedTester {
 
         match connector.connect(&self.target.hostname, std_stream) {
             Ok(ssl_stream) => {
-                let cipher = ssl_stream
-                    .ssl()
-                    .current_cipher()
-                    .ok_or_else(|| anyhow::anyhow!("No cipher negotiated"))?;
+                let cipher = ssl_stream.ssl().current_cipher().ok_or_else(|| {
+                    crate::error::TlsError::InvalidHandshake {
+                        details: "No cipher negotiated".into(),
+                    }
+                })?;
 
                 Ok(cipher.name().to_string())
             }
-            Err(e) => Err(anyhow::anyhow!("Connection failed: {}", e).into()),
+            Err(e) => Err(crate::error::TlsError::Other(format!(
+                "Connection failed: {}",
+                e
+            ))),
         }
     }
 }
@@ -542,7 +542,7 @@ mod tests {
     #[test]
     fn test_consistency_score_calculation() {
         // Test consistency score calculation
-        let test_results = vec![
+        let test_results = [
             CipherOrderEnforcementTest {
                 test_name: "Test 1".to_string(),
                 client_order: vec!["A".to_string()],

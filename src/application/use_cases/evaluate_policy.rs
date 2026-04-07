@@ -1,26 +1,27 @@
 use crate::Result;
-use crate::application::{PolicySource, ScanAssessment};
-use crate::policy::{PolicyResult, evaluator::PolicyEvaluator};
+use crate::application::{PolicyEvaluatorPort, PolicySource, ScanAssessment};
+use crate::policy::PolicyResult;
 use std::path::Path;
 
 /// Application use case for policy evaluation.
 pub struct EvaluatePolicy;
 
 impl EvaluatePolicy {
-    pub fn execute_assessment(
+    pub fn execute(
+        evaluator: &dyn PolicyEvaluatorPort,
         policy: &crate::policy::Policy,
         assessment: &ScanAssessment,
     ) -> Result<PolicyResult> {
-        let evaluator = PolicyEvaluator::new(policy.clone());
-        evaluator.evaluate(assessment)
+        evaluator.evaluate(policy, assessment)
     }
 
     pub fn execute_with_provider(
+        evaluator: &dyn PolicyEvaluatorPort,
         provider: &dyn PolicySource,
         policy_path: &Path,
         assessment: &ScanAssessment,
     ) -> Result<PolicyResult> {
         let policy = provider.load_policy(policy_path)?;
-        Self::execute_assessment(&policy, assessment)
+        Self::execute(evaluator, &policy, assessment)
     }
 }

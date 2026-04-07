@@ -14,7 +14,6 @@
 use cipherrun::Args;
 use cipherrun::commands::{CommandExit, CommandRouter};
 use cipherrun::utils::PathExt;
-use clap::Parser;
 use std::process::ExitCode;
 use tracing::{Level, info};
 use tracing_subscriber::FmtSubscriber;
@@ -46,7 +45,7 @@ async fn run_cli() -> anyhow::Result<CommandExit> {
     tracing::subscriber::set_global_default(subscriber).expect("Failed to set subscriber");
 
     // Parse command line arguments
-    let mut args = Args::parse();
+    let mut args = Args::parse_with_sources()?;
 
     // Validate CLI arguments for conflicting flags
     args.validate()?;

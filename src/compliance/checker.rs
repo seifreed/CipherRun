@@ -31,9 +31,8 @@ impl ComplianceChecker {
                     severity: Severity::Critical,
                 });
             }
-
             // Check if protocol is NOT in allowed list (when allow list is specified)
-            if !rule.allowed.is_empty() && !rule.is_allowed(&protocol_name) {
+            else if !rule.allowed.is_empty() && !rule.is_allowed(&protocol_name) {
                 violations.push(Violation {
                     violation_type: "Non-Compliant Protocol".to_string(),
                     description: format!("{} is not in the allowed protocol list", protocol_name),
@@ -43,16 +42,26 @@ impl ComplianceChecker {
             }
         }
 
-        // Check if any required protocol is missing
-        for allowed_protocol in &rule.allowed {
-            let is_supported = results
-                .protocols
-                .iter()
-                .any(|p| p.supported && p.protocol.to_string() == *allowed_protocol);
+        // Check that at least one allowed protocol is supported.
+        // If none of the allowed protocols are available, flag a violation.
+        if !rule.allowed.is_empty() {
+            let any_allowed_supported = rule.allowed.iter().any(|allowed_protocol| {
+                results
+                    .protocols
+                    .iter()
+                    .any(|p| p.supported && p.protocol.to_string() == *allowed_protocol)
+            });
 
-            if !is_supported && !rule.allowed.is_empty() {
-                // This is informational - at least one allowed protocol should work
-                // We don't fail if one specific allowed protocol is missing
+            if !any_allowed_supported {
+                violations.push(Violation {
+                    violation_type: "Missing Required Protocol".to_string(),
+                    description: format!(
+                        "None of the required protocols are supported: {}",
+                        rule.allowed.join(", ")
+                    ),
+                    evidence: "No allowed protocol found in scan results".to_string(),
+                    severity: Severity::High,
+                });
             }
         }
 
@@ -81,10 +90,8 @@ impl ComplianceChecker {
                         evidence: format!("{} ({})", cipher_name, openssl_name),
                         severity: Severity::Critical,
                     });
-                }
-
-                // Check if cipher is explicitly denied
-                if rule.is_denied(cipher_name) || rule.is_denied(openssl_name) {
+                } else if rule.is_denied(cipher_name) || rule.is_denied(openssl_name) {
+                    // Check if cipher is explicitly denied (only if not already caught by pattern)
                     violations.push(Violation {
                         violation_type: "Prohibited Cipher Suite".to_string(),
                         description: format!("Explicitly prohibited cipher for {}", protocol),
@@ -221,25 +228,46 @@ impl ComplianceChecker {
         }
 
         for (protocol, cipher_summary) in &results.ciphers {
-            // Check if ANY cipher without forward secrecy is supported
-            for cipher in &cipher_summary.supported_ciphers {
-                // Check cipher name for forward secrecy indicators (ECDHE, DHE)
-                let has_fs = cipher.iana_name.contains("ECDHE")
-                    || cipher.iana_name.contains("DHE")
-                    || cipher.openssl_name.contains("ECDHE")
-                    || cipher.openssl_name.contains("DHE");
+            // Collect all ciphers without forward secrecy for this protocol
+            let non_fs_ciphers: Vec<_> = cipher_summary
+                .supported_ciphers
+                .iter()
+                .filter(|cipher| {
+                    // TLS 1.3 ciphers (e.g. TLS_AES_128_GCM_SHA256) inherently
+                    // require forward secrecy by protocol design — no key-exchange
+                    // algorithm appears in the name.
+                    let is_tls13_cipher = cipher.iana_name.starts_with("TLS_")
+                        && !cipher.iana_name.contains("_RSA_")
+                        && !cipher.iana_name.contains("_ECDHE_")
+                        && !cipher.iana_name.contains("_DHE_")
+                        && !cipher.iana_name.contains("_ECDH_")
+                        && !cipher.iana_name.contains("_DH_");
+                    let has_fs = is_tls13_cipher
+                        || cipher.iana_name.starts_with("TLS_ECDHE_")
+                        || cipher.iana_name.starts_with("TLS_DHE_")
+                        || cipher.iana_name.contains("_ECDHE_")
+                        || cipher.iana_name.contains("_DHE_")
+                        || cipher.openssl_name.starts_with("ECDHE-")
+                        || cipher.openssl_name.starts_with("DHE-");
+                    !has_fs
+                })
+                .collect();
 
-                if !has_fs {
-                    violations.push(Violation {
-                        violation_type: "Missing Forward Secrecy".to_string(),
-                        description: format!(
-                            "Cipher suite without forward secrecy enabled for {}",
-                            protocol
-                        ),
-                        evidence: format!("{} does not provide forward secrecy", cipher.iana_name),
-                        severity: Severity::High,
-                    });
-                }
+            // Only create one violation per protocol, listing all non-FS ciphers
+            if !non_fs_ciphers.is_empty() {
+                let cipher_list: Vec<String> =
+                    non_fs_ciphers.iter().map(|c| c.iana_name.clone()).collect();
+
+                violations.push(Violation {
+                    violation_type: "Missing Forward Secrecy".to_string(),
+                    description: format!(
+                        "{} cipher suite(s) without forward secrecy enabled for {}",
+                        non_fs_ciphers.len(),
+                        protocol
+                    ),
+                    evidence: format!("Non-FS ciphers: {}", cipher_list.join(", ")),
+                    severity: Severity::High,
+                });
             }
         }
 
@@ -308,11 +336,28 @@ impl ComplianceChecker {
             // Parse expiration date and calculate days remaining
             // This is a simplified check - in production, parse the actual date
             if let Some(ref countdown) = leaf_cert.expiry_countdown {
-                // Extract days from countdown string (e.g., "30 days")
-                if countdown.contains("day") {
+                // Extract days from countdown string.
+                // Format is "expires in 30 days", "expired 5 days ago", etc.
+                // Find the numeric token that precedes "day"/"days".
+                let is_expired = countdown.contains("expired") || countdown.contains("ago");
+                if is_expired {
+                    // Certificate is already expired — always flag regardless of format
+                    violations.push(Violation {
+                        violation_type: "Certificate Expired".to_string(),
+                        description: format!("Certificate has already expired ({})", countdown),
+                        evidence: format!("Certificate expires: {}", leaf_cert.not_after),
+                        severity: Severity::Critical,
+                    });
+                } else if countdown.contains("day") {
                     let parts: Vec<&str> = countdown.split_whitespace().collect();
-                    if let Some(days_str) = parts.first()
-                        && let Ok(days) = days_str.parse::<i64>()
+                    let days_value = parts.windows(2).find_map(|w| {
+                        if w[1].starts_with("day") {
+                            w[0].parse::<i64>().ok()
+                        } else {
+                            None
+                        }
+                    });
+                    if let Some(days) = days_value
                         && days <= max_days
                     {
                         violations.push(Violation {
@@ -392,32 +437,33 @@ mod tests {
             custom_params: HashMap::new(),
         };
 
-        #[allow(clippy::field_reassign_with_default)]
-        let mut results = ScanAssessment::default();
-        results.protocols = vec![
-            ProtocolTestResult {
-                protocol: Protocol::SSLv2,
-                supported: true,
-                preferred: false,
-                ciphers_count: 0,
-                heartbeat_enabled: None,
-                handshake_time_ms: None,
-                session_resumption_caching: None,
-                session_resumption_tickets: None,
-                secure_renegotiation: None,
-            },
-            ProtocolTestResult {
-                protocol: Protocol::TLS12,
-                supported: true,
-                preferred: false,
-                ciphers_count: 0,
-                heartbeat_enabled: None,
-                handshake_time_ms: None,
-                session_resumption_caching: None,
-                session_resumption_tickets: None,
-                secure_renegotiation: None,
-            },
-        ];
+        let results = ScanAssessment {
+            protocols: vec![
+                ProtocolTestResult {
+                    protocol: Protocol::SSLv2,
+                    supported: true,
+                    preferred: false,
+                    ciphers_count: 0,
+                    heartbeat_enabled: None,
+                    handshake_time_ms: None,
+                    session_resumption_caching: None,
+                    session_resumption_tickets: None,
+                    secure_renegotiation: None,
+                },
+                ProtocolTestResult {
+                    protocol: Protocol::TLS12,
+                    supported: true,
+                    preferred: false,
+                    ciphers_count: 0,
+                    heartbeat_enabled: None,
+                    handshake_time_ms: None,
+                    session_resumption_caching: None,
+                    session_resumption_tickets: None,
+                    secure_renegotiation: None,
+                },
+            ],
+            ..Default::default()
+        };
 
         let violations = ComplianceChecker::check_protocols(&rule, &results)
             .expect("test assertion should succeed");
@@ -444,32 +490,33 @@ mod tests {
             custom_params: HashMap::new(),
         };
 
-        #[allow(clippy::field_reassign_with_default)]
-        let mut results = ScanAssessment::default();
-        results.protocols = vec![
-            ProtocolTestResult {
-                protocol: Protocol::TLS10,
-                supported: true,
-                preferred: false,
-                ciphers_count: 0,
-                heartbeat_enabled: None,
-                handshake_time_ms: None,
-                session_resumption_caching: None,
-                session_resumption_tickets: None,
-                secure_renegotiation: None,
-            },
-            ProtocolTestResult {
-                protocol: Protocol::TLS12,
-                supported: true,
-                preferred: false,
-                ciphers_count: 0,
-                heartbeat_enabled: None,
-                handshake_time_ms: None,
-                session_resumption_caching: None,
-                session_resumption_tickets: None,
-                secure_renegotiation: None,
-            },
-        ];
+        let results = ScanAssessment {
+            protocols: vec![
+                ProtocolTestResult {
+                    protocol: Protocol::TLS10,
+                    supported: true,
+                    preferred: false,
+                    ciphers_count: 0,
+                    heartbeat_enabled: None,
+                    handshake_time_ms: None,
+                    session_resumption_caching: None,
+                    session_resumption_tickets: None,
+                    secure_renegotiation: None,
+                },
+                ProtocolTestResult {
+                    protocol: Protocol::TLS12,
+                    supported: true,
+                    preferred: false,
+                    ciphers_count: 0,
+                    heartbeat_enabled: None,
+                    handshake_time_ms: None,
+                    session_resumption_caching: None,
+                    session_resumption_tickets: None,
+                    secure_renegotiation: None,
+                },
+            ],
+            ..Default::default()
+        };
 
         let violations = ComplianceChecker::check_protocols(&rule, &results)
             .expect("test assertion should succeed");
@@ -496,28 +543,29 @@ mod tests {
             custom_params: HashMap::new(),
         };
 
-        #[allow(clippy::field_reassign_with_default)]
-        let mut results = ScanAssessment::default();
-        results.vulnerabilities = vec![
-            VulnerabilityResult {
-                vuln_type: VulnerabilityType::Heartbleed,
-                vulnerable: true,
-                inconclusive: false,
-                details: "bad".to_string(),
-                cve: None,
-                cwe: None,
-                severity: VulnSeverity::High,
-            },
-            VulnerabilityResult {
-                vuln_type: VulnerabilityType::BEAST,
-                vulnerable: false,
-                inconclusive: false,
-                details: "ok".to_string(),
-                cve: Some("CVE-2011-3389".to_string()),
-                cwe: None,
-                severity: VulnSeverity::Medium,
-            },
-        ];
+        let results = ScanAssessment {
+            vulnerabilities: vec![
+                VulnerabilityResult {
+                    vuln_type: VulnerabilityType::Heartbleed,
+                    vulnerable: true,
+                    inconclusive: false,
+                    details: "bad".to_string(),
+                    cve: None,
+                    cwe: None,
+                    severity: VulnSeverity::High,
+                },
+                VulnerabilityResult {
+                    vuln_type: VulnerabilityType::BEAST,
+                    vulnerable: false,
+                    inconclusive: false,
+                    details: "ok".to_string(),
+                    cve: Some("CVE-2011-3389".to_string()),
+                    cwe: None,
+                    severity: VulnSeverity::Medium,
+                },
+            ],
+            ..Default::default()
+        };
 
         let violations = ComplianceChecker::check_vulnerabilities(&rule, &results)
             .expect("test assertion should succeed");

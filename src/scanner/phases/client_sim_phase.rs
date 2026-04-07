@@ -34,7 +34,8 @@ use async_trait::async_trait;
 /// requirements.
 ///
 /// Configuration sources (from ScanRequest):
-/// - Full scan mode (--all) enables client simulation
+/// - Explicit client simulation flag (-c/--client-simulation)
+/// - Baseline scan policy enables implicit client simulation
 /// - Target information (hostname, port, resolved IPs)
 pub struct ClientSimPhase;
 
@@ -59,8 +60,9 @@ impl ScanPhase for ClientSimPhase {
 
     fn should_run(&self, args: &ScanRequest) -> bool {
         // Run if:
-        // - Full scan mode (--all)
-        args.scan.all
+        // - Explicit client simulation requested
+        // - Baseline scan policy enables implicit client simulation
+        args.should_run_client_simulation_phase()
     }
 
     async fn execute(&self, context: &mut ScanContext) -> Result<()> {
@@ -90,18 +92,32 @@ mod tests {
     fn test_client_sim_phase_should_run() {
         let phase = ClientSimPhase::new();
 
-        // Test with --all flag
+        // Test with baseline
         let mut args = ScanRequest::default();
         args.scan.all = true;
         assert!(phase.should_run(&args));
+
+        // Test with explicit client simulation and baseline disabled
+        let mut args = ScanRequest::default();
+        args.scan.all = false;
+        args.fingerprint.client_simulation = true;
+        assert!(phase.should_run(&args));
+
+        // Specific-focus scans should not implicitly enable client simulation.
+        let mut args = ScanRequest::default();
+        args.scan.all = true;
+        args.scan.show_sigs = true;
+        assert!(!phase.should_run(&args));
 
         // Test without --all flag
         let args = ScanRequest::default();
         assert!(!phase.should_run(&args));
 
         // Test with target but no --all
-        let mut args = ScanRequest::default();
-        args.target = Some("example.com".to_string());
+        let args = ScanRequest {
+            target: Some("example.com".to_string()),
+            ..Default::default()
+        };
         assert!(!phase.should_run(&args));
     }
 

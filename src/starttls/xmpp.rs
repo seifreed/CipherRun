@@ -51,9 +51,17 @@ impl XmppNegotiator {
 impl StarttlsNegotiator for XmppNegotiator {
     async fn negotiate_starttls(&self, stream: &mut tokio::net::TcpStream) -> Result<()> {
         // 1. Send XMPP stream header
+        // Escape hostname for safe XML attribute interpolation
+        let safe_hostname = self
+            .hostname
+            .replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+            .replace('\'', "&apos;")
+            .replace('"', "&quot;");
         let stream_header = format!(
             "<?xml version='1.0'?><stream:stream to='{}' xmlns='jabber:client' xmlns:stream='http://etherx.jabber.org/streams' version='1.0'>",
-            self.hostname
+            safe_hostname
         );
         stream.write_all(stream_header.as_bytes()).await?;
         stream.flush().await?;

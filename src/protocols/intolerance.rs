@@ -89,6 +89,12 @@ mod tests {
             let ext_type = u16::from_be_bytes([hello[offset], hello[offset + 1]]);
             let ext_len = u16::from_be_bytes([hello[offset + 2], hello[offset + 3]]) as usize;
             offset += 4;
+
+            // Bounds check before slicing
+            if offset + ext_len > hello.len() {
+                break;
+            }
+
             let data = hello[offset..offset + ext_len].to_vec();
             offset += ext_len;
             extensions.push((ext_type, data));

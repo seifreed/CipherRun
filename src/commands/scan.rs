@@ -4,10 +4,11 @@
 
 use super::scan_presenter::ScanPresenter;
 use super::{Command, CommandExit};
-use crate::application::use_cases::{ScanWorkflow, ScanWorkflowInput};
-use crate::compliance::BuiltinFrameworkSource;
+use crate::application::use_cases::{ScanWorkflow, ScanWorkflowInput, ScanWorkflowServices};
+use crate::compliance::{BuiltinFrameworkSource, engine::DefaultComplianceEvaluator};
 use crate::db::ConfigFileScanResultsStoreFactory;
-use crate::policy::FilesystemPolicySource;
+use crate::policy::{FilesystemPolicySource, evaluator::DefaultPolicyEvaluator};
+use crate::scanner::DefaultScannerPort;
 use crate::{Args, Result};
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -43,17 +44,22 @@ impl ScanCommand {
 #[async_trait]
 impl Command for ScanCommand {
     async fn execute(&self) -> Result<CommandExit> {
-        let workflow_result = ScanWorkflow::execute(ScanWorkflowInput {
+        let input = ScanWorkflowInput {
             request: self.args.to_scan_request(),
             compliance_framework: self.args.compliance.framework.clone(),
             policy_path: self.args.compliance.policy.clone(),
             store_results: self.args.database.store_results,
             database_config_path: self.args.database.config.clone(),
+        };
+        let services = ScanWorkflowServices {
+            scanner_port: Arc::new(DefaultScannerPort),
             compliance_framework_source: Some(Arc::new(BuiltinFrameworkSource)),
+            compliance_evaluator: Some(Arc::new(DefaultComplianceEvaluator)),
             policy_source: Some(Arc::new(FilesystemPolicySource)),
+            policy_evaluator: Some(Arc::new(DefaultPolicyEvaluator)),
             scan_results_store_factory: Some(Arc::new(ConfigFileScanResultsStoreFactory)),
-        })
-        .await?;
+        };
+        let workflow_result = ScanWorkflow::execute(input, &services).await?;
         let presenter = ScanPresenter::new(&self.args);
         let exit = presenter.present(&workflow_result)?;
 

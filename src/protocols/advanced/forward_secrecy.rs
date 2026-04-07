@@ -1,15 +1,24 @@
-use super::{
-    ForwardSecrecyAnalysis, ForwardSecrecyCipher, ProtocolAdvancedTester,
-};
 use super::analysis::{classify_fs_grade, grade_to_string};
+use super::{ForwardSecrecyAnalysis, ForwardSecrecyCipher, ProtocolAdvancedTester};
 use crate::Result;
 use openssl::ssl::{SslConnector, SslMethod};
-use tokio::net::TcpStream;
-use tokio::time::{Duration, timeout};
+use tokio::time::Duration;
 
 const FS_CIPHERS: &[(&str, &str, &str, &str, u16)] = &[
-    ("TLS_AES_256_GCM_SHA384", "TLS 1.3", "ECDHE", "AES-256-GCM", 256),
-    ("TLS_AES_128_GCM_SHA256", "TLS 1.3", "ECDHE", "AES-128-GCM", 128),
+    (
+        "TLS_AES_256_GCM_SHA384",
+        "TLS 1.3",
+        "ECDHE",
+        "AES-256-GCM",
+        256,
+    ),
+    (
+        "TLS_AES_128_GCM_SHA256",
+        "TLS 1.3",
+        "ECDHE",
+        "AES-128-GCM",
+        128,
+    ),
     (
         "TLS_CHACHA20_POLY1305_SHA256",
         "TLS 1.3",
@@ -94,7 +103,9 @@ impl ProtocolAdvancedTester {
             0.0
         };
 
-        let ecdhe_supported = supported_fs_ciphers.iter().any(|c| c.key_exchange == "ECDHE");
+        let ecdhe_supported = supported_fs_ciphers
+            .iter()
+            .any(|c| c.key_exchange == "ECDHE");
         let dhe_supported = supported_fs_ciphers.iter().any(|c| c.key_exchange == "DHE");
         let fs_supported = !supported_fs_ciphers.is_empty();
         let preferred = if total_ciphers > 0 {
@@ -133,19 +144,19 @@ impl ProtocolAdvancedTester {
         let addr = self.target.socket_addrs()[0];
         let connect_timeout = Duration::from_secs(10);
 
-        let stream = timeout(connect_timeout, TcpStream::connect(&addr))
-            .await
-            .map_err(|_| anyhow::anyhow!("Connection timeout"))??;
+        let stream =
+            crate::utils::network::connect_with_timeout(addr, connect_timeout, None).await?;
 
         let std_stream = stream.into_std()?;
         let builder = SslConnector::builder(SslMethod::tls())?;
         let connector = builder.build();
         let ssl_stream = connector.connect(&self.target.hostname, std_stream)?;
 
-        let cipher = ssl_stream
-            .ssl()
-            .current_cipher()
-            .ok_or_else(|| anyhow::anyhow!("No cipher negotiated"))?;
+        let cipher = ssl_stream.ssl().current_cipher().ok_or_else(|| {
+            crate::error::TlsError::InvalidHandshake {
+                details: "No cipher negotiated".into(),
+            }
+        })?;
 
         let cipher_name = cipher.name();
         Ok(cipher_name.contains("ECDHE") || cipher_name.contains("DHE"))

@@ -51,7 +51,7 @@ impl Ja3Fingerprint {
             .extensions
             .iter()
             .map(|e| e.extension_type)
-            .filter(|&t| !Self::is_grease(t) && t != 21) // Filter GREASE and padding (21)
+            .filter(|&t| !Self::is_grease(t)) // Filter GREASE only (padding ext 21 must be kept per JA3 spec)
             .collect();
 
         // 4. Extract supported groups/curves from extensions
@@ -250,9 +250,8 @@ impl Ja3Database {
         Ok(Self { signatures })
     }
 
-    /// Load default embedded database
-    #[allow(clippy::should_implement_trait)]
-    pub fn default() -> Self {
+    /// Create database with common known signatures
+    pub fn with_common_signatures() -> Self {
         let mut signatures = HashMap::new();
 
         // Add known signatures
@@ -339,6 +338,12 @@ impl Ja3Database {
         Self { signatures }
     }
 
+    /// Load default embedded database
+    #[allow(clippy::should_implement_trait)]
+    pub fn default() -> Self {
+        Self::with_common_signatures()
+    }
+
     /// Match a JA3 hash against the database
     pub fn match_fingerprint(&self, ja3_hash: &str) -> Option<&Ja3Signature> {
         self.signatures.get(ja3_hash)
@@ -357,7 +362,8 @@ impl Ja3Database {
 
 impl Default for Ja3Database {
     fn default() -> Self {
-        Self::default()
+        // Return a database with common known signatures for immediate use
+        Self::with_common_signatures()
     }
 }
 

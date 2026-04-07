@@ -10,7 +10,9 @@ impl SessionResumptionTester {
             tester.measure_performance_gain_sync()
         })
         .await
-        .map_err(|err| anyhow::anyhow!("Performance gain join error: {err}"))??;
+        .map_err(|err| {
+            crate::error::TlsError::Other(format!("Performance gain join error: {err}"))
+        })??;
 
         Ok(gain)
     }

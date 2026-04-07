@@ -38,16 +38,26 @@ impl StarttlsNegotiator for IrcNegotiator {
         reader.get_mut().flush().await?;
 
         // Read capability list
+        // IRC CAP LS can be multi-line: "CAP * LS * :cap1 cap2" (asterisk = more lines follow)
+        // Final line: "CAP * LS :cap3 cap4" (no asterisk = last line)
         let mut starttls_supported = false;
+        const MAX_CAP_LINES: usize = 50;
+        let mut line_count = 0;
         loop {
             let response = Self::read_response(&mut reader).await?;
+            line_count += 1;
 
-            if response.contains("tls") || response.contains("TLS") {
+            if response.to_lowercase().contains("tls") {
                 starttls_supported = true;
             }
 
-            // CAP * LS :capability list
-            if response.contains("CAP") && response.contains("LS") {
+            // Break on the final CAP LS line (no asterisk before the colon)
+            // Multi-line continuation has "CAP * LS *" while final has "CAP * LS :"
+            if response.contains("CAP") && response.contains("LS") && !response.contains("LS *") {
+                break;
+            }
+
+            if line_count >= MAX_CAP_LINES {
                 break;
             }
         }

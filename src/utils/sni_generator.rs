@@ -1,7 +1,7 @@
 // Random SNI Generator Module
 // Generates random valid-looking SNI hostnames for IP address scanning
 
-use rand::Rng;
+use rand::RngExt;
 
 /// SNI Generator for creating random hostnames
 pub struct SniGenerator;
@@ -20,8 +20,8 @@ impl SniGenerator {
     /// Length between min_len and min_len+7 characters
     /// Must start and end with alphanumeric, can contain hyphens in middle
     fn generate_random_label(min_len: usize) -> String {
-        let mut rng = rand::thread_rng();
-        let length = rng.gen_range(min_len..min_len + 7);
+        let mut rng = rand::rng();
+        let length = rng.random_range(min_len..min_len + 7);
 
         let mut label = String::with_capacity(length);
 
@@ -30,7 +30,7 @@ impl SniGenerator {
 
         // Middle characters can include hyphens
         for _i in 1..length - 1 {
-            if rng.gen_bool(0.1) {
+            if rng.random_bool(0.1) {
                 // 10% chance of hyphen
                 label.push('-');
             } else {
@@ -48,19 +48,19 @@ impl SniGenerator {
 
     /// Generate random alphanumeric character (lowercase)
     fn random_alphanum_char() -> char {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         const CHARSET: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";
-        CHARSET[rng.gen_range(0..CHARSET.len())] as char
+        CHARSET[rng.random_range(0..CHARSET.len())] as char
     }
 
     /// Choose random realistic TLD
     fn choose_random_tld() -> &'static str {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         const TLDS: &[&str] = &[
             "com", "net", "org", "io", "co", "dev", "app", "cloud", "tech", "online", "site",
             "info", "biz", "me", "cc", "tv", "xyz", "live", "store", "digital",
         ];
-        TLDS[rng.gen_range(0..TLDS.len())]
+        TLDS[rng.random_range(0..TLDS.len())]
     }
 
     /// Generate random SNI with custom pattern

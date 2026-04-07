@@ -1,0 +1,39 @@
+mod connection;
+mod ct_logs;
+mod fingerprint;
+mod http;
+mod network;
+mod phases;
+mod queries;
+mod scan;
+mod starttls;
+mod tls;
+mod validation;
+
+#[cfg(test)]
+#[path = "tests.rs"]
+mod tests;
+
+pub use connection::ScanRequestConnection;
+pub use ct_logs::ScanRequestCtLogs;
+pub use fingerprint::ScanRequestFingerprint;
+pub use http::ScanRequestHttp;
+pub use network::ScanRequestNetwork;
+pub use scan::ScanRequestScan;
+pub use starttls::ScanRequestStarttls;
+pub use tls::ScanRequestTls;
+
+#[derive(Debug, Clone, Default)]
+pub struct ScanRequest {
+    pub target: Option<String>,
+    pub port: Option<u16>,
+    pub ip: Option<String>,
+    pub scan: ScanRequestScan,
+    pub network: ScanRequestNetwork,
+    pub connection: ScanRequestConnection,
+    pub tls: ScanRequestTls,
+    pub fingerprint: ScanRequestFingerprint,
+    pub http: ScanRequestHttp,
+    pub starttls: ScanRequestStarttls,
+    pub ct_logs: ScanRequestCtLogs,
+}

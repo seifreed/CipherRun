@@ -24,12 +24,26 @@ pub struct CtClient {
 
 impl CtClient {
     /// Create a new CT Log API client
+    ///
+    /// Returns a CtClient instance with default timeout settings.
+    /// The HTTP client is configured with:
+    /// - 30 second timeout
+    /// - Connection pool with 10 max idle connections per host
+    ///
+    /// Note: If the HTTP client fails to build (extremely rare),
+    /// a default client without timeout settings will be used.
     pub fn new() -> Self {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(30))
             .pool_max_idle_per_host(10)
             .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
+            .unwrap_or_else(|e| {
+                tracing::warn!(
+                    "Failed to build HTTP client with timeout settings: {}. Using default client.",
+                    e
+                );
+                reqwest::Client::new()
+            });
 
         Self { client }
     }
@@ -41,6 +55,20 @@ impl CtClient {
         let response = self
             .retry_request(|| async { self.client.get(&url).send().await })
             .await?;
+
+        // Validate response size to prevent memory exhaustion
+        let content_length = response.content_length();
+        if let Some(len) = content_length {
+            const MAX_RESPONSE_SIZE: u64 = 1024 * 1024; // 1 MB max for STH response
+            if len > MAX_RESPONSE_SIZE {
+                return Err(TlsError::ParseError {
+                    message: format!(
+                        "STH response too large: {} bytes (max {})",
+                        len, MAX_RESPONSE_SIZE
+                    ),
+                });
+            }
+        }
 
         let sth: SignedTreeHead = response.json().await.map_err(|e| TlsError::ParseError {
             message: format!("Failed to parse STH response: {}", e),
@@ -56,6 +84,13 @@ impl CtClient {
         start: u64,
         end: u64,
     ) -> Result<Vec<CtLogEntryResponse>> {
+        // Validate range
+        if start > end {
+            return Err(TlsError::ParseError {
+                message: format!("Invalid range: start ({}) > end ({})", start, end),
+            });
+        }
+
         let url = format!(
             "{}/ct/v1/get-entries?start={}&end={}",
             log_url.trim_end_matches('/'),
@@ -65,12 +100,47 @@ impl CtClient {
 
         debug!("Fetching entries from {} to {}", start, end);
 
-        let response = self
+        let mut response = self
             .retry_request(|| async { self.client.get(&url).send().await })
             .await?;
 
+        // Validate response size to prevent memory exhaustion
+        // Check Content-Length if present, but also limit the actual bytes read
+        // since chunked responses may not have Content-Length
+        const MAX_ENTRIES_RESPONSE_SIZE: u64 = 50 * 1024 * 1024; // 50 MB
+        if let Some(len) = response.content_length()
+            && len > MAX_ENTRIES_RESPONSE_SIZE
+        {
+            return Err(TlsError::ParseError {
+                message: format!(
+                    "Entries response too large: {} bytes (max {})",
+                    len, MAX_ENTRIES_RESPONSE_SIZE
+                ),
+            });
+        }
+
+        // Read the body in chunks to enforce size limit even for chunked responses
+        // that bypass Content-Length checks. This prevents memory exhaustion from
+        // malicious servers sending unbounded data without Content-Length.
+        let mut body = Vec::new();
+        while let Some(chunk) = response.chunk().await.map_err(|e| TlsError::ParseError {
+            message: format!("Failed to read entries response body: {}", e),
+        })? {
+            body.extend_from_slice(&chunk);
+            if body.len() as u64 > MAX_ENTRIES_RESPONSE_SIZE {
+                return Err(TlsError::ParseError {
+                    message: format!(
+                        "Entries response body too large: >{} bytes (max {})",
+                        body.len(),
+                        MAX_ENTRIES_RESPONSE_SIZE
+                    ),
+                });
+            }
+        }
+        let bytes = bytes::Bytes::from(body);
+
         let entries_response: EntriesResponse =
-            response.json().await.map_err(|e| TlsError::ParseError {
+            serde_json::from_slice(&bytes).map_err(|e| TlsError::ParseError {
                 message: format!("Failed to parse entries response: {}", e),
             })?;
 

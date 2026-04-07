@@ -2,10 +2,29 @@
 // RFC 4642
 
 use super::protocols::{StarttlsNegotiator, StarttlsProtocol};
+use super::text_protocol::{
+    CapabilityCommand, CapabilityConfig, CapabilityResponseStyle, GreetingStyle, SuccessCheck,
+    TextProtocolConfig,
+};
 use crate::Result;
 use async_trait::async_trait;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
+
+const CONFIG: TextProtocolConfig = TextProtocolConfig {
+    protocol_name: "NNTP",
+    protocol: StarttlsProtocol::NNTP,
+    greeting: GreetingStyle::StatusCodes(&[200, 201]),
+    capability: Some(CapabilityConfig {
+        command: CapabilityCommand::Static(b"CAPABILITIES\r\n"),
+        starttls_marker: "STARTTLS",
+        response_style: CapabilityResponseStyle::DotTerminated {
+            first_line_prefix: None,
+            first_line_status: Some(101),
+        },
+    }),
+    starttls_command: b"STARTTLS\r\n",
+    success: SuccessCheck::StatusCode(382),
+};
 
 /// NNTP STARTTLS negotiator
 pub struct NntpNegotiator;
@@ -20,83 +39,12 @@ impl NntpNegotiator {
     pub fn new() -> Self {
         Self
     }
-
-    async fn read_response(reader: &mut BufReader<&mut TcpStream>) -> Result<(u16, String)> {
-        let mut response = String::new();
-        reader.read_line(&mut response).await?;
-
-        let code =
-            response[0..3]
-                .parse::<u16>()
-                .map_err(|_| crate::error::TlsError::ParseError {
-                    message: "Invalid NNTP response code".to_string(),
-                })?;
-
-        Ok((code, response))
-    }
 }
 
 #[async_trait]
 impl StarttlsNegotiator for NntpNegotiator {
     async fn negotiate_starttls(&self, stream: &mut TcpStream) -> Result<()> {
-        let mut reader = BufReader::new(stream);
-
-        // Read server greeting (200 or 201)
-        let (code, _response) = Self::read_response(&mut reader).await?;
-        if code != 200 && code != 201 {
-            return Err(crate::error::TlsError::UnexpectedResponse {
-                details: format!("NNTP greeting failed: expected 200/201, got {}", code),
-            });
-        }
-
-        // Send CAPABILITIES to check STARTTLS support
-        reader.get_mut().write_all(b"CAPABILITIES\r\n").await?;
-        reader.get_mut().flush().await?;
-
-        // Read capabilities (101 = capability list follows)
-        let (code, _response) = Self::read_response(&mut reader).await?;
-        if code != 101 {
-            return Err(crate::error::TlsError::UnexpectedResponse {
-                details: format!("CAPABILITIES failed: {}", code),
-            });
-        }
-
-        // Read capability lines until we find STARTTLS or end marker
-        let mut starttls_supported = false;
-        loop {
-            let mut line = String::new();
-            reader.read_line(&mut line).await?;
-
-            if line.trim() == "." {
-                break;
-            }
-
-            if line.to_uppercase().contains("STARTTLS") {
-                starttls_supported = true;
-            }
-        }
-
-        if !starttls_supported {
-            return Err(crate::error::TlsError::StarttlsError {
-                protocol: "NNTP".to_string(),
-                details: "Server does not support STARTTLS".to_string(),
-            });
-        }
-
-        // Send STARTTLS command
-        reader.get_mut().write_all(b"STARTTLS\r\n").await?;
-        reader.get_mut().flush().await?;
-
-        // Read STARTTLS response (382 = continue with TLS negotiation)
-        let (code, response) = Self::read_response(&mut reader).await?;
-        if code != 382 {
-            return Err(crate::error::TlsError::StarttlsError {
-                protocol: "NNTP".to_string(),
-                details: format!("STARTTLS failed: {}", response),
-            });
-        }
-
-        Ok(())
+        super::text_protocol::negotiate(&CONFIG, "", stream).await
     }
 
     fn protocol(&self) -> StarttlsProtocol {
@@ -107,7 +55,8 @@ impl StarttlsNegotiator for NntpNegotiator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use crate::starttls::response;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
     use tokio::net::{TcpListener, TcpStream};
 
     #[test]
@@ -118,106 +67,106 @@ mod tests {
 
     #[tokio::test]
     async fn test_nntp_read_response_parse_error() {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("test listener should bind to localhost");
+        let addr = listener.local_addr().expect("test listener should have local addr");
 
         let server = tokio::spawn(async move {
-            let (mut stream, _) = listener.accept().await.unwrap();
-            stream.write_all(b"abc\r\n").await.unwrap();
+            let (mut stream, _) = listener.accept().await.expect("test server should accept connection");
+            stream.write_all(b"abc\r\n").await.expect("test server should write response");
         });
 
-        let mut client = TcpStream::connect(addr).await.unwrap();
+        let mut client = TcpStream::connect(addr).await.expect("test client should connect");
         let mut reader = BufReader::new(&mut client);
-        let err = NntpNegotiator::read_response(&mut reader)
+        let err = response::read_status_line(&mut reader, "NNTP")
             .await
             .unwrap_err();
-        assert!(format!("{err}").contains("Invalid NNTP response"));
+        assert!(format!("{err}").contains("Invalid NNTP status code"));
 
-        server.await.unwrap();
+        server.await.expect("test server task should complete");
     }
 
     #[tokio::test]
     async fn test_nntp_read_response_valid() {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("test listener should bind to localhost");
+        let addr = listener.local_addr().expect("test listener should have local addr");
 
         let server = tokio::spawn(async move {
-            let (mut stream, _) = listener.accept().await.unwrap();
-            stream.write_all(b"200 ready\r\n").await.unwrap();
+            let (mut stream, _) = listener.accept().await.expect("test server should accept connection");
+            stream.write_all(b"200 ready\r\n").await.expect("test server should write response");
         });
 
-        let mut client = TcpStream::connect(addr).await.unwrap();
+        let mut client = TcpStream::connect(addr).await.expect("test client should connect");
         let mut reader = BufReader::new(&mut client);
-        let (code, line) = NntpNegotiator::read_response(&mut reader)
+        let (code, line) = response::read_status_line(&mut reader, "NNTP")
             .await
             .expect("test assertion should succeed");
         assert_eq!(code, 200);
         assert!(line.contains("ready"));
 
-        server.await.unwrap();
+        server.await.expect("test server task should complete");
     }
 
     #[tokio::test]
     async fn test_nntp_negotiate_starttls_success() {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("test listener should bind to localhost");
+        let addr = listener.local_addr().expect("test listener should have local addr");
 
         let server = tokio::spawn(async move {
-            let (mut stream, _) = listener.accept().await.unwrap();
-            stream.write_all(b"200 server ready\r\n").await.unwrap();
+            let (mut stream, _) = listener.accept().await.expect("test server should accept connection");
+            stream.write_all(b"200 server ready\r\n").await.expect("test server should write response");
 
             let mut buffer = vec![0u8; 256];
-            let _ = stream.read(&mut buffer).await.unwrap();
+            let _ = stream.read(&mut buffer).await.expect("test should read data");
 
             stream
                 .write_all(b"101 Capability list follows\r\n")
                 .await
-                .unwrap();
-            stream.write_all(b"VERSION 2\r\n").await.unwrap();
-            stream.write_all(b"STARTTLS\r\n").await.unwrap();
-            stream.write_all(b".\r\n").await.unwrap();
+                .expect("test server should write response");
+            stream.write_all(b"VERSION 2\r\n").await.expect("test server should write response");
+            stream.write_all(b"STARTTLS\r\n").await.expect("test server should write response");
+            stream.write_all(b".\r\n").await.expect("test server should write response");
 
-            let _ = stream.read(&mut buffer).await.unwrap();
+            let _ = stream.read(&mut buffer).await.expect("test should read data");
             stream
                 .write_all(b"382 Continue with TLS negotiation\r\n")
                 .await
-                .unwrap();
+                .expect("test server should write response");
         });
 
-        let mut client = TcpStream::connect(addr).await.unwrap();
+        let mut client = TcpStream::connect(addr).await.expect("test client should connect");
         let negotiator = NntpNegotiator::new();
         let result = negotiator.negotiate_starttls(&mut client).await;
         assert!(result.is_ok());
 
-        server.await.unwrap();
+        server.await.expect("test server task should complete");
     }
 
     #[tokio::test]
     async fn test_nntp_negotiate_starttls_missing_starttls() {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("test listener should bind to localhost");
+        let addr = listener.local_addr().expect("test listener should have local addr");
 
         let server = tokio::spawn(async move {
-            let (mut stream, _) = listener.accept().await.unwrap();
-            stream.write_all(b"201 server ready\r\n").await.unwrap();
+            let (mut stream, _) = listener.accept().await.expect("test server should accept connection");
+            stream.write_all(b"201 server ready\r\n").await.expect("test server should write response");
 
             let mut buffer = vec![0u8; 256];
-            let _ = stream.read(&mut buffer).await.unwrap();
+            let _ = stream.read(&mut buffer).await.expect("test should read data");
 
             stream
                 .write_all(b"101 Capability list follows\r\n")
                 .await
-                .unwrap();
-            stream.write_all(b"VERSION 2\r\n").await.unwrap();
-            stream.write_all(b"MODE-READER\r\n").await.unwrap();
-            stream.write_all(b".\r\n").await.unwrap();
+                .expect("test server should write response");
+            stream.write_all(b"VERSION 2\r\n").await.expect("test server should write response");
+            stream.write_all(b"MODE-READER\r\n").await.expect("test server should write response");
+            stream.write_all(b".\r\n").await.expect("test server should write response");
         });
 
-        let mut client = TcpStream::connect(addr).await.unwrap();
+        let mut client = TcpStream::connect(addr).await.expect("test client should connect");
         let negotiator = NntpNegotiator::new();
         let result = negotiator.negotiate_starttls(&mut client).await;
         assert!(result.is_err());
 
-        server.await.unwrap();
+        server.await.expect("test server task should complete");
     }
 }

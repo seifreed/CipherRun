@@ -4,7 +4,50 @@
 use crate::db::config::{DatabaseConfig, DatabaseType};
 use sqlx::{Pool, Postgres, Row, Sqlite};
 use std::str::FromStr;
-use std::time::Duration;
+
+/// Sanitize a SQL identifier (table name, column name) to prevent injection.
+///
+/// Only allows alphanumeric characters and underscores.
+/// Panics on invalid identifiers — these are programming errors since
+/// table/column names should be hardcoded, never from user input.
+#[inline]
+fn sanitize_identifier(ident: &str) -> String {
+    // Reject empty or overly long identifiers
+    assert!(
+        !ident.is_empty() && ident.len() <= 128,
+        "SQL identifier rejected: length {} (must be 1-128 chars)",
+        ident.len()
+    );
+
+    // Only allow alphanumeric and underscore
+    assert!(
+        ident.chars().all(|c| c.is_alphanumeric() || c == '_'),
+        "SQL identifier rejected: '{}' (only alphanumeric and underscore allowed)",
+        ident
+    );
+
+    ident.to_string()
+}
+
+/// Sanitize multiple identifiers for use in column list
+#[inline]
+fn sanitize_identifiers(idents: &[&str]) -> String {
+    idents
+        .iter()
+        .map(|id| sanitize_identifier(id))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Sanitize a comma-separated column list in SELECT statements
+#[inline]
+fn sanitize_select_columns(columns: &str) -> String {
+    columns
+        .split(',')
+        .map(|col| sanitize_identifier(col.trim()))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
 
 /// QueryBuilder that handles placeholder syntax differences between databases.
 /// PostgreSQL uses $1, $2, $3... while SQLite uses ?, ?, ?...
@@ -46,14 +89,27 @@ impl QueryBuilder {
     }
 
     /// Build an INSERT query with the correct placeholders
+    ///
+    /// # Security
+    /// Table and column names are validated to prevent SQL injection.
+    /// Only alphanumeric characters and underscores are allowed.
+    /// Returns the query string (invalid identifiers result in empty strings which cause SQL errors).
     pub fn insert_query(&mut self, table: &str, columns: &[&str]) -> String {
         self.reset();
-        let cols = columns.join(", ");
+        let cols = sanitize_identifiers(columns);
         let placeholders = self.placeholders(columns.len());
-        format!("INSERT INTO {} ({}) VALUES ({})", table, cols, placeholders)
+        format!(
+            "INSERT INTO {} ({}) VALUES ({})",
+            sanitize_identifier(table),
+            cols,
+            placeholders
+        )
     }
 
     /// Build an INSERT query with RETURNING clause (Postgres) or without (SQLite)
+    ///
+    /// # Security
+    /// Table and column names are validated to prevent SQL injection.
     pub fn insert_returning_query(
         &mut self,
         table: &str,
@@ -61,26 +117,78 @@ impl QueryBuilder {
         returning_col: &str,
     ) -> String {
         self.reset();
-        let cols = columns.join(", ");
+        let cols = sanitize_identifiers(columns);
         let placeholders = self.placeholders(columns.len());
         match self.db_type {
             DatabaseType::Postgres => format!(
                 "INSERT INTO {} ({}) VALUES ({}) RETURNING {}",
-                table, cols, placeholders, returning_col
+                sanitize_identifier(table),
+                cols,
+                placeholders,
+                sanitize_identifier(returning_col)
             ),
             DatabaseType::Sqlite => {
-                format!("INSERT INTO {} ({}) VALUES ({})", table, cols, placeholders)
+                format!(
+                    "INSERT INTO {} ({}) VALUES ({})",
+                    sanitize_identifier(table),
+                    cols,
+                    placeholders
+                )
+            }
+        }
+    }
+
+    /// Build an INSERT ... ON CONFLICT DO NOTHING query with RETURNING clause.
+    ///
+    /// On conflict with `conflict_col`, the row is not inserted. For Postgres,
+    /// the RETURNING clause returns the ID. For SQLite, uses INSERT OR IGNORE.
+    ///
+    /// # Security
+    /// Table and column names are validated to prevent SQL injection.
+    pub fn insert_on_conflict_do_nothing_query(
+        &mut self,
+        table: &str,
+        columns: &[&str],
+        conflict_col: &str,
+        returning_col: &str,
+    ) -> String {
+        self.reset();
+        let cols = sanitize_identifiers(columns);
+        let placeholders = self.placeholders(columns.len());
+        match self.db_type {
+            DatabaseType::Postgres => format!(
+                "INSERT INTO {} ({}) VALUES ({}) ON CONFLICT ({}) DO NOTHING RETURNING {}",
+                sanitize_identifier(table),
+                cols,
+                placeholders,
+                sanitize_identifier(conflict_col),
+                sanitize_identifier(returning_col)
+            ),
+            DatabaseType::Sqlite => {
+                format!(
+                    "INSERT OR IGNORE INTO {} ({}) VALUES ({})",
+                    sanitize_identifier(table),
+                    cols,
+                    placeholders
+                )
             }
         }
     }
 
     /// Build a SELECT query with WHERE clause
+    ///
+    /// # Security
+    /// Table and column names are validated to prevent SQL injection.
+    /// For multiple columns, pass them as comma-separated string.
     pub fn select_where_query(&mut self, table: &str, columns: &str, where_col: &str) -> String {
         self.reset();
         let placeholder = self.placeholder();
         format!(
             "SELECT {} FROM {} WHERE {} = {}",
-            columns, table, where_col, placeholder
+            sanitize_select_columns(columns),
+            sanitize_identifier(table),
+            sanitize_identifier(where_col),
+            placeholder
         )
     }
 
@@ -101,7 +209,7 @@ impl QueryBuilder {
         row_count: usize,
     ) -> String {
         self.reset();
-        let cols = columns.join(", ");
+        let cols = sanitize_identifiers(columns);
 
         // Build multiple value sets: (?, ?), (?, ?), ...
         let value_sets: Vec<String> = (0..row_count)
@@ -113,7 +221,7 @@ impl QueryBuilder {
 
         format!(
             "INSERT INTO {} ({}) VALUES {}",
-            table,
+            sanitize_identifier(table),
             cols,
             value_sets.join(", ")
         )
@@ -137,7 +245,7 @@ impl DatabasePool {
 
                 let pool = sqlx::postgres::PgPoolOptions::new()
                     .max_connections(max_connections)
-                    .acquire_timeout(Duration::from_secs(30))
+                    .acquire_timeout(crate::constants::DB_ACQUIRE_TIMEOUT)
                     .connect(&connection_string)
                     .await
                     .map_err(|e| {
@@ -162,11 +270,22 @@ impl DatabasePool {
                                 e
                             ))
                         })?
-                        .create_if_missing(true);
+                        .create_if_missing(true)
+                        // Enable WAL mode for better concurrency:
+                        // - Multiple readers can work concurrently
+                        // - Writers don't block readers
+                        // - This is essential for a connection pool > 1
+                        .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
+                        // Set busy timeout for write operations
+                        // This allows waiting instead of immediately failing on lock contention
+                        .busy_timeout(crate::constants::DB_BUSY_TIMEOUT);
 
                 let pool = sqlx::sqlite::SqlitePoolOptions::new()
-                    .max_connections(1) // SQLite is single-writer
-                    .acquire_timeout(Duration::from_secs(30))
+                    // Allow multiple connections for read concurrency
+                    // With WAL mode, readers don't block writers
+                    // This prevents the system from blocking if one connection is slow
+                    .max_connections(5)
+                    .acquire_timeout(crate::constants::DB_ACQUIRE_TIMEOUT)
                     .connect_with(connect_options)
                     .await
                     .map_err(|e| {
@@ -178,6 +297,102 @@ impl DatabasePool {
         };
 
         Ok(pool)
+    }
+
+    /// Run a simple health check query (`SELECT 1`) against the database
+    pub async fn health_check(&self) -> crate::Result<()> {
+        match self {
+            DatabasePool::Postgres(pool) => {
+                sqlx::query("SELECT 1").fetch_one(pool).await.map_err(|e| {
+                    crate::TlsError::DatabaseError(format!("Database health check failed: {}", e))
+                })?;
+            }
+            DatabasePool::Sqlite(pool) => {
+                sqlx::query("SELECT 1").fetch_one(pool).await.map_err(|e| {
+                    crate::TlsError::DatabaseError(format!("Database health check failed: {}", e))
+                })?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Query top scanned domains from the last 30 days
+    pub async fn get_top_domains(
+        &self,
+        limit: i64,
+    ) -> crate::Result<Vec<(String, i64, chrono::DateTime<chrono::Utc>)>> {
+        match self {
+            DatabasePool::Postgres(pool) => {
+                let rows = sqlx::query(
+                    r#"
+                    SELECT target_hostname, COUNT(*) as scan_count,
+                           MAX(scan_timestamp) as last_scan
+                    FROM scans
+                    WHERE scan_timestamp > NOW() - INTERVAL '30 days'
+                    GROUP BY target_hostname
+                    ORDER BY scan_count DESC
+                    LIMIT $1
+                    "#,
+                )
+                .bind(limit)
+                .fetch_all(pool)
+                .await
+                .map_err(|e| {
+                    crate::TlsError::DatabaseError(format!("Failed to query top domains: {}", e))
+                })?;
+
+                Ok(rows
+                    .into_iter()
+                    .filter_map(|row| {
+                        let count: i64 = row.get("scan_count");
+                        if count < 0 {
+                            tracing::warn!("Negative scan count encountered: {}", count);
+                            return None;
+                        }
+                        Some((
+                            row.get::<String, _>("target_hostname"),
+                            count,
+                            row.get::<chrono::DateTime<chrono::Utc>, _>("last_scan"),
+                        ))
+                    })
+                    .collect())
+            }
+            DatabasePool::Sqlite(pool) => {
+                let rows = sqlx::query(
+                    r#"
+                    SELECT target_hostname, COUNT(*) as scan_count,
+                           MAX(scan_timestamp) as last_scan
+                    FROM scans
+                    WHERE scan_timestamp > datetime('now', '-30 days')
+                    GROUP BY target_hostname
+                    ORDER BY scan_count DESC
+                    LIMIT ?
+                    "#,
+                )
+                .bind(limit)
+                .fetch_all(pool)
+                .await
+                .map_err(|e| {
+                    crate::TlsError::DatabaseError(format!("Failed to query top domains: {}", e))
+                })?;
+
+                Ok(rows
+                    .into_iter()
+                    .filter_map(|row| {
+                        let count: i64 = row.get::<i64, _>("scan_count");
+                        if count < 0 {
+                            tracing::warn!("Negative scan count encountered: {}", count);
+                            return None;
+                        }
+                        Some((
+                            row.get::<String, _>("target_hostname"),
+                            count,
+                            row.get::<chrono::DateTime<chrono::Utc>, _>("last_scan"),
+                        ))
+                    })
+                    .collect())
+            }
+        }
     }
 
     /// Get database type
@@ -431,6 +646,37 @@ mod tests {
         assert_eq!(query, "SELECT a, b FROM items WHERE id = $1");
         let query2 = builder.select_where_query("items", "a", "id");
         assert_eq!(query2, "SELECT a FROM items WHERE id = $1");
+    }
+
+    #[test]
+    fn test_sanitize_identifier_valid() {
+        assert!(!sanitize_identifier("table_name").is_empty());
+        assert!(!sanitize_identifier("column123").is_empty());
+        assert!(!sanitize_identifier("a_b_c").is_empty());
+    }
+
+    #[test]
+    #[should_panic(expected = "must be 1-128 chars")]
+    fn test_sanitize_identifier_empty() {
+        sanitize_identifier("");
+    }
+
+    #[test]
+    #[should_panic(expected = "only alphanumeric and underscore allowed")]
+    fn test_sanitize_identifier_invalid_chars() {
+        sanitize_identifier("table-name");
+    }
+
+    #[test]
+    #[should_panic(expected = "only alphanumeric and underscore allowed")]
+    fn test_sanitize_identifier_injection() {
+        sanitize_identifier("table;drop");
+    }
+
+    #[test]
+    #[should_panic(expected = "must be 1-128 chars")]
+    fn test_sanitize_identifier_too_long() {
+        sanitize_identifier(&"a".repeat(200));
     }
 
     #[tokio::test]

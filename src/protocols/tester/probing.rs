@@ -101,7 +101,11 @@ impl ProtocolTester {
                 idx + 1,
                 addrs.len(),
                 protocol,
-                if ip_supports { "supported" } else { "NOT supported" },
+                if ip_supports {
+                    "supported"
+                } else {
+                    "NOT supported"
+                },
                 if ip_supports { "✓" } else { "✗" }
             );
 
@@ -126,7 +130,11 @@ impl ProtocolTester {
                     "  {} {} - {}",
                     ip,
                     protocol,
-                    if *supported { "SUPPORTED" } else { "NOT SUPPORTED" }
+                    if *supported {
+                        "SUPPORTED"
+                    } else {
+                        "NOT SUPPORTED"
+                    }
                 );
             }
         }
@@ -197,7 +205,7 @@ impl ProtocolTester {
     pub(super) fn build_sslv2_client_hello(&self) -> Vec<u8> {
         let mut hello = vec![0x80, 0x00, 0x01, 0x00, 0x02];
         hello.push(0x00);
-        hello.push(0x06);
+        hello.push(0x09); // cipher_spec_length: 9 bytes (3 ciphers × 3 bytes each)
         hello.push(0x00);
         hello.push(0x00);
         hello.push(0x00);
@@ -219,7 +227,7 @@ impl ProtocolTester {
         protocol: Protocol,
         addr: std::net::SocketAddr,
     ) -> Result<bool> {
-        use openssl::ssl::{SslConnector, SslMethod, SslVersion, SslVerifyMode};
+        use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode, SslVersion};
 
         let mut stream = match crate::utils::network::connect_with_timeout(
             addr,
@@ -244,6 +252,14 @@ impl ProtocolTester {
 
         let std_stream = stream.into_std()?;
         std_stream.set_nonblocking(false)?;
+
+        // Set socket-level read/write timeouts to prevent indefinite blocking
+        // on servers that accept TCP but never complete the TLS handshake
+        let socket_timeout = Some(std::time::Duration::from_secs(
+            self.read_timeout.as_secs().max(10),
+        ));
+        std_stream.set_read_timeout(socket_timeout)?;
+        std_stream.set_write_timeout(socket_timeout)?;
 
         let mut builder = SslConnector::builder(SslMethod::tls())?;
         builder.set_verify(SslVerifyMode::NONE);
@@ -317,7 +333,9 @@ impl ProtocolTester {
 
         let sni_host = self.sni_hostname.as_ref().unwrap_or(&self.target.hostname);
         let domain = rustls_pki_types::ServerName::try_from(sni_host.as_str())
-            .map_err(|_| anyhow::anyhow!("Invalid DNS name"))?
+            .map_err(|_| crate::error::TlsError::ParseError {
+                message: "Invalid DNS name".into(),
+            })?
             .to_owned();
 
         match timeout(self.read_timeout, connector.connect(domain, stream)).await {

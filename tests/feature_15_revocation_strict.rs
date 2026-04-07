@@ -52,9 +52,10 @@ mod revocation_strict_tests {
                 method: RevocationMethod::OCSP,
                 details: "Certificate is good".to_string(),
                 ocsp_stapling: false,
+                ocsp_stapling_details: None,
                 must_staple: false,
             },
-            hard_fail_applied: false,
+            hard_fail_mode_enabled: false,
             error_details: None,
         };
 
@@ -72,9 +73,10 @@ mod revocation_strict_tests {
                 method: RevocationMethod::OCSP,
                 details: "Certificate is revoked".to_string(),
                 ocsp_stapling: false,
+                ocsp_stapling_details: None,
                 must_staple: false,
             },
-            hard_fail_applied: false,
+            hard_fail_mode_enabled: false,
             error_details: None,
         };
 
@@ -92,9 +94,10 @@ mod revocation_strict_tests {
                 method: RevocationMethod::None,
                 details: "Revocation status unknown".to_string(),
                 ocsp_stapling: false,
+                ocsp_stapling_details: None,
                 must_staple: false,
             },
-            hard_fail_applied: false,
+            hard_fail_mode_enabled: false,
             error_details: None,
         };
 
@@ -112,9 +115,10 @@ mod revocation_strict_tests {
                 method: RevocationMethod::None,
                 details: "Revocation check failed".to_string(),
                 ocsp_stapling: false,
+                ocsp_stapling_details: None,
                 must_staple: false,
             },
-            hard_fail_applied: false,
+            hard_fail_mode_enabled: false,
             error_details: Some("OCSP responder timeout".to_string()),
         };
 
@@ -132,9 +136,10 @@ mod revocation_strict_tests {
                 method: RevocationMethod::OCSP,
                 details: "Test details".to_string(),
                 ocsp_stapling: true,
+                ocsp_stapling_details: None,
                 must_staple: false,
             },
-            hard_fail_applied: false,
+            hard_fail_mode_enabled: false,
             error_details: None,
         };
 
@@ -174,9 +179,10 @@ mod revocation_strict_tests {
                 method: RevocationMethod::None,
                 details: "Check failed".to_string(),
                 ocsp_stapling: false,
+                ocsp_stapling_details: None,
                 must_staple: false,
             },
-            hard_fail_applied: false,
+            hard_fail_mode_enabled: false,
             error_details: Some(error_details.clone()),
         };
 
@@ -191,9 +197,10 @@ mod revocation_strict_tests {
                 method: RevocationMethod::CRL,
                 details: "Verified via CRL".to_string(),
                 ocsp_stapling: false,
+                ocsp_stapling_details: None,
                 must_staple: false,
             },
-            hard_fail_applied: false,
+            hard_fail_mode_enabled: false,
             error_details: None,
         };
 
@@ -209,9 +216,10 @@ mod revocation_strict_tests {
                 method: RevocationMethod::OCSPStapling,
                 details: "OCSP stapling response verified".to_string(),
                 ocsp_stapling: true,
+                ocsp_stapling_details: None,
                 must_staple: true,
             },
-            hard_fail_applied: false,
+            hard_fail_mode_enabled: false,
             error_details: None,
         };
 

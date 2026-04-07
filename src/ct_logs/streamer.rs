@@ -66,8 +66,21 @@ pub struct CtStreamer {
 impl CtStreamer {
     /// Create a new CT log streamer
     pub async fn new(config: CtConfig) -> Result<Self> {
-        // Validate batch size
-        let batch_size = config.batch_size.clamp(1, MAX_BATCH_SIZE);
+        // Validate and clamp batch size with warning
+        let batch_size = if config.batch_size > MAX_BATCH_SIZE {
+            tracing::warn!(
+                "batch_size {} exceeds maximum {}, clamping to {}",
+                config.batch_size,
+                MAX_BATCH_SIZE,
+                MAX_BATCH_SIZE
+            );
+            MAX_BATCH_SIZE
+        } else if config.batch_size == 0 {
+            tracing::warn!("batch_size cannot be 0, using default of 1");
+            1
+        } else {
+            config.batch_size
+        };
         let mut config = config;
         config.batch_size = batch_size;
 
@@ -111,11 +124,12 @@ impl CtStreamer {
                 error!("Failed to listen for shutdown signal: {}", e);
             }
             info!("Shutdown signal received");
-            shutdown_clone.store(true, Ordering::Relaxed);
+            shutdown_clone.store(true, Ordering::Release);
         });
 
         // Create channel for certificate entries
-        let (tx, mut rx) = mpsc::channel::<CtLogEntry>(10000);
+        // Buffer size limited to prevent memory spike on burst of certificates
+        let (tx, mut rx) = mpsc::channel::<CtLogEntry>(1000);
 
         // Spawn output handler
         let json_output = self.config.json_output;
@@ -250,7 +264,7 @@ impl CtStreamer {
         };
 
         // Streaming loop
-        while !shutdown.load(Ordering::Relaxed) {
+        while !shutdown.load(Ordering::Acquire) {
             // Get current tree size
             let tree_size = match client.get_tree_size(&source_url).await {
                 Ok(size) => size,
@@ -272,8 +286,14 @@ impl CtStreamer {
                 continue;
             }
 
-            // Calculate batch end
-            let batch_end = (current_index + config.batch_size).min(tree_size - 1);
+            // Calculate batch end (guard against underflow when tree_size is 0)
+            // batch_end is inclusive, so we subtract 1 from batch_size to get exactly batch_size entries
+            let batch_end = if tree_size == 0 {
+                current_index
+            } else {
+                (current_index + config.batch_size.saturating_sub(1))
+                    .min(tree_size.saturating_sub(1))
+            };
 
             debug!(
                 "Fetching entries {}-{} from {} (tree size: {})",
@@ -343,7 +363,7 @@ impl CtStreamer {
     async fn stats_reporter(stats: StatsTracker, shutdown: Arc<AtomicBool>) {
         let mut interval = tokio::time::interval(Duration::from_secs(30));
 
-        while !shutdown.load(Ordering::Relaxed) {
+        while !shutdown.load(Ordering::Acquire) {
             interval.tick().await;
             stats.print_stats();
         }

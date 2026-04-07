@@ -40,6 +40,7 @@ use async_trait::async_trait;
 /// - Custom headers (--header "Name: Value")
 /// - User agent override (--sneaky mode)
 /// - Header testing enable/disable (--headers)
+/// - Baseline scan policy for implicit execution
 pub struct HttpHeadersPhase;
 
 impl HttpHeadersPhase {
@@ -115,8 +116,8 @@ impl ScanPhase for HttpHeadersPhase {
     fn should_run(&self, args: &ScanRequest) -> bool {
         // Run if:
         // - Explicit header analysis requested (--headers)
-        // - Full scan mode (--all)
-        args.scan.headers || args.scan.all
+        // - Baseline scan policy enables implicit header analysis
+        args.should_run_http_headers_phase()
     }
 
     async fn execute(&self, context: &mut ScanContext) -> Result<()> {
@@ -151,7 +152,7 @@ mod tests {
             vec!["127.0.0.1".parse().unwrap()],
         )
         .expect("test assertion should succeed");
-        ScanContext::new(target, Arc::new(args), None)
+        ScanContext::new(target, Arc::new(args), None, None)
     }
 
     #[test]
@@ -168,9 +169,17 @@ mod tests {
         args.scan.all = true;
         assert!(phase.should_run(&args));
 
-        // Test with target specified (default scan, should NOT run)
+        // Specific-focus scans should not implicitly enable header analysis.
         let mut args = ScanRequest::default();
-        args.target = Some("example.com".to_string());
+        args.scan.all = true;
+        args.scan.show_sigs = true;
+        assert!(!phase.should_run(&args));
+
+        // Test with target specified (default scan, should NOT run)
+        let args = ScanRequest {
+            target: Some("example.com".to_string()),
+            ..Default::default()
+        };
         assert!(!phase.should_run(&args));
 
         // Test with no relevant flags

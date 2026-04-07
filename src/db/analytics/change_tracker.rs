@@ -6,7 +6,62 @@ use crate::db::{CipherRecord, CipherRunDatabase, ProtocolRecord, ScanRecord, Vul
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::hash::Hash;
 use std::sync::Arc;
+
+macro_rules! dual_query_fetch_all {
+    ($self:expr, $pg_query:expr, $sqlite_query:expr, $err_msg:expr, $( $bind:expr ),* ) => {{
+        match $self.db.pool() {
+            DatabasePool::Postgres(pool) => {
+                let q = sqlx::query_as($pg_query);
+                $( let q = q.bind($bind); )*
+                q.fetch_all(pool)
+                    .await
+                    .map_err(|e| crate::TlsError::DatabaseError(format!("{}: {}", $err_msg, e)))
+            }
+            DatabasePool::Sqlite(pool) => {
+                let q = sqlx::query_as($sqlite_query);
+                $( let q = q.bind($bind); )*
+                q.fetch_all(pool)
+                    .await
+                    .map_err(|e| crate::TlsError::DatabaseError(format!("{}: {}", $err_msg, e)))
+            }
+        }
+    }};
+}
+
+macro_rules! dual_query_fetch_optional {
+    ($self:expr, $pg_query:expr, $sqlite_query:expr, $err_msg:expr, $( $bind:expr ),* ) => {{
+        match $self.db.pool() {
+            DatabasePool::Postgres(pool) => {
+                let q = sqlx::query_as($pg_query);
+                $( let q = q.bind($bind); )*
+                q.fetch_optional(pool)
+                    .await
+                    .map_err(|e| crate::TlsError::DatabaseError(format!("{}: {}", $err_msg, e)))
+            }
+            DatabasePool::Sqlite(pool) => {
+                let q = sqlx::query_as($sqlite_query);
+                $( let q = q.bind($bind); )*
+                q.fetch_optional(pool)
+                    .await
+                    .map_err(|e| crate::TlsError::DatabaseError(format!("{}: {}", $err_msg, e)))
+            }
+        }
+    }};
+}
+
+struct SetDifferences<T> {
+    removed: Vec<T>,
+    added: Vec<T>,
+}
+
+fn detect_set_differences<T: Eq + Hash + Clone>(old: &HashSet<T>, new: &HashSet<T>) -> SetDifferences<T> {
+    SetDifferences {
+        removed: old.difference(new).cloned().collect(),
+        added: new.difference(old).cloned().collect(),
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ChangeType {
@@ -45,22 +100,23 @@ impl ChangeTracker {
         Self { db }
     }
 
-    /// Detect changes for a hostname in the last N days
+    /// Detect changes for a hostname across the last N scans
     pub async fn detect_changes(
         &self,
         hostname: &str,
         port: u16,
-        days: i64,
+        limit: i64,
     ) -> crate::Result<Vec<ChangeEvent>> {
-        let scans = self.db.get_scan_history(hostname, port, days).await?;
+        let scans = self.db.get_scan_history(hostname, port, limit).await?;
 
+        // Need at least 2 scans to compare
         if scans.len() < 2 {
             return Ok(Vec::new());
         }
 
-        // Compare consecutive scans
+        // Compare consecutive scans (use saturating_sub to prevent underflow)
         let mut all_changes = Vec::new();
-        for i in 0..scans.len() - 1 {
+        for i in 0..scans.len().saturating_sub(1) {
             let newer_scan = &scans[i];
             let older_scan = &scans[i + 1];
 
@@ -189,28 +245,13 @@ impl ChangeTracker {
     // Helper methods
 
     async fn get_scan_by_id(&self, scan_id: i64) -> crate::Result<Option<ScanRecord>> {
-        match self.db.pool() {
-            DatabasePool::Postgres(pool) => {
-                let result = sqlx::query_as::<_, ScanRecord>(
-                    "SELECT scan_id, target_hostname, target_port, scan_timestamp, overall_grade, overall_score, scan_duration_ms, scanner_version FROM scans WHERE scan_id = $1"
-                )
-                .bind(scan_id)
-                .fetch_optional(pool)
-                .await
-                .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to fetch scan: {}", e)))?;
-                Ok(result)
-            }
-            DatabasePool::Sqlite(pool) => {
-                let result = sqlx::query_as::<_, ScanRecord>(
-                    "SELECT scan_id, target_hostname, target_port, scan_timestamp, overall_grade, overall_score, scan_duration_ms, scanner_version FROM scans WHERE scan_id = ?"
-                )
-                .bind(scan_id)
-                .fetch_optional(pool)
-                .await
-                .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to fetch scan: {}", e)))?;
-                Ok(result)
-            }
-        }
+        Ok(dual_query_fetch_optional!(
+            self,
+            "SELECT scan_id, target_hostname, target_port, scan_timestamp, overall_grade, overall_score, scan_duration_ms, scanner_version FROM scans WHERE scan_id = $1",
+            "SELECT scan_id, target_hostname, target_port, scan_timestamp, overall_grade, overall_score, scan_duration_ms, scanner_version FROM scans WHERE scan_id = ?",
+            "Failed to fetch scan",
+            scan_id
+        )?)
     }
 
     async fn detect_protocol_changes(
@@ -224,20 +265,21 @@ impl ChangeTracker {
 
         let mut changes = Vec::new();
 
-        let set1: HashSet<&str> = protocols1
+        let set1: HashSet<String> = protocols1
             .iter()
             .filter(|p| p.enabled)
-            .map(|p| p.protocol_name.as_str())
+            .map(|p| p.protocol_name.clone())
             .collect();
 
-        let set2: HashSet<&str> = protocols2
+        let set2: HashSet<String> = protocols2
             .iter()
             .filter(|p| p.enabled)
-            .map(|p| p.protocol_name.as_str())
+            .map(|p| p.protocol_name.clone())
             .collect();
 
-        // Removed protocols
-        for proto in set1.difference(&set2) {
+        let diffs = detect_set_differences(&set1, &set2);
+
+        for proto in &diffs.removed {
             changes.push(ChangeEvent {
                 change_type: ChangeType::Protocol,
                 severity: ChangeSeverity::Medium,
@@ -248,8 +290,7 @@ impl ChangeTracker {
             });
         }
 
-        // Added protocols
-        for proto in set2.difference(&set1) {
+        for proto in &diffs.added {
             let severity = if proto.contains("SSLv") {
                 ChangeSeverity::High
             } else if proto.contains("TLS 1.3") {
@@ -303,11 +344,12 @@ impl ChangeTracker {
 
         let mut changes = Vec::new();
 
-        let set1: HashSet<&str> = ciphers1.iter().map(|c| c.cipher_name.as_str()).collect();
-        let set2: HashSet<&str> = ciphers2.iter().map(|c| c.cipher_name.as_str()).collect();
+        let set1: HashSet<String> = ciphers1.iter().map(|c| c.cipher_name.clone()).collect();
+        let set2: HashSet<String> = ciphers2.iter().map(|c| c.cipher_name.clone()).collect();
 
-        // Removed ciphers
-        for cipher_name in set1.difference(&set2) {
+        let diffs = detect_set_differences(&set1, &set2);
+
+        for cipher_name in &diffs.removed {
             let cipher = ciphers1
                 .iter()
                 .find(|c| &c.cipher_name == cipher_name)
@@ -327,8 +369,7 @@ impl ChangeTracker {
             });
         }
 
-        // Added ciphers
-        for cipher_name in set2.difference(&set1) {
+        for cipher_name in &diffs.added {
             let cipher = ciphers2
                 .iter()
                 .find(|c| &c.cipher_name == cipher_name)
@@ -456,64 +497,70 @@ impl ChangeTracker {
 
         let mut changes = Vec::new();
 
-        let set1: HashSet<&str> = vulns1
+        // Use (type, severity) as the dedup key to distinguish multiple findings
+        // of the same vulnerability type with different severities
+        let set1: HashSet<(String, String)> = vulns1
             .iter()
-            .map(|v| v.vulnerability_type.as_str())
+            .map(|v| (v.vulnerability_type.clone(), v.severity.clone()))
             .collect();
-        let set2: HashSet<&str> = vulns2
+        let set2: HashSet<(String, String)> = vulns2
             .iter()
-            .map(|v| v.vulnerability_type.as_str())
+            .map(|v| (v.vulnerability_type.clone(), v.severity.clone()))
             .collect();
 
+        let diffs = detect_set_differences(&set1, &set2);
+
         // Resolved vulnerabilities
-        for vuln_type in set1.difference(&set2) {
+        for (vuln_type, vuln_sev) in &diffs.removed {
             let vuln = vulns1
                 .iter()
-                .find(|v| &v.vulnerability_type == vuln_type)
+                .find(|v| {
+                    v.vulnerability_type.as_str() == vuln_type && v.severity.as_str() == vuln_sev
+                })
                 .ok_or_else(|| anyhow::anyhow!("Vulnerability {} not found in set1", vuln_type))?;
-            let severity = match vuln.severity.as_str() {
-                "critical" => ChangeSeverity::Info,
-                "high" => ChangeSeverity::Info,
-                "medium" => ChangeSeverity::Info,
-                "low" => ChangeSeverity::Info,
-                _ => ChangeSeverity::Info,
-            };
+            let severity = Self::vuln_severity_to_change_severity(&vuln.severity);
 
             changes.push(ChangeEvent {
                 change_type: ChangeType::Vulnerability,
                 severity,
                 description: format!("Vulnerability resolved: {}", vuln_type),
-                previous_value: Some(vuln.severity.clone()), // Necessary: String for ChangeEvent
+                previous_value: Some(vuln.severity.clone()),
                 current_value: Some("resolved".to_string()),
                 timestamp,
             });
         }
 
         // New vulnerabilities
-        for vuln_type in set2.difference(&set1) {
+        for (vuln_type, vuln_sev) in &diffs.added {
             let vuln = vulns2
                 .iter()
-                .find(|v| &v.vulnerability_type == vuln_type)
+                .find(|v| {
+                    v.vulnerability_type.as_str() == vuln_type && v.severity.as_str() == vuln_sev
+                })
                 .ok_or_else(|| anyhow::anyhow!("Vulnerability {} not found in set2", vuln_type))?;
-            let severity = match vuln.severity.as_str() {
-                "critical" => ChangeSeverity::Critical,
-                "high" => ChangeSeverity::High,
-                "medium" => ChangeSeverity::Medium,
-                "low" => ChangeSeverity::Low,
-                _ => ChangeSeverity::Info,
-            };
+            let severity = Self::vuln_severity_to_change_severity(&vuln.severity);
 
             changes.push(ChangeEvent {
                 change_type: ChangeType::Vulnerability,
                 severity,
                 description: format!("New vulnerability detected: {}", vuln_type),
                 previous_value: None,
-                current_value: Some(vuln.severity.clone()), // Necessary: String for ChangeEvent
+                current_value: Some(vuln.severity.clone()),
                 timestamp,
             });
         }
 
         Ok(changes)
+    }
+
+    fn vuln_severity_to_change_severity(severity: &str) -> ChangeSeverity {
+        match severity {
+            "critical" => ChangeSeverity::Critical,
+            "high" => ChangeSeverity::High,
+            "medium" => ChangeSeverity::Medium,
+            "low" => ChangeSeverity::Low,
+            _ => ChangeSeverity::Info,
+        }
     }
 
     async fn detect_rating_changes(
@@ -552,78 +599,33 @@ impl ChangeTracker {
     }
 
     async fn get_protocols(&self, scan_id: i64) -> crate::Result<Vec<ProtocolRecord>> {
-        match self.db.pool() {
-            DatabasePool::Postgres(pool) => {
-                let protocols = sqlx::query_as::<_, ProtocolRecord>(
-                    "SELECT protocol_id, scan_id, protocol_name, enabled, preferred FROM protocols WHERE scan_id = $1"
-                )
-                .bind(scan_id)
-                .fetch_all(pool)
-                .await
-                .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to fetch protocols: {}", e)))?;
-                Ok(protocols)
-            }
-            DatabasePool::Sqlite(pool) => {
-                let protocols = sqlx::query_as::<_, ProtocolRecord>(
-                    "SELECT protocol_id, scan_id, protocol_name, enabled, preferred FROM protocols WHERE scan_id = ?"
-                )
-                .bind(scan_id)
-                .fetch_all(pool)
-                .await
-                .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to fetch protocols: {}", e)))?;
-                Ok(protocols)
-            }
-        }
+        Ok(dual_query_fetch_all!(
+            self,
+            "SELECT protocol_id, scan_id, protocol_name, enabled, preferred FROM protocols WHERE scan_id = $1",
+            "SELECT protocol_id, scan_id, protocol_name, enabled, preferred FROM protocols WHERE scan_id = ?",
+            "Failed to fetch protocols",
+            scan_id
+        )?)
     }
 
     async fn get_ciphers(&self, scan_id: i64) -> crate::Result<Vec<CipherRecord>> {
-        match self.db.pool() {
-            DatabasePool::Postgres(pool) => {
-                let ciphers = sqlx::query_as::<_, CipherRecord>(
-                    "SELECT cipher_id, scan_id, protocol_name, cipher_name, key_exchange, authentication, encryption, mac, bits, forward_secrecy, strength FROM cipher_suites WHERE scan_id = $1"
-                )
-                .bind(scan_id)
-                .fetch_all(pool)
-                .await
-                .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to fetch ciphers: {}", e)))?;
-                Ok(ciphers)
-            }
-            DatabasePool::Sqlite(pool) => {
-                let ciphers = sqlx::query_as::<_, CipherRecord>(
-                    "SELECT cipher_id, scan_id, protocol_name, cipher_name, key_exchange, authentication, encryption, mac, bits, forward_secrecy, strength FROM cipher_suites WHERE scan_id = ?"
-                )
-                .bind(scan_id)
-                .fetch_all(pool)
-                .await
-                .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to fetch ciphers: {}", e)))?;
-                Ok(ciphers)
-            }
-        }
+        Ok(dual_query_fetch_all!(
+            self,
+            "SELECT cipher_id, scan_id, protocol_name, cipher_name, key_exchange, authentication, encryption, mac, bits, forward_secrecy, strength FROM cipher_suites WHERE scan_id = $1",
+            "SELECT cipher_id, scan_id, protocol_name, cipher_name, key_exchange, authentication, encryption, mac, bits, forward_secrecy, strength FROM cipher_suites WHERE scan_id = ?",
+            "Failed to fetch ciphers",
+            scan_id
+        )?)
     }
 
     async fn get_vulnerabilities(&self, scan_id: i64) -> crate::Result<Vec<VulnerabilityRecord>> {
-        match self.db.pool() {
-            DatabasePool::Postgres(pool) => {
-                let vulns = sqlx::query_as::<_, VulnerabilityRecord>(
-                    "SELECT vuln_id, scan_id, vulnerability_type, severity, description, cve_id, affected_component FROM vulnerabilities WHERE scan_id = $1"
-                )
-                .bind(scan_id)
-                .fetch_all(pool)
-                .await
-                .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to fetch vulnerabilities: {}", e)))?;
-                Ok(vulns)
-            }
-            DatabasePool::Sqlite(pool) => {
-                let vulns = sqlx::query_as::<_, VulnerabilityRecord>(
-                    "SELECT vuln_id, scan_id, vulnerability_type, severity, description, cve_id, affected_component FROM vulnerabilities WHERE scan_id = ?"
-                )
-                .bind(scan_id)
-                .fetch_all(pool)
-                .await
-                .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to fetch vulnerabilities: {}", e)))?;
-                Ok(vulns)
-            }
-        }
+        Ok(dual_query_fetch_all!(
+            self,
+            "SELECT vuln_id, scan_id, vulnerability_type, severity, description, cve_id, affected_component FROM vulnerabilities WHERE scan_id = $1",
+            "SELECT vuln_id, scan_id, vulnerability_type, severity, description, cve_id, affected_component FROM vulnerabilities WHERE scan_id = ?",
+            "Failed to fetch vulnerabilities",
+            scan_id
+        )?)
     }
 
     async fn get_leaf_certificate(
@@ -670,18 +672,24 @@ impl ChangeTracker {
                 .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to fetch certificate: {}", e)))?;
 
                 if let Some(row) = row {
-                    let san_json: String = row.try_get("san_domains").unwrap_or_default();
-                    let san_domains: Vec<String> =
-                        serde_json::from_str(&san_json).unwrap_or_default();
+                    let san_json: Option<String> = row.try_get("san_domains").ok();
+                    let san_domains = CertificateRecord::parse_json_text_array(
+                        san_json.as_deref(),
+                        "san_domains",
+                    )?;
 
-                    let key_usage_json: String = row.try_get("key_usage").unwrap_or_default();
-                    let key_usage: Vec<String> =
-                        serde_json::from_str(&key_usage_json).unwrap_or_default();
+                    let key_usage_json: Option<String> = row.try_get("key_usage").ok();
+                    let key_usage = CertificateRecord::parse_json_text_array(
+                        key_usage_json.as_deref(),
+                        "key_usage",
+                    )?;
 
-                    let extended_key_usage_json: String =
-                        row.try_get("extended_key_usage").unwrap_or_default();
-                    let extended_key_usage: Vec<String> =
-                        serde_json::from_str(&extended_key_usage_json).unwrap_or_default();
+                    let extended_key_usage_json: Option<String> =
+                        row.try_get("extended_key_usage").ok();
+                    let extended_key_usage = CertificateRecord::parse_json_text_array(
+                        extended_key_usage_json.as_deref(),
+                        "extended_key_usage",
+                    )?;
 
                     Ok(Some(CertificateRecord {
                         cert_id: row.try_get("cert_id").ok(),

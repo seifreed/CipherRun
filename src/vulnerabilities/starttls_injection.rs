@@ -2,6 +2,7 @@
 // Tests for command injection during STARTTLS protocol upgrade
 
 use crate::Result;
+use crate::constants::TLS_HANDSHAKE_TIMEOUT;
 use crate::utils::network::Target;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -24,15 +25,43 @@ impl StarttlsInjectionTester {
         Self { target }
     }
 
+    /// Check if a response code appears at the start of any line in the response.
+    /// This prevents false positives from codes appearing in the middle of text
+    /// (e.g., in hostnames, error messages, or certificate data).
+    ///
+    /// SMTP/IMAP/POP3 response codes must appear at the beginning of a line
+    /// per their respective RFCs.
+    fn response_code_at_line_start(response: &str, code: &str) -> bool {
+        response.lines().any(|line| line.starts_with(code))
+    }
+
+    /// Find the position of a response code at the start of a line.
+    /// Returns the byte position if found, or None if not found.
+    /// This is used to verify the order of responses in multi-line responses.
+    fn find_response_code_at_line_start(response: &str, code: &str) -> Option<usize> {
+        let mut pos = 0;
+        for line in response.lines() {
+            if line.starts_with(code) {
+                return Some(pos);
+            }
+            // +1 for the newline character that .lines() removes
+            pos += line.len() + 1;
+        }
+        None
+    }
+
     /// Test SMTP STARTTLS injection
     pub async fn test_smtp_injection(&self) -> Result<bool> {
-        let addr = format!("{}:{}", self.target.hostname, self.target.port);
+        let addr = self.target.socket_addrs()[0];
 
         // Try to connect with timeout
-        let stream = match timeout(Duration::from_secs(5), TcpStream::connect(&addr)).await {
-            Ok(Ok(s)) => s,
-            _ => return Ok(false),
-        };
+        let stream =
+            match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None)
+                .await
+            {
+                Ok(s) => s,
+                Err(_) => return Ok(false),
+            };
 
         // Test 1: Command injection before STARTTLS completes
         if self.test_command_injection_smtp(stream).await? {
@@ -67,10 +96,19 @@ impl StarttlsInjectionTester {
         let n = timeout(Duration::from_secs(2), stream.read(&mut buf)).await??;
         let response = String::from_utf8_lossy(&buf[..n]);
 
-        // If server accepts the injected MAIL FROM before TLS, it's vulnerable
-        // Expected: Only "220 Ready to start TLS"
-        // Vulnerable: "220 Ready..." followed by "250 OK" for MAIL FROM
-        if response.contains("250") && response.contains("220") {
+        // If server accepts the injected MAIL FROM before TLS, it's vulnerable.
+        // Expected: Only "220 Ready to start TLS" (no "250" at all)
+        // Vulnerable: "220 Ready..." followed by "250 OK" for the injected MAIL FROM
+        //
+        // We verify ORDER: "250" must appear AFTER "220" to confirm the server
+        // processed the injected command after acknowledging STARTTLS.
+        // IMPORTANT: We check that codes appear at the START of lines to avoid
+        // false positives from these strings appearing in hostnames, banners, or
+        // other parts of the response.
+        if let Some(pos_220) = Self::find_response_code_at_line_start(&response, "220")
+            && let Some(pos_250) = Self::find_response_code_at_line_start(&response, "250")
+            && pos_250 > pos_220
+        {
             return Ok(true);
         }
 
@@ -79,12 +117,15 @@ impl StarttlsInjectionTester {
 
     /// Test IMAP STARTTLS injection
     pub async fn test_imap_injection(&self) -> Result<bool> {
-        let addr = format!("{}:{}", self.target.hostname, self.target.port);
+        let addr = self.target.socket_addrs()[0];
 
-        let stream = match timeout(Duration::from_secs(5), TcpStream::connect(&addr)).await {
-            Ok(Ok(s)) => s,
-            _ => return Ok(false),
-        };
+        let stream =
+            match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None)
+                .await
+            {
+                Ok(s) => s,
+                Err(_) => return Ok(false),
+            };
 
         self.test_command_injection_imap(stream).await
     }
@@ -118,7 +159,10 @@ impl StarttlsInjectionTester {
         let response = String::from_utf8_lossy(&buf[..n]);
 
         // Vulnerable if server processes LOGIN before TLS upgrade
-        if response.contains("a003") {
+        // IMAP responses are tagged with the command tag at the start of the line
+        // Format: "a003 STATUS message" - we check for this at line start to avoid
+        // false positives from the tag appearing in other parts of the response
+        if Self::response_code_at_line_start(&response, "a003") {
             return Ok(true);
         }
 
@@ -127,12 +171,15 @@ impl StarttlsInjectionTester {
 
     /// Test POP3 STARTTLS injection
     pub async fn test_pop3_injection(&self) -> Result<bool> {
-        let addr = format!("{}:{}", self.target.hostname, self.target.port);
+        let addr = self.target.socket_addrs()[0];
 
-        let stream = match timeout(Duration::from_secs(5), TcpStream::connect(&addr)).await {
-            Ok(Ok(s)) => s,
-            _ => return Ok(false),
-        };
+        let stream =
+            match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None)
+                .await
+            {
+                Ok(s) => s,
+                Err(_) => return Ok(false),
+            };
 
         self.test_command_injection_pop3(stream).await
     }
@@ -172,36 +219,36 @@ impl StarttlsInjectionTester {
         // 1. Ignore the injection (only response to STLS)
         // 2. Return an error about the unexpected command
         // 3. Close the connection
-        
+
         // Count +OK responses that specifically indicate command processing
-        let ok_responses: Vec<&str> = response.lines()
+        let ok_responses: Vec<&str> = response
+            .lines()
             .filter(|line| line.starts_with("+OK"))
             .collect();
-        
+
         // Vulnerable if we got more than one +OK response
         // (one for STLS, one for the injected USER command)
         if ok_responses.len() >= 2 {
             // Verify the second +OK is related to USER command processing
             // by checking if it mentions user/authentication
-            let has_user_response = response.lines()
+            let has_user_response = response
+                .lines()
                 .skip_while(|line| !line.contains("STLS"))
-                .any(|line| line.contains("+OK") && 
-                    (line.to_lowercase().contains("user") || 
-                     line.to_lowercase().contains("auth") ||
-                     line.to_lowercase().contains("login")));
-            
+                .any(|line| {
+                    line.contains("+OK")
+                        && (line.to_lowercase().contains("user")
+                            || line.to_lowercase().contains("auth")
+                            || line.to_lowercase().contains("login"))
+                });
+
             return Ok(has_user_response);
         }
-        
-        // Check if the injected command caused any visible effect
-        // (error message about unknown command confirms no injection)
-        let has_error_response = response.lines()
-            .any(|line| line.to_lowercase().contains("error") || 
-                        line.to_lowercase().contains("unknown") ||
-                        line.to_lowercase().contains("bad"));
-        
-        // If we got error responses, the server properly handled the injection
-        Ok(false && !has_error_response)
+
+        // With only one +OK and no clear evidence of command processing,
+        // we cannot confirm vulnerability. The server may have silently
+        // ignored the injection or closed the connection.
+        // Default to not vulnerable to avoid false positives.
+        Ok(false)
     }
 
     /// Test all STARTTLS injection vectors

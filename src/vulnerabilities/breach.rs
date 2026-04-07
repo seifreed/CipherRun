@@ -6,10 +6,8 @@
 // Similar to CRIME but targets HTTP-level compression instead of TLS compression.
 
 use crate::Result;
+use crate::constants::TLS_HANDSHAKE_TIMEOUT;
 use crate::utils::network::Target;
-use std::time::Duration;
-use tokio::net::TcpStream;
-use tokio::time::timeout;
 
 /// BREACH vulnerability tester
 pub struct BreachTester {
@@ -65,52 +63,58 @@ impl BreachTester {
         let addr = self.target.socket_addrs()[0];
 
         // First establish TLS connection
-        match timeout(Duration::from_secs(5), TcpStream::connect(addr)).await {
-            Ok(Ok(stream)) => {
-                let std_stream = stream.into_std()?;
-                std_stream.set_nonblocking(false)?;
+        let stream =
+            match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None)
+                .await
+            {
+                Ok(s) => s,
+                Err(_) => return Ok(false),
+            };
 
-                // Establish TLS
-                use openssl::ssl::{SslConnector, SslMethod};
-                let connector = SslConnector::builder(SslMethod::tls())?.build();
+        let std_stream = stream.into_std()?;
+        std_stream.set_nonblocking(false)?;
 
-                match connector.connect(&self.target.hostname, std_stream) {
-                    Ok(mut ssl_stream) => {
-                        use std::io::{Read, Write};
+        // Establish TLS
+        use openssl::ssl::{SslConnector, SslMethod};
+        let connector = SslConnector::builder(SslMethod::tls())?.build();
 
-                        // Send HTTP request with Accept-Encoding header
-                        let request = format!(
-                            "GET / HTTP/1.1\r\n\
-                             Host: {}\r\n\
-                             Accept-Encoding: gzip, deflate\r\n\
-                             User-Agent: Mozilla/5.0\r\n\
-                             Connection: close\r\n\
-                             \r\n",
-                            self.target.hostname
-                        );
+        match connector.connect(&self.target.hostname, std_stream) {
+            Ok(mut ssl_stream) => {
+                use std::io::{Read, Write};
 
-                        ssl_stream.write_all(request.as_bytes())?;
+                // Send HTTP request with Accept-Encoding header
+                let request = format!(
+                    "GET / HTTP/1.1\r\n\
+                     Host: {}\r\n\
+                     Accept-Encoding: gzip, deflate\r\n\
+                     User-Agent: Mozilla/5.0\r\n\
+                     Connection: close\r\n\
+                     \r\n",
+                    self.target.hostname
+                );
 
-                        // Read response headers
-                        let mut buffer = vec![0u8; 8192];
-                        let n = ssl_stream.read(&mut buffer)?;
+                ssl_stream.write_all(request.as_bytes())?;
 
-                        if n > 0 {
-                            let response = String::from_utf8_lossy(&buffer[..n]);
-                            // Check for Content-Encoding header
-                            let compressed = response.lines().any(|line| {
-                                line.to_lowercase().starts_with("content-encoding:")
-                                    && (line.contains("gzip") || line.contains("deflate"))
-                            });
-                            Ok(compressed)
-                        } else {
-                            Ok(false)
-                        }
-                    }
-                    Err(_) => Ok(false),
+                // Read response headers
+                let mut buffer = vec![0u8; 8192];
+                let n = ssl_stream.read(&mut buffer)?;
+
+                if n > 0 {
+                    let response = String::from_utf8_lossy(&buffer[..n]);
+                    // Check for Content-Encoding header
+                    let compressed = response.lines().any(|line| {
+                        let lower = line.to_lowercase();
+                        lower.starts_with("content-encoding:")
+                            && (lower.contains("gzip")
+                                || lower.contains("deflate")
+                                || lower.contains("br"))
+                    });
+                    Ok(compressed)
+                } else {
+                    Ok(false)
                 }
             }
-            _ => Ok(false),
+            Err(_) => Ok(false),
         }
     }
 
@@ -118,47 +122,50 @@ impl BreachTester {
     async fn test_dynamic_content(&self) -> Result<bool> {
         let addr = self.target.socket_addrs()[0];
 
-        match timeout(Duration::from_secs(5), TcpStream::connect(addr)).await {
-            Ok(Ok(stream)) => {
-                let std_stream = stream.into_std()?;
-                std_stream.set_nonblocking(false)?;
+        let stream =
+            match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None)
+                .await
+            {
+                Ok(s) => s,
+                Err(_) => return Ok(false),
+            };
 
-                use openssl::ssl::{SslConnector, SslMethod};
-                let connector = SslConnector::builder(SslMethod::tls())?.build();
+        let std_stream = stream.into_std()?;
+        std_stream.set_nonblocking(false)?;
 
-                match connector.connect(&self.target.hostname, std_stream) {
-                    Ok(mut ssl_stream) => {
-                        use std::io::{Read, Write};
+        use openssl::ssl::{SslConnector, SslMethod};
+        let connector = SslConnector::builder(SslMethod::tls())?.build();
 
-                        // Send request with unique marker in query string
-                        let marker = "BREACH_TEST_MARKER_12345";
-                        let request = format!(
-                            "GET /?test={} HTTP/1.1\r\n\
-                             Host: {}\r\n\
-                             Accept-Encoding: gzip, deflate\r\n\
-                             Connection: close\r\n\
-                             \r\n",
-                            marker, self.target.hostname
-                        );
+        match connector.connect(&self.target.hostname, std_stream) {
+            Ok(mut ssl_stream) => {
+                use std::io::{Read, Write};
 
-                        ssl_stream.write_all(request.as_bytes())?;
+                // Send request with unique marker in query string
+                let marker = "BREACH_TEST_MARKER_12345";
+                let request = format!(
+                    "GET /?test={} HTTP/1.1\r\n\
+                     Host: {}\r\n\
+                     Accept-Encoding: gzip, deflate\r\n\
+                     Connection: close\r\n\
+                     \r\n",
+                    marker, self.target.hostname
+                );
 
-                        // Read response
-                        let mut buffer = vec![0u8; 16384];
-                        let n = ssl_stream.read(&mut buffer)?;
+                ssl_stream.write_all(request.as_bytes())?;
 
-                        if n > 0 {
-                            let response = String::from_utf8_lossy(&buffer[..n]);
-                            // Check if our marker is reflected in the response
-                            Ok(response.contains(marker))
-                        } else {
-                            Ok(false)
-                        }
-                    }
-                    Err(_) => Ok(false),
+                // Read response
+                let mut buffer = vec![0u8; 16384];
+                let n = ssl_stream.read(&mut buffer)?;
+
+                if n > 0 {
+                    let response = String::from_utf8_lossy(&buffer[..n]);
+                    // Check if our marker is reflected in the response
+                    Ok(response.contains(marker))
+                } else {
+                    Ok(false)
                 }
             }
-            _ => Ok(false),
+            Err(_) => Ok(false),
         }
     }
 
@@ -166,48 +173,51 @@ impl BreachTester {
     async fn test_sensitive_data_reflection(&self) -> Result<bool> {
         let addr = self.target.socket_addrs()[0];
 
-        match timeout(Duration::from_secs(5), TcpStream::connect(addr)).await {
-            Ok(Ok(stream)) => {
-                let std_stream = stream.into_std()?;
-                std_stream.set_nonblocking(false)?;
+        let stream =
+            match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None)
+                .await
+            {
+                Ok(s) => s,
+                Err(_) => return Ok(false),
+            };
 
-                use openssl::ssl::{SslConnector, SslMethod};
-                let connector = SslConnector::builder(SslMethod::tls())?.build();
+        let std_stream = stream.into_std()?;
+        std_stream.set_nonblocking(false)?;
 
-                match connector.connect(&self.target.hostname, std_stream) {
-                    Ok(mut ssl_stream) => {
-                        use std::io::{Read, Write};
+        use openssl::ssl::{SslConnector, SslMethod};
+        let connector = SslConnector::builder(SslMethod::tls())?.build();
 
-                        // Send request with Cookie header
-                        let request = format!(
-                            "GET / HTTP/1.1\r\n\
-                             Host: {}\r\n\
-                             Cookie: sessionid=test123; csrftoken=abc456\r\n\
-                             Accept-Encoding: gzip, deflate\r\n\
-                             Connection: close\r\n\
-                             \r\n",
-                            self.target.hostname
-                        );
+        match connector.connect(&self.target.hostname, std_stream) {
+            Ok(mut ssl_stream) => {
+                use std::io::{Read, Write};
 
-                        ssl_stream.write_all(request.as_bytes())?;
+                // Send request with Cookie header
+                let request = format!(
+                    "GET / HTTP/1.1\r\n\
+                     Host: {}\r\n\
+                     Cookie: sessionid=test123; csrftoken=abc456\r\n\
+                     Accept-Encoding: gzip, deflate\r\n\
+                     Connection: close\r\n\
+                     \r\n",
+                    self.target.hostname
+                );
 
-                        // Read response
-                        let mut buffer = vec![0u8; 16384];
-                        let n = ssl_stream.read(&mut buffer)?;
+                ssl_stream.write_all(request.as_bytes())?;
 
-                        if n > 0 {
-                             let response = String::from_utf8_lossy(&buffer[..n]);
-                             // Check for sensitive data with more precise matching
-                             let has_sensitive = Self::detect_sensitive_patterns(&response);
-                             Ok(has_sensitive)
-                        } else {
-                            Ok(false)
-                        }
-                    }
-                    Err(_) => Ok(false),
+                // Read response
+                let mut buffer = vec![0u8; 16384];
+                let n = ssl_stream.read(&mut buffer)?;
+
+                if n > 0 {
+                    let response = String::from_utf8_lossy(&buffer[..n]);
+                    // Check for sensitive data with more precise matching
+                    let has_sensitive = Self::detect_sensitive_patterns(&response);
+                    Ok(has_sensitive)
+                } else {
+                    Ok(false)
                 }
             }
-            _ => Ok(false),
+            Err(_) => Ok(false),
         }
     }
 
@@ -215,15 +225,15 @@ impl BreachTester {
     /// Uses precise matching to reduce false positives from comments/irrelevant text
     fn detect_sensitive_patterns(response: &str) -> bool {
         let response_lower = response.to_lowercase();
-        
+
         // Check Set-Cookie header (definitive indicator)
         if response_lower.contains("set-cookie:") {
             return true;
         }
-        
+
         // Check for CSRF tokens in HTML attributes (more precise)
         // Look for actual HTML attributes, not just the word "csrf"
-        if response.contains("csrf-token=") 
+        if response.contains("csrf-token=")
             || response.contains("csrf_token=")
             || response.contains("_csrf=")
             || response.contains("name=\"csrf")
@@ -232,7 +242,7 @@ impl BreachTester {
         {
             return true;
         }
-        
+
         // Check for session tokens in specific contexts
         // Avoid matching "session" word in comments or unrelated text
         if response_lower.contains("phpsessid=")
@@ -245,7 +255,7 @@ impl BreachTester {
         {
             return true;
         }
-        
+
         // Check for API tokens in headers or meta tags
         if response_lower.contains("authorization:")
             || response_lower.contains("x-auth-token:")
@@ -257,7 +267,7 @@ impl BreachTester {
         {
             return true;
         }
-        
+
         false
     }
 }

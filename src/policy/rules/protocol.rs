@@ -1,9 +1,9 @@
 // Protocol policy rules
 
-use crate::policy::violation::PolicyViolation;
-use crate::policy::ProtocolPolicy;
-use crate::protocols::{Protocol, ProtocolTestResult};
 use crate::Result;
+use crate::policy::ProtocolPolicy;
+use crate::policy::violation::PolicyViolation;
+use crate::protocols::{Protocol, ProtocolTestResult};
 use std::str::FromStr;
 
 pub struct ProtocolRule<'a> {

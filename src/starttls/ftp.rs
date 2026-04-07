@@ -1,9 +1,10 @@
 // FTP STARTTLS Negotiator (AUTH TLS)
 
 use super::protocols::{StarttlsNegotiator, StarttlsProtocol};
+use super::response;
 use crate::{Result, tls_bail};
 use async_trait::async_trait;
-use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncWriteExt, BufReader};
 
 /// FTP STARTTLS negotiator
 pub struct FtpNegotiator;
@@ -11,44 +12,6 @@ pub struct FtpNegotiator;
 impl FtpNegotiator {
     pub fn new() -> Self {
         Self
-    }
-
-    /// Read FTP response (can be multi-line)
-    async fn read_response<S>(reader: &mut BufReader<&mut S>) -> Result<(u16, String)>
-    where
-        S: AsyncRead + Unpin,
-    {
-        let mut full_response = String::new();
-        let mut first_code = 0u16;
-
-        loop {
-            let mut line = String::new();
-            reader.read_line(&mut line).await?;
-
-            if line.len() < 3 {
-                tls_bail!("Invalid FTP response: too short");
-            }
-
-            let code: u16 = line[0..3]
-                .parse()
-                .map_err(|_| crate::error::TlsError::ParseError {
-                    message: "Invalid FTP status code".to_string(),
-                })?;
-
-            if first_code == 0 {
-                first_code = code;
-            }
-
-            full_response.push_str(&line);
-
-            // Multi-line responses have a dash after code (220-...)
-            // Last line has space (220 ...)
-            if line.len() >= 4 && &line[3..4] == " " {
-                break;
-            }
-        }
-
-        Ok((first_code, full_response))
     }
 }
 
@@ -58,7 +21,7 @@ impl StarttlsNegotiator for FtpNegotiator {
         let mut reader = BufReader::new(stream);
 
         // 1. Read server greeting (220)
-        let (code, _response) = Self::read_response(&mut reader).await?;
+        let (code, _response) = response::read_multiline_status(&mut reader, "FTP", 100).await?;
         if code != 220 {
             tls_bail!("FTP greeting failed: expected 220, got {}", code);
         }
@@ -68,7 +31,7 @@ impl StarttlsNegotiator for FtpNegotiator {
         reader.get_mut().flush().await?;
 
         // 3. Read AUTH TLS response (234)
-        let (code, response) = Self::read_response(&mut reader).await?;
+        let (code, response) = response::read_multiline_status(&mut reader, "FTP", 100).await?;
         if code != 234 {
             // Some servers might return 502 (command not implemented)
             if code == 502 {
@@ -120,7 +83,7 @@ mod tests {
         });
 
         let mut reader = BufReader::new(&mut client);
-        let (code, response) = FtpNegotiator::read_response(&mut reader)
+        let (code, response) = response::read_multiline_status(&mut reader, "FTP", 100)
             .await
             .expect("test assertion should succeed");
 
@@ -137,7 +100,7 @@ mod tests {
         });
 
         let mut reader = BufReader::new(&mut client);
-        let result = FtpNegotiator::read_response(&mut reader).await;
+        let result = response::read_multiline_status(&mut reader, "FTP", 100).await;
         assert!(result.is_err());
     }
 
@@ -149,7 +112,7 @@ mod tests {
         });
 
         let mut reader = BufReader::new(&mut client);
-        let (code, response) = FtpNegotiator::read_response(&mut reader)
+        let (code, response) = response::read_multiline_status(&mut reader, "FTP", 100)
             .await
             .expect("test assertion should succeed");
         assert_eq!(code, 220);
@@ -159,22 +122,22 @@ mod tests {
     #[tokio::test]
     async fn test_ftp_negotiate_starttls_not_supported() {
         use tokio::net::TcpListener;
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("test listener should bind to localhost");
+        let addr = listener.local_addr().expect("test listener should have local addr");
 
         let server = tokio::spawn(async move {
-            let (mut stream, _) = listener.accept().await.unwrap();
-            stream.write_all(b"220 ready\r\n").await.unwrap();
+            let (mut stream, _) = listener.accept().await.expect("test server should accept connection");
+            stream.write_all(b"220 ready\r\n").await.expect("test server should write response");
 
             let mut buf = [0u8; 16];
-            let _ = stream.read(&mut buf).await.unwrap();
+            let _ = stream.read(&mut buf).await.expect("test should read data");
             stream
                 .write_all(b"502 command not implemented\r\n")
                 .await
-                .unwrap();
+                .expect("test server should write response");
         });
 
-        let mut client = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let mut client = tokio::net::TcpStream::connect(addr).await.expect("test client should connect");
         let negotiator = FtpNegotiator::new();
         let err = negotiator
             .negotiate_starttls(&mut client)
@@ -182,6 +145,6 @@ mod tests {
             .unwrap_err();
         assert!(format!("{err}").contains("does not support"));
 
-        server.await.unwrap();
+        server.await.expect("test server task should complete");
     }
 }

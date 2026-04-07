@@ -2,6 +2,7 @@
 
 pub mod channels;
 pub mod email;
+pub mod formatting;
 pub mod pagerduty;
 pub mod slack;
 pub mod teams;
@@ -26,6 +27,30 @@ pub enum AlertType {
     ExpiryWarning { days_remaining: i64 },
     ValidationFailure { reason: String },
     ScanFailure { error: String },
+}
+
+impl AlertType {
+    /// Stable deduplication key for alert grouping (no timestamps).
+    /// Same incident type for the same host produces the same key,
+    /// enabling proper deduplication in PagerDuty and similar systems.
+    pub fn dedup_key(&self) -> String {
+        match self {
+            AlertType::CertificateChange { .. } => "cert-change".to_string(),
+            AlertType::ExpiryWarning { days_remaining } => {
+                // Group by urgency bracket so "7 days" and "6 days" dedup together
+                let bracket = if *days_remaining <= 1 {
+                    "critical"
+                } else if *days_remaining <= 7 {
+                    "week"
+                } else {
+                    "warning"
+                };
+                format!("expiry-{}", bracket)
+            }
+            AlertType::ValidationFailure { .. } => "validation-failure".to_string(),
+            AlertType::ScanFailure { .. } => "scan-failure".to_string(),
+        }
+    }
 }
 
 /// Alert details
@@ -90,10 +115,19 @@ impl Alert {
             ChangeSeverity::Low
         };
 
-        let message = format!(
-            "Certificate for {} expires in {} days",
-            hostname, days_remaining
-        );
+        let message = if days_remaining < 0 {
+            format!(
+                "Certificate for {} expired {} days ago",
+                hostname, -days_remaining
+            )
+        } else if days_remaining == 0 {
+            format!("Certificate for {} expires today", hostname)
+        } else {
+            format!(
+                "Certificate for {} expires in {} days",
+                hostname, days_remaining
+            )
+        };
 
         Self {
             hostname,
@@ -137,22 +171,11 @@ impl Alert {
         }
     }
 
-    /// Get a unique key for deduplication
+    /// Get a unique key for deduplication.
+    /// Uses the same bracketed approach as AlertType::dedup_key() so that
+    /// daily expiry countdown changes (7→6→5 days) don't defeat dedup.
     pub fn dedup_key(&self) -> String {
-        match &self.alert_type {
-            AlertType::CertificateChange { .. } => {
-                format!("change:{}", self.hostname)
-            }
-            AlertType::ExpiryWarning { days_remaining } => {
-                format!("expiry:{}:{}", self.hostname, days_remaining)
-            }
-            AlertType::ValidationFailure { reason } => {
-                format!("validation:{}:{}", self.hostname, reason)
-            }
-            AlertType::ScanFailure { .. } => {
-                format!("scan:{}", self.hostname)
-            }
-        }
+        format!("{}:{}", self.hostname, self.alert_type.dedup_key())
     }
 }
 
@@ -211,7 +234,7 @@ mod tests_extra {
         let alert = Alert::expiry_warning("example.com".to_string(), 3, details);
 
         assert_eq!(alert.severity, ChangeSeverity::High);
-        assert_eq!(alert.dedup_key(), "expiry:example.com:3");
+        assert_eq!(alert.dedup_key(), "example.com:expiry-week");
         matches!(alert.alert_type, AlertType::ExpiryWarning { .. });
     }
 }
@@ -287,14 +310,19 @@ impl AlertManager {
 
     /// Send alert through all channels
     pub async fn send_alert(&self, alert: &Alert) -> Result<()> {
-        // Check for duplicate
-        if self.is_duplicate(alert).await {
+        // Check for duplicate and record atomically
+        if self.check_and_record_alert(alert).await {
             tracing::debug!("Alert deduplicated: {}", alert.dedup_key());
             return Ok(());
         }
 
-        // Record alert
-        self.record_alert(alert).await;
+        if self.channels.is_empty() {
+            tracing::warn!(
+                "No alert channels configured — alert not delivered: {}",
+                alert.message
+            );
+            return Ok(());
+        }
 
         // Send to all channels
         let mut success_count = 0;
@@ -312,14 +340,41 @@ impl AlertManager {
             }
         }
 
-        if success_count == 0 && !self.channels.is_empty() {
+        if success_count == 0 {
             return Err(anyhow::anyhow!("All alert channels failed").into());
         }
 
         Ok(())
     }
 
-    /// Check if alert is a duplicate
+    /// Check if alert is a duplicate and record it atomically
+    /// Returns true if the alert was already sent recently (duplicate)
+    async fn check_and_record_alert(&self, alert: &Alert) -> bool {
+        let mut recent = self.recent_alerts.lock().await;
+        let key = alert.dedup_key();
+        let now = Utc::now();
+
+        // Check if duplicate
+        if let Some(last_sent) = recent.get(&key) {
+            let elapsed = now - *last_sent;
+            if elapsed < self.dedup_window {
+                // Already sent recently - don't send again
+                return true;
+            }
+        }
+
+        // Record actual dispatch time for accurate deduplication
+        recent.insert(key, now);
+
+        // Clean old entries
+        let cutoff = now - self.dedup_window;
+        recent.retain(|_, &mut time| time > cutoff);
+
+        false
+    }
+
+    /// Check if alert is a duplicate (for testing)
+    #[cfg(test)]
     async fn is_duplicate(&self, alert: &Alert) -> bool {
         let recent = self.recent_alerts.lock().await;
         let key = alert.dedup_key();
@@ -332,7 +387,8 @@ impl AlertManager {
         }
     }
 
-    /// Record alert for deduplication
+    /// Record alert for deduplication (for testing)
+    #[cfg(test)]
     async fn record_alert(&self, alert: &Alert) {
         let mut recent = self.recent_alerts.lock().await;
         recent.insert(alert.dedup_key(), alert.timestamp);
@@ -386,7 +442,7 @@ mod tests {
         let alert =
             Alert::scan_failure("example.com".to_string(), "Connection refused".to_string());
 
-        assert_eq!(alert.dedup_key(), "scan:example.com");
+        assert_eq!(alert.dedup_key(), "example.com:scan-failure");
     }
 
     #[test]

@@ -2,9 +2,13 @@
 // Advanced analytics and reporting for historical scan data
 
 pub mod change_tracker;
+pub mod cipher_trend;
 pub mod dashboard_generator;
+pub mod protocol_trend;
+pub mod rating_trend;
 pub mod scan_comparator;
 pub mod trend_analyzer;
+pub mod vulnerability_trend;
 
 pub use change_tracker::{ChangeEvent, ChangeSeverity, ChangeTracker, ChangeType};
 pub use dashboard_generator::{

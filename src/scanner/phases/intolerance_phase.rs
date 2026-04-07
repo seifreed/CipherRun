@@ -36,7 +36,7 @@ use async_trait::async_trait;
 /// clients.
 ///
 /// Configuration sources (from ScanRequest):
-/// - Full scan mode (--all) enables intolerance testing
+/// - Baseline scan policy enables intolerance testing
 /// - Target information (hostname, port, resolved IPs)
 pub struct IntolerancePhase;
 
@@ -61,8 +61,8 @@ impl ScanPhase for IntolerancePhase {
 
     fn should_run(&self, args: &ScanRequest) -> bool {
         // Run if:
-        // - Full scan mode (--all)
-        args.scan.all
+        // - Baseline scan policy enables intolerance testing
+        args.should_run_intolerance_phase()
     }
 
     async fn execute(&self, context: &mut ScanContext) -> Result<()> {
@@ -92,18 +92,26 @@ mod tests {
     fn test_intolerance_phase_should_run() {
         let phase = IntolerancePhase::new();
 
-        // Test with --all flag
+        // Test with baseline
         let mut args = ScanRequest::default();
         args.scan.all = true;
         assert!(phase.should_run(&args));
+
+        // Specific-focus scans should not implicitly enable intolerance testing.
+        let mut args = ScanRequest::default();
+        args.scan.all = true;
+        args.scan.show_sigs = true;
+        assert!(!phase.should_run(&args));
 
         // Test without --all flag
         let args = ScanRequest::default();
         assert!(!phase.should_run(&args));
 
         // Test with target but no --all
-        let mut args = ScanRequest::default();
-        args.target = Some("example.com".to_string());
+        let args = ScanRequest {
+            target: Some("example.com".to_string()),
+            ..Default::default()
+        };
         assert!(!phase.should_run(&args));
     }
 

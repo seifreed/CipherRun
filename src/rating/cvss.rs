@@ -237,11 +237,13 @@ impl CvssCalculator {
                 .score(metrics.scope.is_changed())
             * metrics.user_interaction.score();
 
-        // Base Score
+        // Base Score (CVSS v3.1 specification):
+        // Scope Changed:   Roundup(min[1.08 × (Impact + Exploitability), 10])
+        // Scope Unchanged: Roundup(min[(Impact + Exploitability), 10])
         let base_score = if metrics.scope.is_changed() {
-            (impact + exploitability).min(10.0)
-        } else {
             ((impact + exploitability) * 1.08).min(10.0)
+        } else {
+            (impact + exploitability).min(10.0)
         };
 
         // Round up to 1 decimal place

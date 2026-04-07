@@ -1,7 +1,9 @@
 // Heartbleed (CVE-2014-0160) vulnerability checker
 
 use crate::Result;
-use crate::constants::{CONTENT_TYPE_HEARTBEAT, HEARTBEAT_REQUEST, VERSION_TLS_1_2};
+use crate::constants::{
+    CONTENT_TYPE_HEARTBEAT, HEARTBEAT_REQUEST, TLS_HANDSHAKE_TIMEOUT, VERSION_TLS_1_2,
+};
 use crate::protocols::{Protocol, handshake::ClientHelloBuilder};
 use crate::utils::network::Target;
 use std::time::Duration;
@@ -16,6 +18,8 @@ pub struct HeartbleedResult {
     pub bytes_received: usize,
     pub bytes_sent: usize,
     pub details: String,
+    /// Whether the test was actually performed (false if connection/parsing failed)
+    pub tested: bool,
 }
 
 /// Heartbleed vulnerability tester
@@ -31,7 +35,7 @@ impl<'a> HeartbleedTester<'a> {
         Self {
             target,
             connect_timeout: Duration::from_secs(10),
-            read_timeout: Duration::from_secs(5),
+            read_timeout: TLS_HANDSHAKE_TIMEOUT,
         }
     }
 
@@ -50,6 +54,7 @@ impl<'a> HeartbleedTester<'a> {
             bytes_received: 0,
             bytes_sent: 3,
             details: "Not vulnerable - No memory leak detected across TLS 1.0/1.1/1.2".to_string(),
+            tested: true,
         })
     }
 
@@ -58,17 +63,23 @@ impl<'a> HeartbleedTester<'a> {
         let addr = self.target.socket_addrs()[0];
 
         // Connect TCP
-        let mut stream = match timeout(self.connect_timeout, TcpStream::connect(addr)).await {
-            Ok(Ok(s)) => s,
-            _ => {
-                return Ok(HeartbleedResult {
-                    vulnerable: false,
-                    bytes_received: 0,
-                    bytes_sent: 0,
-                    details: "Connection failed - Unable to test".to_string(),
-                });
-            }
-        };
+        let mut stream =
+            match crate::utils::network::connect_with_timeout(addr, self.connect_timeout, None)
+                .await
+            {
+                Ok(s) => s,
+                Err(_) => {
+                    return Ok(HeartbleedResult {
+                        vulnerable: false,
+                        bytes_received: 0,
+                        bytes_sent: 0,
+                        details:
+                            "Connection failed - Vulnerability status UNKNOWN (unable to test)"
+                                .to_string(),
+                        tested: false,
+                    });
+                }
+            };
 
         // Build ClientHello with Heartbeat extension
         let mut builder = ClientHelloBuilder::new(protocol);
@@ -99,6 +110,7 @@ impl<'a> HeartbleedTester<'a> {
                     bytes_received: 0,
                     bytes_sent: 0,
                     details: "ServerHello timeout or empty response".to_string(),
+                    tested: false,
                 });
             }
         };
@@ -110,6 +122,7 @@ impl<'a> HeartbleedTester<'a> {
                 bytes_received: 0,
                 bytes_sent: 0,
                 details: "Heartbeat extension not supported by server".to_string(),
+                tested: true,
             });
         }
 
@@ -117,18 +130,46 @@ impl<'a> HeartbleedTester<'a> {
         self.send_malicious_heartbeat(&mut stream).await
     }
 
-    /// Check if ServerHello contains heartbeat extension
+    /// Check if ServerHello contains heartbeat extension.
+    /// Parses the TLS ServerHello structure to find extensions, avoiding
+    /// false positives from matching 0x000f in session ID or other fields.
     fn check_heartbeat_extension(&self, data: &[u8]) -> bool {
-        // Need at least a few bytes to search for extension
-        if data.len() < 2 {
+        // TLS ServerHello minimum: 5 (record) + 4 (handshake) + 2 (version) + 32 (random) + 1 (sid len) = 44
+        if data.len() < 44 {
             return false;
         }
 
-        // Look for heartbeat extension type 0x000f in the response
-        for i in 0..data.len().saturating_sub(2) {
-            if data[i] == 0x00 && data[i + 1] == 0x0f {
+        // Verify this is a Handshake record (0x16) containing ServerHello (0x02)
+        if data[0] != 0x16 || data[5] != 0x02 {
+            return false;
+        }
+
+        // Session ID length at offset 43
+        let sid_len = data[43] as usize;
+        // After session ID: cipher suite (2 bytes) + compression method (1 byte)
+        let ext_offset = 44 + sid_len + 2 + 1;
+
+        // Check we have room for extensions length (2 bytes)
+        if ext_offset + 2 > data.len() {
+            return false;
+        }
+
+        let ext_total_len = u16::from_be_bytes([data[ext_offset], data[ext_offset + 1]]) as usize;
+        let ext_start = ext_offset + 2;
+        let ext_end = (ext_start + ext_total_len).min(data.len());
+
+        // Walk extensions looking for heartbeat (type 0x000f)
+        let mut pos = ext_start;
+        while pos + 4 <= ext_end {
+            let ext_type = u16::from_be_bytes([data[pos], data[pos + 1]]);
+            let ext_len = u16::from_be_bytes([data[pos + 2], data[pos + 3]]) as usize;
+            pos += 4;
+
+            if ext_type == 0x000f {
                 return true;
             }
+
+            pos += ext_len;
         }
 
         false
@@ -137,9 +178,14 @@ impl<'a> HeartbleedTester<'a> {
     /// Send malicious heartbeat request and check for memory leak
     async fn send_malicious_heartbeat(&self, stream: &mut TcpStream) -> Result<HeartbleedResult> {
         const HEARTBEAT_PAYLOAD_SENT: usize = 3;
-        // Minimum suspicious response: heartbeat type (1) + length (2) + any payload
-        // A legitimate response echoes our 3 bytes. Anything significantly larger suggests leak.
-        const MIN_SUSPICIOUS_RESPONSE: usize = 64;
+        // Minimum suspicious response threshold.
+        // A legitimate heartbeat response echoes our 3 bytes payload plus 3 bytes header (type + length).
+        // TLS record overhead: 5 bytes (content type + version + length).
+        // Total legitimate: ~11 bytes minimum. We use 128 as a conservative threshold
+        // to avoid false positives from servers that include additional metadata.
+        // The malicious payload claims 0x4000 (16384) bytes, so any response >128 is suspicious.
+        // See: CVE-2014-0160 - heartbeat allows reading up to 64KB of memory.
+        const MIN_SUSPICIOUS_RESPONSE: usize = 128;
 
         // Build malicious heartbeat request
         let mut heartbeat = Vec::new();
@@ -189,19 +235,26 @@ impl<'a> HeartbleedTester<'a> {
                     bytes_received: n,
                     bytes_sent: HEARTBEAT_PAYLOAD_SENT,
                     details,
+                    tested: true,
                 })
             }
             Ok(Err(_)) => Ok(HeartbleedResult {
                 vulnerable: false,
                 bytes_received: 0,
                 bytes_sent: HEARTBEAT_PAYLOAD_SENT,
-                details: "Connection error during heartbeat test - server may have closed connection".to_string(),
+                details:
+                    "Connection error during heartbeat test - server may have closed connection"
+                        .to_string(),
+                tested: false,
             }),
             Err(_) => Ok(HeartbleedResult {
                 vulnerable: false,
                 bytes_received: 0,
                 bytes_sent: HEARTBEAT_PAYLOAD_SENT,
-                details: "Timeout waiting for heartbeat response - server may have closed connection".to_string(),
+                details:
+                    "Timeout waiting for heartbeat response - server may have closed connection"
+                        .to_string(),
+                tested: false,
             }),
         }
     }
@@ -257,13 +310,51 @@ mod tests {
             read_timeout: Duration::from_secs(5),
         };
 
-        // Sample data with heartbeat extension
-        let data_with_ext = vec![0x16, 0x03, 0x03, 0x00, 0x40, 0x00, 0x0f, 0x00, 0x01, 0x01];
+        // Build a minimal valid ServerHello with heartbeat extension (0x000f)
+        // Record: type=0x16, version=0x0303, length=TBD
+        // Handshake: type=0x02, length=TBD
+        // ServerHello: version=0x0303, random(32), sid_len=0, cipher=0x1301, compress=0x00
+        // Extensions: len=TBD, ext_type=0x000f, ext_len=1, ext_data=0x01
+        let mut data_with_ext = vec![
+            0x16, 0x03, 0x03, 0x00, 0x00, // TLS record header (length placeholder)
+            0x02, 0x00, 0x00, 0x00, // Handshake header (length placeholder)
+            0x03, 0x03, // ServerHello version TLS 1.2
+        ];
+        data_with_ext.extend_from_slice(&[0xAA; 32]); // 32 bytes random
+        data_with_ext.push(0x00); // session_id_length = 0
+        data_with_ext.extend_from_slice(&[0x13, 0x01]); // cipher suite
+        data_with_ext.push(0x00); // compression method
+        // Extensions: total length=7, heartbeat ext (type=0x000f, len=1, data=0x01)
+        data_with_ext.extend_from_slice(&[0x00, 0x07]); // extensions total length
+        data_with_ext.extend_from_slice(&[0x00, 0x0f]); // ext type: heartbeat
+        data_with_ext.extend_from_slice(&[0x00, 0x01]); // ext length
+        data_with_ext.push(0x01); // heartbeat mode: peer_allowed_to_send
+        // Patch record and handshake lengths
+        let record_len = (data_with_ext.len() - 5) as u16;
+        data_with_ext[3] = (record_len >> 8) as u8;
+        data_with_ext[4] = (record_len & 0xff) as u8;
+        let hs_len = (data_with_ext.len() - 9) as u32;
+        data_with_ext[6] = ((hs_len >> 16) & 0xff) as u8;
+        data_with_ext[7] = ((hs_len >> 8) & 0xff) as u8;
+        data_with_ext[8] = (hs_len & 0xff) as u8;
 
         assert!(tester.check_heartbeat_extension(&data_with_ext));
 
-        // Data without extension
-        let data_without_ext = vec![0x16, 0x03, 0x03, 0x00, 0x40];
+        // Same ServerHello but WITHOUT the heartbeat extension (no extensions)
+        let mut data_without_ext = vec![
+            0x16, 0x03, 0x03, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x03, 0x03,
+        ];
+        data_without_ext.extend_from_slice(&[0xAA; 32]);
+        data_without_ext.push(0x00);
+        data_without_ext.extend_from_slice(&[0x13, 0x01]);
+        data_without_ext.push(0x00);
+        let record_len = (data_without_ext.len() - 5) as u16;
+        data_without_ext[3] = (record_len >> 8) as u8;
+        data_without_ext[4] = (record_len & 0xff) as u8;
+        let hs_len = (data_without_ext.len() - 9) as u32;
+        data_without_ext[6] = ((hs_len >> 16) & 0xff) as u8;
+        data_without_ext[7] = ((hs_len >> 8) & 0xff) as u8;
+        data_without_ext[8] = (hs_len & 0xff) as u8;
         assert!(!tester.check_heartbeat_extension(&data_without_ext));
     }
 
@@ -318,7 +409,7 @@ mod tests {
         let mut stream = TcpStream::connect(addr).await.unwrap();
         let result = tester.send_malicious_heartbeat(&mut stream).await.unwrap();
         assert!(result.vulnerable);
-        assert!(result.bytes_received > 64);
+        assert!(result.bytes_received > 128);
     }
 
     #[tokio::test]

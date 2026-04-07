@@ -14,10 +14,10 @@
 
 use crate::Result;
 use crate::utils::network::Target;
+use crate::utils::timing::{TimingOracleConfig, TimingSampleSet, detect_timing_oracle};
 use std::io::{Read, Write};
 use std::time::Duration;
-use tokio::net::TcpStream;
-use tokio::time::{Instant, timeout};
+use tokio::time::Instant;
 
 /// Padding oracle timing analysis result
 #[derive(Debug, Clone)]
@@ -86,16 +86,12 @@ impl<'a> PaddingOracle2016Tester<'a> {
         } else if vulnerable {
             format!(
                 "VULNERABLE to CVE-2016-2107 Padding Oracle - Timing difference detected: valid={:.2}ms, invalid={:.2}ms. {}",
-                timing_result.valid_avg_ms,
-                timing_result.invalid_avg_ms,
-                timing_result.details
+                timing_result.valid_avg_ms, timing_result.invalid_avg_ms, timing_result.details
             )
         } else if cbc_supported {
             format!(
                 "AES-CBC supported but no clear timing oracle detected - valid={:.2}ms, invalid={:.2}ms. {}",
-                timing_result.valid_avg_ms,
-                timing_result.invalid_avg_ms,
-                timing_result.details
+                timing_result.valid_avg_ms, timing_result.invalid_avg_ms, timing_result.details
             )
         } else {
             "Not vulnerable - AES-CBC not supported".to_string()
@@ -120,31 +116,34 @@ impl<'a> PaddingOracle2016Tester<'a> {
         // AES-CBC cipher suites (explicitly exclude GCM which is AEAD)
         let aes_cbc_ciphers = "AES128-SHA:AES256-SHA:AES128-SHA256:AES256-SHA256";
 
-        match timeout(self.connect_timeout, TcpStream::connect(addr)).await {
-            Ok(Ok(stream)) => {
-                let std_stream = stream.into_std()?;
-                std_stream.set_nonblocking(false)?;
+        let stream =
+            match crate::utils::network::connect_with_timeout(addr, self.connect_timeout, None)
+                .await
+            {
+                Ok(s) => s,
+                Err(_) => return Ok(false),
+            };
 
-                let mut builder = SslConnector::builder(SslMethod::tls())?;
+        let std_stream = stream.into_std()?;
+        std_stream.set_nonblocking(false)?;
 
-                // Set cipher list to only CBC mode
-                builder.set_cipher_list(aes_cbc_ciphers)?;
+        let mut builder = SslConnector::builder(SslMethod::tls())?;
 
-                // Try TLS 1.0, 1.1, 1.2 (CVE affects these versions)
-                builder.set_min_proto_version(Some(SslVersion::TLS1))?;
-                builder.set_max_proto_version(Some(SslVersion::TLS1_2))?;
+        // Set cipher list to only CBC mode
+        builder.set_cipher_list(aes_cbc_ciphers)?;
 
-                let connector = builder.build();
+        // Try TLS 1.0, 1.1, 1.2 (CVE affects these versions)
+        builder.set_min_proto_version(Some(SslVersion::TLS1))?;
+        builder.set_max_proto_version(Some(SslVersion::TLS1_2))?;
 
-                match connector.connect(&self.target.hostname, std_stream) {
-                    Ok(_ssl_stream) => {
-                        // Successfully connected with AES-CBC cipher
-                        Ok(true)
-                    }
-                    Err(_) => Ok(false),
-                }
+        let connector = builder.build();
+
+        match connector.connect(&self.target.hostname, std_stream) {
+            Ok(_ssl_stream) => {
+                // Successfully connected with AES-CBC cipher
+                Ok(true)
             }
-            _ => Ok(false),
+            Err(_) => Ok(false),
         }
     }
 
@@ -158,108 +157,79 @@ impl<'a> PaddingOracle2016Tester<'a> {
     ///
     /// Returns (valid_avg, invalid_avg, oracle_detected, inconclusive)
     async fn perform_timing_analysis(&self) -> Result<PaddingOracleTimingResult> {
-        const SAMPLES: usize = 25; // Increased from 10 for better statistical significance
-        const MIN_SAMPLES: usize = 15; // Minimum samples needed for reliable detection
-        const TIMING_THRESHOLD_MS: f64 = 15.0; // 15ms - more realistic for network jitter
-        const COEFFICIENT_OF_VARIATION_MAX: f64 = 0.4; // Max acceptable CV for reliable timing
+        const SAMPLES: usize = 25;
+        const MIN_SAMPLES: usize = 15;
+        const TIMING_THRESHOLD_MS: f64 = 15.0;
 
-        let mut valid_timings = Vec::with_capacity(SAMPLES);
-        let mut invalid_timings = Vec::with_capacity(SAMPLES);
+        let mut valid_timings = TimingSampleSet::with_capacity(SAMPLES);
+        let mut invalid_timings = TimingSampleSet::with_capacity(SAMPLES);
 
-        // Collect timing samples
         for _ in 0..SAMPLES {
-            // Test with valid padding
             if let Ok(time) = self.send_padded_request(true).await {
                 valid_timings.push(time);
             }
-
-            // Test with invalid padding
             if let Ok(time) = self.send_padded_request(false).await {
                 invalid_timings.push(time);
             }
-
-            // Small delay between tests to avoid rate limiting
             tokio::time::sleep(Duration::from_millis(150)).await;
         }
 
-        // Need sufficient samples for meaningful statistics
-        if valid_timings.len() < MIN_SAMPLES || invalid_timings.len() < MIN_SAMPLES {
-            return Ok(PaddingOracleTimingResult {
-                valid_avg_ms: 0.0,
-                invalid_avg_ms: 0.0,
-                oracle_detected: false,
-                inconclusive: true,
-                details: format!(
-                    "Insufficient timing samples (valid: {}, invalid: {}, need: {}). \
-                     Network conditions prevented reliable timing measurement.",
-                    valid_timings.len(), invalid_timings.len(), MIN_SAMPLES
-                ),
-            });
-        }
+        let config = TimingOracleConfig {
+            min_samples: MIN_SAMPLES,
+            timing_threshold_ms: TIMING_THRESHOLD_MS,
+            cv_max: 0.4,
+            significance_base_ms: TIMING_THRESHOLD_MS,
+        };
 
-        // Calculate averages and standard deviations
-        let valid_avg = valid_timings.iter().sum::<f64>() / valid_timings.len() as f64;
-        let invalid_avg = invalid_timings.iter().sum::<f64>() / invalid_timings.len() as f64;
+        let analysis = match detect_timing_oracle(&valid_timings, &invalid_timings, &config) {
+            Some(result) => result,
+            None => {
+                return Ok(PaddingOracleTimingResult {
+                    valid_avg_ms: 0.0,
+                    invalid_avg_ms: 0.0,
+                    oracle_detected: false,
+                    inconclusive: true,
+                    details: format!(
+                        "Insufficient timing samples (valid: {}, invalid: {}, need: {}). \
+                         Network conditions prevented reliable timing measurement.",
+                        valid_timings.len(),
+                        invalid_timings.len(),
+                        MIN_SAMPLES
+                    ),
+                });
+            }
+        };
 
-        let valid_variance: f64 = valid_timings.iter()
-            .map(|t| (t - valid_avg).powi(2))
-            .sum::<f64>() / valid_timings.len() as f64;
-        let valid_stddev = valid_variance.sqrt();
+        let vs = &analysis.valid_stats;
+        let is = &analysis.invalid_stats;
 
-        let invalid_variance: f64 = invalid_timings.iter()
-            .map(|t| (t - invalid_avg).powi(2))
-            .sum::<f64>() / invalid_timings.len() as f64;
-        let invalid_stddev = invalid_variance.sqrt();
-
-        // Calculate coefficient of variation to assess timing reliability
-        let valid_cv = if valid_avg > 0.0 { valid_stddev / valid_avg } else { f64::MAX };
-        let invalid_cv = if invalid_avg > 0.0 { invalid_stddev / invalid_avg } else { f64::MAX };
-
-        // Check if timing measurements are reliable
-        let timing_reliable = valid_cv < COEFFICIENT_OF_VARIATION_MAX 
-            && invalid_cv < COEFFICIENT_OF_VARIATION_MAX;
-
-        // Calculate timing difference
-        let timing_diff = (valid_avg - invalid_avg).abs();
-
-        // Statistical significance check: difference should be > 2 * combined_stddev
-        let combined_stddev = (valid_variance + invalid_variance).sqrt();
-        let statistically_significant = timing_diff > 2.0 * combined_stddev + TIMING_THRESHOLD_MS;
-
-        // Oracle detected only if:
-        // 1. Timing measurements are reliable (low variance)
-        // 2. Timing difference exceeds threshold
-        // 3. Difference is statistically significant
-        let oracle_detected = timing_reliable && timing_diff > TIMING_THRESHOLD_MS && statistically_significant;
-
-        let details = if !timing_reliable {
+        let details = if !analysis.timing_reliable {
             format!(
                 "Timing measurements unreliable (CV valid: {:.2}, invalid: {:.2}). \
                  High variance suggests network jitter. Diff: {:.2}ms. \
                  Manual testing recommended.",
-                valid_cv, invalid_cv, timing_diff
+                vs.coefficient_of_variation, is.coefficient_of_variation, analysis.timing_diff_ms
             )
-        } else if oracle_detected {
+        } else if analysis.oracle_detected {
             format!(
                 "Padding oracle DETECTED: timing difference {:.2}ms exceeds threshold ({:.1}ms). \
                  Valid padding avg: {:.2}ms (σ={:.2}ms), Invalid padding avg: {:.2}ms (σ={:.2}ms). \
                  Statistical significance confirmed.",
-                timing_diff, TIMING_THRESHOLD_MS,
-                valid_avg, valid_stddev, invalid_avg, invalid_stddev
+                analysis.timing_diff_ms, TIMING_THRESHOLD_MS, vs.mean, vs.stddev, is.mean, is.stddev
             )
         } else {
             format!(
                 "No padding oracle detected: timing difference {:.2}ms below threshold ({:.1}ms). \
                  Valid padding avg: {:.2}ms, Invalid padding avg: {:.2}ms.",
-                timing_diff, TIMING_THRESHOLD_MS, valid_avg, invalid_avg
+                analysis.timing_diff_ms, TIMING_THRESHOLD_MS, vs.mean, is.mean
             )
         };
 
         Ok(PaddingOracleTimingResult {
-            valid_avg_ms: valid_avg,
-            invalid_avg_ms: invalid_avg,
-            oracle_detected,
-            inconclusive: !timing_reliable,
+            valid_avg_ms: vs.mean,
+            invalid_avg_ms: is.mean,
+            oracle_detected: analysis.oracle_detected,
+            inconclusive: !analysis.timing_reliable,
             details,
         })
     }
@@ -273,47 +243,50 @@ impl<'a> PaddingOracle2016Tester<'a> {
         let addr = self.target.socket_addrs()[0];
         let start = Instant::now();
 
-        match timeout(self.connect_timeout, TcpStream::connect(addr)).await {
-            Ok(Ok(stream)) => {
-                let std_stream = stream.into_std()?;
-                std_stream.set_nonblocking(false)?;
-
-                let mut builder = SslConnector::builder(SslMethod::tls())?;
-                builder.set_cipher_list("AES128-SHA:AES256-SHA")?;
-                builder.set_min_proto_version(Some(SslVersion::TLS1))?;
-                builder.set_max_proto_version(Some(SslVersion::TLS1_2))?;
-
-                let connector = builder.build();
-
-                match connector.connect(&self.target.hostname, std_stream) {
-                    Ok(mut ssl_stream) => {
-                        // Build application data with specific padding
-                        let app_data = self.build_application_data(valid_padding);
-
-                        // Send the crafted data (synchronous write)
-                        let write_result = ssl_stream.get_mut().write_all(&app_data);
-
-                        if write_result.is_err() {
-                            // Connection error - still measure time
-                            let elapsed = start.elapsed().as_secs_f64() * 1000.0;
-                            return Ok(elapsed);
-                        }
-
-                        // Try to read response (server should send alert for invalid padding)
-                        let mut buffer = vec![0u8; 1024];
-                        let _ = ssl_stream.get_mut().read(&mut buffer);
-
-                        // Measure total time
-                        let elapsed = start.elapsed().as_secs_f64() * 1000.0;
-                        Ok(elapsed)
-                    }
-                    Err(_) => {
-                        let elapsed = start.elapsed().as_secs_f64() * 1000.0;
-                        Ok(elapsed)
-                    }
+        let stream =
+            match crate::utils::network::connect_with_timeout(addr, self.connect_timeout, None)
+                .await
+            {
+                Ok(s) => s,
+                Err(_) => {
+                    let elapsed = start.elapsed().as_secs_f64() * 1000.0;
+                    return Ok(elapsed);
                 }
+            };
+
+        let std_stream = stream.into_std()?;
+        std_stream.set_nonblocking(false)?;
+
+        let mut builder = SslConnector::builder(SslMethod::tls())?;
+        builder.set_cipher_list("AES128-SHA:AES256-SHA")?;
+        builder.set_min_proto_version(Some(SslVersion::TLS1))?;
+        builder.set_max_proto_version(Some(SslVersion::TLS1_2))?;
+
+        let connector = builder.build();
+
+        match connector.connect(&self.target.hostname, std_stream) {
+            Ok(mut ssl_stream) => {
+                // Build application data with specific padding
+                let app_data = self.build_application_data(valid_padding);
+
+                // Send the crafted data (synchronous write)
+                let write_result = ssl_stream.get_mut().write_all(&app_data);
+
+                if write_result.is_err() {
+                    // Connection error - still measure time
+                    let elapsed = start.elapsed().as_secs_f64() * 1000.0;
+                    return Ok(elapsed);
+                }
+
+                // Try to read response (server should send alert for invalid padding)
+                let mut buffer = vec![0u8; 1024];
+                let _ = ssl_stream.get_mut().read(&mut buffer);
+
+                // Measure total time
+                let elapsed = start.elapsed().as_secs_f64() * 1000.0;
+                Ok(elapsed)
             }
-            _ => {
+            Err(_) => {
                 let elapsed = start.elapsed().as_secs_f64() * 1000.0;
                 Ok(elapsed)
             }

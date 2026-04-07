@@ -126,11 +126,7 @@ impl ScanPhase for ProtocolPhase {
     }
 
     fn should_run(&self, args: &ScanRequest) -> bool {
-        // Run if:
-        // - Explicit protocol testing requested (--protocols)
-        // - Full scan mode (--all)
-        // - Default scan (target specified without other flags)
-        args.scan.protocols || args.scan.all || args.target.is_some()
+        args.should_run_protocol_phase()
     }
 
     async fn execute(&self, context: &mut ScanContext) -> Result<()> {
@@ -159,7 +155,7 @@ mod tests {
             vec!["127.0.0.1".parse().unwrap()],
         )
         .expect("test assertion should succeed");
-        ScanContext::new(target, Arc::new(args), None)
+        ScanContext::new(target, Arc::new(args), None, None)
     }
 
     #[test]
@@ -176,10 +172,12 @@ mod tests {
         args.scan.all = true;
         assert!(phase.should_run(&args));
 
-        // Test with target specified (default scan)
-        let mut args = ScanRequest::default();
-        args.target = Some("example.com".to_string());
-        assert!(phase.should_run(&args));
+        // Target alone should not imply baseline scanning
+        let args = ScanRequest {
+            target: Some("example.com".to_string()),
+            ..Default::default()
+        };
+        assert!(!phase.should_run(&args));
 
         // Test with no relevant flags
         let args = ScanRequest::default();

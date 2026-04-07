@@ -10,8 +10,6 @@ use crate::Result;
 use crate::utils::network::Target;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::net::TcpStream;
-use tokio::time::timeout;
 
 /// STARTTLS tester
 pub struct StarttlsTester {
@@ -30,7 +28,13 @@ impl StarttlsTester {
 
     /// Test STARTTLS for a specific protocol
     pub async fn test_protocol(&self, protocol: StarttlsProtocol) -> StarttlsTestResult {
-        let port = protocol.default_port();
+        // Use the target's configured port if it differs from the default TLS port (443),
+        // otherwise fall back to the protocol's default STARTTLS port
+        let port = if self.target.port != 443 {
+            self.target.port
+        } else {
+            protocol.default_port()
+        };
 
         // Create negotiator for the protocol
         let negotiator: Arc<dyn StarttlsNegotiator> = match protocol {
@@ -88,8 +92,9 @@ impl StarttlsTester {
         negotiator: Arc<dyn StarttlsNegotiator>,
     ) -> Result<()> {
         // Connect to target
-        let addr = format!("{}:{}", self.target.hostname, port);
-        let mut stream = timeout(self.connect_timeout, TcpStream::connect(&addr)).await??;
+        let addr = std::net::SocketAddr::new(self.target.primary_ip(), port);
+        let mut stream =
+            crate::utils::network::connect_with_timeout(addr, self.connect_timeout, None).await?;
 
         // Negotiate STARTTLS
         negotiator.negotiate_starttls(&mut stream).await?;

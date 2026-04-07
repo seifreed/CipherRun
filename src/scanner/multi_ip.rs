@@ -119,8 +119,19 @@ impl MultiIpScanner {
 
             // Create an async block future (no tokio::spawn)
             let future = async move {
-                // Acquire semaphore permit
-                let _permit = sem.acquire().await.expect("semaphore closed");
+                // Acquire semaphore permit - use proper error handling instead of expect()
+                let _permit = match sem.acquire().await {
+                    Ok(permit) => permit,
+                    Err(_) => {
+                        // Semaphore was closed - return error result
+                        return SingleIpScanResult {
+                            ip,
+                            scan_result: ScanResults::default(),
+                            scan_duration_ms: 0,
+                            error: Some("Scanner semaphore closed - scan aborted".to_string()),
+                        };
+                    }
+                };
 
                 // Notify callback of IP scan start
                 if let Some(ref cb) = callback {
@@ -153,6 +164,12 @@ impl MultiIpScanner {
         // Wait for all futures to complete
         let mut per_ip_results = HashMap::new();
         while let Some(result) = futures.next().await {
+            if per_ip_results.contains_key(&result.ip) {
+                tracing::warn!(
+                    "Duplicate IP result for {}, overwriting previous result",
+                    result.ip
+                );
+            }
             per_ip_results.insert(result.ip, result);
         }
 

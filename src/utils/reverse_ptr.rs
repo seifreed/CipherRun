@@ -4,8 +4,9 @@
 use crate::Result;
 use crate::error::TlsError;
 use crate::utils::sni_generator::SniGenerator;
-use hickory_resolver::TokioAsyncResolver;
+use hickory_resolver::TokioResolver;
 use hickory_resolver::config::*;
+use hickory_resolver::name_server::TokioConnectionProvider;
 use std::net::IpAddr;
 
 /// Reverse PTR lookup utilities
@@ -14,8 +15,11 @@ pub struct ReversePtrLookup;
 impl ReversePtrLookup {
     /// Perform reverse PTR lookup for IP address
     pub async fn lookup_ptr(ip: &IpAddr) -> Result<String> {
-        let resolver =
-            TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default());
+        let resolver = TokioResolver::builder_with_config(
+            ResolverConfig::default(),
+            TokioConnectionProvider::default(),
+        )
+        .build();
 
         let lookup =
             resolver
@@ -151,8 +155,11 @@ impl ReversePtrLookup {
         let hostname = Self::lookup_ptr(ip).await?;
 
         // Perform forward lookup
-        let resolver =
-            TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default());
+        let resolver = TokioResolver::builder_with_config(
+            ResolverConfig::default(),
+            TokioConnectionProvider::default(),
+        )
+        .build();
 
         match ip {
             IpAddr::V4(_) => {

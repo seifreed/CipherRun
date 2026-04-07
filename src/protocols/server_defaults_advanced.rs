@@ -13,8 +13,7 @@ use crate::utils::network::Target;
 use crate::{Result, tls_bail};
 use analysis::{analyze_cipher_kex, classify_dh_strength, estimate_dh_size, estimate_key_size};
 use openssl::ssl::{SslConnector, SslMethod};
-use tokio::net::TcpStream;
-use tokio::time::{Duration, timeout};
+use tokio::time::Duration;
 
 /// Server defaults advanced tester
 pub struct ServerDefaultsAdvancedTester {
@@ -83,12 +82,10 @@ impl ServerDefaultsAdvancedTester {
             .count();
         let inconclusive = test_results.is_empty();
         let server_preferred = !inconclusive && client_respected_count == 0;
-        let client_order_respected =
-            !inconclusive && client_respected_count == test_results.len();
+        let client_order_respected = !inconclusive && client_respected_count == test_results.len();
 
         let details = if inconclusive {
-            "Cipher order preference inconclusive (no successful comparison handshakes)"
-                .to_string()
+            "Cipher order preference inconclusive (no successful comparison handshakes)".to_string()
         } else if server_preferred {
             format!(
                 "Server enforces its own cipher preference (0/{} tests matched client's first choice)",
@@ -121,11 +118,8 @@ impl ServerDefaultsAdvancedTester {
         let addr = self.target.socket_addrs()[0];
         let connect_timeout = Duration::from_secs(10);
 
-        let stream = timeout(connect_timeout, TcpStream::connect(&addr))
-            .await
-            .map_err(|_| crate::error::TlsError::Timeout {
-                duration: connect_timeout,
-            })??;
+        let stream =
+            crate::utils::network::connect_with_timeout(addr, connect_timeout, None).await?;
 
         let std_stream = stream.into_std()?;
 
@@ -135,10 +129,11 @@ impl ServerDefaultsAdvancedTester {
         let connector = builder.build();
         let ssl_stream = connector.connect(&self.target.hostname, std_stream)?;
 
-        let cipher = ssl_stream
-            .ssl()
-            .current_cipher()
-            .ok_or_else(|| anyhow::anyhow!("No cipher negotiated"))?;
+        let cipher = ssl_stream.ssl().current_cipher().ok_or_else(|| {
+            crate::error::TlsError::InvalidHandshake {
+                details: "No cipher negotiated".into(),
+            }
+        })?;
 
         Ok(cipher.name().to_string())
     }
@@ -148,11 +143,8 @@ impl ServerDefaultsAdvancedTester {
         let addr = self.target.socket_addrs()[0];
         let connect_timeout = Duration::from_secs(10);
 
-        let stream = timeout(connect_timeout, TcpStream::connect(&addr))
-            .await
-            .map_err(|_| crate::error::TlsError::Timeout {
-                duration: connect_timeout,
-            })??;
+        let stream =
+            crate::utils::network::connect_with_timeout(addr, connect_timeout, None).await?;
 
         let std_stream = stream.into_std()?;
 
@@ -263,11 +255,8 @@ impl ServerDefaultsAdvancedTester {
         let addr = self.target.socket_addrs()[0];
         let connect_timeout = Duration::from_secs(10);
 
-        let stream = timeout(connect_timeout, TcpStream::connect(&addr))
-            .await
-            .map_err(|_| crate::error::TlsError::Timeout {
-                duration: connect_timeout,
-            })??;
+        let stream =
+            crate::utils::network::connect_with_timeout(addr, connect_timeout, None).await?;
 
         let std_stream = stream.into_std()?;
 
@@ -295,11 +284,8 @@ impl ServerDefaultsAdvancedTester {
         let addr = self.target.socket_addrs()[0];
         let connect_timeout = Duration::from_secs(10);
 
-        let stream = timeout(connect_timeout, TcpStream::connect(&addr))
-            .await
-            .map_err(|_| crate::error::TlsError::Timeout {
-                duration: connect_timeout,
-            })??;
+        let stream =
+            crate::utils::network::connect_with_timeout(addr, connect_timeout, None).await?;
 
         let std_stream = stream.into_std()?;
 
@@ -307,10 +293,11 @@ impl ServerDefaultsAdvancedTester {
         let connector = builder.build();
         let ssl_stream = connector.connect(&self.target.hostname, std_stream)?;
 
-        let cipher = ssl_stream
-            .ssl()
-            .current_cipher()
-            .ok_or_else(|| anyhow::anyhow!("No cipher negotiated"))?;
+        let cipher = ssl_stream.ssl().current_cipher().ok_or_else(|| {
+            crate::error::TlsError::InvalidHandshake {
+                details: "No cipher negotiated".into(),
+            }
+        })?;
 
         let cipher_name = cipher.name().to_string();
         let (algorithm, ephemeral, parameters) = analyze_cipher_kex(&cipher_name);
@@ -422,7 +409,7 @@ mod tests {
         let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
         let cert_der = cert.cert.der().clone();
         let key_der = rustls::pki_types::PrivateKeyDer::Pkcs8(
-            rustls::pki_types::PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der()),
+            rustls::pki_types::PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der()),
         );
 
         let config = rustls::ServerConfig::builder()

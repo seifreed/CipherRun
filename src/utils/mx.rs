@@ -367,10 +367,12 @@ mod tests {
             warnings: vec![],
         };
 
-        let mut ok_result = ScanResults::default();
-        ok_result.rating = Some(RatingResults {
-            ssl_rating: Some(rating),
-        });
+        let ok_result = ScanResults {
+            rating: Some(RatingResults {
+                ssl_rating: Some(rating),
+            }),
+            ..Default::default()
+        };
 
         let results: Vec<(MxRecord, Result<ScanResults>)> = vec![
             (mx1, Ok(ok_result)),
@@ -468,15 +470,19 @@ mod tests {
             warnings: vec![],
         };
 
-        let mut ok_a = ScanResults::default();
-        ok_a.rating = Some(RatingResults {
-            ssl_rating: Some(rating_a),
-        });
+        let ok_a = ScanResults {
+            rating: Some(RatingResults {
+                ssl_rating: Some(rating_a),
+            }),
+            ..Default::default()
+        };
 
-        let mut ok_b = ScanResults::default();
-        ok_b.rating = Some(RatingResults {
-            ssl_rating: Some(rating_b),
-        });
+        let ok_b = ScanResults {
+            rating: Some(RatingResults {
+                ssl_rating: Some(rating_b),
+            }),
+            ..Default::default()
+        };
 
         let results: Vec<(MxRecord, Result<ScanResults>)> = vec![(mx1, Ok(ok_a)), (mx2, Ok(ok_b))];
 

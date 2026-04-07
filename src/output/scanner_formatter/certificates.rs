@@ -212,16 +212,48 @@ impl<'a> ScannerFormatter<'a> {
 
         println!("\n  {}", "OCSP Details:".cyan());
 
-        if matches!(revocation.method, RevocationMethod::OCSP) {
+        println!(
+            "    Must-Staple:  {}",
+            if revocation.must_staple {
+                "Y Required by certificate".green()
+            } else {
+                "No".normal()
+            }
+        );
+
+        if let Some(stapling) = &revocation.ocsp_stapling_details {
             println!(
-                "    Stapling:     {}",
-                if revocation.must_staple {
-                    "Y Required by certificate".green()
+                "    Supported:    {}",
+                if stapling.stapling_supported {
+                    "Y Advertised by server".green()
                 } else {
-                    "Optional".yellow()
+                    "No".yellow()
                 }
             );
+            println!(
+                "    Stapled Resp: {}",
+                if stapling.stapled_response_present {
+                    "Y Present in handshake".green()
+                } else {
+                    "No".yellow()
+                }
+            );
+            if let Some(valid) = stapling.stapled_response_valid {
+                println!(
+                    "    Validation:   {}",
+                    if valid {
+                        "Y Response structure looks valid".green()
+                    } else {
+                        "X Invalid stapled response".red()
+                    }
+                );
+            }
+            println!("    Handshake:    {}", stapling.details);
+        } else {
+            println!("    Stapling:     Information unavailable for this connection");
+        }
 
+        if matches!(revocation.method, RevocationMethod::OCSP) {
             match revocation.status {
                 RevocationStatus::Good => {
                     println!(

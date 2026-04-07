@@ -7,6 +7,16 @@ use chrono::Utc;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// Parsed policy metadata: (name, description, created_at, enabled, rules_content, updated_at)
+pub(super) type PolicyMetadata = (
+    String,
+    Option<String>,
+    chrono::DateTime<Utc>,
+    bool,
+    String,
+    chrono::DateTime<Utc>,
+);
+
 pub(super) fn policy_dir_from_state(state: &AppState) -> Result<&PathBuf, ApiError> {
     state
         .policy_dir
@@ -82,17 +92,7 @@ pub(super) fn parse_policy_file_content(
 pub(super) fn read_policy_with_metadata(
     policy_path: &Path,
     fallback_id: String,
-) -> Result<
-    (
-        String,
-        Option<String>,
-        chrono::DateTime<Utc>,
-        bool,
-        String,
-        chrono::DateTime<Utc>,
-    ),
-    ApiError,
-> {
+) -> Result<PolicyMetadata, ApiError> {
     let content = fs::read_to_string(policy_path)
         .map_err(|e| ApiError::Internal(format!("Failed to read policy file: {}", e)))?;
     let (name, description, created_at, enabled, rules_content) =

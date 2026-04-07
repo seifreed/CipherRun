@@ -171,7 +171,11 @@ mod tests {
 
         assert!(!result.measured);
         assert!(result.groups.iter().all(|g| !g.supported));
-        assert!(result.details.contains("does not parse real group negotiation"));
+        assert!(
+            result
+                .details
+                .contains("does not parse real group negotiation")
+        );
     }
 
     #[tokio::test]

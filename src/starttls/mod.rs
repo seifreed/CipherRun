@@ -10,10 +10,12 @@ pub mod nntp;
 pub mod pop3;
 pub mod postgres;
 pub mod protocols;
+pub mod response;
 pub mod sieve;
 pub mod smtp;
 pub mod telnet;
 pub mod tester;
+pub mod text_protocol;
 pub mod xmpp;
 
 pub use protocols::{StarttlsNegotiator, StarttlsProtocol, StarttlsTestResult};

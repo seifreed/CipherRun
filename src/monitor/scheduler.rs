@@ -2,12 +2,13 @@
 
 use crate::monitor::inventory::MonitoredDomain;
 use chrono::{DateTime, Duration, Utc};
-use rand::Rng;
+use rand::RngExt;
 use std::collections::HashMap;
 
 /// Scheduling engine for managing domain scan intervals
 pub struct SchedulingEngine {
     next_scan_times: HashMap<String, DateTime<Utc>>,
+    in_progress: std::collections::HashSet<String>,
     jitter_percent: u8,
 }
 
@@ -16,6 +17,7 @@ impl SchedulingEngine {
     pub fn new() -> Self {
         Self {
             next_scan_times: HashMap::new(),
+            in_progress: std::collections::HashSet::new(),
             jitter_percent: 10, // ±10% jitter by default
         }
     }
@@ -38,6 +40,11 @@ impl SchedulingEngine {
             let identifier = domain.identifier();
 
             // Check if domain is due for scan
+            // Skip domains that are already being scanned
+            if self.in_progress.contains(&identifier) {
+                continue;
+            }
+
             let is_due = if let Some(next_scan) = self.next_scan_times.get(&identifier) {
                 now >= *next_scan
             } else {
@@ -47,12 +54,22 @@ impl SchedulingEngine {
 
             if is_due {
                 due_domains.push(domain);
-                // Schedule next scan
-                self.schedule_next_scan_internal(&identifier, domain.interval_seconds);
             }
         }
 
         due_domains
+    }
+
+    /// Mark a domain as currently being scanned to prevent concurrent scans
+    pub fn mark_scan_in_progress(&mut self, domain: &MonitoredDomain) {
+        self.in_progress.insert(domain.identifier());
+    }
+
+    /// Mark a scan as completed and schedule the next one
+    pub fn mark_scan_completed(&mut self, domain: &MonitoredDomain) {
+        let identifier = domain.identifier();
+        self.in_progress.remove(&identifier);
+        self.schedule_next_scan_internal(&identifier, domain.interval_seconds);
     }
 
     /// Schedule next scan for a domain
@@ -62,7 +79,8 @@ impl SchedulingEngine {
 
     /// Internal method to schedule next scan with jitter
     fn schedule_next_scan_internal(&mut self, identifier: &str, interval_seconds: u64) {
-        let interval_with_jitter = self.add_jitter(Duration::seconds(interval_seconds as i64));
+        let clamped_seconds = interval_seconds.min(i64::MAX as u64) as i64;
+        let interval_with_jitter = self.add_jitter(Duration::seconds(clamped_seconds));
         let next_scan = Utc::now() + interval_with_jitter;
 
         self.next_scan_times
@@ -73,16 +91,20 @@ impl SchedulingEngine {
     ///
     /// Adds random variation of ±jitter_percent to the duration
     fn add_jitter(&self, duration: Duration) -> Duration {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
 
-        // Calculate jitter range
+        // Calculate jitter range with overflow protection
         let seconds = duration.num_seconds();
-        let jitter_range = (seconds * self.jitter_percent as i64) / 100;
+        // Use at least 1 second of jitter to prevent thundering herd even for short intervals
+        let jitter_range = ((seconds.saturating_mul(self.jitter_percent as i64) + 50) / 100).max(1);
 
         // Random jitter between -jitter_range and +jitter_range
-        let jitter = rng.gen_range(-jitter_range..=jitter_range);
+        let jitter = rng.random_range(-jitter_range..=jitter_range);
 
-        Duration::seconds(seconds + jitter)
+        // Use saturating arithmetic to prevent overflow
+        let adjusted_seconds = seconds.saturating_add(jitter).max(0);
+
+        Duration::seconds(adjusted_seconds)
     }
 
     /// Get next scan time for a domain
@@ -187,7 +209,11 @@ mod tests {
         assert_eq!(due_domains.len(), 1);
         assert_eq!(due_domains[0].hostname, "example.com");
 
-        // Should have scheduled next scan
+        // Not yet scheduled — only scheduled after mark_scan_completed
+        assert_eq!(scheduler.scheduled_count(), 0);
+
+        // Simulate successful scan completion
+        scheduler.mark_scan_completed(due_domains[0]);
         assert_eq!(scheduler.scheduled_count(), 1);
     }
 
@@ -308,7 +334,11 @@ mod tests {
         let due = scheduler.get_domains_to_scan(&domains);
         assert_eq!(due.len(), 3);
 
-        // All should now be scheduled
+        // Not yet scheduled — mark all as completed
+        assert_eq!(scheduler.scheduled_count(), 0);
+        for domain in &due {
+            scheduler.mark_scan_completed(domain);
+        }
         assert_eq!(scheduler.scheduled_count(), 3);
 
         // Immediately after, none should be due

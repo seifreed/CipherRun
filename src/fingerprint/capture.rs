@@ -18,7 +18,7 @@ impl ClientHelloNetworkCapture {
     pub fn new(target: Target) -> Self {
         Self {
             target,
-            timeout: Duration::from_secs(10),
+            timeout: crate::constants::DEFAULT_CONNECT_TIMEOUT,
         }
     }
 

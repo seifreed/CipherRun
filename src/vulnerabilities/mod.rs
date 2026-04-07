@@ -7,7 +7,7 @@ pub use aggregation::merge_vulnerability_result;
 use serde::{Deserialize, Serialize};
 
 /// Vulnerability types
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum VulnerabilityType {
     Heartbleed,
     CCSInjection,

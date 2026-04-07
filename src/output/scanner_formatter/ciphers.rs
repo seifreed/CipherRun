@@ -25,9 +25,110 @@ impl<'a> ScannerFormatter<'a> {
                 continue;
             }
 
-            display_cipher_strength_distribution(&summary.counts);
-            display_cipher_security_features(&summary.counts);
-            self.display_cipher_ordering(summary);
+            if self.args.scan.each_cipher {
+                self.display_each_cipher_list(summary);
+            } else if self.args.scan.categories {
+                self.display_category_focus(summary);
+            } else if self.args.scan.forward_secrecy {
+                self.display_forward_secrecy_focus(summary);
+            } else if self.args.scan.server_defaults || self.args.scan.server_preference {
+                self.display_server_preference_focus(summary);
+            } else {
+                display_cipher_strength_distribution(&summary.counts);
+                display_cipher_security_features(&summary.counts);
+                self.display_cipher_ordering(summary);
+            }
+        }
+    }
+
+    fn display_each_cipher_list(&self, summary: &ProtocolCipherSummary) {
+        display_cipher_strength_distribution(&summary.counts);
+        println!("\n  Supported Cipher Suites:");
+
+        for cipher in &summary.supported_ciphers {
+            let cipher_name = self.format_cipher_name(cipher);
+            let mut details = Vec::new();
+
+            details.push(match cipher.strength() {
+                crate::ciphers::CipherStrength::NULL => "NULL".red().bold().to_string(),
+                crate::ciphers::CipherStrength::Export => "EXPORT".red().to_string(),
+                crate::ciphers::CipherStrength::Low => "LOW".yellow().to_string(),
+                crate::ciphers::CipherStrength::Medium => "MEDIUM".normal().to_string(),
+                crate::ciphers::CipherStrength::High => "HIGH".green().to_string(),
+            });
+
+            if cipher.has_forward_secrecy() {
+                details.push("FS".green().to_string());
+            }
+            if cipher.is_aead() {
+                details.push("AEAD".green().to_string());
+            }
+
+            println!("    - {} [{}]", cipher_name, details.join(", "));
+        }
+
+        self.display_cipher_ordering(summary);
+    }
+
+    fn display_category_focus(&self, summary: &ProtocolCipherSummary) {
+        println!("  {}", "Category Summary:".cyan());
+        display_cipher_strength_distribution(&summary.counts);
+        println!(
+            "\n  Total by category: null={}, export={}, low={}, medium={}, high={}",
+            summary.counts.null_ciphers,
+            summary.counts.export_ciphers,
+            summary.counts.low_strength,
+            summary.counts.medium_strength,
+            summary.counts.high_strength
+        );
+    }
+
+    fn display_forward_secrecy_focus(&self, summary: &ProtocolCipherSummary) {
+        println!("  {}", "Forward Secrecy Focus:".cyan());
+        display_cipher_security_features(&summary.counts);
+
+        let non_fs: Vec<_> = summary
+            .supported_ciphers
+            .iter()
+            .filter(|cipher| !cipher.has_forward_secrecy())
+            .collect();
+
+        if non_fs.is_empty() {
+            println!(
+                "    {} All supported ciphers provide forward secrecy",
+                "Y".green()
+            );
+            return;
+        }
+
+        println!(
+            "    {} {} cipher suites do not provide forward secrecy:",
+            "!".yellow(),
+            non_fs.len()
+        );
+        for cipher in non_fs {
+            println!("      - {}", self.format_cipher_name(cipher));
+        }
+    }
+
+    fn display_server_preference_focus(&self, summary: &ProtocolCipherSummary) {
+        println!("  {}", "Server Preference Focus:".cyan());
+        self.display_cipher_ordering(summary);
+
+        if summary.server_preference.is_empty() {
+            println!("    Preference list unavailable");
+            return;
+        }
+
+        println!("\n  Preference Order:");
+        for (index, cipher_hex) in summary.server_preference.iter().enumerate() {
+            let rendered = summary
+                .supported_ciphers
+                .iter()
+                .find(|cipher| cipher.hexcode.eq_ignore_ascii_case(cipher_hex))
+                .map(|cipher| self.format_cipher_name(cipher))
+                .unwrap_or_else(|| format!("0x{}", cipher_hex));
+            println!("    {}. {}", index + 1, rendered);
         }
     }
 
@@ -56,6 +157,20 @@ impl<'a> ScannerFormatter<'a> {
             }
         } else {
             println!("\n  {} Client chooses cipher order", "!".yellow());
+        }
+    }
+
+    fn format_cipher_name(&self, cipher: &crate::ciphers::CipherSuite) -> String {
+        let cipher_name = if self.args.output.iana_names {
+            &cipher.iana_name
+        } else {
+            &cipher.openssl_name
+        };
+
+        if self.args.output.show_cipher_ids {
+            format!("{} (0x{})", cipher_name, cipher.hexcode)
+        } else {
+            cipher_name.to_string()
         }
     }
 }

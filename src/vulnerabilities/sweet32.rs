@@ -7,8 +7,6 @@
 use crate::Result;
 use crate::utils::network::Target;
 use std::time::Duration;
-use tokio::net::TcpStream;
-use tokio::time::timeout;
 
 /// Sweet32 vulnerability tester
 pub struct Sweet32Tester {
@@ -106,26 +104,29 @@ impl Sweet32Tester {
 
         let addr = self.target.socket_addrs()[0];
 
-        match timeout(Duration::from_secs(3), TcpStream::connect(addr)).await {
-            Ok(Ok(stream)) => {
-                let std_stream = stream.into_std()?;
-                std_stream.set_nonblocking(false)?;
+        let stream =
+            match crate::utils::network::connect_with_timeout(addr, Duration::from_secs(3), None)
+                .await
+            {
+                Ok(s) => s,
+                Err(_) => return Ok(false),
+            };
 
-                let mut builder = SslConnector::builder(SslMethod::tls())?;
+        let std_stream = stream.into_std()?;
+        std_stream.set_nonblocking(false)?;
 
-                // Try to set the specific cipher
-                match builder.set_cipher_list(cipher) {
-                    Ok(_) => {
-                        let connector = builder.build();
-                        match connector.connect(&self.target.hostname, std_stream) {
-                            Ok(_) => Ok(true),
-                            Err(_) => Ok(false),
-                        }
-                    }
+        let mut builder = SslConnector::builder(SslMethod::tls())?;
+
+        // Try to set the specific cipher
+        match builder.set_cipher_list(cipher) {
+            Ok(_) => {
+                let connector = builder.build();
+                match connector.connect(&self.target.hostname, std_stream) {
+                    Ok(_) => Ok(true),
                     Err(_) => Ok(false),
                 }
             }
-            _ => Ok(false),
+            Err(_) => Ok(false),
         }
     }
 }

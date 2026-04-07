@@ -215,7 +215,10 @@ async fn test_heartbleed_vulnerability_async() {
 
     match result {
         Ok(heartbleed_result) => {
-            println!("Heartbleed test result: vulnerable={}", heartbleed_result.vulnerable);
+            println!(
+                "Heartbleed test result: vulnerable={}",
+                heartbleed_result.vulnerable
+            );
             // Modern servers should not be vulnerable to Heartbleed
             assert!(
                 !heartbleed_result.vulnerable,

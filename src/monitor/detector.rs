@@ -146,27 +146,77 @@ impl ChangeDetector {
         // Check expiry date changes
         if previous.not_after != current.not_after {
             // Parse dates to determine if extended or shortened
-            // For now, do simple string comparison
-            let is_extended = current.not_after > previous.not_after;
+            let is_extended = {
+                let parse_date = |s: &str| -> Option<chrono::DateTime<chrono::Utc>> {
+                    use chrono::NaiveDateTime;
+                    // Try RFC3339: "2025-01-01T00:00:00Z"
+                    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
+                        return Some(dt.with_timezone(&chrono::Utc));
+                    }
+                    // Try "YYYY-MM-DD HH:MM:SS UTC" format
+                    if let Ok(dt) = NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S UTC") {
+                        return Some(dt.and_utc());
+                    }
+                    // Try without timezone suffix
+                    let cleaned = s.replace(" UTC", "").replace(" GMT", "");
+                    if let Ok(dt) = NaiveDateTime::parse_from_str(&cleaned, "%Y-%m-%d %H:%M:%S") {
+                        return Some(dt.and_utc());
+                    }
+                    // Try ISO format with offset: "2025-01-01 00:00:00 +0000"
+                    if let Ok(dt) = chrono::DateTime::parse_from_str(
+                        &format!("{} +0000", s),
+                        "%Y-%m-%d %H:%M:%S %z",
+                    ) {
+                        return Some(dt.with_timezone(&chrono::Utc));
+                    }
+                    // Try OpenSSL format: "Jan  1 00:00:00 2025 GMT"
+                    if s.ends_with(" GMT") || s.ends_with(" UTC") {
+                        let without_tz = s.replace(" GMT", "").replace(" UTC", "");
+                        if let Ok(dt) =
+                            NaiveDateTime::parse_from_str(&without_tz, "%b %d %H:%M:%S %Y")
+                        {
+                            return Some(dt.and_utc());
+                        }
+                    }
+                    None
+                };
+                match (
+                    parse_date(&previous.not_after),
+                    parse_date(&current.not_after),
+                ) {
+                    (Some(prev), Some(curr)) => Some(curr > prev),
+                    _ => {
+                        // Cannot reliably compare dates — skip emitting a directional change event
+                        tracing::warn!(
+                            "Could not parse certificate dates for comparison: '{}' vs '{}', skipping expiry direction detection",
+                            previous.not_after,
+                            current.not_after
+                        );
+                        None
+                    }
+                }
+            };
 
-            if is_extended {
-                changes.push(ChangeEvent {
-                    change_type: ChangeType::ExpiryExtended,
-                    severity: ChangeSeverity::Low,
-                    description: "Certificate expiry date extended".to_string(),
-                    previous_value: Some(previous.not_after.clone()),
-                    current_value: Some(current.not_after.clone()),
-                    detected_at: now,
-                });
-            } else {
-                changes.push(ChangeEvent {
-                    change_type: ChangeType::ExpiryShortened,
-                    severity: ChangeSeverity::Medium,
-                    description: "Certificate expiry date shortened".to_string(),
-                    previous_value: Some(previous.not_after.clone()),
-                    current_value: Some(current.not_after.clone()),
-                    detected_at: now,
-                });
+            if let Some(is_extended) = is_extended {
+                if is_extended {
+                    changes.push(ChangeEvent {
+                        change_type: ChangeType::ExpiryExtended,
+                        severity: ChangeSeverity::Low,
+                        description: "Certificate expiry date extended".to_string(),
+                        previous_value: Some(previous.not_after.clone()),
+                        current_value: Some(current.not_after.clone()),
+                        detected_at: now,
+                    });
+                } else {
+                    changes.push(ChangeEvent {
+                        change_type: ChangeType::ExpiryShortened,
+                        severity: ChangeSeverity::Medium,
+                        description: "Certificate expiry date shortened".to_string(),
+                        previous_value: Some(previous.not_after.clone()),
+                        current_value: Some(current.not_after.clone()),
+                        detected_at: now,
+                    });
+                }
             }
         }
 

@@ -87,8 +87,30 @@ impl ScanJob {
         if let Some(started) = self.started_at
             && progress > 0
         {
-            let elapsed = (Utc::now() - started).num_seconds() as u64;
-            let total_estimated = (elapsed * 100) / progress as u64;
+            let elapsed_signed = (Utc::now() - started).num_seconds();
+
+            // Guard against clock skew (started_at in the future)
+            if elapsed_signed < 0 {
+                tracing::warn!("Job started_at is in the future, skipping ETA calculation");
+                return;
+            }
+
+            let elapsed = elapsed_signed as u64;
+
+            // Use checked arithmetic to prevent overflow
+            // elapsed * 100 could overflow for very large values (unreachable in practice)
+            let total_estimated = match elapsed
+                .checked_mul(100)
+                .and_then(|e| e.checked_div(progress as u64))
+            {
+                Some(val) => val,
+                None => {
+                    // Overflow would only occur with elapsed > 584 years, but handle gracefully
+                    tracing::debug!("ETA calculation overflow, skipping");
+                    return;
+                }
+            };
+
             let remaining = total_estimated.saturating_sub(elapsed);
             self.eta_seconds = Some(remaining);
             self.estimated_completion =
@@ -143,6 +165,13 @@ pub trait JobQueue: Send + Sync {
     /// Update job
     async fn update_job(&self, job: &ScanJob) -> Result<()>;
 
+    /// Update job only if it hasn't been cancelled.
+    /// This prevents race conditions where a job completes and a cancellation
+    /// request arrives simultaneously, and the completion would overwrite the
+    /// cancelled status.
+    /// Returns Ok(true) if the job was updated, Ok(false) if it was cancelled.
+    async fn update_job_preserving_cancelled(&self, job: &ScanJob) -> Result<bool>;
+
     /// Cancel job
     async fn cancel_job(&self, id: &str) -> Result<bool>;
 
@@ -193,14 +222,23 @@ impl JobQueue for InMemoryJobQueue {
 
     async fn dequeue(&self) -> Result<Option<ScanJob>> {
         let mut queue = self.queue.write().await;
-        let jobs = self.jobs.read().await;
+        // Acquire jobs lock once to avoid repeated lock/unlock per iteration
+        let jobs = self.jobs.write().await;
 
         while let Some(job) = queue.pop_front() {
-            match jobs.get(&job.id) {
-                Some(current) if matches!(current.status, ScanStatus::Queued) => {
-                    return Ok(Some(current.clone()));
+            match jobs.get(&job.id).map(|j| j.status) {
+                Some(ScanStatus::Queued) => {
+                    let current_job = jobs.get(&job.id).cloned().unwrap_or(job);
+                    return Ok(Some(current_job));
                 }
-                _ => continue,
+                Some(_) => {
+                    // Job was cancelled or completed - skip it
+                    continue;
+                }
+                None => {
+                    // Job not found in HashMap - skip it (shouldn't happen)
+                    continue;
+                }
             }
         }
 
@@ -218,15 +256,31 @@ impl JobQueue for InMemoryJobQueue {
         Ok(())
     }
 
+    async fn update_job_preserving_cancelled(&self, job: &ScanJob) -> Result<bool> {
+        let mut jobs = self.jobs.write().await;
+        if let Some(current) = jobs.get(&job.id) {
+            // Only update if not cancelled - prevent race condition where
+            // completion overwrites cancellation
+            if matches!(current.status, ScanStatus::Cancelled) {
+                tracing::info!(
+                    "Job {} was cancelled while processing, preserving cancelled status",
+                    job.id
+                );
+                return Ok(false);
+            }
+        }
+        jobs.insert(job.id.clone(), job.clone());
+        Ok(true)
+    }
+
     async fn cancel_job(&self, id: &str) -> Result<bool> {
         let mut queue = self.queue.write().await;
         let mut jobs = self.jobs.write().await;
 
-        if let Some(mut job) = jobs.get(id).cloned() {
+        if let Some(job) = jobs.get_mut(id) {
             // Only cancel if not already completed/failed
             if matches!(job.status, ScanStatus::Queued | ScanStatus::Running) {
                 job.mark_cancelled();
-                jobs.insert(id.to_string(), job);
                 queue.retain(|queued| queued.id != id);
                 return Ok(true);
             }

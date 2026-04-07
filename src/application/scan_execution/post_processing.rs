@@ -1,5 +1,4 @@
-use crate::compliance::{ComplianceReport, ComplianceStatus};
-use crate::policy::PolicyResult;
+use crate::application::{ComplianceReport, ComplianceStatus, PolicyResult};
 
 pub struct ScanPostProcessingView<'a> {
     pub(crate) compliance_report: Option<&'a ComplianceReport>,
@@ -69,7 +68,8 @@ impl<'a> ScanPostView<'a> {
     }
 
     pub fn policy_failed(&self) -> bool {
-        self.policy_result().is_some_and(PolicyResult::has_violations)
+        self.policy_result()
+            .is_some_and(PolicyResult::has_violations)
     }
 
     pub fn has_failures(&self) -> bool {

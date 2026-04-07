@@ -72,39 +72,42 @@ impl ScanExecutor {
                 break;
             }
 
-            // Wait for available slot
-            let permit = match Arc::clone(&self.semaphore).try_acquire_owned() {
-                Ok(p) => p,
-                Err(_) => {
-                    // No slots available, wait a bit
-                    tokio::time::sleep(Duration::from_millis(100)).await;
+            // Try to dequeue a job FIRST, before acquiring a permit.
+            // This avoids holding a permit while no work is available,
+            // which would starve real jobs under high load.
+            let job = match self.job_queue.dequeue().await {
+                Ok(Some(job)) => job,
+                Ok(None) => {
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                    continue;
+                }
+                Err(e) => {
+                    error!("Error dequeuing job: {}", e);
+                    tokio::time::sleep(Duration::from_secs(1)).await;
                     continue;
                 }
             };
 
-            // Try to dequeue a job
-            match self.job_queue.dequeue().await {
-                Ok(Some(job)) => {
-                    let executor = Arc::clone(&self);
-                    let queue = Arc::clone(&self.job_queue);
+            // Now acquire a permit to limit concurrency
+            let permit = match Arc::clone(&self.semaphore).acquire_owned().await {
+                Ok(p) => p,
+                Err(_) => {
+                    // Semaphore closed — re-enqueue the job so it's not lost
+                    error!("Semaphore closed, cannot execute job {}", job.id);
+                    if let Err(e) = self.job_queue.enqueue(job).await {
+                        error!("Failed to re-enqueue job: {}", e);
+                    }
+                    break;
+                }
+            };
 
-                    // Spawn task to process job
-                    tokio::spawn(async move {
-                        executor.execute_scan(queue, job).await;
-                        drop(permit);
-                    });
-                }
-                Ok(None) => {
-                    // No jobs in queue
-                    drop(permit);
-                    tokio::time::sleep(Duration::from_millis(500)).await;
-                }
-                Err(e) => {
-                    error!("Error dequeuing job: {}", e);
-                    drop(permit);
-                    tokio::time::sleep(Duration::from_secs(1)).await;
-                }
-            }
+            let executor = Arc::clone(&self);
+            let queue = Arc::clone(&self.job_queue);
+
+            tokio::spawn(async move {
+                executor.execute_scan(queue, job).await;
+                drop(permit);
+            });
         }
 
         Ok(())
@@ -125,6 +128,14 @@ impl ScanExecutor {
         job.mark_started();
         if let Err(e) = queue.update_job(&job).await {
             error!("Failed to update job status: {}", e);
+        }
+
+        // Re-verify job wasn't cancelled between initial check and mark_started
+        if let Ok(Some(current)) = queue.get_job(&job.id).await
+            && matches!(current.status, ScanStatus::Cancelled)
+        {
+            info!("Job {} cancelled during startup, aborting", job.id);
+            return;
         }
 
         // Send progress update
@@ -223,15 +234,27 @@ impl ScanExecutor {
                 let msg = if cancelled {
                     ProgressMessage::new(&job.id, job.progress, "cancelled")
                 } else {
-                    ProgressMessage::failed(&job.id, &job.error.clone().unwrap_or_default())
+                    ProgressMessage::failed(&job.id, job.error.clone().unwrap_or_default())
                 };
                 let _ = self.progress_tx.send(msg);
             }
         }
 
         // Update job in queue
-        if let Err(e) = queue.update_job(&job).await {
-            error!("Failed to update job status: {}", e);
+        // Use update_job_preserving_cancelled to prevent race condition where
+        // a cancellation request arrives between scan completion and this update.
+        // This ensures we don't overwrite a cancelled status with completed/failed.
+        match queue.update_job_preserving_cancelled(&job).await {
+            Ok(true) => {
+                // Job was successfully updated
+            }
+            Ok(false) => {
+                // Job was cancelled while we were processing - this is expected
+                tracing::info!("Job {} was cancelled, preserving cancelled status", job.id);
+            }
+            Err(e) => {
+                error!("Failed to update job status: {}", e);
+            }
         }
 
         // Call webhook if configured
@@ -311,9 +334,78 @@ impl ScanExecutor {
         let _ = self.progress_tx.send(msg);
     }
 
-    /// Send webhook notification
+    /// Send webhook notification.
+    /// Validates the URL against SSRF before making the request.
     async fn send_webhook(webhook_url: &str, job: &ScanJob) -> Result<()> {
-        let client = reqwest::Client::new();
+        // Parse and validate webhook URL to prevent SSRF
+        let url: url::Url = webhook_url
+            .parse()
+            .map_err(|e| anyhow::anyhow!("Invalid webhook URL: {}", e))?;
+
+        // Only allow http/https schemes
+        match url.scheme() {
+            "http" | "https" => {}
+            scheme => anyhow::bail!(
+                "Webhook URL scheme '{}' not allowed (only http/https)",
+                scheme
+            ),
+        }
+
+        // Resolve hostname and check all IPs against SSRF blocklist
+        let host = url
+            .host_str()
+            .ok_or_else(|| anyhow::anyhow!("Webhook URL has no host"))?;
+
+        // Block obvious private hostnames and IP literals
+        if host == "localhost"
+            || host.ends_with(".local")
+            || host.ends_with(".internal")
+            || host == "127.0.0.1"
+            || host == "::1"
+        {
+            anyhow::bail!("Webhook URL points to private/local host: {}", host);
+        }
+
+        // Also check if host is an IP literal pointing to a private address
+        if let Ok(ip) = host.parse::<std::net::IpAddr>()
+            && crate::security::input_validation::is_private_ip(&ip)
+        {
+            anyhow::bail!(
+                "Webhook URL uses private/internal IP literal {} (SSRF blocked)",
+                ip
+            );
+        }
+
+        // Resolve DNS and check all resulting IPs
+        // IMPORTANT: If DNS resolution fails, reject the request to prevent SSRF bypass
+        // via DNS rebinding or resolver misconfiguration
+        let addrs: Vec<_> = tokio::net::lookup_host(format!("{}:{}", host, url.port_or_known_default().unwrap_or(80)))
+            .await
+            .map_err(|e| anyhow::anyhow!("Webhook DNS resolution failed for {}: {} (SSRF protection requires successful DNS resolution)", host, e))?
+            .collect();
+
+        if addrs.is_empty() {
+            anyhow::bail!(
+                "Webhook DNS resolution returned no addresses for {} (SSRF blocked)",
+                host
+            );
+        }
+
+        for addr in &addrs {
+            if crate::security::input_validation::is_private_ip(&addr.ip()) {
+                anyhow::bail!(
+                    "Webhook URL resolves to private/internal IP {} (SSRF blocked)",
+                    addr.ip()
+                );
+            }
+        }
+
+        // Pin resolved IPs to prevent DNS rebinding TOCTOU attacks
+        let mut client_builder = reqwest::Client::builder().timeout(Duration::from_secs(10));
+        for addr in &addrs {
+            client_builder = client_builder.resolve(host, *addr);
+        }
+        let client = client_builder.build()?;
 
         let payload = serde_json::json!({
             "job_id": job.id,
@@ -323,12 +415,7 @@ impl ScanExecutor {
             "error": job.error,
         });
 
-        let response = client
-            .post(webhook_url)
-            .json(&payload)
-            .timeout(Duration::from_secs(10))
-            .send()
-            .await?;
+        let response = client.post(webhook_url).json(&payload).send().await?;
 
         if !response.status().is_success() {
             anyhow::bail!("Webhook returned status: {}", response.status());

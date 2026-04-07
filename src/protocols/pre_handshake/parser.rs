@@ -55,8 +55,10 @@ impl PreHandshakeScanner {
 
                             let cipher_offset = offset + 34;
                             if cipher_offset + 2 <= offset + handshake_length {
-                                let cipher =
-                                    u16::from_be_bytes([data[cipher_offset], data[cipher_offset + 1]]);
+                                let cipher = u16::from_be_bytes([
+                                    data[cipher_offset],
+                                    data[cipher_offset + 1],
+                                ]);
                                 cipher_suite = Some(format!("0x{:04x}", cipher));
 
                                 if cipher_offset + 3 <= offset + handshake_length {
@@ -64,7 +66,8 @@ impl PreHandshakeScanner {
                                 }
                             }
 
-                            server_hello_data = Some(data[offset..offset + handshake_length].to_vec());
+                            server_hello_data =
+                                Some(data[offset..offset + handshake_length].to_vec());
                         }
                     }
                     0x0b => {

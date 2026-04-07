@@ -42,22 +42,7 @@ pub async fn health_check(State(state): State<Arc<AppState>>) -> Json<HealthResp
 
 /// Check database health with a simple query
 async fn check_database_health(db: &crate::db::connection::DatabasePool) -> crate::Result<()> {
-    use crate::db::connection::DatabasePool;
-
-    match db {
-        DatabasePool::Postgres(pool) => {
-            sqlx::query("SELECT 1").fetch_one(pool).await.map_err(|e| {
-                crate::TlsError::DatabaseError(format!("Database health check failed: {}", e))
-            })?;
-            Ok(())
-        }
-        DatabasePool::Sqlite(pool) => {
-            sqlx::query("SELECT 1").fetch_one(pool).await.map_err(|e| {
-                crate::TlsError::DatabaseError(format!("Database health check failed: {}", e))
-            })?;
-            Ok(())
-        }
-    }
+    db.health_check().await
 }
 
 #[cfg(test)]

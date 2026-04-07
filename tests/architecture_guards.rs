@@ -1040,6 +1040,15 @@ fn certificate_routes_use_shared_presenters_for_http_responses() {
 }
 
 #[test]
+fn compliance_route_uses_adapter_not_direct_scanner() {
+    assert_file_has_no_forbidden_pattern(
+        "src/api/routes/compliance.rs",
+        &["Scanner::new(", "use crate::scanner::Scanner"],
+        "Compliance route must use the compliance adapter instead of creating Scanner directly (dependency inversion).",
+    );
+}
+
+#[test]
 fn health_and_stats_routes_use_shared_presenters_for_http_responses() {
     assert_file_has_no_forbidden_pattern(
         "src/api/routes/health.rs",

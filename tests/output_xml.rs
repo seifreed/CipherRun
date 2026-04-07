@@ -10,9 +10,11 @@ use cipherrun::scanner::{CertificateAnalysisResult, RatingResults, ScanResults};
 use cipherrun::vulnerabilities::{Severity, VulnerabilityResult, VulnerabilityType};
 
 fn build_test_results() -> ScanResults {
-    let mut results = ScanResults::default();
-    results.target = "example.com & <test>".to_string();
-    results.scan_time_ms = 1234;
+    let mut results = ScanResults {
+        target: "example.com & <test>".to_string(),
+        scan_time_ms: 1234,
+        ..Default::default()
+    };
 
     results.protocols = vec![ProtocolTestResult {
         protocol: Protocol::TLS13,
@@ -29,6 +31,7 @@ fn build_test_results() -> ScanResults {
     results.vulnerabilities = vec![VulnerabilityResult {
         vuln_type: VulnerabilityType::Heartbleed,
         vulnerable: false,
+        inconclusive: false,
         details: "Safe & sound <ok>".to_string(),
         cve: Some("CVE-2014-0160".to_string()),
         cwe: None,

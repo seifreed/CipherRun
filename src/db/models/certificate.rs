@@ -41,6 +41,18 @@ pub struct ScanCertificateRecord {
 }
 
 impl CertificateRecord {
+    pub(crate) fn parse_json_text_array(
+        raw: Option<&str>,
+        field_name: &str,
+    ) -> crate::Result<Vec<String>> {
+        match raw.map(str::trim) {
+            None | Some("") => Ok(Vec::new()),
+            Some(raw) => serde_json::from_str(raw).map_err(|e| {
+                crate::TlsError::DatabaseError(format!("Invalid JSON in {}: {}", field_name, e))
+            }),
+        }
+    }
+
     /// Create new certificate record
     pub fn new(
         fingerprint_sha256: String,
@@ -148,5 +160,28 @@ mod tests {
         assert_eq!(junction.scan_id, 1);
         assert_eq!(junction.cert_id, 100);
         assert_eq!(junction.chain_position, 0);
+    }
+
+    #[test]
+    fn test_parse_json_text_array_tolerates_empty_values() {
+        assert_eq!(
+            CertificateRecord::parse_json_text_array(None, "san_domains").unwrap(),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            CertificateRecord::parse_json_text_array(Some(""), "san_domains").unwrap(),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            CertificateRecord::parse_json_text_array(Some("[]"), "san_domains").unwrap(),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn test_parse_json_text_array_rejects_invalid_json() {
+        let err =
+            CertificateRecord::parse_json_text_array(Some("not-json"), "san_domains").unwrap_err();
+        assert!(format!("{}", err).contains("Invalid JSON in san_domains"));
     }
 }

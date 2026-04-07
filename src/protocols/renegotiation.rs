@@ -9,7 +9,6 @@ use crate::constants::{
 };
 use crate::utils::network::Target;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
 use tokio::time::timeout;
 
 /// Renegotiation tester
@@ -32,8 +31,21 @@ impl<'a> RenegotiationTester<'a> {
 
     /// Test renegotiation support
     pub async fn test(&self) -> Result<RenegotiationTestResult> {
-        let support = self.test_renegotiation_support().await?;
+        // Test for secure renegotiation extension (RFC 5746)
         let secure_extension = self.test_secure_renegotiation_extension().await?;
+
+        // Test for insecure renegotiation (CVE-2009-3555)
+        let insecure_detected = self.test_insecure_renegotiation().await?;
+
+        // Determine support level
+        let support = if secure_extension {
+            RenegotiationSupport::SecureRenegotiation
+        } else if insecure_detected {
+            RenegotiationSupport::InsecureRenegotiation
+        } else {
+            // Check if renegotiation is supported at all using OpenSSL
+            self.test_renegotiation_support().await?
+        };
 
         let vulnerable = matches!(support, RenegotiationSupport::InsecureRenegotiation);
 
@@ -59,13 +71,29 @@ impl<'a> RenegotiationTester<'a> {
     }
 
     /// Test renegotiation support
+    ///
+    /// Note: This tests if the server supports renegotiation at all.
+    /// To detect INSECURE renegotiation (CVE-2009-3555), we need to check
+    /// if the server accepts connections WITHOUT the renegotiation_info extension.
+    ///
+    /// The current implementation uses OpenSSL's SslConnector which ALWAYS
+    /// includes the renegotiation_info extension (RFC 5746). This means
+    /// we can only detect:
+    /// - SecureRenegotiation: Server accepts connection with RFC 5746
+    /// - NotSupported: Connection fails
+    ///
+    /// To detect InsecureRenegotiation, we would need to:
+    /// 1. Send ClientHello WITHOUT renegotiation_info extension
+    /// 2. See if server accepts (vulnerable) or rejects (secure)
+    ///
+    /// This is implemented in test_insecure_renegotiation() below.
     async fn test_renegotiation_support(&self) -> Result<RenegotiationSupport> {
         use openssl::ssl::{SslConnector, SslMethod};
 
         let addr = self.target.socket_addrs()[0];
 
-        match timeout(DEFAULT_READ_TIMEOUT, TcpStream::connect(addr)).await {
-            Ok(Ok(stream)) => {
+        match crate::utils::network::connect_with_timeout(addr, DEFAULT_READ_TIMEOUT, None).await {
+            Ok(stream) => {
                 let std_stream = stream.into_std()?;
                 std_stream.set_nonblocking(false)?;
 
@@ -75,8 +103,8 @@ impl<'a> RenegotiationTester<'a> {
 
                 match connector.connect(&self.target.hostname, std_stream) {
                     Ok(_ssl_stream) => {
-                        // Check if renegotiation info extension is present
-                        // Modern OpenSSL has secure renegotiation by default
+                        // OpenSSL client with RFC 5746 connected successfully
+                        // Server supports secure renegotiation
                         Ok(RenegotiationSupport::SecureRenegotiation)
                     }
                     Err(_) => Ok(RenegotiationSupport::NotSupported),
@@ -86,12 +114,74 @@ impl<'a> RenegotiationTester<'a> {
         }
     }
 
+    /// Test for insecure renegotiation (CVE-2009-3555)
+    ///
+    /// Send ClientHello WITHOUT renegotiation_info extension.
+    /// If server accepts, it may be vulnerable to insecure renegotiation.
+    async fn test_insecure_renegotiation(&self) -> Result<bool> {
+        let addr = self.target.socket_addrs()[0];
+
+        match crate::utils::network::connect_with_timeout(addr, DEFAULT_READ_TIMEOUT, None).await {
+            Ok(mut stream) => {
+                // Send ClientHello WITHOUT renegotiation_info extension
+                let client_hello = self.build_client_hello_without_reneg_info();
+                stream.write_all(&client_hello).await?;
+
+                // Read ServerHello
+                let mut buffer = vec![0u8; VULNERABILITY_CHECK_BUFFER_SIZE];
+                match timeout(SHORT_TIMEOUT, stream.read(&mut buffer)).await {
+                    Ok(Ok(n)) if n > 0 => {
+                        // Check if server responded with a valid ServerHello
+                        // If server responds but WITHOUT renegotiation_info,
+                        // it may be vulnerable
+                        if buffer[0] == CONTENT_TYPE_HANDSHAKE && n > 5 {
+                            // Check if server's ServerHello includes renegotiation_info
+                            let has_reneg_info =
+                                self.has_renegotiation_info_extension(&buffer[..n]);
+
+                            // Detection analysis:
+                            // - Server sends ServerHello WITHOUT renegotiation_info extension:
+                            //   This COULD indicate insecure renegotiation support, but it's NOT
+                            //   conclusive proof of CVE-2009-3555 vulnerability.
+                            //
+                            // - To fully confirm insecure renegotiation vulnerability, we would need to:
+                            //   1. Complete the initial handshake without RFC 5746 extension
+                            //   2. Attempt a renegotiation request
+                            //   3. Observe if server accepts it (vulnerable) or rejects (secure)
+                            //
+                            // - Current detection is a heuristic: servers that respond to
+                            //   ClientHello without reneg_info but don't include it in response
+                            //   may be older/unpatched implementations.
+                            // - False positives possible for servers that just don't support
+                            //   renegotiation at all.
+                            //
+                            // Result interpretation:
+                            // - true: Server MIGHT be vulnerable - recommend manual testing
+                            // - false: Server has RFC 5746 extension or didn't respond properly
+                            if !has_reneg_info {
+                                // Server responded with ServerHello WITHOUT renegotiation_info extension.
+                                // This means the server accepted our ClientHello that had NO
+                                // renegotiation_info extension and did not include one in its response.
+                                // This is a strong indicator of insecure renegotiation (CVE-2009-3555):
+                                // a secure server would either include the extension or reject the connection.
+                                return Ok(true);
+                            }
+                        }
+                        Ok(false)
+                    }
+                    _ => Ok(false),
+                }
+            }
+            _ => Ok(false),
+        }
+    }
+
     /// Test for secure renegotiation extension (RFC 5746)
     async fn test_secure_renegotiation_extension(&self) -> Result<bool> {
         let addr = self.target.socket_addrs()[0];
 
-        match timeout(DEFAULT_READ_TIMEOUT, TcpStream::connect(addr)).await {
-            Ok(Ok(mut stream)) => {
+        match crate::utils::network::connect_with_timeout(addr, DEFAULT_READ_TIMEOUT, None).await {
+            Ok(mut stream) => {
                 // Send ClientHello
                 let client_hello = self.build_client_hello();
                 stream.write_all(&client_hello).await?;
@@ -189,12 +279,115 @@ impl<'a> RenegotiationTester<'a> {
         hello
     }
 
-    /// Check if response has renegotiation_info extension
+    /// Build ClientHello WITHOUT renegotiation_info extension
+    /// Used to test for insecure renegotiation (CVE-2009-3555)
+    fn build_client_hello_without_reneg_info(&self) -> Vec<u8> {
+        let mut hello = Vec::new();
+
+        // TLS Record: Handshake
+        hello.push(CONTENT_TYPE_HANDSHAKE);
+        hello.push((VERSION_TLS_1_2 >> 8) as u8);
+        hello.push((VERSION_TLS_1_2 & 0xff) as u8);
+
+        // Length placeholder
+        let len_pos = hello.len();
+        hello.push(0x00);
+        hello.push(0x00);
+
+        // Handshake: ClientHello
+        hello.push(HANDSHAKE_TYPE_CLIENT_HELLO);
+
+        // Handshake length placeholder
+        let hs_len_pos = hello.len();
+        hello.push(0x00);
+        hello.push(0x00);
+        hello.push(0x00);
+
+        // Client Version: TLS 1.2
+        hello.push((VERSION_TLS_1_2 >> 8) as u8);
+        hello.push((VERSION_TLS_1_2 & 0xff) as u8);
+
+        // Random (32 bytes)
+        for i in 0..32 {
+            hello.push((i * 13) as u8);
+        }
+
+        // Session ID (empty)
+        hello.push(0x00);
+
+        // Cipher Suites
+        hello.push(0x00);
+        hello.push(0x04);
+        hello.push(0xc0);
+        hello.push(0x2f); // TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+        hello.push(0x00);
+        hello.push(0x9c); // TLS_RSA_WITH_AES_128_GCM_SHA256
+
+        // Compression (none)
+        hello.push(0x01);
+        hello.push(0x00);
+
+        // NO extensions - ClientHello without renegotiation_info
+
+        // Update handshake length
+        let hs_len = hello.len() - hs_len_pos - 3;
+        hello[hs_len_pos] = ((hs_len >> 16) & 0xff) as u8;
+        hello[hs_len_pos + 1] = ((hs_len >> 8) & 0xff) as u8;
+        hello[hs_len_pos + 2] = (hs_len & 0xff) as u8;
+
+        // Update record length
+        let rec_len = hello.len() - len_pos - 2;
+        hello[len_pos] = ((rec_len >> 8) & 0xff) as u8;
+        hello[len_pos + 1] = (rec_len & 0xff) as u8;
+
+        hello
+    }
+
+    /// Check if ServerHello response contains renegotiation_info extension (0xff01).
+    ///
+    /// Parses the TLS record structure to search only within the extensions section,
+    /// avoiding false positives from matching bytes in random/certificate data.
     fn has_renegotiation_info_extension(&self, response: &[u8]) -> bool {
-        // Look for renegotiation_info extension type
-        let ext_high = (EXTENSION_RENEGOTIATION_INFO >> 8) as u8;
-        let ext_low = (EXTENSION_RENEGOTIATION_INFO & 0xff) as u8;
-        response.windows(2).any(|w| w == [ext_high, ext_low])
+        // Minimum ServerHello: 5 (record) + 4 (handshake) + 2 (version) + 32 (random) + 1 (sid len) = 44
+        if response.len() < 44 || response[0] != CONTENT_TYPE_HANDSHAKE {
+            return false;
+        }
+
+        // Skip TLS record header (5 bytes) + handshake header (4 bytes)
+        // ServerHello: version(2) + random(32) + session_id_length(1)
+        let sid_len_offset = 5 + 4 + 2 + 32;
+        if sid_len_offset >= response.len() {
+            return false;
+        }
+        let sid_len = response[sid_len_offset] as usize;
+
+        // After session_id: cipher_suite(2) + compression(1) + extensions_length(2)
+        let ext_len_offset = sid_len_offset + 1 + sid_len + 2 + 1;
+        if ext_len_offset + 2 > response.len() {
+            return false;
+        }
+        let ext_total =
+            u16::from_be_bytes([response[ext_len_offset], response[ext_len_offset + 1]]) as usize;
+
+        // Search only within the extensions section
+        let ext_start = ext_len_offset + 2;
+        let ext_end = (ext_start + ext_total).min(response.len());
+        if ext_start >= ext_end {
+            return false;
+        }
+
+        // Parse extensions structurally instead of using byte pattern scan
+        // to avoid false positives from extension data containing 0xff01
+        let mut pos = ext_start;
+        while pos + 4 <= ext_end {
+            let ext_type = u16::from_be_bytes([response[pos], response[pos + 1]]);
+            let ext_len = u16::from_be_bytes([response[pos + 2], response[pos + 3]]) as usize;
+            if ext_type == EXTENSION_RENEGOTIATION_INFO {
+                return true;
+            }
+            pos += 4 + ext_len;
+        }
+        false
     }
 }
 
@@ -275,7 +468,38 @@ mod tests {
         )
         .unwrap();
         let tester = RenegotiationTester::new(&target);
-        let response = vec![0x00, 0xff, 0x01, 0x00];
+
+        // Build a minimal valid ServerHello with renegotiation_info extension
+        let mut response = vec![0u8; 0];
+        // TLS record header: type=handshake(0x16), version=TLS1.2, length placeholder
+        response.extend_from_slice(&[0x16, 0x03, 0x03, 0x00, 0x00]);
+        // Handshake header: type=ServerHello(0x02), length placeholder
+        response.extend_from_slice(&[0x02, 0x00, 0x00, 0x00]);
+        // Server version: TLS 1.2
+        response.extend_from_slice(&[0x03, 0x03]);
+        // Server random: 32 bytes
+        response.extend_from_slice(&[0x00; 32]);
+        // Session ID length: 0
+        response.push(0x00);
+        // Cipher suite: TLS_RSA_WITH_AES_128_GCM_SHA256
+        response.extend_from_slice(&[0x00, 0x9c]);
+        // Compression method: none
+        response.push(0x00);
+        // Extensions length: 5 bytes (renegotiation_info ext)
+        response.extend_from_slice(&[0x00, 0x05]);
+        // Extension: renegotiation_info (0xff01), length=1, data=0x00
+        response.extend_from_slice(&[0xff, 0x01, 0x00, 0x01, 0x00]);
+
+        // Patch record length
+        let rec_len = (response.len() - 5) as u16;
+        response[3] = (rec_len >> 8) as u8;
+        response[4] = (rec_len & 0xff) as u8;
+        // Patch handshake length
+        let hs_len = (response.len() - 9) as u32;
+        response[6] = ((hs_len >> 16) & 0xff) as u8;
+        response[7] = ((hs_len >> 8) & 0xff) as u8;
+        response[8] = (hs_len & 0xff) as u8;
+
         assert!(tester.has_renegotiation_info_extension(&response));
     }
 

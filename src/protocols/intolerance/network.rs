@@ -1,10 +1,7 @@
 use super::IntoleranceTester;
 use crate::Result;
-use crate::constants::{
-    ALERT_LEVEL_FATAL, BUFFER_SIZE_MAX_TLS_RECORD, CONTENT_TYPE_ALERT,
-};
+use crate::constants::{ALERT_LEVEL_FATAL, BUFFER_SIZE_MAX_TLS_RECORD, CONTENT_TYPE_ALERT};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
 use tokio::time::timeout;
 
 impl IntoleranceTester {
@@ -13,12 +10,8 @@ impl IntoleranceTester {
 
         let addr = self.target.socket_addrs()[0];
 
-        let stream = timeout(self.connect_timeout, TcpStream::connect(addr))
-            .await
-            .map_err(|_| TlsError::ConnectionTimeout {
-                duration: self.connect_timeout,
-                addr,
-            })??;
+        let stream =
+            crate::utils::network::connect_with_timeout(addr, self.connect_timeout, None).await?;
 
         let (mut reader, mut writer) = tokio::io::split(stream);
         writer.write_all(client_hello).await?;
@@ -57,9 +50,8 @@ impl IntoleranceTester {
 
         let addr = self.target.socket_addrs()[0];
 
-        let stream = timeout(self.connect_timeout, TcpStream::connect(addr))
-            .await
-            .map_err(|_| anyhow::anyhow!("Connection timeout"))??;
+        let stream =
+            crate::utils::network::connect_with_timeout(addr, self.connect_timeout, None).await?;
 
         let std_stream = stream.into_std()?;
         std_stream.set_nonblocking(false)?;
@@ -71,10 +63,17 @@ impl IntoleranceTester {
         match connector.connect(&self.target.hostname, std_stream) {
             Ok(ssl_stream) => {
                 let cipher = ssl_stream.ssl().current_cipher();
-                if let Some(c) = cipher {
-                    if c.name().contains("DHE") {
-                        return Ok(None);
+                if let Some(c) = cipher
+                    && c.name().contains("DHE")
+                {
+                    // Extract the DH prime from the negotiated connection
+                    if let Ok(tmp_key) = ssl_stream.ssl().tmp_key()
+                        && let Ok(dh) = tmp_key.dh()
+                        && let Ok(hex_str) = dh.prime_p().to_hex_str()
+                    {
+                        return Ok(Some(hex_str.to_string().to_uppercase()));
                     }
+                    return Ok(None);
                 }
                 Ok(None)
             }

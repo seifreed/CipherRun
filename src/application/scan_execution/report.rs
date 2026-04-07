@@ -1,8 +1,6 @@
 use crate::application::scan_execution::cli_view::ScanCliView;
 use crate::application::scan_execution::post_processing::ScanPostProcessingView;
-use crate::compliance::{ComplianceReport, ComplianceStatus};
-use crate::policy::PolicyResult;
-use crate::scanner::ScanResults;
+use crate::application::{ComplianceReport, ComplianceStatus, PolicyResult, ScanResults};
 
 pub struct ScanExecutionReport {
     scan_results: ScanResults,

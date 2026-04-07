@@ -11,7 +11,6 @@ use crate::error::TlsError;
 use crate::utils::network::Target;
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
 use tokio::time::timeout;
 
 /// Pre-handshake scanner for fast certificate retrieval
@@ -39,13 +38,11 @@ impl PreHandshakeScanner {
     pub async fn scan_pre_handshake(&self) -> Result<PreHandshakeScanResult> {
         let start_time = Instant::now();
 
-        let addr = format!("{}:{}", self.target.hostname, self.target.port);
-        let mut stream = timeout(self.timeout_duration, TcpStream::connect(&addr))
-            .await
-            .map_err(|_| TlsError::Timeout {
-                duration: self.timeout_duration,
-            })?
-            .map_err(|e| TlsError::IoError { source: e })?;
+        let addr = self.target.primary_ip();
+        let socket_addr = std::net::SocketAddr::new(addr, self.target.port);
+        let mut stream =
+            crate::utils::network::connect_with_timeout(socket_addr, self.timeout_duration, None)
+                .await?;
 
         let client_hello = self.build_client_hello()?;
         stream
@@ -77,6 +74,7 @@ impl PreHandshakeScanner {
             success: true,
             certificate_data: parse_result.certificate_data,
             server_hello_data: parse_result.server_hello_data,
+            handshake_data: response_data.to_vec(),
             handshake_time_ms: elapsed.as_millis() as u64,
             protocol_version: parse_result.protocol_version,
             cipher_suite: parse_result.cipher_suite,
@@ -91,6 +89,7 @@ pub struct PreHandshakeScanResult {
     pub success: bool,
     pub certificate_data: Option<CertificateInfo>,
     pub server_hello_data: Option<Vec<u8>>,
+    pub handshake_data: Vec<u8>,
     pub handshake_time_ms: u64,
     pub protocol_version: Option<String>,
     pub cipher_suite: Option<String>,

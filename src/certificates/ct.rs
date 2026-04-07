@@ -101,8 +101,11 @@ impl CtVerifier {
         const SCT_EXTENSION_OID: &str = "1.3.6.1.4.1.11129.2.4.2";
 
         // Parse the raw certificate to check extensions
-        let (_rem, parsed_cert) = X509Certificate::from_der(&cert.der_bytes)
-            .map_err(|_| anyhow::anyhow!("Failed to parse certificate"))?;
+        let (_rem, parsed_cert) = X509Certificate::from_der(&cert.der_bytes).map_err(|_| {
+            crate::error::TlsError::ParseError {
+                message: "Failed to parse certificate".into(),
+            }
+        })?;
 
         // Look for SCT extension
         for ext in parsed_cert.extensions() {
@@ -138,8 +141,11 @@ impl CtVerifier {
         // Validate that we have enough data for the declared length
         // The total_len represents the number of bytes that follow the 2-byte length field
         if total_len + 2 > sct_list.len() {
-            // Return 0 for malformed data instead of erroring
-            // This allows graceful handling of invalid SCT lists
+            tracing::warn!(
+                "Malformed SCT list: declared length {} exceeds data length {}",
+                total_len + 2,
+                sct_list.len()
+            );
             return Ok(0);
         }
 
@@ -154,7 +160,12 @@ impl CtVerifier {
             pos += 2;
 
             if pos + sct_len > end_pos {
-                // Malformed: SCT extends past declared list length
+                tracing::warn!(
+                    "Malformed SCT entry: SCT at offset {} with length {} extends past list end {}",
+                    pos,
+                    sct_len,
+                    end_pos
+                );
                 break;
             }
 
@@ -174,7 +185,11 @@ impl CtVerifier {
 
         // Use crt.sh API to check if certificate is logged
         // This is a public service that indexes CT logs
-        let url = format!("https://crt.sh/?q={}&output=json", cert.serial_number);
+        let fingerprint = match &cert.fingerprint_sha256 {
+            Some(fp) => fp.replace(':', ""),
+            None => return Ok(false),
+        };
+        let url = format!("https://crt.sh/?q={}&output=json", fingerprint);
 
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(10))

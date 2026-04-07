@@ -1,6 +1,7 @@
 // PagerDuty Alert Channel - Events API v2
 
 use crate::Result;
+use crate::constants::ALERT_SEND_TIMEOUT;
 use crate::monitor::alerts::{Alert, AlertChannel, AlertType};
 use crate::monitor::config::PagerDutyConfig;
 use crate::monitor::detector::ChangeSeverity;
@@ -18,10 +19,11 @@ pub struct PagerDutyChannel {
 impl PagerDutyChannel {
     /// Create new PagerDuty channel
     pub fn new(config: PagerDutyConfig) -> Self {
-        Self {
-            config,
-            client: reqwest::Client::new(),
-        }
+        let client = reqwest::Client::builder()
+            .timeout(ALERT_SEND_TIMEOUT)
+            .build()
+            .expect("Failed to build HTTP client with timeout");
+        Self { config, client }
     }
 
     /// Convert severity to PagerDuty severity
@@ -82,7 +84,7 @@ impl PagerDutyChannel {
         json!({
             "routing_key": self.config.integration_key,
             "event_action": "trigger",
-            "dedup_key": format!("cipherrun:{}:{}", alert.hostname, alert.timestamp.timestamp()),
+            "dedup_key": format!("cipherrun:{}:{}", alert.hostname, alert.alert_type.dedup_key()),
             "payload": {
                 "summary": alert.message,
                 "source": "CipherRun Monitor",
@@ -125,18 +127,20 @@ impl AlertChannel for PagerDutyChannel {
     }
 
     async fn test_connection(&self) -> Result<()> {
+        // Use "change" event_action instead of "trigger" to avoid creating
+        // a real incident that would page on-call engineers.
+        // Change events validate the integration key and routing without
+        // triggering alerts or incidents.
         let test_event = json!({
             "routing_key": self.config.integration_key,
-            "event_action": "trigger",
-            "dedup_key": format!("cipherrun:test:{}", chrono::Utc::now().timestamp()),
+            "event_action": "change",
             "payload": {
-                "summary": "Test alert from CipherRun monitoring",
+                "summary": "CipherRun monitoring integration test",
                 "source": "CipherRun Monitor",
-                "severity": "info",
-                "component": "certificate-monitor",
+                "timestamp": chrono::Utc::now().to_rfc3339(),
                 "custom_details": {
                     "test": true,
-                    "message": "This is a test alert to verify PagerDuty integration"
+                    "message": "This is a test event to verify PagerDuty integration (no incident created)"
                 }
             }
         });

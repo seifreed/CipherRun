@@ -6,7 +6,6 @@ use crate::utils::network::Target;
 use rustls::{ClientConfig, RootCertStore};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tokio::net::TcpStream;
 use tokio::time::{Duration, timeout};
 
 /// ALPN detection result
@@ -93,13 +92,16 @@ impl AlpnTester {
 
     /// Test a specific ALPN protocol
     async fn test_protocol(&self, protocols: Vec<Vec<u8>>) -> Result<Option<String>> {
-        let addr = format!("{}:{}", self.target.hostname, self.target.port);
+        let addr = self.target.socket_addrs()[0];
 
         // Connect to server
-        let stream = match timeout(Duration::from_secs(5), TcpStream::connect(&addr)).await {
-            Ok(Ok(s)) => s,
-            _ => return Ok(None),
-        };
+        let stream =
+            match crate::utils::network::connect_with_timeout(addr, Duration::from_secs(5), None)
+                .await
+            {
+                Ok(s) => s,
+                Err(_) => return Ok(None),
+            };
 
         // Create rustls config with ALPN
         let mut root_store = RootCertStore::empty();
@@ -116,7 +118,9 @@ impl AlpnTester {
 
         let hostname = self.target.hostname.clone();
         let server_name = rustls::pki_types::ServerName::try_from(hostname)
-            .map_err(|_| anyhow::anyhow!("Invalid DNS name"))?
+            .map_err(|_| crate::error::TlsError::ParseError {
+                message: "Invalid DNS name".into(),
+            })?
             .to_owned();
 
         // Attempt TLS handshake with ALPN

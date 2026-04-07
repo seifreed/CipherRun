@@ -51,9 +51,9 @@ impl ProxyConfig {
     /// Parse host:port string
     fn parse_hostport(hostport: &str) -> Result<(String, u16)> {
         if let Some((host, port_str)) = hostport.rsplit_once(':') {
-            let port = port_str.parse::<u16>().map_err(|_| {
-                anyhow::anyhow!("Invalid port")
-            })?;
+            let port = port_str
+                .parse::<u16>()
+                .map_err(|_| anyhow::anyhow!("Invalid port"))?;
             Ok((host.to_string(), port))
         } else {
             // Default to port 8080 for HTTP proxies
@@ -201,17 +201,13 @@ mod tests {
 
     #[test]
     fn test_parse_proxy_invalid_port_non_numeric() {
-        let err = ProxyConfig::parse("proxy.example.com:notaport")
-            .err()
-            .expect("should fail");
+        let err = ProxyConfig::parse("proxy.example.com:notaport").expect_err("should fail");
         assert!(err.to_string().contains("Invalid port"));
     }
 
     #[test]
     fn test_parse_proxy_invalid_port() {
-        let err = ProxyConfig::parse("proxy.local:notaport")
-            .err()
-            .expect("should fail");
+        let err = ProxyConfig::parse("proxy.local:notaport").expect_err("should fail");
         assert!(err.to_string().contains("Invalid port"));
     }
 

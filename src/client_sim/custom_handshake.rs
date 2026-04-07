@@ -187,8 +187,8 @@ impl ClientHelloBuilder {
     pub fn new(version: u16) -> Self {
         // Generate random
         let mut random = [0u8; 32];
-        use rand::RngCore;
-        rand::thread_rng().fill_bytes(&mut random);
+        use rand::Rng;
+        rand::rng().fill_bytes(&mut random);
 
         Self {
             version,

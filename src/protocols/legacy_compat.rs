@@ -108,8 +108,8 @@ impl LegacyCompatTester {
         let weak_ciphers_found = Vec::new();
 
         for cipher in &weak_cipher_names {
-            if cipher.contains("DES") {}
-            if cipher.contains("RC2") {}
+            cipher.contains("DES");
+            cipher.contains("RC2");
             if cipher.contains("MD5") {}
         }
 

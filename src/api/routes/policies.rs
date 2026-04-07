@@ -166,7 +166,8 @@ pub async fn evaluate_policy(
 
     // Evaluate policy against scan results
     let assessment = ScanAssessment::from_scan_results(&scan_results);
-    let policy_result = EvaluatePolicy::execute_assessment(&policy, &assessment)
+    let evaluator = crate::policy::evaluator::DefaultPolicyEvaluator;
+    let policy_result = EvaluatePolicy::execute(&evaluator, &policy, &assessment)
         .map_err(|e| ApiError::Internal(format!("Policy evaluation failed: {}", e)))?;
 
     Ok(Json(present_policy_evaluation(

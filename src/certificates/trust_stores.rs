@@ -47,18 +47,6 @@ impl TrustStore {
             TrustStore::Windows => "Microsoft Windows",
         }
     }
-
-    /// Get store identifier for internal lookups
-    #[allow(dead_code)]
-    fn store_id(&self) -> &'static str {
-        match self {
-            TrustStore::Mozilla => "mozilla",
-            TrustStore::Apple => "apple",
-            TrustStore::Android => "android",
-            TrustStore::Java => "java",
-            TrustStore::Windows => "microsoft",
-        }
-    }
 }
 
 impl std::fmt::Display for TrustStore {
@@ -279,7 +267,7 @@ impl TrustStoreValidator {
         let last_cert = chain
             .certificates
             .last()
-            .ok_or_else(|| anyhow::anyhow!("Certificate chain is empty"))?;
+            .ok_or_else(|| crate::error::TlsError::Other("Certificate chain is empty".into()))?;
 
         // Check if the last cert is a self-signed root
         let is_self_signed_root = last_cert.subject == last_cert.issuer && last_cert.is_ca;

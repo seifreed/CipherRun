@@ -16,11 +16,10 @@
 // - OWASP: TLS 1.3 0-RTT Security Considerations
 
 use crate::Result;
+use crate::constants::TLS_HANDSHAKE_TIMEOUT;
 use crate::utils::network::Target;
 use rustls::{ClientConfig, RootCertStore};
 use std::sync::Arc;
-use std::time::Duration;
-use tokio::net::TcpStream;
 use tokio::time::timeout;
 
 /// Information about early data size from server
@@ -97,9 +96,11 @@ impl<'a> EarlyDataTester<'a> {
 
         // Test 3: Attempt to replay 0-RTT data
         let replay_result = self.test_replay_attack().await?;
-        
+
         if replay_result.inconclusive {
-            issues.push("⚠️ 0-RTT replay test is inconclusive - manual testing recommended".to_string());
+            issues.push(
+                "⚠️ 0-RTT replay test is inconclusive - manual testing recommended".to_string(),
+            );
             issues.push(replay_result.details.clone());
         } else if replay_result.vulnerable {
             vulnerable = true;
@@ -117,7 +118,8 @@ impl<'a> EarlyDataTester<'a> {
                 "Vulnerable to 0-RTT replay attacks - Server supports early_data and accepts replayed requests. \
                 max_early_data_size: {}. Server should implement anti-replay mechanisms (single-use tickets, \
                 time-based checks, or nonce tracking).",
-                early_data_info.max_early_data_size
+                early_data_info
+                    .max_early_data_size
                     .map(|s| s.to_string())
                     .unwrap_or_else(|| "unknown".to_string())
             )
@@ -179,7 +181,7 @@ impl<'a> EarlyDataTester<'a> {
     /// - Nginx: configurable, often 16384 bytes
     async fn get_max_early_data_size(&self) -> Result<EarlyDataSizeInfo> {
         let supports_tls13 = self.connect_tls13().await?;
-        
+
         if !supports_tls13 {
             return Ok(EarlyDataSizeInfo {
                 tls13_supported: false,
@@ -235,7 +237,7 @@ impl<'a> EarlyDataTester<'a> {
     async fn test_replay_attack(&self) -> Result<ReplayTestResult> {
         // First, check if TLS 1.3 is supported
         let tls13_supported = self.connect_tls13().await?;
-        
+
         if !tls13_supported {
             return Ok(ReplayTestResult {
                 tested: false,
@@ -244,19 +246,20 @@ impl<'a> EarlyDataTester<'a> {
                 details: "Server does not support TLS 1.3 - 0-RTT not applicable".to_string(),
             });
         }
-        
+
         // Check if early_data extension is supported
         let early_data_info = self.get_max_early_data_size().await?;
-        
+
         if !early_data_info.early_data_supported {
             return Ok(ReplayTestResult {
                 tested: false,
                 vulnerable: false,
                 inconclusive: false,
-                details: "Server does not advertise early_data support - 0-RTT not enabled".to_string(),
+                details: "Server does not advertise early_data support - 0-RTT not enabled"
+                    .to_string(),
             });
         }
-        
+
         // Full 0-RTT replay testing would require:
         // 1. Complete TLS 1.3 handshake to get session ticket
         // 2. Parse NewSessionTicket for max_early_data_size
@@ -266,7 +269,7 @@ impl<'a> EarlyDataTester<'a> {
         // Since this requires significant TLS 1.3 state management,
         // we mark the result as INCONCLUSIVE with detailed explanation.
         // This is more honest than returning "not vulnerable" without testing.
-        
+
         Ok(ReplayTestResult {
             tested: false,
             vulnerable: false,
@@ -277,8 +280,7 @@ impl<'a> EarlyDataTester<'a> {
                  currently implemented. Manual testing recommended. \
                  Potential vulnerability: Servers without anti-replay mechanisms may accept \
                  replayed 0-RTT data, allowing request duplication attacks.",
-                early_data_info.max_early_data_size,
-                early_data_info.is_estimated
+                early_data_info.max_early_data_size, early_data_info.is_estimated
             ),
         })
     }
@@ -288,10 +290,13 @@ impl<'a> EarlyDataTester<'a> {
         let addr = self.target.socket_addrs()[0];
 
         // Connect TCP
-        let stream = match timeout(Duration::from_secs(5), TcpStream::connect(addr)).await {
-            Ok(Ok(s)) => s,
-            _ => return Ok(false),
-        };
+        let stream =
+            match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None)
+                .await
+            {
+                Ok(s) => s,
+                Err(_) => return Ok(false),
+            };
 
         // Build TLS 1.3 only config
         let mut root_store = RootCertStore::empty();
@@ -305,10 +310,12 @@ impl<'a> EarlyDataTester<'a> {
 
         // Try to connect
         let domain = rustls_pki_types::ServerName::try_from(self.target.hostname.as_str())
-            .map_err(|_| anyhow::anyhow!("Invalid DNS name"))?
+            .map_err(|_| crate::error::TlsError::ParseError {
+                message: "Invalid DNS name".into(),
+            })?
             .to_owned();
 
-        match timeout(Duration::from_secs(5), connector.connect(domain, stream)).await {
+        match timeout(TLS_HANDSHAKE_TIMEOUT, connector.connect(domain, stream)).await {
             Ok(Ok(tls_stream)) => {
                 // Check if we got TLS 1.3
                 let (_, connection) = tls_stream.get_ref();

@@ -56,7 +56,10 @@ impl IntoleranceTester {
         let extended_hello = self.build_extended_client_hello()?;
         let extended_response = self.send_client_hello(&extended_hello).await;
 
-        Ok(matches!((minimal_response, extended_response), (Ok(_), Err(_))))
+        Ok(matches!(
+            (minimal_response, extended_response),
+            (Ok(_), Err(_))
+        ))
     }
 
     async fn test_version_intolerance(&self) -> Result<bool> {
@@ -66,7 +69,10 @@ impl IntoleranceTester {
         let high_version_hello = self.build_versioned_client_hello(0x0303)?;
         let high_version_response = self.send_client_hello(&high_version_hello).await;
 
-        Ok(matches!((normal_response, high_version_response), (Ok(_), Err(_))))
+        Ok(matches!(
+            (normal_response, high_version_response),
+            (Ok(_), Err(_))
+        ))
     }
 
     async fn test_long_handshake_intolerance(&self) -> Result<bool> {

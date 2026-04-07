@@ -15,7 +15,7 @@ pub struct ScanRecord {
     pub scan_timestamp: DateTime<Utc>,
     pub overall_grade: Option<String>,
     pub overall_score: Option<i32>,
-    pub scan_duration_ms: Option<i32>,
+    pub scan_duration_ms: Option<i64>,
     pub scanner_version: Option<String>,
 }
 
@@ -41,9 +41,9 @@ impl ScanRecord {
         self
     }
 
-    /// Set scan duration
+    /// Set scan duration (capped to i64::MAX to prevent truncation)
     pub fn with_duration(mut self, duration_ms: u64) -> Self {
-        self.scan_duration_ms = Some(duration_ms as i32);
+        self.scan_duration_ms = Some(duration_ms.min(i64::MAX as u64) as i64);
         self
     }
 }

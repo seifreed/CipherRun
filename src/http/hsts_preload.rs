@@ -1,9 +1,11 @@
 // HSTS Preload List Checker - Verify if domain is in browser preload lists
 
+use crate::constants::HTTP_REQUEST_TIMEOUT;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use tokio::sync::Mutex as TokioMutex;
 
 /// HSTS Preload status across browsers
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -50,7 +52,7 @@ struct CacheEntry {
 /// HSTS Preload Checker with caching and rate limiting
 pub struct HstsPreloadChecker {
     cache: Arc<Mutex<HashMap<String, CacheEntry>>>,
-    last_request: Arc<Mutex<Option<Instant>>>,
+    last_request: Arc<TokioMutex<Option<Instant>>>,
     cache_duration: Duration,
     rate_limit_duration: Duration,
 }
@@ -66,9 +68,9 @@ impl HstsPreloadChecker {
     pub fn new() -> Self {
         Self {
             cache: Arc::new(Mutex::new(HashMap::new())),
-            last_request: Arc::new(Mutex::new(None)),
-            cache_duration: Duration::from_secs(3600), // 1 hour cache
-            rate_limit_duration: Duration::from_secs(1), // 1 second between requests
+            last_request: Arc::new(TokioMutex::new(None)),
+            cache_duration: crate::constants::HSTS_CACHE_DURATION,
+            rate_limit_duration: crate::constants::HSTS_RATE_LIMIT_INTERVAL,
         }
     }
 
@@ -108,11 +110,15 @@ impl HstsPreloadChecker {
 
     /// Query hstspreload.org API
     async fn query_api(&self, domain: &str) -> Result<PreloadStatus, String> {
-        let url = format!("https://hstspreload.org/api/v2/status?domain={}", domain);
+        let encoded_domain = urlencoding::encode(domain);
+        let url = format!(
+            "https://hstspreload.org/api/v2/status?domain={}",
+            encoded_domain
+        );
 
         // Create HTTP client with timeout
         let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(10))
+            .timeout(HTTP_REQUEST_TIMEOUT)
             .build()
             .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
 
@@ -153,9 +159,10 @@ impl HstsPreloadChecker {
             // Chromium-based browsers (Chrome, Edge, Opera, Brave, etc.)
             in_chrome: is_preloaded,
             in_edge: is_preloaded, // Edge uses Chromium list
-            // Firefox maintains separate list but largely mirrors Chromium
+            // Firefox and Safari maintain separate lists; the hstspreload.org API
+            // only provides Chromium status, so these are best-effort approximations.
+            // In practice the lists overlap heavily but are not identical.
             in_firefox: is_preloaded,
-            // Safari uses own list but also largely mirrors Chromium
             in_safari: is_preloaded,
             chromium_status: Some(chromium_status),
             source: PreloadSource::Api,
@@ -166,18 +173,20 @@ impl HstsPreloadChecker {
     fn normalize_domain(domain: &str) -> String {
         let mut normalized = domain.to_lowercase();
 
-        // Remove www. prefix
-        if normalized.starts_with("www.") {
+        // Remove www. prefix (ensure we don't create empty string)
+        if normalized.starts_with("www.") && normalized.len() > 4 {
             normalized = normalized[4..].to_string();
         }
 
         // Remove port if present
-        if let Some(idx) = normalized.find(':') {
+        if let Some(idx) = normalized.find(':')
+            && idx > 0
+        {
             normalized = normalized[..idx].to_string();
         }
 
         // Remove trailing dot
-        if normalized.ends_with('.') {
+        if normalized.ends_with('.') && normalized.len() > 1 {
             normalized.pop();
         }
 
@@ -219,30 +228,20 @@ impl HstsPreloadChecker {
     }
 
     /// Wait for rate limit before making request
+    ///
+    /// Holds a tokio::sync::Mutex across the sleep to properly serialize
+    /// concurrent callers, preventing multiple requests from firing simultaneously.
     async fn wait_for_rate_limit(&self) {
-        let wait_time = if let Ok(last_request) = self.last_request.lock() {
-            if let Some(last) = *last_request {
-                let elapsed = last.elapsed();
-                if elapsed < self.rate_limit_duration {
-                    Some(self.rate_limit_duration - elapsed)
-                } else {
-                    None
-                }
-            } else {
-                None
+        let mut last_request = self.last_request.lock().await;
+
+        if let Some(last) = *last_request {
+            let elapsed = last.elapsed();
+            if elapsed < self.rate_limit_duration {
+                tokio::time::sleep(self.rate_limit_duration - elapsed).await;
             }
-        } else {
-            None
-        };
-
-        if let Some(duration) = wait_time {
-            tokio::time::sleep(duration).await;
         }
 
-        // Update last request time after waiting
-        if let Ok(mut last_request) = self.last_request.lock() {
-            *last_request = Some(Instant::now());
-        }
+        *last_request = Some(Instant::now());
     }
 
     /// Clear the cache (useful for testing or forced refresh)

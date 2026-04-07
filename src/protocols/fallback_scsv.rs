@@ -260,8 +260,7 @@ mod tests {
         assert!(inconclusive.inconclusive);
         assert!(!inconclusive.not_applicable);
 
-        let not_applicable =
-            crate::protocols::fallback_scsv::model::ScsvSupport::not_applicable();
+        let not_applicable = crate::protocols::fallback_scsv::model::ScsvSupport::not_applicable();
         assert!(!not_applicable.supported);
         assert!(!not_applicable.vulnerable);
         assert!(!not_applicable.accepts_downgrade);
@@ -304,8 +303,7 @@ mod tests {
         let record_len = u16::from_be_bytes([hello[3], hello[4]]) as usize;
         assert_eq!(record_len, hello.len() - 5);
 
-        let hs_len =
-            ((hello[6] as usize) << 16) | ((hello[7] as usize) << 8) | (hello[8] as usize);
+        let hs_len = ((hello[6] as usize) << 16) | ((hello[7] as usize) << 8) | (hello[8] as usize);
         assert_eq!(hs_len, hello.len() - 9);
     }
 
@@ -324,8 +322,7 @@ mod tests {
         let record_len = u16::from_be_bytes([hello[3], hello[4]]) as usize;
         assert_eq!(record_len, hello.len() - 5);
 
-        let hs_len =
-            ((hello[6] as usize) << 16) | ((hello[7] as usize) << 8) | (hello[8] as usize);
+        let hs_len = ((hello[6] as usize) << 16) | ((hello[7] as usize) << 8) | (hello[8] as usize);
         assert_eq!(hs_len, hello.len() - 9);
     }
 
@@ -358,6 +355,12 @@ mod tests {
 
         let cipher_count = 3usize;
         let ext_len_pos = 5 + 1 + 3 + 2 + 32 + 1 + 2 + cipher_count * 2 + 1 + 1;
+
+        // Bounds check before accessing hello array
+        assert!(
+            ext_len_pos + 9 < hello.len(),
+            "ClientHello too short for SNI extraction"
+        );
 
         let ext_len = u16::from_be_bytes([hello[ext_len_pos], hello[ext_len_pos + 1]]) as usize;
         assert_eq!(ext_len, hello.len() - ext_len_pos - 2);

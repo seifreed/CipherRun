@@ -156,8 +156,12 @@ mod tests {
 
     #[test]
     fn test_truncate_with_ellipsis_tiny_max_len() {
+        // When max_len <= 3, we can't fit any chars + "...", so return original
         let truncated = truncate_with_ellipsis("longstring", 2);
-        assert_eq!(truncated, "...");
+        assert_eq!(truncated, "longstring");
+        // When max_len > 3, truncation works
+        let truncated = truncate_with_ellipsis("longstring", 6);
+        assert_eq!(truncated, "lon...");
     }
 
     #[test]
@@ -193,7 +197,8 @@ mod tests {
     fn test_get_cert_type() {
         assert_eq!(get_cert_type(0, 3), "Leaf Certificate");
         assert_eq!(get_cert_type(1, 3), "Intermediate CA");
-        assert_eq!(get_cert_type(2, 3), "Root CA");
+        assert_eq!(get_cert_type(2, 3), "Root/Top CA");
+        assert_eq!(get_cert_type(1, 2), "Issuer CA");
     }
 
     #[test]
@@ -330,35 +335,44 @@ mod tests {
 
     #[test]
     fn test_display_sections_smoke() {
-        let mut args = Args::default();
-        args.scan.show_certificates = true;
+        let args = Args {
+            scan: crate::cli::ScanArgs {
+                show_certificates: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
         let formatter = ScannerFormatter::new(&args);
 
-        let mut leaf = CertificateInfo::default();
-        leaf.subject = "CN=example.com".to_string();
-        leaf.issuer = "CN=Test CA".to_string();
-        leaf.serial_number = "01".to_string();
-        leaf.not_before = "2025-01-01".to_string();
-        leaf.not_after = "2026-01-01".to_string();
-        leaf.signature_algorithm = "sha256WithRSAEncryption".to_string();
-        leaf.public_key_algorithm = "RSA".to_string();
-        leaf.public_key_size = Some(2048);
-        leaf.rsa_exponent = Some("e 65537".to_string());
-        leaf.san = vec!["example.com".to_string()];
-        leaf.debian_weak_key = Some(true);
-        leaf.fingerprint_sha256 = Some("AA:BB".to_string());
-        leaf.pin_sha256 = Some("pin".to_string());
-        leaf.aia_url = Some("http://ca.example.com".to_string());
-        leaf.der_bytes = vec![0u8; 4];
+        let leaf = CertificateInfo {
+            subject: "CN=example.com".to_string(),
+            issuer: "CN=Test CA".to_string(),
+            serial_number: "01".to_string(),
+            not_before: "2025-01-01".to_string(),
+            not_after: "2026-01-01".to_string(),
+            signature_algorithm: "sha256WithRSAEncryption".to_string(),
+            public_key_algorithm: "RSA".to_string(),
+            public_key_size: Some(2048),
+            rsa_exponent: Some("e 65537".to_string()),
+            san: vec!["example.com".to_string()],
+            debian_weak_key: Some(true),
+            fingerprint_sha256: Some("AA:BB".to_string()),
+            pin_sha256: Some("pin".to_string()),
+            aia_url: Some("http://ca.example.com".to_string()),
+            der_bytes: vec![0u8; 4],
+            ..Default::default()
+        };
 
-        let mut root = CertificateInfo::default();
-        root.subject = "CN=Root".to_string();
-        root.issuer = "CN=Root".to_string();
-        root.is_ca = true;
-        root.signature_algorithm = "sha256WithRSAEncryption".to_string();
-        root.public_key_algorithm = "RSA".to_string();
-        root.public_key_size = Some(4096);
-        root.der_bytes = vec![0u8; 4];
+        let root = CertificateInfo {
+            subject: "CN=Root".to_string(),
+            issuer: "CN=Root".to_string(),
+            is_ca: true,
+            signature_algorithm: "sha256WithRSAEncryption".to_string(),
+            public_key_algorithm: "RSA".to_string(),
+            public_key_size: Some(4096),
+            der_bytes: vec![0u8; 4],
+            ..Default::default()
+        };
 
         let chain = CertificateChain {
             certificates: vec![leaf.clone(), root],
@@ -425,6 +439,7 @@ mod tests {
             method: RevocationMethod::OCSP,
             details: "Revoked".to_string(),
             ocsp_stapling: true,
+            ocsp_stapling_details: None,
             must_staple: false,
         };
 
@@ -667,8 +682,13 @@ mod tests {
 
     #[test]
     fn test_display_results_summary_and_headers() {
-        let mut args = Args::default();
-        args.output.show_times = true;
+        let args = Args {
+            output: crate::cli::OutputArgs {
+                show_times: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
         let formatter = ScannerFormatter::new(&args);
 
         let protocol_results = vec![ProtocolTestResult {
@@ -729,25 +749,27 @@ mod tests {
             threat_level: "high".to_string(),
         };
 
-        let mut results = crate::scanner::ScanResults::default();
-        results.target = "example.com:443".to_string();
-        results.scan_time_ms = 123;
-        results.protocols = protocol_results;
-        results.http = Some(crate::scanner::HttpResults {
-            http_headers: Some(http_headers),
-        });
-        results.rating = Some(crate::scanner::RatingResults {
-            ssl_rating: Some(rating),
-        });
-        results.fingerprints = Some(crate::scanner::FingerprintResults {
-            ja3_fingerprint: Some(ja3),
-            ja3_match: Some(ja3_sig),
-            ja3s_fingerprint: None,
-            ja3s_match: None,
-            jarm_fingerprint: None,
-            client_hello_raw: None,
-            server_hello_raw: None,
-        });
+        let results = crate::scanner::ScanResults {
+            target: "example.com:443".to_string(),
+            scan_time_ms: 123,
+            protocols: protocol_results,
+            http: Some(crate::scanner::HttpResults {
+                http_headers: Some(http_headers),
+            }),
+            rating: Some(crate::scanner::RatingResults {
+                ssl_rating: Some(rating),
+            }),
+            fingerprints: Some(crate::scanner::FingerprintResults {
+                ja3_fingerprint: Some(ja3),
+                ja3_match: Some(ja3_sig),
+                ja3s_fingerprint: None,
+                ja3s_match: None,
+                jarm_fingerprint: None,
+                client_hello_raw: None,
+                server_hello_raw: None,
+            }),
+            ..Default::default()
+        };
 
         formatter.display_results_summary(&results);
     }

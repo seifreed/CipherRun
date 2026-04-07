@@ -1,7 +1,7 @@
 // IDS-friendly mode - Slower scanning to avoid triggering IDS/IPS
 // Implements delays, rate limiting, and randomization
 
-use rand::Rng;
+use rand::RngExt;
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -110,8 +110,8 @@ impl IdsFriendlyLimiter {
 
         // Apply delay
         let delay_ms = if self.config.randomize {
-            let mut rng = rand::thread_rng();
-            rng.gen_range(self.config.min_delay_ms..=self.config.max_delay_ms)
+            let mut rng = rand::rng();
+            rng.random_range(self.config.min_delay_ms..=self.config.max_delay_ms)
         } else {
             self.config.min_delay_ms
         };
@@ -137,8 +137,8 @@ impl IdsFriendlyLimiter {
 
 /// Apply randomized delay (jitter)
 pub async fn random_delay(min_ms: u64, max_ms: u64) {
-    let mut rng = rand::thread_rng();
-    let delay_ms = rng.gen_range(min_ms..=max_ms);
+    let mut rng = rand::rng();
+    let delay_ms = rng.random_range(min_ms..=max_ms);
     sleep(Duration::from_millis(delay_ms)).await;
 }
 
@@ -150,7 +150,7 @@ pub async fn fixed_delay(ms: u64) {
 /// Randomize order of items (to avoid predictable scanning patterns)
 pub fn randomize_order<T>(items: &mut [T]) {
     use rand::seq::SliceRandom;
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     items.shuffle(&mut rng);
 }
 

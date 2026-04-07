@@ -40,6 +40,7 @@ pub use vulnerability_phase::VulnerabilityPhase;
 use crate::Result;
 use crate::application::ScanRequest;
 use crate::constants::{DEFAULT_CONNECT_TIMEOUT, DEFAULT_SOCKET_TIMEOUT};
+use crate::protocols::pre_handshake::PreHandshakeScanResult;
 use crate::scanner::ScanResults;
 use crate::utils::adaptive::AdaptiveController;
 use crate::utils::mtls::MtlsConfig;
@@ -182,6 +183,9 @@ pub struct ScanContext {
     /// Optional mTLS configuration for client authentication
     pub mtls_config: Option<MtlsConfig>,
 
+    /// Optional pre-handshake capture used to enrich later phases.
+    pub pre_handshake: Option<PreHandshakeScanResult>,
+
     /// Adaptive controller for timeouts, backoff, and concurrency
     pub adaptive: Arc<AdaptiveController>,
 }
@@ -193,7 +197,12 @@ impl ScanContext {
     /// * `target` - Target server to scan
     /// * `args` - CLI arguments wrapped in Arc for efficient sharing
     /// * `mtls_config` - Optional reference to mTLS configuration
-    pub fn new(target: Target, args: Arc<ScanRequest>, mtls_config: Option<MtlsConfig>) -> Self {
+    pub fn new(
+        target: Target,
+        args: Arc<ScanRequest>,
+        mtls_config: Option<MtlsConfig>,
+        pre_handshake: Option<PreHandshakeScanResult>,
+    ) -> Self {
         let target_str = format!("{}:{}", target.hostname, target.port);
         let base_connect_timeout = std::time::Duration::from_secs(
             args.connection
@@ -236,6 +245,7 @@ impl ScanContext {
             },
             args,
             mtls_config,
+            pre_handshake,
             adaptive,
         }
     }
@@ -435,7 +445,7 @@ mod tests {
         )
         .expect("test assertion should succeed");
         let args = Arc::new(ScanRequest::default());
-        let context = ScanContext::new(target, args, None);
+        let context = ScanContext::new(target, args, None, None);
         assert_eq!(context.results.target, "example.com:443");
     }
 }

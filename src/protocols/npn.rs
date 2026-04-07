@@ -6,7 +6,6 @@ use crate::Result;
 use crate::utils::network::Target;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
 use tokio::time::timeout;
 
 /// NPN protocol tester
@@ -46,8 +45,9 @@ impl NpnTester {
         // Use raw TLS handshake to properly test NPN
         let addr = self.target.socket_addrs()[0];
 
-        match timeout(Duration::from_secs(5), TcpStream::connect(addr)).await {
-            Ok(Ok(mut stream)) => {
+        match crate::utils::network::connect_with_timeout(addr, Duration::from_secs(5), None).await
+        {
+            Ok(mut stream) => {
                 // Send ClientHello with NPN extension
                 let client_hello = self.build_client_hello_with_npn();
                 stream.write_all(&client_hello).await?;
@@ -144,45 +144,67 @@ impl NpnTester {
         hello
     }
 
-    /// Parse NPN protocols from ServerHello
+    /// Parse NPN protocols from ServerHello using structured TLS extension parsing
     fn parse_npn_response(&self, response: &[u8]) -> Result<Vec<String>> {
         let mut protocols = Vec::new();
+        const MAX_PROTOCOLS: usize = 100;
 
-        // Look for NPN extension (0x3374) in ServerHello
-        for i in 0..response.len().saturating_sub(4) {
-            if response[i] == 0x33 && response[i + 1] == 0x74 {
-                // Found NPN extension
-                if i + 3 < response.len() {
-                    let ext_len = u16::from_be_bytes([response[i + 2], response[i + 3]]);
-                    let start = i + 4;
-                    let end = start + ext_len as usize;
+        // Need at least: record header (5) + handshake header (4) + version (2) + random (32) + sid_len (1) = 44
+        if response.len() < 44 || response[0] != 0x16 || response[5] != 0x02 {
+            return Ok(protocols);
+        }
 
-                    if end <= response.len() {
-                        // Parse protocol list
-                        let mut pos = start;
-                        while pos < end {
-                            if pos < response.len() {
-                                let proto_len = response[pos] as usize;
-                                pos += 1;
+        // Parse ServerHello structurally to find extensions
+        let sid_len = response[43] as usize;
+        // cipher suite (2) + compression (1) + extensions_length (2)
+        let ext_len_offset = 44 + sid_len + 2 + 1;
+        if ext_len_offset + 2 > response.len() {
+            return Ok(protocols);
+        }
 
-                                if pos + proto_len <= end && pos + proto_len <= response.len() {
-                                    if let Ok(proto) =
-                                        String::from_utf8(response[pos..pos + proto_len].to_vec())
-                                    {
-                                        protocols.push(proto);
-                                    }
-                                    pos += proto_len;
-                                } else {
-                                    break;
-                                }
-                            } else {
-                                break;
-                            }
-                        }
+        let ext_total =
+            u16::from_be_bytes([response[ext_len_offset], response[ext_len_offset + 1]]) as usize;
+        let ext_start = ext_len_offset + 2;
+        let ext_end = (ext_start + ext_total).min(response.len());
+
+        // Walk extensions structurally
+        let mut pos = ext_start;
+        while pos + 4 <= ext_end {
+            let ext_type = u16::from_be_bytes([response[pos], response[pos + 1]]);
+            let ext_len = u16::from_be_bytes([response[pos + 2], response[pos + 3]]) as usize;
+            pos += 4;
+            if pos + ext_len > ext_end {
+                break;
+            }
+
+            if ext_type == 0x3374 {
+                // Parse NPN protocol list
+                let npn_end = pos + ext_len;
+                let mut npn_pos = pos;
+                while npn_pos < npn_end
+                    && npn_pos < response.len()
+                    && protocols.len() < MAX_PROTOCOLS
+                {
+                    let proto_len = response[npn_pos] as usize;
+                    npn_pos += 1;
+                    if proto_len == 0 {
+                        // Invalid: zero-length protocol name per NPN spec
+                        break;
                     }
+                    if npn_pos + proto_len > npn_end {
+                        break;
+                    }
+                    if let Ok(proto) =
+                        String::from_utf8(response[npn_pos..npn_pos + proto_len].to_vec())
+                    {
+                        protocols.push(proto);
+                    }
+                    npn_pos += proto_len;
                 }
                 break;
             }
+
+            pos += ext_len;
         }
 
         Ok(protocols)
@@ -253,12 +275,43 @@ mod tests {
         .unwrap();
         let tester = NpnTester::new(target);
 
-        let mut response = vec![0x01, 0x02, 0x03];
-        response.extend_from_slice(&[0x33, 0x74, 0x00, 0x0c]); // NPN ext, len=12
+        // Build a valid ServerHello with NPN extension
+        let mut response = Vec::new();
+        // TLS record header
+        response.extend_from_slice(&[0x16, 0x03, 0x03, 0x00, 0x00]); // type=handshake, version, length placeholder
+        // Handshake header
+        response.extend_from_slice(&[0x02, 0x00, 0x00, 0x00]); // type=ServerHello, length placeholder
+        // Server version
+        response.extend_from_slice(&[0x03, 0x03]);
+        // Server random (32 bytes)
+        response.extend_from_slice(&[0x00; 32]);
+        // Session ID length: 0
+        response.push(0x00);
+        // Cipher suite
+        response.extend_from_slice(&[0x00, 0x9c]);
+        // Compression: none
+        response.push(0x00);
+        // Extensions length placeholder
+        let ext_len_pos = response.len();
+        response.extend_from_slice(&[0x00, 0x00]);
+        // NPN extension (0x3374), data = protocol list
+        response.extend_from_slice(&[0x33, 0x74, 0x00, 0x0c]); // ext type + len=12
         response.push(0x02);
         response.extend_from_slice(b"h2");
         response.push(0x08);
         response.extend_from_slice(b"http/1.1");
+
+        // Patch lengths
+        let ext_len = (response.len() - ext_len_pos - 2) as u16;
+        response[ext_len_pos] = (ext_len >> 8) as u8;
+        response[ext_len_pos + 1] = (ext_len & 0xff) as u8;
+        let rec_len = (response.len() - 5) as u16;
+        response[3] = (rec_len >> 8) as u8;
+        response[4] = (rec_len & 0xff) as u8;
+        let hs_len = (response.len() - 9) as u32;
+        response[6] = ((hs_len >> 16) & 0xff) as u8;
+        response[7] = ((hs_len >> 8) & 0xff) as u8;
+        response[8] = (hs_len & 0xff) as u8;
 
         let protocols = tester
             .parse_npn_response(&response)
@@ -267,7 +320,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_npn_response_invalid_length() {
+    fn test_parse_npn_response_invalid_data() {
         let target = Target::with_ips(
             "example.com".to_string(),
             443,
@@ -276,6 +329,7 @@ mod tests {
         .unwrap();
         let tester = NpnTester::new(target);
 
+        // Not a valid ServerHello - should return empty
         let response = vec![0x33, 0x74, 0xff, 0xff];
         let protocols = tester
             .parse_npn_response(&response)
@@ -293,6 +347,7 @@ mod tests {
         .unwrap();
         let tester = NpnTester::new(target);
 
+        // Too short for a ServerHello
         let response = vec![0x01, 0x02, 0x03, 0x04];
         let protocols = tester
             .parse_npn_response(&response)
@@ -301,7 +356,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_npn_response_truncated_protocol() {
+    fn test_parse_npn_response_truncated() {
         let target = Target::with_ips(
             "example.com".to_string(),
             443,
@@ -310,8 +365,9 @@ mod tests {
         .unwrap();
         let tester = NpnTester::new(target);
 
-        let mut response = vec![0x33, 0x74, 0x00, 0x02]; // len=2
-        response.push(0x03); // proto_len=3 but only 1 byte remains
+        // Truncated data - not a valid ServerHello
+        let mut response = vec![0x16, 0x03, 0x03, 0x00, 0x02];
+        response.push(0x03);
         response.push(b'h');
 
         let protocols = tester

@@ -6,7 +6,7 @@ use crate::application::{
 use crate::db::CertificateInventoryService;
 
 pub async fn load_inventory_page(
-    reader: &(impl CertificateInventoryPort + Sync),
+    reader: &impl CertificateInventoryPort,
     query: &CertificateInventoryQuery,
 ) -> Result<CertificateInventoryPage, ApiError> {
     reader
@@ -16,7 +16,7 @@ pub async fn load_inventory_page(
 }
 
 pub async fn load_inventory_record(
-    reader: &(impl CertificateInventoryPort + Sync),
+    reader: &impl CertificateInventoryPort,
     fingerprint: &str,
 ) -> Result<Option<CertificateInventoryRecord>, ApiError> {
     reader

@@ -7,6 +7,10 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+/// Maximum number of per-source stats to track
+/// Prevents unbounded memory growth from many unique CT log sources
+const MAX_SOURCES: usize = 1000;
+
 /// Statistics for CT log streaming
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Stats {
@@ -18,7 +22,7 @@ pub struct Stats {
     pub duplicates_filtered: u64,
     /// Total retry attempts
     pub retry_attempts: u64,
-    /// Per-source statistics
+    /// Per-source statistics (bounded to prevent memory exhaustion)
     pub per_source: HashMap<String, SourceStats>,
     /// Start time
     #[serde(skip)]
@@ -44,6 +48,8 @@ pub struct SourceStats {
     pub failed_fetches: u64,
     /// Average fetch time in milliseconds
     pub avg_fetch_time_ms: u64,
+    /// Total fetch time in milliseconds (for accurate average calculation)
+    pub total_fetch_time_ms: u64,
 }
 
 /// Thread-safe statistics tracker
@@ -93,6 +99,9 @@ impl StatsTracker {
     }
 
     /// Update source statistics
+    ///
+    /// Note: Per-source stats are bounded to MAX_SOURCES to prevent unbounded memory growth.
+    /// If the limit is reached, stats for new sources are not tracked (but global stats still work).
     pub fn update_source_stats(
         &self,
         source_id: &str,
@@ -101,6 +110,17 @@ impl StatsTracker {
         fetch_time: Duration,
     ) {
         if let Ok(mut stats) = self.stats.lock() {
+            // Check if we should track this source
+            // Either it already exists, or we have room for new sources
+            let should_track =
+                stats.per_source.contains_key(source_id) || stats.per_source.len() < MAX_SOURCES;
+
+            if !should_track {
+                // Skip tracking for new sources when at capacity
+                // Global stats (total_processed, etc.) are still updated
+                return;
+            }
+
             let source_stats = stats
                 .per_source
                 .entry(source_id.to_string())
@@ -113,43 +133,57 @@ impl StatsTracker {
             source_stats.tree_size = tree_size;
             source_stats.successful_fetches += 1;
 
-            // Update average fetch time
-            let total_fetches = source_stats.successful_fetches;
-            let old_avg = source_stats.avg_fetch_time_ms;
+            // Update average fetch time using running sum for accuracy
             let new_fetch_ms = fetch_time.as_millis() as u64;
-
-            source_stats.avg_fetch_time_ms =
-                ((old_avg * (total_fetches - 1)) + new_fetch_ms) / total_fetches;
+            source_stats.total_fetch_time_ms = source_stats
+                .total_fetch_time_ms
+                .saturating_add(new_fetch_ms);
+            source_stats.avg_fetch_time_ms = source_stats
+                .total_fetch_time_ms
+                .checked_div(source_stats.successful_fetches)
+                .unwrap_or(0);
         }
     }
 
     /// Increment source certificates processed
+    ///
+    /// Note: Per-source stats are bounded to MAX_SOURCES. New sources beyond
+    /// the limit will not have their per-source stats tracked.
     pub fn increment_source_processed(&self, source_id: &str, count: u64) {
         if let Ok(mut stats) = self.stats.lock() {
-            let source_stats = stats
-                .per_source
-                .entry(source_id.to_string())
-                .or_insert_with(|| SourceStats {
-                    source_id: source_id.to_string(),
-                    ..Default::default()
-                });
-
-            source_stats.certificates_processed += count;
+            // Only track if source exists or we have capacity
+            if let Some(source_stats) = stats.per_source.get_mut(source_id) {
+                source_stats.certificates_processed += count;
+            } else if stats.per_source.len() < MAX_SOURCES {
+                // Create new entry only if under capacity
+                let source_stats = stats
+                    .per_source
+                    .entry(source_id.to_string())
+                    .or_insert_with(|| SourceStats {
+                        source_id: source_id.to_string(),
+                        ..Default::default()
+                    });
+                source_stats.certificates_processed += count;
+            }
         }
     }
 
     /// Increment source failed fetches
     pub fn increment_source_failures(&self, source_id: &str) {
         if let Ok(mut stats) = self.stats.lock() {
-            let source_stats = stats
-                .per_source
-                .entry(source_id.to_string())
-                .or_insert_with(|| SourceStats {
-                    source_id: source_id.to_string(),
-                    ..Default::default()
-                });
-
-            source_stats.failed_fetches += 1;
+            // Only update existing entries or create new ones if under capacity
+            if let Some(source_stats) = stats.per_source.get_mut(source_id) {
+                source_stats.failed_fetches += 1;
+            } else if stats.per_source.len() < MAX_SOURCES {
+                let source_stats = stats
+                    .per_source
+                    .entry(source_id.to_string())
+                    .or_insert_with(|| SourceStats {
+                        source_id: source_id.to_string(),
+                        ..Default::default()
+                    });
+                source_stats.failed_fetches += 1;
+            }
         }
     }
 

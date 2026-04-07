@@ -4,9 +4,27 @@
 // connection timeouts, retry backoff, and concurrency based on observed
 // network behavior (e.g., timeouts). It is intentionally conservative
 // to avoid oscillations while improving resilience for slow or rate-limited hosts.
+//
+// NOTE: Uses std::sync::Mutex because all operations are very short (just reading/writing
+// numeric values) and never cross await points. This is more efficient than tokio::sync::Mutex
+// for this use case and avoids the need for async methods.
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
+/// Helper to lock mutex with poisoning recovery
+/// Returns the guard, recovering from poisoning if necessary
+fn lock_mutex<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    match mutex.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            // Mutex is poisoned - recover the guard anyway (data is still valid)
+            // The panic that caused poisoning already propagated its error
+            tracing::warn!("Mutex poisoned, recovering with available data");
+            poisoned.into_inner()
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct AdaptiveSnapshot {
@@ -72,7 +90,7 @@ impl AdaptiveController {
     }
 
     pub fn snapshot(&self) -> AdaptiveSnapshot {
-        let state = self.state.lock().expect("adaptive state poisoned");
+        let state = lock_mutex(&self.state);
         AdaptiveSnapshot {
             connect_timeout: state.connect_timeout,
             socket_timeout: state.socket_timeout,
@@ -108,7 +126,7 @@ impl AdaptiveController {
     }
 
     pub fn on_timeout(&self) {
-        let mut state = self.state.lock().expect("adaptive state poisoned");
+        let mut state = lock_mutex(&self.state);
         state.consecutive_timeouts = state.consecutive_timeouts.saturating_add(1);
         state.consecutive_failures = state.consecutive_failures.saturating_add(1);
         state.success_streak = 0;
@@ -137,7 +155,7 @@ impl AdaptiveController {
     }
 
     pub fn on_retryable_error(&self) {
-        let mut state = self.state.lock().expect("adaptive state poisoned");
+        let mut state = lock_mutex(&self.state);
         state.consecutive_failures = state.consecutive_failures.saturating_add(1);
         state.success_streak = 0;
 
@@ -154,13 +172,13 @@ impl AdaptiveController {
     }
 
     pub fn on_non_retryable_error(&self) {
-        let mut state = self.state.lock().expect("adaptive state poisoned");
+        let mut state = lock_mutex(&self.state);
         state.consecutive_failures = state.consecutive_failures.saturating_add(1);
         state.success_streak = 0;
     }
 
     pub fn on_success(&self) {
-        let mut state = self.state.lock().expect("adaptive state poisoned");
+        let mut state = lock_mutex(&self.state);
         state.success_streak = state.success_streak.saturating_add(1);
         state.consecutive_timeouts = 0;
         state.consecutive_failures = 0;
@@ -202,7 +220,11 @@ fn sub_duration(a: Duration, b: Duration) -> Duration {
 }
 
 fn mul_duration(a: Duration, factor: u64) -> Duration {
-    Duration::from_millis(a.as_millis().saturating_mul(factor as u128) as u64)
+    let millis = a.as_millis();
+    let result = millis.saturating_mul(factor as u128);
+    // Cap at u64::MAX milliseconds (approximately 584 million years)
+    let capped = result.min(u64::MAX as u128);
+    Duration::from_millis(capped as u64)
 }
 
 fn div_duration(a: Duration, divisor: u64) -> Duration {

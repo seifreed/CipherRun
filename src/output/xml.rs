@@ -20,95 +20,10 @@ pub fn generate_xml_report(results: &ScanResults) -> Result<String> {
     ));
 
     // Protocols
-    xml.push_str("  <protocols>\n");
-    for protocol in &results.protocols {
-        xml.push_str("    <protocol>\n");
-        xml.push_str(&format!(
-            "      <name>{}</name>\n",
-            escape_xml(&protocol.protocol.to_string())
-        ));
-        xml.push_str(&format!(
-            "      <supported>{}</supported>\n",
-            protocol.supported
-        ));
-
-        xml.push_str(&format!(
-            "      <secure_renegotiation_status>{}</secure_renegotiation_status>\n",
-            option_status_label(protocol.secure_renegotiation)
-        ));
-        if let Some(secure_reneg) = protocol.secure_renegotiation {
-            xml.push_str(&format!(
-                "      <secure_renegotiation>{}</secure_renegotiation>\n",
-                secure_reneg
-            ));
-        }
-
-        // Session resumption details
-        xml.push_str(&format!(
-            "      <session_resumption_caching_status>{}</session_resumption_caching_status>\n",
-            option_status_label(protocol.session_resumption_caching)
-        ));
-        if let Some(caching) = protocol.session_resumption_caching {
-            xml.push_str(&format!(
-                "      <session_resumption_caching>{}</session_resumption_caching>\n",
-                caching
-            ));
-        }
-        xml.push_str(&format!(
-            "      <session_resumption_tickets_status>{}</session_resumption_tickets_status>\n",
-            option_status_label(protocol.session_resumption_tickets)
-        ));
-        if let Some(tickets) = protocol.session_resumption_tickets {
-            xml.push_str(&format!(
-                "      <session_resumption_tickets>{}</session_resumption_tickets>\n",
-                tickets
-            ));
-        }
-
-        // Heartbeat extension
-        xml.push_str(&format!(
-            "      <heartbeat_enabled_status>{}</heartbeat_enabled_status>\n",
-            option_status_label(protocol.heartbeat_enabled)
-        ));
-        if let Some(heartbeat) = protocol.heartbeat_enabled {
-            xml.push_str(&format!(
-                "      <heartbeat_enabled>{}</heartbeat_enabled>\n",
-                heartbeat
-            ));
-        }
-
-        xml.push_str("    </protocol>\n");
-    }
-    xml.push_str("  </protocols>\n");
+    write_protocols_block(&mut xml, &results.protocols);
 
     // Vulnerabilities
-    xml.push_str("  <vulnerabilities>\n");
-    for vuln in &results.vulnerabilities {
-        xml.push_str("    <vulnerability>\n");
-        xml.push_str(&format!("      <type>{:?}</type>\n", vuln.vuln_type));
-        xml.push_str(&format!(
-            "      <status>{}</status>\n",
-            escape_xml(vuln.status_label())
-        ));
-        xml.push_str(&format!(
-            "      <vulnerable>{}</vulnerable>\n",
-            vuln.vulnerable
-        ));
-        xml.push_str(&format!(
-            "      <inconclusive>{}</inconclusive>\n",
-            vuln.inconclusive
-        ));
-        xml.push_str(&format!("      <severity>{:?}</severity>\n", vuln.severity));
-        if let Some(cve) = &vuln.cve {
-            xml.push_str(&format!("      <cve>{}</cve>\n", escape_xml(cve)));
-        }
-        xml.push_str(&format!(
-            "      <details>{}</details>\n",
-            escape_xml(&vuln.details)
-        ));
-        xml.push_str("    </vulnerability>\n");
-    }
-    xml.push_str("  </vulnerabilities>\n");
+    write_vulnerabilities_block(&mut xml, &results.vulnerabilities);
 
     // Certificate
     if let Some(cert_data) = &results.certificate_chain {
@@ -159,6 +74,83 @@ pub fn generate_xml_report(results: &ScanResults) -> Result<String> {
     Ok(xml)
 }
 
+fn write_optional_bool_field(xml: &mut String, tag: &str, value: Option<bool>) {
+    xml.push_str(&format!(
+        "      <{}_status>{}</{}_status>\n",
+        tag,
+        option_status_label(value),
+        tag
+    ));
+    if let Some(v) = value {
+        xml.push_str(&format!("      <{0}>{1}</{0}>\n", tag, v));
+    }
+}
+
+fn write_protocols_block(
+    xml: &mut String,
+    protocols: &[crate::protocols::ProtocolTestResult],
+) {
+    xml.push_str("  <protocols>\n");
+    for protocol in protocols {
+        xml.push_str("    <protocol>\n");
+        xml.push_str(&format!(
+            "      <name>{}</name>\n",
+            escape_xml(&protocol.protocol.to_string())
+        ));
+        xml.push_str(&format!(
+            "      <supported>{}</supported>\n",
+            protocol.supported
+        ));
+        write_optional_bool_field(xml, "secure_renegotiation", protocol.secure_renegotiation);
+        write_optional_bool_field(
+            xml,
+            "session_resumption_caching",
+            protocol.session_resumption_caching,
+        );
+        write_optional_bool_field(
+            xml,
+            "session_resumption_tickets",
+            protocol.session_resumption_tickets,
+        );
+        write_optional_bool_field(xml, "heartbeat_enabled", protocol.heartbeat_enabled);
+        xml.push_str("    </protocol>\n");
+    }
+    xml.push_str("  </protocols>\n");
+}
+
+fn write_vulnerabilities_block(
+    xml: &mut String,
+    vulnerabilities: &[crate::vulnerabilities::VulnerabilityResult],
+) {
+    xml.push_str("  <vulnerabilities>\n");
+    for vuln in vulnerabilities {
+        xml.push_str("    <vulnerability>\n");
+        xml.push_str(&format!("      <type>{:?}</type>\n", vuln.vuln_type));
+        xml.push_str(&format!(
+            "      <status>{}</status>\n",
+            escape_xml(vuln.status_label())
+        ));
+        xml.push_str(&format!(
+            "      <vulnerable>{}</vulnerable>\n",
+            vuln.vulnerable
+        ));
+        xml.push_str(&format!(
+            "      <inconclusive>{}</inconclusive>\n",
+            vuln.inconclusive
+        ));
+        xml.push_str(&format!("      <severity>{:?}</severity>\n", vuln.severity));
+        if let Some(cve) = &vuln.cve {
+            xml.push_str(&format!("      <cve>{}</cve>\n", escape_xml(cve)));
+        }
+        xml.push_str(&format!(
+            "      <details>{}</details>\n",
+            escape_xml(&vuln.details)
+        ));
+        xml.push_str("    </vulnerability>\n");
+    }
+    xml.push_str("  </vulnerabilities>\n");
+}
+
 fn escape_xml(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
@@ -186,29 +178,31 @@ mod tests {
 
     #[test]
     fn test_generate_xml_report_escapes_and_includes_sections() {
-        let mut results = ScanResults::default();
-        results.target = "exa&<>'\"".to_string();
-        results.scan_time_ms = 123;
-        results.protocols = vec![ProtocolTestResult {
-            protocol: Protocol::TLS12,
-            supported: true,
-            preferred: false,
-            ciphers_count: 1,
-            handshake_time_ms: Some(10),
-            heartbeat_enabled: Some(false),
-            session_resumption_caching: Some(true),
-            session_resumption_tickets: Some(false),
-            secure_renegotiation: Some(true),
-        }];
-        results.vulnerabilities = vec![VulnerabilityResult {
-            vuln_type: VulnerabilityType::Heartbleed,
-            vulnerable: false,
-            inconclusive: false,
-            details: "detail & <tag>".to_string(),
-            cve: Some("CVE-2014-0160".to_string()),
-            cwe: None,
-            severity: Severity::High,
-        }];
+        let results = ScanResults {
+            target: "exa&<>'\"".to_string(),
+            scan_time_ms: 123,
+            protocols: vec![ProtocolTestResult {
+                protocol: Protocol::TLS12,
+                supported: true,
+                preferred: false,
+                ciphers_count: 1,
+                handshake_time_ms: Some(10),
+                heartbeat_enabled: Some(false),
+                session_resumption_caching: Some(true),
+                session_resumption_tickets: Some(false),
+                secure_renegotiation: Some(true),
+            }],
+            vulnerabilities: vec![VulnerabilityResult {
+                vuln_type: VulnerabilityType::Heartbleed,
+                vulnerable: false,
+                inconclusive: false,
+                details: "detail & <tag>".to_string(),
+                cve: Some("CVE-2014-0160".to_string()),
+                cwe: None,
+                severity: Severity::High,
+            }],
+            ..Default::default()
+        };
 
         let xml = generate_xml_report(&results).expect("test assertion should succeed");
 
@@ -245,20 +239,22 @@ mod tests {
 
     #[test]
     fn test_xml_includes_rating_section() {
-        let mut results = ScanResults::default();
-        results.target = "example.com:443".to_string();
-        results.scan_time_ms = 1;
-        results.rating = Some(RatingResults {
-            ssl_rating: Some(RatingResult {
-                grade: Grade::A,
-                score: 90,
-                certificate_score: 90,
-                protocol_score: 90,
-                key_exchange_score: 90,
-                cipher_strength_score: 90,
-                warnings: Vec::new(),
+        let results = ScanResults {
+            target: "example.com:443".to_string(),
+            scan_time_ms: 1,
+            rating: Some(RatingResults {
+                ssl_rating: Some(RatingResult {
+                    grade: Grade::A,
+                    score: 90,
+                    certificate_score: 90,
+                    protocol_score: 90,
+                    key_exchange_score: 90,
+                    cipher_strength_score: 90,
+                    warnings: Vec::new(),
+                }),
             }),
-        });
+            ..Default::default()
+        };
 
         let xml = generate_xml_report(&results).expect("test assertion should succeed");
         assert!(xml.contains("<rating>"));

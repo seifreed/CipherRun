@@ -2,7 +2,7 @@
 // Copyright (C) 2025 Marc Rivero (@seifreed)
 // Licensed under GPL-3.0
 
-use clap::Parser;
+use clap::{CommandFactory, FromArgMatches, Parser, parser::ValueSource};
 use std::path::PathBuf;
 
 // Sub-modules for organized CLI arguments
@@ -36,6 +36,13 @@ pub use output_args::OutputArgs;
 pub use scan_args::ScanArgs;
 pub use starttls_args::StarttlsArgs;
 pub use tls_config_args::TlsConfigArgs;
+
+#[derive(Debug, Clone, Default)]
+pub struct ExplicitFingerprintFlags {
+    pub ja3_explicit: bool,
+    pub ja3s_explicit: bool,
+    pub jarm_explicit: bool,
+}
 
 /// CipherRun - Fast, modular TLS/SSL security scanner
 ///
@@ -161,9 +168,38 @@ pub struct Args {
     /// Display version information and exit
     #[arg(long = "version", short = 'V')]
     pub version: bool,
+
+    #[arg(skip = ExplicitFingerprintFlags::default())]
+    pub fingerprint_flag_sources: ExplicitFingerprintFlags,
 }
 
 impl Args {
+    pub fn parse_with_sources() -> Result<Self, clap::Error> {
+        Self::parse_with_sources_from(std::env::args_os())
+    }
+
+    pub fn parse_with_sources_from<I, T>(itr: I) -> Result<Self, clap::Error>
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<std::ffi::OsString> + Clone,
+    {
+        let mut command = Self::command();
+        let matches = command.try_get_matches_from_mut(itr)?;
+        let mut args = Self::from_arg_matches(&matches)?;
+        args.fingerprint_flag_sources = ExplicitFingerprintFlags {
+            ja3_explicit: Self::is_explicit_value(&matches, "ja3"),
+            ja3s_explicit: Self::is_explicit_value(&matches, "ja3s"),
+            jarm_explicit: Self::is_explicit_value(&matches, "jarm"),
+        };
+        Ok(args)
+    }
+
+    fn is_explicit_value(matches: &clap::ArgMatches, id: &str) -> bool {
+        matches
+            .value_source(id)
+            .is_some_and(|source| source != ValueSource::DefaultValue)
+    }
+
     /// Validate CLI arguments for mutual exclusivity and logical consistency
     ///
     /// Returns an error if conflicting flags are used together
@@ -181,7 +217,28 @@ impl Args {
             scan: crate::application::scan_request::ScanRequestScan {
                 protocols: self.scan.protocols,
                 each_cipher: self.scan.each_cipher,
+                cipher_per_proto: self.scan.cipher_per_proto,
+                categories: self.scan.categories,
+                forward_secrecy: self.scan.forward_secrecy,
+                server_defaults: self.scan.server_defaults,
+                server_preference: self.scan.server_preference,
                 vulnerabilities: self.scan.vulnerabilities,
+                heartbleed: self.scan.heartbleed,
+                ccs: self.scan.ccs,
+                ticketbleed: self.scan.ticketbleed,
+                robot: self.scan.robot,
+                renegotiation: self.scan.renegotiation,
+                crime: self.scan.crime,
+                breach: self.scan.breach,
+                poodle: self.scan.poodle,
+                fallback: self.scan.fallback,
+                sweet32: self.scan.sweet32,
+                beast: self.scan.beast,
+                lucky13: self.scan.lucky13,
+                freak: self.scan.freak,
+                logjam: self.scan.logjam,
+                drown: self.scan.drown,
+                early_data: self.scan.early_data,
                 headers: self.scan.headers,
                 all: self.scan.all,
                 full: self.scan.full,
@@ -191,6 +248,11 @@ impl Args {
                 no_heartbleed: self.scan.no_heartbleed,
                 no_renegotiation: self.scan.no_renegotiation,
                 no_check_certificate: self.scan.no_check_certificate,
+                disable_rating: self.scan.disable_rating,
+                fast: self.scan.fast,
+                ocsp: self.scan.ocsp,
+                pre_handshake: self.scan.pre_handshake,
+                probe_status: self.scan.probe_status,
                 show_sigs: self.scan.show_sigs,
                 show_groups: self.scan.show_groups,
                 no_groups: self.scan.no_groups,
@@ -231,12 +293,15 @@ impl Args {
             },
             fingerprint: crate::application::scan_request::ScanRequestFingerprint {
                 ja3: self.fingerprint.ja3,
+                explicit_ja3: self.fingerprint_flag_sources.ja3_explicit,
                 client_hello: self.fingerprint.client_hello,
                 ja3_database: self.fingerprint.ja3_database.clone(),
                 ja3s: self.fingerprint.ja3s,
+                explicit_ja3s: self.fingerprint_flag_sources.ja3s_explicit,
                 server_hello: self.fingerprint.server_hello,
                 ja3s_database: self.fingerprint.ja3s_database.clone(),
                 jarm: self.fingerprint.jarm,
+                explicit_jarm: self.fingerprint_flag_sources.jarm_explicit,
                 jarm_database: self.fingerprint.jarm_database.clone(),
                 client_simulation: self.fingerprint.client_simulation,
             },
@@ -281,40 +346,12 @@ impl Args {
 
     /// Check if we should run the default test suite
     pub fn run_default_suite(&self) -> bool {
-        !self.scan.protocols
-            && !self.scan.each_cipher
-            && !self.scan.cipher_per_proto
-            && !self.scan.categories
-            && !self.scan.forward_secrecy
-            && !self.scan.server_defaults
-            && !self.scan.server_preference
-            && !self.scan.headers
-            && !self.scan.vulnerabilities
-            && !self.scan.heartbleed
-            && !self.fingerprint.client_simulation
-            && !self.scan.full
+        self.to_scan_request().baseline_scan_requested()
     }
 
     /// Check if vulnerability testing is enabled
     pub fn test_vulnerabilities(&self) -> bool {
-        self.scan.vulnerabilities
-            || self.scan.heartbleed
-            || self.scan.ccs
-            || self.scan.ticketbleed
-            || self.scan.robot
-            || self.scan.renegotiation
-            || self.scan.crime
-            || self.scan.breach
-            || self.scan.poodle
-            || self.scan.fallback
-            || self.scan.sweet32
-            || self.scan.beast
-            || self.scan.lucky13
-            || self.scan.freak
-            || self.scan.logjam
-            || self.scan.drown
-            || self.scan.early_data
-            || self.scan.full
+        self.to_scan_request().should_run_vulnerability_phase()
     }
 
     /// Get the SNI hostname to use (custom or default)
@@ -353,35 +390,56 @@ mod tests {
 
     #[test]
     fn test_validate_conflicting_ip_flags() {
-        let mut args = Args::default();
-        args.network.test_all_ips = true;
-        args.network.first_ip_only = true;
+        let args = Args {
+            network: NetworkArgs {
+                test_all_ips: true,
+                first_ip_only: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
         assert!(args.validate().is_err());
     }
 
     #[test]
     fn test_validate_ip_with_test_all_ips_conflict() {
-        let mut args = Args::default();
-        args.ip = Some("127.0.0.1".to_string());
-        args.network.test_all_ips = true;
+        let args = Args {
+            ip: Some("127.0.0.1".to_string()),
+            network: NetworkArgs {
+                test_all_ips: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
         assert!(args.validate().is_err());
     }
 
     #[test]
     fn test_validate_ip_with_first_ip_only_conflict() {
-        let mut args = Args::default();
-        args.ip = Some("127.0.0.1".to_string());
-        args.network.first_ip_only = true;
+        let args = Args {
+            ip: Some("127.0.0.1".to_string()),
+            network: NetworkArgs {
+                first_ip_only: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
         assert!(args.validate().is_err());
     }
 
     #[test]
     fn test_run_default_suite_flags() {
-        let args = Args::default();
+        let parsed = Args::parse_with_sources_from(["cipherrun"]).expect("parse should succeed");
+        let args = parsed;
         assert!(args.run_default_suite());
 
-        let mut args = Args::default();
-        args.scan.protocols = true;
+        let args = Args {
+            scan: ScanArgs {
+                protocols: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
         assert!(!args.run_default_suite());
     }
 
@@ -390,8 +448,13 @@ mod tests {
         let args = Args::default();
         assert!(!args.test_vulnerabilities());
 
-        let mut args = Args::default();
-        args.scan.breach = true;
+        let args = Args {
+            scan: ScanArgs {
+                breach: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
         assert!(args.test_vulnerabilities());
     }
 
@@ -406,9 +469,14 @@ mod tests {
 
     #[test]
     fn test_protocols_to_test_flags() {
-        let mut args = Args::default();
-        args.scan.ssl2 = true;
-        args.scan.tls13 = true;
+        let args = Args {
+            scan: ScanArgs {
+                ssl2: true,
+                tls13: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
         let protocols = args.protocols_to_test().unwrap();
         assert_eq!(
             protocols,
@@ -418,8 +486,13 @@ mod tests {
             ]
         );
 
-        let mut args = Args::default();
-        args.scan.tlsall = true;
+        let args = Args {
+            scan: ScanArgs {
+                tlsall: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
         let protocols = args.protocols_to_test().unwrap();
         assert_eq!(
             protocols,
@@ -437,18 +510,33 @@ mod tests {
 
     #[test]
     fn test_retry_config() {
-        let mut args = Args::default();
-        args.connection.no_retry = true;
+        let args = Args {
+            connection: ConnectionArgs {
+                no_retry: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
         assert!(args.retry_config().is_none());
 
-        let mut args = Args::default();
-        args.connection.max_retries = 0;
+        let args = Args {
+            connection: ConnectionArgs {
+                max_retries: 0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
         assert!(args.retry_config().is_none());
 
-        let mut args = Args::default();
-        args.connection.max_retries = 5;
-        args.connection.retry_backoff_ms = 250;
-        args.connection.max_backoff_ms = 2000;
+        let args = Args {
+            connection: ConnectionArgs {
+                max_retries: 5,
+                retry_backoff_ms: 250,
+                max_backoff_ms: 2000,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
         let cfg = args.retry_config().expect("should return retry config");
         assert_eq!(cfg.max_retries, 5);
         assert_eq!(cfg.initial_backoff, std::time::Duration::from_millis(250));
@@ -466,8 +554,132 @@ mod tests {
 
     #[test]
     fn test_run_default_suite_disabled_by_client_simulation() {
-        let mut args = Args::default();
-        args.fingerprint.client_simulation = true;
+        let args = Args {
+            fingerprint: FingerprintArgs {
+                client_simulation: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
         assert!(!args.run_default_suite());
+    }
+
+    #[test]
+    fn test_to_scan_request_preserves_functional_scan_flags() {
+        let args = Args {
+            scan: ScanArgs {
+                cipher_per_proto: true,
+                server_defaults: true,
+                heartbleed: true,
+                disable_rating: true,
+                fast: true,
+                ocsp: true,
+                pre_handshake: true,
+                probe_status: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let request = args.to_scan_request();
+
+        assert!(request.scan.cipher_per_proto);
+        assert!(request.scan.server_defaults);
+        assert!(request.scan.heartbleed);
+        assert!(request.scan.disable_rating);
+        assert!(request.scan.fast);
+        assert!(request.scan.ocsp);
+        assert!(request.scan.pre_handshake);
+        assert!(request.scan.probe_status);
+    }
+
+    #[test]
+    fn test_run_default_suite_respects_all_false() {
+        let args = Args {
+            target: Some("example.com".to_string()),
+            scan: ScanArgs {
+                all: false,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        assert!(!args.run_default_suite());
+    }
+
+    #[test]
+    fn test_parse_with_sources_tracks_explicit_fingerprint_flags() {
+        let args = Args::parse_with_sources_from(["cipherrun", "--ja3=false", "--jarm=true"])
+            .expect("parse should succeed");
+
+        assert!(args.fingerprint_flag_sources.ja3_explicit);
+        assert!(!args.fingerprint_flag_sources.ja3s_explicit);
+        assert!(args.fingerprint_flag_sources.jarm_explicit);
+    }
+
+    #[test]
+    fn test_to_scan_request_preserves_explicit_fingerprint_sources() {
+        let args = Args::parse_with_sources_from(["cipherrun", "--all=false", "--ja3=true"])
+            .expect("parse should succeed");
+
+        let request = args.to_scan_request();
+
+        assert!(request.fingerprint.explicit_ja3);
+        assert!(!request.fingerprint.explicit_ja3s);
+        assert!(!request.fingerprint.explicit_jarm);
+        assert!(request.should_run_ja3_fingerprint());
+        assert!(!request.should_run_ja3s_fingerprint());
+        assert!(!request.should_run_jarm_fingerprint());
+    }
+
+    #[test]
+    fn test_explicit_positive_fingerprint_request_disables_default_suite() {
+        let args = Args::parse_with_sources_from(["cipherrun", "--ja3=true"])
+            .expect("parse should succeed");
+
+        assert!(!args.run_default_suite());
+        assert!(args.to_scan_request().should_run_ja3_fingerprint());
+    }
+
+    #[test]
+    fn test_explicit_negative_fingerprint_flag_keeps_default_suite() {
+        let args = Args::parse_with_sources_from(["cipherrun", "--ja3=false"])
+            .expect("parse should succeed");
+
+        assert!(args.run_default_suite());
+        assert!(!args.to_scan_request().should_run_ja3_fingerprint());
+    }
+
+    #[test]
+    fn test_probe_status_flag_disables_default_suite() {
+        let args = Args::parse_with_sources_from(["cipherrun", "--probe-status"])
+            .expect("parse should succeed");
+
+        assert!(!args.run_default_suite());
+    }
+
+    #[test]
+    fn test_pre_handshake_flag_disables_default_suite() {
+        let args = Args::parse_with_sources_from(["cipherrun", "--pre-handshake"])
+            .expect("parse should succeed");
+
+        assert!(!args.run_default_suite());
+    }
+
+    #[test]
+    fn test_ocsp_flag_disables_default_suite() {
+        let args =
+            Args::parse_with_sources_from(["cipherrun", "--ocsp"]).expect("parse should succeed");
+
+        assert!(!args.run_default_suite());
+    }
+
+    #[test]
+    fn test_client_simulation_flag_disables_default_suite() {
+        let args = Args::parse_with_sources_from(["cipherrun", "--client-simulation"])
+            .expect("parse should succeed");
+
+        assert!(!args.run_default_suite());
+        assert!(args.to_scan_request().should_run_client_simulation_phase());
     }
 }

@@ -18,8 +18,8 @@ pub use certificate_inventory::{
 pub use parsed_input::{CompareScanIds, HostPortDaysInput, HostPortInput};
 pub use persistence::PersistedScan;
 pub use ports::{
-    CertificateInventoryPort, ComplianceFrameworkSource, PolicySource, ScanHistoryPort,
-    ScanResultsStore, ScanResultsStoreFactory,
+    CertificateInventoryPort, ComplianceEvaluatorPort, ComplianceFrameworkSource, PolicyEvaluatorPort,
+    PolicySource, ScanHistoryPort, ScanResultsStore, ScanResultsStoreFactory, ScannerPort,
 };
 pub use scan_execution::{
     ScanCliView, ScanExecutionReport, ScanExportView, ScanFeatureView, ScanFingerprintView,
@@ -27,3 +27,8 @@ pub use scan_execution::{
 };
 pub use scan_history::{ScanHistoryEntry, ScanHistoryQuery};
 pub use scan_request::ScanRequest;
+
+// Domain types re-exported from infrastructure modules
+pub use crate::compliance::{ComplianceReport, ComplianceStatus};
+pub use crate::policy::PolicyResult;
+pub use crate::scanner::ScanResults;

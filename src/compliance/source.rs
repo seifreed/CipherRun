@@ -46,7 +46,7 @@ impl BuiltinFrameworkSource {
         ]
     }
 
-    fn builtin_filename(framework_id: &str) -> Result<&'static str> {
+    fn builtin_filename(framework_id: &str) -> crate::Result<&'static str> {
         match framework_id {
             "pci-dss-v4" | "pci-dss" | "pci" => Ok("pci_dss_v4.yaml"),
             "nist-sp800-52r2" | "nist" => Ok("nist_sp800_52r2.yaml"),
@@ -55,10 +55,12 @@ impl BuiltinFrameworkSource {
             "mozilla-modern" | "modern" => Ok("mozilla_modern.yaml"),
             "mozilla-intermediate" | "intermediate" => Ok("mozilla_intermediate.yaml"),
             "gdpr" => Ok("gdpr.yaml"),
-            _ => Err(anyhow::anyhow!(
-                "Unknown framework ID: {}. Supported: pci-dss-v4, nist-sp800-52r2, hipaa, soc2, mozilla-modern, mozilla-intermediate, gdpr",
-                framework_id
-            )),
+            _ => Err(crate::error::TlsError::ConfigError {
+                message: format!(
+                    "Unknown framework ID: {}. Supported: pci-dss-v4, nist-sp800-52r2, hipaa, soc2, mozilla-modern, mozilla-intermediate, gdpr",
+                    framework_id
+                ),
+            }),
         }
     }
 }
@@ -68,14 +70,16 @@ impl ComplianceFrameworkSource for BuiltinFrameworkSource {
         let filename = Self::builtin_filename(framework_id)?;
         let data_path = format!("data/compliance/{}", filename);
         if Path::new(&data_path).exists() {
-            return Self::load_from_file(&data_path).map_err(Into::into);
+            return Self::load_from_file(&data_path)
+                .context(format!("loading compliance framework '{}'", framework_id))
+                .map_err(Into::into);
         }
 
-        Err(anyhow::anyhow!(
-            "Framework file not found: {}. Please ensure data/compliance/{} exists.",
-            framework_id,
-            filename
-        )
-        .into())
+        Err(crate::error::TlsError::ConfigError {
+            message: format!(
+                "Framework file not found: {}. Please ensure data/compliance/{} exists.",
+                framework_id, filename
+            ),
+        })
     }
 }

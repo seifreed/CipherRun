@@ -27,36 +27,37 @@ impl ClientCAsTester {
         let overall_read_timeout = Duration::from_secs(10);
         let read_timeout = Duration::from_secs(2);
 
-        let mut stream = match timeout(connect_timeout, TcpStream::connect(addr)).await {
-            Ok(Ok(stream)) => stream,
-            _ => {
-                return Ok(ClientCAsResult {
-                    cas: Vec::new(),
-                    requires_client_auth: false,
-                });
-            }
-        };
+        let mut stream =
+            match crate::utils::network::connect_with_timeout(addr, connect_timeout, None).await {
+                Ok(stream) => stream,
+                _ => {
+                    return Ok(ClientCAsResult {
+                        cas: Vec::new(),
+                        requires_client_auth: false,
+                    });
+                }
+            };
 
         let mut builder =
             crate::protocols::handshake::ClientHelloBuilder::new(crate::protocols::Protocol::TLS12);
         builder.add_cipher(0xc030);
 
-        if let Ok(client_hello) = builder.build_with_defaults(Some(&self.target.hostname)) {
-            if let Ok(response) = timeout(overall_read_timeout, async {
+        if let Ok(client_hello) = builder.build_with_defaults(Some(&self.target.hostname))
+            && let Ok(response) = timeout(overall_read_timeout, async {
                 stream.write_all(&client_hello).await?;
-                self.read_tls_handshake_bytes(&mut stream, read_timeout).await
+                self.read_tls_handshake_bytes(&mut stream, read_timeout)
+                    .await
             })
             .await
-                && let Ok(data) = response
-            {
-                let cert_request = self.find_certificate_request(&data);
-                let cas = cert_request.clone().unwrap_or_default();
+            && let Ok(data) = response
+        {
+            let cert_request = self.find_certificate_request(&data);
+            let cas = cert_request.clone().unwrap_or_default();
 
-                return Ok(ClientCAsResult {
-                    requires_client_auth: cert_request.is_some(),
-                    cas,
-                });
-            }
+            return Ok(ClientCAsResult {
+                requires_client_auth: cert_request.is_some(),
+                cas,
+            });
         }
 
         Ok(ClientCAsResult {

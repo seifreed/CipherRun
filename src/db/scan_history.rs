@@ -83,29 +83,53 @@ async fn fetch_history_sqlite(
 
 fn scan_history_entry_from_pg_row(row: PgRow) -> ScanHistoryEntry {
     ScanHistoryEntry {
-        scan_id: row.get::<i64, _>("scan_id") as u64,
+        scan_id: {
+            let id = row.get::<i64, _>("scan_id");
+            if id < 0 {
+                tracing::error!(
+                    "Corrupt negative scan_id {} in database, using absolute value",
+                    id
+                );
+            }
+            id.unsigned_abs()
+        },
         timestamp: row.get("scan_timestamp"),
         grade: row.get("overall_grade"),
-        score: row
-            .get::<Option<i32>, _>("overall_score")
-            .map(|score| score as u8),
+        score: row.get::<Option<i32>, _>("overall_score").map(|score| {
+            if !(0..=100).contains(&score) {
+                tracing::warn!("Score {} out of valid range [0,100], clamping", score);
+            }
+            score.clamp(0, 100) as u8
+        }),
         duration_ms: row
             .get::<Option<i64>, _>("scan_duration_ms")
-            .map(|duration| duration as u64),
+            .map(|d| d.max(0) as u64),
     }
 }
 
 fn scan_history_entry_from_sqlite_row(row: SqliteRow) -> ScanHistoryEntry {
     ScanHistoryEntry {
-        scan_id: row.get::<i64, _>("scan_id") as u64,
+        scan_id: {
+            let id = row.get::<i64, _>("scan_id");
+            if id < 0 {
+                tracing::error!(
+                    "Corrupt negative scan_id {} in database, using absolute value",
+                    id
+                );
+            }
+            id.unsigned_abs()
+        },
         timestamp: row.get("scan_timestamp"),
         grade: row.get("overall_grade"),
-        score: row
-            .get::<Option<i32>, _>("overall_score")
-            .map(|score| score as u8),
+        score: row.get::<Option<i32>, _>("overall_score").map(|score| {
+            if !(0..=100).contains(&score) {
+                tracing::warn!("Score {} out of valid range [0,100], clamping", score);
+            }
+            score.clamp(0, 100) as u8
+        }),
         duration_ms: row
             .get::<Option<i64>, _>("scan_duration_ms")
-            .map(|duration| duration as u64),
+            .map(|d| d.max(0) as u64),
     }
 }
 

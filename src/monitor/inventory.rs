@@ -11,6 +11,12 @@ use std::path::Path;
 
 pub use crate::monitor::types::AlertThresholds;
 
+/// Maximum file size for domains file (10 MB)
+const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;
+
+/// Maximum number of domains in inventory
+const MAX_DOMAINS: usize = 100_000;
+
 /// Monitored domain configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MonitoredDomain {
@@ -87,40 +93,49 @@ impl CertificateInventory {
         Ok(())
     }
 
-    /// Remove a domain from the inventory
-    pub fn remove_domain(&mut self, hostname: &str) -> Result<()> {
-        // Try with default port 443 if no port specified
-        let key = if hostname.contains(':') {
+    /// Normalize a hostname into a consistent `host:port` key.
+    /// If no port is specified, defaults to 443.
+    fn normalize_key(hostname: &str) -> String {
+        if hostname.contains(':') {
             hostname.to_string()
         } else {
             format!("{}:443", hostname)
-        };
+        }
+    }
 
-        self.domains.remove(&key);
+    /// Remove a domain from the inventory
+    pub fn remove_domain(&mut self, hostname: &str) -> Result<()> {
+        let key = Self::normalize_key(hostname);
+        // Try exact key first, then fall back to raw hostname in case it was
+        // stored without a port suffix
+        if self.domains.remove(&key).is_none() && key != hostname {
+            self.domains.remove(hostname);
+        }
         Ok(())
     }
 
     /// Get a domain by hostname
     pub fn get_domain(&self, hostname: &str) -> Option<&MonitoredDomain> {
-        // Try with default port 443 if no port specified
-        let key = if hostname.contains(':') {
-            hostname.to_string()
-        } else {
-            format!("{}:443", hostname)
-        };
-
-        self.domains.get(&key)
+        let key = Self::normalize_key(hostname);
+        self.domains.get(&key).or_else(|| {
+            if key != hostname {
+                self.domains.get(hostname)
+            } else {
+                None
+            }
+        })
     }
 
     /// Get a mutable reference to a domain
     pub fn get_domain_mut(&mut self, hostname: &str) -> Option<&mut MonitoredDomain> {
-        let key = if hostname.contains(':') {
-            hostname.to_string()
-        } else {
-            format!("{}:443", hostname)
-        };
-
-        self.domains.get_mut(&key)
+        let key = Self::normalize_key(hostname);
+        if self.domains.contains_key(&key) {
+            return self.domains.get_mut(&key);
+        }
+        if key != hostname {
+            return self.domains.get_mut(hostname);
+        }
+        None
     }
 
     /// Get all enabled domains
@@ -144,11 +159,26 @@ impl CertificateInventory {
     /// badssl.com 1h
     /// ```
     pub fn load_from_file<P: AsRef<Path>>(&mut self, path: P) -> Result<()> {
-        let file = fs::File::open(path.as_ref()).map_err(|e| {
-            anyhow::anyhow!("Failed to open domains file {:?}: {}", path.as_ref(), e)
-        })?;
+        let path_ref = path.as_ref();
+
+        // Check file size before loading to prevent memory exhaustion
+        let metadata = fs::metadata(path_ref)
+            .map_err(|e| anyhow::anyhow!("Failed to read file metadata {:?}: {}", path_ref, e))?;
+
+        if metadata.len() > MAX_FILE_SIZE {
+            return Err(anyhow::anyhow!(
+                "Domains file too large: {} bytes (max {} bytes)",
+                metadata.len(),
+                MAX_FILE_SIZE
+            )
+            .into());
+        }
+
+        let file = fs::File::open(path_ref)
+            .map_err(|e| anyhow::anyhow!("Failed to open domains file {:?}: {}", path_ref, e))?;
 
         let reader = BufReader::new(file);
+        let mut domain_count = 0;
 
         for line in reader.lines() {
             let line = line?;
@@ -157,6 +187,17 @@ impl CertificateInventory {
             // Skip empty lines and comments
             if line.is_empty() || line.starts_with('#') {
                 continue;
+            }
+
+            // Check domain count limit
+            domain_count += 1;
+            if domain_count > MAX_DOMAINS {
+                tracing::warn!(
+                    "Domains file contains more than {} entries, only the first {} will be loaded",
+                    MAX_DOMAINS,
+                    MAX_DOMAINS
+                );
+                break;
             }
 
             // Parse line: hostname[:port] [interval]
@@ -209,12 +250,35 @@ impl CertificateInventory {
 
     /// Load domains from JSON file
     pub fn load_from_json<P: AsRef<Path>>(&mut self, path: P) -> Result<()> {
-        let contents = fs::read_to_string(path.as_ref()).map_err(|e| {
-            anyhow::anyhow!("Failed to read inventory file {:?}: {}", path.as_ref(), e)
-        })?;
+        let path_ref = path.as_ref();
+
+        // Check file size before loading to prevent memory exhaustion
+        let metadata = fs::metadata(path_ref)
+            .map_err(|e| anyhow::anyhow!("Failed to read file metadata {:?}: {}", path_ref, e))?;
+
+        if metadata.len() > MAX_FILE_SIZE {
+            return Err(anyhow::anyhow!(
+                "Inventory JSON file too large: {} bytes (max {} bytes)",
+                metadata.len(),
+                MAX_FILE_SIZE
+            )
+            .into());
+        }
+
+        let contents = fs::read_to_string(path_ref)
+            .map_err(|e| anyhow::anyhow!("Failed to read inventory file {:?}: {}", path_ref, e))?;
 
         let domains: HashMap<String, MonitoredDomain> = serde_json::from_str(&contents)
             .map_err(|e| anyhow::anyhow!("Failed to parse inventory JSON: {}", e))?;
+
+        if domains.len() > MAX_DOMAINS {
+            return Err(anyhow::anyhow!(
+                "Inventory JSON contains {} domains (max {})",
+                domains.len(),
+                MAX_DOMAINS
+            )
+            .into());
+        }
 
         self.domains = domains;
         Ok(())
@@ -268,16 +332,22 @@ fn parse_interval(interval_str: &str) -> Result<u64> {
         .map_err(|e| anyhow::anyhow!("Invalid interval value: {}", e))?;
 
     let seconds = match unit {
-        "s" => value,
-        "m" => value * 60,
-        "h" => value * 3600,
-        "d" => value * 86400,
+        "s" => Ok(value),
+        "m" => value
+            .checked_mul(60)
+            .ok_or_else(|| anyhow::anyhow!("Interval overflow: value too large")),
+        "h" => value
+            .checked_mul(3600)
+            .ok_or_else(|| anyhow::anyhow!("Interval overflow: value too large")),
+        "d" => value
+            .checked_mul(86400)
+            .ok_or_else(|| anyhow::anyhow!("Interval overflow: value too large")),
         _ => {
             return Err(
                 anyhow::anyhow!("Invalid interval unit: {} (use s, m, h, or d)", unit).into(),
             );
         }
-    };
+    }?;
 
     Ok(seconds)
 }

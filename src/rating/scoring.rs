@@ -109,14 +109,21 @@ impl RatingCalculator {
         // Determine grade
         let mut grade = Grade::from_score(score);
 
-        // Check for certificate issues that override grade
+        // Check for certificate issues that override grade.
+        // Priority: expired/untrusted (Grade T) takes precedence over mismatch (Grade M),
+        // because an expired cert is a more severe trust failure.
         if let Some(cert) = certificate {
-            if !cert.hostname_match {
-                grade = Grade::M; // Certificate name mismatch
+            if !cert.not_expired {
+                grade = Grade::T; // Certificate expired — most critical
             } else if !cert.trust_chain_valid {
-                grade = Grade::T; // Trust issues
+                grade = Grade::T; // Trust chain invalid
+            } else if !cert.hostname_match {
+                grade = Grade::M; // Certificate name mismatch
             }
         }
+        // Note: certificate=None means cert evaluation was skipped (e.g. protocol-only scan).
+        // Callers performing a full TLS scan MUST provide certificate data;
+        // missing certificate on a full scan should be treated as Grade T upstream.
 
         RatingResult {
             grade,
@@ -264,7 +271,6 @@ impl RatingCalculator {
         let mut score = 100u8;
         let mut total_ciphers = 0;
         let mut weak_ciphers = 0; // low + medium strength
-        let mut low_strength_count = 0;
         let mut aead_count = 0;
 
         for summary in ciphers.values() {
@@ -281,15 +287,12 @@ impl RatingCalculator {
             // Aggregate counts across all protocols
             total_ciphers += summary.counts.total;
             weak_ciphers += summary.counts.low_strength + summary.counts.medium_strength;
-            low_strength_count += summary.counts.low_strength;
             aead_count += summary.counts.aead;
         }
 
         if total_ciphers > 0 {
             // Calculate percentage of weak ciphers
             let weak_percentage = (weak_ciphers * 100) / total_ciphers;
-            let low_percentage = (low_strength_count * 100) / total_ciphers;
-
             // SSL Labs criteria: Penalize based on percentage of WEAK ciphers
             if weak_percentage >= 75 {
                 // 75%+ weak ciphers: -20 points (major penalty)
@@ -305,12 +308,8 @@ impl RatingCalculator {
                 score = score.saturating_sub(5);
             }
 
-            // Additional penalty if LOW strength ciphers present (very weak)
-            if low_percentage >= 25 {
-                score = score.saturating_sub(10);
-            } else if low_percentage > 0 {
-                score = score.saturating_sub(5);
-            }
+            // Note: low-strength ciphers are already penalized as part of weak_percentage
+            // (which includes low + medium strength). No separate penalty needed.
 
             // Check AEAD support (penalty for CBC mode ciphers)
             let aead_percentage = (aead_count * 100) / total_ciphers;

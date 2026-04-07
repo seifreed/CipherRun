@@ -1,5 +1,6 @@
 use super::phases;
 use crate::application::ScanRequest;
+use crate::protocols::pre_handshake::PreHandshakeScanResult;
 use crate::utils::mtls::MtlsConfig;
 use crate::utils::network::Target;
 use std::sync::Arc;
@@ -8,8 +9,9 @@ pub(crate) fn build_scan_context(
     target: Target,
     request: ScanRequest,
     mtls_config: Option<MtlsConfig>,
+    pre_handshake: Option<PreHandshakeScanResult>,
 ) -> phases::ScanContext {
-    phases::ScanContext::new(target, Arc::new(request), mtls_config)
+    phases::ScanContext::new(target, Arc::new(request), mtls_config, pre_handshake)
 }
 
 pub(crate) fn build_phase_orchestrator(

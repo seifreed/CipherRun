@@ -44,6 +44,8 @@ impl CommandRouter {
     /// # Errors
     /// Returns a TlsError if invalid argument combinations are detected
     pub fn route(args: Args) -> Result<Box<dyn Command>> {
+        Self::validate_routing(&args)?;
+
         // Priority 1: API server mode
         if args.api_server.enable {
             return Ok(Box::new(ApiServerCommand::new(args)));
@@ -123,6 +125,20 @@ impl CommandRouter {
             });
         }
 
+        let exclusive_mode_active = mode_count == 1;
+        let additional_action_requested = args.target.is_some()
+            || args.input_file.is_some()
+            || args.mx_domain.is_some()
+            || args.database.init
+            || args.database.cleanup_days.is_some()
+            || args.database.history.is_some();
+
+        if exclusive_mode_active && additional_action_requested {
+            return Err(TlsError::InvalidInput {
+                message: "Operational modes (--serve, --monitor, --ct-logs, analytics) cannot be combined with scan targets, MX/file input, or database action flags.".to_string(),
+            });
+        }
+
         // Check for MX + file conflict
         if args.mx_domain.is_some() && args.input_file.is_some() {
             return Err(TlsError::InvalidInput {
@@ -145,59 +161,86 @@ impl CommandRouter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cli::{ApiServerArgs, CtLogsArgs, DatabaseArgs, MonitoringArgs};
 
     #[test]
     fn test_route_api_server() {
-        let mut args = Args::default();
-        args.api_server.enable = true;
+        let args = Args {
+            api_server: ApiServerArgs {
+                enable: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
         let cmd = CommandRouter::route(args).expect("test assertion should succeed");
         assert_eq!(cmd.name(), "ApiServerCommand");
     }
 
     #[test]
     fn test_route_monitor() {
-        let mut args = Args::default();
-        args.monitoring.enable = true;
+        let args = Args {
+            monitoring: MonitoringArgs {
+                enable: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
         let cmd = CommandRouter::route(args).expect("test assertion should succeed");
         assert_eq!(cmd.name(), "MonitorCommand");
     }
 
     #[test]
     fn test_route_ct_logs() {
-        let mut args = Args::default();
-        args.ct_logs.enable = true;
+        let args = Args {
+            ct_logs: CtLogsArgs {
+                enable: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
         let cmd = CommandRouter::route(args).expect("test assertion should succeed");
         assert_eq!(cmd.name(), "CtLogsCommand");
     }
 
     #[test]
     fn test_route_analytics() {
-        let mut args = Args::default();
-        args.compare = Some("1:2".to_string());
+        let args = Args {
+            compare: Some("1:2".to_string()),
+            ..Default::default()
+        };
         let cmd = CommandRouter::route(args).expect("test assertion should succeed");
         assert_eq!(cmd.name(), "AnalyticsCommand");
     }
 
     #[test]
     fn test_route_database() {
-        let mut args = Args::default();
-        args.database.init = true;
+        let args = Args {
+            database: DatabaseArgs {
+                init: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
         let cmd = CommandRouter::route(args).expect("test assertion should succeed");
         assert_eq!(cmd.name(), "DatabaseCommand");
     }
 
     #[test]
     fn test_route_mx_test() {
-        let mut args = Args::default();
-        args.mx_domain = Some("example.com".to_string());
+        let args = Args {
+            mx_domain: Some("example.com".to_string()),
+            ..Default::default()
+        };
         let cmd = CommandRouter::route(args).expect("test assertion should succeed");
         assert_eq!(cmd.name(), "MxTestCommand");
     }
 
     #[test]
     fn test_route_mass_scan() {
-        let mut args = Args::default();
-        args.input_file = Some(std::path::PathBuf::from("targets.txt"));
+        let args = Args {
+            input_file: Some(std::path::PathBuf::from("targets.txt")),
+            ..Default::default()
+        };
         let cmd = CommandRouter::route(args).expect("test assertion should succeed");
         assert_eq!(cmd.name(), "MassScanCommand");
     }
@@ -211,18 +254,42 @@ mod tests {
 
     #[test]
     fn test_validate_conflicting_modes() {
-        let mut args = Args::default();
-        args.api_server.enable = true;
-        args.monitoring.enable = true;
+        let args = Args {
+            api_server: ApiServerArgs {
+                enable: true,
+                ..Default::default()
+            },
+            monitoring: MonitoringArgs {
+                enable: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
         let result = CommandRouter::validate_routing(&args);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_validate_mx_file_conflict() {
-        let mut args = Args::default();
-        args.mx_domain = Some("example.com".to_string());
-        args.input_file = Some(std::path::PathBuf::from("targets.txt"));
+        let args = Args {
+            mx_domain: Some("example.com".to_string()),
+            input_file: Some(std::path::PathBuf::from("targets.txt")),
+            ..Default::default()
+        };
+        let result = CommandRouter::validate_routing(&args);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_operational_mode_with_target_conflict() {
+        let args = Args {
+            api_server: ApiServerArgs {
+                enable: true,
+                ..Default::default()
+            },
+            target: Some("example.com:443".to_string()),
+            ..Default::default()
+        };
         let result = CommandRouter::validate_routing(&args);
         assert!(result.is_err());
     }

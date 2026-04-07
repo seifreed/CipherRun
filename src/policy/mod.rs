@@ -240,7 +240,9 @@ impl PolicyResult {
     /// Format the result for display
     pub fn format(&self, format: &str) -> crate::Result<String> {
         match format {
-            "json" => Ok(serde_json::to_string_pretty(self)?),
+            "json" => serde_json::to_string_pretty(self).map_err(|e| crate::TlsError::ParseError {
+                message: format!("Failed to serialize policy result to JSON: {}", e),
+            }),
             "csv" => self.to_csv(),
             "terminal" => self.to_terminal(),
             _ => self.to_terminal(),

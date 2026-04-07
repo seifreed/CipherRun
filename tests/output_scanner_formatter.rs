@@ -128,6 +128,7 @@ fn test_scanner_formatter_display_helpers() {
     let vulns = vec![VulnerabilityResult {
         vuln_type: VulnerabilityType::Heartbleed,
         vulnerable: false,
+        inconclusive: false,
         details: "Not vulnerable".to_string(),
         cve: Some("CVE-2014-0160".to_string()),
         cwe: None,

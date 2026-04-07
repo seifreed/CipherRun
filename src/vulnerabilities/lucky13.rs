@@ -5,12 +5,12 @@
 // It exploits timing differences in MAC verification to recover plaintext.
 
 use crate::Result;
+use crate::constants::TLS_HANDSHAKE_TIMEOUT;
 use crate::protocols::Protocol;
 use crate::protocols::handshake::ClientHelloBuilder;
 use crate::utils::network::Target;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
 use tokio::time::{Instant, timeout};
 
 /// Lucky13 vulnerability tester
@@ -23,29 +23,46 @@ impl Lucky13Tester {
         Self { target }
     }
 
+    /// Timing test configuration
+    const MIN_SAMPLES: usize = 15; // Minimum samples for statistical significance
+    const SAMPLES: usize = 25; // Target number of samples
+    const WARMUP_SAMPLES: usize = 5; // Warmup samples to discard (cache warmup)
+    const COEFFICIENT_OF_VARIATION_MAX: f64 = 0.5; // Max acceptable CV
+    const TIMING_THRESHOLD_PERCENT: f64 = 15.0; // Minimum % difference for timing oracle
+    const MIN_TIMING_THRESHOLD_MS: f64 = 10.0; // Minimum absolute difference (network jitter)
+
     /// Test for Lucky13 vulnerability
     pub async fn test(&self) -> Result<Lucky13TestResult> {
         let cbc_supported = self.test_cbc_ciphers().await?;
-        
-        let timing_result = if cbc_supported {
+
+        let (timing_result, inconclusive) = if cbc_supported {
             self.test_timing_oracle().await?
         } else {
-            // Return false for timing_oracle when CBC not supported
-            false
+            (false, false)
         };
 
         let details = if !cbc_supported {
             "Not vulnerable - CBC ciphers not supported".to_string()
+        } else if inconclusive {
+            "INCONCLUSIVE: CBC ciphers supported but timing analysis was unreliable due to network conditions. \
+             Manual testing recommended.".to_string()
         } else if timing_result {
-            "Vulnerable to Lucky13 (CVE-2013-0169) - CBC ciphers with timing oracle detected".to_string()
+            "Vulnerable to Lucky13 (CVE-2013-0169) - CBC ciphers with timing oracle detected"
+                .to_string()
         } else {
-            "Partially vulnerable - CBC ciphers supported but no clear timing oracle detected".to_string()
+            "Partially vulnerable - CBC ciphers supported but no timing oracle detected. \
+             Server may still be vulnerable to more advanced timing attacks."
+                .to_string()
         };
+
+        let partially_vulnerable = cbc_supported && !timing_result && !inconclusive;
 
         Ok(Lucky13TestResult {
             vulnerable: cbc_supported && timing_result,
+            partially_vulnerable,
             cbc_supported,
             timing_oracle: timing_result,
+            inconclusive,
             details,
         })
     }
@@ -59,8 +76,8 @@ impl Lucky13Tester {
         // Test with various CBC ciphers
         let cbc_ciphers = "AES128-SHA:AES256-SHA:AES128-SHA256:AES256-SHA256:DES-CBC3-SHA";
 
-        match timeout(Duration::from_secs(5), TcpStream::connect(addr)).await {
-            Ok(Ok(stream)) => {
+        match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None).await {
+            Ok(stream) => {
                 let std_stream = stream.into_std()?;
                 std_stream.set_nonblocking(false)?;
 
@@ -78,49 +95,115 @@ impl Lucky13Tester {
     }
 
     /// Test for timing oracle by sending malformed MAC
-    /// Returns Ok(true) if timing oracle detected, Ok(false) if not detected,
-    /// or stores inconclusive status separately
-    async fn test_timing_oracle(&self) -> Result<bool> {
-        // Run multiple tests to detect timing differences
-        let mut short_padding_times = Vec::new();
-        let mut long_padding_times = Vec::new();
+    /// Returns (timing_oracle_detected, inconclusive)
+    /// Uses proper statistical analysis with warmup, sufficient samples, and CV checks
+    async fn test_timing_oracle(&self) -> Result<(bool, bool)> {
+        // Warmup phase: discard initial samples to allow cache warmup
+        for _ in 0..Self::WARMUP_SAMPLES {
+            let _ = self.test_mac_timing(true).await;
+            let _ = self.test_mac_timing(false).await;
+        }
 
-        for _ in 0..5 {
+        // Collect timing samples
+        let mut short_padding_times = Vec::with_capacity(Self::SAMPLES);
+        let mut long_padding_times = Vec::with_capacity(Self::SAMPLES);
+
+        for _ in 0..Self::SAMPLES {
             if let Ok(time) = self.test_mac_timing(true).await {
                 short_padding_times.push(time);
             }
             if let Ok(time) = self.test_mac_timing(false).await {
                 long_padding_times.push(time);
             }
+
+            // Small delay between samples to avoid rate limiting
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
 
-        // If we can't collect samples, return false (not vulnerable)
-        // but this should be interpreted as inconclusive at a higher level
-        if short_padding_times.is_empty() || long_padding_times.is_empty() {
-            // Return false, but note that this indicates we couldn't test
-            // In a production system, you'd want to track this as inconclusive
-            return Ok(false);
+        // Check if we have enough samples for statistical significance
+        if short_padding_times.len() < Self::MIN_SAMPLES
+            || long_padding_times.len() < Self::MIN_SAMPLES
+        {
+            // Insufficient samples - return inconclusive
+            return Ok((false, true));
         }
 
-        // Calculate average times
+        // Calculate statistics
         let avg_short: f64 =
             short_padding_times.iter().sum::<u128>() as f64 / short_padding_times.len() as f64;
         let avg_long: f64 =
             long_padding_times.iter().sum::<u128>() as f64 / long_padding_times.len() as f64;
 
-        // If there's a significant timing difference (>10%), timing oracle exists
-        let diff_percent = ((avg_short - avg_long).abs() / avg_long) * 100.0;
-        Ok(diff_percent > 10.0)
+        // Calculate sample standard deviations (Bessel's correction: N-1)
+        // Using N-1 avoids underestimating variance with small samples,
+        // which would cause false positive timing oracle detections.
+        let short_n = short_padding_times.len() as f64;
+        let short_variance: f64 = short_padding_times
+            .iter()
+            .map(|t| (*t as f64 - avg_short).powi(2))
+            .sum::<f64>()
+            / (short_n - 1.0).max(1.0);
+        let short_stddev = short_variance.sqrt();
+
+        let long_n = long_padding_times.len() as f64;
+        let long_variance: f64 = long_padding_times
+            .iter()
+            .map(|t| (*t as f64 - avg_long).powi(2))
+            .sum::<f64>()
+            / (long_n - 1.0).max(1.0);
+        let long_stddev = long_variance.sqrt();
+
+        // Calculate coefficient of variation (CV) to assess timing reliability
+        let short_cv = if avg_short > 0.0 {
+            short_stddev / avg_short
+        } else {
+            f64::MAX
+        };
+        let long_cv = if avg_long > 0.0 {
+            long_stddev / avg_long
+        } else {
+            f64::MAX
+        };
+
+        // Check if timing measurements are reliable (low variance)
+        let timing_reliable = short_cv < Self::COEFFICIENT_OF_VARIATION_MAX
+            && long_cv < Self::COEFFICIENT_OF_VARIATION_MAX;
+
+        // Calculate timing difference
+        let timing_diff = (avg_short - avg_long).abs();
+        let timing_diff_percent = if avg_long > 0.0 {
+            (timing_diff / avg_long) * 100.0
+        } else {
+            0.0
+        };
+
+        // Statistical significance: difference should be > combined std dev
+        let combined_stddev = (short_variance + long_variance).sqrt();
+        let statistically_significant =
+            timing_diff > 2.0 * combined_stddev + Self::MIN_TIMING_THRESHOLD_MS;
+
+        // Timing oracle detected if:
+        // 1. Timing measurements are reliable (low CV)
+        // 2. Difference is statistically significant
+        // 3. Percentage difference exceeds threshold
+        let oracle_detected = timing_reliable
+            && statistically_significant
+            && timing_diff_percent > Self::TIMING_THRESHOLD_PERCENT;
+
+        // If timing is not reliable, report as inconclusive
+        if !timing_reliable {
+            return Ok((false, true));
+        }
+
+        Ok((oracle_detected, false))
     }
 
     /// Test MAC timing with different padding lengths
     async fn test_mac_timing(&self, short_padding: bool) -> Result<u128> {
         let addr = self.target.socket_addrs()[0];
 
-        let start = Instant::now();
-
-        match timeout(Duration::from_secs(5), TcpStream::connect(addr)).await {
-            Ok(Ok(mut stream)) => {
+        match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None).await {
+            Ok(mut stream) => {
                 // Send ClientHello
                 let client_hello = self.build_client_hello();
                 stream.write_all(&client_hello).await?;
@@ -139,6 +222,10 @@ impl Lucky13Tester {
 
                 // Send Finished with invalid MAC (different padding)
                 let finished = self.build_malformed_finished(short_padding);
+
+                // Start timing ONLY around the malformed Finished + server response
+                // This isolates the MAC verification timing from connection setup noise
+                let start = Instant::now();
                 stream.write_all(&finished).await?;
 
                 // Measure time until server responds with alert
@@ -209,8 +296,10 @@ impl Lucky13Tester {
 #[derive(Debug, Clone)]
 pub struct Lucky13TestResult {
     pub vulnerable: bool,
+    pub partially_vulnerable: bool,
     pub cbc_supported: bool,
     pub timing_oracle: bool,
+    pub inconclusive: bool,
     pub details: String,
 }
 
@@ -223,11 +312,14 @@ mod tests {
     fn test_lucky13_result() {
         let result = Lucky13TestResult {
             vulnerable: false,
+            partially_vulnerable: true,
             cbc_supported: true,
             timing_oracle: false,
+            inconclusive: false,
             details: "Test".to_string(),
         };
         assert!(!result.vulnerable);
+        assert!(result.partially_vulnerable);
         assert!(result.cbc_supported);
     }
 
@@ -306,8 +398,10 @@ mod tests {
     fn test_lucky13_result_details_contains_cbc() {
         let result = Lucky13TestResult {
             vulnerable: false,
+            partially_vulnerable: true,
             cbc_supported: true,
             timing_oracle: false,
+            inconclusive: false,
             details:
                 "Partially vulnerable - CBC ciphers supported but no clear timing oracle detected"
                     .to_string(),
@@ -320,11 +414,29 @@ mod tests {
     fn test_lucky13_result_not_vulnerable_details() {
         let result = Lucky13TestResult {
             vulnerable: false,
+            partially_vulnerable: false,
             cbc_supported: false,
             timing_oracle: false,
+            inconclusive: false,
             details: "Not vulnerable - CBC ciphers not supported".to_string(),
         };
         assert!(!result.vulnerable);
         assert!(result.details.contains("Not vulnerable"));
+    }
+
+    #[test]
+    fn test_lucky13_result_inconclusive() {
+        let result = Lucky13TestResult {
+            vulnerable: false,
+            partially_vulnerable: false,
+            cbc_supported: true,
+            timing_oracle: false,
+            inconclusive: true,
+            details: "INCONCLUSIVE: CBC ciphers supported but timing analysis was unreliable"
+                .to_string(),
+        };
+        assert!(!result.vulnerable);
+        assert!(result.inconclusive);
+        assert!(result.cbc_supported);
     }
 }

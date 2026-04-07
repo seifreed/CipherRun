@@ -4,6 +4,7 @@ mod lookup;
 
 use crate::application::PersistedScan;
 use crate::db::CipherRunDatabase;
+use insert::CertificateInsertParams;
 
 impl CipherRunDatabase {
     pub(crate) async fn store_certificates(
@@ -32,22 +33,22 @@ impl CipherRunDatabase {
         &self,
         cert_info: &crate::application::persistence::PersistedCertificate,
     ) -> crate::Result<i64> {
-        self.insert_or_get_certificate_direct(
-            &cert_info.fingerprint_sha256,
-            &cert_info.subject,
-            &cert_info.issuer,
-            cert_info.serial_number.as_deref(),
-            cert_info.not_before,
-            cert_info.not_after,
-            cert_info.signature_algorithm.as_deref(),
-            cert_info.public_key_algorithm.as_deref(),
-            cert_info.public_key_size,
-            &cert_info.san_domains,
-            cert_info.is_ca,
-            &cert_info.key_usage,
-            &cert_info.extended_key_usage,
-            cert_info.der_bytes.as_deref(),
-        )
-        .await
+        let params = CertificateInsertParams {
+            fingerprint: &cert_info.fingerprint_sha256,
+            subject: &cert_info.subject,
+            issuer: &cert_info.issuer,
+            serial_number: cert_info.serial_number.as_deref(),
+            not_before: cert_info.not_before,
+            not_after: cert_info.not_after,
+            signature_algorithm: cert_info.signature_algorithm.as_deref(),
+            public_key_algorithm: cert_info.public_key_algorithm.as_deref(),
+            public_key_size: cert_info.public_key_size,
+            san_domains: &cert_info.san_domains,
+            is_ca: cert_info.is_ca,
+            key_usage: &cert_info.key_usage,
+            extended_key_usage: &cert_info.extended_key_usage,
+            der_bytes: cert_info.der_bytes.as_deref(),
+        };
+        self.insert_or_get_certificate_direct(&params).await
     }
 }

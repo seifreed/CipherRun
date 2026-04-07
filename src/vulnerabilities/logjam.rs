@@ -6,10 +6,9 @@
 // precomputation attacks.
 
 use crate::Result;
+use crate::constants::TLS_HANDSHAKE_TIMEOUT;
 use crate::utils::network::Target;
 use std::time::Duration;
-use tokio::net::TcpStream;
-use tokio::time::timeout;
 
 /// LOGJAM vulnerability tester
 pub struct LogjamTester {
@@ -82,41 +81,44 @@ impl LogjamTester {
         let addr = self.target.socket_addrs()[0];
         let hostname = self.target.hostname.clone();
 
-        match timeout(Duration::from_secs(5), TcpStream::connect(addr)).await {
-            Ok(Ok(stream)) => {
-                // Convert to std stream for OpenSSL
-                let std_stream = stream.into_std()?;
-                std_stream.set_nonblocking(false)?;
-
-                // Wrap blocking SSL operations in spawn_blocking
-                let result = tokio::task::spawn_blocking(move || -> crate::Result<bool> {
-                    let mut builder = SslConnector::builder(SslMethod::tls())?;
-
-                    // Set DHE ciphers only
-                    builder.set_cipher_list("DHE:EDH:!aNULL:!eNULL")?;
-
-                    let connector = builder.build();
-                    match connector.connect(&hostname, std_stream) {
-                        Ok(ssl_stream) => match ssl_stream.ssl().peer_tmp_key() {
-                            Ok(tmp_key) => {
-                                if tmp_key.id() == Id::DH {
-                                    Ok(tmp_key.bits() <= 1024)
-                                } else {
-                                    Ok(false)
-                                }
-                            }
-                            Err(_) => Ok(false),
-                        },
-                        Err(_) => Ok(false),
-                    }
-                })
+        let stream =
+            match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None)
                 .await
-                .map_err(|e| anyhow::anyhow!("Spawn blocking failed: {}", e))??;
+            {
+                Ok(s) => s,
+                Err(_) => return Ok(false),
+            };
 
-                Ok(result)
+        // Convert to std stream for OpenSSL
+        let std_stream = stream.into_std()?;
+        std_stream.set_nonblocking(false)?;
+
+        // Wrap blocking SSL operations in spawn_blocking
+        let result = tokio::task::spawn_blocking(move || -> crate::Result<bool> {
+            let mut builder = SslConnector::builder(SslMethod::tls())?;
+
+            // Set DHE ciphers only
+            builder.set_cipher_list("DHE:EDH:!aNULL:!eNULL")?;
+
+            let connector = builder.build();
+            match connector.connect(&hostname, std_stream) {
+                Ok(ssl_stream) => match ssl_stream.ssl().peer_tmp_key() {
+                    Ok(tmp_key) => {
+                        if tmp_key.id() == Id::DH {
+                            Ok(tmp_key.bits() <= 1024)
+                        } else {
+                            Ok(false)
+                        }
+                    }
+                    Err(_) => Ok(false),
+                },
+                Err(_) => Ok(false),
             }
-            _ => Ok(false),
-        }
+        })
+        .await
+        .map_err(|e| crate::error::TlsError::Other(format!("Spawn blocking failed: {}", e)))??;
+
+        Ok(result)
     }
 
     /// Test for DHE cipher support
@@ -159,40 +161,43 @@ impl LogjamTester {
         let hostname = self.target.hostname.clone();
         let cipher = cipher.to_string();
 
-        match timeout(Duration::from_secs(3), TcpStream::connect(addr)).await {
-            Ok(Ok(stream)) => {
-                // Convert to std stream for OpenSSL
-                let std_stream = stream.into_std()?;
-                std_stream.set_nonblocking(false)?;
+        let stream =
+            match crate::utils::network::connect_with_timeout(addr, Duration::from_secs(3), None)
+                .await
+            {
+                Ok(s) => s,
+                Err(_) => return Ok(false),
+            };
 
-                // Wrap blocking SSL operations in spawn_blocking
-                let result = tokio::task::spawn_blocking(move || -> Result<bool> {
-                    let mut builder = SslConnector::builder(SslMethod::tls())?;
+        // Convert to std stream for OpenSSL
+        let std_stream = stream.into_std()?;
+        std_stream.set_nonblocking(false)?;
 
-                    // Allow SSL 3.0 for export ciphers
-                    if cipher.starts_with("EXP") {
-                        builder.set_min_proto_version(Some(SslVersion::SSL3))?;
-                    }
+        // Wrap blocking SSL operations in spawn_blocking
+        let result = tokio::task::spawn_blocking(move || -> Result<bool> {
+            let mut builder = SslConnector::builder(SslMethod::tls())?;
 
-                    // Try to set the specific cipher
-                    match builder.set_cipher_list(&cipher) {
-                        Ok(_) => {
-                            let connector = builder.build();
-                            match connector.connect(&hostname, std_stream) {
-                                Ok(_) => Ok(true),
-                                Err(_) => Ok(false),
-                            }
-                        }
+            // Allow SSL 3.0 for export ciphers
+            if cipher.starts_with("EXP") {
+                builder.set_min_proto_version(Some(SslVersion::SSL3))?;
+            }
+
+            // Try to set the specific cipher
+            match builder.set_cipher_list(&cipher) {
+                Ok(_) => {
+                    let connector = builder.build();
+                    match connector.connect(&hostname, std_stream) {
+                        Ok(_) => Ok(true),
                         Err(_) => Ok(false),
                     }
-                })
-                .await
-                .map_err(|e| anyhow::anyhow!("Spawn blocking failed: {}", e))??;
-
-                Ok(result)
+                }
+                Err(_) => Ok(false),
             }
-            _ => Ok(false),
-        }
+        })
+        .await
+        .map_err(|e| crate::error::TlsError::Other(format!("Spawn blocking failed: {}", e)))??;
+
+        Ok(result)
     }
 }
 

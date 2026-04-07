@@ -65,9 +65,9 @@ pub fn test_api_router_with_config(config: ApiConfig) -> Router {
 
     let api_routes = Router::new()
         .route("/scan", post(routes::scans::create_scan))
-        .route("/scan/:id", get(routes::scans::get_scan_status))
-        .route("/scan/:id", delete(routes::scans::cancel_scan))
-        .route("/scan/:id/results", get(routes::scans::get_scan_results))
+        .route("/scan/{id}", get(routes::scans::get_scan_status))
+        .route("/scan/{id}", delete(routes::scans::cancel_scan))
+        .route("/scan/{id}/results", get(routes::scans::get_scan_results))
         .route("/health", get(routes::health::health_check))
         .route("/stats", get(routes::stats::get_stats));
 
