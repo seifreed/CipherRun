@@ -43,7 +43,12 @@ impl NpnTester {
     /// Test NPN support by sending ClientHello with NPN extension
     async fn test_npn_support(&self) -> Result<Vec<String>> {
         // Use raw TLS handshake to properly test NPN
-        let addr = self.target.socket_addrs()[0];
+        let addr = self
+            .target
+            .socket_addrs()
+            .first()
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
 
         match crate::utils::network::connect_with_timeout(addr, Duration::from_secs(5), None).await
         {

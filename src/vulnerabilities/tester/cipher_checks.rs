@@ -157,44 +157,57 @@ pub(crate) fn evaluate_export<'a>(
     }
 }
 
-pub(crate) fn evaluate_beast(summary: Option<&ProtocolCipherSummary>) -> VulnerabilityResult {
-    if let Some(summary) = summary {
+/// Evaluate BEAST vulnerability (CVE-2011-3389)
+///
+/// BEAST affects both TLS 1.0 and SSL 3.0 with CBC ciphers.
+/// This function evaluates both protocols for vulnerability.
+pub(crate) fn evaluate_beast(
+    tls10_summary: Option<&ProtocolCipherSummary>,
+    ssl3_summary: Option<&ProtocolCipherSummary>,
+) -> VulnerabilityResult {
+    let mut vulnerable_protocols = Vec::new();
+
+    // Check TLS 1.0
+    if let Some(summary) = tls10_summary {
         let cbc_count = summary
             .supported_ciphers
             .iter()
             .filter(|c| c.encryption.contains("CBC"))
             .count();
-        let vulnerable = cbc_count > 0;
+        if cbc_count > 0 {
+            vulnerable_protocols.push(format!("TLS 1.0 ({} CBC ciphers)", cbc_count));
+        }
+    }
 
-        VulnerabilityResult {
-            vuln_type: VulnerabilityType::BEAST,
-            vulnerable,
-            inconclusive: false,
-            details: if vulnerable {
-                format!(
-                    "Server supports TLS 1.0 with {} CBC cipher(s), potentially vulnerable to BEAST",
-                    cbc_count
-                )
-            } else {
-                "Server supports TLS 1.0 but no CBC ciphers".to_string()
-            },
-            cve: Some("CVE-2011-3389".to_string()),
-            cwe: Some("CWE-326".to_string()),
-            severity: if vulnerable {
-                Severity::Medium
-            } else {
-                Severity::Info
-            },
+    // Check SSL 3.0
+    if let Some(summary) = ssl3_summary {
+        let cbc_count = summary
+            .supported_ciphers
+            .iter()
+            .filter(|c| c.encryption.contains("CBC"))
+            .count();
+        if cbc_count > 0 {
+            vulnerable_protocols.push(format!("SSL 3.0 ({} CBC ciphers)", cbc_count));
         }
-    } else {
-        VulnerabilityResult {
-            vuln_type: VulnerabilityType::BEAST,
-            vulnerable: false,
-            inconclusive: false,
-            details: "Server does not support TLS 1.0".to_string(),
-            cve: Some("CVE-2011-3389".to_string()),
-            cwe: Some("CWE-326".to_string()),
-            severity: Severity::Info,
-        }
+    }
+
+    let vulnerable = !vulnerable_protocols.is_empty();
+
+    VulnerabilityResult {
+        vuln_type: VulnerabilityType::BEAST,
+        vulnerable,
+        inconclusive: false,
+        details: if vulnerable {
+            format!("Vulnerable to BEAST: {}", vulnerable_protocols.join(", "))
+        } else {
+            "Server does not support TLS 1.0 or SSL 3.0 with CBC ciphers".to_string()
+        },
+        cve: Some("CVE-2011-3389".to_string()),
+        cwe: Some("CWE-326".to_string()),
+        severity: if vulnerable {
+            Severity::Medium
+        } else {
+            Severity::Info
+        },
     }
 }

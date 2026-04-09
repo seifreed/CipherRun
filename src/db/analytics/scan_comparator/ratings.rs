@@ -70,7 +70,8 @@ impl ScanComparator {
             } else {
                 0
             };
-        let cipher_changes = cipher_diff.added.len() + cipher_diff.removed.len();
+        let cipher_changes =
+            cipher_diff.added.len() + cipher_diff.removed.len() + cipher_diff.changed.len();
         let certificate_changes = if certificate_diff.fingerprint_changed {
             1
         } else {

@@ -18,18 +18,40 @@ use governor::{
     middleware::StateInformationMiddleware,
     state::{InMemoryState, NotKeyed},
 };
+use std::collections::BTreeMap;
 use std::num::NonZeroU32;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
+use std::time::Instant;
+
+/// Mask an API key for safe logging (shows first 4 and last 4 characters)
+fn mask_key(key: &str) -> String {
+    if key.len() > 8 {
+        format!("{}...{}", &key[..4], &key[key.len() - 4..])
+    } else if key.len() > 4 {
+        format!("{}****", &key[..4])
+    } else {
+        "****".to_string()
+    }
+}
 
 /// Type alias for the governor rate limiter with state information middleware
 /// This allows us to get remaining capacity information after each check
 type Limiter =
     Arc<GovernorRateLimiter<NotKeyed, InMemoryState, DefaultClock, StateInformationMiddleware>>;
 
-/// Per-key rate limiter storage
+/// Entry with rate limiter and last access timestamp for LRU eviction
+struct RateLimitEntry {
+    limiter: Limiter,
+    last_access: Instant,
+}
+
+/// Per-key rate limiter storage with efficient LRU eviction
 pub struct PerKeyRateLimiter {
-    /// Storage for per-key rate limiters
-    limiters: Arc<DashMap<String, Limiter>>,
+    /// Storage for per-key rate limiters with timestamps
+    limiters: Arc<DashMap<String, RateLimitEntry>>,
+    /// Index for efficient LRU eviction: timestamp -> keys
+    /// Uses BTreeMap for O(log n) access to oldest entries
+    access_index: Arc<RwLock<BTreeMap<Instant, Vec<String>>>>,
     /// Default quota configuration
     default_quota: Quota,
     /// Requests per minute limit
@@ -50,28 +72,11 @@ impl PerKeyRateLimiter {
 
         Self {
             limiters: Arc::new(DashMap::new()),
+            access_index: Arc::new(RwLock::new(BTreeMap::new())),
             default_quota,
             requests_per_minute: effective_rpm,
             window_seconds: 60,
         }
-    }
-
-    /// Get or create a rate limiter for a specific API key
-    /// Uses DashMap::entry() for atomic get-or-insert to avoid TOCTOU races
-    fn get_or_create_limiter(
-        &self,
-        key: &str,
-    ) -> Arc<GovernorRateLimiter<NotKeyed, InMemoryState, DefaultClock, StateInformationMiddleware>>
-    {
-        self.limiters
-            .entry(key.to_string())
-            .or_insert_with(|| {
-                Arc::new(
-                    GovernorRateLimiter::direct(self.default_quota)
-                        .with_middleware::<StateInformationMiddleware>(),
-                )
-            })
-            .clone()
     }
 
     /// Check rate limit for a specific key and return rate limit info
@@ -79,8 +84,39 @@ impl PerKeyRateLimiter {
     /// Uses Governor as the single source of truth for rate limiting decisions.
     /// Remaining is calculated from Governor's StateInformationMiddleware which
     /// provides accurate remaining capacity without race conditions.
+    ///
+    /// The timestamp is updated atomically with the limiter access to ensure
+    /// LRU eviction correctness under high concurrency.
     pub fn check(&self, key: &str) -> RateLimitResult {
-        let limiter = self.get_or_create_limiter(key);
+        let now = Instant::now();
+
+        // Use entry API to update timestamp atomically with limiter access
+        // This prevents race conditions where another request could access
+        // the limiter between our get-or-create and timestamp update
+        let limiter = self
+            .limiters
+            .entry(key.to_string())
+            .and_modify(|entry| {
+                // Update timestamp for existing entries
+                entry.last_access = now;
+            })
+            .or_insert_with(|| {
+                let limiter = Arc::new(
+                    GovernorRateLimiter::direct(self.default_quota)
+                        .with_middleware::<StateInformationMiddleware>(),
+                );
+                RateLimitEntry {
+                    limiter: limiter.clone(),
+                    last_access: now,
+                }
+            })
+            .limiter
+            .clone();
+
+        // Update access index for LRU eviction (write lock, brief)
+        if let Ok(mut index) = self.access_index.write() {
+            index.entry(now).or_default().push(key.to_string());
+        }
 
         // Try to consume a token from the rate limiter
         // With StateInformationMiddleware, check() returns StateSnapshot on success
@@ -131,35 +167,72 @@ impl PerKeyRateLimiter {
 
     /// Cleanup expired entries (should be called periodically)
     ///
-    /// Removes entries when the map grows too large. Since DashMap doesn't
-    /// maintain insertion order, we remove a portion of entries to keep
-    /// memory usage bounded. This is a simple cleanup strategy - for more
-    /// sophisticated cleanup, consider using an LRU cache instead.
+    /// Uses BTreeMap index for O(log n) LRU eviction:
+    /// 1. Removes entries older than MAX_AGE_SECS
+    /// 2. If still over limit, removes least recently used entries
+    ///
+    /// Complexity: O(m log n) where m is entries to remove, n is total entries
+    /// This is significantly faster than O(n log n) sorting for large datasets.
     pub fn cleanup(&self) {
         const MAX_ENTRIES: usize = 10000;
-        const REMOVE_RATIO: usize = 2; // Remove 1/2 of entries when over limit
+        const MAX_AGE_SECS: u64 = 3600; // 1 hour
 
-        if self.limiters.len() > MAX_ENTRIES {
-            // Calculate how many entries to remove
-            let to_remove = self.limiters.len() / REMOVE_RATIO;
+        if self.limiters.len() <= MAX_ENTRIES {
+            return;
+        }
 
-            // Collect keys to remove (arbitrary selection since DashMap is unordered)
-            let keys_to_remove: Vec<String> = self
-                .limiters
-                .iter()
-                .take(to_remove)
-                .map(|entry| entry.key().clone())
+        let now = Instant::now();
+        let cutoff = now - std::time::Duration::from_secs(MAX_AGE_SECS);
+
+        // Use BTreeMap for efficient range query - O(log n) to find old entries
+        if let Ok(mut index) = self.access_index.write() {
+            // Collect keys to remove from old timestamps
+            let old_keys: Vec<String> = index
+                .range(..cutoff)
+                .flat_map(|(_, keys)| keys.clone())
                 .collect();
 
-            for key in &keys_to_remove {
-                self.limiters.remove(key);
+            // Remove old entries from DashMap - O(m log n)
+            for key in old_keys {
+                self.limiters.remove(&key);
             }
 
-            tracing::info!(
-                "Rate limiter cleanup: removed {} entries, {} remaining",
-                keys_to_remove.len(),
-                self.limiters.len()
-            );
+            // Clear old entries from index - O(log n) to split
+            let mut remaining = BTreeMap::new();
+            std::mem::swap(&mut *index, &mut remaining);
+            *index = remaining.split_off(&cutoff);
+
+            // If still over limit, remove oldest entries using BTreeMap
+            if self.limiters.len() > MAX_ENTRIES {
+                let to_remove = self.limiters.len() - MAX_ENTRIES / 2;
+                let mut removed = 0;
+
+                // BTreeMap is sorted by timestamp, iterate from oldest
+                for (_timestamp, keys) in remaining.iter() {
+                    for key in keys {
+                        if removed >= to_remove {
+                            break;
+                        }
+                        self.limiters.remove(key);
+                        removed += 1;
+                    }
+                    if removed >= to_remove {
+                        break;
+                    }
+                }
+
+                // Remove evicted entries from index
+                let evicted_cutoff = *remaining.keys().next().unwrap_or(&cutoff);
+                let mut new_index = BTreeMap::new();
+                std::mem::swap(&mut *index, &mut new_index);
+                *index = new_index.split_off(&evicted_cutoff);
+
+                tracing::info!(
+                    "Rate limiter LRU cleanup: removed {} oldest entries, {} remaining",
+                    removed,
+                    self.limiters.len()
+                );
+            }
         }
     }
 }
@@ -203,7 +276,10 @@ pub async fn rate_limit(
     if let Some(auth) = auth_ext {
         // Check if user is Admin - admins bypass rate limiting
         if auth.permission == Permission::Admin {
-            tracing::debug!("Admin key {} - bypassing rate limit", auth.api_key);
+            tracing::debug!(
+                "Admin key {} - bypassing rate limit",
+                mask_key(&auth.api_key)
+            );
             return Ok(next.run(req).await);
         }
 
@@ -216,7 +292,7 @@ pub async fn rate_limit(
             } => {
                 tracing::debug!(
                     "Rate limit check passed for key {}: {}/{} remaining",
-                    auth.api_key,
+                    mask_key(&auth.api_key),
                     remaining,
                     limit
                 );
@@ -246,7 +322,7 @@ pub async fn rate_limit(
             } => {
                 tracing::warn!(
                     "Rate limit exceeded for key {}: limit={}, retry_after={}s",
-                    auth.api_key,
+                    mask_key(&auth.api_key),
                     limit,
                     retry_after
                 );
@@ -294,6 +370,7 @@ impl Clone for PerKeyRateLimiter {
     fn clone(&self) -> Self {
         Self {
             limiters: self.limiters.clone(),
+            access_index: self.access_index.clone(),
             default_quota: self.default_quota,
             requests_per_minute: self.requests_per_minute,
             window_seconds: self.window_seconds,

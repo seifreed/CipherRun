@@ -146,14 +146,14 @@ impl PolicyEvaluator {
         if let Some(rating) = results.ssl_rating() {
             // Check minimum grade
             if let Some(ref min_grade_str) = policy.min_grade {
-                let min_grade = self.parse_grade(min_grade_str).map_err(|_| {
-                    crate::TlsError::ConfigError {
-                        message: format!(
-                            "Invalid min_grade '{}' in policy rating configuration",
-                            min_grade_str
-                        ),
-                    }
-                })?;
+                let min_grade =
+                    self.parse_grade(min_grade_str)
+                        .map_err(|_| crate::TlsError::ConfigError {
+                            message: format!(
+                                "Invalid min_grade '{}' in policy rating configuration",
+                                min_grade_str
+                            ),
+                        })?;
                 if rating.grade < min_grade {
                     violations.push(
                         PolicyViolation::new(

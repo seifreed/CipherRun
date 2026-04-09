@@ -27,7 +27,11 @@ pub(super) async fn send_malformed_record(
     target: &Target,
     record_type: MalformedRecordType,
 ) -> Result<ServerResponse> {
-    let addr = target.socket_addrs()[0];
+    let addr = target
+        .socket_addrs()
+        .first()
+        .copied()
+        .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
     let start_time = Instant::now();
 
     match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None).await {
@@ -38,8 +42,7 @@ pub(super) async fn send_malformed_record(
 
             // Read ServerHello and handshake messages
             let mut buffer = vec![0u8; 8192];
-            let bytes_read =
-                timeout(Duration::from_secs(3), stream.read(&mut buffer)).await??;
+            let bytes_read = timeout(Duration::from_secs(3), stream.read(&mut buffer)).await??;
 
             if bytes_read == 0 {
                 return Ok(ServerResponse {
@@ -56,18 +59,18 @@ pub(super) async fn send_malformed_record(
 
             // Try to read response
             let mut response = vec![0u8; 1024];
-            let alert_type =
-                match timeout(Duration::from_secs(2), stream.read(&mut response)).await {
-                    Ok(Ok(n)) if n > 0 => {
-                        // Parse TLS alert if present
-                        if response[0] == CONTENT_TYPE_ALERT && n >= 7 {
-                            Some(response[6]) // Alert description
-                        } else {
-                            None
-                        }
+            let alert_type = match timeout(Duration::from_secs(2), stream.read(&mut response)).await
+            {
+                Ok(Ok(n)) if n > 0 => {
+                    // Parse TLS alert if present
+                    if response[0] == CONTENT_TYPE_ALERT && n >= 7 {
+                        Some(response[6]) // Alert description
+                    } else {
+                        None
                     }
-                    _ => None,
-                };
+                }
+                _ => None,
+            };
 
             Ok(ServerResponse {
                 connection_accepted: true,

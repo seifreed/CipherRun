@@ -5,6 +5,7 @@ use super::{
 use super::{CIPHER_SUITE_BASE_OFFSET, SERVER_HELLO_MIN_SIZE, SESSION_ID_LENGTH_OFFSET};
 use crate::ciphers::CipherSuite;
 use crate::protocols::{Protocol, handshake::ClientHelloBuilder};
+use anyhow::Context;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -65,8 +66,9 @@ impl CipherTester {
             return Ok(Vec::new());
         }
 
-        let (first_choice, second_choice, third_choice, reversed, rotated) =
-            self.run_preference_tests(protocol, &cipher_hexcodes).await?;
+        let (first_choice, second_choice, third_choice, reversed, rotated) = self
+            .run_preference_tests(protocol, &cipher_hexcodes)
+            .await?;
 
         let analyzer = super::CipherPreferenceAnalyzer::new(
             first_choice,
@@ -88,7 +90,13 @@ impl CipherTester {
         &self,
         protocol: Protocol,
         cipher_hexcodes: &[u16],
-    ) -> Result<(Option<u16>, Option<u16>, Option<u16>, Vec<u16>, Option<Vec<u16>>)> {
+    ) -> Result<(
+        Option<u16>,
+        Option<u16>,
+        Option<u16>,
+        Vec<u16>,
+        Option<Vec<u16>>,
+    )> {
         let first_choice = self
             .get_server_chosen_cipher(protocol, cipher_hexcodes)
             .await?;
@@ -131,7 +139,12 @@ impl CipherTester {
         protocol: Protocol,
         cipher_hexcodes: &[u16],
     ) -> Result<Option<u16>> {
-        let addr = self.target.socket_addrs()[0];
+        let addr = self
+            .target
+            .socket_addrs()
+            .first()
+            .copied()
+            .context("No socket addresses available for target")?;
 
         let mut stream = match crate::utils::network::connect_with_timeout(
             addr,
@@ -203,8 +216,7 @@ impl CipherTester {
         );
 
         if bytes_read >= cipher_offset + 2 {
-            let cipher =
-                u16::from_be_bytes([response[cipher_offset], response[cipher_offset + 1]]);
+            let cipher = u16::from_be_bytes([response[cipher_offset], response[cipher_offset + 1]]);
             tracing::debug!("Server chose cipher: 0x{:04x}", cipher);
             Some(cipher)
         } else {

@@ -22,7 +22,12 @@ impl ClientCAsTester {
     }
 
     pub async fn enumerate_client_cas(&self) -> Result<ClientCAsResult> {
-        let addr = self.target.socket_addrs()[0];
+        let addr = self
+            .target
+            .socket_addrs()
+            .first()
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
         let connect_timeout = Duration::from_secs(10);
         let overall_read_timeout = Duration::from_secs(10);
         let read_timeout = Duration::from_secs(2);

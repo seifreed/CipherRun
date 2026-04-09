@@ -3,6 +3,7 @@ use crate::utils::mtls::MtlsConfig;
 use crate::utils::network::Target;
 use std::time::Duration;
 use tokio::time::timeout;
+use tracing::debug;
 use x509_parser::prelude::*;
 
 use super::{CertificateChain, CertificateInfo};
@@ -43,7 +44,12 @@ impl CertificateParser {
         use std::sync::Arc;
         use tokio_rustls::TlsConnector;
 
-        let addr = self.target.socket_addrs()[0];
+        let addr = self
+            .target
+            .socket_addrs()
+            .first()
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
 
         // Connect TCP
         let stream =
@@ -89,17 +95,22 @@ impl CertificateParser {
             crate::error::TlsError::Other("No certificates received from server".into())
         })?;
 
-        // Limit certificate chain size to prevent DoS
+        // Limit certificate chain size to prevent DoS and potential bypass attacks
+        // A chain with >100 certs could hide a malicious cert after 99 valid ones
         const MAX_CERT_CHAIN_LENGTH: usize = 100;
         if certs.len() > MAX_CERT_CHAIN_LENGTH {
-            tracing::warn!(
-                "Certificate chain too long ({} certs), truncating to {}",
-                certs.len(),
-                MAX_CERT_CHAIN_LENGTH
-            );
+            return Err(crate::error::TlsError::CertificateError(
+                crate::error::CertificateValidationError::InvalidChain {
+                    reason: format!(
+                        "Certificate chain too long ({} certs), maximum allowed is {}. This could indicate a malicious server attempting to bypass validation.",
+                        certs.len(),
+                        MAX_CERT_CHAIN_LENGTH
+                    ),
+                },
+            ));
         }
 
-        let certs_to_process = certs.iter().take(MAX_CERT_CHAIN_LENGTH);
+        let certs_to_process = certs.iter();
         let mut parsed_certs = Vec::new();
 
         for cert_der in certs_to_process {
@@ -140,14 +151,27 @@ impl CertificateParser {
                         let addr_str = match ip.len() {
                             4 => format!("{}.{}.{}.{}", ip[0], ip[1], ip[2], ip[3]),
                             16 => {
-                                let arr: [u8; 16] = (*ip).try_into().unwrap_or([0; 16]);
+                                // Convert IPv6 bytes to address, handling malformed data gracefully
+                                let arr: [u8; 16] = match (*ip).try_into() {
+                                    Ok(a) => a,
+                                    Err(_) => {
+                                        debug!(
+                                            "Invalid IPv6 address length in SAN: {} bytes, expected 16",
+                                            ip.len()
+                                        );
+                                        // Return unspecified address for malformed data
+                                        [0; 16]
+                                    }
+                                };
                                 format!("{}", std::net::Ipv6Addr::from(arr))
                             }
                             _ => format!("IP:{}", hex::encode(ip)),
                         };
                         san.push(addr_str);
                     }
-                    _ => {}
+                    other => {
+                        debug!("Skipping non-DNS/IP SAN type: {:?}", other);
+                    }
                 }
             }
         }

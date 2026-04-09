@@ -102,12 +102,10 @@ mod response_only_tests {
 
     #[test]
     fn test_ipv6_address() {
-        let output = "[[::1]:443] TLS 1.3";
-        // Note: This is a simplified test. Real IPv6 handling may need adjustment
-        let result = ResponseOnlyFormatter::strip_target_prefix(output, "[::1]", 443);
+        let output = "[::1]:443 TLS 1.3";
+        let result = ResponseOnlyFormatter::strip_target_prefix(output, "::1", 443);
 
-        // Should handle IPv6 addresses
-        assert!(!result.contains("[::1]"));
+        assert_eq!(result, "TLS 1.3");
     }
 
     #[test]

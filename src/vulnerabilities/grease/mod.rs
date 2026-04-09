@@ -193,7 +193,12 @@ impl GreaseTester {
 
     /// Test baseline TLS connection (no GREASE)
     async fn test_baseline_connection(&self) -> Result<bool> {
-        let addr = self.target.socket_addrs()[0];
+        let addr = self
+            .target
+            .socket_addrs()
+            .first()
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
 
         let stream =
             match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None)

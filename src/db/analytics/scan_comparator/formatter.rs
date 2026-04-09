@@ -1,6 +1,27 @@
 // Formatting methods for ScanComparator
 
-use super::{ScanComparator, ScanComparison};
+use super::{CipherDetailInfo, ScanComparator, ScanComparison};
+use crate::utils::network::canonical_target;
+
+fn format_cipher_detail(cipher: &CipherDetailInfo) -> String {
+    let bits = cipher
+        .bits
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "N/A".to_string());
+
+    format!(
+        "{} [{}] strength={} fs={} key_exchange={} authentication={} encryption={} mac={} bits={}",
+        cipher.name.as_str(),
+        cipher.protocol.as_str(),
+        cipher.strength.as_str(),
+        cipher.forward_secrecy,
+        cipher.key_exchange.as_deref().unwrap_or("N/A"),
+        cipher.authentication.as_deref().unwrap_or("N/A"),
+        cipher.encryption.as_deref().unwrap_or("N/A"),
+        cipher.mac.as_deref().unwrap_or("N/A"),
+        bits
+    )
+}
 
 impl ScanComparator {
     /// Format comparison as string
@@ -41,8 +62,8 @@ impl ScanComparator {
             comp.scan_2.scan_id.unwrap_or(0)
         ));
         output.push_str(&format!(
-            "Target: {}:{}\n\n",
-            comp.scan_1.target_hostname, comp.scan_1.target_port
+            "Target: {}\n\n",
+            canonical_target(&comp.scan_1.target_hostname, comp.scan_1.target_port as u16)
         ));
 
         // Summary
@@ -78,7 +99,9 @@ impl ScanComparator {
         ));
 
         // Rating comparison
-        if comp.rating_diff.overall_changed {
+        let has_rating_changes = comp.rating_diff.overall_changed
+            || comp.rating_diff.component_diffs.iter().any(|component| component.changed);
+        if has_rating_changes {
             output.push_str("RATING CHANGES\n");
             output
                 .push_str("───────────────────────────────────────────────────────────────────\n");
@@ -116,7 +139,10 @@ impl ScanComparator {
         }
 
         // Protocol changes
-        if !comp.protocol_diff.added.is_empty() || !comp.protocol_diff.removed.is_empty() {
+        let has_protocol_changes = !comp.protocol_diff.added.is_empty()
+            || !comp.protocol_diff.removed.is_empty()
+            || comp.protocol_diff.preferred_change.is_some();
+        if has_protocol_changes {
             output.push_str("PROTOCOL CHANGES\n");
             output
                 .push_str("───────────────────────────────────────────────────────────────────\n");
@@ -139,7 +165,10 @@ impl ScanComparator {
         }
 
         // Cipher changes
-        if !comp.cipher_diff.added.is_empty() || !comp.cipher_diff.removed.is_empty() {
+        if !comp.cipher_diff.added.is_empty()
+            || !comp.cipher_diff.removed.is_empty()
+            || !comp.cipher_diff.changed.is_empty()
+        {
             output.push_str("CIPHER SUITE CHANGES\n");
             output
                 .push_str("───────────────────────────────────────────────────────────────────\n");
@@ -170,6 +199,35 @@ impl ScanComparator {
                     output.push_str(&format!(
                         "  ... and {} more\n",
                         comp.cipher_diff.removed.len() - 5
+                    ));
+                }
+            }
+            if !comp.cipher_diff.changed.is_empty() {
+                output.push_str(&format!("Changed ({}):\n", comp.cipher_diff.changed.len()));
+                for cipher in comp.cipher_diff.changed.iter().take(5) {
+                    output.push_str(&format!(
+                        "  * {} [{}]\n",
+                        cipher.current.name, cipher.current.protocol
+                    ));
+                    if !cipher.changed_fields.is_empty() {
+                        output.push_str(&format!(
+                            "    Fields: {}\n",
+                            cipher.changed_fields.join(", ")
+                        ));
+                    }
+                    output.push_str(&format!(
+                        "    Before: {}\n",
+                        format_cipher_detail(&cipher.previous)
+                    ));
+                    output.push_str(&format!(
+                        "    After:  {}\n",
+                        format_cipher_detail(&cipher.current)
+                    ));
+                }
+                if comp.cipher_diff.changed.len() > 5 {
+                    output.push_str(&format!(
+                        "  ... and {} more\n",
+                        comp.cipher_diff.changed.len() - 5
                     ));
                 }
             }
@@ -211,7 +269,10 @@ impl ScanComparator {
         }
 
         // Vulnerability changes
-        if !comp.vulnerability_diff.new.is_empty() || !comp.vulnerability_diff.resolved.is_empty() {
+        if !comp.vulnerability_diff.new.is_empty()
+            || !comp.vulnerability_diff.resolved.is_empty()
+            || !comp.vulnerability_diff.changed.is_empty()
+        {
             output.push_str("VULNERABILITY CHANGES\n");
             output
                 .push_str("───────────────────────────────────────────────────────────────────\n");
@@ -225,6 +286,12 @@ impl ScanComparator {
                 output.push_str("Resolved Vulnerabilities:\n");
                 for vuln in &comp.vulnerability_diff.resolved {
                     output.push_str(&format!("  - {} [{}]\n", vuln.vuln_type, vuln.severity));
+                }
+            }
+            if !comp.vulnerability_diff.changed.is_empty() {
+                output.push_str("Changed Vulnerabilities:\n");
+                for vuln in &comp.vulnerability_diff.changed {
+                    output.push_str(&format!("  * {} [{}]\n", vuln.vuln_type, vuln.severity));
                 }
             }
             output.push('\n');

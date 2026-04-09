@@ -39,6 +39,7 @@ pub struct CipherDiff {
     pub added: Vec<CipherInfo>,
     pub removed: Vec<CipherInfo>,
     pub unchanged: Vec<CipherInfo>,
+    pub changed: Vec<CipherChangeInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -47,6 +48,26 @@ pub struct CipherInfo {
     pub protocol: String,
     pub strength: String,
     pub forward_secrecy: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CipherDetailInfo {
+    pub name: String,
+    pub protocol: String,
+    pub key_exchange: Option<String>,
+    pub authentication: Option<String>,
+    pub encryption: Option<String>,
+    pub mac: Option<String>,
+    pub bits: Option<i32>,
+    pub forward_secrecy: bool,
+    pub strength: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CipherChangeInfo {
+    pub previous: CipherDetailInfo,
+    pub current: CipherDetailInfo,
+    pub changed_fields: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -76,17 +76,20 @@ impl<'a> ScanPresenter<'a> {
         cli_view: &ScanCliView<'_>,
         artifacts: Option<&ScanArtifactsOutcome>,
     ) {
-        if cli_view.should_render_post_scan_notices_for(artifacts.is_some())
-            && let Some(artifacts) = artifacts
+        if !cli_view.should_render_post_scan_notices_for(artifacts.is_some()) {
+            return;
+        }
+
+        let notices = ScanNoticePresenter::new();
+
+        if let Some(scan_id) = cli_view.stored_scan_id_for_artifact_notices() {
+            notices.render_storage_notice(Some(scan_id));
+        }
+
+        if let Some(artifacts) = artifacts
+            && cli_view.should_render_post_scan_export_spacing(artifacts.export_outcome.exported())
         {
-            let notices = ScanNoticePresenter::new();
-            if let Some(scan_id) = cli_view.stored_scan_id_for_artifact_notices() {
-                notices.render_storage_notice(Some(scan_id));
-            }
-            notices.render_export_spacing(
-                cli_view
-                    .should_render_post_scan_export_spacing(artifacts.export_outcome.exported()),
-            );
+            notices.render_export_spacing(true);
         }
     }
 

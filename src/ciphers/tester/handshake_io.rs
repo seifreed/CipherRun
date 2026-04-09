@@ -37,7 +37,12 @@ impl CipherTester {
             self.try_cipher_handshake_all_ips(protocol, cipher_hexcode)
                 .await
         } else {
-            let addr = self.target.socket_addrs()[0];
+            let addr = self
+                .target
+                .socket_addrs()
+                .first()
+                .copied()
+                .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
             self.try_cipher_handshake_on_ip_with_pool(protocol, cipher_hexcode, addr, pool)
                 .await
         }
@@ -52,7 +57,12 @@ impl CipherTester {
             self.try_cipher_handshake_all_ips(protocol, cipher_hexcode)
                 .await
         } else {
-            let addr = self.target.socket_addrs()[0];
+            let addr = self
+                .target
+                .socket_addrs()
+                .first()
+                .copied()
+                .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
             self.try_cipher_handshake_on_ip(protocol, cipher_hexcode, addr)
                 .await
         }

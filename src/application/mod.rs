@@ -1,6 +1,7 @@
 pub mod assessment;
 pub mod certificate_filters;
 pub mod certificate_inventory;
+pub mod output_presentation;
 pub mod parsed_input;
 pub mod persistence;
 pub mod ports;
@@ -15,11 +16,13 @@ pub use certificate_inventory::{
     CertificateInventoryPage, CertificateInventoryQuery, CertificateInventoryRecord,
     CertificateInventorySort,
 };
+pub use output_presentation::OutputPresentationMode;
 pub use parsed_input::{CompareScanIds, HostPortDaysInput, HostPortInput};
 pub use persistence::PersistedScan;
 pub use ports::{
-    CertificateInventoryPort, ComplianceEvaluatorPort, ComplianceFrameworkSource, PolicyEvaluatorPort,
-    PolicySource, ScanHistoryPort, ScanResultsStore, ScanResultsStoreFactory, ScannerPort,
+    CertificateInventoryPort, ComplianceEvaluatorPort, ComplianceFrameworkSource,
+    PolicyEvaluatorPort, PolicySource, ScanHistoryPort, ScanResultsStore, ScanResultsStoreFactory,
+    ScannerPort,
 };
 pub use scan_execution::{
     ScanCliView, ScanExecutionReport, ScanExportView, ScanFeatureView, ScanFingerprintView,

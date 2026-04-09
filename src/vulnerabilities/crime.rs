@@ -64,7 +64,12 @@ impl<'a> CrimeTester<'a> {
         // We send a ClientHello offering DEFLATE compression and check if the
         // server accepts it by looking at the compression method in ServerHello.
 
-        let addr = self.target.socket_addrs()[0];
+        let addr = self
+            .target
+            .socket_addrs()
+            .first()
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
 
         let mut stream =
             match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None)
@@ -116,7 +121,12 @@ impl<'a> CrimeTester<'a> {
     /// Detection approach: Parse the ServerHello extensions to find NPN (0x3374),
     /// then check if any negotiated protocol is SPDY (not h2/HTTP2).
     async fn test_spdy_compression(&self) -> Result<bool> {
-        let addr = self.target.socket_addrs()[0];
+        let addr = self
+            .target
+            .socket_addrs()
+            .first()
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
 
         let mut stream =
             match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None)

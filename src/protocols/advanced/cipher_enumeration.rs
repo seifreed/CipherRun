@@ -93,7 +93,12 @@ impl ProtocolAdvancedTester {
     }
 
     pub(super) async fn test_cipher_support(&self, cipher: &str) -> Result<bool> {
-        let addr = self.target.socket_addrs()[0];
+        let addr = self
+            .target
+            .socket_addrs()
+            .first()
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
         let connect_timeout = Duration::from_secs(10);
 
         let stream =
@@ -124,7 +129,12 @@ impl ProtocolAdvancedTester {
     }
 
     async fn test_cipher_with_protocol(&self, cipher: &str, protocol: SslVersion) -> Result<bool> {
-        let addr = self.target.socket_addrs()[0];
+        let addr = self
+            .target
+            .socket_addrs()
+            .first()
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
         let connect_timeout = Duration::from_secs(10);
 
         let stream =

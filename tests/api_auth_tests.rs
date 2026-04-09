@@ -58,7 +58,7 @@ async fn test_auth_invalid_key_returns_401() {
 #[tokio::test]
 async fn test_auth_missing_key_returns_401() {
     let app = common::api::test_api_router();
-    assert_auth_error(&app, "/api/v1/stats", None, "Missing X-API-Key").await;
+    assert_auth_error(&app, "/api/v1/stats", None, "Missing API key").await;
 }
 
 #[tokio::test]

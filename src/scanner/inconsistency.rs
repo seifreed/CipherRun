@@ -129,9 +129,10 @@ impl InconsistencyDetector {
     /// Detect all inconsistencies across scan results
     pub fn detect_all(&self) -> Vec<Inconsistency> {
         let mut inconsistencies = Vec::new();
+        let successful_scan_count = self.successful_scan_count();
 
         // Only detect inconsistencies if we have multiple successful scans
-        if self.results.len() < 2 {
+        if successful_scan_count < 2 {
             return inconsistencies;
         }
 
@@ -154,6 +155,13 @@ impl InconsistencyDetector {
         inconsistencies.extend(self.detect_alpn_inconsistencies());
 
         inconsistencies
+    }
+
+    fn successful_scan_count(&self) -> usize {
+        self.results
+            .values()
+            .filter(|result| result.error.is_none())
+            .count()
     }
 
     /// Detect protocol support inconsistencies
@@ -200,7 +208,7 @@ impl InconsistencyDetector {
                         "{} support is inconsistent across backends ({}/{} IPs support it)",
                         protocol.name(),
                         ips_with.len(),
-                        self.results.len()
+                        self.successful_scan_count()
                     ),
                     ips_affected: ips_with.iter().chain(ips_without.iter()).copied().collect(),
                     details: InconsistencyDetails::Protocols {
@@ -747,6 +755,84 @@ mod tests {
         assert!(kinds.contains(&InconsistencyType::SecurityGrade));
         assert!(kinds.contains(&InconsistencyType::SessionResumption));
         assert!(kinds.contains(&InconsistencyType::Alpn));
+    }
+
+    #[test]
+    fn test_protocol_inconsistency_denominator_excludes_failed_scans() {
+        let ip1: IpAddr = Ipv4Addr::new(127, 0, 0, 1).into();
+        let ip2: IpAddr = Ipv4Addr::new(127, 0, 0, 2).into();
+        let ip3: IpAddr = Ipv4Addr::new(127, 0, 0, 3).into();
+
+        let scan1 = make_scan(
+            Protocol::TLS13,
+            true,
+            None,
+            "CIPHER",
+            Grade::A,
+            None,
+            None,
+            None,
+        );
+        let scan2 = make_scan(
+            Protocol::TLS13,
+            false,
+            None,
+            "CIPHER",
+            Grade::A,
+            None,
+            None,
+            None,
+        );
+
+        let mut results = HashMap::new();
+        results.insert(
+            ip1,
+            SingleIpScanResult {
+                ip: ip1,
+                scan_result: scan1,
+                scan_duration_ms: 100,
+                error: None,
+            },
+        );
+        results.insert(
+            ip2,
+            SingleIpScanResult {
+                ip: ip2,
+                scan_result: scan2,
+                scan_duration_ms: 120,
+                error: None,
+            },
+        );
+        results.insert(
+            ip3,
+            SingleIpScanResult {
+                ip: ip3,
+                scan_result: ScanResults::default(),
+                scan_duration_ms: 80,
+                error: Some("timeout".to_string()),
+            },
+        );
+
+        let detector = InconsistencyDetector::new(results);
+        let inconsistencies = detector.detect_all();
+
+        let protocol_inconsistency = inconsistencies
+            .into_iter()
+            .find(|inconsistency| {
+                matches!(
+                    inconsistency.details,
+                    InconsistencyDetails::Protocols {
+                        protocol: Protocol::TLS13,
+                        ..
+                    }
+                )
+            })
+            .expect("protocol inconsistency should be detected");
+
+        assert_eq!(
+            protocol_inconsistency.description,
+            "TLS 1.3 support is inconsistent across backends (1/2 IPs support it)"
+        );
     }
 
     #[test]

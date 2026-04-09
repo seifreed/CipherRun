@@ -38,7 +38,7 @@ async fn fetch_history_postgres(
         SELECT scan_id, scan_timestamp, overall_grade, overall_score, scan_duration_ms
         FROM scans
         WHERE target_hostname = $1 AND target_port = $2
-        ORDER BY scan_timestamp DESC
+        ORDER BY scan_timestamp DESC, scan_id DESC
         LIMIT $3
         "#,
     )
@@ -64,7 +64,7 @@ async fn fetch_history_sqlite(
         SELECT scan_id, scan_timestamp, overall_grade, overall_score, scan_duration_ms
         FROM scans
         WHERE target_hostname = ? AND target_port = ?
-        ORDER BY scan_timestamp DESC
+        ORDER BY scan_timestamp DESC, scan_id DESC
         LIMIT ?
         "#,
     )

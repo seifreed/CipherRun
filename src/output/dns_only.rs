@@ -5,7 +5,9 @@
 /// in a clean, deduplicated format. Wildcard domains are normalized by removing
 /// the wildcard prefix.
 use crate::certificates::parser::CertificateInfo;
+use crate::scanner::ScanResults;
 use std::collections::HashSet;
+use std::net::IpAddr;
 
 /// DNS-Only output mode
 pub struct DnsOnlyMode;
@@ -32,13 +34,16 @@ impl DnsOnlyMode {
         if !cert.subject.is_empty()
             && let Some(cn) = Self::extract_cn(&cert.subject)
         {
-            domains.insert(Self::normalize_domain(&cn));
+            if let Some(domain) = Self::normalize_dns_domain(&cn) {
+                domains.insert(domain);
+            }
         }
 
         // Add all Subject Alternative Names (SANs)
         for san in &cert.san {
-            let normalized = Self::normalize_domain(san);
-            domains.insert(normalized);
+            if let Some(domain) = Self::normalize_dns_domain(san) {
+                domains.insert(domain);
+            }
         }
 
         // Convert to sorted vector
@@ -87,6 +92,24 @@ impl DnsOnlyMode {
         normalized.trim().to_string()
     }
 
+    /// Normalize and filter a value so only DNS-style names remain.
+    fn normalize_dns_domain(domain: &str) -> Option<String> {
+        let normalized = Self::normalize_domain(domain);
+        if normalized.is_empty() {
+            return None;
+        }
+
+        if normalized.starts_with("ip:") {
+            return None;
+        }
+
+        if normalized.parse::<IpAddr>().is_ok() {
+            return None;
+        }
+
+        Some(normalized)
+    }
+
     /// Extract unique domains from a certificate chain
     ///
     /// This processes only the leaf certificate (first in chain).
@@ -106,6 +129,16 @@ impl DnsOnlyMode {
         } else {
             domains.join("\n")
         }
+    }
+
+    /// Extract DNS-only output from a full scan result.
+    pub fn format_scan_results(results: &ScanResults) -> String {
+        results
+            .certificate_chain
+            .as_ref()
+            .and_then(|analysis| analysis.chain.leaf())
+            .map(Self::format_output)
+            .unwrap_or_default()
     }
 }
 
@@ -201,6 +234,24 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_domains_skips_ip_sans_and_ip_cn() {
+        let cert = CertificateInfo {
+            subject: "CN=192.0.2.1,O=Org,C=US".to_string(),
+            san: vec![
+                "192.0.2.1".to_string(),
+                "2001:db8::1".to_string(),
+                "IP:0a000001".to_string(),
+                "DNS:example.com".to_string(),
+            ],
+            ..Default::default()
+        };
+
+        let domains = DnsOnlyMode::extract_domains(&cert);
+
+        assert_eq!(domains, vec!["example.com".to_string()]);
+    }
+
+    #[test]
     fn test_format_output_multiple_domains() {
         let cert = CertificateInfo {
             subject: "CN=api.example.com,O=Org,C=US".to_string(),
@@ -251,5 +302,42 @@ mod tests {
         let cert = CertificateInfo::default();
         let output = DnsOnlyMode::format_output(&cert);
         assert!(output.is_empty());
+    }
+
+    #[test]
+    fn test_format_scan_results_uses_leaf_certificate() {
+        let leaf = CertificateInfo {
+            subject: "CN=api.example.com".to_string(),
+            san: vec!["www.example.com".to_string()],
+            ..Default::default()
+        };
+
+        let chain = crate::certificates::parser::CertificateChain {
+            certificates: vec![leaf],
+            chain_length: 1,
+            chain_size_bytes: 1,
+        };
+
+        let results = crate::scanner::ScanResults {
+            certificate_chain: Some(crate::scanner::CertificateAnalysisResult {
+                chain,
+                validation: crate::certificates::validator::ValidationResult {
+                    valid: true,
+                    issues: Vec::new(),
+                    trust_chain_valid: true,
+                    hostname_match: true,
+                    not_expired: true,
+                    signature_valid: true,
+                    trusted_ca: None,
+                    platform_trust: None,
+                },
+                revocation: None,
+            }),
+            ..Default::default()
+        };
+
+        let output = DnsOnlyMode::format_scan_results(&results);
+        assert!(output.contains("api.example.com"));
+        assert!(output.contains("www.example.com"));
     }
 }

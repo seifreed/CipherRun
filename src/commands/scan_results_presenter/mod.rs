@@ -19,6 +19,12 @@ impl<'a> ScanResultsPresenter<'a> {
 
         let results = cli_view.results();
         let formatter = ScannerFormatter::new(self.args);
+        let presentation_mode = self.args.output_presentation_mode();
+
+        if presentation_mode.is_dns_only() {
+            self.render_dns_only(results);
+            return;
+        }
 
         if cli_view.should_render_results_summary_only() {
             formatter.display_results_summary(results);
@@ -29,6 +35,11 @@ impl<'a> ScanResultsPresenter<'a> {
         if cli_view.should_render_results_summary() {
             formatter.display_results_summary(results);
         }
+    }
+
+    fn render_dns_only(&self, results: &crate::scanner::ScanResults) {
+        let formatter = crate::output::ScannerFormatter::new(self.args);
+        formatter.display_dns_only_results(results);
     }
 
     fn render_tls_sections(

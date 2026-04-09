@@ -141,7 +141,12 @@ impl ProtocolAdvancedTester {
     }
 
     pub(super) async fn check_fs_preference(&self) -> Result<bool> {
-        let addr = self.target.socket_addrs()[0];
+        let addr = self
+            .target
+            .socket_addrs()
+            .first()
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
         let connect_timeout = Duration::from_secs(10);
 
         let stream =

@@ -135,7 +135,10 @@ mod tests {
         }
     }
 
-    pub(crate) fn make_summary(protocol: Protocol, ciphers: Vec<CipherSuite>) -> ProtocolCipherSummary {
+    pub(crate) fn make_summary(
+        protocol: Protocol,
+        ciphers: Vec<CipherSuite>,
+    ) -> ProtocolCipherSummary {
         ProtocolCipherSummary {
             protocol,
             supported_ciphers: ciphers,
@@ -347,6 +350,349 @@ mod tests {
         assert_eq!(aggregated.alpn_protocols, vec!["http/1.1".to_string()]);
         assert_eq!(aggregated.session_resumption_caching, Some(false));
         assert_eq!(aggregated.session_resumption_tickets, Some(false));
+    }
+
+    #[test]
+    fn test_aggregate_ciphers_conservative_is_stable_and_conservative() {
+        let ip1: IpAddr = Ipv4Addr::new(127, 0, 0, 1).into();
+        let ip2: IpAddr = Ipv4Addr::new(127, 0, 0, 2).into();
+
+        let cipher_a = make_cipher("AES128-SHA", 128, "RSA", "AES-128-CBC");
+        let cipher_b = make_cipher("ECDHE-ECDSA-AES256-GCM-SHA384", 256, "ECDHE", "AES-256-GCM");
+
+        let mut ciphers_ip1 = HashMap::new();
+        let mut summary_ip1 = make_summary(Protocol::TLS12, vec![cipher_a.clone()]);
+        summary_ip1.server_ordered = true;
+        summary_ip1.server_preference = vec!["0x002F".to_string()];
+        summary_ip1.preferred_cipher = Some(cipher_a.clone());
+        summary_ip1.avg_handshake_time_ms = Some(10);
+        ciphers_ip1.insert(Protocol::TLS12, summary_ip1);
+
+        let mut ciphers_ip2 = HashMap::new();
+        let mut summary_ip2 = make_summary(Protocol::TLS12, vec![cipher_b.clone()]);
+        summary_ip2.server_ordered = false;
+        summary_ip2.server_preference = vec!["0xC030".to_string()];
+        summary_ip2.preferred_cipher = Some(cipher_b.clone());
+        summary_ip2.avg_handshake_time_ms = Some(20);
+        ciphers_ip2.insert(Protocol::TLS12, summary_ip2);
+
+        let protocol = ProtocolTestResult {
+            protocol: Protocol::TLS12,
+            supported: true,
+            preferred: true,
+            ciphers_count: 1,
+            handshake_time_ms: Some(10),
+            heartbeat_enabled: Some(true),
+            session_resumption_caching: Some(true),
+            session_resumption_tickets: Some(true),
+            secure_renegotiation: Some(true),
+        };
+        let protocol_ip2 = ProtocolTestResult {
+            handshake_time_ms: Some(20),
+            heartbeat_enabled: Some(true),
+            session_resumption_caching: Some(true),
+            session_resumption_tickets: Some(true),
+            secure_renegotiation: Some(false),
+            preferred: false,
+            ..protocol.clone()
+        };
+
+        let scan_ip1 = make_scan_result(
+            vec![protocol.clone()],
+            ciphers_ip1,
+            "fp1",
+            Grade::A,
+            90,
+            vec!["h2".to_string()],
+        );
+        let scan_ip2 = make_scan_result(
+            vec![protocol_ip2],
+            ciphers_ip2,
+            "fp2",
+            Grade::A,
+            90,
+            vec!["h2".to_string()],
+        );
+
+        let mut results_a = HashMap::new();
+        results_a.insert(
+            ip1,
+            SingleIpScanResult {
+                ip: ip1,
+                scan_result: scan_ip1.clone(),
+                scan_duration_ms: 100,
+                error: None,
+            },
+        );
+        results_a.insert(
+            ip2,
+            SingleIpScanResult {
+                ip: ip2,
+                scan_result: scan_ip2.clone(),
+                scan_duration_ms: 120,
+                error: None,
+            },
+        );
+
+        let mut results_b = HashMap::new();
+        results_b.insert(
+            ip2,
+            SingleIpScanResult {
+                ip: ip2,
+                scan_result: scan_ip2,
+                scan_duration_ms: 120,
+                error: None,
+            },
+        );
+        results_b.insert(
+            ip1,
+            SingleIpScanResult {
+                ip: ip1,
+                scan_result: scan_ip1,
+                scan_duration_ms: 100,
+                error: None,
+            },
+        );
+
+        let aggregated_a = ConservativeAggregator::new(results_a, vec![]).aggregate();
+        let aggregated_b = ConservativeAggregator::new(results_b, vec![]).aggregate();
+
+        let summary_a = aggregated_a
+            .ciphers
+            .get(&Protocol::TLS12)
+            .expect("TLS12 summary should exist");
+        let summary_b = aggregated_b
+            .ciphers
+            .get(&Protocol::TLS12)
+            .expect("TLS12 summary should exist");
+
+        let names_a: Vec<_> = summary_a
+            .supported_ciphers
+            .iter()
+            .map(|cipher| cipher.openssl_name.as_str())
+            .collect();
+        let names_b: Vec<_> = summary_b
+            .supported_ciphers
+            .iter()
+            .map(|cipher| cipher.openssl_name.as_str())
+            .collect();
+
+        assert_eq!(names_a, names_b);
+        assert_eq!(
+            names_a,
+            vec![
+                cipher_a.openssl_name.as_str(),
+                cipher_b.openssl_name.as_str()
+            ]
+        );
+        assert!(!summary_a.server_ordered);
+        assert!(summary_a.server_preference.is_empty());
+        assert!(summary_a.preferred_cipher.is_none());
+        assert_eq!(summary_a.avg_handshake_time_ms, Some(20));
+        assert_eq!(summary_a.counts.total, 2);
+        assert_eq!(summary_a.counts.forward_secrecy, 1);
+        assert_eq!(summary_a.counts.aead, 1);
+    }
+
+    #[test]
+    fn test_aggregate_protocols_conservative_uses_consensus_metadata() {
+        let ip1: IpAddr = Ipv4Addr::new(127, 0, 0, 1).into();
+        let ip2: IpAddr = Ipv4Addr::new(127, 0, 0, 2).into();
+
+        let cipher_ip1 = make_cipher("TLS_AES_128_GCM_SHA256", 128, "ECDHE", "AES-128-GCM");
+        let cipher_ip2 = make_cipher(
+            "TLS_CHACHA20_POLY1305_SHA256",
+            256,
+            "ECDHE",
+            "CHACHA20-POLY1305",
+        );
+
+        let mut ciphers_ip1 = HashMap::new();
+        ciphers_ip1.insert(
+            Protocol::TLS13,
+            make_summary(Protocol::TLS13, vec![cipher_ip1.clone()]),
+        );
+
+        let mut ciphers_ip2 = HashMap::new();
+        ciphers_ip2.insert(
+            Protocol::TLS13,
+            make_summary(Protocol::TLS13, vec![cipher_ip2.clone()]),
+        );
+
+        let protocol_ip1 = ProtocolTestResult {
+            protocol: Protocol::TLS13,
+            supported: true,
+            preferred: true,
+            ciphers_count: 1,
+            handshake_time_ms: Some(10),
+            heartbeat_enabled: Some(true),
+            session_resumption_caching: Some(true),
+            session_resumption_tickets: Some(true),
+            secure_renegotiation: Some(true),
+        };
+        let protocol_ip2 = ProtocolTestResult {
+            preferred: false,
+            handshake_time_ms: Some(20),
+            heartbeat_enabled: Some(true),
+            session_resumption_caching: Some(true),
+            session_resumption_tickets: Some(true),
+            secure_renegotiation: Some(false),
+            ..protocol_ip1.clone()
+        };
+
+        let scan_ip1 = make_scan_result(
+            vec![protocol_ip1],
+            ciphers_ip1,
+            "fp1",
+            Grade::A,
+            90,
+            vec!["h2".to_string()],
+        );
+        let scan_ip2 = make_scan_result(
+            vec![protocol_ip2],
+            ciphers_ip2,
+            "fp2",
+            Grade::A,
+            90,
+            vec!["h2".to_string()],
+        );
+
+        let mut results_a = HashMap::new();
+        results_a.insert(
+            ip1,
+            SingleIpScanResult {
+                ip: ip1,
+                scan_result: scan_ip1.clone(),
+                scan_duration_ms: 100,
+                error: None,
+            },
+        );
+        results_a.insert(
+            ip2,
+            SingleIpScanResult {
+                ip: ip2,
+                scan_result: scan_ip2.clone(),
+                scan_duration_ms: 120,
+                error: None,
+            },
+        );
+
+        let mut results_b = HashMap::new();
+        results_b.insert(
+            ip2,
+            SingleIpScanResult {
+                ip: ip2,
+                scan_result: scan_ip2,
+                scan_duration_ms: 120,
+                error: None,
+            },
+        );
+        results_b.insert(
+            ip1,
+            SingleIpScanResult {
+                ip: ip1,
+                scan_result: scan_ip1,
+                scan_duration_ms: 100,
+                error: None,
+            },
+        );
+
+        let aggregated_a = ConservativeAggregator::new(results_a, vec![]).aggregate();
+        let aggregated_b = ConservativeAggregator::new(results_b, vec![]).aggregate();
+
+        let tls13_a = aggregated_a
+            .protocols
+            .iter()
+            .find(|p| p.protocol == Protocol::TLS13)
+            .expect("TLS13 should be present");
+        let tls13_b = aggregated_b
+            .protocols
+            .iter()
+            .find(|p| p.protocol == Protocol::TLS13)
+            .expect("TLS13 should be present");
+
+        assert!(tls13_a.supported);
+        assert!(tls13_b.supported);
+        assert!(!tls13_a.preferred);
+        assert!(!tls13_b.preferred);
+        assert_eq!(tls13_a.ciphers_count, 2);
+        assert_eq!(tls13_b.ciphers_count, 2);
+        assert_eq!(tls13_a.handshake_time_ms, Some(20));
+        assert_eq!(tls13_b.handshake_time_ms, Some(20));
+        assert_eq!(tls13_a.heartbeat_enabled, Some(true));
+        assert_eq!(tls13_b.heartbeat_enabled, Some(true));
+        assert_eq!(tls13_a.session_resumption_caching, Some(true));
+        assert_eq!(tls13_b.session_resumption_caching, Some(true));
+        assert_eq!(tls13_a.session_resumption_tickets, Some(true));
+        assert_eq!(tls13_b.session_resumption_tickets, Some(true));
+        assert_eq!(tls13_a.secure_renegotiation, None);
+        assert_eq!(tls13_b.secure_renegotiation, None);
+    }
+
+    #[test]
+    fn test_aggregate_certificate_tie_break_is_deterministic() {
+        let ip1: IpAddr = Ipv4Addr::new(127, 0, 0, 1).into();
+        let ip2: IpAddr = Ipv4Addr::new(127, 0, 0, 2).into();
+
+        let scan_a = make_scan_result(vec![], HashMap::new(), "bbbb", Grade::A, 90, Vec::new());
+        let scan_b = make_scan_result(vec![], HashMap::new(), "aaaa", Grade::A, 90, Vec::new());
+
+        let mut results_a = HashMap::new();
+        results_a.insert(
+            ip1,
+            SingleIpScanResult {
+                ip: ip1,
+                scan_result: scan_a.clone(),
+                scan_duration_ms: 100,
+                error: None,
+            },
+        );
+        results_a.insert(
+            ip2,
+            SingleIpScanResult {
+                ip: ip2,
+                scan_result: scan_b.clone(),
+                scan_duration_ms: 120,
+                error: None,
+            },
+        );
+
+        let mut results_b = HashMap::new();
+        results_b.insert(
+            ip2,
+            SingleIpScanResult {
+                ip: ip2,
+                scan_result: scan_b,
+                scan_duration_ms: 120,
+                error: None,
+            },
+        );
+        results_b.insert(
+            ip1,
+            SingleIpScanResult {
+                ip: ip1,
+                scan_result: scan_a,
+                scan_duration_ms: 100,
+                error: None,
+            },
+        );
+
+        let aggregated_a = ConservativeAggregator::new(results_a, vec![]).aggregate();
+        let aggregated_b = ConservativeAggregator::new(results_b, vec![]).aggregate();
+
+        let fingerprint_a = aggregated_a
+            .certificate_info
+            .as_ref()
+            .and_then(|cert| cert.fingerprint_sha256.as_deref());
+        let fingerprint_b = aggregated_b
+            .certificate_info
+            .as_ref()
+            .and_then(|cert| cert.fingerprint_sha256.as_deref());
+
+        assert_eq!(fingerprint_a, Some("aaaa"));
+        assert_eq!(fingerprint_a, fingerprint_b);
+        assert!(!aggregated_a.certificate_consistent);
+        assert!(!aggregated_b.certificate_consistent);
     }
 
     #[test]

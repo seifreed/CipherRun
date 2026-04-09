@@ -23,6 +23,8 @@ pub use scan::ScanRequestScan;
 pub use starttls::ScanRequestStarttls;
 pub use tls::ScanRequestTls;
 
+use super::OutputPresentationMode;
+
 #[derive(Debug, Clone, Default)]
 pub struct ScanRequest {
     pub target: Option<String>,
@@ -36,4 +38,5 @@ pub struct ScanRequest {
     pub http: ScanRequestHttp,
     pub starttls: ScanRequestStarttls,
     pub ct_logs: ScanRequestCtLogs,
+    pub presentation_mode: OutputPresentationMode,
 }

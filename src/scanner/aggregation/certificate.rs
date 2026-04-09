@@ -29,10 +29,17 @@ impl ConservativeAggregator {
             }
         }
 
-        // Return the most common certificate (clone only once)
+        // Return the most common certificate (clone only once).
+        // Ties are resolved deterministically by lexicographic fingerprint order.
         cert_counts
             .into_iter()
-            .max_by_key(|(_, (_, count))| *count)
+            .max_by(
+                |(fingerprint_a, (_, count_a)), (fingerprint_b, (_, count_b))| {
+                    count_a
+                        .cmp(count_b)
+                        .then_with(|| fingerprint_b.cmp(fingerprint_a))
+                },
+            )
             .map(|(_, (cert, _))| cert.clone())
     }
 

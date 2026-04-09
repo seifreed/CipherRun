@@ -86,6 +86,22 @@ mod dns_only_tests {
     }
 
     #[test]
+    fn test_extract_domains_skips_ip_sans() {
+        let cert = create_test_cert(
+            "CN=192.0.2.1,O=Test",
+            vec![
+                "192.0.2.1".to_string(),
+                "2001:db8::1".to_string(),
+                "IP:0a000001".to_string(),
+                "DNS:example.com".to_string(),
+            ],
+        );
+        let domains = DnsOnlyMode::extract_domains(&cert);
+
+        assert_eq!(domains, vec!["example.com".to_string()]);
+    }
+
+    #[test]
     fn test_case_insensitivity() {
         let cert = create_test_cert("CN=EXAMPLE.COM,O=Test", vec!["WWW.EXAMPLE.COM".to_string()]);
         let domains = DnsOnlyMode::extract_domains(&cert);

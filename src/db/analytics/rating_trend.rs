@@ -2,8 +2,6 @@
 // Analyzes security rating scores over time
 
 use super::trend_analyzer::TrendAnalyzer;
-use crate::db::ScanRecord;
-use chrono::{Duration, Utc};
 
 impl TrendAnalyzer {
     /// Analyze rating trend over time
@@ -13,15 +11,9 @@ impl TrendAnalyzer {
         port: u16,
         days: i64,
     ) -> crate::Result<super::trend_analyzer::RatingTrend> {
-        let scans = self.db().get_scan_history(hostname, port, 100).await?;
+        let scans = self.get_scans_in_range(hostname, port, days).await?;
 
-        let cutoff = Utc::now() - Duration::days(days);
-        let filtered_scans: Vec<&ScanRecord> = scans
-            .iter()
-            .filter(|s| s.scan_timestamp >= cutoff)
-            .collect();
-
-        if filtered_scans.is_empty() {
+        if scans.is_empty() {
             return Err(crate::TlsError::DatabaseError(
                 "No scans found in the specified time range".to_string(),
             ));
@@ -30,7 +22,7 @@ impl TrendAnalyzer {
         let mut data_points = Vec::new();
         let mut scores = Vec::new();
 
-        for scan in &filtered_scans {
+        for scan in &scans {
             if let Some(score) = scan.overall_score {
                 let score_u8 = score.clamp(0, 100) as u8;
                 data_points.push((scan.scan_timestamp, score_u8));
@@ -162,5 +154,36 @@ mod tests {
             .expect("rating trend should succeed");
         assert_eq!(rating.data_points.len(), 2);
         assert!(rating.mean > 0.0);
+    }
+
+    #[tokio::test]
+    async fn test_rating_trend_analysis_uses_all_scans_in_window() {
+        let db = setup_db().await;
+        let hostname = "example.com";
+        let port = 443;
+
+        for i in 0..101 {
+            insert_scan(
+                &db,
+                hostname,
+                port,
+                Utc::now() - Duration::minutes(i as i64),
+                Some("A"),
+                Some(100 - i as i32),
+            )
+            .await;
+        }
+
+        let analyzer = TrendAnalyzer::new(db.clone());
+
+        let rating = analyzer
+            .analyze_rating_trend(hostname, port, 30)
+            .await
+            .expect("rating trend should succeed");
+        assert_eq!(rating.data_points.len(), 101);
+        assert_eq!(
+            rating.direction,
+            crate::db::analytics::trend_analyzer::TrendDirection::Improving
+        );
     }
 }

@@ -1,8 +1,8 @@
 // Certificate comparison methods for ScanComparator
 
 use super::{CertSummary, CertificateDiff, ScanComparator};
-use crate::db::connection::DatabasePool;
 use crate::db::CertificateRecord;
+use crate::db::connection::DatabasePool;
 
 impl ScanComparator {
     pub(crate) async fn compare_certificates(

@@ -16,6 +16,18 @@ pub struct RenegotiationTester<'a> {
     target: &'a Target,
 }
 
+/// Result of insecure renegotiation detection
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum InsecureRenegotiationResult {
+    /// Server appears vulnerable to insecure renegotiation
+    Detected,
+    /// Server responded without renegotiation_info extension - inconclusive
+    /// Manual verification needed to determine if CVE-2009-3555 vulnerable
+    Inconclusive,
+    /// Server properly rejected or has secure renegotiation
+    NotDetected,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum RenegotiationSupport {
     SecureRenegotiation,     // RFC 5746 supported
@@ -35,12 +47,16 @@ impl<'a> RenegotiationTester<'a> {
         let secure_extension = self.test_secure_renegotiation_extension().await?;
 
         // Test for insecure renegotiation (CVE-2009-3555)
-        let insecure_detected = self.test_insecure_renegotiation().await?;
+        let insecure_result = self.test_insecure_renegotiation().await?;
+
+        // Determine if manual verification is needed
+        let needs_verification =
+            matches!(insecure_result, InsecureRenegotiationResult::Inconclusive);
 
         // Determine support level
         let support = if secure_extension {
             RenegotiationSupport::SecureRenegotiation
-        } else if insecure_detected {
+        } else if matches!(insecure_result, InsecureRenegotiationResult::Detected) {
             RenegotiationSupport::InsecureRenegotiation
         } else {
             // Check if renegotiation is supported at all using OpenSSL
@@ -59,13 +75,21 @@ impl<'a> RenegotiationTester<'a> {
             RenegotiationSupport::ClientInitiatedDisabled => {
                 "Client-initiated renegotiation disabled (secure configuration)".to_string()
             }
-            RenegotiationSupport::NotSupported => "Renegotiation not supported".to_string(),
+            RenegotiationSupport::NotSupported => {
+                if needs_verification {
+                    "Renegotiation support unclear - server responded without renegotiation_info extension. \
+                     Manual verification recommended for CVE-2009-3555.".to_string()
+                } else {
+                    "Renegotiation not supported".to_string()
+                }
+            }
         };
 
         Ok(RenegotiationTestResult {
             support,
             secure_extension,
             vulnerable,
+            needs_verification,
             details,
         })
     }
@@ -90,7 +114,12 @@ impl<'a> RenegotiationTester<'a> {
     async fn test_renegotiation_support(&self) -> Result<RenegotiationSupport> {
         use openssl::ssl::{SslConnector, SslMethod};
 
-        let addr = self.target.socket_addrs()[0];
+        let addr = self
+            .target
+            .socket_addrs()
+            .first()
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
 
         match crate::utils::network::connect_with_timeout(addr, DEFAULT_READ_TIMEOUT, None).await {
             Ok(stream) => {
@@ -118,8 +147,18 @@ impl<'a> RenegotiationTester<'a> {
     ///
     /// Send ClientHello WITHOUT renegotiation_info extension.
     /// If server accepts, it may be vulnerable to insecure renegotiation.
-    async fn test_insecure_renegotiation(&self) -> Result<bool> {
-        let addr = self.target.socket_addrs()[0];
+    ///
+    /// Returns:
+    /// - `Detected`: Server confirmed vulnerable (rare - would require completing handshake and renegotiating)
+    /// - `Inconclusive`: Server responded without renegotiation_info extension - manual verification needed
+    /// - `NotDetected`: Server has secure renegotiation or doesn't support renegotiation
+    async fn test_insecure_renegotiation(&self) -> Result<InsecureRenegotiationResult> {
+        let addr = self
+            .target
+            .socket_addrs()
+            .first()
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
 
         match crate::utils::network::connect_with_timeout(addr, DEFAULT_READ_TIMEOUT, None).await {
             Ok(mut stream) => {
@@ -149,36 +188,42 @@ impl<'a> RenegotiationTester<'a> {
                             //   2. Attempt a renegotiation request
                             //   3. Observe if server accepts it (vulnerable) or rejects (secure)
                             //
-                            // - Current detection is a heuristic: servers that respond to
-                            //   ClientHello without reneg_info but don't include it in response
-                            //   may be older/unpatched implementations.
-                            // - False positives possible for servers that just don't support
-                            //   renegotiation at all.
+                            // - Current detection is a heuristic that produces false positives:
+                            //   Many modern servers simply don't support renegotiation at all.
                             //
                             // Result interpretation:
-                            // - true: Server MIGHT be vulnerable - recommend manual testing
-                            // - false: Server has RFC 5746 extension or didn't respond properly
+                            // - When extension is missing, return Inconclusive to indicate manual verification needed
+                            // - The secure_renegotiation_extension test provides RFC 5746 compliance info.
                             if !has_reneg_info {
                                 // Server responded with ServerHello WITHOUT renegotiation_info extension.
-                                // This means the server accepted our ClientHello that had NO
-                                // renegotiation_info extension and did not include one in its response.
-                                // This is a strong indicator of insecure renegotiation (CVE-2009-3555):
-                                // a secure server would either include the extension or reject the connection.
-                                return Ok(true);
+                                // This is inconclusive - server may:
+                                // 1. Be vulnerable to insecure renegotiation (CVE-2009-3555)
+                                // 2. Simply not support renegotiation at all (modern, secure behavior)
+                                // Mark as inconclusive and recommend manual verification.
+                                tracing::warn!(
+                                    "Server responded without renegotiation_info extension - \
+                                     inconclusive for CVE-2009-3555. Manual verification recommended."
+                                );
+                                return Ok(InsecureRenegotiationResult::Inconclusive);
                             }
                         }
-                        Ok(false)
+                        Ok(InsecureRenegotiationResult::NotDetected)
                     }
-                    _ => Ok(false),
+                    _ => Ok(InsecureRenegotiationResult::NotDetected),
                 }
             }
-            _ => Ok(false),
+            _ => Ok(InsecureRenegotiationResult::NotDetected),
         }
     }
 
     /// Test for secure renegotiation extension (RFC 5746)
     async fn test_secure_renegotiation_extension(&self) -> Result<bool> {
-        let addr = self.target.socket_addrs()[0];
+        let addr = self
+            .target
+            .socket_addrs()
+            .first()
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
 
         match crate::utils::network::connect_with_timeout(addr, DEFAULT_READ_TIMEOUT, None).await {
             Ok(mut stream) => {
@@ -397,6 +442,12 @@ pub struct RenegotiationTestResult {
     pub support: RenegotiationSupport,
     pub secure_extension: bool,
     pub vulnerable: bool,
+    /// Indicates the test result is inconclusive and requires manual verification.
+    /// This is set when the server does not include renegotiation_info extension,
+    /// which could mean either:
+    /// - The server is vulnerable to CVE-2009-3555 (insecure renegotiation)
+    /// - The server simply doesn't support renegotiation (modern, secure behavior)
+    pub needs_verification: bool,
     pub details: String,
 }
 
@@ -410,10 +461,12 @@ mod tests {
             support: RenegotiationSupport::SecureRenegotiation,
             secure_extension: true,
             vulnerable: false,
+            needs_verification: false,
             details: "Test".to_string(),
         };
         assert!(!result.vulnerable);
         assert!(result.secure_extension);
+        assert!(!result.needs_verification);
     }
 
     #[test]
@@ -422,10 +475,25 @@ mod tests {
             support: RenegotiationSupport::InsecureRenegotiation,
             secure_extension: false,
             vulnerable: true,
+            needs_verification: false,
             details: "VULNERABLE: Insecure renegotiation enabled".to_string(),
         };
         assert!(result.vulnerable);
         assert!(result.details.contains("VULNERABLE"));
+        assert!(!result.needs_verification);
+    }
+
+    #[test]
+    fn test_renegotiation_result_needs_verification() {
+        let result = RenegotiationTestResult {
+            support: RenegotiationSupport::NotSupported,
+            secure_extension: false,
+            vulnerable: false,
+            needs_verification: true,
+            details: "Server does not include renegotiation_info extension".to_string(),
+        };
+        assert!(!result.vulnerable);
+        assert!(result.needs_verification);
     }
 
     #[test]

@@ -29,16 +29,23 @@ impl<'a> ScanPostPresenter<'a> {
     }
 
     fn render_outcome(&self, post_view: &ScanPostView<'_>) -> Result<ScanPostProcessingOutcome> {
-        if let Some(exit) = self.render_compliance_section(post_view)? {
-            return Ok(ScanPostProcessingOutcome { exit });
+        let mut exit = CommandExit::success();
+
+        if let Some(section_exit) = self.render_compliance_section(post_view)? {
+            exit = self.merge_non_zero_exit(exit, section_exit);
         }
-        if let Some(exit) = self.render_policy_section(post_view)? {
-            return Ok(ScanPostProcessingOutcome { exit });
+        if let Some(section_exit) = self.render_policy_section(post_view)? {
+            exit = self.merge_non_zero_exit(exit, section_exit);
         }
 
-        Ok(ScanPostProcessingOutcome {
-            exit: CommandExit::success(),
-        })
+        Ok(ScanPostProcessingOutcome { exit })
+    }
+
+    fn merge_non_zero_exit(&self, current: CommandExit, candidate: CommandExit) -> CommandExit {
+        if current.code() == 0 && candidate.code() != 0 {
+            return candidate;
+        }
+        current
     }
 
     fn render_compliance_section(
@@ -102,5 +109,31 @@ impl<'a> ScanPostPresenter<'a> {
         }
 
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::Args;
+    use crate::commands::CommandExit;
+    use crate::commands::scan_post_presenter::ScanPostPresenter;
+
+    #[test]
+    fn test_merge_non_zero_exit_preserves_initial_zero_only_exit() {
+        let args = Args::default();
+        let presenter = ScanPostPresenter::new(&args);
+        let merged = presenter.merge_non_zero_exit(CommandExit::success(), CommandExit::failure(1));
+
+        assert_eq!(merged.code(), 1);
+    }
+
+    #[test]
+    fn test_merge_non_zero_exit_keeps_existing_non_zero_exit() {
+        let args = Args::default();
+        let presenter = ScanPostPresenter::new(&args);
+        let merged =
+            presenter.merge_non_zero_exit(CommandExit::failure(2), CommandExit::failure(1));
+
+        assert_eq!(merged.code(), 2);
     }
 }

@@ -1,4 +1,5 @@
 use crate::application::ScanResults;
+use crate::utils::network::split_target_host_port;
 use chrono::{DateTime, Utc};
 
 #[derive(Debug, Clone)]
@@ -72,9 +73,11 @@ pub struct PersistedCertificate {
 
 impl PersistedScan {
     pub fn from_scan_results(results: &ScanResults) -> Self {
-        let parts: Vec<&str> = results.target.split(':').collect();
-        let target_hostname = parts.first().unwrap_or(&"unknown").to_string();
-        let target_port = parts.get(1).and_then(|p| p.parse().ok()).unwrap_or(443);
+        let (target_hostname, target_port) = match split_target_host_port(&results.target) {
+            Ok((hostname, Some(port))) => (hostname, port),
+            Ok((hostname, None)) => (hostname, 443),
+            Err(_) => (results.target.clone(), 443),
+        };
 
         let overall_grade = results.ssl_rating().map(|rating| rating.grade.to_string());
         let overall_score = results.ssl_rating().map(|rating| rating.score);

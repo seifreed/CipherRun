@@ -87,7 +87,7 @@ impl MonitorCommand {
         use crate::monitor::MonitoredDomain;
 
         if let Some(domain_str) = &self.args.monitoring.domain {
-            let parsed = HostPortInput::parse_with_default_port(domain_str, 443);
+            let parsed = HostPortInput::parse_with_default_port(domain_str, 443)?;
             let domain = MonitoredDomain::new(parsed.hostname, parsed.port);
             daemon.add_domain(domain).await?;
         }

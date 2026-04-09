@@ -186,9 +186,8 @@ impl ClientHelloBuilder {
             use ring::agreement;
             use ring::rand::SystemRandom;
             let rng = SystemRandom::new();
-            let private_key =
-                agreement::EphemeralPrivateKey::generate(&agreement::X25519, &rng)
-                    .expect("X25519 key generation requires system entropy");
+            let private_key = agreement::EphemeralPrivateKey::generate(&agreement::X25519, &rng)
+                .expect("X25519 key generation requires system entropy");
             private_key
                 .compute_public_key()
                 .expect("X25519 public key derivation is infallible")

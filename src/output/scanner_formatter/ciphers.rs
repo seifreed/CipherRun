@@ -8,6 +8,9 @@ use std::collections::HashMap;
 impl<'a> ScannerFormatter<'a> {
     /// Display cipher test results
     pub fn display_cipher_results(&self, results: &HashMap<Protocol, ProtocolCipherSummary>) {
+        let mut results: Vec<_> = results.iter().collect();
+        results.sort_by_key(|(protocol, _)| **protocol);
+
         for (protocol, summary) in results {
             let timing_info =
                 format_avg_timing(self.args.output.show_times, summary.avg_handshake_time_ms);

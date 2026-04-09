@@ -195,7 +195,8 @@ impl<'a> PoodleTester<'a> {
             return Ok(Self::cbc_not_supported_result(variant));
         }
 
-        const ITERATIONS: usize = 5;
+        // Increased from 5 to 10 for better statistical significance
+        const ITERATIONS: usize = 10;
         let mut responses_a = Vec::new();
         let mut responses_b = Vec::new();
 
@@ -212,8 +213,7 @@ impl<'a> PoodleTester<'a> {
             }
         }
 
-        let oracle_detected =
-            oracle_detection::detect_response_oracle(&responses_a, &responses_b);
+        let oracle_detected = oracle_detection::detect_response_oracle(&responses_a, &responses_b);
 
         Ok(PoodleVariantResult {
             variant,
@@ -230,10 +230,13 @@ impl<'a> PoodleTester<'a> {
     /// Test for Sleeping POODLE - Timing-based padding oracle
     async fn test_sleeping_poodle(&self) -> Result<PoodleVariantResult> {
         if !network_probes::supports_cbc_ciphers(self.target).await? {
-            return Ok(Self::cbc_not_supported_result(PoodleVariant::SleepingPoodle));
+            return Ok(Self::cbc_not_supported_result(
+                PoodleVariant::SleepingPoodle,
+            ));
         }
 
-        const SAMPLES: usize = 20;
+        // Increased from 20 to 30 for better statistical confidence
+        const SAMPLES: usize = 30;
         const TIMING_THRESHOLD_MS: f64 = 15.0;
 
         let mut valid_timings = TimingSampleSet::with_capacity(SAMPLES);
@@ -268,9 +271,22 @@ impl<'a> PoodleTester<'a> {
             });
         }
 
+        // Adaptive threshold based on coefficient of variation
+        let cv_estimate = valid_timings
+            .compute_statistics()
+            .map(|s| s.coefficient_of_variation)
+            .unwrap_or(0.5);
+
+        let adaptive_threshold = if cv_estimate > 0.3 {
+            // High variance network - increase threshold
+            TIMING_THRESHOLD_MS * (1.0 + cv_estimate)
+        } else {
+            TIMING_THRESHOLD_MS
+        };
+
         let config = TimingOracleConfig {
-            min_samples: 5,
-            timing_threshold_ms: TIMING_THRESHOLD_MS,
+            min_samples: 10, // Increased from 5 for better reliability
+            timing_threshold_ms: adaptive_threshold,
             cv_max: 0.5,
             significance_base_ms: 10.0,
         };
@@ -282,7 +298,7 @@ impl<'a> PoodleTester<'a> {
                     variant: PoodleVariant::SleepingPoodle,
                     vulnerable: false,
                     details: format!(
-                        "Insufficient timing samples (valid: {}, invalid: {}). Need at least 5 samples for reliable detection.",
+                        "Insufficient timing samples (valid: {}, invalid: {}). Need at least 10 samples for reliable detection.",
                         valid_timings.len(),
                         invalid_timings.len()
                     ),
@@ -307,7 +323,7 @@ impl<'a> PoodleTester<'a> {
                 "Vulnerable to Sleeping POODLE - Timing oracle detected: valid={:.2}ms (σ={:.2}ms), \
                  invalid={:.2}ms (σ={:.2}ms), diff={:.2}ms (threshold: {:.1}ms). \
                  Statistical significance confirmed.",
-                vs.mean, vs.stddev, is.mean, is.stddev, analysis.timing_diff_ms, TIMING_THRESHOLD_MS
+                vs.mean, vs.stddev, is.mean, is.stddev, analysis.timing_diff_ms, adaptive_threshold
             )
         } else if !analysis.timing_reliable {
             format!(
@@ -315,11 +331,11 @@ impl<'a> PoodleTester<'a> {
                  Diff={:.2}ms - high variance suggests network jitter, not timing oracle.",
                 vs.coefficient_of_variation, is.coefficient_of_variation, analysis.timing_diff_ms
             )
-        } else if analysis.timing_diff_ms <= TIMING_THRESHOLD_MS {
+        } else if analysis.timing_diff_ms <= adaptive_threshold {
             format!(
                 "Not vulnerable to Sleeping POODLE - Timing diff ({:.2}ms) below threshold ({:.1}ms). \
                  Valid={:.2}ms, Invalid={:.2}ms",
-                analysis.timing_diff_ms, TIMING_THRESHOLD_MS, vs.mean, is.mean
+                analysis.timing_diff_ms, adaptive_threshold, vs.mean, is.mean
             )
         } else {
             format!(
@@ -340,7 +356,9 @@ impl<'a> PoodleTester<'a> {
     /// Test for OpenSSL 0-Length Fragment vulnerability (CVE-2011-4576)
     async fn test_openssl_0length(&self) -> Result<PoodleVariantResult> {
         if !network_probes::supports_cbc_ciphers(self.target).await? {
-            return Ok(Self::cbc_not_supported_result(PoodleVariant::OpenSsl0Length));
+            return Ok(Self::cbc_not_supported_result(
+                PoodleVariant::OpenSsl0Length,
+            ));
         }
 
         const ITERATIONS: usize = 3;
@@ -652,11 +670,9 @@ mod tests {
     #[test]
     fn test_build_malformed_record_dispatch() {
         let a = record_builder::build_malformed_record(MalformedRecordType::InvalidPaddingValidMac);
-        let b =
-            record_builder::build_malformed_record(MalformedRecordType::ValidPaddingInvalidMac);
-        let c = record_builder::build_malformed_record(
-            MalformedRecordType::InvalidPaddingInvalidMac,
-        );
+        let b = record_builder::build_malformed_record(MalformedRecordType::ValidPaddingInvalidMac);
+        let c =
+            record_builder::build_malformed_record(MalformedRecordType::InvalidPaddingInvalidMac);
         let d = record_builder::build_malformed_record(MalformedRecordType::ZeroLengthFragment);
 
         assert!(a.len() > d.len());
@@ -717,7 +733,8 @@ mod tests {
 
     #[test]
     fn test_build_malformed_record_selector() {
-        let record = record_builder::build_malformed_record(MalformedRecordType::ZeroLengthFragment);
+        let record =
+            record_builder::build_malformed_record(MalformedRecordType::ZeroLengthFragment);
         assert_eq!(record.len(), 5);
         assert_eq!(record[0], CONTENT_TYPE_APPLICATION_DATA);
     }

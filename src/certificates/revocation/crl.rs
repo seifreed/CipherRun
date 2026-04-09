@@ -1,6 +1,6 @@
 use super::{RevocationChecker, RevocationStatus};
-use crate::certificates::parser::CertificateInfo;
 use crate::Result;
+use crate::certificates::parser::CertificateInfo;
 use tokio::time::timeout;
 use x509_parser::prelude::*;
 

@@ -60,7 +60,8 @@ impl ScanWorkflow {
             .compliance_evaluator
             .as_deref()
             .ok_or_else(|| crate::TlsError::ConfigError {
-                message: "Compliance evaluator is required when compliance is requested".to_string(),
+                message: "Compliance evaluator is required when compliance is requested"
+                    .to_string(),
             })
     }
 
@@ -107,9 +108,11 @@ impl ScanWorkflow {
                 Self::compliance_evaluator(services)?,
                 Self::compliance_source(services)?,
                 framework_id,
-                assessment.as_ref().ok_or_else(|| crate::TlsError::ConfigError {
-                    message: "assessment should exist when compliance is requested".to_string(),
-                })?,
+                assessment
+                    .as_ref()
+                    .ok_or_else(|| crate::TlsError::ConfigError {
+                        message: "assessment should exist when compliance is requested".to_string(),
+                    })?,
             )?),
             None => None,
         };
@@ -119,9 +122,11 @@ impl ScanWorkflow {
                 Self::policy_evaluator(services)?,
                 Self::policy_source(services)?,
                 policy_path,
-                assessment.as_ref().ok_or_else(|| crate::TlsError::ConfigError {
-                    message: "assessment should exist when policy is requested".to_string(),
-                })?,
+                assessment
+                    .as_ref()
+                    .ok_or_else(|| crate::TlsError::ConfigError {
+                        message: "assessment should exist when policy is requested".to_string(),
+                    })?,
             )?),
             None => None,
         };

@@ -3,7 +3,8 @@
 
 use crate::db::CipherRunDatabase;
 use crate::db::connection::DatabasePool;
-use chrono::{DateTime, Utc};
+use crate::utils::network::canonical_target;
+use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -65,9 +66,15 @@ impl TrendAnalyzer {
         Self { db }
     }
 
-    /// Accessor for the database, used by sub-module impl blocks
-    pub(crate) fn db(&self) -> &CipherRunDatabase {
-        &self.db
+    /// Fetch scans within a time window and return them in chronological order.
+    pub(crate) async fn get_scans_in_range(
+        &self,
+        hostname: &str,
+        port: u16,
+        days: i64,
+    ) -> crate::Result<Vec<crate::db::ScanRecord>> {
+        let cutoff = Utc::now() - Duration::days(days);
+        self.db.get_scan_history_since(hostname, port, cutoff).await
     }
 
     /// Generate comprehensive trend report
@@ -84,7 +91,7 @@ impl TrendAnalyzer {
         report
             .push_str("╚════════════════════════════════════════════════════════════════════╝\n\n");
 
-        report.push_str(&format!("Target: {}:{}\n", hostname, port));
+        report.push_str(&format!("Target: {}\n", canonical_target(hostname, port)));
         report.push_str(&format!("Period: Last {} days\n", days));
         report.push_str(&format!(
             "Generated: {}\n\n",
@@ -131,7 +138,14 @@ impl TrendAnalyzer {
                 report.push_str(&format!("Median count:  {}\n", vuln_trend.median));
                 report.push_str(&format!("Trend:         {:?}\n", vuln_trend.direction));
                 report.push_str("\nSeverity Distribution:\n");
-                for (severity, count) in &vuln_trend.severity_distribution {
+                let mut severity_distribution: Vec<_> =
+                    vuln_trend.severity_distribution.iter().collect();
+                severity_distribution.sort_by(|(severity_a, _), (severity_b, _)| {
+                    severity_sort_rank(severity_a)
+                        .cmp(&severity_sort_rank(severity_b))
+                        .then_with(|| severity_a.cmp(severity_b))
+                });
+                for (severity, count) in severity_distribution {
                     report.push_str(&format!("  {}: {}\n", severity, count));
                 }
                 report.push('\n');
@@ -237,14 +251,16 @@ impl TrendAnalyzer {
             return TrendDirection::Stable;
         }
 
+        let ordered = ordered_data_points(data_points);
+
         // Simple linear regression to determine slope
-        let n = data_points.len() as f64;
+        let n = ordered.len() as f64;
         let mut sum_x = 0.0;
         let mut sum_y = 0.0;
         let mut sum_xy = 0.0;
         let mut sum_x2 = 0.0;
 
-        for (i, (_, y)) in data_points.iter().enumerate() {
+        for (i, (_, y)) in ordered.iter().enumerate() {
             let x = i as f64;
             let y_val = *y as f64;
             sum_x += x;
@@ -271,14 +287,16 @@ impl TrendAnalyzer {
             return TrendDirection::Stable;
         }
 
+        let ordered = ordered_data_points(data_points);
+
         // Simple linear regression to determine slope
-        let n = data_points.len() as f64;
+        let n = ordered.len() as f64;
         let mut sum_x = 0.0;
         let mut sum_y = 0.0;
         let mut sum_xy = 0.0;
         let mut sum_x2 = 0.0;
 
-        for (i, (_, y)) in data_points.iter().enumerate() {
+        for (i, (_, y)) in ordered.iter().enumerate() {
             let x = i as f64;
             let y_val = *y as f64;
             sum_x += x;
@@ -304,14 +322,16 @@ impl TrendAnalyzer {
             return None;
         }
 
+        let ordered = ordered_data_points(data_points);
+
         // Linear regression
-        let n = data_points.len() as f64;
+        let n = ordered.len() as f64;
         let mut sum_x = 0.0;
         let mut sum_y = 0.0;
         let mut sum_xy = 0.0;
         let mut sum_x2 = 0.0;
 
-        for (i, (_, y)) in data_points.iter().enumerate() {
+        for (i, (_, y)) in ordered.iter().enumerate() {
             let x = i as f64;
             let y_val = *y as f64;
             sum_x += x;
@@ -423,6 +443,23 @@ impl TrendAnalyzer {
     }
 }
 
+fn ordered_data_points<T: Clone>(data_points: &[(DateTime<Utc>, T)]) -> Vec<(DateTime<Utc>, T)> {
+    let mut ordered = data_points.to_vec();
+    ordered.sort_by(|a, b| a.0.cmp(&b.0));
+    ordered
+}
+
+fn severity_sort_rank(severity: &str) -> usize {
+    match severity {
+        "critical" => 0,
+        "high" => 1,
+        "medium" => 2,
+        "low" => 3,
+        "info" => 4,
+        _ => 5,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -512,6 +549,34 @@ mod tests {
         let points = vec![(Utc::now(), 60), (Utc::now(), 70), (Utc::now(), 80)];
         let forecast = TrendAnalyzer::forecast_linear(&points).unwrap();
         assert!(forecast >= 80);
+    }
+
+    #[test]
+    fn test_trend_functions_are_order_independent() {
+        let base = Utc::now();
+        let rating_points_desc = vec![
+            (base + Duration::minutes(2), 80),
+            (base + Duration::minutes(1), 70),
+            (base, 60),
+        ];
+        assert_eq!(
+            TrendAnalyzer::determine_trend_direction(&rating_points_desc),
+            TrendDirection::Improving
+        );
+        assert_eq!(
+            TrendAnalyzer::forecast_linear(&rating_points_desc),
+            Some(90)
+        );
+
+        let vuln_points_desc = vec![
+            (base + Duration::minutes(2), 15usize),
+            (base + Duration::minutes(1), 10usize),
+            (base, 5usize),
+        ];
+        assert_eq!(
+            TrendAnalyzer::determine_usize_trend_direction(&vuln_points_desc),
+            TrendDirection::Degrading
+        );
     }
 
     static DB_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -673,7 +738,7 @@ mod tests {
     #[tokio::test]
     async fn test_trend_analyzer_with_database_data() {
         let db = setup_db().await;
-        let hostname = "example.com";
+        let hostname = "2001:db8::1";
         let port = 443;
 
         let scan1 = insert_scan(
@@ -705,6 +770,7 @@ mod tests {
 
         insert_vulnerability(&db, scan1, "ROBOT", "high").await;
         insert_vulnerability(&db, scan2, "SWEET32", "medium").await;
+        insert_vulnerability(&db, scan2, "LOGJAM", "low").await;
 
         let analyzer = TrendAnalyzer::new(db.clone());
 
@@ -740,5 +806,18 @@ mod tests {
             .expect("trend report should succeed");
         assert!(report.contains("TREND ANALYSIS REPORT"));
         assert!(report.contains("RATING TREND"));
+        assert!(report.contains("Target: [2001:db8::1]:443"));
+
+        let high_pos = report
+            .find("  high: ")
+            .expect("high severity line should exist");
+        let medium_pos = report
+            .find("  medium: ")
+            .expect("medium severity line should exist");
+        let low_pos = report
+            .find("  low: ")
+            .expect("low severity line should exist");
+        assert!(high_pos < medium_pos);
+        assert!(medium_pos < low_pos);
     }
 }

@@ -21,9 +21,7 @@ pub(super) fn build_malformed_record(record_type: MalformedRecordType) -> Vec<u8
     match record_type {
         MalformedRecordType::InvalidPaddingValidMac => build_record_invalid_padding_valid_mac(),
         MalformedRecordType::ValidPaddingInvalidMac => build_record_valid_padding_invalid_mac(),
-        MalformedRecordType::InvalidPaddingInvalidMac => {
-            build_record_invalid_padding_invalid_mac()
-        }
+        MalformedRecordType::InvalidPaddingInvalidMac => build_record_invalid_padding_invalid_mac(),
         MalformedRecordType::ZeroLengthFragment => build_zero_length_record(),
     }
 }

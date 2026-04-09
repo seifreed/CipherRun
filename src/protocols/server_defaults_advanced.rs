@@ -115,7 +115,12 @@ impl ServerDefaultsAdvancedTester {
     }
 
     async fn test_with_cipher_list(&self, cipher_list: &[&str]) -> Result<String> {
-        let addr = self.target.socket_addrs()[0];
+        let addr = self
+            .target
+            .socket_addrs()
+            .first()
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
         let connect_timeout = Duration::from_secs(10);
 
         let stream =
@@ -140,7 +145,12 @@ impl ServerDefaultsAdvancedTester {
 
     /// Analyze DH parameter strength
     pub async fn analyze_dh_parameters(&self) -> Result<DhParameterAnalysis> {
-        let addr = self.target.socket_addrs()[0];
+        let addr = self
+            .target
+            .socket_addrs()
+            .first()
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
         let connect_timeout = Duration::from_secs(10);
 
         let stream =
@@ -252,7 +262,12 @@ impl ServerDefaultsAdvancedTester {
     }
 
     async fn test_ecdh_curve(&self, group_name: &str) -> Result<()> {
-        let addr = self.target.socket_addrs()[0];
+        let addr = self
+            .target
+            .socket_addrs()
+            .first()
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
         let connect_timeout = Duration::from_secs(10);
 
         let stream =
@@ -281,7 +296,12 @@ impl ServerDefaultsAdvancedTester {
 
     /// Analyze key exchange in detail
     pub async fn analyze_key_exchange(&self) -> Result<KeyExchangeAnalysis> {
-        let addr = self.target.socket_addrs()[0];
+        let addr = self
+            .target
+            .socket_addrs()
+            .first()
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
         let connect_timeout = Duration::from_secs(10);
 
         let stream =

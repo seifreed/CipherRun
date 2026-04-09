@@ -5,6 +5,7 @@ use crate::Result;
 use crate::security::{
     validate_cipher, validate_hostname, validate_port, validate_starttls_protocol,
 };
+use crate::utils::network::canonical_target;
 use serde::{Deserialize, Serialize};
 use std::process::{Command, Stdio};
 use std::time::Duration;
@@ -112,7 +113,7 @@ impl OpenSslClient {
 
         // Add host and port
         cmd.arg("-connect");
-        cmd.arg(format!("{}:{}", options.host, options.port));
+        cmd.arg(connect_authority(&options.host, options.port));
 
         // Add STARTTLS protocol
         if let Some(ref protocol) = options.starttls {
@@ -395,6 +396,10 @@ fn extract_certificates(stdout: &str) -> Vec<String> {
     certificates
 }
 
+fn connect_authority(host: &str, port: u16) -> String {
+    canonical_target(host, port)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -494,5 +499,11 @@ MIIDXTCCAkWgAwIBAgIJAKJ
         assert!(info.verify_result.contains("Verify return code"));
         assert_eq!(info.session_details, "");
         assert!(info.certificate_chain.is_empty());
+    }
+
+    #[test]
+    fn test_connect_authority_brackets_ipv6() {
+        assert_eq!(connect_authority("2001:db8::1", 443), "[2001:db8::1]:443");
+        assert_eq!(connect_authority("[2001:db8::1]", 443), "[2001:db8::1]:443");
     }
 }

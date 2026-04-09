@@ -15,10 +15,38 @@ impl CertificateValidator {
         let ca_stores = CA_STORES.as_ref();
 
         // Helper to verify signature using OpenSSL
-        fn verify_signature(_cert_der: &[u8], _issuer_der: &[u8]) -> bool {
-            // Cannot verify certificate signatures with current setup
-            // Continue with subject-only matching
-            false
+        fn verify_signature(cert_der: &[u8], issuer_der: &[u8]) -> bool {
+            use openssl::x509::X509;
+
+            // Parse the certificate from DER bytes
+            let cert = match X509::from_der(cert_der) {
+                Ok(c) => c,
+                Err(_) => {
+                    tracing::debug!("Failed to parse certificate DER bytes");
+                    return false;
+                }
+            };
+
+            // Parse the issuer certificate from DER bytes
+            let issuer = match X509::from_der(issuer_der) {
+                Ok(c) => c,
+                Err(_) => {
+                    tracing::debug!("Failed to parse issuer certificate DER bytes");
+                    return false;
+                }
+            };
+
+            // Get issuer's public key
+            let issuer_pkey = match issuer.public_key() {
+                Ok(pk) => pk,
+                Err(_) => {
+                    tracing::debug!("Failed to extract issuer public key");
+                    return false;
+                }
+            };
+
+            // Verify the certificate's signature using issuer's public key
+            cert.verify(&issuer_pkey).unwrap_or(false)
         }
 
         let find_store_for_subject = |subject: &str| -> Option<(String, Vec<u8>)> {
@@ -49,6 +77,21 @@ impl CertificateValidator {
                 // Verify the certificate is actually in our trust store by checking DER
                 if !last_cert.der_bytes.is_empty() && last_cert.der_bytes == ca_der {
                     return (true, Some(store_name));
+                }
+                // DER bytes unavailable for a known CA subject - add warning but try to verify
+                if last_cert.der_bytes.is_empty() {
+                    // Can't cryptographically verify, but subject matches a known CA
+                    // This is a medium-severity issue, not critical
+                    issues.push(ValidationIssue {
+                        severity: IssueSeverity::Medium,
+                        issue_type: IssueType::UntrustedCA,
+                        description: format!(
+                            "Self-signed certificate subject matches known CA '{}' but DER bytes unavailable for cryptographic verification. \
+                             Manual verification recommended.",
+                            last_cert.subject
+                        ),
+                    });
+                    return (false, None);
                 }
                 // Subject matches but DER is different - potential spoofing attempt
                 issues.push(ValidationIssue {
@@ -107,14 +150,40 @@ impl CertificateValidator {
                     return (false, None);
                 }
             } else {
-                issues.push(ValidationIssue {
-                    severity: IssueSeverity::Medium,
-                    issue_type: IssueType::UntrustedCA,
-                    description: format!(
-                        "Cannot verify intermediate signature - DER bytes unavailable: '{}' -> '{}'",
-                        cert.subject, issuer_cert.subject
-                    ),
-                });
+                // DER bytes unavailable - this is a security concern
+                // SECURITY: Default to strict mode for certificate validation
+                // Use CIPHERUN_ALLOW_WEAK_CERT_VALIDATION=true to allow non-strict validation
+                // (not recommended for production use)
+                let strict_mode = !std::env::var("CIPHERUN_ALLOW_WEAK_CERT_VALIDATION")
+                    .map(|v| v == "true" || v == "1")
+                    .unwrap_or(false);
+
+                if strict_mode {
+                    issues.push(ValidationIssue {
+                        severity: IssueSeverity::Critical,
+                        issue_type: IssueType::UntrustedCA,
+                        description: format!(
+                            "Cannot verify signature without DER bytes (strict mode): '{}' -> '{}'",
+                            cert.subject, issuer_cert.subject
+                        ),
+                    });
+                    return (false, None);
+                } else {
+                    tracing::warn!(
+                        "SECURITY: Weak certificate validation enabled - signature verification skipped for '{}' -> '{}'. \
+                         This reduces security. Remove CIPHERUN_ALLOW_WEAK_CERT_VALIDATION to restore strict validation.",
+                        cert.subject,
+                        issuer_cert.subject
+                    );
+                    issues.push(ValidationIssue {
+                        severity: IssueSeverity::Medium,
+                        issue_type: IssueType::UntrustedCA,
+                        description: format!(
+                            "Cannot verify intermediate signature - DER bytes unavailable: '{}' -> '{}'",
+                            cert.subject, issuer_cert.subject
+                        ),
+                    });
+                }
             }
         }
 
@@ -137,24 +206,44 @@ impl CertificateValidator {
                 }
             }
             // DER bytes unavailable - cannot verify signature cryptographically
-            issues.push(ValidationIssue {
-                severity: IssueSeverity::High,
-                issue_type: IssueType::UntrustedCA,
-                description: format!(
-                    "Cannot verify certificate signature - DER bytes unavailable for issuer: {}",
-                    last_cert.issuer
-                ),
-            });
-            return (false, None);
-        }
+            // SECURITY: In strict mode (default), this is a failure
+            // Use CIPHERUN_ALLOW_WEAK_CERT_VALIDATION=true to allow non-strict validation
+            let strict_mode = !std::env::var("CIPHERUN_ALLOW_WEAK_CERT_VALIDATION")
+                .map(|v| v == "true" || v == "1")
+                .unwrap_or(false);
 
-        // Also check if the CA cert itself is the last cert in our chain
-        if let Some((store_name, ca_der)) = find_store_for_subject(&last_cert.subject) {
-            // For this case, the certificate itself might be a trusted CA
-            if !last_cert.der_bytes.is_empty() && last_cert.der_bytes == ca_der {
-                return (true, Some(store_name));
+            if strict_mode {
+                issues.push(ValidationIssue {
+                    severity: IssueSeverity::Critical,
+                    issue_type: IssueType::UntrustedCA,
+                    description: format!(
+                        "Cannot verify certificate signature without DER bytes (strict mode) for issuer: {}",
+                        last_cert.issuer
+                    ),
+                });
+                return (false, None);
+            } else {
+                tracing::warn!(
+                    "SECURITY: Weak certificate validation enabled - signature verification skipped for root CA '{}'. \
+                     This reduces security. Remove CIPHERUN_ALLOW_WEAK_CERT_VALIDATION to restore strict validation.",
+                    last_cert.issuer
+                );
+                issues.push(ValidationIssue {
+                    severity: IssueSeverity::High,
+                    issue_type: IssueType::UntrustedCA,
+                    description: format!(
+                        "Cannot verify certificate signature - DER bytes unavailable for issuer: {}",
+                        last_cert.issuer
+                    ),
+                });
+                return (false, None);
             }
         }
+
+        // Note: We do NOT check if the last cert's subject matches a trusted CA here.
+        // The chain validation requires that the issuer of the last cert be a trusted CA,
+        // not that the last cert itself is a trusted CA. A chain where an intermediate
+        // CA's subject matches a trusted CA name but is not signed by that CA is invalid.
 
         issues.push(ValidationIssue {
             severity: IssueSeverity::High,
@@ -247,6 +336,102 @@ mod tests {
             issues
                 .iter()
                 .any(|i| matches!(i.issue_type, IssueType::SelfSigned))
+        );
+    }
+
+    #[test]
+    fn test_validate_trust_chain_self_signed_with_missing_der_fails_strict_mode() {
+        let validator = CertificateValidator::new("example.com".to_string());
+        let mut issues = Vec::new();
+
+        let stores = CA_STORES.as_ref();
+        let all_stores = stores.all_stores();
+        let Some(first_store) = all_stores.first() else {
+            panic!("Expected at least one CA store to be available");
+        };
+
+        let Some(known_ca) = first_store.certificates.first() else {
+            panic!("Expected CA store to contain at least one certificate");
+        };
+
+        let cert = CertificateInfo {
+            subject: known_ca.subject.clone(),
+            issuer: known_ca.subject.clone(),
+            is_ca: true,
+            ..base_cert(
+                "2024-01-01 00:00:00 +0000".to_string(),
+                "2025-01-01 00:00:00 +0000".to_string(),
+            )
+        };
+
+        let chain = CertificateChain {
+            certificates: vec![cert],
+            chain_length: 1,
+            chain_size_bytes: 0,
+        };
+
+        let (valid, ca) = validator.validate_trust_chain(&chain, &mut issues);
+
+        assert!(!valid);
+        assert!(ca.is_none());
+        assert!(
+            issues.iter().any(|i| {
+                i.issue_type == IssueType::UntrustedCA
+                    && i.description.contains("DER bytes unavailable")
+            }),
+            "Expected strict-mode DER unavailable issue"
+        );
+    }
+
+    #[test]
+    fn test_validate_trust_chain_intermediate_missing_der_fails() {
+        let validator = CertificateValidator::new("example.com".to_string());
+        let mut issues = Vec::new();
+
+        let stores = CA_STORES.as_ref();
+        let all_stores = stores.all_stores();
+        let Some(first_store) = all_stores.first() else {
+            panic!("Expected at least one CA store to be available");
+        };
+
+        let Some(intermediate_ca) = first_store.certificates.first() else {
+            panic!("Expected CA store to contain at least one certificate");
+        };
+
+        let mut leaf = base_cert(
+            "2024-01-01 00:00:00 +0000".to_string(),
+            "2025-01-01 00:00:00 +0000".to_string(),
+        );
+        leaf.subject = "CN=leaf.example.com".to_string();
+        leaf.issuer = intermediate_ca.subject.clone();
+        leaf.der_bytes = Vec::new();
+
+        let mut issuer = base_cert(
+            "2024-01-01 00:00:00 +0000".to_string(),
+            "2025-01-01 00:00:00 +0000".to_string(),
+        );
+        issuer.subject = intermediate_ca.subject.clone();
+        issuer.issuer = intermediate_ca.subject.clone();
+        issuer.der_bytes = intermediate_ca.der.clone();
+        issuer.is_ca = true;
+
+        let chain = CertificateChain {
+            certificates: vec![leaf, issuer],
+            chain_length: 2,
+            chain_size_bytes: 0,
+        };
+
+        let (valid, ca) = validator.validate_trust_chain(&chain, &mut issues);
+
+        assert!(!valid);
+        assert!(ca.is_none());
+        assert!(
+            issues.iter().any(|i| {
+                i.issue_type == IssueType::UntrustedCA
+                    && i.description
+                        .contains("Cannot verify signature without DER bytes")
+            }),
+            "Expected missing-DER signature validation issue"
         );
     }
 }

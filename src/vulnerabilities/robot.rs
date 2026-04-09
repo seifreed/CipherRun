@@ -118,11 +118,76 @@ impl RobotTester {
         }
 
         // Weak oracle: Two distinct response patterns indicate observable differences.
+        // However, we need additional validation to avoid false positives from noise.
         // Response length alone is NOT a reliable oracle indicator — network fragmentation,
         // error message variation, and TCP buffering can cause length differences without
-        // revealing padding validity. Only use pattern diversity as signal.
+        // revealing padding validity.
+        //
+        // To be classified as a weak oracle, two patterns must:
+        // 1. Be genuinely different (not just a few bytes apart)
+        // 2. Have sufficient byte-level differences to indicate real oracle behavior
         if unique_patterns == 2 {
-            return Ok(RobotStatus::WeakOracle);
+            // Calculate the actual byte-level difference between the two patterns
+            let patterns: Vec<_> = response_patterns.iter().collect();
+            if patterns.len() == 2 {
+                let p1 = patterns[0];
+                let p2 = patterns[1];
+
+                // Count byte-level differences between patterns
+                let min_len = p1.len().min(p2.len());
+                let mut byte_differences = 0;
+                for i in 0..min_len {
+                    if p1.get(i) != p2.get(i) {
+                        byte_differences += 1;
+                    }
+                }
+                // Add length difference as additional divergence
+                let len_difference = (p1.len() as isize - p2.len() as isize).unsigned_abs();
+                byte_differences += len_difference;
+
+                // Adaptive threshold: use absolute count OR relative percentage
+                const MIN_BYTE_DIFFERENCES: usize = 4;
+                const MIN_RELATIVE_DIFFERENCE: f64 = 0.1; // 10% of pattern length
+
+                let pattern_len = p1.len().max(p2.len()) as f64;
+                let relative_diff = if pattern_len > 0.0 {
+                    byte_differences as f64 / pattern_len
+                } else {
+                    0.0
+                };
+
+                // Consider it a weak oracle if:
+                // 1. Absolute difference >= MIN_BYTE_DIFFERENCES, OR
+                // 2. Relative difference >= 10% of the longer pattern
+                if byte_differences >= MIN_BYTE_DIFFERENCES
+                    || relative_diff >= MIN_RELATIVE_DIFFERENCE
+                {
+                    tracing::debug!(
+                        "ROBOT: Weak oracle detected - {} byte differences ({:.1}% of {} bytes)",
+                        byte_differences,
+                        relative_diff * 100.0,
+                        pattern_len as usize
+                    );
+                    return Ok(RobotStatus::WeakOracle);
+                }
+
+                // Borderline case (2-3 byte differences): log for manual investigation
+                if byte_differences >= 2 {
+                    tracing::info!(
+                        "ROBOT: Borderline detection - {} byte differences ({:.1}% of pattern), manual investigation recommended",
+                        byte_differences,
+                        relative_diff * 100.0
+                    );
+                }
+
+                // Fewer differences - could be noise, classify as not vulnerable
+                tracing::debug!(
+                    "ROBOT: Two patterns detected but only {} byte differences (min: {} or {:.0}%), likely noise",
+                    byte_differences,
+                    MIN_BYTE_DIFFERENCES,
+                    MIN_RELATIVE_DIFFERENCE * 100.0
+                );
+            }
         }
 
         // All responses identical - no observable oracle
@@ -131,7 +196,12 @@ impl RobotTester {
 
     /// Send ClientKeyExchange with invalid RSA ciphertext
     async fn send_invalid_rsa_ciphertext(&self, variant: u8) -> Result<Option<Vec<u8>>> {
-        let addr = self.target.socket_addrs()[0];
+        let addr = self
+            .target
+            .socket_addrs()
+            .first()
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
 
         let mut stream =
             match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None)

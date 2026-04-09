@@ -16,6 +16,8 @@ use std::sync::Arc;
 pub struct AuthExtension {
     pub permission: Permission,
     pub api_key: String,
+    /// Whether the API key was provided via query parameter (less secure than header)
+    pub from_query_param: bool,
 }
 
 /// Authentication middleware
@@ -35,22 +37,55 @@ pub async fn authenticate(
         return Ok(next.run(req).await);
     }
 
-    // Extract API key from X-API-Key header
-    let api_key = req
+    // Extract API key from X-API-Key header or query parameter
+    // Query parameter support is needed for WebSocket connections from browsers
+    // which cannot set custom headers during the WebSocket handshake
+    // SECURITY NOTE: Query parameters are logged in server logs, proxy logs,
+    // and browser history. Use X-API-Key header when possible.
+    let (api_key, from_query_param) = req
         .headers()
         .get("X-API-Key")
         .and_then(|h| h.to_str().ok())
-        .ok_or_else(|| ApiError::Unauthorized("Missing X-API-Key header".to_string()))?;
+        .map(|s| (s.to_string(), false))
+        .or_else(|| {
+            req.uri().query().and_then(|query| {
+                query.split('&').find_map(|param| {
+                    let parts: Vec<&str> = param.splitn(2, '=').collect();
+                    if parts.len() == 2 && parts[0] == "api_key" {
+                        Some((parts[1].to_string(), true))
+                    } else {
+                        None
+                    }
+                })
+            })
+        })
+        .ok_or_else(|| {
+            ApiError::Unauthorized(
+                "Missing API key (use X-API-Key header or api_key query parameter)".to_string(),
+            )
+        })?;
+
+    // SECURITY AUDIT: Log when API key is provided via query parameter
+    // This is less secure than header-based auth and should be monitored
+    if from_query_param {
+        tracing::warn!(
+            "SECURITY: API key provided via query parameter (less secure). \
+             Key may be logged in server logs, proxy logs, and browser history. \
+             Path: {}",
+            path
+        );
+    }
 
     // Validate API key
     let permission = config
-        .validate_key(api_key)
+        .validate_key(&api_key)
         .ok_or_else(|| ApiError::Unauthorized("Invalid API key".to_string()))?;
 
     // Store both permission and API key in request extensions for later use
     let auth_ext = AuthExtension {
         permission,
         api_key: api_key.to_string(),
+        from_query_param,
     };
     req.extensions_mut().insert(auth_ext);
 
@@ -101,6 +136,7 @@ mod tests {
         let auth = AuthExtension {
             permission: Permission::User,
             api_key: "key".to_string(),
+            from_query_param: false,
         };
         req.extensions_mut().insert(auth.clone());
 

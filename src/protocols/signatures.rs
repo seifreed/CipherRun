@@ -32,7 +32,12 @@ impl SignatureTester {
         use tokio::time::timeout;
 
         // Try to connect and read server's supported signature algorithms
-        let addr = self.target.socket_addrs()[0];
+        let addr = self
+            .target
+            .socket_addrs()
+            .first()
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
         let connect_timeout = Duration::from_secs(10);
         let read_timeout = Duration::from_secs(5);
 

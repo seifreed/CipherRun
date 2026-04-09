@@ -92,7 +92,12 @@ impl AlpnTester {
 
     /// Test a specific ALPN protocol
     async fn test_protocol(&self, protocols: Vec<Vec<u8>>) -> Result<Option<String>> {
-        let addr = self.target.socket_addrs()[0];
+        let addr = self
+            .target
+            .socket_addrs()
+            .first()
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
 
         // Connect to server
         let stream =

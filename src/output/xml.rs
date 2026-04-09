@@ -86,10 +86,7 @@ fn write_optional_bool_field(xml: &mut String, tag: &str, value: Option<bool>) {
     }
 }
 
-fn write_protocols_block(
-    xml: &mut String,
-    protocols: &[crate::protocols::ProtocolTestResult],
-) {
+fn write_protocols_block(xml: &mut String, protocols: &[crate::protocols::ProtocolTestResult]) {
     xml.push_str("  <protocols>\n");
     for protocol in protocols {
         xml.push_str("    <protocol>\n");

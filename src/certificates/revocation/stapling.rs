@@ -1,6 +1,7 @@
 use super::{OcspStaplingResult, RevocationChecker};
-use crate::certificates::parser::CertificateInfo;
 use crate::Result;
+use crate::certificates::parser::CertificateInfo;
+use tracing::trace;
 use x509_parser::prelude::*;
 
 impl RevocationChecker {
@@ -163,7 +164,12 @@ impl RevocationChecker {
                             }
                         }
                     }
-                    _ => {}
+                    _ => {
+                        trace!(
+                            "Skipping unknown handshake message type: 0x{:02x}",
+                            msg_type
+                        );
+                    }
                 }
 
                 msg_offset += 4 + msg_len;

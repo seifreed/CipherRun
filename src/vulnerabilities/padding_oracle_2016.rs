@@ -111,7 +111,12 @@ impl<'a> PaddingOracle2016Tester<'a> {
     async fn check_aes_cbc_support(&self) -> Result<bool> {
         use openssl::ssl::{SslConnector, SslMethod, SslVersion};
 
-        let addr = self.target.socket_addrs()[0];
+        let addr = self
+            .target
+            .socket_addrs()
+            .first()
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
 
         // AES-CBC cipher suites (explicitly exclude GCM which is AEAD)
         let aes_cbc_ciphers = "AES128-SHA:AES256-SHA:AES128-SHA256:AES256-SHA256";
@@ -215,7 +220,12 @@ impl<'a> PaddingOracle2016Tester<'a> {
                 "Padding oracle DETECTED: timing difference {:.2}ms exceeds threshold ({:.1}ms). \
                  Valid padding avg: {:.2}ms (σ={:.2}ms), Invalid padding avg: {:.2}ms (σ={:.2}ms). \
                  Statistical significance confirmed.",
-                analysis.timing_diff_ms, TIMING_THRESHOLD_MS, vs.mean, vs.stddev, is.mean, is.stddev
+                analysis.timing_diff_ms,
+                TIMING_THRESHOLD_MS,
+                vs.mean,
+                vs.stddev,
+                is.mean,
+                is.stddev
             )
         } else {
             format!(
@@ -240,7 +250,12 @@ impl<'a> PaddingOracle2016Tester<'a> {
     async fn send_padded_request(&self, valid_padding: bool) -> Result<f64> {
         use openssl::ssl::{SslConnector, SslMethod, SslVersion};
 
-        let addr = self.target.socket_addrs()[0];
+        let addr = self
+            .target
+            .socket_addrs()
+            .first()
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
         let start = Instant::now();
 
         let stream =

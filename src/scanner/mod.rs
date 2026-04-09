@@ -20,12 +20,12 @@ pub mod phases;
 // Re-export domain-specific configuration objects
 pub use crate::protocols::ProtocolTestResult;
 pub use config::{CertificateConfig, CipherTestConfig, ProtocolTestConfig};
+pub use default_port::DefaultScannerPort;
 pub use probe_status::{ErrorType as ProbeErrorType, ProbeStatus};
 pub use results::{
     AdvancedResults, CertificateAnalysisResult, FingerprintResults, HttpResults, RatingResults,
     ScanMetadata, ScanResults, SniMethod,
 };
-pub use default_port::DefaultScannerPort;
 pub use service::Scanner;
 
 // Re-export progress reporter types for dependency injection

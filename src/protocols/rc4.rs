@@ -77,7 +77,12 @@ impl Rc4Tester {
     async fn test_cipher(&self, cipher: &str) -> Result<bool> {
         use openssl::ssl::{SslConnector, SslMethod, SslVersion};
 
-        let addr = self.target.socket_addrs()[0];
+        let addr = self
+            .target
+            .socket_addrs()
+            .first()
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
 
         match crate::utils::network::connect_with_timeout(addr, Duration::from_secs(3), None).await
         {
@@ -114,7 +119,12 @@ impl Rc4Tester {
     pub async fn test_rc4_preferred(&self) -> Result<bool> {
         use openssl::ssl::{SslConnector, SslMethod};
 
-        let addr = self.target.socket_addrs()[0];
+        let addr = self
+            .target
+            .socket_addrs()
+            .first()
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
 
         match crate::utils::network::connect_with_timeout(addr, Duration::from_secs(5), None).await
         {

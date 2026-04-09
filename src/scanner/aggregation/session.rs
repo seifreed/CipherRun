@@ -18,26 +18,28 @@ impl ConservativeAggregator {
             return Vec::new();
         }
 
-        // Performance optimization: Collect ALPN protocols using references
+        // Collect ALPN protocol sets for every successful backend.
+        // A backend without ALPN enabled (or without an ALPN report) is treated as
+        // an empty set to enforce the conservative intersection contract.
         let mut protocol_sets: Vec<HashSet<&str>> = Vec::new();
 
         for result in &successful_results {
-            if let Some(alpn_report) = result.scan_result.alpn_result()
-                && alpn_report.alpn_enabled
-            {
-                let protocols: HashSet<&str> = alpn_report
-                    .alpn_result
-                    .supported_protocols
-                    .iter()
-                    .map(|s| s.as_str())
-                    .collect();
-                protocol_sets.push(protocols);
-            }
-        }
+            let protocols = if let Some(alpn_report) = result.scan_result.alpn_result() {
+                if alpn_report.alpn_enabled {
+                    alpn_report
+                        .alpn_result
+                        .supported_protocols
+                        .iter()
+                        .map(|s| s.as_str())
+                        .collect()
+                } else {
+                    HashSet::new()
+                }
+            } else {
+                HashSet::new()
+            };
 
-        // If no IPs have ALPN enabled, return empty
-        if protocol_sets.is_empty() {
-            return Vec::new();
+            protocol_sets.push(protocols);
         }
 
         // Find intersection - only protocols supported by ALL IPs
@@ -173,6 +175,87 @@ mod tests {
             SingleIpScanResult {
                 ip,
                 scan_result: scan,
+                scan_duration_ms: 1,
+                error: None,
+            },
+        );
+
+        let aggregator = ConservativeAggregator::new(results, Vec::new());
+        let aggregated = aggregator.aggregate();
+        assert!(aggregated.alpn_protocols.is_empty());
+    }
+
+    #[test]
+    fn test_aggregate_alpn_disabled_across_ips_returns_empty() {
+        let ip1: IpAddr = Ipv4Addr::new(127, 0, 0, 1).into();
+        let ip2: IpAddr = Ipv4Addr::new(127, 0, 0, 2).into();
+
+        let mut results = HashMap::new();
+
+        let mut scan_ip1 = ScanResults {
+            advanced: Some(AdvancedResults {
+                alpn_result: Some(crate::protocols::alpn::AlpnReport {
+                    alpn_enabled: true,
+                    alpn_result: crate::protocols::alpn::AlpnResult {
+                        supported_protocols: vec!["h2".to_string()],
+                        http2_supported: true,
+                        http3_supported: false,
+                        negotiated_protocol: None,
+                        details: Vec::new(),
+                    },
+                    spdy_supported: false,
+                    recommendations: Vec::new(),
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        // Explicitly include a protocol list with protocols to avoid accidental fallback.
+        scan_ip1.protocols = vec![ProtocolTestResult {
+            protocol: Protocol::TLS13,
+            supported: true,
+            preferred: true,
+            ciphers_count: 0,
+            handshake_time_ms: None,
+            heartbeat_enabled: None,
+            session_resumption_caching: None,
+            session_resumption_tickets: None,
+            secure_renegotiation: None,
+        }];
+
+        let scan_ip2 = ScanResults {
+            advanced: Some(AdvancedResults {
+                alpn_result: Some(crate::protocols::alpn::AlpnReport {
+                    alpn_enabled: false,
+                    alpn_result: crate::protocols::alpn::AlpnResult {
+                        supported_protocols: vec!["h2".to_string()],
+                        http2_supported: true,
+                        http3_supported: false,
+                        negotiated_protocol: None,
+                        details: Vec::new(),
+                    },
+                    spdy_supported: false,
+                    recommendations: Vec::new(),
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        results.insert(
+            ip1,
+            SingleIpScanResult {
+                ip: ip1,
+                scan_result: scan_ip1,
+                scan_duration_ms: 1,
+                error: None,
+            },
+        );
+        results.insert(
+            ip2,
+            SingleIpScanResult {
+                ip: ip2,
+                scan_result: scan_ip2,
                 scan_duration_ms: 1,
                 error: None,
             },

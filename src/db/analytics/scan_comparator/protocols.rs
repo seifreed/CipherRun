@@ -1,9 +1,13 @@
 // Protocol comparison methods for ScanComparator
 
 use super::{ProtocolDiff, ScanComparator};
-use crate::db::connection::DatabasePool;
 use crate::db::ProtocolRecord;
+use crate::db::connection::DatabasePool;
 use std::collections::HashSet;
+
+fn sort_protocol_names(protocols: &mut Vec<String>) {
+    protocols.sort();
+}
 
 impl ScanComparator {
     pub(crate) async fn compare_protocols(
@@ -27,9 +31,13 @@ impl ScanComparator {
             .collect();
 
         // Only clone when building final result vectors
-        let added: Vec<String> = set2.difference(&set1).map(|s| s.to_string()).collect();
-        let removed: Vec<String> = set1.difference(&set2).map(|s| s.to_string()).collect();
-        let unchanged: Vec<String> = set1.intersection(&set2).map(|s| s.to_string()).collect();
+        let mut added: Vec<String> = set2.difference(&set1).map(|s| s.to_string()).collect();
+        let mut removed: Vec<String> = set1.difference(&set2).map(|s| s.to_string()).collect();
+        let mut unchanged: Vec<String> = set1.intersection(&set2).map(|s| s.to_string()).collect();
+
+        sort_protocol_names(&mut added);
+        sort_protocol_names(&mut removed);
+        sort_protocol_names(&mut unchanged);
 
         let pref1 = protocols1
             .iter()

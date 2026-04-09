@@ -1,6 +1,7 @@
 // API Server Implementation
 
 use crate::api::{config::ApiConfig, middleware, routes, state::AppState};
+use crate::utils::network::canonical_target;
 use anyhow::Result;
 use axum::{
     Router, middleware as axum_middleware,
@@ -118,7 +119,7 @@ impl ApiServer {
         let app = self.build_router();
 
         // Create listener
-        let addr = format!("{}:{}", self.config.host, self.config.port);
+        let addr = canonical_target(&self.config.host, self.config.port);
         let listener = tokio::net::TcpListener::bind(&addr).await?;
 
         info!("CipherRun API server listening on {}", addr);

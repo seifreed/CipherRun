@@ -96,10 +96,7 @@ pub async fn negotiate(
     check_capability(config, hostname, &mut reader).await?;
 
     // Step 4: Send STARTTLS command
-    reader
-        .get_mut()
-        .write_all(config.starttls_command)
-        .await?;
+    reader.get_mut().write_all(config.starttls_command).await?;
     reader.get_mut().flush().await?;
 
     // Step 5: Validate STARTTLS response
@@ -192,8 +189,9 @@ async fn check_capability(
         CapabilityResponseStyle::UntilTagged {
             ok_prefix,
             error_prefixes,
-        } => read_tagged_capabilities(reader, config, cap_config, ok_prefix, error_prefixes)
-            .await?,
+        } => {
+            read_tagged_capabilities(reader, config, cap_config, ok_prefix, error_prefixes).await?
+        }
         CapabilityResponseStyle::DotTerminated {
             first_line_prefix,
             first_line_status,
@@ -283,10 +281,7 @@ async fn read_dot_terminated_capabilities(
         if trimmed == "." {
             break;
         }
-        if trimmed
-            .to_uppercase()
-            .contains(cap.starttls_marker)
-        {
+        if trimmed.to_uppercase().contains(cap.starttls_marker) {
             supported = true;
         }
     }
@@ -354,8 +349,7 @@ async fn validate_success(
             }
         }
         SuccessCheck::StatusCode(expected) => {
-            let (code, response) =
-                response::read_status_line(reader, config.protocol_name).await?;
+            let (code, response) = response::read_status_line(reader, config.protocol_name).await?;
             if code != *expected {
                 return Err(TlsError::StarttlsError {
                     protocol: config.protocol_name.to_string(),

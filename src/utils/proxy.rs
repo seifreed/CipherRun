@@ -2,6 +2,7 @@
 // Supports CONNECT method for HTTPS proxying
 
 use crate::Result;
+use crate::utils::network::canonical_target;
 use anyhow::Context;
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -50,25 +51,31 @@ impl ProxyConfig {
 
     /// Parse host:port string
     fn parse_hostport(hostport: &str) -> Result<(String, u16)> {
-        if let Some((host, port_str)) = hostport.rsplit_once(':') {
-            let port = port_str
-                .parse::<u16>()
-                .map_err(|_| anyhow::anyhow!("Invalid port"))?;
-            Ok((host.to_string(), port))
-        } else {
-            // Default to port 8080 for HTTP proxies
-            Ok((hostport.to_string(), 8080))
-        }
+        use crate::utils::network::split_target_host_port;
+
+        let (host, port) = split_target_host_port(hostport)?;
+        // Default to port 8080 for HTTP proxies
+        Ok((host, port.unwrap_or(8080)))
     }
 
     /// Get socket address for proxy
     pub async fn socket_addr(&self) -> Result<SocketAddr> {
-        use crate::utils::network::resolve_hostname;
+        let addrs = self.socket_addrs().await?;
+        Ok(addrs
+            .into_iter()
+            .next()
+            .context("No IP addresses found for proxy")?)
+    }
 
-        let ips = resolve_hostname(&self.host).await?;
-        let ip = ips.first().context("No IP addresses found for proxy")?;
+    /// Get all socket addresses for proxy resolution.
+    pub async fn socket_addrs(&self) -> Result<Vec<SocketAddr>> {
+        use crate::utils::network::resolve_hostname_unsafe;
 
-        Ok(SocketAddr::new(*ip, self.port))
+        let ips = resolve_hostname_unsafe(&self.host).await?;
+        Ok(ips
+            .into_iter()
+            .map(|ip| SocketAddr::new(ip, self.port))
+            .collect())
     }
 }
 
@@ -80,10 +87,8 @@ pub async fn connect_via_proxy(
     connect_timeout: Duration,
 ) -> Result<TcpStream> {
     // Connect to proxy
-    let proxy_addr = proxy.socket_addr().await?;
-    let mut stream = timeout(connect_timeout, TcpStream::connect(proxy_addr))
-        .await
-        .context("Proxy connection timeout")??;
+    let proxy_addrs = proxy.socket_addrs().await?;
+    let mut stream = connect_to_any_socket_addr(&proxy_addrs, connect_timeout).await?;
 
     // Send CONNECT request
     let connect_request =
@@ -117,6 +122,33 @@ pub async fn connect_via_proxy(
     Ok(reader.into_inner())
 }
 
+async fn connect_to_any_socket_addr(
+    addrs: &[SocketAddr],
+    connect_timeout: Duration,
+) -> Result<TcpStream> {
+    let mut last_error: Option<anyhow::Error> = None;
+
+    for addr in addrs {
+        match timeout(connect_timeout, TcpStream::connect(*addr)).await {
+            Ok(Ok(stream)) => return Ok(stream),
+            Ok(Err(err)) => {
+                last_error = Some(anyhow::anyhow!(
+                    "Failed to connect to proxy {}: {}",
+                    addr,
+                    err
+                ));
+            }
+            Err(_) => {
+                last_error = Some(anyhow::anyhow!("Proxy connection timeout for {}", addr));
+            }
+        }
+    }
+
+    Err(last_error
+        .unwrap_or_else(|| anyhow::anyhow!("No IP addresses found for proxy"))
+        .into())
+}
+
 /// Build HTTP CONNECT request
 fn build_connect_request(
     host: &str,
@@ -124,11 +156,8 @@ fn build_connect_request(
     username: &Option<String>,
     password: &Option<String>,
 ) -> String {
-    let mut request = format!(
-        "CONNECT {}:{} HTTP/1.1\r\n\
-         Host: {}:{}\r\n",
-        host, port, host, port
-    );
+    let authority = canonical_target(normalize_connect_host(host), port);
+    let mut request = format!("CONNECT {} HTTP/1.1\r\nHost: {}\r\n", authority, authority);
 
     // Add Proxy-Authorization if credentials provided
     if let (Some(user), Some(pass)) = (username, password) {
@@ -140,6 +169,12 @@ fn build_connect_request(
 
     request.push_str("\r\n");
     request
+}
+
+fn normalize_connect_host(host: &str) -> &str {
+    host.strip_prefix('[')
+        .and_then(|value| value.strip_suffix(']'))
+        .unwrap_or(host)
 }
 
 /// Check if proxy is working
@@ -180,6 +215,13 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_proxy_bracketed_ipv6() {
+        let proxy = ProxyConfig::parse("[::1]:3128").expect("test assertion should succeed");
+        assert_eq!(proxy.host, "::1");
+        assert_eq!(proxy.port, 3128);
+    }
+
+    #[test]
     fn test_build_connect_request_no_auth() {
         let request = build_connect_request("example.com", 443, &None, &None);
         assert!(request.contains("CONNECT example.com:443"));
@@ -197,6 +239,13 @@ mod tests {
         );
         assert!(request.contains("CONNECT example.com:443"));
         assert!(request.contains("Proxy-Authorization: Basic"));
+    }
+
+    #[test]
+    fn test_build_connect_request_brackets_ipv6() {
+        let request = build_connect_request("2001:db8::1", 443, &None, &None);
+        assert!(request.contains("CONNECT [2001:db8::1]:443"));
+        assert!(request.contains("Host: [2001:db8::1]:443"));
     }
 
     #[test]
@@ -234,5 +283,44 @@ mod tests {
         assert_eq!(proxy.port, 8080);
         assert_eq!(proxy.username.as_deref(), Some("user"));
         assert!(proxy.password.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_socket_addr_allows_private_ip_proxy() {
+        let proxy = ProxyConfig {
+            host: "127.0.0.1".to_string(),
+            port: 8080,
+            username: None,
+            password: None,
+        };
+
+        let addr = proxy
+            .socket_addr()
+            .await
+            .expect("private proxy IP should be allowed");
+        assert_eq!(addr.ip().to_string(), "127.0.0.1");
+        assert_eq!(addr.port(), 8080);
+    }
+
+    #[tokio::test]
+    async fn test_connect_to_any_socket_addr_falls_back_to_second_address() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let fallback_addr = listener
+            .local_addr()
+            .expect("listener should expose local addr");
+        let unreachable_addr =
+            SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), 1);
+
+        let stream =
+            connect_to_any_socket_addr(&[unreachable_addr, fallback_addr], Duration::from_secs(1))
+                .await
+                .expect("second address should succeed");
+
+        let peer = stream
+            .peer_addr()
+            .expect("connected stream should expose peer address");
+        assert_eq!(peer, fallback_addr);
     }
 }

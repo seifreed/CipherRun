@@ -1,7 +1,7 @@
-/// Shared timing analysis utilities for vulnerability detection.
-///
-/// Provides statistical tools for detecting timing oracles in TLS implementations.
-/// Used by both POODLE (Sleeping POODLE variant) and Padding Oracle (CVE-2016-2107) testers.
+//! Shared timing analysis utilities for vulnerability detection.
+//!
+//! Provides statistical tools for detecting timing oracles in TLS implementations.
+//! Used by both POODLE (Sleeping POODLE variant) and Padding Oracle (CVE-2016-2107) testers.
 
 /// A collection of timing samples with statistical computation.
 #[derive(Debug, Clone)]
@@ -74,19 +74,10 @@ impl TimingSampleSet {
         let count = self.samples.len();
         let mean = self.samples.iter().sum::<f64>() / count as f64;
 
-        let variance = self
-            .samples
-            .iter()
-            .map(|t| (t - mean).powi(2))
-            .sum::<f64>()
-            / count as f64;
+        let variance = self.samples.iter().map(|t| (t - mean).powi(2)).sum::<f64>() / count as f64;
         let stddev = variance.sqrt();
 
-        let coefficient_of_variation = if mean > 0.0 {
-            stddev / mean
-        } else {
-            f64::MAX
-        };
+        let coefficient_of_variation = if mean > 0.0 { stddev / mean } else { f64::MAX };
 
         Some(TimingStatistics {
             mean,
@@ -228,7 +219,9 @@ mod tests {
         for v in [1.0, 100.0, 1.0, 100.0, 1.0, 100.0, 1.0, 100.0, 1.0, 100.0] {
             valid.push(v);
         }
-        for v in [50.0, 150.0, 50.0, 150.0, 50.0, 150.0, 50.0, 150.0, 50.0, 150.0] {
+        for v in [
+            50.0, 150.0, 50.0, 150.0, 50.0, 150.0, 50.0, 150.0, 50.0, 150.0,
+        ] {
             invalid.push(v);
         }
 

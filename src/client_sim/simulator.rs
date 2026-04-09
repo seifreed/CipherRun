@@ -133,7 +133,12 @@ impl ClientSimulator {
         use std::sync::Arc;
         use tokio_rustls::TlsConnector;
 
-        let addr = self.target.socket_addrs()[0];
+        let addr = self
+            .target
+            .socket_addrs()
+            .first()
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
 
         // Connect TCP
         let stream = timeout(self.connect_timeout, TcpStream::connect(addr)).await??;

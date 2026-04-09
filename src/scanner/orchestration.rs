@@ -2,6 +2,7 @@ use super::{CertificateAnalysisResult, RatingResults, ScanMetadata, ScanResults,
 use crate::Result;
 use crate::rating::RatingCalculator;
 use crate::scanner::probe_status::ProbeStatus;
+use crate::utils::network::canonical_target;
 use crate::vulnerabilities::{VulnerabilityResult, merge_vulnerability_result};
 use std::time::Duration;
 
@@ -38,7 +39,7 @@ impl Scanner {
         &self,
         report: &crate::scanner::multi_ip::MultiIpScanReport,
     ) -> Result<ScanResults> {
-        let base_scan = report
+        let _base_scan = report
             .per_ip_results
             .values()
             .find(|result| result.is_successful())
@@ -52,7 +53,7 @@ impl Scanner {
         );
 
         let mut aggregated = ScanResults {
-            target: base_scan.scan_result.target.clone(),
+            target: canonical_target(&report.target.hostname, report.target.port),
             scan_time_ms: report.total_duration_ms,
             protocols: report.aggregated.protocols.clone(),
             ciphers: report.aggregated.ciphers.clone(),
@@ -98,36 +99,50 @@ impl Scanner {
     }
 
     fn aggregate_probe_status(report: &crate::scanner::multi_ip::MultiIpScanReport) -> ProbeStatus {
-        let successful_results: Vec<_> = report
+        let mut successful_results: Vec<_> = report
             .per_ip_results
-            .values()
-            .filter(|result| result.is_successful())
+            .iter()
+            .filter(|(_, result)| result.is_successful())
             .collect();
+
+        successful_results.sort_by_key(|(ip, _)| **ip);
+
+        let has_connection_evidence = successful_results
+            .iter()
+            .any(|(_, result)| result.scan_result.has_connection_evidence());
 
         let attempted_statuses: Vec<_> = successful_results
             .iter()
-            .map(|result| &result.scan_result.scan_metadata.probe_status)
-            .filter(|status| status.attempts > 0)
+            .map(|(ip, result)| (*ip, &result.scan_result.scan_metadata.probe_status))
+            .filter(|(_, status)| status.attempts > 0)
             .collect();
 
         if attempted_statuses.is_empty() {
+            if has_connection_evidence {
+                let mut aggregated = ProbeStatus::partial_success(
+                    Duration::from_millis(0),
+                    "Probe/connectivity preflight failed, but later scan phases established a working connection".to_string(),
+                );
+                aggregated.attempts = 0;
+                return aggregated;
+            }
             return ProbeStatus::default();
         }
 
-        let total_attempts = attempted_statuses
+        let total_attempts: u32 = attempted_statuses
             .iter()
-            .map(|status| status.attempts)
+            .map(|(_, status)| status.attempts)
             .sum();
         let successful_statuses: Vec<_> = attempted_statuses
             .iter()
             .copied()
-            .filter(|status| status.success)
+            .filter(|(_, status)| status.success)
             .collect();
 
-        if let Some(best_success) = successful_statuses
+        if let Some((_, best_success)) = successful_statuses
             .iter()
             .copied()
-            .min_by_key(|status| status.connection_time_ms.unwrap_or(u64::MAX))
+            .min_by_key(|(ip, status)| (status.connection_time_ms.unwrap_or(u64::MAX), *ip))
         {
             let had_partial_failures = successful_statuses.len() < attempted_statuses.len();
             let had_failed_ip_scans = report.failed_scans > 0;
@@ -148,13 +163,10 @@ impl Scanner {
             return aggregated;
         }
 
-        if successful_results
-            .iter()
-            .any(|result| result.scan_result.has_connection_evidence())
-        {
+        if has_connection_evidence {
             let best_observed_time_ms = attempted_statuses
                 .iter()
-                .filter_map(|status| status.connection_time_ms)
+                .filter_map(|(_, status)| status.connection_time_ms)
                 .min()
                 .unwrap_or(0);
             let mut aggregated = ProbeStatus::partial_success(
@@ -165,7 +177,7 @@ impl Scanner {
             return aggregated;
         }
 
-        let mut aggregated = (*attempted_statuses[0]).clone();
+        let mut aggregated = attempted_statuses[0].1.clone();
         aggregated.attempts = total_attempts;
         aggregated
     }
@@ -178,7 +190,10 @@ impl Scanner {
     ) -> Vec<VulnerabilityResult> {
         let mut aggregated: Vec<VulnerabilityResult> = Vec::new();
 
-        for result in results.values() {
+        let mut results: Vec<_> = results.iter().collect();
+        results.sort_by_key(|(ip, _)| **ip);
+
+        for (_, result) in results {
             if result.error.is_some() && result.scan_result.vulnerabilities.is_empty() {
                 continue;
             }
@@ -195,6 +210,9 @@ impl Scanner {
             }
         }
 
+        // Sort by vulnerability type for deterministic output
+        aggregated.sort_by_key(|v| v.vuln_type.sort_key());
+
         aggregated
     }
 
@@ -205,25 +223,72 @@ impl Scanner {
         >,
         certificate_info: Option<&crate::certificates::parser::CertificateInfo>,
     ) -> Option<CertificateAnalysisResult> {
+        // Collect all successful certificate chains for analysis
+        let mut successful_chains: Vec<_> = results
+            .iter()
+            .filter(|(_, result)| result.error.is_none())
+            .filter_map(|(ip, result)| {
+                result
+                    .scan_result
+                    .certificate_chain
+                    .clone()
+                    .map(|chain| (*ip, chain))
+            })
+            .collect();
+
+        successful_chains.sort_by_key(|(ip, _)| *ip);
+
+        let successful_chains: Vec<_> = successful_chains
+            .into_iter()
+            .map(|(_, chain)| chain)
+            .collect();
+
+        if successful_chains.is_empty() {
+            return None;
+        }
+
+        // Detect certificate inconsistencies across IPs
+        let first_fingerprint = successful_chains
+            .first()
+            .and_then(|chain| chain.chain.leaf())
+            .and_then(|cert| cert.fingerprint_sha256.as_ref());
+
+        let has_inconsistencies = successful_chains.iter().skip(1).any(|chain| {
+            let current_fingerprint = chain
+                .chain
+                .leaf()
+                .and_then(|cert| cert.fingerprint_sha256.as_ref());
+            current_fingerprint != first_fingerprint
+        });
+
+        if has_inconsistencies {
+            tracing::warn!(
+                "Certificate inconsistency detected across IPs - different certificates served. \
+                 Using first available certificate for reporting. \
+                 This may indicate load balancing or SNI-based certificate selection."
+            );
+        }
+
+        // Use the provided fingerprint if available, otherwise use first chain's fingerprint
         let fingerprint = certificate_info.and_then(|cert| cert.fingerprint_sha256.as_ref());
-        let Some(fingerprint) = fingerprint else {
-            return results
-                .values()
-                .filter(|result| result.error.is_none())
-                .find_map(|result| result.scan_result.certificate_chain.clone());
+        let target_fingerprint = fingerprint.or(first_fingerprint);
+
+        let Some(target_fingerprint) = target_fingerprint else {
+            // No fingerprint available, return first successful chain
+            return successful_chains.first().cloned();
         };
 
-        results
-            .values()
-            .filter(|result| result.error.is_none())
-            .find_map(|result| {
-                let chain = result.scan_result.certificate_chain.as_ref()?;
-                let leaf = chain.chain.leaf()?;
-                if leaf.fingerprint_sha256.as_ref()? == fingerprint {
-                    Some(chain.clone())
-                } else {
-                    None
-                }
-            })
+        Self::select_chain_by_fingerprint(&successful_chains, target_fingerprint.as_str())
+            .or_else(|| successful_chains.first().cloned())
+    }
+
+    pub(crate) fn select_chain_by_fingerprint(
+        successful_chains: &[CertificateAnalysisResult],
+        target_fingerprint: &str,
+    ) -> Option<CertificateAnalysisResult> {
+        successful_chains.iter().find_map(|chain| {
+            let leaf = chain.chain.leaf()?;
+            (leaf.fingerprint_sha256.as_deref() == Some(target_fingerprint)).then(|| chain.clone())
+        })
     }
 }

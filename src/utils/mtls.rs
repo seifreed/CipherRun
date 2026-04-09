@@ -8,6 +8,7 @@ use std::io::BufReader;
 use std::path::Path;
 use std::sync::Arc;
 use tokio_rustls::TlsConnector;
+use tracing::warn;
 
 /// mTLS configuration
 pub struct MtlsConfig {
@@ -67,7 +68,9 @@ impl MtlsConfig {
                 Ok(rustls_pemfile::Item::Sec1Key(key)) => {
                     keys.push(PrivateKeyDer::Sec1(key));
                 }
-                _ => {}
+                Ok(_) | Err(_) => {
+                    warn!("Skipping unsupported PEM item in mTLS config");
+                }
             }
         }
 

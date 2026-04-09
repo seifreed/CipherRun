@@ -52,7 +52,12 @@ impl BeastTester {
     async fn test_tls10_cbc(&self) -> Result<bool> {
         use openssl::ssl::{SslConnector, SslMethod, SslVersion};
 
-        let addr = self.target.socket_addrs()[0];
+        let addr = self
+            .target
+            .socket_addrs()
+            .first()
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
 
         // Try to connect with TLS 1.0 and CBC cipher
         let stream =
@@ -85,7 +90,12 @@ impl BeastTester {
     async fn test_ssl3_cbc(&self) -> Result<bool> {
         use openssl::ssl::{SslConnector, SslMethod, SslVersion};
 
-        let addr = self.target.socket_addrs()[0];
+        let addr = self
+            .target
+            .socket_addrs()
+            .first()
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
 
         let stream =
             match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None)

@@ -333,21 +333,45 @@ mod tests {
     #[test]
     fn test_collect_result_ok_and_err() {
         let mut results = Vec::new();
-        orchestration::collect_result(&mut results, Ok(sample_result()), "sample");
+        orchestration::collect_result(
+            &mut results,
+            Ok(sample_result()),
+            VulnerabilityType::Heartbleed,
+            "sample",
+        );
         orchestration::collect_result(
             &mut results,
             Err(crate::TlsError::Other("boom".to_string())),
+            VulnerabilityType::Heartbleed,
             "sample",
         );
-        assert_eq!(results.len(), 1);
+        // Should have 2 results: one success and one inconclusive for the error
+        assert_eq!(results.len(), 2);
+        assert!(!results[0].inconclusive);
+        assert!(results[1].inconclusive);
     }
 
     #[test]
     fn test_collect_results_and_optional() {
         let mut results = Vec::new();
-        orchestration::collect_results(&mut results, Ok(vec![sample_result()]), "sample");
-        orchestration::collect_optional_result(&mut results, Ok(Some(sample_result())), "sample");
-        orchestration::collect_optional_result(&mut results, Ok(None), "sample");
+        orchestration::collect_results(
+            &mut results,
+            Ok(vec![sample_result()]),
+            &[VulnerabilityType::Heartbleed],
+            "sample",
+        );
+        orchestration::collect_optional_result(
+            &mut results,
+            Ok(Some(sample_result())),
+            VulnerabilityType::Heartbleed,
+            "sample",
+        );
+        orchestration::collect_optional_result(
+            &mut results,
+            Ok(None),
+            VulnerabilityType::Heartbleed,
+            "sample",
+        );
         assert_eq!(results.len(), 2);
     }
 
@@ -514,9 +538,24 @@ mod tests {
     #[test]
     fn test_collect_helpers() {
         let mut results = Vec::new();
-        orchestration::collect_result(&mut results, Ok(sample_result()), "ok");
-        orchestration::collect_results(&mut results, Ok(vec![sample_result()]), "ok");
-        orchestration::collect_optional_result(&mut results, Ok(Some(sample_result())), "ok");
+        orchestration::collect_result(
+            &mut results,
+            Ok(sample_result()),
+            VulnerabilityType::Heartbleed,
+            "ok",
+        );
+        orchestration::collect_results(
+            &mut results,
+            Ok(vec![sample_result()]),
+            &[VulnerabilityType::Heartbleed],
+            "ok",
+        );
+        orchestration::collect_optional_result(
+            &mut results,
+            Ok(Some(sample_result())),
+            VulnerabilityType::Heartbleed,
+            "ok",
+        );
         assert_eq!(results.len(), 3);
     }
 

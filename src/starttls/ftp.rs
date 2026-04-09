@@ -122,12 +122,22 @@ mod tests {
     #[tokio::test]
     async fn test_ftp_negotiate_starttls_not_supported() {
         use tokio::net::TcpListener;
-        let listener = TcpListener::bind("127.0.0.1:0").await.expect("test listener should bind to localhost");
-        let addr = listener.local_addr().expect("test listener should have local addr");
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test listener should bind to localhost");
+        let addr = listener
+            .local_addr()
+            .expect("test listener should have local addr");
 
         let server = tokio::spawn(async move {
-            let (mut stream, _) = listener.accept().await.expect("test server should accept connection");
-            stream.write_all(b"220 ready\r\n").await.expect("test server should write response");
+            let (mut stream, _) = listener
+                .accept()
+                .await
+                .expect("test server should accept connection");
+            stream
+                .write_all(b"220 ready\r\n")
+                .await
+                .expect("test server should write response");
 
             let mut buf = [0u8; 16];
             let _ = stream.read(&mut buf).await.expect("test should read data");
@@ -137,7 +147,9 @@ mod tests {
                 .expect("test server should write response");
         });
 
-        let mut client = tokio::net::TcpStream::connect(addr).await.expect("test client should connect");
+        let mut client = tokio::net::TcpStream::connect(addr)
+            .await
+            .expect("test client should connect");
         let negotiator = FtpNegotiator::new();
         let err = negotiator
             .negotiate_starttls(&mut client)

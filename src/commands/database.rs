@@ -4,6 +4,7 @@
 
 use super::{Command, CommandExit};
 use crate::application::HostPortInput;
+use crate::utils::network::canonical_target;
 use crate::{Args, Result};
 use async_trait::async_trait;
 
@@ -55,13 +56,13 @@ impl DatabaseCommand {
         Ok(())
     }
 
-    fn parse_history_target(&self, history_target: &str) -> (String, u16) {
-        let parsed = HostPortInput::parse_with_default_port(history_target, 443);
-        (parsed.hostname, parsed.port)
+    fn parse_history_target(&self, history_target: &str) -> Result<(String, u16)> {
+        let parsed = HostPortInput::parse_with_default_port(history_target, 443)?;
+        Ok((parsed.hostname, parsed.port))
     }
 
     fn render_history(&self, hostname: &str, port: u16, scans: &[crate::db::models::ScanRecord]) {
-        println!("\nScan History for {}:{}", hostname, port);
+        println!("\nScan History for {}", canonical_target(hostname, port));
         println!("{}", "=".repeat(80));
 
         if scans.is_empty() {
@@ -82,7 +83,7 @@ impl DatabaseCommand {
 
     async fn show_history(&self, db: &crate::db::CipherRunDatabase) -> Result<()> {
         if let Some(history_target) = &self.args.database.history {
-            let (hostname, port) = self.parse_history_target(history_target);
+            let (hostname, port) = self.parse_history_target(history_target)?;
             let scans = db
                 .get_scan_history(&hostname, port, self.args.database.history_limit)
                 .await?;

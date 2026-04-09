@@ -2,6 +2,7 @@
 // Parses nmap -oG output format
 
 use crate::Result;
+use crate::utils::network::canonical_target;
 use std::fs;
 
 /// Nmap target from greppable output
@@ -95,7 +96,7 @@ impl NmapParser {
         targets
             .iter()
             .filter(|t| t.protocol == "tcp") // Only TCP ports
-            .map(|t| format!("{}:{}", t.hostname, t.port))
+            .map(|t| canonical_target(&t.hostname, t.port))
             .collect()
     }
 
@@ -154,6 +155,35 @@ Host: 192.168.1.1 (example.com)	Ports: 443/open/tcp//https///	Ignored State: clo
 
         let strings = NmapParser::to_target_strings(&targets);
         assert_eq!(strings[0], "example.com:443");
+    }
+
+    #[test]
+    fn test_to_target_strings_brackets_ipv6() {
+        let targets = vec![
+            NmapTarget {
+                hostname: "2001:db8::1".to_string(),
+                ip: "2001:db8::1".to_string(),
+                port: 443,
+                protocol: "tcp".to_string(),
+                state: "open".to_string(),
+            },
+            NmapTarget {
+                hostname: "example.com".to_string(),
+                ip: "192.168.1.1".to_string(),
+                port: 8443,
+                protocol: "tcp".to_string(),
+                state: "open".to_string(),
+            },
+        ];
+
+        let strings = NmapParser::to_target_strings(&targets);
+        assert_eq!(
+            strings,
+            vec![
+                "[2001:db8::1]:443".to_string(),
+                "example.com:8443".to_string()
+            ]
+        );
     }
 
     #[test]

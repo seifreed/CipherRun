@@ -52,7 +52,12 @@ impl StarttlsInjectionTester {
 
     /// Test SMTP STARTTLS injection
     pub async fn test_smtp_injection(&self) -> Result<bool> {
-        let addr = self.target.socket_addrs()[0];
+        let addr = self
+            .target
+            .socket_addrs()
+            .first()
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
 
         // Try to connect with timeout
         let stream =
@@ -117,7 +122,12 @@ impl StarttlsInjectionTester {
 
     /// Test IMAP STARTTLS injection
     pub async fn test_imap_injection(&self) -> Result<bool> {
-        let addr = self.target.socket_addrs()[0];
+        let addr = self
+            .target
+            .socket_addrs()
+            .first()
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
 
         let stream =
             match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None)
@@ -171,7 +181,12 @@ impl StarttlsInjectionTester {
 
     /// Test POP3 STARTTLS injection
     pub async fn test_pop3_injection(&self) -> Result<bool> {
-        let addr = self.target.socket_addrs()[0];
+        let addr = self
+            .target
+            .socket_addrs()
+            .first()
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
 
         let stream =
             match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None)

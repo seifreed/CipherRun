@@ -8,7 +8,7 @@ use crate::Args;
 use crate::Result;
 use crate::error::TlsError;
 use crate::scanner::ScanResults;
-use crate::utils::network::Target;
+use crate::utils::network::{Target, canonical_target};
 use hickory_resolver::TokioResolver;
 use hickory_resolver::config::*;
 use hickory_resolver::name_server::TokioConnectionProvider;
@@ -144,7 +144,7 @@ impl AnycastScanner {
 
         // Create scanner with modified args (use IP directly)
         let mut scanner_args = self.args.clone();
-        scanner_args.target = Some(format!("{}:{}", ip, self.port));
+        scanner_args.target = Some(anycast_target_for_ip(ip, self.port));
 
         // Override SNI to use original hostname
         if scanner_args.tls.sni_name.is_none() {
@@ -155,7 +155,10 @@ impl AnycastScanner {
         let scanner = crate::scanner::Scanner::new(scanner_args.to_scan_request())?;
         scanner.run().await
     }
+}
 
+fn anycast_target_for_ip(ip: &IpAddr, port: u16) -> String {
+    canonical_target(&ip.to_string(), port)
 }
 
 /// Result of scanning a single IP
@@ -295,6 +298,18 @@ mod tests {
 
         // With default ScanResults, we don't have cert data, so it should be uncertain
         assert!(detection.confidence >= 0.0);
+    }
+
+    #[test]
+    fn test_anycast_target_for_ip_brackets_ipv6() {
+        let ip: IpAddr = "2001:db8::1".parse().unwrap();
+        assert_eq!(anycast_target_for_ip(&ip, 443), "[2001:db8::1]:443");
+    }
+
+    #[test]
+    fn test_anycast_target_for_ip_keeps_ipv4_plain() {
+        let ip: IpAddr = "192.0.2.10".parse().unwrap();
+        assert_eq!(anycast_target_for_ip(&ip, 443), "192.0.2.10:443");
     }
 
     #[test]

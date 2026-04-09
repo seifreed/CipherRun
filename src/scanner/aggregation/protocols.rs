@@ -4,6 +4,7 @@
 
 use super::ConservativeAggregator;
 use crate::protocols::{Protocol, ProtocolTestResult};
+use std::collections::HashSet;
 
 impl ConservativeAggregator {
     /// Aggregate protocols conservatively - only protocols supported by ALL IPs
@@ -11,11 +12,12 @@ impl ConservativeAggregator {
         let mut aggregated = Vec::new();
 
         // Get all successful results
-        let successful_results: Vec<_> = self
+        let mut successful_results: Vec<_> = self
             .results
-            .values()
-            .filter(|r| r.error.is_none())
+            .iter()
+            .filter(|(_, r)| r.error.is_none())
             .collect();
+        successful_results.sort_by_key(|(ip, _)| **ip);
 
         if successful_results.is_empty() {
             return aggregated;
@@ -23,26 +25,75 @@ impl ConservativeAggregator {
 
         // For each protocol, check if ALL IPs support it
         for protocol in Protocol::all() {
-            let all_support = successful_results.iter().all(|result| {
-                result
-                    .scan_result
-                    .protocols
-                    .iter()
-                    .any(|p| p.protocol == protocol && p.supported)
-            });
-
-            // Take the best protocol test result details if supported by all
-            if all_support {
-                // Find the first result for this protocol to use as template
-                if let Some(first_result) = successful_results.first()
-                    && let Some(protocol_result) = first_result
+            let protocol_results: Vec<_> = successful_results
+                .iter()
+                .filter_map(|(_, result)| {
+                    result
                         .scan_result
                         .protocols
                         .iter()
                         .find(|p| p.protocol == protocol)
-                {
-                    aggregated.push(protocol_result.clone());
-                }
+                })
+                .collect();
+
+            let all_support = protocol_results.len() == successful_results.len()
+                && protocol_results.iter().all(|result| result.supported);
+
+            // Take the best protocol test result details if supported by all
+            if all_support {
+                let ciphers_count = successful_results
+                    .iter()
+                    .filter_map(|(_, result)| result.scan_result.ciphers.get(&protocol))
+                    .flat_map(|summary| {
+                        summary
+                            .supported_ciphers
+                            .iter()
+                            .map(|cipher| cipher.openssl_name.as_str())
+                    })
+                    .collect::<HashSet<_>>()
+                    .len();
+
+                let preferred = protocol_results.iter().all(|result| result.preferred);
+                let handshake_time_ms = protocol_results
+                    .iter()
+                    .filter_map(|result| result.handshake_time_ms)
+                    .max();
+                let heartbeat_enabled = consensus_optional_bool(
+                    protocol_results
+                        .iter()
+                        .copied()
+                        .map(|result| result.heartbeat_enabled),
+                );
+                let session_resumption_caching = consensus_optional_bool(
+                    protocol_results
+                        .iter()
+                        .copied()
+                        .map(|result| result.session_resumption_caching),
+                );
+                let session_resumption_tickets = consensus_optional_bool(
+                    protocol_results
+                        .iter()
+                        .copied()
+                        .map(|result| result.session_resumption_tickets),
+                );
+                let secure_renegotiation = consensus_optional_bool(
+                    protocol_results
+                        .iter()
+                        .copied()
+                        .map(|result| result.secure_renegotiation),
+                );
+
+                aggregated.push(ProtocolTestResult {
+                    protocol,
+                    supported: true,
+                    preferred,
+                    ciphers_count,
+                    handshake_time_ms,
+                    heartbeat_enabled,
+                    session_resumption_caching,
+                    session_resumption_tickets,
+                    secure_renegotiation,
+                });
             } else {
                 // Add as unsupported
                 aggregated.push(ProtocolTestResult {
@@ -61,4 +112,22 @@ impl ConservativeAggregator {
 
         aggregated
     }
+}
+
+fn consensus_optional_bool(values: impl IntoIterator<Item = Option<bool>>) -> Option<bool> {
+    let mut seen: Option<bool> = None;
+
+    for value in values {
+        let Some(value) = value else {
+            return None;
+        };
+
+        match seen {
+            None => seen = Some(value),
+            Some(existing) if existing == value => {}
+            Some(_) => return None,
+        }
+    }
+
+    seen
 }

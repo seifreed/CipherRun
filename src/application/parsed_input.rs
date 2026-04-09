@@ -1,3 +1,4 @@
+use crate::utils::network::split_target_host_port;
 use crate::{Result, TlsError};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,20 +36,30 @@ pub struct HostPortDaysInput {
 
 impl HostPortDaysInput {
     pub fn parse(raw: &str) -> Result<Self> {
-        let parts: Vec<&str> = raw.split(':').collect();
-        if parts.len() != 3 {
+        if raw.matches(':').count() < 2 {
             return Err(TlsError::InvalidInput {
                 message: "Expected format HOSTNAME:PORT:DAYS".to_string(),
             });
         }
 
-        let hostname = parts[0].to_string();
-        let port = parts[1].parse().map_err(|_| TlsError::InvalidInput {
-            message: format!("Invalid port: {}", parts[1]),
+        let (host_port, days_str) = raw.rsplit_once(':').ok_or_else(|| TlsError::InvalidInput {
+            message: "Expected format HOSTNAME:PORT:DAYS".to_string(),
         })?;
-        let days = parts[2].parse().map_err(|_| TlsError::InvalidInput {
-            message: format!("Invalid days: {}", parts[2]),
+
+        let days = days_str.parse().map_err(|_| TlsError::InvalidInput {
+            message: format!("Invalid days: {}", days_str),
         })?;
+
+        let (hostname, port) =
+            split_target_host_port(host_port).map_err(|e| TlsError::InvalidInput {
+                message: e.to_string(),
+            })?;
+
+        let Some(port) = port else {
+            return Err(TlsError::InvalidInput {
+                message: "Expected format HOSTNAME:PORT:DAYS".to_string(),
+            });
+        };
 
         Ok(Self {
             hostname,
@@ -65,15 +76,15 @@ pub struct HostPortInput {
 }
 
 impl HostPortInput {
-    pub fn parse_with_default_port(raw: &str, default_port: u16) -> Self {
-        let parts: Vec<&str> = raw.split(':').collect();
-        let hostname = parts.first().unwrap_or(&"").to_string();
-        let port = parts
-            .get(1)
-            .and_then(|p| p.parse().ok())
-            .unwrap_or(default_port);
+    pub fn parse_with_default_port(raw: &str, default_port: u16) -> Result<Self> {
+        let (hostname, port) = split_target_host_port(raw).map_err(|e| TlsError::InvalidInput {
+            message: e.to_string(),
+        })?;
 
-        Self { hostname, port }
+        Ok(Self {
+            hostname,
+            port: port.unwrap_or(default_port),
+        })
     }
 }
 
@@ -102,9 +113,36 @@ mod tests {
     }
 
     #[test]
+    fn parses_host_port_days_with_bracketed_ipv6() {
+        let parsed = HostPortDaysInput::parse("[::1]:443:7").expect("should parse");
+        assert_eq!(parsed.hostname, "::1");
+        assert_eq!(parsed.port, 443);
+        assert_eq!(parsed.days, 7);
+    }
+
+    #[test]
+    fn rejects_host_port_days_with_ipv6_without_brackets() {
+        assert!(HostPortDaysInput::parse("::1:443:7").is_err());
+    }
+
+    #[test]
     fn parses_host_port_with_default_port() {
-        let parsed = HostPortInput::parse_with_default_port("example.com", 443);
+        let parsed =
+            HostPortInput::parse_with_default_port("example.com", 443).expect("should parse");
         assert_eq!(parsed.hostname, "example.com");
         assert_eq!(parsed.port, 443);
+    }
+
+    #[test]
+    fn parses_bracketed_ipv6_host_port_with_default_port() {
+        let parsed =
+            HostPortInput::parse_with_default_port("[::1]:8443", 443).expect("should parse");
+        assert_eq!(parsed.hostname, "::1");
+        assert_eq!(parsed.port, 8443);
+    }
+
+    #[test]
+    fn rejects_malformed_host_port_input() {
+        assert!(HostPortInput::parse_with_default_port("example.com:443:extra", 443).is_err());
     }
 }

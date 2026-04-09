@@ -2,6 +2,7 @@ use super::{HandshakeParseResult, PreHandshakeScanner};
 use crate::Result;
 use crate::certificates::parser::CertificateInfo;
 use crate::error::TlsError;
+use tracing::trace;
 
 impl PreHandshakeScanner {
     pub(super) fn parse_handshake_response(&self, data: &[u8]) -> Result<HandshakeParseResult> {
@@ -98,7 +99,12 @@ impl PreHandshakeScanner {
                             }
                         }
                     }
-                    _ => {}
+                    _ => {
+                        trace!(
+                            "Skipping unhandled handshake type: 0x{:02x}",
+                            handshake_type
+                        );
+                    }
                 }
 
                 offset += handshake_length;

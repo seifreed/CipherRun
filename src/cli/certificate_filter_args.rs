@@ -2,6 +2,7 @@
 // Copyright (C) 2025 Marc Rivero (@seifreed)
 // Licensed under GPL-3.0
 
+use crate::application::OutputPresentationMode;
 use clap::Args;
 
 /// Certificate validation filter options
@@ -52,6 +53,16 @@ impl CertificateFilterArgs {
             || self.filter_revoked
             || self.filter_untrusted
     }
+
+    pub fn presentation_mode(&self) -> OutputPresentationMode {
+        if self.response_only {
+            OutputPresentationMode::ResponseOnly
+        } else if self.dns_only {
+            OutputPresentationMode::DnsOnly
+        } else {
+            OutputPresentationMode::Normal
+        }
+    }
 }
 
 #[cfg(test)]
@@ -94,5 +105,16 @@ mod tests {
 
         assert!(args.dns_only);
         assert!(!args.response_only);
+    }
+
+    #[test]
+    fn test_certificate_filter_args_presentation_mode_precedence() {
+        let parsed = TestCli::parse_from(["test", "--dns-only", "--response-only"]);
+        let args = parsed.args;
+
+        assert_eq!(
+            args.presentation_mode(),
+            OutputPresentationMode::ResponseOnly
+        );
     }
 }

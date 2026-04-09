@@ -17,6 +17,8 @@
 /// TLS 1.3
 /// TLS_AES_128_GCM_SHA256
 /// ```
+use crate::utils::network::canonical_target;
+
 /// Response-only output formatter
 pub struct ResponseOnlyFormatter;
 
@@ -55,16 +57,27 @@ impl ResponseOnlyFormatter {
     /// The output with all target prefixes removed
     pub fn strip_target_prefix(output: &str, hostname: &str, port: u16) -> String {
         let mut result = String::new();
+        let hostname = hostname
+            .strip_prefix('[')
+            .and_then(|value| value.strip_suffix(']'))
+            .unwrap_or(hostname);
+        let canonical = canonical_target(hostname, port);
+        let bracketed_canonical = if canonical.starts_with('[') {
+            canonical.clone()
+        } else {
+            format!("[{}]", canonical)
+        };
 
         // Common prefix patterns to strip:
         // - "[hostname:port]"
         // - "hostname:port"
         // - "[hostname:443]" (with port)
         let prefix_patterns = [
-            format!("[{}:{}]", hostname, port), // [hostname:port]
-            format!("{}:{}", hostname, port),   // hostname:port
-            format!("[{}]", hostname),          // [hostname] (no port)
-            hostname.to_string(),               // just hostname
+            bracketed_canonical,              // [host:port] or [ipv6]:port
+            canonical,                        // host:port or [ipv6]:port
+            format!("{}:{}", hostname, port), // hostname:port
+            format!("[{}]", hostname),        // [hostname] (no port)
+            hostname.to_string(),             // just hostname
         ];
 
         for line in output.lines() {
@@ -86,7 +99,12 @@ impl ResponseOnlyFormatter {
     fn strip_line_prefix(line: &str, patterns: &[String]) -> String {
         for pattern in patterns {
             if line.starts_with(pattern) {
-                let remainder = line[pattern.len()..].trim();
+                let remainder = &line[pattern.len()..];
+                if !Self::has_valid_prefix_boundary(pattern, remainder) {
+                    continue;
+                }
+
+                let remainder = remainder.trim();
                 // Also handle cases where there might be extra separators
                 let cleaned = remainder
                     .trim_start_matches('-')
@@ -100,6 +118,17 @@ impl ResponseOnlyFormatter {
 
         // If no prefix matched, return the line as-is (but trimmed)
         line.trim().to_string()
+    }
+
+    fn has_valid_prefix_boundary(pattern: &str, remainder: &str) -> bool {
+        match remainder.chars().next() {
+            None => true,
+            Some(next) if pattern.contains(':') => {
+                next.is_whitespace() || matches!(next, '-' | ':')
+            }
+            Some(next) if pattern.starts_with('[') => next.is_whitespace(),
+            Some(next) => next.is_whitespace(),
+        }
     }
 }
 
@@ -213,5 +242,24 @@ mod tests {
         let result = ResponseOnlyFormatter::strip_target_prefix(output, "example.com", 443);
         let lines: Vec<&str> = result.lines().collect();
         assert_eq!(lines, vec!["TLS 1.2", "TLS 1.3"]);
+    }
+
+    #[test]
+    fn test_strip_target_prefix_ipv6() {
+        let output = "[::1]:443 TLS 1.3\n";
+        let result = ResponseOnlyFormatter::strip_target_prefix(output, "::1", 443);
+        assert_eq!(result, "TLS 1.3");
+    }
+
+    #[test]
+    fn test_strip_target_prefix_does_not_strip_hostname_prefix_substrings() {
+        let output = "example.comparison TLS 1.3\nexample.com:443comparison TLS 1.2\n";
+        let result = ResponseOnlyFormatter::strip_target_prefix(output, "example.com", 443);
+        let lines: Vec<&str> = result.lines().collect();
+
+        assert_eq!(
+            lines,
+            vec!["example.comparison TLS 1.3", "example.com:443comparison TLS 1.2"]
+        );
     }
 }

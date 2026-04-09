@@ -71,7 +71,12 @@ impl Lucky13Tester {
     async fn test_cbc_ciphers(&self) -> Result<bool> {
         use openssl::ssl::{SslConnector, SslMethod};
 
-        let addr = self.target.socket_addrs()[0];
+        let addr = self
+            .target
+            .socket_addrs()
+            .first()
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
 
         // Test with various CBC ciphers
         let cbc_ciphers = "AES128-SHA:AES256-SHA:AES128-SHA256:AES256-SHA256:DES-CBC3-SHA";
@@ -200,7 +205,12 @@ impl Lucky13Tester {
 
     /// Test MAC timing with different padding lengths
     async fn test_mac_timing(&self, short_padding: bool) -> Result<u128> {
-        let addr = self.target.socket_addrs()[0];
+        let addr = self
+            .target
+            .socket_addrs()
+            .first()
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
 
         match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None).await {
             Ok(mut stream) => {

@@ -11,12 +11,16 @@ use crate::Result;
 use crate::application::{CertificateFilters, ScanRequest};
 use crate::certificates::status::CertificateStatus;
 use crate::scanner::{ScanResults, Scanner};
+use crate::utils::network::split_target_host_port;
 use colored::*;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 
-type ScanTask = (String, tokio::task::JoinHandle<(String, Result<ScanResults>)>);
+type ScanTask = (
+    String,
+    tokio::task::JoinHandle<(String, Result<ScanResults>)>,
+);
 
 /// Mass scanner for scanning multiple targets
 ///
@@ -204,11 +208,11 @@ impl MassScanner {
                 );
                 pb.set_message(format!("Scanning {}", target_for_task));
 
-                let result: Result<_> = match MassScanner::create_scanner(&request, &target_for_task)
-                {
-                    Ok(s) => s.run().await,
-                    Err(e) => Err(e),
-                };
+                let result: Result<_> =
+                    match MassScanner::create_scanner(&request, &target_for_task) {
+                        Ok(s) => s.run().await,
+                        Err(e) => Err(e),
+                    };
 
                 pb.finish_and_clear();
                 (target_for_task, result)
@@ -300,16 +304,14 @@ impl MassScanner {
         };
 
         // Extract hostname from target (format: "hostname:port")
-        let hostname = scan_result
-            .target
-            .split(':')
-            .next()
-            .unwrap_or(&scan_result.target);
+        let hostname = split_target_host_port(&scan_result.target)
+            .map(|(hostname, _)| hostname)
+            .unwrap_or_else(|_| scan_result.target.clone());
 
         // Create certificate status
         let cert_status = CertificateStatus::from_validation_result(
             &cert_analysis.validation,
-            hostname,
+            &hostname,
             cert,
             cert_analysis.revocation.as_ref(),
         );
@@ -742,8 +744,12 @@ mod tests {
         let path = dir.path().join("mass_scan.json");
 
         let results = vec![("example.com:443".to_string(), Ok(ScanResults::default()))];
-        MassScanner::export_all_json(&results, path.to_str().expect("test path should be valid UTF-8"), true)
-            .expect("test assertion should succeed");
+        MassScanner::export_all_json(
+            &results,
+            path.to_str().expect("test path should be valid UTF-8"),
+            true,
+        )
+        .expect("test assertion should succeed");
 
         let contents = std::fs::read_to_string(&path).expect("test assertion should succeed");
         assert!(contents.contains("\"scan_type\""));

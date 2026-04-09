@@ -1,8 +1,8 @@
 // Policy exception matching and handling
 
 use crate::policy::PolicyException;
+use crate::utils::network::split_target_host_port;
 use chrono::{NaiveDate, Utc};
-use regex::Regex;
 
 /// Exception matcher for policy rules
 pub struct ExceptionMatcher {
@@ -42,20 +42,39 @@ impl ExceptionMatcher {
 
     /// Check if target matches domain pattern (supports wildcards)
     fn matches_domain(&self, target: &str, pattern: &str) -> bool {
-        // Extract hostname from target if it contains port
-        let hostname = if let Some(pos) = target.find(':') {
-            &target[..pos]
-        } else {
-            target
-        };
+        let hostname = split_target_host_port(target)
+            .map(|(hostname, _)| hostname)
+            .unwrap_or_else(|_| target.to_string());
+        let hostname = hostname.as_str();
 
-        // Convert wildcard pattern to regex
-        // *.example.com -> ^.*\.example\.com$
-        // example.com -> ^example\.com$
-        let regex_pattern = pattern.replace('.', r"\.").replace('*', ".*");
+        // Exact match
+        if pattern == hostname {
+            return true;
+        }
 
-        if let Ok(re) = Regex::new(&format!("^{}$", regex_pattern)) {
-            return re.is_match(hostname);
+        // Wildcard pattern - matches single level subdomains AND base domain
+        // *.example.com matches:
+        // - sub.example.com (single level subdomain)
+        // - example.com (base domain) - useful for many CDN/load balancer scenarios
+        // Does NOT match:
+        // - sub.sub.example.com (multi-level subdomain)
+        if let Some(suffix) = pattern.strip_prefix("*.") {
+            // Match base domain directly
+            if hostname == suffix {
+                return true;
+            }
+
+            // Match single-level subdomain
+            if hostname.ends_with(&format!(".{}", suffix)) {
+                // Extract the prefix (what comes before .suffix)
+                let prefix_end = hostname.len() - suffix.len() - 1;
+                let prefix = &hostname[..prefix_end];
+
+                // Prefix should not contain dots (single level subdomain only)
+                if !prefix.contains('.') {
+                    return true;
+                }
+            }
         }
 
         false
@@ -140,8 +159,11 @@ mod tests {
 
         assert!(matcher.matches_domain("subdomain.example.com", "*.example.com"));
         assert!(matcher.matches_domain("test.example.com", "*.example.com"));
-        assert!(!matcher.matches_domain("example.com", "*.example.com"));
+        // Base domain now matches the wildcard pattern
+        assert!(matcher.matches_domain("example.com", "*.example.com"));
         assert!(!matcher.matches_domain("other.org", "*.example.com"));
+        // Multi-level subdomains don't match
+        assert!(!matcher.matches_domain("sub.sub.example.com", "*.example.com"));
     }
 
     #[test]
@@ -159,6 +181,24 @@ mod tests {
 
         assert!(matcher.matches_domain("example.com", "example.com"));
         assert!(!matcher.matches_domain("subdomain.example.com", "example.com"));
+    }
+
+    #[test]
+    fn test_ipv6_domain_matching() {
+        let exception = PolicyException {
+            domain: Some("::1".to_string()),
+            rules: vec!["protocols.prohibited".to_string()],
+            reason: "IPv6 test".to_string(),
+            expires: None,
+            approved_by: "Admin".to_string(),
+            ticket: None,
+        };
+
+        let matcher = ExceptionMatcher::new(vec![exception]);
+
+        assert!(matcher.matches_domain("[::1]:443", "::1"));
+        assert!(matcher.matches_domain("::1", "::1"));
+        assert!(!matcher.matches_domain("[2001:db8::1]:443", "::1"));
     }
 
     #[test]

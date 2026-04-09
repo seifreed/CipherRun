@@ -66,7 +66,10 @@ mod tests {
         let (mut client, mut server) = tokio::io::duplex(64);
 
         let writer = tokio::spawn(async move {
-            server.write_all(b"a\n").await.expect("test server should write response");
+            server
+                .write_all(b"a\n")
+                .await
+                .expect("test server should write response");
         });
 
         let mut reader = BufReader::new(&mut client);
@@ -83,7 +86,10 @@ mod tests {
         let (mut client, mut server) = tokio::io::duplex(64);
 
         let writer = tokio::spawn(async move {
-            server.write_all(b"xx0 Invalid\r\n").await.expect("test server should write response");
+            server
+                .write_all(b"xx0 Invalid\r\n")
+                .await
+                .expect("test server should write response");
         });
 
         let mut reader = BufReader::new(&mut client);
@@ -100,7 +106,10 @@ mod tests {
         let (mut client, mut server) = tokio::io::duplex(64);
 
         let writer = tokio::spawn(async move {
-            server.write_all(b"220 Ready\r\n").await.expect("test server should write response");
+            server
+                .write_all(b"220 Ready\r\n")
+                .await
+                .expect("test server should write response");
         });
 
         let mut reader = BufReader::new(&mut client);
@@ -115,29 +124,47 @@ mod tests {
 
     #[tokio::test]
     async fn test_smtp_negotiate_starttls_success() {
-        let listener = TcpListener::bind("127.0.0.1:0").await.expect("test listener should bind to localhost");
-        let addr = listener.local_addr().expect("test listener should have local addr");
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test listener should bind to localhost");
+        let addr = listener
+            .local_addr()
+            .expect("test listener should have local addr");
 
         let server = tokio::spawn(async move {
-            let (mut stream, _) = listener.accept().await.expect("test server should accept connection");
-            stream.write_all(b"220 ready\r\n").await.expect("test server should write response");
+            let (mut stream, _) = listener
+                .accept()
+                .await
+                .expect("test server should accept connection");
+            stream
+                .write_all(b"220 ready\r\n")
+                .await
+                .expect("test server should write response");
 
             let mut buffer = vec![0u8; 256];
-            let _ = stream.read(&mut buffer).await.expect("test should read data");
+            let _ = stream
+                .read(&mut buffer)
+                .await
+                .expect("test should read data");
 
             stream
                 .write_all(b"250-localhost\r\n250-STARTTLS\r\n250 OK\r\n")
                 .await
                 .expect("test server should write response");
 
-            let _ = stream.read(&mut buffer).await.expect("test should read data");
+            let _ = stream
+                .read(&mut buffer)
+                .await
+                .expect("test should read data");
             stream
                 .write_all(b"220 Ready to start TLS\r\n")
                 .await
                 .expect("test server should write response");
         });
 
-        let mut client = TcpStream::connect(addr).await.expect("test client should connect");
+        let mut client = TcpStream::connect(addr)
+            .await
+            .expect("test client should connect");
         let negotiator = SmtpNegotiator::new("example.com".to_string());
         let result = negotiator.negotiate_starttls(&mut client).await;
         assert!(result.is_ok());

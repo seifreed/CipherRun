@@ -13,6 +13,7 @@ use crate::api::{
     ws::progress::scan_websocket_handler,
 };
 use crate::security::validate_target;
+use crate::utils::network::canonical_target;
 use axum::{
     Json,
     extract::{Path, State, WebSocketUpgrade},
@@ -52,25 +53,14 @@ pub async fn create_scan(
         return Err(ApiError::BadRequest("Target cannot be empty".to_string()));
     }
 
-    // Length limit to prevent DoS
-    if request.target.len() > 255 {
-        return Err(ApiError::BadRequest(
-            "Target string is too long (max 255 characters)".to_string(),
-        ));
-    }
-
     // SECURITY: Validate target format and prevent SSRF
     // By default, we block private IPs. If internal scanning is needed,
     // this should be configured through a separate, authorized API endpoint
     let (validated_hostname, validated_port) = validate_target(&request.target, false)
         .map_err(|e| ApiError::BadRequest(format!("Invalid target: {}", e)))?;
 
-    // If port was provided in target, use it; otherwise target remains as-is
-    let final_target = if let Some(port) = validated_port {
-        format!("{}:{}", validated_hostname, port)
-    } else {
-        validated_hostname
-    };
+    // Always store and return the canonical authority form so IPv6 remains unambiguous.
+    let final_target = canonical_target(&validated_hostname, validated_port.unwrap_or(443));
 
     info!("Validated target: {}", final_target);
 
@@ -78,8 +68,7 @@ pub async fn create_scan(
     let job = ScanJob::new(final_target.clone(), request.options, request.webhook_url);
 
     // Enqueue via adapter
-    let scan_id =
-        scan_adapter::enqueue_scan(state.job_queue.as_ref(), job).await?;
+    let scan_id = scan_adapter::enqueue_scan(state.job_queue.as_ref(), job).await?;
     state.record_scan().await;
     let queued_job = scan_adapter::get_scan(state.job_queue.as_ref(), &scan_id).await?;
 
@@ -248,6 +237,16 @@ mod tests {
         Arc::new(AppState::new(ApiConfig::default()).expect("state should build"))
     }
 
+    fn valid_hostname_253() -> String {
+        format!(
+            "{}.{}.{}.{}",
+            "a".repeat(63),
+            "b".repeat(63),
+            "c".repeat(63),
+            "d".repeat(61)
+        )
+    }
+
     #[tokio::test]
     async fn test_create_scan_empty_target() {
         let state = build_state();
@@ -276,6 +275,37 @@ mod tests {
             .await
             .expect_err("too long target should fail");
         assert!(matches!(err, ApiError::BadRequest(_)));
+    }
+
+    #[tokio::test]
+    async fn test_create_scan_allows_max_hostname_with_port() {
+        let state = build_state();
+        let request = ScanRequest {
+            target: format!("{}:443", valid_hostname_253()),
+            options: ScanOptions::default(),
+            webhook_url: None,
+        };
+
+        let response = create_scan(State(state), Json(request))
+            .await
+            .expect("max hostname with port should succeed");
+        assert!(response.target.ends_with(":443"));
+    }
+
+    #[tokio::test]
+    async fn test_create_scan_canonicalizes_ipv6_target_without_port() {
+        let state = build_state();
+        let request = ScanRequest {
+            target: "2001:4860:4860::8888".to_string(),
+            options: ScanOptions::default(),
+            webhook_url: None,
+        };
+
+        let response = create_scan(State(state), Json(request))
+            .await
+            .expect("public IPv6 target without port should succeed");
+
+        assert_eq!(response.target, "[2001:4860:4860::8888]:443");
     }
 
     #[tokio::test]

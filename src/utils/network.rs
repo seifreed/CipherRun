@@ -5,10 +5,13 @@ use hickory_resolver::TokioResolver;
 use hickory_resolver::config::*;
 use hickory_resolver::name_server::TokioConnectionProvider;
 use openssl::ssl::{SslConnector, SslMethod, SslStream, SslVersion};
-use std::net::{IpAddr, SocketAddr, TcpStream as StdTcpStream};
+use std::net::{IpAddr, Ipv6Addr, SocketAddr, TcpStream as StdTcpStream};
 use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio::time::timeout;
+
+// Import SSRF validation for DNS rebinding protection
+use crate::security::input_validation::ssrf::validate_resolved_ips;
 
 /// Target information
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -18,26 +21,96 @@ pub struct Target {
     pub ip_addresses: Vec<IpAddr>,
 }
 
+/// Canonical target formatter.
+///
+/// Hostnames and IPv4 addresses are rendered as `host:port`.
+/// IPv6 addresses are rendered as `[host]:port` to avoid ambiguity.
+pub fn canonical_target(hostname: &str, port: u16) -> String {
+    let hostname = hostname
+        .strip_prefix('[')
+        .and_then(|value| value.strip_suffix(']'))
+        .unwrap_or(hostname);
+
+    if hostname.contains(':') {
+        format!("[{}]:{}", hostname, port)
+    } else {
+        format!("{}:{}", hostname, port)
+    }
+}
+
+/// Display a hostname without a port.
+///
+/// IPv6 literals are bracketed so the display remains unambiguous.
+pub fn display_target_host(hostname: &str) -> String {
+    let hostname = hostname
+        .strip_prefix('[')
+        .and_then(|value| value.strip_suffix(']'))
+        .unwrap_or(hostname);
+
+    if hostname.contains(':') {
+        format!("[{}]", hostname)
+    } else {
+        hostname.to_string()
+    }
+}
+
+/// Split a target string into hostname and optional port without resolving DNS.
+///
+/// This parser accepts URLs, bracketed IPv6, raw IPv6 literals, and host[:port]
+/// inputs. Raw IPv6 literals without brackets are treated as host-only values.
+pub fn split_target_host_port(input: &str) -> Result<(String, Option<u16>)> {
+    if input.contains("://") {
+        let url = url::Url::parse(input)?;
+        let host = url.host_str().context("No hostname in URL")?.to_string();
+        return Ok((host, url.port()));
+    }
+
+    if let Some(rest) = input.strip_prefix('[') {
+        if let Some(bracket_end) = rest.find(']') {
+            let hostname = rest[..bracket_end].to_string();
+            let suffix = &rest[bracket_end + 1..];
+            if suffix.is_empty() {
+                return Ok((hostname, None));
+            }
+            if let Some(port_str) = suffix.strip_prefix(':') {
+                return Ok((hostname, Some(parse_port(port_str)?)));
+            }
+            return Err(anyhow::anyhow!("Invalid format after IPv6 address"));
+        }
+        return Err(anyhow::anyhow!(
+            "Invalid IPv6 address format - missing closing bracket"
+        ));
+    }
+
+    if let Ok(ipv6) = input.parse::<Ipv6Addr>() {
+        return Ok((ipv6.to_string(), None));
+    }
+
+    if let Some((host, port_str)) = input.rsplit_once(':')
+        && !host.contains(':')
+    {
+        return Ok((host.to_string(), Some(parse_port(port_str)?)));
+    }
+
+    if input.contains(':') {
+        anyhow::bail!("Invalid target format: use [IPv6]:port for IPv6 addresses with ports");
+    }
+
+    Ok((input.to_string(), None))
+}
+
 impl Target {
     /// Parse target from string (host:port or just host)
     pub async fn parse(input: &str) -> Result<Self> {
-        // Parse hostname and port
-        let (hostname, port) = if input.contains("://") {
-            // URL format (https://example.com:443)
-            let url = url::Url::parse(input)?;
-            let host = url.host_str().context("No hostname in URL")?.to_string();
-            let port = url.port().unwrap_or(443);
-            (host, port)
-        } else if let Some((host, port_str)) = input.rsplit_once(':') {
-            // host:port format
-            let port = port_str.parse::<u16>()?;
-            (host.to_string(), port)
-        } else {
-            // Just hostname, default to 443
-            (input.to_string(), 443)
-        };
+        Self::parse_with_port_override(input, None).await
+    }
 
-        // Resolve IP addresses
+    /// Parse target from string, allowing an explicit port override.
+    ///
+    /// The override wins over any embedded port in the input.
+    pub async fn parse_with_port_override(input: &str, port_override: Option<u16>) -> Result<Self> {
+        let (hostname, parsed_port) = split_target_host_port(input)?;
+        let port = port_override.or(parsed_port).unwrap_or(443);
         let ip_addresses = resolve_hostname(&hostname).await?;
 
         // Validate non-empty IP addresses
@@ -95,13 +168,37 @@ impl Target {
 /// Performance optimization: Uses global DNS cache to avoid redundant lookups.
 /// This significantly improves mass scanning performance by reducing DNS queries.
 ///
+/// # Security
+/// Validates resolved IPs against SSRF rules by default (blocks private IPs).
+/// Use `resolve_hostname_unsafe()` for internal scanning scenarios.
+///
 /// # Performance Characteristics
 /// - Cache hit: O(1) - instant return
 /// - Cache miss: O(n) where n is DNS resolution time
 /// - Typical improvement: 100-500ms saved per cached lookup
 pub async fn resolve_hostname(hostname: &str) -> Result<Vec<IpAddr>> {
+    resolve_hostname_with_ssrf_check(hostname, false).await
+}
+
+/// Resolve hostname without SSRF validation (for internal scanning).
+///
+/// # Security Warning
+/// This function bypasses SSRF protection and should only be used when
+/// internal network scanning is explicitly authorized.
+pub async fn resolve_hostname_unsafe(hostname: &str) -> Result<Vec<IpAddr>> {
+    resolve_hostname_with_ssrf_check(hostname, true).await
+}
+
+/// Internal implementation with SSRF check parameter.
+async fn resolve_hostname_with_ssrf_check(
+    hostname: &str,
+    allow_private_ips: bool,
+) -> Result<Vec<IpAddr>> {
     // Check if it's already an IP address
     if let Ok(ip) = hostname.parse::<IpAddr>() {
+        // SECURITY: Validate against SSRF rules (DNS rebinding protection)
+        validate_resolved_ips(&[ip], allow_private_ips)
+            .map_err(|e| anyhow::anyhow!("SSRF validation failed: {}", e))?;
         return Ok(vec![ip]);
     }
 
@@ -109,6 +206,10 @@ pub async fn resolve_hostname(hostname: &str) -> Result<Vec<IpAddr>> {
     let cache = super::dns_cache::global_cache();
     if let Some(cached_ips) = cache.get(hostname).await {
         tracing::debug!("DNS cache hit for {}", hostname);
+        // SECURITY: Validate cached IPs against SSRF rules
+        validate_resolved_ips(&cached_ips, allow_private_ips).map_err(|e| {
+            anyhow::anyhow!("SSRF validation failed for cached {}: {}", hostname, e)
+        })?;
         return Ok(cached_ips);
     }
 
@@ -130,6 +231,10 @@ pub async fn resolve_hostname(hostname: &str) -> Result<Vec<IpAddr>> {
     if ips.is_empty() {
         anyhow::bail!("No IP addresses found for {}", hostname);
     }
+
+    // SECURITY: Validate resolved IPs against SSRF rules (DNS rebinding protection)
+    validate_resolved_ips(&ips, allow_private_ips)
+        .map_err(|e| anyhow::anyhow!("SSRF validation failed for {}: {}", hostname, e))?;
 
     // Store in cache for future use
     cache.insert(hostname.to_string(), ips.clone()).await;
@@ -457,31 +562,27 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn test_parse_target_hostname() {
-        let target = Target::parse("example.com")
-            .await
-            .expect("test assertion should succeed");
-        assert_eq!(target.hostname, "example.com");
-        assert_eq!(target.port, 443);
-        assert!(!target.ip_addresses.is_empty());
+    async fn test_split_target_host_port_hostname() {
+        let (hostname, port) =
+            split_target_host_port("example.com").expect("test assertion should succeed");
+        assert_eq!(hostname, "example.com");
+        assert_eq!(port, None);
     }
 
     #[tokio::test]
-    async fn test_parse_target_with_port() {
-        let target = Target::parse("example.com:8443")
-            .await
-            .expect("test assertion should succeed");
-        assert_eq!(target.hostname, "example.com");
-        assert_eq!(target.port, 8443);
+    async fn test_split_target_host_port_with_port() {
+        let (hostname, port) =
+            split_target_host_port("example.com:8443").expect("test assertion should succeed");
+        assert_eq!(hostname, "example.com");
+        assert_eq!(port, Some(8443));
     }
 
     #[tokio::test]
-    async fn test_parse_target_url() {
-        let target = Target::parse("https://example.com:443")
-            .await
+    async fn test_split_target_host_port_url() {
+        let (hostname, port) = split_target_host_port("https://example.com:8443")
             .expect("test assertion should succeed");
-        assert_eq!(target.hostname, "example.com");
-        assert_eq!(target.port, 443);
+        assert_eq!(hostname, "example.com");
+        assert_eq!(port, Some(8443));
     }
 
     #[tokio::test]
@@ -492,6 +593,55 @@ mod tests {
         assert_eq!(target.hostname, "93.184.216.34");
         assert_eq!(target.port, 443);
         assert_eq!(target.ip_addresses.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_parse_target_raw_ipv6_without_port() {
+        let target = Target::parse("2001:4860:4860::8888")
+            .await
+            .expect("test assertion should succeed");
+        assert_eq!(target.hostname, "2001:4860:4860::8888");
+        assert_eq!(target.port, 443);
+        assert_eq!(target.ip_addresses.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_parse_target_bracketed_ipv6_with_port() {
+        let target = Target::parse("[2001:4860:4860::8888]:443")
+            .await
+            .expect("test assertion should succeed");
+        assert_eq!(target.hostname, "2001:4860:4860::8888");
+        assert_eq!(target.port, 443);
+        assert_eq!(target.ip_addresses.len(), 1);
+    }
+
+    #[test]
+    fn test_split_target_host_port_rejects_extra_colons() {
+        let err = split_target_host_port("example.com:443:extra")
+            .expect_err("should reject malformed host:port input");
+        assert!(
+            err.to_string()
+                .contains("Invalid target format: use [IPv6]:port")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_parse_target_with_explicit_port_override() {
+        let target = Target::parse_with_port_override("93.184.216.34:443", Some(8443))
+            .await
+            .expect("test assertion should succeed");
+        assert_eq!(target.hostname, "93.184.216.34");
+        assert_eq!(target.port, 8443);
+    }
+
+    #[test]
+    fn test_canonical_target_brackets_ipv6() {
+        assert_eq!(canonical_target("2001:db8::1", 443), "[2001:db8::1]:443");
+    }
+
+    #[test]
+    fn test_canonical_target_strips_existing_brackets() {
+        assert_eq!(canonical_target("[2001:db8::1]", 443), "[2001:db8::1]:443");
     }
 
     #[test]
@@ -555,11 +705,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_resolve_hostname_short_circuit_ip() {
-        let ips = resolve_hostname("192.0.2.1")
+        // Use a public IP address (Google DNS) to avoid SSRF validation
+        let ips = resolve_hostname("8.8.8.8")
             .await
             .expect("test assertion should succeed");
         assert_eq!(ips.len(), 1);
-        assert_eq!(ips[0], "192.0.2.1".parse::<IpAddr>().unwrap());
+        assert_eq!(ips[0], "8.8.8.8".parse::<IpAddr>().unwrap());
     }
 
     #[test]

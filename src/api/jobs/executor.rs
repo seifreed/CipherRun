@@ -6,6 +6,7 @@ use crate::api::models::response::{ProgressMessage, ScanStatus};
 use crate::api::state::ApiStats;
 use crate::application::ScanRequest;
 use crate::scanner::{ScanResults, Scanner};
+use crate::utils::network::canonical_target;
 use anyhow::Result;
 use std::sync::Arc;
 use std::time::Duration;
@@ -379,7 +380,8 @@ impl ScanExecutor {
         // Resolve DNS and check all resulting IPs
         // IMPORTANT: If DNS resolution fails, reject the request to prevent SSRF bypass
         // via DNS rebinding or resolver misconfiguration
-        let addrs: Vec<_> = tokio::net::lookup_host(format!("{}:{}", host, url.port_or_known_default().unwrap_or(80)))
+        let lookup_target = webhook_lookup_target(host, url.port_or_known_default().unwrap_or(80));
+        let addrs: Vec<_> = tokio::net::lookup_host(lookup_target)
             .await
             .map_err(|e| anyhow::anyhow!("Webhook DNS resolution failed for {}: {} (SSRF protection requires successful DNS resolution)", host, e))?
             .collect();
@@ -444,6 +446,10 @@ impl Clone for ScanExecutor {
             shutdown_rx: self.shutdown_rx.clone(),
         }
     }
+}
+
+fn webhook_lookup_target(host: &str, port: u16) -> String {
+    canonical_target(host, port)
 }
 
 #[cfg(test)]
@@ -525,5 +531,21 @@ mod tests {
         assert!(request.network.ipv6_only);
         assert!(!request.network.ipv4_only);
         assert!(request.starttls.protocol.is_none());
+    }
+
+    #[test]
+    fn test_webhook_lookup_target_brackets_ipv6() {
+        assert_eq!(
+            webhook_lookup_target("2001:db8::1", 443),
+            "[2001:db8::1]:443"
+        );
+    }
+
+    #[test]
+    fn test_webhook_lookup_target_strips_existing_brackets() {
+        assert_eq!(
+            webhook_lookup_target("[2001:db8::1]", 443),
+            "[2001:db8::1]:443"
+        );
     }
 }

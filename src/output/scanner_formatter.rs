@@ -13,6 +13,7 @@ mod advanced_tls;
 mod certificates;
 mod ciphers;
 mod client_simulation;
+mod dns_only;
 mod fingerprints;
 mod header;
 mod helpers;

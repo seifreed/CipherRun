@@ -267,14 +267,8 @@ fn certificate_details_html(details: &AlertDetails) -> String {
                     <li><strong>Expiry:</strong> {}</li>
                 </ul>",
             serial,
-            details
-                .certificate_issuer
-                .as_deref()
-                .unwrap_or("Unknown"),
-            details
-                .certificate_expiry
-                .as_deref()
-                .unwrap_or("Unknown")
+            details.certificate_issuer.as_deref().unwrap_or("Unknown"),
+            details.certificate_expiry.as_deref().unwrap_or("Unknown")
         )
     } else {
         String::new()

@@ -72,19 +72,19 @@ impl DashboardGenerator {
         port: u16,
         days: i64,
     ) -> crate::Result<DashboardData> {
-        let scans = self.db.get_scan_history(hostname, port, 100).await?;
-
         let cutoff = Utc::now() - Duration::days(days);
-        let filtered_scans: Vec<&ScanRecord> = scans
-            .iter()
-            .filter(|s| s.scan_timestamp >= cutoff)
-            .collect();
+        let scans = self
+            .db
+            .get_scan_history_since(hostname, port, cutoff)
+            .await?;
 
-        if filtered_scans.is_empty() {
+        if scans.is_empty() {
             return Err(crate::TlsError::DatabaseError(
                 "No scans found in the specified time range".to_string(),
             ));
         }
+
+        let filtered_scans: Vec<&ScanRecord> = scans.iter().collect();
 
         // Generate rating timeseries
         let rating_timeseries = self.generate_rating_timeseries(&filtered_scans).await?;
@@ -103,12 +103,14 @@ impl DashboardGenerator {
             .await?;
 
         // Generate top issues
-        let top_issues = self.generate_top_issues(&filtered_scans).await?;
+        let all_issues = self.generate_top_issues(&filtered_scans).await?;
 
         // Generate summary
         let summary = self
-            .generate_summary(hostname, port, days, &filtered_scans, &top_issues)
+            .generate_summary(hostname, port, days, &filtered_scans, &all_issues)
             .await?;
+
+        let top_issues = all_issues.into_iter().take(10).collect();
 
         Ok(DashboardData {
             rating_timeseries,
@@ -167,7 +169,8 @@ impl DashboardGenerator {
             if let Some(scan_id) = scan.scan_id {
                 let vulns = self.get_vulnerabilities(scan_id).await?;
                 for vuln in vulns {
-                    *severity_counts.entry(vuln.severity.clone()).or_insert(0) += 1;
+                    let severity = normalized_severity_label(&vuln.severity);
+                    *severity_counts.entry(severity.to_string()).or_insert(0) += 1;
                 }
             }
         }
@@ -175,8 +178,10 @@ impl DashboardGenerator {
         let total: usize = severity_counts.values().sum();
         let mut distribution = Vec::new();
 
-        let severity_order = ["critical", "high", "medium", "low", "info"];
-        let severity_colors = ["#dc3545", "#fd7e14", "#ffc107", "#28a745", "#17a2b8"];
+        let severity_order = ["critical", "high", "medium", "low", "info", "unknown"];
+        let severity_colors = [
+            "#dc3545", "#fd7e14", "#ffc107", "#28a745", "#17a2b8", "#6c757d",
+        ];
 
         for (severity, color) in severity_order.iter().zip(severity_colors.iter()) {
             if let Some(&count) = severity_counts.get(*severity) {
@@ -246,8 +251,8 @@ impl DashboardGenerator {
             })
             .collect();
 
-        // Sort by value descending
-        distribution.sort_by(|a, b| b.value.cmp(&a.value));
+        // Sort by value descending with a stable label tie-breaker
+        distribution.sort_by(|a, b| b.value.cmp(&a.value).then_with(|| a.label.cmp(&b.label)));
 
         Ok(distribution)
     }
@@ -278,8 +283,8 @@ impl DashboardGenerator {
         let total: usize = strength_counts.values().sum();
         let mut distribution = Vec::new();
 
-        let strength_order = ["strong", "medium", "weak"];
-        let strength_colors = ["#28a745", "#ffc107", "#dc3545"];
+        let strength_order = ["strong", "medium", "weak", "unknown"];
+        let strength_colors = ["#28a745", "#ffc107", "#dc3545", "#6c757d"];
 
         for (strength, color) in strength_order.iter().zip(strength_colors.iter()) {
             if let Some(&count) = strength_counts.get(*strength) {
@@ -308,9 +313,13 @@ impl DashboardGenerator {
             if let Some(scan_id) = scan.scan_id {
                 let vulns = self.get_vulnerabilities(scan_id).await?;
                 for vuln in vulns {
+                    let normalized_severity = normalized_severity_label(&vuln.severity);
                     let entry = issue_tracker
                         .entry(vuln.vulnerability_type.clone())
-                        .or_insert_with(|| (vuln.severity.clone(), Vec::new()));
+                        .or_insert_with(|| (normalized_severity.to_string(), Vec::new()));
+                    if severity_priority(normalized_severity) < severity_priority(&entry.0) {
+                        entry.0 = normalized_severity.to_string();
+                    }
                     entry.1.push(scan.scan_timestamp);
                 }
             }
@@ -331,26 +340,15 @@ impl DashboardGenerator {
             })
             .collect();
 
-        // Sort by severity and count
+        // Sort by severity, count, and label to keep output deterministic
         issues.sort_by(|a, b| {
-            let severity_order = |s: &str| match s {
-                "critical" => 0,
-                "high" => 1,
-                "medium" => 2,
-                "low" => 3,
-                _ => 4,
-            };
-
-            let a_severity = severity_order(&a.severity);
-            let b_severity = severity_order(&b.severity);
-
-            a_severity
-                .cmp(&b_severity)
+            severity_priority(&a.severity)
+                .cmp(&severity_priority(&b.severity))
                 .then_with(|| b.count.cmp(&a.count))
+                .then_with(|| a.title.cmp(&b.title))
+                .then_with(|| a.first_seen.cmp(&b.first_seen))
+                .then_with(|| a.last_seen.cmp(&b.last_seen))
         });
-
-        // Take top 10
-        issues.truncate(10);
 
         Ok(issues)
     }
@@ -363,7 +361,7 @@ impl DashboardGenerator {
         scans: &[&ScanRecord],
         top_issues: &[IssueItem],
     ) -> crate::Result<DashboardSummary> {
-        let latest = scans.first();
+        let latest = scans.last();
 
         let latest_grade = latest.and_then(|s| s.overall_grade.clone());
         let latest_score = latest.and_then(|s| s.overall_score);
@@ -481,6 +479,28 @@ impl DashboardGenerator {
                 Ok(ciphers)
             }
         }
+    }
+}
+
+fn normalized_severity_label(severity: &str) -> &'static str {
+    match severity.to_ascii_lowercase().as_str() {
+        "critical" => "critical",
+        "high" => "high",
+        "medium" => "medium",
+        "low" => "low",
+        "info" => "info",
+        _ => "unknown",
+    }
+}
+
+fn severity_priority(severity: &str) -> usize {
+    match normalized_severity_label(severity) {
+        "critical" => 0,
+        "high" => 1,
+        "medium" => 2,
+        "low" => 3,
+        "info" => 4,
+        _ => 5,
     }
 }
 

@@ -1,6 +1,7 @@
 // Database Configuration
 // Handles PostgreSQL and SQLite database configuration
 
+use crate::utils::network::canonical_target;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -123,8 +124,11 @@ impl DatabaseConfig {
                 }
 
                 Ok(format!(
-                    "postgres://{}:{}@{}:{}/{}",
-                    username, encoded_password, host, port, database
+                    "postgres://{}:{}@{}/{}",
+                    username,
+                    encoded_password,
+                    canonical_target(host, port),
+                    database
                 ))
             }
             DatabaseType::Sqlite => {
@@ -233,5 +237,37 @@ mod tests {
             .connection_string()
             .expect("test assertion should succeed");
         assert!(conn_str.contains("sqlite:"));
+    }
+
+    #[test]
+    fn test_postgres_connection_string_ipv6_host() {
+        let config = DatabaseConfig::postgres(
+            "::1".to_string(),
+            5432,
+            "testdb".to_string(),
+            "user".to_string(),
+            "pass".to_string(),
+        );
+
+        let conn_str = config
+            .connection_string()
+            .expect("test assertion should succeed");
+        assert_eq!(conn_str, "postgres://user:pass@[::1]:5432/testdb");
+    }
+
+    #[test]
+    fn test_postgres_connection_string_strips_existing_brackets() {
+        let config = DatabaseConfig::postgres(
+            "[::1]".to_string(),
+            5432,
+            "testdb".to_string(),
+            "user".to_string(),
+            "pass".to_string(),
+        );
+
+        let conn_str = config
+            .connection_string()
+            .expect("test assertion should succeed");
+        assert_eq!(conn_str, "postgres://user:pass@[::1]:5432/testdb");
     }
 }

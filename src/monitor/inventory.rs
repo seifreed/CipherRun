@@ -2,6 +2,7 @@
 
 use crate::Result;
 use crate::certificates::parser::CertificateInfo;
+use crate::utils::network::{canonical_target, split_target_host_port};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -69,7 +70,7 @@ impl MonitoredDomain {
 
     /// Get domain identifier
     pub fn identifier(&self) -> String {
-        format!("{}:{}", self.hostname, self.port)
+        canonical_target(&self.hostname, self.port)
     }
 }
 
@@ -96,10 +97,9 @@ impl CertificateInventory {
     /// Normalize a hostname into a consistent `host:port` key.
     /// If no port is specified, defaults to 443.
     fn normalize_key(hostname: &str) -> String {
-        if hostname.contains(':') {
-            hostname.to_string()
-        } else {
-            format!("{}:443", hostname)
+        match split_target_host_port(hostname) {
+            Ok((hostname, port)) => canonical_target(&hostname, port.unwrap_or(443)),
+            Err(_) => hostname.to_string(),
         }
     }
 
@@ -201,25 +201,15 @@ impl CertificateInventory {
             }
 
             // Parse line: hostname[:port] [interval]
+            // IPv6 with port must be bracketed, e.g. [2001:db8::1]:443
             let parts: Vec<&str> = line.split_whitespace().collect();
             if parts.is_empty() {
                 continue;
             }
 
             let host_port = parts[0];
-            let (hostname, port) = if host_port.contains(':') {
-                let hp: Vec<&str> = host_port.split(':').collect();
-                if hp.len() != 2 {
-                    tracing::warn!("Invalid host:port format: {}", host_port);
-                    continue;
-                }
-                let port = hp[1]
-                    .parse::<u16>()
-                    .map_err(|e| anyhow::anyhow!("Invalid port number in {}: {}", host_port, e))?;
-                (hp[0].to_string(), port)
-            } else {
-                (host_port.to_string(), 443)
-            };
+            let (hostname, port) = split_target_host_port(host_port)?;
+            let port = port.unwrap_or(443);
 
             // Parse interval if provided
             let interval_seconds = if parts.len() > 1 {
@@ -280,7 +270,12 @@ impl CertificateInventory {
             .into());
         }
 
-        self.domains = domains;
+        let mut normalized_domains = HashMap::with_capacity(domains.len());
+        for domain in domains.into_values() {
+            normalized_domains.insert(domain.identifier(), domain);
+        }
+
+        self.domains = normalized_domains;
         Ok(())
     }
 
@@ -374,6 +369,12 @@ mod tests {
     }
 
     #[test]
+    fn test_monitored_domain_identifier_ipv6_is_bracketed() {
+        let domain = MonitoredDomain::new("::1".to_string(), 443);
+        assert_eq!(domain.identifier(), "[::1]:443");
+    }
+
+    #[test]
     fn test_monitored_domain_update_scan() {
         let mut domain = MonitoredDomain::new("example.com".to_string(), 443);
         assert!(domain.last_scan.is_none());
@@ -412,6 +413,23 @@ mod tests {
     }
 
     #[test]
+    fn test_inventory_get_domain_ipv6() {
+        let mut inventory = CertificateInventory::new();
+        inventory
+            .add_domain(MonitoredDomain::new("::1".to_string(), 443))
+            .expect("test assertion should succeed");
+
+        let retrieved = inventory.get_domain("::1");
+        assert!(retrieved.is_some());
+        assert_eq!(retrieved.unwrap().hostname, "::1");
+
+        inventory
+            .remove_domain("::1")
+            .expect("test assertion should succeed");
+        assert_eq!(inventory.len(), 0);
+    }
+
+    #[test]
     fn test_inventory_get_domain_mut_updates() {
         let mut inventory = CertificateInventory::new();
         inventory
@@ -424,6 +442,29 @@ mod tests {
 
         let updated = inventory
             .get_domain("example.com")
+            .expect("test assertion should succeed");
+        assert_eq!(updated.interval_seconds, 120);
+    }
+
+    #[test]
+    fn test_inventory_get_domain_mut_updates_ipv6_identifier() {
+        let mut inventory = CertificateInventory::new();
+        let domain = MonitoredDomain::new("::1".to_string(), 443);
+        let identifier = domain.identifier();
+        assert_eq!(identifier, "[::1]:443");
+
+        inventory
+            .add_domain(domain)
+            .expect("test assertion should succeed");
+
+        if let Some(domain) = inventory.get_domain_mut(&identifier) {
+            domain.interval_seconds = 120;
+        } else {
+            panic!("expected IPv6 domain to be retrievable by identifier");
+        }
+
+        let updated = inventory
+            .get_domain(&identifier)
             .expect("test assertion should succeed");
         assert_eq!(updated.interval_seconds, 120);
     }
@@ -487,9 +528,35 @@ mod tests {
     }
 
     #[test]
+    fn test_load_from_file_with_bracketed_ipv6() -> Result<()> {
+        let mut temp_file = NamedTempFile::new()?;
+        writeln!(temp_file, "[::1]:443 30m")?;
+
+        let mut inventory = CertificateInventory::new();
+        inventory.load_from_file(temp_file.path())?;
+
+        assert_eq!(inventory.len(), 1);
+        assert!(inventory.get_domain("::1").is_some());
+        assert!(inventory.get_domain("[::1]:443").is_some());
+        Ok(())
+    }
+
+    #[test]
     fn test_load_from_file_invalid_port() -> Result<()> {
         let mut temp_file = NamedTempFile::new()?;
         writeln!(temp_file, "example.com:notaport")?;
+
+        let mut inventory = CertificateInventory::new();
+        let result = inventory.load_from_file(temp_file.path());
+
+        assert!(result.is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn test_load_from_file_invalid_target_format() -> Result<()> {
+        let mut temp_file = NamedTempFile::new()?;
+        writeln!(temp_file, "example.com:443:extra")?;
 
         let mut inventory = CertificateInventory::new();
         let result = inventory.load_from_file(temp_file.path());

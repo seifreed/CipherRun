@@ -28,27 +28,42 @@ impl CcsInjectionTester {
 
     /// Test for CCS Injection vulnerability
     pub async fn test(&self) -> Result<CcsTestResult> {
-        let (vulnerable, inconclusive) = self.test_ccs_injection().await?;
+        let status = self.test_ccs_injection().await?;
 
-        let details = if inconclusive {
-            "CCS Injection test inconclusive - connection timeout or handshake failure prevented reliable testing".to_string()
-        } else if vulnerable {
-            "Vulnerable to CCS Injection (CVE-2014-0224) - Server accepts early CCS messages"
-                .to_string()
-        } else {
-            "Not vulnerable - Server rejects early CCS messages".to_string()
+        let details = match status {
+            TestStatus::Vulnerable => {
+                "Vulnerable to CCS Injection (CVE-2014-0224) - Server accepts early CCS messages"
+                    .to_string()
+            }
+            TestStatus::NotVulnerable => {
+                "Not vulnerable - Server rejects early CCS messages".to_string()
+            }
+            TestStatus::Inconclusive => {
+                "CCS Injection test inconclusive - unexpected response pattern".to_string()
+            }
+            TestStatus::ConnectionFailed => {
+                "CCS Injection test inconclusive - connection failed".to_string()
+            }
+            TestStatus::HandshakeFailed => {
+                "CCS Injection test inconclusive - handshake timeout or error".to_string()
+            }
         };
 
         Ok(CcsTestResult {
-            vulnerable,
+            vulnerable: status.is_vulnerable(),
+            status,
             details,
-            inconclusive,
         })
     }
 
     /// Test CCS injection by sending early ChangeCipherSpec
-    async fn test_ccs_injection(&self) -> Result<(bool, bool)> {
-        let addr = self.target.socket_addrs()[0];
+    async fn test_ccs_injection(&self) -> Result<TestStatus> {
+        let addr = self
+            .target
+            .socket_addrs()
+            .first()
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
 
         match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None).await {
             Ok(mut stream) => {
@@ -62,11 +77,15 @@ impl CcsInjectionTester {
                     Ok(Ok(n)) if n > 0 => n,
                     Ok(Ok(_)) => {
                         // Zero bytes read - connection closed by server
-                        return Ok((false, true));
+                        return Ok(TestStatus::HandshakeFailed);
                     }
-                    Ok(Err(_)) | Err(_) => {
-                        // Read error or timeout during ServerHello read
-                        return Ok((false, true));
+                    Ok(Err(e)) => {
+                        tracing::debug!("CCS test read error during ServerHello: {}", e);
+                        return Ok(TestStatus::HandshakeFailed);
+                    }
+                    Err(_) => {
+                        tracing::debug!("CCS test timeout during ServerHello");
+                        return Ok(TestStatus::HandshakeFailed);
                     }
                 };
 
@@ -90,18 +109,21 @@ impl CcsInjectionTester {
                 // original handshake -- these are NOT responses to our CCS.
                 // We loop to consume all handshake continuation messages before
                 // evaluating the actual CCS/Alert response.
-                let mut reads_remaining: u8 = 5;
+                // Allow up to 15 handshake messages for complex handshakes (Certificate,
+                // CertificateStatus, ServerKeyExchange, CertificateRequest, ServerHelloDone, etc.)
+                const MAX_HANDSHAKE_MESSAGES: u8 = 15;
+                let mut reads_remaining: u8 = MAX_HANDSHAKE_MESSAGES;
                 loop {
                     let mut response = vec![0u8; 1024];
                     match timeout(Duration::from_secs(2), stream.read(&mut response)).await {
                         Ok(Ok(n)) if n > 0 => {
                             if response[0] == CONTENT_TYPE_ALERT {
                                 // Alert = server rejected our premature CCS → not vulnerable
-                                break Ok((false, false));
+                                break Ok(TestStatus::NotVulnerable);
                             } else if response[0] == CONTENT_TYPE_CHANGE_CIPHER_SPEC {
                                 // Server sent CCS in response to our premature CCS.
                                 // This is the actual indicator of CVE-2014-0224.
-                                break Ok((true, false));
+                                break Ok(TestStatus::Vulnerable);
                             } else if response[0] == CONTENT_TYPE_HANDSHAKE && n >= 6 {
                                 let handshake_type = response[5];
                                 // 0x0B = Certificate, 0x0C = ServerKeyExchange, 0x0E = ServerHelloDone
@@ -110,32 +132,36 @@ impl CcsInjectionTester {
                                     reads_remaining -= 1;
                                     if reads_remaining == 0 {
                                         // Too many handshake messages without CCS/Alert
-                                        break Ok((false, false));
+                                        tracing::debug!(
+                                            "Reached max handshake message limit ({}), assuming not vulnerable",
+                                            MAX_HANDSHAKE_MESSAGES
+                                        );
+                                        break Ok(TestStatus::NotVulnerable);
                                     }
                                     continue;
                                 } else {
                                     // Unexpected handshake message after CCS — inconclusive
-                                    break Ok((false, true));
+                                    break Ok(TestStatus::Inconclusive);
                                 }
                             } else {
                                 // Unknown response type — inconclusive
-                                break Ok((false, true));
+                                break Ok(TestStatus::Inconclusive);
                             }
                         }
                         Ok(Ok(_)) => {
                             // Zero bytes — connection closed, not vulnerable
-                            break Ok((false, false));
+                            break Ok(TestStatus::NotVulnerable);
                         }
                         Ok(Err(_)) | Err(_) => {
                             // Timeout or error — inconclusive
-                            break Ok((false, true));
+                            break Ok(TestStatus::Inconclusive);
                         }
                     }
                 }
             }
             Err(_) => {
-                // Connection failed - inconclusive
-                Ok((false, true))
+                // Connection failed
+                Ok(TestStatus::ConnectionFailed)
             }
         }
     }
@@ -148,12 +174,42 @@ impl CcsInjectionTester {
     }
 }
 
+/// CCS test status with detailed failure reasons
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TestStatus {
+    /// Server correctly rejected CCS - not vulnerable
+    NotVulnerable,
+    /// Server accepted CCS - vulnerable to CVE-2014-0224
+    Vulnerable,
+    /// Connection or handshake error - test inconclusive
+    Inconclusive,
+    /// Connection failed to establish
+    ConnectionFailed,
+    /// Handshake failed during ServerHello read
+    HandshakeFailed,
+}
+
+impl TestStatus {
+    /// Returns true if the test result indicates vulnerability
+    pub fn is_vulnerable(&self) -> bool {
+        matches!(self, Self::Vulnerable)
+    }
+
+    /// Returns true if the test could not complete
+    pub fn is_inconclusive(&self) -> bool {
+        matches!(
+            self,
+            Self::Inconclusive | Self::ConnectionFailed | Self::HandshakeFailed
+        )
+    }
+}
+
 /// CCS test result
 #[derive(Debug, Clone)]
 pub struct CcsTestResult {
     pub vulnerable: bool,
+    pub status: TestStatus,
     pub details: String,
-    pub inconclusive: bool,
 }
 
 #[cfg(test)]
@@ -213,18 +269,19 @@ mod tests {
     fn test_ccs_result_creation() {
         let result = CcsTestResult {
             vulnerable: false,
+            status: TestStatus::NotVulnerable,
             details: "Test".to_string(),
-            inconclusive: false,
         };
         assert!(!result.vulnerable);
+        assert!(!result.status.is_inconclusive());
     }
 
     #[test]
     fn test_ccs_result_debug_contains_details() {
         let result = CcsTestResult {
             vulnerable: true,
+            status: TestStatus::Vulnerable,
             details: "Details".to_string(),
-            inconclusive: false,
         };
 
         let debug = format!("{:?}", result);
@@ -235,8 +292,8 @@ mod tests {
     fn test_ccs_result_not_vulnerable_details() {
         let result = CcsTestResult {
             vulnerable: false,
+            status: TestStatus::NotVulnerable,
             details: "Not vulnerable - Server rejects early CCS messages".to_string(),
-            inconclusive: false,
         };
         assert!(!result.vulnerable);
         assert!(result.details.contains("Not vulnerable"));
@@ -246,10 +303,22 @@ mod tests {
     fn test_ccs_result_details_passthrough() {
         let result = CcsTestResult {
             vulnerable: false,
+            status: TestStatus::NotVulnerable,
             details: "Not vulnerable".to_string(),
-            inconclusive: false,
         };
         assert!(result.details.contains("Not vulnerable"));
+    }
+
+    #[test]
+    fn test_status_methods() {
+        assert!(TestStatus::Vulnerable.is_vulnerable());
+        assert!(!TestStatus::NotVulnerable.is_vulnerable());
+
+        assert!(TestStatus::Inconclusive.is_inconclusive());
+        assert!(TestStatus::ConnectionFailed.is_inconclusive());
+        assert!(TestStatus::HandshakeFailed.is_inconclusive());
+        assert!(!TestStatus::Vulnerable.is_inconclusive());
+        assert!(!TestStatus::NotVulnerable.is_inconclusive());
     }
 
     #[tokio::test]
@@ -268,7 +337,8 @@ mod tests {
         let tester = CcsInjectionTester::new(target);
         let result = tester.test().await.unwrap();
         assert!(!result.vulnerable);
-        // Connection to inactive port should be marked as inconclusive
-        assert!(result.inconclusive);
+        // Connection to inactive port should be marked as connection failed
+        assert!(result.status.is_inconclusive());
+        assert!(matches!(result.status, TestStatus::ConnectionFailed));
     }
 }

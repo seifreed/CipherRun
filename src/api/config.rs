@@ -62,11 +62,13 @@ impl Default for ApiConfig {
         let random_key = generate_secure_api_key();
         api_keys.insert(random_key.clone(), Permission::User);
 
-        // SECURITY WARNING: Log the generated key only once at startup
+        // SECURITY WARNING: Show only key prefix to avoid exposing full key in logs
         // In production, users should set their own keys via config file
+        let key_preview: String = random_key.chars().take(8).collect();
         tracing::warn!(
             "=============================================================================\n\
-             SECURITY WARNING: Using auto-generated API key: {}\n\
+             SECURITY WARNING: Auto-generated API key created\n\
+             Key prefix: {}...\n\
              \n\
              This key is randomly generated and will change on restart.\n\
              For production use:\n\
@@ -75,7 +77,7 @@ impl Default for ApiConfig {
              3. Never use the default configuration in production\n\
              4. Restrict API access to specific IP addresses if possible\n\
              =============================================================================",
-            random_key
+            key_preview
         );
 
         Self {
@@ -138,34 +140,42 @@ impl ApiConfig {
     /// Validate API key and return permission level
     ///
     /// # Security
-    /// Uses constant-time comparison to prevent timing attacks (CWE-208).
+    /// Uses a two-phase approach to minimize timing side-channel exposure:
+    /// 1. Fast length-based pre-filter to avoid processing obviously invalid keys
+    /// 2. Constant-time comparison for keys with matching lengths
+    ///
     /// All key comparisons take the same amount of time regardless of:
     /// - How many characters match
-    /// - Whether the key exists in the map
     /// - The position of the first mismatch
     pub fn validate_key(&self, key: &str) -> Option<Permission> {
+        // Fast pre-filter: collect lengths of all valid keys
+        // This is O(n) but doesn't leak timing about specific key content
+        let valid_lengths: Vec<usize> = self.api_keys.keys().map(|k| k.len()).collect();
+
+        // Quick reject if key length doesn't match any valid key
+        // This is the only length-based optimization that doesn't leak key content
+        if !valid_lengths.contains(&key.len()) {
+            return None;
+        }
+
         let mut result: Option<Permission> = None;
 
         for (stored_key, permission) in &self.api_keys {
             let key_bytes = key.as_bytes();
             let stored_bytes = stored_key.as_bytes();
 
-            // Pad both slices to the same length so ct_eq always runs on equal-length inputs,
-            // preventing timing side-channel that leaks key length information
-            let max_len = key_bytes.len().max(stored_bytes.len()).max(1);
-            let mut padded_key = vec![0u8; max_len];
-            let mut padded_stored = vec![0u8; max_len];
-            padded_key[..key_bytes.len()].copy_from_slice(key_bytes);
-            padded_stored[..stored_bytes.len()].copy_from_slice(stored_bytes);
+            // Skip keys with different lengths early (but after the length check above)
+            if key_bytes.len() != stored_bytes.len() {
+                continue;
+            }
 
-            // Constant-time: combine length and content checks with bitwise AND (not boolean)
-            let lengths_match: subtle::Choice = key_bytes.len().ct_eq(&stored_bytes.len());
-            let bytes_match: subtle::Choice = padded_key.ct_eq(&padded_stored);
-            let is_match: bool = (lengths_match & bytes_match).into();
+            // Constant-time comparison for keys of matching length
+            let bytes_match: subtle::Choice = key_bytes.ct_eq(stored_bytes);
+            let is_match: bool = bytes_match.into();
 
             if is_match {
                 result = Some(*permission);
-                // DO NOT break early - continue checking all keys
+                // DO NOT break early - continue checking all keys for constant timing
             }
         }
 

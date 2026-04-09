@@ -209,15 +209,15 @@ impl ServerHelloNetworkCapture {
         client_hello.extend_from_slice(&[
             0x00, 0x0B, // Extension type
             0x00, 0x02, // Extension length: 2
-            0x01,       // Formats length: 1
-            0x00,       // uncompressed
+            0x01, // Formats length: 1
+            0x00, // uncompressed
         ]);
 
         // supported_versions (TLS 1.3)
         client_hello.extend_from_slice(&[
             0x00, 0x2B, // Extension type
             0x00, 0x05, // Extension length: 5
-            0x04,       // Versions length: 4
+            0x04, // Versions length: 4
             0x03, 0x04, // TLS 1.3
             0x03, 0x03, // TLS 1.2
         ]);
@@ -238,8 +238,8 @@ impl ServerHelloNetworkCapture {
         client_hello.extend_from_slice(&[
             0x00, 0x2D, // Extension type
             0x00, 0x02, // Extension length: 2
-            0x01,       // Modes length: 1
-            0x01,       // psk_dhe_ke
+            0x01, // Modes length: 1
+            0x01, // psk_dhe_ke
         ]);
 
         // extended_master_secret

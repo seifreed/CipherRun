@@ -1,14 +1,16 @@
 use async_trait::async_trait;
-use cipherrun::application::ports::ScannerPort;
 use cipherrun::application::ScanRequest;
+use cipherrun::application::ports::ScannerPort;
 use cipherrun::scanner::ScanResults;
 
+#[allow(dead_code)]
 /// Mock scanner that returns predetermined results for testing.
 pub struct MockScannerPort {
     pub results: ScanResults,
 }
 
 impl MockScannerPort {
+    #[allow(dead_code)]
     pub fn default_success() -> Self {
         Self {
             results: ScanResults {

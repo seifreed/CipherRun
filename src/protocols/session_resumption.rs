@@ -89,7 +89,12 @@ impl SessionResumptionTester {
     fn establish_session_sync(&self) -> Result<Option<SslSession>> {
         use std::net::TcpStream as StdTcpStream;
 
-        let addr = self.target.socket_addrs()[0];
+        let addr = self
+            .target
+            .socket_addrs()
+            .first()
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
         let stream = StdTcpStream::connect_timeout(&addr, Duration::from_secs(10))?;
         stream.set_nonblocking(false)?;
 
@@ -109,7 +114,12 @@ impl SessionResumptionTester {
 
         use std::net::TcpStream as StdTcpStream;
 
-        let addr = self.target.socket_addrs()[0];
+        let addr = self
+            .target
+            .socket_addrs()
+            .first()
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
         let stream = StdTcpStream::connect_timeout(&addr, Duration::from_secs(10))?;
         stream.set_nonblocking(false)?;
 

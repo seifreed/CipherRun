@@ -287,7 +287,12 @@ impl<'a> EarlyDataTester<'a> {
 
     /// Attempt to connect with TLS 1.3
     async fn connect_tls13(&self) -> Result<bool> {
-        let addr = self.target.socket_addrs()[0];
+        let addr = self
+            .target
+            .socket_addrs()
+            .first()
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
 
         // Connect TCP
         let stream =

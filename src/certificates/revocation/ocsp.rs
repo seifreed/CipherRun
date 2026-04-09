@@ -1,6 +1,6 @@
 use super::{RevocationChecker, RevocationStatus};
-use crate::certificates::parser::CertificateInfo;
 use crate::Result;
+use crate::certificates::parser::CertificateInfo;
 use openssl::hash::MessageDigest;
 use openssl::ocsp::{OcspCertId, OcspRequest, OcspResponse, OcspResponseStatus};
 use openssl::x509::X509;

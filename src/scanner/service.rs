@@ -5,7 +5,7 @@ use crate::protocols::pre_handshake::{PreHandshakeScanResult, PreHandshakeScanne
 use crate::rating::{RatingCalculator, RatingResult, grader::Grade};
 use crate::scanner::probe_status::{ErrorType, ProbeStatus};
 use crate::utils::mtls::MtlsConfig;
-use crate::utils::network::Target;
+use crate::utils::network::{Target, canonical_target, split_target_host_port};
 use parking_lot::RwLock;
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
@@ -67,10 +67,11 @@ impl Scanner {
 
         // Use a placeholder target with sentinel IP (0.0.0.0) since DNS resolution requires async.
         // The actual IPs are resolved in initialize() which is called by run() before any scanning.
+        let (hostname, embedded_port) = split_target_host_port(target_str)?;
         let placeholder_ip = PLACEHOLDER_IP;
         let target = Target::with_ips(
-            target_str.to_string(),
-            request.port.unwrap_or(443),
+            hostname,
+            request.port.or(embedded_port).unwrap_or(443),
             vec![placeholder_ip],
         )?;
 
@@ -106,7 +107,7 @@ impl Scanner {
                     message: "No target specified".into(),
                 })?;
 
-        let parsed_target = Target::parse(target_str).await?;
+        let parsed_target = Target::parse_with_port_override(target_str, self.request.port).await?;
         *self.target.write() = parsed_target;
         Ok(())
     }
@@ -189,7 +190,8 @@ impl Scanner {
 
         results.scan_time_ms = start_time.elapsed().as_millis() as u64;
         if let Some(preflight) = preflight {
-            results.scan_metadata.probe_status = self.reconcile_probe_status(&preflight.probe_status, &results);
+            results.scan_metadata.probe_status =
+                self.reconcile_probe_status(&preflight.probe_status, &results);
             results.scan_metadata.pre_handshake_used = preflight.pre_handshake.is_some();
         }
 
@@ -308,7 +310,7 @@ impl Scanner {
         let target = self.get_target_owned();
 
         ScanResults {
-            target: format!("{}:{}", target.hostname, target.port),
+            target: canonical_target(&target.hostname, target.port),
             scan_time_ms,
             scan_metadata: ScanMetadata {
                 probe_status,
@@ -343,7 +345,10 @@ impl Scanner {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::scan_request::ScanRequestScan;
     use crate::protocols::{Protocol, ProtocolTestResult};
+    use crate::scanner::SilentProgressReporter;
+    use std::sync::Arc;
 
     fn test_scanner() -> Scanner {
         Scanner::new(ScanRequest {
@@ -400,5 +405,31 @@ mod tests {
 
         assert!(!reconciled.success);
         assert_eq!(reconciled.error_type, Some(ErrorType::NetworkError));
+    }
+
+    #[tokio::test]
+    async fn initialize_preserves_explicit_cli_port_override() {
+        let scanner = Scanner::with_reporter(
+            ScanRequest {
+                target: Some("93.184.216.34:443".to_string()),
+                port: Some(8443),
+                scan: ScanRequestScan {
+                    probe_status: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            Arc::new(SilentProgressReporter::new()),
+        )
+        .expect("scanner should build");
+
+        scanner
+            .initialize()
+            .await
+            .expect("initialization should succeed");
+
+        let target = scanner.get_target_owned();
+        assert_eq!(target.hostname, "93.184.216.34");
+        assert_eq!(target.port, 8443);
     }
 }

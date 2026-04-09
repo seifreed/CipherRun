@@ -12,6 +12,7 @@ use crate::scanner::inconsistency::{
     Inconsistency, InconsistencyDetails, InconsistencyType, SingleIpScanResult,
 };
 use crate::scanner::multi_ip::MultiIpScanReport;
+use crate::utils::network::canonical_target;
 use colored::*;
 use std::fmt;
 
@@ -34,9 +35,10 @@ impl fmt::Display for MultiIpScanReport {
 
         writeln!(
             f,
-            "Target: {}:{}",
-            self.target.hostname.green().bold(),
-            self.target.port
+            "Target: {}",
+            canonical_target(&self.target.hostname, self.target.port)
+                .green()
+                .bold()
         )?;
         writeln!(
             f,
@@ -523,6 +525,37 @@ mod tests {
         assert!(output.contains("MULTI-IP SCAN REPORT"));
         assert!(output.contains("Target:"));
         assert!(output.contains("example.com"));
+    }
+
+    #[test]
+    fn test_display_report_brackets_ipv6_target() {
+        let target =
+            Target::with_ips("::1".to_string(), 443, vec!["192.0.2.10".parse().unwrap()]).unwrap();
+
+        let report = MultiIpScanReport {
+            target,
+            per_ip_results: HashMap::new(),
+            total_ips: 1,
+            successful_scans: 0,
+            failed_scans: 1,
+            total_duration_ms: 0,
+            aggregated: AggregatedScanResult {
+                protocols: Vec::new(),
+                ciphers: HashMap::new(),
+                grade: ("F".to_string(), 0),
+                certificate_info: None,
+                certificate_consistent: true,
+                inconsistencies: Vec::new(),
+                alpn_protocols: Vec::new(),
+                session_resumption_caching: Some(false),
+                session_resumption_tickets: Some(false),
+            },
+            inconsistencies: Vec::new(),
+        };
+
+        let output = format!("{}", report);
+        assert!(output.contains("Target: [::1]:443"));
+        assert!(!output.contains("Target: ::1:443"));
     }
 
     #[test]

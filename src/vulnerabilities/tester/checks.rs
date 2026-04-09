@@ -129,25 +129,51 @@ impl VulnerabilityScanner {
     }
 
     pub async fn test_beast(&self) -> Result<VulnerabilityResult> {
-        let protocol_result = self.protocol_tester.test_protocol(Protocol::TLS10).await?;
+        // BEAST vulnerability affects both TLS 1.0 and SSL 3.0 with CBC ciphers
+        // Test both protocols for comprehensive vulnerability detection
+        let tls10_result = self.protocol_tester.test_protocol(Protocol::TLS10).await?;
+        let ssl3_result = self.protocol_tester.test_protocol(Protocol::SSLv3).await?;
 
-        if !protocol_result.supported {
+        let tls10_supported = tls10_result.supported;
+        let ssl3_supported = ssl3_result.supported;
+
+        if !tls10_supported && !ssl3_supported {
             return Ok(VulnerabilityResult {
                 vuln_type: VulnerabilityType::BEAST,
                 vulnerable: false,
                 inconclusive: false,
-                details: "Server does not support TLS 1.0".to_string(),
+                details: "Server does not support TLS 1.0 or SSL 3.0".to_string(),
                 cve: Some("CVE-2011-3389".to_string()),
                 cwe: Some("CWE-326".to_string()),
                 severity: Severity::Info,
             });
         }
 
-        let cipher_summary = self
-            .cipher_tester
-            .test_protocol_ciphers(Protocol::TLS10)
-            .await?;
-        Ok(super::cipher_checks::evaluate_beast(Some(&cipher_summary)))
+        // Get cipher summaries for each supported protocol
+        let tls10_summary = if tls10_supported {
+            Some(
+                self.cipher_tester
+                    .test_protocol_ciphers(Protocol::TLS10)
+                    .await?,
+            )
+        } else {
+            None
+        };
+
+        let ssl3_summary = if ssl3_supported {
+            Some(
+                self.cipher_tester
+                    .test_protocol_ciphers(Protocol::SSLv3)
+                    .await?,
+            )
+        } else {
+            None
+        };
+
+        Ok(super::cipher_checks::evaluate_beast(
+            tls10_summary.as_ref(),
+            ssl3_summary.as_ref(),
+        ))
     }
 
     pub async fn test_renegotiation(&self) -> Result<VulnerabilityResult> {
@@ -228,7 +254,8 @@ impl VulnerabilityScanner {
         Ok(VulnerabilityResult {
             vuln_type: VulnerabilityType::Heartbleed,
             vulnerable: result.vulnerable,
-            inconclusive: false,
+            // Mark as inconclusive if the test couldn't be performed
+            inconclusive: !result.tested,
             details: result.details,
             cve: Some("CVE-2014-0160".to_string()),
             cwe: Some("CWE-119".to_string()),
@@ -249,7 +276,7 @@ impl VulnerabilityScanner {
         Ok(VulnerabilityResult {
             vuln_type: VulnerabilityType::CCSInjection,
             vulnerable: result.vulnerable,
-            inconclusive: result.inconclusive,
+            inconclusive: result.status.is_inconclusive(),
             details: result.details,
             cve: Some("CVE-2014-0224".to_string()),
             cwe: Some("CWE-310".to_string()),
@@ -690,27 +717,52 @@ mod tests {
 
     #[test]
     fn evaluate_beast_no_summary() {
-        let result = super::super::cipher_checks::evaluate_beast(None);
+        let result = super::super::cipher_checks::evaluate_beast(None, None);
         assert!(!result.vulnerable);
         assert_eq!(result.vuln_type, VulnerabilityType::BEAST);
         assert_eq!(result.severity, Severity::Info);
     }
 
     #[test]
-    fn evaluate_beast_with_cbc_ciphers() {
+    fn evaluate_beast_with_tls10_cbc_ciphers() {
         let ciphers = vec![make_cipher("AES128-CBC", 128, false)];
         let summary = summary_with_ciphers(Protocol::TLS10, ciphers, CipherCounts::default());
-        let result = super::super::cipher_checks::evaluate_beast(Some(&summary));
+        let result = super::super::cipher_checks::evaluate_beast(Some(&summary), None);
         assert!(result.vulnerable);
         assert_eq!(result.severity, Severity::Medium);
+        assert!(result.details.contains("TLS 1.0"));
         assert!(result.details.contains("CBC"));
+    }
+
+    #[test]
+    fn evaluate_beast_with_ssl3_cbc_ciphers() {
+        let ciphers = vec![make_cipher("AES128-CBC", 128, false)];
+        let summary = summary_with_ciphers(Protocol::SSLv3, ciphers, CipherCounts::default());
+        let result = super::super::cipher_checks::evaluate_beast(None, Some(&summary));
+        assert!(result.vulnerable);
+        assert!(result.details.contains("SSL 3.0"));
+    }
+
+    #[test]
+    fn evaluate_beast_with_both_protocols() {
+        let tls10_ciphers = vec![make_cipher("AES128-CBC", 128, false)];
+        let tls10_summary =
+            summary_with_ciphers(Protocol::TLS10, tls10_ciphers, CipherCounts::default());
+        let ssl3_ciphers = vec![make_cipher("AES256-CBC", 256, false)];
+        let ssl3_summary =
+            summary_with_ciphers(Protocol::SSLv3, ssl3_ciphers, CipherCounts::default());
+        let result =
+            super::super::cipher_checks::evaluate_beast(Some(&tls10_summary), Some(&ssl3_summary));
+        assert!(result.vulnerable);
+        assert!(result.details.contains("TLS 1.0"));
+        assert!(result.details.contains("SSL 3.0"));
     }
 
     #[test]
     fn evaluate_beast_without_cbc_ciphers() {
         let ciphers = vec![make_cipher("AES128-GCM", 128, false)];
         let summary = summary_with_ciphers(Protocol::TLS10, ciphers, CipherCounts::default());
-        let result = super::super::cipher_checks::evaluate_beast(Some(&summary));
+        let result = super::super::cipher_checks::evaluate_beast(Some(&summary), None);
         assert!(!result.vulnerable);
     }
 

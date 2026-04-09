@@ -104,7 +104,12 @@ impl OpossumTester {
 
     /// Test OpenSSL version detection
     async fn test_openssl_version(&self) -> Result<OpossumStatus> {
-        let addr = self.target.socket_addrs()[0];
+        let addr = self
+            .target
+            .socket_addrs()
+            .first()
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
         let hostname = self.target.hostname.clone();
 
         // Connect and try to extract OpenSSL version from server
@@ -152,7 +157,11 @@ impl OpossumTester {
         let hostname = self.target.hostname.clone();
 
         let stream = match crate::utils::network::connect_with_timeout(
-            self.target.socket_addrs()[0],
+            self.target
+                .socket_addrs()
+                .first()
+                .copied()
+                .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?,
             TLS_HANDSHAKE_TIMEOUT,
             None,
         )
@@ -192,7 +201,9 @@ impl OpossumTester {
             Err(_) => {
                 if self
                     .control_handshake_completes_without_hang(
-                        self.target.socket_addrs()[0],
+                        self.target.socket_addrs().first().copied().ok_or_else(|| {
+                            anyhow::anyhow!("No socket addresses available for target")
+                        })?,
                         &hostname,
                     )
                     .await?

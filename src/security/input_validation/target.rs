@@ -21,16 +21,10 @@ pub fn validate_target(
         ));
     }
 
-    if target.len() > 300 {
-        return Err(ValidationError::InvalidHostname(
-            "Target string too long".to_string(),
-        ));
-    }
-
     let (hostname, port) = if target.starts_with('[') {
         parse_bracketed_ipv6(target)?
     } else if target.contains("::") || target.matches(':').count() >= 2 {
-        parse_unbracketed_ipv6(target)
+        parse_unbracketed_ipv6(target)?
     } else {
         parse_host_port(target)?
     };
@@ -83,20 +77,56 @@ fn parse_bracketed_ipv6(
 }
 
 /// Parse unbracketed IPv6 target (multiple colons, no brackets).
-fn parse_unbracketed_ipv6(target: &str) -> (String, Option<u16>) {
+/// Handles cases like `::1` (localhost), `2001:db8::1` (IPv6 only).
+///
+/// IMPORTANT: IPv6 addresses with ports MUST use bracketed notation:
+/// - Correct: `[::1]:443`, `[2001:db8::1]:8080`
+/// - Unbracketed IPv6 targets are treated as host-only values, even when the
+///   final hextet is numeric.
+fn parse_unbracketed_ipv6(
+    target: &str,
+) -> std::result::Result<(String, Option<u16>), ValidationError> {
+    // First, try parsing as pure IPv6 address (no port)
     if target.parse::<Ipv6Addr>().is_ok() {
-        return (target.to_string(), None);
+        return Ok((target.to_string(), None));
     }
+
+    // Check if this looks like an IPv6 address with a port appended
+    // (e.g., "::1:443" or "2001:db8::1:8080")
     if let Some(last_colon) = target.rfind(':') {
         let potential_port = &target[last_colon + 1..];
         if let Ok(port) = potential_port.parse::<u16>() {
             let potential_host = &target[..last_colon];
+            // The host part must be a valid IPv6 address
             if potential_host.parse::<Ipv6Addr>().is_ok() {
-                return (potential_host.to_string(), Some(port));
+                // AMBIGUOUS: This could be:
+                // - IPv6 address `::1:443` (with port component in address)
+                // - IPv6 `::1` with port `443`
+                //
+                // We REQUIRE bracketed notation to disambiguate.
+                // Return an error with helpful guidance
+                return Err(ValidationError::InvalidHostname(format!(
+                    "Ambiguous IPv6 address with port: '{}'. \
+                     IPv6 addresses with ports must use bracketed notation. \
+                     Use '[{}]:{}' instead.",
+                    target, potential_host, port
+                )));
             }
         }
     }
-    (target.to_string(), None)
+
+    // If we reach here, the input looks like IPv6 but couldn't be fully parsed
+    // Log a warning for the user to use bracketed notation
+    if target.contains("::") || target.matches(':').count() >= 2 {
+        tracing::warn!(
+            "Potentially malformed IPv6 address '{}'. \
+             Use bracketed notation [IPv6]:port for IPv6 addresses with ports, \
+             e.g., '[::1]:443' or '[2001:db8::1]:443'.",
+            target
+        );
+    }
+
+    Ok((target.to_string(), None))
 }
 
 /// Parse regular hostname or IPv4 with optional port: `host:port` or `host`
@@ -174,5 +204,62 @@ mod tests {
         assert!(result.is_ok());
         let (_host, port) = result.expect("test assertion should succeed");
         assert_eq!(port, Some(65535));
+    }
+
+    #[test]
+    fn test_validate_target_allows_max_hostname_with_port() {
+        let hostname = format!(
+            "{}.{}.{}.{}",
+            "a".repeat(63),
+            "b".repeat(63),
+            "c".repeat(63),
+            "d".repeat(61)
+        );
+        assert_eq!(hostname.len(), 253);
+
+        let result = validate_target(&format!("{}:443", hostname), true);
+        assert!(
+            result.is_ok(),
+            "Hostname at RFC limit should remain valid with a port"
+        );
+        let (host, port) = result.expect("test assertion should succeed");
+        assert_eq!(host, hostname);
+        assert_eq!(port, Some(443));
+    }
+
+    #[test]
+    fn test_validate_target_allows_ipv6_like_tail_without_brackets() {
+        let result = validate_target("::1:443", true);
+
+        assert!(
+            result.is_ok(),
+            "IPv6 literal should remain valid without brackets"
+        );
+        let (host, port) = result.expect("test assertion should succeed");
+
+        assert_eq!(host, "::1:443");
+        assert!(port.is_none());
+    }
+
+    #[test]
+    fn test_validate_target_allows_compact_ipv6_with_numeric_tail() {
+        let result = validate_target("2001:db8::1:2", true);
+
+        assert!(result.is_ok(), "Compact IPv6 should remain valid");
+        let (host, port) = result.expect("test assertion should succeed");
+
+        assert_eq!(host, "2001:db8::1:2");
+        assert!(port.is_none());
+    }
+
+    #[test]
+    fn test_validate_target_allows_bracketed_ipv6_with_port_only() {
+        let result = validate_target("[2001:db8::1]:8443", true);
+
+        assert!(result.is_ok(), "Bracketed IPv6 with port should be allowed");
+        let (host, port) = result.expect("test assertion should succeed");
+
+        assert_eq!(host, "2001:db8::1");
+        assert_eq!(port, Some(8443));
     }
 }

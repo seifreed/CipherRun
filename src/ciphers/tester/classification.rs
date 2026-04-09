@@ -48,7 +48,9 @@ impl CipherTester {
         counts
     }
 
-    pub async fn test_all_protocols(&self) -> Result<HashMap<Protocol, super::ProtocolCipherSummary>> {
+    pub async fn test_all_protocols(
+        &self,
+    ) -> Result<HashMap<Protocol, super::ProtocolCipherSummary>> {
         let mut results = HashMap::new();
         for protocol in Protocol::all() {
             if matches!(protocol, Protocol::QUIC) {

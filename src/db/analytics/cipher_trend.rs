@@ -2,8 +2,6 @@
 // Analyzes cipher suite strength distribution over time
 
 use super::trend_analyzer::{CipherStrengthData, TrendAnalyzer};
-use crate::db::ScanRecord;
-use chrono::{Duration, Utc};
 
 impl TrendAnalyzer {
     /// Analyze cipher strength trend over time
@@ -13,15 +11,9 @@ impl TrendAnalyzer {
         port: u16,
         days: i64,
     ) -> crate::Result<super::trend_analyzer::CipherStrengthTrend> {
-        let scans = self.db().get_scan_history(hostname, port, 100).await?;
+        let scans = self.get_scans_in_range(hostname, port, days).await?;
 
-        let cutoff = Utc::now() - Duration::days(days);
-        let filtered_scans: Vec<&ScanRecord> = scans
-            .iter()
-            .filter(|s| s.scan_timestamp >= cutoff)
-            .collect();
-
-        if filtered_scans.is_empty() {
+        if scans.is_empty() {
             return Err(crate::TlsError::DatabaseError(
                 "No scans found in the specified time range".to_string(),
             ));
@@ -31,7 +23,7 @@ impl TrendAnalyzer {
         let mut weak_counts = Vec::new();
         let mut strong_counts = Vec::new();
 
-        for scan in &filtered_scans {
+        for scan in &scans {
             if let Some(scan_id) = scan.scan_id {
                 let ciphers = self.get_ciphers(scan_id).await?;
 

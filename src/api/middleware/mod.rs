@@ -36,6 +36,7 @@ mod tests {
         let auth = AuthExtension {
             permission: Permission::User,
             api_key: "key".to_string(),
+            from_query_param: false,
         };
         req.extensions_mut().insert(auth.clone());
 

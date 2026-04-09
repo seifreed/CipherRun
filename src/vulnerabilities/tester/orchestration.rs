@@ -1,38 +1,92 @@
 use super::{Protocol, VulnerabilityResult, VulnerabilityScanner, VulnerabilityType};
 use crate::Result;
+use crate::vulnerabilities::Severity;
 use std::collections::HashMap;
 
 pub(super) fn collect_result(
     results: &mut Vec<VulnerabilityResult>,
     result: Result<VulnerabilityResult>,
+    vuln_type: VulnerabilityType,
     test_name: &str,
 ) {
     match result {
         Ok(r) => results.push(r),
-        Err(e) => tracing::warn!("{} test failed: {}", test_name, e),
+        Err(e) => {
+            tracing::warn!("{} test failed: {}", test_name, e);
+            // Add inconclusive result so user knows the test was attempted but failed
+            results.push(VulnerabilityResult {
+                vuln_type,
+                vulnerable: false,
+                inconclusive: true,
+                details: format!(
+                    "Test error: {} - unable to determine vulnerability status",
+                    e
+                ),
+                cve: None,
+                cwe: None,
+                severity: Severity::Info,
+            });
+        }
     }
 }
 
+/// Collect multiple vulnerability results from a test that returns a vector.
+/// On error, creates inconclusive results for each expected vulnerability type.
 pub(super) fn collect_results(
     results: &mut Vec<VulnerabilityResult>,
     result: Result<Vec<VulnerabilityResult>>,
+    vuln_types: &[VulnerabilityType],
     test_name: &str,
 ) {
     match result {
         Ok(r) => results.extend(r),
-        Err(e) => tracing::warn!("{} test failed: {}", test_name, e),
+        Err(e) => {
+            tracing::warn!("{} test failed: {}", test_name, e);
+            // Add inconclusive results for each expected vulnerability type
+            // so users know these tests were attempted but failed
+            for vuln_type in vuln_types {
+                results.push(VulnerabilityResult {
+                    vuln_type: *vuln_type,
+                    vulnerable: false,
+                    inconclusive: true,
+                    details: format!(
+                        "Test error: {} - unable to determine vulnerability status",
+                        e
+                    ),
+                    cve: None,
+                    cwe: None,
+                    severity: Severity::Info,
+                });
+            }
+        }
     }
 }
 
 pub(super) fn collect_optional_result(
     results: &mut Vec<VulnerabilityResult>,
     result: Result<Option<VulnerabilityResult>>,
+    vuln_type: VulnerabilityType,
     test_name: &str,
 ) {
     match result {
         Ok(Some(r)) => results.push(r),
         Ok(None) => {}
-        Err(e) => tracing::warn!("{} test failed: {}", test_name, e),
+        Err(e) => {
+            tracing::warn!("{} test failed: {}", test_name, e);
+            // Add inconclusive result so user knows the test was attempted but failed
+            results.push(VulnerabilityResult {
+                vuln_type,
+                vulnerable: false,
+                inconclusive: true,
+                details: format!(
+                    "Test error: {} - unable to determine vulnerability status",
+                    e
+                ),
+                cve: None,
+                cwe: None,
+                severity: Severity::Info,
+            });
+        }
     }
 }
 
@@ -146,30 +200,150 @@ impl VulnerabilityScanner {
             self.test_lucky13(),
         );
 
-        collect_result(&mut results, drown_result, "DROWN");
-        collect_result(&mut results, poodle_ssl_result, "POODLE SSL");
-        collect_results(&mut results, poodle_variants_result, "POODLE variants");
-        collect_result(&mut results, rc4_result, "RC4");
-        collect_result(&mut results, des3_result, "3DES");
-        collect_result(&mut results, null_result, "NULL ciphers");
-        collect_result(&mut results, export_result, "EXPORT ciphers");
-        collect_result(&mut results, beast_result, "BEAST");
-        collect_optional_result(&mut results, renegotiation_result, "Renegotiation");
-        collect_optional_result(&mut results, fallback_result, "TLS Fallback");
-        collect_optional_result(&mut results, compression_result, "Compression");
-        collect_optional_result(&mut results, heartbleed_result, "Heartbleed");
-        collect_result(&mut results, early_data_result, "Early data");
-        collect_result(&mut results, padding_oracle_result, "Padding oracle");
-        collect_result(&mut results, opossum_result, "Opossum");
-        collect_result(&mut results, grease_result, "GREASE");
-        collect_result(&mut results, ccs_result, "CCS");
-        collect_result(&mut results, ticketbleed_result, "Ticketbleed");
-        collect_result(&mut results, robot_result, "ROBOT");
-        collect_result(&mut results, breach_result, "BREACH");
-        collect_result(&mut results, sweet32_result, "Sweet32");
-        collect_result(&mut results, freak_result, "FREAK");
-        collect_result(&mut results, logjam_result, "LOGJAM");
-        collect_result(&mut results, lucky13_result, "Lucky13");
+        collect_result(
+            &mut results,
+            drown_result,
+            VulnerabilityType::DROWN,
+            "DROWN",
+        );
+        collect_result(
+            &mut results,
+            poodle_ssl_result,
+            VulnerabilityType::POODLE,
+            "POODLE SSL",
+        );
+        collect_results(
+            &mut results,
+            poodle_variants_result,
+            &[
+                VulnerabilityType::ZombiePoodle,
+                VulnerabilityType::GoldenDoodle,
+                VulnerabilityType::SleepingPoodle,
+                VulnerabilityType::OpenSsl0Length,
+            ],
+            "POODLE variants",
+        );
+        collect_result(&mut results, rc4_result, VulnerabilityType::RC4, "RC4");
+        collect_result(
+            &mut results,
+            des3_result,
+            VulnerabilityType::SWEET32,
+            "3DES",
+        );
+        collect_result(
+            &mut results,
+            null_result,
+            VulnerabilityType::NullCipher,
+            "NULL ciphers",
+        );
+        collect_result(
+            &mut results,
+            export_result,
+            VulnerabilityType::FREAK,
+            "EXPORT ciphers",
+        );
+        collect_result(
+            &mut results,
+            beast_result,
+            VulnerabilityType::BEAST,
+            "BEAST",
+        );
+        collect_optional_result(
+            &mut results,
+            renegotiation_result,
+            VulnerabilityType::Renegotiation,
+            "Renegotiation",
+        );
+        collect_optional_result(
+            &mut results,
+            fallback_result,
+            VulnerabilityType::TLSFallback,
+            "TLS Fallback",
+        );
+        collect_optional_result(
+            &mut results,
+            compression_result,
+            VulnerabilityType::CRIME,
+            "Compression",
+        );
+        collect_optional_result(
+            &mut results,
+            heartbleed_result,
+            VulnerabilityType::Heartbleed,
+            "Heartbleed",
+        );
+        collect_result(
+            &mut results,
+            early_data_result,
+            VulnerabilityType::EarlyDataReplay,
+            "Early data",
+        );
+        collect_result(
+            &mut results,
+            padding_oracle_result,
+            VulnerabilityType::PaddingOracle2016,
+            "Padding oracle",
+        );
+        collect_result(
+            &mut results,
+            opossum_result,
+            VulnerabilityType::Opossum,
+            "Opossum",
+        );
+        collect_result(
+            &mut results,
+            grease_result,
+            VulnerabilityType::GREASE,
+            "GREASE",
+        );
+        collect_result(
+            &mut results,
+            ccs_result,
+            VulnerabilityType::CCSInjection,
+            "CCS",
+        );
+        collect_result(
+            &mut results,
+            ticketbleed_result,
+            VulnerabilityType::Ticketbleed,
+            "Ticketbleed",
+        );
+        collect_result(
+            &mut results,
+            robot_result,
+            VulnerabilityType::ROBOT,
+            "ROBOT",
+        );
+        collect_result(
+            &mut results,
+            breach_result,
+            VulnerabilityType::BREACH,
+            "BREACH",
+        );
+        collect_result(
+            &mut results,
+            sweet32_result,
+            VulnerabilityType::SWEET32,
+            "Sweet32",
+        );
+        collect_result(
+            &mut results,
+            freak_result,
+            VulnerabilityType::FREAK,
+            "FREAK",
+        );
+        collect_result(
+            &mut results,
+            logjam_result,
+            VulnerabilityType::LOGJAM,
+            "LOGJAM",
+        );
+        collect_result(
+            &mut results,
+            lucky13_result,
+            VulnerabilityType::LUCKY13,
+            "Lucky13",
+        );
 
         results
     }
@@ -212,20 +386,90 @@ impl VulnerabilityScanner {
             self.test_ccs(),
         );
 
-        collect_result(&mut results, drown_result, "DROWN");
-        collect_result(&mut results, poodle_ssl_result, "POODLE SSL");
-        collect_results(&mut results, poodle_variants_result, "POODLE variants");
-        collect_result(&mut results, rc4_result, "RC4");
-        collect_result(&mut results, des3_result, "3DES");
-        collect_result(&mut results, null_result, "NULL ciphers");
-        collect_result(&mut results, export_result, "EXPORT ciphers");
-        collect_result(&mut results, beast_result, "BEAST");
-        collect_optional_result(&mut results, renegotiation_result, "Renegotiation");
-        collect_optional_result(&mut results, fallback_result, "TLS Fallback");
-        collect_optional_result(&mut results, compression_result, "Compression");
-        collect_optional_result(&mut results, heartbleed_result, "Heartbleed");
-        collect_result(&mut results, early_data_result, "Early data");
-        collect_result(&mut results, ccs_result, "CCS");
+        collect_result(
+            &mut results,
+            drown_result,
+            VulnerabilityType::DROWN,
+            "DROWN",
+        );
+        collect_result(
+            &mut results,
+            poodle_ssl_result,
+            VulnerabilityType::POODLE,
+            "POODLE SSL",
+        );
+        collect_results(
+            &mut results,
+            poodle_variants_result,
+            &[
+                VulnerabilityType::ZombiePoodle,
+                VulnerabilityType::GoldenDoodle,
+                VulnerabilityType::SleepingPoodle,
+                VulnerabilityType::OpenSsl0Length,
+            ],
+            "POODLE variants",
+        );
+        collect_result(&mut results, rc4_result, VulnerabilityType::RC4, "RC4");
+        collect_result(
+            &mut results,
+            des3_result,
+            VulnerabilityType::SWEET32,
+            "3DES",
+        );
+        collect_result(
+            &mut results,
+            null_result,
+            VulnerabilityType::NullCipher,
+            "NULL ciphers",
+        );
+        collect_result(
+            &mut results,
+            export_result,
+            VulnerabilityType::FREAK,
+            "EXPORT ciphers",
+        );
+        collect_result(
+            &mut results,
+            beast_result,
+            VulnerabilityType::BEAST,
+            "BEAST",
+        );
+        collect_optional_result(
+            &mut results,
+            renegotiation_result,
+            VulnerabilityType::Renegotiation,
+            "Renegotiation",
+        );
+        collect_optional_result(
+            &mut results,
+            fallback_result,
+            VulnerabilityType::TLSFallback,
+            "TLS Fallback",
+        );
+        collect_optional_result(
+            &mut results,
+            compression_result,
+            VulnerabilityType::CRIME,
+            "Compression",
+        );
+        collect_optional_result(
+            &mut results,
+            heartbleed_result,
+            VulnerabilityType::Heartbleed,
+            "Heartbleed",
+        );
+        collect_result(
+            &mut results,
+            early_data_result,
+            VulnerabilityType::EarlyDataReplay,
+            "Early data",
+        );
+        collect_result(
+            &mut results,
+            ccs_result,
+            VulnerabilityType::CCSInjection,
+            "CCS",
+        );
 
         results
     }
@@ -234,18 +478,39 @@ impl VulnerabilityScanner {
         let mut results = Vec::new();
 
         if self.selected_checks.is_enabled(&VulnerabilityType::DROWN) {
-            collect_result(&mut results, self.test_drown().await, "DROWN");
+            collect_result(
+                &mut results,
+                self.test_drown().await,
+                VulnerabilityType::DROWN,
+                "DROWN",
+            );
         }
         if self.selected_checks.is_enabled(&VulnerabilityType::POODLE) {
-            collect_result(&mut results, self.test_poodle_ssl().await, "POODLE SSL");
+            collect_result(
+                &mut results,
+                self.test_poodle_ssl().await,
+                VulnerabilityType::POODLE,
+                "POODLE SSL",
+            );
             collect_results(
                 &mut results,
                 self.test_poodle_variants().await,
+                &[
+                    VulnerabilityType::ZombiePoodle,
+                    VulnerabilityType::GoldenDoodle,
+                    VulnerabilityType::SleepingPoodle,
+                    VulnerabilityType::OpenSsl0Length,
+                ],
                 "POODLE variants",
             );
         }
         if self.selected_checks.is_enabled(&VulnerabilityType::BEAST) {
-            collect_result(&mut results, self.test_beast().await, "BEAST");
+            collect_result(
+                &mut results,
+                self.test_beast().await,
+                VulnerabilityType::BEAST,
+                "BEAST",
+            );
         }
         if self
             .selected_checks
@@ -254,6 +519,7 @@ impl VulnerabilityScanner {
             collect_optional_result(
                 &mut results,
                 self.test_renegotiation_if_enabled().await,
+                VulnerabilityType::Renegotiation,
                 "Renegotiation",
             );
         }
@@ -264,6 +530,7 @@ impl VulnerabilityScanner {
             collect_optional_result(
                 &mut results,
                 self.test_fallback_if_enabled().await,
+                VulnerabilityType::TLSFallback,
                 "TLS Fallback",
             );
         }
@@ -271,6 +538,7 @@ impl VulnerabilityScanner {
             collect_optional_result(
                 &mut results,
                 self.test_compression_if_enabled().await,
+                VulnerabilityType::CRIME,
                 "Compression",
             );
         }
@@ -281,6 +549,7 @@ impl VulnerabilityScanner {
             collect_optional_result(
                 &mut results,
                 self.test_heartbleed_if_enabled().await,
+                VulnerabilityType::Heartbleed,
                 "Heartbleed",
             );
         }
@@ -288,37 +557,82 @@ impl VulnerabilityScanner {
             .selected_checks
             .is_enabled(&VulnerabilityType::EarlyDataReplay)
         {
-            collect_result(&mut results, self.test_early_data().await, "Early data");
+            collect_result(
+                &mut results,
+                self.test_early_data().await,
+                VulnerabilityType::EarlyDataReplay,
+                "Early data",
+            );
         }
         if self
             .selected_checks
             .is_enabled(&VulnerabilityType::CCSInjection)
         {
-            collect_result(&mut results, self.test_ccs().await, "CCS");
+            collect_result(
+                &mut results,
+                self.test_ccs().await,
+                VulnerabilityType::CCSInjection,
+                "CCS",
+            );
         }
         if self
             .selected_checks
             .is_enabled(&VulnerabilityType::Ticketbleed)
         {
-            collect_result(&mut results, self.test_ticketbleed().await, "Ticketbleed");
+            collect_result(
+                &mut results,
+                self.test_ticketbleed().await,
+                VulnerabilityType::Ticketbleed,
+                "Ticketbleed",
+            );
         }
         if self.selected_checks.is_enabled(&VulnerabilityType::ROBOT) {
-            collect_result(&mut results, self.test_robot().await, "ROBOT");
+            collect_result(
+                &mut results,
+                self.test_robot().await,
+                VulnerabilityType::ROBOT,
+                "ROBOT",
+            );
         }
         if self.selected_checks.is_enabled(&VulnerabilityType::BREACH) {
-            collect_result(&mut results, self.test_breach().await, "BREACH");
+            collect_result(
+                &mut results,
+                self.test_breach().await,
+                VulnerabilityType::BREACH,
+                "BREACH",
+            );
         }
         if self.selected_checks.is_enabled(&VulnerabilityType::SWEET32) {
-            collect_result(&mut results, self.test_sweet32().await, "Sweet32");
+            collect_result(
+                &mut results,
+                self.test_sweet32().await,
+                VulnerabilityType::SWEET32,
+                "Sweet32",
+            );
         }
         if self.selected_checks.is_enabled(&VulnerabilityType::FREAK) {
-            collect_result(&mut results, self.test_freak().await, "FREAK");
+            collect_result(
+                &mut results,
+                self.test_freak().await,
+                VulnerabilityType::FREAK,
+                "FREAK",
+            );
         }
         if self.selected_checks.is_enabled(&VulnerabilityType::LOGJAM) {
-            collect_result(&mut results, self.test_logjam().await, "LOGJAM");
+            collect_result(
+                &mut results,
+                self.test_logjam().await,
+                VulnerabilityType::LOGJAM,
+                "LOGJAM",
+            );
         }
         if self.selected_checks.is_enabled(&VulnerabilityType::LUCKY13) {
-            collect_result(&mut results, self.test_lucky13().await, "Lucky13");
+            collect_result(
+                &mut results,
+                self.test_lucky13().await,
+                VulnerabilityType::LUCKY13,
+                "Lucky13",
+            );
         }
 
         Ok(results)
@@ -404,6 +718,7 @@ impl VulnerabilityScanner {
     ) -> Result<VulnerabilityResult> {
         Ok(super::cipher_checks::evaluate_beast(
             cipher_cache.get(&Protocol::TLS10),
+            cipher_cache.get(&Protocol::SSLv3),
         ))
     }
 }

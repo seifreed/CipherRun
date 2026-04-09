@@ -1,8 +1,8 @@
 mod common;
 
-use cipherrun::application::use_cases::{RunScan, ScanWorkflow};
-use cipherrun::application::use_cases::scan_workflow::{ScanWorkflowInput, ScanWorkflowServices};
 use cipherrun::application::ScanRequest;
+use cipherrun::application::use_cases::scan_workflow::{ScanWorkflowInput, ScanWorkflowServices};
+use cipherrun::application::use_cases::{RunScan, ScanWorkflow};
 use cipherrun::compliance::{BuiltinFrameworkSource, engine::DefaultComplianceEvaluator};
 use common::mock_scanner::MockScannerPort;
 use std::sync::Arc;

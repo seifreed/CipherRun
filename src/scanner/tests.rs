@@ -176,6 +176,88 @@ fn test_aggregate_vulnerabilities_merges_by_type() {
 }
 
 #[test]
+fn test_aggregate_vulnerabilities_preserves_all_detail_segments_deterministically() {
+    let ip1: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+    let ip2: std::net::IpAddr = "127.0.0.2".parse().unwrap();
+
+    let scan_short = ScanResults {
+        vulnerabilities: vec![VulnerabilityResult {
+            vuln_type: VulnerabilityType::RC4,
+            vulnerable: true,
+            inconclusive: false,
+            details: "TLS 1.2".to_string(),
+            cve: None,
+            cwe: None,
+            severity: Severity::Medium,
+        }],
+        ..Default::default()
+    };
+
+    let scan_long = ScanResults {
+        vulnerabilities: vec![VulnerabilityResult {
+            vuln_type: VulnerabilityType::RC4,
+            vulnerable: true,
+            inconclusive: false,
+            details: "TLS 1.2 support".to_string(),
+            cve: None,
+            cwe: None,
+            severity: Severity::Medium,
+        }],
+        ..Default::default()
+    };
+
+    let mut results_a = HashMap::new();
+    results_a.insert(
+        ip1,
+        crate::scanner::inconsistency::SingleIpScanResult {
+            ip: ip1,
+            scan_result: scan_short.clone(),
+            scan_duration_ms: 10,
+            error: None,
+        },
+    );
+    results_a.insert(
+        ip2,
+        crate::scanner::inconsistency::SingleIpScanResult {
+            ip: ip2,
+            scan_result: scan_long.clone(),
+            scan_duration_ms: 12,
+            error: None,
+        },
+    );
+
+    let mut results_b = HashMap::new();
+    results_b.insert(
+        ip2,
+        crate::scanner::inconsistency::SingleIpScanResult {
+            ip: ip2,
+            scan_result: scan_long,
+            scan_duration_ms: 12,
+            error: None,
+        },
+    );
+    results_b.insert(
+        ip1,
+        crate::scanner::inconsistency::SingleIpScanResult {
+            ip: ip1,
+            scan_result: scan_short,
+            scan_duration_ms: 10,
+            error: None,
+        },
+    );
+
+    let aggregated_a = Scanner::aggregate_vulnerabilities(&results_a);
+    let aggregated_b = Scanner::aggregate_vulnerabilities(&results_b);
+
+    assert_eq!(aggregated_a.len(), 1);
+    assert_eq!(aggregated_b.len(), 1);
+    assert_eq!(aggregated_a[0].details, "TLS 1.2; TLS 1.2 support");
+    assert_eq!(aggregated_a[0].details, aggregated_b[0].details);
+    assert!(aggregated_a[0].details.contains("TLS 1.2"));
+    assert!(aggregated_a[0].details.contains("TLS 1.2 support"));
+}
+
+#[test]
 fn test_select_common_certificate_chain_prefers_matching_fingerprint() {
     let mut results = HashMap::new();
 
@@ -265,6 +347,63 @@ fn test_select_common_certificate_chain_prefers_matching_fingerprint() {
 }
 
 #[test]
+fn test_select_chain_by_fingerprint_uses_sorted_chain_order() {
+    let low_leaf = CertificateInfo {
+        fingerprint_sha256: Some("AA".to_string()),
+        subject: "CN=low-ip".to_string(),
+        ..Default::default()
+    };
+    let low_chain = CertificateAnalysisResult {
+        chain: CertificateChain {
+            certificates: vec![low_leaf],
+            chain_length: 1,
+            chain_size_bytes: 111,
+        },
+        validation: ValidationResult {
+            valid: true,
+            issues: Vec::new(),
+            trust_chain_valid: true,
+            hostname_match: true,
+            not_expired: true,
+            signature_valid: true,
+            trusted_ca: None,
+            platform_trust: None,
+        },
+        revocation: None,
+    };
+
+    let high_leaf = CertificateInfo {
+        fingerprint_sha256: Some("AA".to_string()),
+        subject: "CN=high-ip".to_string(),
+        ..Default::default()
+    };
+    let high_chain = CertificateAnalysisResult {
+        chain: CertificateChain {
+            certificates: vec![high_leaf],
+            chain_length: 1,
+            chain_size_bytes: 222,
+        },
+        validation: ValidationResult {
+            valid: true,
+            issues: Vec::new(),
+            trust_chain_valid: true,
+            hostname_match: true,
+            not_expired: true,
+            signature_valid: true,
+            trusted_ca: None,
+            platform_trust: None,
+        },
+        revocation: None,
+    };
+
+    let selected = Scanner::select_chain_by_fingerprint(&[low_chain.clone(), high_chain], "AA")
+        .expect("expected a matching chain");
+
+    assert_eq!(selected.chain.chain_size_bytes, 111);
+    assert_eq!(selected.chain.leaf().unwrap().subject, "CN=low-ip");
+}
+
+#[test]
 fn test_select_common_certificate_chain_fallback_to_first_success() {
     let mut results = HashMap::new();
 
@@ -311,6 +450,89 @@ fn test_select_common_certificate_chain_fallback_to_first_success() {
     assert_eq!(
         selected.unwrap().chain.leaf().unwrap().fingerprint_sha256,
         Some("CC".to_string())
+    );
+}
+
+#[test]
+fn test_select_common_certificate_chain_is_deterministic_without_fingerprint() {
+    let mut results = HashMap::new();
+
+    let low_leaf = CertificateInfo {
+        fingerprint_sha256: Some("AA".to_string()),
+        ..Default::default()
+    };
+    let low_chain = CertificateAnalysisResult {
+        chain: CertificateChain {
+            certificates: vec![low_leaf.clone()],
+            chain_length: 1,
+            chain_size_bytes: 0,
+        },
+        validation: ValidationResult {
+            valid: true,
+            issues: Vec::new(),
+            trust_chain_valid: true,
+            hostname_match: true,
+            not_expired: true,
+            signature_valid: true,
+            trusted_ca: None,
+            platform_trust: None,
+        },
+        revocation: None,
+    };
+
+    let high_leaf = CertificateInfo {
+        fingerprint_sha256: Some("BB".to_string()),
+        ..Default::default()
+    };
+    let high_chain = CertificateAnalysisResult {
+        chain: CertificateChain {
+            certificates: vec![high_leaf.clone()],
+            chain_length: 1,
+            chain_size_bytes: 0,
+        },
+        validation: ValidationResult {
+            valid: true,
+            issues: Vec::new(),
+            trust_chain_valid: true,
+            hostname_match: true,
+            not_expired: true,
+            signature_valid: true,
+            trusted_ca: None,
+            platform_trust: None,
+        },
+        revocation: None,
+    };
+
+    results.insert(
+        "127.0.0.2".parse().unwrap(),
+        crate::scanner::inconsistency::SingleIpScanResult {
+            ip: "127.0.0.2".parse().unwrap(),
+            scan_result: ScanResults {
+                certificate_chain: Some(high_chain),
+                ..Default::default()
+            },
+            scan_duration_ms: 12,
+            error: None,
+        },
+    );
+    results.insert(
+        "127.0.0.1".parse().unwrap(),
+        crate::scanner::inconsistency::SingleIpScanResult {
+            ip: "127.0.0.1".parse().unwrap(),
+            scan_result: ScanResults {
+                certificate_chain: Some(low_chain),
+                ..Default::default()
+            },
+            scan_duration_ms: 10,
+            error: None,
+        },
+    );
+
+    let selected = Scanner::select_common_certificate_chain(&results, None)
+        .expect("lowest IP should be selected deterministically");
+    assert_eq!(
+        selected.chain.leaf().unwrap().fingerprint_sha256,
+        Some("AA".to_string())
     );
 }
 
@@ -406,6 +628,7 @@ fn test_build_conservative_multi_ip_result() {
     };
 
     let scan_result = ScanResults {
+        target: "192.0.2.10:443".to_string(),
         certificate_chain: Some(chain),
         protocols: vec![ProtocolTestResult {
             protocol: Protocol::TLS12,
@@ -469,6 +692,7 @@ fn test_build_conservative_multi_ip_result() {
     let result = scanner
         .build_conservative_multi_ip_result(&report)
         .expect("test assertion should succeed");
+    assert_eq!(result.target, "example.com:443");
     assert_eq!(result.vulnerabilities.len(), 1);
     assert!(result.certificate_chain.is_some());
     assert!(result.rating.is_some());
@@ -644,7 +868,10 @@ fn test_build_conservative_multi_ip_result_aggregates_probe_metadata() {
         .expect("test assertion should succeed");
 
     assert!(result.scan_metadata.probe_status.success);
-    assert_eq!(result.scan_metadata.probe_status.connection_time_ms, Some(8));
+    assert_eq!(
+        result.scan_metadata.probe_status.connection_time_ms,
+        Some(8)
+    );
     assert_eq!(result.scan_metadata.probe_status.attempts, 2);
     assert!(result.scan_metadata.pre_handshake_used);
 }
@@ -732,8 +959,176 @@ fn test_build_conservative_multi_ip_result_keeps_success_with_failed_ips() {
         result.scan_metadata.probe_status.error_type,
         Some(crate::scanner::probe_status::ErrorType::Warning)
     );
-    assert_eq!(result.scan_metadata.probe_status.connection_time_ms, Some(11));
+    assert_eq!(
+        result.scan_metadata.probe_status.connection_time_ms,
+        Some(11)
+    );
     assert_eq!(result.scan_metadata.probe_status.attempts, 1);
+}
+
+#[test]
+fn test_build_conservative_multi_ip_result_uses_stable_probe_fallback() {
+    let args = Args {
+        target: Some("example.com".to_string()),
+        ..Default::default()
+    };
+    let scanner = Scanner::new(args.to_scan_request()).expect("test assertion should succeed");
+
+    let ip_low: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+    let ip_high: std::net::IpAddr = "127.0.0.2".parse().unwrap();
+
+    let fallback_low = ScanResults {
+        scan_metadata: ScanMetadata {
+            probe_status: ProbeStatus::failure_string(
+                "low-ip".to_string(),
+                crate::scanner::probe_status::ErrorType::Timeout,
+            ),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let fallback_high = ScanResults {
+        scan_metadata: ScanMetadata {
+            probe_status: ProbeStatus::failure_string(
+                "high-ip".to_string(),
+                crate::scanner::probe_status::ErrorType::Timeout,
+            ),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let mut per_ip_results = HashMap::new();
+    per_ip_results.insert(
+        ip_high,
+        crate::scanner::inconsistency::SingleIpScanResult {
+            ip: ip_high,
+            scan_result: fallback_high,
+            scan_duration_ms: 9,
+            error: None,
+        },
+    );
+    per_ip_results.insert(
+        ip_low,
+        crate::scanner::inconsistency::SingleIpScanResult {
+            ip: ip_low,
+            scan_result: fallback_low,
+            scan_duration_ms: 7,
+            error: None,
+        },
+    );
+
+    let aggregated = crate::scanner::aggregation::AggregatedScanResult {
+        protocols: Vec::new(),
+        ciphers: HashMap::new(),
+        grade: ("F".to_string(), 0),
+        certificate_info: None,
+        certificate_consistent: true,
+        inconsistencies: Vec::new(),
+        alpn_protocols: Vec::new(),
+        session_resumption_caching: Some(false),
+        session_resumption_tickets: Some(false),
+    };
+
+    let report = crate::scanner::multi_ip::MultiIpScanReport {
+        target: Target::with_ips("example.com".to_string(), 443, vec![ip_high, ip_low])
+            .expect("test assertion should succeed"),
+        per_ip_results,
+        total_ips: 2,
+        successful_scans: 2,
+        failed_scans: 0,
+        total_duration_ms: 16,
+        inconsistencies: Vec::new(),
+        aggregated,
+    };
+
+    let result = scanner
+        .build_conservative_multi_ip_result(&report)
+        .expect("test assertion should succeed");
+
+    assert_eq!(
+        result.scan_metadata.probe_status.error.as_deref(),
+        Some("low-ip")
+    );
+    assert_eq!(result.scan_metadata.probe_status.attempts, 2);
+}
+
+#[test]
+fn test_build_conservative_multi_ip_result_partial_success_without_probe_attempts() {
+    let args = Args {
+        target: Some("example.com".to_string()),
+        scan: crate::cli::ScanArgs {
+            disable_rating: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let scanner = Scanner::new(args.to_scan_request()).expect("test assertion should succeed");
+
+    let ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+    let scan_result = ScanResults {
+        protocols: vec![ProtocolTestResult {
+            protocol: Protocol::TLS12,
+            supported: true,
+            preferred: true,
+            ciphers_count: 1,
+            handshake_time_ms: Some(5),
+            heartbeat_enabled: None,
+            session_resumption_caching: None,
+            session_resumption_tickets: None,
+            secure_renegotiation: None,
+        }],
+        ..Default::default()
+    };
+
+    let mut per_ip_results = HashMap::new();
+    per_ip_results.insert(
+        ip,
+        crate::scanner::inconsistency::SingleIpScanResult {
+            ip,
+            scan_result,
+            scan_duration_ms: 9,
+            error: None,
+        },
+    );
+
+    let report = crate::scanner::multi_ip::MultiIpScanReport {
+        target: Target::with_ips("example.com".to_string(), 443, vec![ip])
+            .expect("test assertion should succeed"),
+        per_ip_results,
+        total_ips: 1,
+        successful_scans: 1,
+        failed_scans: 0,
+        total_duration_ms: 9,
+        inconsistencies: Vec::new(),
+        aggregated: crate::scanner::aggregation::AggregatedScanResult {
+            protocols: Vec::new(),
+            ciphers: HashMap::new(),
+            grade: ("F".to_string(), 0),
+            certificate_info: None,
+            certificate_consistent: true,
+            inconsistencies: Vec::new(),
+            alpn_protocols: Vec::new(),
+            session_resumption_caching: Some(false),
+            session_resumption_tickets: Some(false),
+        },
+    };
+
+    let result = scanner
+        .build_conservative_multi_ip_result(&report)
+        .expect("test assertion should succeed");
+
+    assert!(result.scan_metadata.probe_status.success);
+    assert_eq!(
+        result.scan_metadata.probe_status.error_type,
+        Some(crate::scanner::probe_status::ErrorType::Warning)
+    );
+    assert_eq!(
+        result.scan_metadata.probe_status.connection_time_ms,
+        Some(0)
+    );
+    assert_eq!(result.scan_metadata.probe_status.attempts, 0);
 }
 
 #[test]
@@ -829,11 +1224,10 @@ fn test_build_conservative_multi_ip_result_clears_unaggregated_residual_sections
             measured: false,
             details: String::new(),
         });
-    scan_result.advanced_mut().client_cas =
-        Some(crate::protocols::client_cas::ClientCAsResult {
-            cas: vec![],
-            requires_client_auth: false,
-        });
+    scan_result.advanced_mut().client_cas = Some(crate::protocols::client_cas::ClientCAsResult {
+        cas: vec![],
+        requires_client_auth: false,
+    });
     scan_result.advanced_mut().intolerance =
         Some(crate::protocols::intolerance::IntoleranceTestResult {
             extension_intolerance: false,

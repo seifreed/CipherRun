@@ -4,15 +4,25 @@ use super::{
 };
 use crate::http::tester::HeaderAnalysisResult;
 use crate::output::probe_status::ProbeStatusTerminalExt;
+use crate::utils::network::{display_target_host, split_target_host_port};
 use colored::*;
 
 impl<'a> ScannerFormatter<'a> {
     /// Display scan results summary
     pub fn display_results_summary(&self, results: &crate::scanner::ScanResults) {
+        let presentation_mode = self.args.output_presentation_mode();
+
         println!("\n{}", "=".repeat(60).cyan());
         println!("{}", "Scan Complete".cyan().bold());
         println!("{}", "=".repeat(60).cyan());
-        println!("Target:          {}", results.target.green());
+        let target_display = if presentation_mode.is_response_only() {
+            split_target_host_port(&results.target)
+                .map(|(hostname, _)| display_target_host(&hostname))
+                .unwrap_or_else(|_| results.target.clone())
+        } else {
+            results.target.clone()
+        };
+        println!("Target:          {}", target_display.green());
         println!("Scan Time:       {} ms", results.scan_time_ms);
         println!("Protocols:       {} tested", results.protocols.len());
         println!(
@@ -77,10 +87,19 @@ impl<'a> ScannerFormatter<'a> {
             return;
         }
 
-        println!(
-            "Probe Status:    {}",
-            results.scan_metadata.probe_status.format_terminal(&results.target)
-        );
+        let formatted = results
+            .scan_metadata
+            .probe_status
+            .format_terminal(&results.target);
+
+        if self.args.output_presentation_mode().is_response_only() {
+            println!(
+                "Probe Status:    {}",
+                results.scan_metadata.probe_status.format_response_only()
+            );
+        } else {
+            println!("Probe Status:    {}", formatted);
+        }
 
         if results.scan_metadata.pre_handshake_used {
             println!("Pre-Handshake:   {}", "Y Enabled".green());

@@ -78,7 +78,12 @@ impl LogjamTester {
         use openssl::pkey::Id;
         use openssl::ssl::{SslConnector, SslMethod};
 
-        let addr = self.target.socket_addrs()[0];
+        let addr = self
+            .target
+            .socket_addrs()
+            .first()
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
         let hostname = self.target.hostname.clone();
 
         let stream =
@@ -157,7 +162,12 @@ impl LogjamTester {
     async fn test_cipher(&self, cipher: &str) -> Result<bool> {
         use openssl::ssl::{SslConnector, SslMethod, SslVersion};
 
-        let addr = self.target.socket_addrs()[0];
+        let addr = self
+            .target
+            .socket_addrs()
+            .first()
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
         let hostname = self.target.hostname.clone();
         let cipher = cipher.to_string();
 

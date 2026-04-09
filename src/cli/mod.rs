@@ -326,7 +326,12 @@ impl Args {
             ct_logs: crate::application::scan_request::ScanRequestCtLogs {
                 enable: self.ct_logs.enable,
             },
+            presentation_mode: self.cert_filters.presentation_mode(),
         }
+    }
+
+    pub fn output_presentation_mode(&self) -> crate::application::OutputPresentationMode {
+        self.cert_filters.presentation_mode()
     }
 
     pub fn to_certificate_filters(&self) -> crate::application::CertificateFilters {

@@ -46,6 +46,22 @@ impl RateLimiter {
     /// than the configured delay. After sleeping (or if no sleep is needed),
     /// it updates the last request timestamp.
     ///
+    /// # Concurrency Behavior
+    ///
+    /// This implementation uses a mutex-protected timestamp for rate limiting.
+    /// Under high concurrency:
+    /// - Multiple requests may acquire the lock simultaneously during the sleep phase
+    /// - Each request calculates its own sleep duration based on the last timestamp
+    /// - This can result in slightly lower effective rates under contention
+    ///
+    /// This is acceptable for the security scanning use case where:
+    /// - Precise rate limiting is not critical
+    /// - Occasional bursts slightly above the rate are harmless
+    /// - Avoiding complex synchronization overhead is preferred
+    ///
+    /// For applications requiring strict rate limits under high concurrency,
+    /// consider using a token bucket or sliding window algorithm.
+    ///
     /// # Examples
     /// ```ignore
     /// let limiter = RateLimiter::new(Duration::from_secs(1));
@@ -57,17 +73,32 @@ impl RateLimiter {
     /// limiter.wait().await;
     /// ```
     pub async fn wait(&self) {
-        let mut last = self.last_request.lock().await;
+        // Calculate sleep duration while holding the lock
+        let sleep_duration = {
+            let mut last = self.last_request.lock().await;
 
-        if let Some(last_time) = *last {
-            let elapsed = last_time.elapsed();
+            if let Some(last_time) = *last {
+                let elapsed = last_time.elapsed();
 
-            if elapsed < self.delay {
-                let sleep_duration = self.delay - elapsed;
-                tokio::time::sleep(sleep_duration).await;
+                if elapsed < self.delay {
+                    self.delay - elapsed
+                } else {
+                    // Enough time has passed, no need to wait
+                    *last = Some(Instant::now());
+                    return;
+                }
+            } else {
+                // First request, no need to wait
+                *last = Some(Instant::now());
+                return;
             }
-        }
+        };
 
+        // Sleep without holding the lock to allow concurrent requests
+        tokio::time::sleep(sleep_duration).await;
+
+        // Update timestamp after sleep
+        let mut last = self.last_request.lock().await;
         *last = Some(Instant::now());
     }
 

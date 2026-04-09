@@ -5,7 +5,8 @@ use crate::db::connection::DatabasePool;
 use crate::db::{CipherRecord, CipherRunDatabase, ProtocolRecord, ScanRecord, VulnerabilityRecord};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::cmp::Ordering;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::hash::Hash;
 use std::sync::Arc;
 
@@ -56,11 +57,104 @@ struct SetDifferences<T> {
     added: Vec<T>,
 }
 
-fn detect_set_differences<T: Eq + Hash + Clone>(old: &HashSet<T>, new: &HashSet<T>) -> SetDifferences<T> {
+#[derive(Debug)]
+struct VulnerabilityPairCandidate<'a> {
+    score: usize,
+    old_index: usize,
+    new_index: usize,
+    old_key: (String, String, String, String),
+    new_key: (String, String, String, String),
+    old: &'a VulnerabilityRecord,
+    new: &'a VulnerabilityRecord,
+}
+
+fn detect_set_differences<T: Eq + Hash + Clone>(
+    old: &HashSet<T>,
+    new: &HashSet<T>,
+) -> SetDifferences<T> {
     SetDifferences {
         removed: old.difference(new).cloned().collect(),
         added: new.difference(old).cloned().collect(),
     }
+}
+
+fn vulnerability_sort_key(vuln: &VulnerabilityRecord) -> (String, String, String, String) {
+    (
+        vuln.description.clone().unwrap_or_default(),
+        vuln.cve_id.clone().unwrap_or_default(),
+        vuln.affected_component.clone().unwrap_or_default(),
+        vuln.severity.clone(),
+    )
+}
+
+fn vulnerability_match_score(old: &VulnerabilityRecord, new: &VulnerabilityRecord) -> usize {
+    let mut score = 0;
+
+    if old.description == new.description {
+        score += 8;
+    }
+    if old.cve_id == new.cve_id {
+        score += 4;
+    }
+    if old.affected_component == new.affected_component {
+        score += 2;
+    }
+    if old.severity == new.severity {
+        score += 1;
+    }
+
+    score
+}
+
+fn vulnerability_record_changed(old: &VulnerabilityRecord, new: &VulnerabilityRecord) -> bool {
+    old.severity != new.severity
+        || old.description != new.description
+        || old.cve_id != new.cve_id
+        || old.affected_component != new.affected_component
+}
+
+fn change_type_rank(change_type: &ChangeType) -> usize {
+    match change_type {
+        ChangeType::Protocol => 0,
+        ChangeType::Cipher => 1,
+        ChangeType::Certificate => 2,
+        ChangeType::Vulnerability => 3,
+        ChangeType::Rating => 4,
+    }
+}
+
+fn change_type_label(change_type: &ChangeType) -> &'static str {
+    match change_type {
+        ChangeType::Protocol => "Protocol",
+        ChangeType::Cipher => "Cipher",
+        ChangeType::Certificate => "Certificate",
+        ChangeType::Vulnerability => "Vulnerability",
+        ChangeType::Rating => "Rating",
+    }
+}
+
+fn change_severity_rank(severity: &ChangeSeverity) -> usize {
+    match severity {
+        ChangeSeverity::Critical => 0,
+        ChangeSeverity::High => 1,
+        ChangeSeverity::Medium => 2,
+        ChangeSeverity::Low => 3,
+        ChangeSeverity::Info => 4,
+    }
+}
+
+fn compare_change_events(a: &ChangeEvent, b: &ChangeEvent) -> Ordering {
+    change_type_rank(&a.change_type)
+        .cmp(&change_type_rank(&b.change_type))
+        .then_with(|| change_severity_rank(&a.severity).cmp(&change_severity_rank(&b.severity)))
+        .then_with(|| a.timestamp.cmp(&b.timestamp))
+        .then_with(|| a.description.cmp(&b.description))
+        .then_with(|| a.previous_value.cmp(&b.previous_value))
+        .then_with(|| a.current_value.cmp(&b.current_value))
+}
+
+fn sort_change_events(events: &mut Vec<ChangeEvent>) {
+    events.sort_by(compare_change_events);
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -126,6 +220,7 @@ impl ChangeTracker {
             }
         }
 
+        sort_change_events(&mut all_changes);
         Ok(all_changes)
     }
 
@@ -187,6 +282,7 @@ impl ChangeTracker {
                 .await?,
         );
 
+        sort_change_events(&mut changes);
         Ok(changes)
     }
 
@@ -204,13 +300,19 @@ impl ChangeTracker {
         report.push_str("═══════════════════════════════════════════════════════\n\n");
 
         // Group by change type
-        let mut by_type: HashMap<String, Vec<&ChangeEvent>> = HashMap::new();
+        let mut by_type: BTreeMap<usize, (&'static str, Vec<&ChangeEvent>)> = BTreeMap::new();
         for change in changes {
-            let type_key = format!("{:?}", change.change_type);
-            by_type.entry(type_key).or_default().push(change);
+            let type_rank = change_type_rank(&change.change_type);
+            let type_label = change_type_label(&change.change_type);
+            by_type
+                .entry(type_rank)
+                .or_insert_with(|| (type_label, Vec::new()))
+                .1
+                .push(change);
         }
 
-        for (change_type, events) in by_type.iter() {
+        for (_, (change_type, mut events)) in by_type {
+            events.sort_by(|a, b| compare_change_events(a, b));
             report.push_str(&format!("{} Changes ({})\n", change_type, events.len()));
             report.push_str("───────────────────────────────────────────────────────\n");
 
@@ -344,50 +446,79 @@ impl ChangeTracker {
 
         let mut changes = Vec::new();
 
-        let set1: HashSet<String> = ciphers1.iter().map(|c| c.cipher_name.clone()).collect();
-        let set2: HashSet<String> = ciphers2.iter().map(|c| c.cipher_name.clone()).collect();
+        let set1: BTreeMap<(String, String), &CipherRecord> = ciphers1
+            .iter()
+            .map(|cipher| (Self::cipher_identity(cipher), cipher))
+            .collect();
+        let set2: BTreeMap<(String, String), &CipherRecord> = ciphers2
+            .iter()
+            .map(|cipher| (Self::cipher_identity(cipher), cipher))
+            .collect();
 
-        let diffs = detect_set_differences(&set1, &set2);
+        let keys: BTreeSet<(String, String)> =
+            set1.keys().cloned().chain(set2.keys().cloned()).collect();
 
-        for cipher_name in &diffs.removed {
-            let cipher = ciphers1
-                .iter()
-                .find(|c| &c.cipher_name == cipher_name)
-                .ok_or_else(|| anyhow::anyhow!("Cipher {} not found in set1", cipher_name))?;
-            let severity = match cipher.strength.as_str() {
-                "weak" | "export" | "null" => ChangeSeverity::Low,
-                _ => ChangeSeverity::Info,
-            };
+        for key in keys {
+            match (set1.get(&key), set2.get(&key)) {
+                (Some(old), Some(new)) => {
+                    if old.same_attributes(new) {
+                        continue;
+                    }
 
-            changes.push(ChangeEvent {
-                change_type: ChangeType::Cipher,
-                severity,
-                description: format!("Cipher removed: {}", cipher_name),
-                previous_value: Some(cipher.strength.clone()), // Necessary: String for ChangeEvent
-                current_value: None,
-                timestamp,
-            });
-        }
+                    changes.push(ChangeEvent {
+                        change_type: ChangeType::Cipher,
+                        severity: Self::cipher_change_severity(old, new),
+                        description: format!(
+                            "Cipher changed: {} [{}]",
+                            old.cipher_name.as_str(),
+                            old.protocol_name.as_str()
+                        ),
+                        previous_value: Some(Self::cipher_detail(old)),
+                        current_value: Some(Self::cipher_detail(new)),
+                        timestamp,
+                    });
+                }
+                (Some(old), None) => {
+                    let severity = match old.strength.as_str() {
+                        "weak" | "export" | "null" => ChangeSeverity::Low,
+                        _ => ChangeSeverity::Info,
+                    };
 
-        for cipher_name in &diffs.added {
-            let cipher = ciphers2
-                .iter()
-                .find(|c| &c.cipher_name == cipher_name)
-                .ok_or_else(|| anyhow::anyhow!("Cipher {} not found in set2", cipher_name))?;
-            let severity = match cipher.strength.as_str() {
-                "weak" | "export" | "null" => ChangeSeverity::High,
-                "medium" => ChangeSeverity::Medium,
-                _ => ChangeSeverity::Info,
-            };
+                    changes.push(ChangeEvent {
+                        change_type: ChangeType::Cipher,
+                        severity,
+                        description: format!(
+                            "Cipher removed: {} [{}]",
+                            old.cipher_name.as_str(),
+                            old.protocol_name.as_str()
+                        ),
+                        previous_value: Some(Self::cipher_detail(old)),
+                        current_value: None,
+                        timestamp,
+                    });
+                }
+                (None, Some(new)) => {
+                    let severity = match new.strength.as_str() {
+                        "weak" | "export" | "null" => ChangeSeverity::High,
+                        "medium" => ChangeSeverity::Medium,
+                        _ => ChangeSeverity::Info,
+                    };
 
-            changes.push(ChangeEvent {
-                change_type: ChangeType::Cipher,
-                severity,
-                description: format!("Cipher added: {}", cipher_name),
-                previous_value: None,
-                current_value: Some(cipher.strength.clone()), // Necessary: String for ChangeEvent
-                timestamp,
-            });
+                    changes.push(ChangeEvent {
+                        change_type: ChangeType::Cipher,
+                        severity,
+                        description: format!(
+                            "Cipher added: {} [{}]",
+                            new.cipher_name.as_str(),
+                            new.protocol_name.as_str()
+                        ),
+                        previous_value: None,
+                        current_value: Some(Self::cipher_detail(new)),
+                        timestamp,
+                    });
+                }
+                (None, None) => unreachable!("cipher identity set should cover both sides"),
+            }
         }
 
         Ok(changes)
@@ -497,57 +628,111 @@ impl ChangeTracker {
 
         let mut changes = Vec::new();
 
-        // Use (type, severity) as the dedup key to distinguish multiple findings
-        // of the same vulnerability type with different severities
-        let set1: HashSet<(String, String)> = vulns1
-            .iter()
-            .map(|v| (v.vulnerability_type.clone(), v.severity.clone()))
-            .collect();
-        let set2: HashSet<(String, String)> = vulns2
-            .iter()
-            .map(|v| (v.vulnerability_type.clone(), v.severity.clone()))
-            .collect();
+        let mut grouped1: BTreeMap<String, Vec<&VulnerabilityRecord>> = BTreeMap::new();
+        let mut grouped2: BTreeMap<String, Vec<&VulnerabilityRecord>> = BTreeMap::new();
 
-        let diffs = detect_set_differences(&set1, &set2);
-
-        // Resolved vulnerabilities
-        for (vuln_type, vuln_sev) in &diffs.removed {
-            let vuln = vulns1
-                .iter()
-                .find(|v| {
-                    v.vulnerability_type.as_str() == vuln_type && v.severity.as_str() == vuln_sev
-                })
-                .ok_or_else(|| anyhow::anyhow!("Vulnerability {} not found in set1", vuln_type))?;
-            let severity = Self::vuln_severity_to_change_severity(&vuln.severity);
-
-            changes.push(ChangeEvent {
-                change_type: ChangeType::Vulnerability,
-                severity,
-                description: format!("Vulnerability resolved: {}", vuln_type),
-                previous_value: Some(vuln.severity.clone()),
-                current_value: Some("resolved".to_string()),
-                timestamp,
-            });
+        for vuln in &vulns1 {
+            grouped1
+                .entry(vuln.vulnerability_type.clone())
+                .or_default()
+                .push(vuln);
+        }
+        for vuln in &vulns2 {
+            grouped2
+                .entry(vuln.vulnerability_type.clone())
+                .or_default()
+                .push(vuln);
         }
 
-        // New vulnerabilities
-        for (vuln_type, vuln_sev) in &diffs.added {
-            let vuln = vulns2
-                .iter()
-                .find(|v| {
-                    v.vulnerability_type.as_str() == vuln_type && v.severity.as_str() == vuln_sev
-                })
-                .ok_or_else(|| anyhow::anyhow!("Vulnerability {} not found in set2", vuln_type))?;
-            let severity = Self::vuln_severity_to_change_severity(&vuln.severity);
+        let vuln_types: BTreeSet<String> = grouped1
+            .keys()
+            .cloned()
+            .chain(grouped2.keys().cloned())
+            .collect();
 
-            changes.push(ChangeEvent {
-                change_type: ChangeType::Vulnerability,
-                severity,
-                description: format!("New vulnerability detected: {}", vuln_type),
-                previous_value: None,
-                current_value: Some(vuln.severity.clone()),
-                timestamp,
+        for vuln_type in vuln_types {
+            let mut old_vulns = grouped1.remove(&vuln_type).unwrap_or_default();
+            let mut new_vulns = grouped2.remove(&vuln_type).unwrap_or_default();
+
+            old_vulns.sort_by(|a, b| vulnerability_sort_key(a).cmp(&vulnerability_sort_key(b)));
+            new_vulns.sort_by(|a, b| vulnerability_sort_key(a).cmp(&vulnerability_sort_key(b)));
+
+            let mut candidates = Vec::new();
+            for (old_index, old_vuln) in old_vulns.iter().enumerate() {
+                for (new_index, new_vuln) in new_vulns.iter().enumerate() {
+                    candidates.push(VulnerabilityPairCandidate {
+                        score: vulnerability_match_score(old_vuln, new_vuln),
+                        old_index,
+                        new_index,
+                        old_key: vulnerability_sort_key(old_vuln),
+                        new_key: vulnerability_sort_key(new_vuln),
+                        old: old_vuln,
+                        new: new_vuln,
+                    });
+                }
+            }
+
+            candidates.sort_by(|a, b| {
+                b.score
+                    .cmp(&a.score)
+                    .then_with(|| a.old_key.cmp(&b.old_key))
+                    .then_with(|| a.new_key.cmp(&b.new_key))
+                    .then_with(|| a.old_index.cmp(&b.old_index))
+                    .then_with(|| a.new_index.cmp(&b.new_index))
             });
+
+            let mut old_used = vec![false; old_vulns.len()];
+            let mut new_used = vec![false; new_vulns.len()];
+
+            for candidate in candidates {
+                if old_used[candidate.old_index] || new_used[candidate.new_index] {
+                    continue;
+                }
+
+                old_used[candidate.old_index] = true;
+                new_used[candidate.new_index] = true;
+
+                if vulnerability_record_changed(candidate.old, candidate.new) {
+                    changes.push(ChangeEvent {
+                        change_type: ChangeType::Vulnerability,
+                        severity: Self::vulnerability_change_severity(candidate.old, candidate.new),
+                        description: format!("Vulnerability changed: {}", vuln_type),
+                        previous_value: Some(Self::vulnerability_detail(candidate.old)),
+                        current_value: Some(Self::vulnerability_detail(candidate.new)),
+                        timestamp,
+                    });
+                }
+            }
+
+            for (index, vuln) in old_vulns.iter().enumerate() {
+                if !old_used[index] {
+                    let severity = Self::vuln_severity_to_change_severity(&vuln.severity);
+
+                    changes.push(ChangeEvent {
+                        change_type: ChangeType::Vulnerability,
+                        severity,
+                        description: format!("Vulnerability resolved: {}", vuln_type),
+                        previous_value: Some(Self::vulnerability_detail(vuln)),
+                        current_value: Some("resolved".to_string()),
+                        timestamp,
+                    });
+                }
+            }
+
+            for (index, vuln) in new_vulns.iter().enumerate() {
+                if !new_used[index] {
+                    let severity = Self::vuln_severity_to_change_severity(&vuln.severity);
+
+                    changes.push(ChangeEvent {
+                        change_type: ChangeType::Vulnerability,
+                        severity,
+                        description: format!("New vulnerability detected: {}", vuln_type),
+                        previous_value: None,
+                        current_value: Some(Self::vulnerability_detail(vuln)),
+                        timestamp,
+                    });
+                }
+            }
         }
 
         Ok(changes)
@@ -561,6 +746,107 @@ impl ChangeTracker {
             "low" => ChangeSeverity::Low,
             _ => ChangeSeverity::Info,
         }
+    }
+
+    fn vulnerability_change_severity(
+        old: &VulnerabilityRecord,
+        new: &VulnerabilityRecord,
+    ) -> ChangeSeverity {
+        std::cmp::max(
+            Self::vuln_severity_to_change_severity(&old.severity),
+            Self::vuln_severity_to_change_severity(&new.severity),
+        )
+    }
+
+    fn vulnerability_detail(vuln: &VulnerabilityRecord) -> String {
+        let mut details = vec![format!("severity={}", vuln.severity)];
+
+        if let Some(description) = &vuln.description {
+            details.push(format!("description={}", description));
+        }
+        if let Some(cve) = &vuln.cve_id {
+            details.push(format!("cve={}", cve));
+        }
+        if let Some(component) = &vuln.affected_component {
+            details.push(format!("component={}", component));
+        }
+
+        details.join(", ")
+    }
+
+    fn cipher_identity(cipher: &CipherRecord) -> (String, String) {
+        (cipher.protocol_name.clone(), cipher.cipher_name.clone())
+    }
+
+    fn cipher_strength_rank(strength: &str) -> i32 {
+        match strength {
+            "weak" | "export" | "null" => 0,
+            "medium" => 1,
+            "strong" => 2,
+            _ => 1,
+        }
+    }
+
+    fn cipher_change_severity(old: &CipherRecord, new: &CipherRecord) -> ChangeSeverity {
+        let mut severity = ChangeSeverity::Info;
+
+        if old.strength != new.strength {
+            let strength_severity = match (
+                Self::cipher_strength_rank(&old.strength),
+                Self::cipher_strength_rank(&new.strength),
+            ) {
+                (old_rank, new_rank) if new_rank < old_rank => ChangeSeverity::High,
+                (old_rank, new_rank) if new_rank > old_rank => ChangeSeverity::Low,
+                _ => ChangeSeverity::Medium,
+            };
+            severity = severity.max(strength_severity);
+        }
+
+        if old.bits != new.bits {
+            let bit_severity = match (old.bits, new.bits) {
+                (Some(old_bits), Some(new_bits)) if new_bits < old_bits => ChangeSeverity::High,
+                (Some(old_bits), Some(new_bits)) if new_bits > old_bits => ChangeSeverity::Low,
+                _ => ChangeSeverity::Medium,
+            };
+            severity = severity.max(bit_severity);
+        }
+
+        if old.forward_secrecy != new.forward_secrecy {
+            let fs_severity = if old.forward_secrecy && !new.forward_secrecy {
+                ChangeSeverity::High
+            } else {
+                ChangeSeverity::Low
+            };
+            severity = severity.max(fs_severity);
+        }
+
+        if old.key_exchange != new.key_exchange
+            || old.authentication != new.authentication
+            || old.encryption != new.encryption
+            || old.mac != new.mac
+        {
+            severity = severity.max(ChangeSeverity::Medium);
+        }
+
+        severity
+    }
+
+    fn cipher_detail(cipher: &CipherRecord) -> String {
+        format!(
+            "protocol={}, cipher={}, key_exchange={}, authentication={}, encryption={}, mac={}, bits={}, forward_secrecy={}, strength={}",
+            cipher.protocol_name.as_str(),
+            cipher.cipher_name.as_str(),
+            cipher.key_exchange.as_deref().unwrap_or("N/A"),
+            cipher.authentication.as_deref().unwrap_or("N/A"),
+            cipher.encryption.as_deref().unwrap_or("N/A"),
+            cipher.mac.as_deref().unwrap_or("N/A"),
+            cipher
+                .bits
+                .map(|bits| bits.to_string())
+                .unwrap_or_else(|| "N/A".to_string()),
+            cipher.forward_secrecy,
+            cipher.strength
+        )
     }
 
     async fn detect_rating_changes(

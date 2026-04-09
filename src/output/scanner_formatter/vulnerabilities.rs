@@ -2,6 +2,28 @@ use super::{ScannerFormatter, VulnerabilityResult, print_section_header};
 use colored::*;
 use std::collections::HashMap;
 
+fn ordered_vulnerability_severity_counts(
+    by_severity: &HashMap<crate::vulnerabilities::Severity, usize>,
+) -> Vec<(crate::vulnerabilities::Severity, usize)> {
+    use crate::vulnerabilities::Severity;
+
+    [
+        Severity::Critical,
+        Severity::High,
+        Severity::Medium,
+        Severity::Low,
+        Severity::Info,
+    ]
+    .into_iter()
+    .filter_map(|severity| {
+        by_severity
+            .get(&severity)
+            .copied()
+            .map(|count| (severity, count))
+    })
+    .collect()
+}
+
 impl<'a> ScannerFormatter<'a> {
     /// Display vulnerability results
     pub fn display_vulnerability_results(&self, results: &[VulnerabilityResult]) {
@@ -69,18 +91,36 @@ impl<'a> ScannerFormatter<'a> {
                 );
             }
 
-            if let Some(count) = by_severity.get(&Severity::Critical) {
-                println!("  Critical: {}", count.to_string().red().bold());
-            }
-            if let Some(count) = by_severity.get(&Severity::High) {
-                println!("  High:     {}", count.to_string().red());
-            }
-            if let Some(count) = by_severity.get(&Severity::Medium) {
-                println!("  Medium:   {}", count.to_string().yellow());
-            }
-            if let Some(count) = by_severity.get(&Severity::Low) {
-                println!("  Low:      {}", count);
+            for (severity, count) in ordered_vulnerability_severity_counts(by_severity) {
+                match severity {
+                    Severity::Critical => {
+                        println!("  Critical: {}", count.to_string().red().bold())
+                    }
+                    Severity::High => println!("  High:     {}", count.to_string().red()),
+                    Severity::Medium => println!("  Medium:   {}", count.to_string().yellow()),
+                    Severity::Low => println!("  Low:      {}", count),
+                    Severity::Info => println!("  Info:     {}", count.to_string().cyan()),
+                }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::vulnerabilities::Severity;
+
+    #[test]
+    fn test_ordered_vulnerability_severity_counts_includes_info() {
+        let mut by_severity = HashMap::new();
+        by_severity.insert(Severity::Info, 2);
+        by_severity.insert(Severity::High, 1);
+
+        let ordered = ordered_vulnerability_severity_counts(&by_severity);
+
+        assert_eq!(ordered.len(), 2);
+        assert_eq!(ordered[0], (Severity::High, 1));
+        assert_eq!(ordered[1], (Severity::Info, 2));
     }
 }

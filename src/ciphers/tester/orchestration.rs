@@ -17,7 +17,12 @@ impl CipherTester {
             self.prepare_cipher_batch(protocol);
 
         let (results, enetdown_count) = self
-            .run_cipher_test_loop(&connection_pool, compatible_ciphers, max_concurrent_tests, protocol)
+            .run_cipher_test_loop(
+                &connection_pool,
+                compatible_ciphers,
+                max_concurrent_tests,
+                protocol,
+            )
             .await;
 
         if enetdown_count > 0 {
@@ -37,7 +42,6 @@ impl CipherTester {
         mut max_concurrent_tests: usize,
         protocol: Protocol,
     ) -> (Vec<CipherTestResult>, usize) {
-        let tester = Arc::new(self);
         let mut results: Vec<CipherTestResult> = Vec::new();
         let mut enetdown_count = 0;
         let mut current_batch_size = max_concurrent_tests;
@@ -46,17 +50,17 @@ impl CipherTester {
         let mut retry_round = 0;
 
         while !cipher_queue.is_empty() || !retry_queue.is_empty() {
-            if cipher_queue.is_empty() && !retry_queue.is_empty() {
-                if !Self::prepare_retry_round(
+            if cipher_queue.is_empty()
+                && !retry_queue.is_empty()
+                && !Self::prepare_retry_round(
                     &mut cipher_queue,
                     &mut retry_queue,
                     &mut retry_round,
                     max_enetdown_retries,
                 )
                 .await
-                {
-                    break;
-                }
+            {
+                break;
             }
 
             if let Some(adaptive) = &self.adaptive {
@@ -76,7 +80,7 @@ impl CipherTester {
             }
 
             let batch_results = Self::execute_cipher_batch(
-                &tester,
+                self,
                 connection_pool,
                 batch,
                 protocol,
@@ -84,12 +88,8 @@ impl CipherTester {
             )
             .await;
 
-            let (batch_enetdown, batch_other_errors) = Self::process_batch_errors(
-                batch_results,
-                protocol,
-                &mut results,
-                &mut retry_queue,
-            );
+            let (batch_enetdown, batch_other_errors) =
+                Self::process_batch_errors(batch_results, protocol, &mut results, &mut retry_queue);
 
             enetdown_count += batch_enetdown;
 
@@ -162,23 +162,27 @@ impl CipherTester {
             self.connection_pool_size
         );
 
-        let connection_pool = if self.connection_pool_size > 0 {
-            let addr = self.target.socket_addrs()[0];
-            Some(Arc::new(TlsConnectionPool::new(
+        let connection_pool = match self.target.socket_addrs().first().copied() {
+            Some(addr) if self.connection_pool_size > 0 => Some(Arc::new(TlsConnectionPool::new(
                 addr,
                 self.connection_pool_size.min(max_concurrent_tests),
                 self.connect_timeout,
                 self.retry_config.clone(),
-            )))
-        } else {
-            None
+            ))),
+            Some(_) => None, // connection_pool_size is 0
+            None => {
+                tracing::warn!(
+                    "No socket addresses available for target, connection pool disabled"
+                );
+                None
+            }
         };
 
         (compatible_ciphers, max_concurrent_tests, connection_pool)
     }
 
     async fn execute_cipher_batch(
-        tester: &Arc<&CipherTester>,
+        tester: &CipherTester,
         connection_pool: &Option<Arc<TlsConnectionPool>>,
         batch: Vec<CipherSuite>,
         protocol: Protocol,
@@ -186,7 +190,7 @@ impl CipherTester {
     ) -> CipherBatchResult {
         stream::iter(batch)
             .map(|cipher| {
-                let tester_clone = tester.clone();
+                let tester_clone = tester;
                 let pool_clone = connection_pool.clone();
                 async move {
                     let result = if let Some(pool) = pool_clone {
@@ -343,7 +347,6 @@ impl CipherTester {
             avg_handshake_time_ms,
         })
     }
-
 }
 
 #[cfg(test)]

@@ -16,8 +16,8 @@ pub use dashboard_generator::{
     TimeSeriesPoint,
 };
 pub use scan_comparator::{
-    CertificateDiff, CipherDiff, ComparisonSummary, ProtocolDiff, RatingDiff, ScanComparator,
-    ScanComparison, VulnerabilityDiff,
+    CertificateDiff, CipherChangeInfo, CipherDetailInfo, CipherDiff, ComparisonSummary,
+    ProtocolDiff, RatingDiff, ScanComparator, ScanComparison, VulnerabilityDiff,
 };
 pub use trend_analyzer::{
     CipherStrengthTrend, ProtocolTrend, RatingTrend, TrendAnalyzer, TrendDirection,

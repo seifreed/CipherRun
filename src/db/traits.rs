@@ -21,6 +21,14 @@ pub trait ScanRepository: Send + Sync {
         limit: i64,
     ) -> crate::Result<Vec<ScanRecord>>;
 
+    /// Get scans for a specific hostname and port at or after a timestamp
+    async fn get_scans_by_hostname_since(
+        &self,
+        hostname: &str,
+        port: u16,
+        since: chrono::DateTime<chrono::Utc>,
+    ) -> crate::Result<Vec<ScanRecord>>;
+
     /// Get the latest scan for a hostname and port
     async fn get_latest_scan(&self, hostname: &str, port: u16)
     -> crate::Result<Option<ScanRecord>>;
@@ -174,6 +182,15 @@ mod tests {
             _hostname: &str,
             _port: u16,
             _limit: i64,
+        ) -> crate::Result<Vec<ScanRecord>> {
+            Ok(Vec::new())
+        }
+
+        async fn get_scans_by_hostname_since(
+            &self,
+            _hostname: &str,
+            _port: u16,
+            _since: chrono::DateTime<chrono::Utc>,
         ) -> crate::Result<Vec<ScanRecord>> {
             Ok(Vec::new())
         }

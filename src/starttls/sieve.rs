@@ -72,7 +72,10 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("test assertion should succeed");
-        let port = listener.local_addr().expect("test listener should have local addr").port();
+        let port = listener
+            .local_addr()
+            .expect("test listener should have local addr")
+            .port();
 
         let lines = lines.iter().map(|l| l.to_string()).collect::<Vec<_>>();
         let starttls_response = starttls_response.to_string();
@@ -155,7 +158,10 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("test assertion should succeed");
-        let port = listener.local_addr().expect("test listener should have local addr").port();
+        let port = listener
+            .local_addr()
+            .expect("test listener should have local addr")
+            .port();
 
         tokio::spawn(async move {
             if let Ok((mut socket, _)) = listener.accept().await {

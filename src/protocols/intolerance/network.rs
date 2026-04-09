@@ -8,7 +8,12 @@ impl IntoleranceTester {
     pub(super) async fn send_client_hello(&self, client_hello: &[u8]) -> Result<Vec<u8>> {
         use crate::TlsError;
 
-        let addr = self.target.socket_addrs()[0];
+        let addr = self
+            .target
+            .socket_addrs()
+            .first()
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
 
         let stream =
             crate::utils::network::connect_with_timeout(addr, self.connect_timeout, None).await?;
@@ -41,14 +46,28 @@ impl IntoleranceTester {
                     Ok(None)
                 }
             }
-            Err(_) => Ok(None),
+            Err(e) => {
+                // Log network errors for debugging - these may indicate connectivity issues
+                // or server-side problems, but should not fail the test
+                tracing::debug!(
+                    "Failed to send client_hello for intolerance test ({}): {}",
+                    self.target.hostname,
+                    e
+                );
+                Ok(None)
+            }
         }
     }
 
     pub(super) async fn extract_dh_prime(&self) -> Result<Option<String>> {
         use openssl::ssl::{SslConnector, SslMethod};
 
-        let addr = self.target.socket_addrs()[0];
+        let addr = self
+            .target
+            .socket_addrs()
+            .first()
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
 
         let stream =
             crate::utils::network::connect_with_timeout(addr, self.connect_timeout, None).await?;

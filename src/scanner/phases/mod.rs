@@ -44,7 +44,7 @@ use crate::protocols::pre_handshake::PreHandshakeScanResult;
 use crate::scanner::ScanResults;
 use crate::utils::adaptive::AdaptiveController;
 use crate::utils::mtls::MtlsConfig;
-use crate::utils::network::Target;
+use crate::utils::network::{Target, canonical_target};
 use async_trait::async_trait;
 use std::sync::Arc;
 
@@ -203,7 +203,7 @@ impl ScanContext {
         mtls_config: Option<MtlsConfig>,
         pre_handshake: Option<PreHandshakeScanResult>,
     ) -> Self {
-        let target_str = format!("{}:{}", target.hostname, target.port);
+        let target_str = canonical_target(&target.hostname, target.port);
         let base_connect_timeout = std::time::Duration::from_secs(
             args.connection
                 .connect_timeout

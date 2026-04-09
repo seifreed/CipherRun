@@ -6,7 +6,7 @@ pub use aggregation::merge_vulnerability_result;
 
 use serde::{Deserialize, Serialize};
 
-/// Vulnerability types
+/// Vulnerability types ordered by severity (most critical first)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum VulnerabilityType {
     Heartbleed,
@@ -37,6 +37,49 @@ pub enum VulnerabilityType {
     SleepingPoodle,    // CVE-2019-5592 - Timing-based padding oracle
     OpenSsl0Length,    // CVE-2011-4576 - Zero-length TLS fragment vulnerability
     GREASE,
+}
+
+impl VulnerabilityType {
+    /// Returns a sort key for deterministic ordering by severity.
+    /// Lower values = higher severity/criticality.
+    pub fn sort_key(&self) -> u8 {
+        match self {
+            // Critical - Remote code execution / info disclosure
+            VulnerabilityType::Heartbleed => 0,
+            VulnerabilityType::CCSInjection => 1,
+            // High - Authentication bypass / session hijacking
+            VulnerabilityType::POODLE => 10,
+            VulnerabilityType::POODLEtls => 11,
+            VulnerabilityType::DROWN => 12,
+            VulnerabilityType::ROBOT => 13,
+            VulnerabilityType::FREAK => 14,
+            VulnerabilityType::LOGJAM => 15,
+            VulnerabilityType::Ticketbleed => 16,
+            VulnerabilityType::LUCKY13 => 17,
+            VulnerabilityType::PaddingOracle2016 => 18,
+            VulnerabilityType::ZombiePoodle => 19,
+            VulnerabilityType::GoldenDoodle => 20,
+            VulnerabilityType::SleepingPoodle => 21,
+            VulnerabilityType::OpenSsl0Length => 22,
+            // Medium - Compression attacks
+            VulnerabilityType::CRIME => 30,
+            VulnerabilityType::BREACH => 31,
+            // Medium - Protocol issues
+            VulnerabilityType::BEAST => 40,
+            VulnerabilityType::Renegotiation => 41,
+            VulnerabilityType::TLSFallback => 42,
+            VulnerabilityType::EarlyDataReplay => 43,
+            // Low - Weak ciphers
+            VulnerabilityType::RC4 => 50,
+            VulnerabilityType::SWEET32 => 51,
+            VulnerabilityType::NullCipher => 52,
+            // Info - Configuration issues
+            VulnerabilityType::Winshock => 60,
+            VulnerabilityType::StarttlsInjection => 61,
+            VulnerabilityType::Opossum => 62,
+            VulnerabilityType::GREASE => 70,
+        }
+    }
 }
 
 /// Vulnerability test result

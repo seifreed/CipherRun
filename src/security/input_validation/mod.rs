@@ -31,7 +31,7 @@ mod hostname;
 mod path;
 mod port;
 mod protocol;
-mod ssrf;
+pub mod ssrf; // Public for SSRF validation in network utilities
 mod target;
 
 /// Validation error types

@@ -1,5 +1,3 @@
-// WebSocket Progress Streaming
-
 use crate::api::models::response::ProgressMessage;
 use axum::{
     extract::{
@@ -11,7 +9,7 @@ use axum::{
 use futures::{SinkExt, StreamExt};
 use std::sync::Arc;
 use tokio::sync::broadcast;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, trace};
 
 /// AppState subset for WebSocket
 pub struct WsState {
@@ -75,7 +73,9 @@ async fn websocket_handler(socket: WebSocket, state: Arc<WsState>) {
                     error!("WebSocket error: {}", e);
                     break;
                 }
-                _ => {}
+                Ok(Message::Binary(_)) => {
+                    trace!("Received binary WebSocket message");
+                }
             }
         }
     });
@@ -166,6 +166,9 @@ pub async fn scan_websocket_handler(socket: WebSocket, scan_id: String, state: A
                 Ok(Message::Ping(_)) => {
                     debug!("Received ping");
                 }
+                Ok(Message::Pong(_)) => {
+                    debug!("Received pong");
+                }
                 Ok(Message::Text(text)) => {
                     debug!("Received text message: {}", text);
                 }
@@ -173,7 +176,9 @@ pub async fn scan_websocket_handler(socket: WebSocket, scan_id: String, state: A
                     error!("WebSocket error: {}", e);
                     break;
                 }
-                _ => {}
+                Ok(Message::Binary(_)) => {
+                    trace!("Received binary WebSocket message");
+                }
             }
         }
     });

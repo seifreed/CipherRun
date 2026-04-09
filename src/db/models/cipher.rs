@@ -61,6 +61,45 @@ impl CipherRecord {
         self.bits = Some(bits as i32);
         self
     }
+
+    /// Return the logical identity of a cipher suite record.
+    pub fn identity(&self) -> (&str, &str) {
+        (&self.protocol_name, &self.cipher_name)
+    }
+
+    /// Return the set of fields that differ between two cipher records.
+    pub fn changed_fields(&self, other: &Self) -> Vec<&'static str> {
+        let mut fields = Vec::new();
+
+        if self.key_exchange != other.key_exchange {
+            fields.push("key_exchange");
+        }
+        if self.authentication != other.authentication {
+            fields.push("authentication");
+        }
+        if self.encryption != other.encryption {
+            fields.push("encryption");
+        }
+        if self.mac != other.mac {
+            fields.push("mac");
+        }
+        if self.bits != other.bits {
+            fields.push("bits");
+        }
+        if self.forward_secrecy != other.forward_secrecy {
+            fields.push("forward_secrecy");
+        }
+        if self.strength != other.strength {
+            fields.push("strength");
+        }
+
+        fields
+    }
+
+    /// Check whether two cipher records have the same attribute values.
+    pub fn same_attributes(&self, other: &Self) -> bool {
+        self.changed_fields(other).is_empty()
+    }
 }
 
 #[cfg(test)]

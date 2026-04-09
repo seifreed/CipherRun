@@ -116,7 +116,7 @@ impl ScanRepository for ScanRepositoryImpl {
                     SELECT scan_id, target_hostname, target_port, scan_timestamp, overall_grade, overall_score, scan_duration_ms, scanner_version
                     FROM scans
                     WHERE target_hostname = $1 AND target_port = $2
-                    ORDER BY scan_timestamp DESC
+                    ORDER BY scan_timestamp DESC, scan_id DESC
                     LIMIT $3
                     "#
                 )
@@ -135,13 +135,61 @@ impl ScanRepository for ScanRepositoryImpl {
                     SELECT scan_id, target_hostname, target_port, scan_timestamp, overall_grade, overall_score, scan_duration_ms, scanner_version
                     FROM scans
                     WHERE target_hostname = ? AND target_port = ?
-                    ORDER BY scan_timestamp DESC
+                    ORDER BY scan_timestamp DESC, scan_id DESC
                     LIMIT ?
                     "#
                 )
                 .bind(hostname)
                 .bind(port)
                 .bind(limit)
+                .fetch_all(pool)
+                .await
+                .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to fetch scans: {}", e)))?;
+
+                Ok(results)
+            }
+        }
+    }
+
+    async fn get_scans_by_hostname_since(
+        &self,
+        hostname: &str,
+        port: u16,
+        since: chrono::DateTime<chrono::Utc>,
+    ) -> crate::Result<Vec<ScanRecord>> {
+        let port = port as i32;
+
+        match &self.pool {
+            DatabasePool::Postgres(pool) => {
+                let results = sqlx::query_as::<_, ScanRecord>(
+                    r#"
+                    SELECT scan_id, target_hostname, target_port, scan_timestamp, overall_grade, overall_score, scan_duration_ms, scanner_version
+                    FROM scans
+                    WHERE target_hostname = $1 AND target_port = $2 AND scan_timestamp >= $3
+                    ORDER BY scan_timestamp DESC, scan_id DESC
+                    "#
+                )
+                .bind(hostname)
+                .bind(port)
+                .bind(since)
+                .fetch_all(pool)
+                .await
+                .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to fetch scans: {}", e)))?;
+
+                Ok(results)
+            }
+            DatabasePool::Sqlite(pool) => {
+                let results = sqlx::query_as::<_, ScanRecord>(
+                    r#"
+                    SELECT scan_id, target_hostname, target_port, scan_timestamp, overall_grade, overall_score, scan_duration_ms, scanner_version
+                    FROM scans
+                    WHERE target_hostname = ? AND target_port = ? AND scan_timestamp >= ?
+                    ORDER BY scan_timestamp DESC, scan_id DESC
+                    "#
+                )
+                .bind(hostname)
+                .bind(port)
+                .bind(since)
                 .fetch_all(pool)
                 .await
                 .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to fetch scans: {}", e)))?;

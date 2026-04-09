@@ -1,10 +1,10 @@
+use crate::application::ScanResults;
 use crate::application::scan_execution::post_processing::{
     ScanNoticeView, ScanPostProcessingView, ScanPostView,
 };
 use crate::application::scan_execution::section_views::{
     ScanExportView, ScanFeatureView, ScanFingerprintView, ScanPrimaryTlsView,
 };
-use crate::application::ScanResults;
 
 pub struct ScanCliView<'a> {
     pub(crate) results: &'a ScanResults,
@@ -176,7 +176,7 @@ impl<'a> ScanCliView<'a> {
     }
 
     pub fn should_render_detailed_results(&self) -> bool {
-        !self.should_render_summary_only()
+        self.should_render_tls_sections()
     }
 
     pub fn should_render_results_summary_only(&self) -> bool {
@@ -184,11 +184,11 @@ impl<'a> ScanCliView<'a> {
     }
 
     pub fn should_render_results(&self) -> bool {
-        self.should_render_detailed_results() || self.should_render_summary_only()
+        self.should_render_detailed_results() || self.should_render_results_summary_only()
     }
 
     pub fn should_render_results_summary(&self) -> bool {
-        self.should_render_results()
+        self.should_render_tls_sections() || self.should_render_results_summary_only()
     }
 
     pub fn has_any_exportable_results(&self) -> bool {
@@ -219,9 +219,8 @@ impl<'a> ScanCliView<'a> {
         self.should_render_artifact_notices() && has_artifacts
     }
 
-    pub fn should_render_post_scan_notices_for(&self, has_artifacts: bool) -> bool {
+    pub fn should_render_post_scan_notices_for(&self, _has_artifacts: bool) -> bool {
         self.should_render_post_scan_notices()
-            && self.should_render_artifact_notices_for(has_artifacts)
     }
 
     pub fn should_render_post_scan_export_spacing_for(
@@ -285,5 +284,111 @@ impl<'a> ScanCliView<'a> {
         ScanFingerprintView {
             results: self.results,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::application::ScanResults;
+    use crate::application::scan_execution::post_processing::ScanPostProcessingView;
+    use crate::protocols::{Protocol, ProtocolTestResult};
+
+    use super::ScanCliView;
+
+    fn new_protocol_result(protocol: Protocol, supported: bool) -> ProtocolTestResult {
+        ProtocolTestResult {
+            protocol,
+            supported,
+            preferred: false,
+            ciphers_count: 0,
+            handshake_time_ms: None,
+            heartbeat_enabled: None,
+            session_resumption_caching: None,
+            session_resumption_tickets: None,
+            secure_renegotiation: None,
+        }
+    }
+
+    #[test]
+    fn test_should_render_flags_without_tls_results_are_summary_only() {
+        let results = ScanResults::default();
+        let post_processing = ScanPostProcessingView {
+            compliance_report: None,
+            policy_result: None,
+            stored_scan_id: None,
+            should_fail_exit: false,
+        };
+        let view = ScanCliView {
+            results: &results,
+            post_processing,
+        };
+
+        assert!(view.should_render_summary_only());
+        assert!(!view.should_render_detailed_results());
+        assert!(view.should_render_results_summary_only());
+        assert!(view.should_render_results());
+        assert!(view.should_render_results_summary());
+    }
+
+    #[test]
+    fn test_should_render_flags_with_tls_protocol_results_are_detailed() {
+        let mut results = ScanResults::default();
+        results
+            .protocols
+            .push(new_protocol_result(Protocol::TLS12, true));
+        let post_processing = ScanPostProcessingView {
+            compliance_report: None,
+            policy_result: None,
+            stored_scan_id: None,
+            should_fail_exit: false,
+        };
+        let view = ScanCliView {
+            results: &results,
+            post_processing,
+        };
+
+        assert!(!view.should_render_summary_only());
+        assert!(view.should_render_detailed_results());
+        assert!(!view.should_render_results_summary_only());
+        assert!(view.should_render_results());
+        assert!(view.should_render_results_summary());
+    }
+
+    #[test]
+    fn test_should_render_post_scan_notices_for_uses_storage_notice_without_artifacts() {
+        let results = ScanResults::default();
+        let post_processing = ScanPostProcessingView {
+            compliance_report: None,
+            policy_result: None,
+            stored_scan_id: Some(123),
+            should_fail_exit: false,
+        };
+        let view = ScanCliView {
+            results: &results,
+            post_processing,
+        };
+
+        assert!(view.should_render_post_scan_notices_for(false));
+        assert_eq!(view.stored_scan_id_for_post_scan_notices(false), Some(123));
+        assert!(view.should_render_post_scan_notices());
+    }
+
+    #[test]
+    fn test_should_render_post_scan_notices_for_without_storage_id_requires_artifacts_context() {
+        let results = ScanResults::default();
+        let post_processing = ScanPostProcessingView {
+            compliance_report: None,
+            policy_result: None,
+            stored_scan_id: None,
+            should_fail_exit: false,
+        };
+        let view = ScanCliView {
+            results: &results,
+            post_processing,
+        };
+
+        assert!(!view.should_render_post_scan_notices_for(false));
+        assert_eq!(view.stored_scan_id_for_post_scan_notices(false), None);
+        assert!(!view.should_render_post_scan_notices());
     }
 }

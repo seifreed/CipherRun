@@ -4,6 +4,25 @@
 // DROWN allows attackers to decrypt TLS sessions by exploiting SSLv2 on the same
 // server or another server using the same private key. Even if the server doesn't
 // support SSLv2 on HTTPS, if it supports SSLv2 on another port (like SMTP), it's vulnerable.
+//
+// DETECTION APPROACH:
+// This implementation detects SSLv2 support with varying levels of confidence:
+//
+// 1. Confirmed: Valid SSLv2 ServerHello (message type 0x04) - definitive SSLv2 support
+// 2. Probable: SSLv2 record structure with known SSLv2 message types - likely SSLv2
+// 3. Suspicious: SSLv2-like header but unusual message - manual review recommended
+// 4. Not Supported: No SSLv2 response or connection error
+//
+// SSLv2 message types:
+// - 0x00: Error
+// - 0x01: ClientHello
+// - 0x02: ClientMasterKey
+// - 0x03: ClientFinished (ClientVerify in some implementations)
+// - 0x04: ServerHello
+// - 0x05: ServerVerify
+// - 0x06: ServerFinished
+// - 0x07: RequestCertificate
+// - 0x08: ClientCertificate
 
 use crate::Result;
 use crate::constants::TLS_HANDSHAKE_TIMEOUT;
@@ -11,6 +30,52 @@ use crate::utils::network::Target;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::timeout;
+
+/// SSLv2 detection status with granular confidence levels
+///
+/// # DROWN Vulnerability Context
+///
+/// DROWN (CVE-2016-0800) exploits SSLv2 connections to decrypt TLS sessions.
+/// A server is DROWN-vulnerable if it accepts SSLv2 connections, allowing an attacker
+/// to perform a "cross-protocol" attack.
+///
+/// # Status Interpretation
+///
+/// - **Confirmed**: Server sent a valid SSLv2 ServerHello (message type 0x04).
+///   This definitively proves SSLv2 support and DROWN vulnerability.
+///
+/// - **Probable**: Server sent an SSLv2 Error (0x00) or other known SSLv2 message.
+///   The server SPEAKS SSLv2, but our specific handshake was rejected.
+///   DROWN may still be possible with different cipher configurations.
+///   Manual verification is recommended.
+///
+/// - **Suspicious**: Server sent data that looks like SSLv2 but has unusual structure.
+///   Further manual analysis required.
+///
+/// - **NotSupported**: No SSLv2 response detected - server likely doesn't support SSLv2.
+///
+/// - **Inconclusive**: Connection error prevented detection - retry recommended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Sslv2Status {
+    /// Valid SSLv2 ServerHello (0x04) - definitive support
+    Confirmed,
+    /// SSLv2 record structure with known message type (0x00-0x08)
+    /// Server speaks SSLv2 but our handshake was rejected - DROWN may still be possible
+    Probable,
+    /// SSLv2-like header but unusual message type - manual review needed
+    Suspicious,
+    /// No SSLv2 response detected
+    NotSupported,
+    /// Connection error prevented detection
+    Inconclusive,
+}
+
+impl Sslv2Status {
+    /// Returns true if SSLv2 is likely supported (Confirmed or Probable)
+    pub fn is_vulnerable(&self) -> bool {
+        matches!(self, Self::Confirmed | Self::Probable)
+    }
+}
 
 /// DROWN vulnerability tester
 pub struct DrownTester {
@@ -24,7 +89,9 @@ impl DrownTester {
 
     /// Test for DROWN vulnerability
     pub async fn test(&self) -> Result<DrownTestResult> {
-        let sslv2_supported = self.test_sslv2().await?;
+        let sslv2_status = self.test_sslv2().await?;
+        let sslv2_supported = sslv2_status.is_vulnerable();
+
         let sslv2_export = if sslv2_supported {
             self.test_sslv2_export_ciphers().await?
         } else {
@@ -33,34 +100,54 @@ impl DrownTester {
 
         let vulnerable = sslv2_supported;
 
-        let details = if vulnerable {
-            if sslv2_export {
-                "Vulnerable to DROWN (CVE-2016-0800) - SSLv2 with export ciphers enabled (highly vulnerable)".to_string()
-            } else {
-                "Vulnerable to DROWN (CVE-2016-0800) - SSLv2 enabled".to_string()
+        let details = match sslv2_status {
+            Sslv2Status::Confirmed if sslv2_export => {
+                "Vulnerable to DROWN (CVE-2016-0800) - SSLv2 ServerHello received, export ciphers enabled (highly vulnerable)".to_string()
             }
-        } else {
-            "Not vulnerable - SSLv2 not supported".to_string()
+            Sslv2Status::Confirmed => {
+                "Vulnerable to DROWN (CVE-2016-0800) - SSLv2 ServerHello received".to_string()
+            }
+            Sslv2Status::Probable if sslv2_export => {
+                "Potentially vulnerable to DROWN - SSLv2 probable (known message type detected), export ciphers enabled".to_string()
+            }
+            Sslv2Status::Probable => {
+                "Potentially vulnerable to DROWN - SSLv2 probable (known message type detected)".to_string()
+            }
+            Sslv2Status::Suspicious => {
+                "DROWN: SSLv2-like response detected - manual verification recommended".to_string()
+            }
+            Sslv2Status::NotSupported => {
+                "Not vulnerable - SSLv2 not supported".to_string()
+            }
+            Sslv2Status::Inconclusive => {
+                "DROWN test inconclusive - connection error prevented SSLv2 detection".to_string()
+            }
         };
 
         Ok(DrownTestResult {
             vulnerable,
             sslv2_supported,
             sslv2_export_ciphers: sslv2_export,
+            sslv2_status: Some(sslv2_status),
             details,
         })
     }
 
-    /// Test if SSLv2 is supported
-    async fn test_sslv2(&self) -> Result<bool> {
-        let addr = self.target.socket_addrs()[0];
+    /// Test if SSLv2 is supported with detailed status
+    async fn test_sslv2(&self) -> Result<Sslv2Status> {
+        let addr = self
+            .target
+            .socket_addrs()
+            .first()
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
 
         let mut stream =
             match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None)
                 .await
             {
                 Ok(s) => s,
-                Err(_) => return Ok(false),
+                Err(_) => return Ok(Sslv2Status::Inconclusive),
             };
 
         // Send SSLv2 ClientHello
@@ -70,37 +157,110 @@ impl DrownTester {
         // Read response
         let mut buffer = vec![0u8; 4096];
         match timeout(Duration::from_secs(3), stream.read(&mut buffer)).await {
-            Ok(Ok(n)) if n >= 2 => {
-                // Check for SSLv2 ServerHello response
-                let first_byte = buffer[0];
-                let second_byte = buffer[1];
-
-                let is_sslv2_header = (first_byte & 0x80) != 0;
-
-                if is_sslv2_header {
-                    let record_len = ((first_byte & 0x7f) as usize) << 8 | second_byte as usize;
-                    let is_reasonable_length = record_len > 0 && record_len <= 16384;
-                    let has_enough_data = n >= 3 && n >= record_len.saturating_add(2);
-
-                    if is_reasonable_length && has_enough_data && n > 2 {
-                        let msg_type = buffer[2];
-                        if msg_type == 0x04 {
-                            return Ok(true);
-                        }
-                    }
-                }
-
-                // If we couldn't definitively confirm SSLv2, be conservative
-                // and return false to avoid false positives
-                Ok(false)
+            Ok(Ok(n)) if n >= 2 => Self::analyze_sslv2_response(&buffer[..n]),
+            Ok(Ok(_)) => {
+                // Zero bytes - connection closed
+                Ok(Sslv2Status::NotSupported)
             }
-            _ => Ok(false),
+            Ok(Err(_)) | Err(_) => {
+                // Read error or timeout
+                Ok(Sslv2Status::Inconclusive)
+            }
+        }
+    }
+
+    /// Analyze SSLv2 response and return detection status
+    fn analyze_sslv2_response(data: &[u8]) -> Result<Sslv2Status> {
+        if data.len() < 2 {
+            return Ok(Sslv2Status::NotSupported);
+        }
+
+        let first_byte = data[0];
+        let second_byte = data[1];
+
+        // SSLv2 uses 2-byte or 3-byte record headers
+        // 2-byte header: high bit set, length in lower 15 bits
+        let is_sslv2_header = (first_byte & 0x80) != 0;
+
+        if !is_sslv2_header {
+            return Ok(Sslv2Status::NotSupported);
+        }
+
+        let record_len = ((first_byte & 0x7f) as usize) << 8 | second_byte as usize;
+        let is_reasonable_length = record_len > 0 && record_len <= 16384;
+        let has_enough_data = data.len() >= 3 && data.len() >= record_len.saturating_add(2);
+
+        if !is_reasonable_length || !has_enough_data {
+            // SSLv2 header present but insufficient data
+            tracing::debug!(
+                "DROWN: SSLv2 header detected but response truncated (len={}, expected={})",
+                data.len(),
+                record_len.saturating_add(2)
+            );
+            return Ok(Sslv2Status::Suspicious);
+        }
+
+        let msg_type = data[2];
+
+        // SSLv2 message types
+        match msg_type {
+            0x04 => {
+                // ServerHello - definitive SSLv2 support
+                tracing::debug!("DROWN: SSLv2 ServerHello (0x04) confirmed");
+                Ok(Sslv2Status::Confirmed)
+            }
+            0x00 => {
+                // SSLv2 Error message (0x00) - server speaks SSLv2 but rejected our ClientHello
+                //
+                // IMPORTANT: This is marked as "Probable" rather than "Confirmed" because:
+                // 1. The server DOES speak SSLv2 (it responded with a valid SSLv2 Error message)
+                // 2. However, DROWN requires a server that accepts SSLv2 connections, not just speaks it
+                // 3. An Error response means our specific cipher/clienthello was rejected
+                // 4. The server might still be exploitable via a different cipher combination
+                //
+                // Security implication: Any SSLv2-speaking server should be considered a potential
+                // DROWN vector. Manual verification with different cipher combinations is recommended.
+                tracing::warn!(
+                    "DROWN: SSLv2 Error (0x00) received - server speaks SSLv2 but rejected handshake, \
+                     manual review recommended. Server may still be DROWN-vulnerable with different ciphers."
+                );
+                Ok(Sslv2Status::Probable)
+            }
+            0x02 | 0x03 => {
+                // ClientMasterKey (0x02) or ClientFinished (0x03) - unusual for server response
+                tracing::warn!(
+                    "DROWN: Unexpected SSLv2 message type 0x{:02x} from server - SSLv2 probable",
+                    msg_type
+                );
+                Ok(Sslv2Status::Probable)
+            }
+            0x05..=0x08 => {
+                // ServerVerify (0x05), ServerFinished (0x06), RequestCertificate (0x07), ClientCertificate (0x08)
+                tracing::debug!(
+                    "DROWN: SSLv2 message type 0x{:02x} detected - SSLv2 probable",
+                    msg_type
+                );
+                Ok(Sslv2Status::Probable)
+            }
+            _ => {
+                // Unknown message type but valid SSLv2 structure
+                tracing::debug!(
+                    "DROWN: Suspicious SSLv2-like response with unknown message type 0x{:02x}",
+                    msg_type
+                );
+                Ok(Sslv2Status::Suspicious)
+            }
         }
     }
 
     /// Test for SSLv2 export ciphers (makes DROWN easier to exploit)
     async fn test_sslv2_export_ciphers(&self) -> Result<bool> {
-        let addr = self.target.socket_addrs()[0];
+        let addr = self
+            .target
+            .socket_addrs()
+            .first()
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
 
         let mut stream =
             match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None)
@@ -118,26 +278,11 @@ impl DrownTester {
         let mut buffer = vec![0u8; 4096];
         match timeout(Duration::from_secs(3), stream.read(&mut buffer)).await {
             Ok(Ok(n)) if n >= 2 => {
-                // Same improved SSLv2 detection logic
-                let first_byte = buffer[0];
-                let second_byte = buffer[1];
-
-                let is_sslv2_header = (first_byte & 0x80) != 0;
-
-                if is_sslv2_header {
-                    let record_len = ((first_byte & 0x7f) as usize) << 8 | second_byte as usize;
-                    let is_reasonable_length = record_len > 0 && record_len <= 16384;
-                    let has_enough_data = n >= 3 && n >= record_len.saturating_add(2);
-
-                    if is_reasonable_length && has_enough_data && n > 2 {
-                        let msg_type = buffer[2];
-                        if msg_type == 0x04 {
-                            return Ok(true);
-                        }
-                    }
-                }
-
-                Ok(false)
+                // Use same analysis logic
+                Ok(matches!(
+                    Self::analyze_sslv2_response(&buffer[..n])?,
+                    Sslv2Status::Confirmed | Sslv2Status::Probable
+                ))
             }
             _ => Ok(false),
         }
@@ -294,6 +439,8 @@ pub struct DrownTestResult {
     pub vulnerable: bool,
     pub sslv2_supported: bool,
     pub sslv2_export_ciphers: bool,
+    /// Detailed SSLv2 detection status (None if test was inconclusive)
+    pub sslv2_status: Option<Sslv2Status>,
     pub details: String,
 }
 
@@ -302,11 +449,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_sslv2_status_is_vulnerable() {
+        assert!(Sslv2Status::Confirmed.is_vulnerable());
+        assert!(Sslv2Status::Probable.is_vulnerable());
+        assert!(!Sslv2Status::Suspicious.is_vulnerable());
+        assert!(!Sslv2Status::NotSupported.is_vulnerable());
+        assert!(!Sslv2Status::Inconclusive.is_vulnerable());
+    }
+
+    #[test]
     fn test_drown_result_not_vulnerable() {
         let result = DrownTestResult {
             vulnerable: false,
             sslv2_supported: false,
             sslv2_export_ciphers: false,
+            sslv2_status: Some(Sslv2Status::NotSupported),
             details: "Not vulnerable".to_string(),
         };
         assert!(!result.vulnerable);
@@ -319,10 +476,84 @@ mod tests {
             vulnerable: true,
             sslv2_supported: true,
             sslv2_export_ciphers: false,
+            sslv2_status: Some(Sslv2Status::Confirmed),
             details: "Vulnerable".to_string(),
         };
         assert!(result.vulnerable);
         assert!(result.sslv2_supported);
+    }
+
+    #[test]
+    fn test_drown_result_probable() {
+        let result = DrownTestResult {
+            vulnerable: true,
+            sslv2_supported: true,
+            sslv2_export_ciphers: false,
+            sslv2_status: Some(Sslv2Status::Probable),
+            details: "Potentially vulnerable".to_string(),
+        };
+        assert!(result.vulnerable);
+        assert!(result.sslv2_supported);
+    }
+
+    #[test]
+    fn test_analyze_sslv2_response_confirmed() {
+        // SSLv2 ServerHello (message type 0x04)
+        // Need valid record: header (2 bytes) + length must match data
+        // Record length 0x40 = 64 bytes, so total = 66 bytes (header + body)
+        let mut response = vec![0x80, 0x40, 0x04]; // header (length=64) + msg type
+        response.extend(vec![0u8; 63]); // padding to match length
+        let result = DrownTester::analyze_sslv2_response(&response);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), Sslv2Status::Confirmed);
+    }
+
+    #[test]
+    fn test_analyze_sslv2_response_error() {
+        // SSLv2 Error message (message type 0x00)
+        let mut response = vec![0x80, 0x40, 0x00]; // header + msg type
+        response.extend(vec![0u8; 63]); // padding to match length
+        let result = DrownTester::analyze_sslv2_response(&response);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), Sslv2Status::Probable);
+    }
+
+    #[test]
+    fn test_analyze_sslv2_response_server_verify() {
+        // SSLv2 ServerVerify (message type 0x05)
+        let mut response = vec![0x80, 0x40, 0x05];
+        response.extend(vec![0u8; 63]);
+        let result = DrownTester::analyze_sslv2_response(&response);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), Sslv2Status::Probable);
+    }
+
+    #[test]
+    fn test_analyze_sslv2_response_unknown() {
+        // Unknown SSLv2 message type with valid length
+        let mut response = vec![0x80, 0x40, 0xFF];
+        response.extend(vec![0u8; 63]);
+        let result = DrownTester::analyze_sslv2_response(&response);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), Sslv2Status::Suspicious);
+    }
+
+    #[test]
+    fn test_analyze_sslv2_response_not_sslv2() {
+        // TLS record (not SSLv2)
+        let response = vec![0x16, 0x03, 0x01]; // TLS handshake
+        let result = DrownTester::analyze_sslv2_response(&response);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), Sslv2Status::NotSupported);
+    }
+
+    #[test]
+    fn test_analyze_sslv2_response_truncated() {
+        // SSLv2 header but insufficient data
+        let response = vec![0x80]; // Only 1 byte
+        let result = DrownTester::analyze_sslv2_response(&response);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), Sslv2Status::NotSupported);
     }
 
     #[test]

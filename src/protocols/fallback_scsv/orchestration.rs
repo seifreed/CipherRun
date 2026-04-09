@@ -156,7 +156,12 @@ impl FallbackScsvTester<'_> {
         if self.test_all_ips {
             self.test_scsv_all_ips(test_version).await
         } else {
-            let addr = self.target.socket_addrs()[0];
+            let addr = self
+                .target
+                .socket_addrs()
+                .first()
+                .copied()
+                .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
             self.test_scsv_on_ip(test_version, addr).await
         }
     }

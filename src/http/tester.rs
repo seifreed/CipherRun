@@ -2,7 +2,7 @@
 
 use super::headers::{HeaderIssue, SecurityHeaderChecker};
 use crate::Result;
-use crate::utils::network::Target;
+use crate::utils::network::{Target, canonical_target};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::Duration;
@@ -161,7 +161,7 @@ impl HeaderAnalyzer {
 
     /// Fetch HTTP headers from target
     async fn fetch_headers(&self) -> Result<ResponseMetadata> {
-        let url = format!("https://{}:{}/", self.target.hostname, self.target.port);
+        let url = target_url(&self.target);
 
         let client = reqwest::Client::builder()
             .timeout(self.timeout)
@@ -276,6 +276,13 @@ impl HeaderAnalyzer {
     }
 }
 
+fn target_url(target: &Target) -> String {
+    format!(
+        "https://{}/",
+        canonical_target(&target.hostname, target.port)
+    )
+}
+
 impl HeaderAnalysisResult {
     /// Get summary text
     pub fn summary(&self) -> String {
@@ -331,7 +338,7 @@ impl SecurityGrade {
 mod tests {
     use super::*;
     use crate::http::headers::IssueType;
-    use std::net::{IpAddr, Ipv4Addr};
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
     use tokio::net::TcpListener;
     use tokio_rustls::TlsAcceptor;
 
@@ -461,6 +468,18 @@ mod tests {
             result.redirect_location.as_deref(),
             Some("https://example.com/")
         );
+    }
+
+    #[test]
+    fn test_target_url_brackets_ipv6() {
+        let target = Target::with_ips(
+            "2001:db8::1".to_string(),
+            443,
+            vec![IpAddr::V6(Ipv6Addr::LOCALHOST)],
+        )
+        .unwrap();
+
+        assert_eq!(target_url(&target), "https://[2001:db8::1]:443/");
     }
 
     #[test]

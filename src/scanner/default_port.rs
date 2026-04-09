@@ -1,5 +1,5 @@
-use crate::application::ports::ScannerPort;
 use crate::application::ScanRequest;
+use crate::application::ports::ScannerPort;
 use crate::scanner::{ScanResults, Scanner};
 use async_trait::async_trait;
 
