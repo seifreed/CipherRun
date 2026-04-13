@@ -169,7 +169,7 @@ mod tests {
                 port,
                 Utc::now() - Duration::minutes(i as i64),
                 Some("A"),
-                Some(100 - i as i32),
+                Some(100 - i),
             )
             .await;
         }

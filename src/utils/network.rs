@@ -38,6 +38,51 @@ pub fn canonical_target(hostname: &str, port: u16) -> String {
     }
 }
 
+/// Build a TLS server name from a hostname or IP literal.
+///
+/// This accepts DNS names, bracketed IPv6 literals, and raw IP literals.
+/// IP targets are converted to `ServerName::IpAddress` so they can be used
+/// in TLS handshakes without being treated as invalid DNS names.
+pub fn server_name_for_hostname(
+    hostname: &str,
+) -> crate::Result<rustls_pki_types::ServerName<'static>> {
+    let hostname = hostname
+        .strip_prefix('[')
+        .and_then(|value| value.strip_suffix(']'))
+        .unwrap_or(hostname);
+
+    if let Ok(ip) = hostname.parse::<IpAddr>() {
+        return Ok(rustls_pki_types::ServerName::from(ip).to_owned());
+    }
+
+    rustls_pki_types::ServerName::try_from(hostname.to_string()).map_err(|_| {
+        crate::error::TlsError::ParseError {
+            message: "Invalid DNS name".into(),
+        }
+    })
+}
+
+/// Choose the hostname to use for an SNI extension.
+///
+/// Explicit overrides win. Otherwise, raw IP literals are omitted because SNI
+/// is defined for DNS hostnames, not address literals.
+pub fn sni_hostname_for_target(hostname: &str, override_hostname: Option<&str>) -> Option<String> {
+    if let Some(override_hostname) = override_hostname {
+        return Some(override_hostname.to_string());
+    }
+
+    let hostname = hostname
+        .strip_prefix('[')
+        .and_then(|value| value.strip_suffix(']'))
+        .unwrap_or(hostname);
+
+    if hostname.parse::<IpAddr>().is_ok() {
+        None
+    } else {
+        Some(hostname.to_string())
+    }
+}
+
 /// Display a hostname without a port.
 ///
 /// IPv6 literals are bracketed so the display remains unambiguous.
@@ -642,6 +687,24 @@ mod tests {
     #[test]
     fn test_canonical_target_strips_existing_brackets() {
         assert_eq!(canonical_target("[2001:db8::1]", 443), "[2001:db8::1]:443");
+    }
+
+    #[test]
+    fn test_sni_hostname_for_target_omits_ip_literals_without_override() {
+        assert_eq!(sni_hostname_for_target("93.184.216.34", None), None);
+        assert_eq!(sni_hostname_for_target("2001:db8::1", None), None);
+        assert_eq!(
+            sni_hostname_for_target("example.com", None),
+            Some("example.com".to_string())
+        );
+    }
+
+    #[test]
+    fn test_sni_hostname_for_target_prefers_override() {
+        assert_eq!(
+            sni_hostname_for_target("93.184.216.34", Some("sni.example")),
+            Some("sni.example".to_string())
+        );
     }
 
     #[test]

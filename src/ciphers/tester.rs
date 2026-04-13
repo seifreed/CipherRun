@@ -88,6 +88,7 @@ pub struct CipherTester {
     sleep_duration: Option<Duration>,
     use_rdp: bool,
     starttls_protocol: Option<crate::starttls::StarttlsProtocol>,
+    sni_hostname: Option<String>,
     test_all_ips: bool,
     retry_config: Option<crate::utils::retry::RetryConfig>,
     max_concurrent_tests: usize,
@@ -107,6 +108,7 @@ impl CipherTester {
             sleep_duration: None,
             use_rdp,
             starttls_protocol: None,
+            sni_hostname: None,
             test_all_ips: false,
             retry_config: None,
             max_concurrent_tests: 10,
@@ -142,6 +144,11 @@ impl CipherTester {
 
     pub fn with_starttls(mut self, protocol: Option<crate::starttls::StarttlsProtocol>) -> Self {
         self.starttls_protocol = protocol;
+        self
+    }
+
+    pub fn with_sni(mut self, sni: Option<String>) -> Self {
+        self.sni_hostname = sni;
         self
     }
 

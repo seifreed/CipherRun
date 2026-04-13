@@ -6,7 +6,7 @@ use crate::db::connection::DatabasePool;
 use crate::utils::network::canonical_target;
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -31,7 +31,7 @@ pub struct VulnerabilityTrend {
     pub data_points: Vec<(DateTime<Utc>, usize)>,
     pub mean: f64,
     pub median: usize,
-    pub severity_distribution: HashMap<String, usize>,
+    pub severity_distribution: BTreeMap<String, usize>,
     pub direction: TrendDirection,
 }
 
@@ -226,6 +226,19 @@ impl TrendAnalyzer {
         let mid = values.len() / 2;
         if values.len().is_multiple_of(2) {
             ((values[mid - 1] as u16 + values[mid] as u16) / 2) as u8
+        } else {
+            values[mid]
+        }
+    }
+
+    pub(crate) fn calculate_usize_median(values: &mut [usize]) -> usize {
+        if values.is_empty() {
+            return 0;
+        }
+        values.sort_unstable();
+        let mid = values.len() / 2;
+        if values.len().is_multiple_of(2) {
+            ((values[mid - 1] as u128 + values[mid] as u128) / 2) as usize
         } else {
             values[mid]
         }
@@ -465,6 +478,7 @@ mod tests {
     use super::*;
     use crate::db::{BindValue, CipherRunDatabase, DatabaseConfig};
     use chrono::{Duration, Utc};
+    use std::collections::BTreeMap;
     use std::path::PathBuf;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -488,6 +502,48 @@ mod tests {
         let mut values = vec![80, 85, 90, 95];
         let median = TrendAnalyzer::calculate_median(&mut values);
         assert_eq!(median, 87);
+    }
+
+    #[test]
+    fn test_calculate_usize_median_even() {
+        let mut values = vec![1usize, 4usize];
+        let median = TrendAnalyzer::calculate_usize_median(&mut values);
+        assert_eq!(median, 2);
+    }
+
+    #[test]
+    fn test_vulnerability_trend_serializes_severity_distribution_deterministically() {
+        let mut first_distribution = BTreeMap::new();
+        first_distribution.insert("medium".to_string(), 2);
+        first_distribution.insert("high".to_string(), 1);
+
+        let mut second_distribution = BTreeMap::new();
+        second_distribution.insert("high".to_string(), 1);
+        second_distribution.insert("medium".to_string(), 2);
+
+        let first = VulnerabilityTrend {
+            data_points: vec![],
+            mean: 0.0,
+            median: 0,
+            severity_distribution: first_distribution,
+            direction: TrendDirection::Stable,
+        };
+        let second = VulnerabilityTrend {
+            data_points: vec![],
+            mean: 0.0,
+            median: 0,
+            severity_distribution: second_distribution,
+            direction: TrendDirection::Stable,
+        };
+
+        let first_json = serde_json::to_string(&first).expect("serialization should succeed");
+        let second_json = serde_json::to_string(&second).expect("serialization should succeed");
+
+        assert_eq!(first_json, second_json);
+        assert!(
+            first_json.find("\"high\":1").expect("high severity")
+                < first_json.find("\"medium\":2").expect("medium severity")
+        );
     }
 
     #[test]

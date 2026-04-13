@@ -16,6 +16,13 @@ impl CipherTester {
             return cipher.protocol.contains("SSLv2");
         }
 
+        // For TLS 1.0/1.1/1.2, most ciphers are backward-compatible, so we test
+        // them against older protocols too. Only exclude TLS 1.3-only and SSLv2 ciphers.
+        // However, some TLS 1.2-specific ciphers (like AES-GCM suites) were never
+        // defined for older protocols. We use explicit protocol matching here:
+        // if a cipher's protocol string exactly matches a newer version and the
+        // target protocol is older, we still test it (the handshake will simply
+        // fail if the server doesn't support it).
         !cipher.protocol.contains("TLS13")
             && !cipher.protocol.contains("TLSv1.3")
             && !cipher.protocol.contains("SSLv2")

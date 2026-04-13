@@ -67,7 +67,8 @@ impl ScanPhase for IntolerancePhase {
 
     async fn execute(&self, context: &mut ScanContext) -> Result<()> {
         // Create intolerance tester with target
-        let tester = IntoleranceTester::new(context.target());
+        let tester =
+            IntoleranceTester::new(context.target()).with_sni(context.args.tls.sni_name.clone());
 
         // Test all intolerance scenarios
         // This tests:

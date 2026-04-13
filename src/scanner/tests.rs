@@ -98,6 +98,94 @@ fn test_scan_results_accessors_and_mutators() {
 }
 
 #[test]
+fn test_scan_results_connection_evidence_requires_successful_subtests() {
+    let mut results = ScanResults::default();
+    results.advanced_mut().alpn_result = Some(crate::protocols::alpn::AlpnReport {
+        alpn_enabled: false,
+        alpn_result: crate::protocols::alpn::AlpnResult {
+            supported_protocols: vec![],
+            http2_supported: false,
+            http3_supported: false,
+            negotiated_protocol: None,
+            details: vec![],
+        },
+        spdy_supported: false,
+        recommendations: vec![],
+    });
+    results.advanced_mut().client_simulations = Some(vec![ClientSimulationResult {
+        client_name: "TestClient".to_string(),
+        client_id: "test".to_string(),
+        success: false,
+        protocol: None,
+        cipher: None,
+        error: Some("failed".to_string()),
+        handshake_time_ms: None,
+        alpn: None,
+        key_exchange: None,
+        forward_secrecy: false,
+        certificate_type: None,
+    }]);
+
+    assert!(!results.has_connection_evidence());
+
+    results.advanced_mut().signature_algorithms =
+        Some(crate::protocols::signatures::SignatureEnumerationResult {
+            algorithms: vec![crate::protocols::signatures::SignatureAlgorithm {
+                name: "rsa_pkcs1_sha256".to_string(),
+                iana_value: 0x0401,
+                supported: false,
+            }],
+        });
+    results.advanced_mut().key_exchange_groups =
+        Some(crate::protocols::groups::GroupEnumerationResult {
+            groups: vec![crate::protocols::groups::KeyExchangeGroup {
+                name: "x25519".to_string(),
+                iana_value: 29,
+                group_type: crate::protocols::groups::GroupType::EllipticCurve,
+                bits: 253,
+                supported: false,
+            }],
+            measured: false,
+            details: "No negotiation".to_string(),
+        });
+    results.advanced_mut().client_cas = Some(crate::protocols::client_cas::ClientCAsResult {
+        cas: vec![],
+        requires_client_auth: false,
+    });
+    results.advanced_mut().intolerance =
+        Some(crate::protocols::intolerance::IntoleranceTestResult::default());
+    results.advanced_mut().alpn_result = Some(crate::protocols::alpn::AlpnReport {
+        alpn_enabled: false,
+        alpn_result: crate::protocols::alpn::AlpnResult {
+            supported_protocols: vec![],
+            http2_supported: false,
+            http3_supported: false,
+            negotiated_protocol: None,
+            details: vec![],
+        },
+        spdy_supported: false,
+        recommendations: vec![],
+    });
+
+    assert!(!results.has_connection_evidence());
+
+    results.advanced_mut().client_simulations = Some(vec![ClientSimulationResult {
+        client_name: "TestClient".to_string(),
+        client_id: "test".to_string(),
+        success: true,
+        protocol: Some(Protocol::TLS13),
+        cipher: Some("TLS_AES_128_GCM_SHA256".to_string()),
+        error: None,
+        handshake_time_ms: Some(8),
+        alpn: Some("h2".to_string()),
+        key_exchange: Some("x25519".to_string()),
+        forward_secrecy: true,
+        certificate_type: Some("RSA 2048".to_string()),
+    }]);
+    assert!(results.has_connection_evidence());
+}
+
+#[test]
 fn test_scan_results_csv_with_vulnerability() {
     let vuln = VulnerabilityResult {
         vuln_type: VulnerabilityType::ROBOT,
@@ -118,6 +206,24 @@ fn test_scan_results_csv_with_vulnerability() {
     assert!(csv.contains("ROBOT"));
     assert!(csv.contains("CVE-2017-13099"));
     assert!(csv.contains("Comma; should be replaced"));
+}
+
+#[test]
+fn test_scan_results_connection_evidence_treats_completed_vulnerability_batch_as_signal() {
+    let results = ScanResults {
+        vulnerabilities: vec![VulnerabilityResult {
+            vuln_type: VulnerabilityType::ROBOT,
+            vulnerable: false,
+            inconclusive: false,
+            details: "Not vulnerable".to_string(),
+            cve: None,
+            cwe: None,
+            severity: Severity::Info,
+        }],
+        ..Default::default()
+    };
+
+    assert!(results.has_connection_evidence());
 }
 
 #[test]
@@ -344,6 +450,127 @@ fn test_select_common_certificate_chain_prefers_matching_fingerprint() {
         .leaf()
         .expect("test assertion should succeed");
     assert_eq!(leaf.fingerprint_sha256.as_deref(), Some("BB"));
+}
+
+#[test]
+fn test_select_common_certificate_chain_prefers_majority_full_chain_for_same_leaf() {
+    let mut results = HashMap::new();
+
+    let leaf = CertificateInfo {
+        fingerprint_sha256: Some("AA".to_string()),
+        ..Default::default()
+    };
+    let intermediate_a = CertificateInfo {
+        fingerprint_sha256: Some("IA".to_string()),
+        subject: "CN=intermediate-a".to_string(),
+        issuer: "CN=root".to_string(),
+        is_ca: true,
+        ..Default::default()
+    };
+    let intermediate_b = CertificateInfo {
+        fingerprint_sha256: Some("IB".to_string()),
+        subject: "CN=intermediate-b".to_string(),
+        issuer: "CN=root".to_string(),
+        is_ca: true,
+        ..Default::default()
+    };
+    let root = CertificateInfo {
+        fingerprint_sha256: Some("RR".to_string()),
+        subject: "CN=root".to_string(),
+        issuer: "CN=root".to_string(),
+        is_ca: true,
+        ..Default::default()
+    };
+
+    let chain_a = CertificateAnalysisResult {
+        chain: CertificateChain {
+            certificates: vec![leaf.clone(), intermediate_a.clone(), root.clone()],
+            chain_length: 3,
+            chain_size_bytes: 0,
+        },
+        validation: ValidationResult {
+            valid: true,
+            issues: Vec::new(),
+            trust_chain_valid: true,
+            hostname_match: true,
+            not_expired: true,
+            signature_valid: true,
+            trusted_ca: None,
+            platform_trust: None,
+        },
+        revocation: None,
+    };
+    let chain_b = CertificateAnalysisResult {
+        chain: CertificateChain {
+            certificates: vec![leaf.clone(), intermediate_b.clone(), root.clone()],
+            chain_length: 3,
+            chain_size_bytes: 0,
+        },
+        validation: ValidationResult {
+            valid: true,
+            issues: Vec::new(),
+            trust_chain_valid: true,
+            hostname_match: true,
+            not_expired: true,
+            signature_valid: true,
+            trusted_ca: None,
+            platform_trust: None,
+        },
+        revocation: None,
+    };
+
+    results.insert(
+        "127.0.0.2".parse().unwrap(),
+        crate::scanner::inconsistency::SingleIpScanResult {
+            ip: "127.0.0.2".parse().unwrap(),
+            scan_result: ScanResults {
+                certificate_chain: Some(chain_a.clone()),
+                ..Default::default()
+            },
+            scan_duration_ms: 10,
+            error: None,
+        },
+    );
+    results.insert(
+        "127.0.0.3".parse().unwrap(),
+        crate::scanner::inconsistency::SingleIpScanResult {
+            ip: "127.0.0.3".parse().unwrap(),
+            scan_result: ScanResults {
+                certificate_chain: Some(chain_a.clone()),
+                ..Default::default()
+            },
+            scan_duration_ms: 12,
+            error: None,
+        },
+    );
+    results.insert(
+        "127.0.0.1".parse().unwrap(),
+        crate::scanner::inconsistency::SingleIpScanResult {
+            ip: "127.0.0.1".parse().unwrap(),
+            scan_result: ScanResults {
+                certificate_chain: Some(chain_b),
+                ..Default::default()
+            },
+            scan_duration_ms: 14,
+            error: None,
+        },
+    );
+
+    let cert_info = leaf;
+    let selected = Scanner::select_common_certificate_chain(&results, Some(&cert_info))
+        .expect("expected a certificate chain");
+
+    assert_eq!(
+        selected.chain.intermediates().len(),
+        1,
+        "expected the majority chain to be selected"
+    );
+    assert_eq!(
+        selected.chain.intermediates()[0]
+            .fingerprint_sha256
+            .as_deref(),
+        Some("IA")
+    );
 }
 
 #[test]

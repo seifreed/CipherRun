@@ -19,7 +19,12 @@ impl IntoleranceTester {
         self.write_randomized_hello_prefix(&mut buf, vec![0xc02f, 0xc030, 0x009c, 0x009d]);
 
         let mut extensions = BytesMut::new();
-        self.add_sni_extension(&mut extensions, &self.target.hostname);
+        if let Some(hostname) = crate::utils::network::sni_hostname_for_target(
+            &self.target.hostname,
+            self.sni_hostname.as_deref(),
+        ) {
+            self.add_sni_extension(&mut extensions, &hostname);
+        }
         self.add_supported_groups_extension(&mut extensions);
         self.add_ec_point_formats_extension(&mut extensions);
         self.add_signature_algorithms_extension(&mut extensions);
@@ -40,7 +45,12 @@ impl IntoleranceTester {
         self.write_randomized_hello_prefix(&mut buf, vec![0xc02f, 0xc030, 0x009c, 0x009d]);
 
         let mut extensions = BytesMut::new();
-        self.add_sni_extension(&mut extensions, &self.target.hostname);
+        if let Some(hostname) = crate::utils::network::sni_hostname_for_target(
+            &self.target.hostname,
+            self.sni_hostname.as_deref(),
+        ) {
+            self.add_sni_extension(&mut extensions, &hostname);
+        }
 
         let current_size = buf.len() + 2 + extensions.len();
         let padding_needed = if current_size < 300 {

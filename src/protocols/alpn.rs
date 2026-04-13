@@ -28,6 +28,10 @@ impl AlpnTester {
         Self { target }
     }
 
+    fn http3_validation_note() -> &'static str {
+        "HTTP/3 requires QUIC/UDP validation and is not determined by this TLS ALPN probe"
+    }
+
     /// Test ALPN support with various protocols
     pub async fn test_alpn(&self) -> Result<AlpnResult> {
         let mut result = AlpnResult {
@@ -38,11 +42,11 @@ impl AlpnTester {
             details: Vec::new(),
         };
 
-        // List of common ALPN protocols to test
+        // List of common ALPN protocols to test over TLS/TCP.
+        // HTTP/3 is intentionally excluded because it requires QUIC/UDP.
         let _protocols_to_test = [
             vec![b"h2".to_vec()],                       // HTTP/2
             vec![b"http/1.1".to_vec()],                 // HTTP/1.1
-            vec![b"h3".to_vec()],                       // HTTP/3
             vec![b"h2".to_vec(), b"http/1.1".to_vec()], // HTTP/2 with fallback
         ];
 
@@ -65,12 +69,9 @@ impl AlpnTester {
             result.details.push("✓ HTTP/1.1 is supported".to_string());
         }
 
-        // Test HTTP/3 (QUIC)
-        // Note: HTTP/3 uses QUIC which is UDP-based, so we can't test it the same way
-        // This is a simplified check
         result
             .details
-            .push("HTTP/3 detection requires QUIC support (UDP-based)".to_string());
+            .push(Self::http3_validation_note().to_string());
 
         // Test with both protocols to see preference
         if let Ok(Some(proto)) = self
@@ -121,12 +122,7 @@ impl AlpnTester {
 
         let connector = tokio_rustls::TlsConnector::from(Arc::new(config));
 
-        let hostname = self.target.hostname.clone();
-        let server_name = rustls::pki_types::ServerName::try_from(hostname)
-            .map_err(|_| crate::error::TlsError::ParseError {
-                message: "Invalid DNS name".into(),
-            })?
-            .to_owned();
+        let server_name = crate::utils::network::server_name_for_hostname(&self.target.hostname)?;
 
         // Attempt TLS handshake with ALPN
         match timeout(
@@ -353,5 +349,12 @@ mod tests {
         };
         assert!(!report.alpn_enabled);
         assert!(report.alpn_result.supported_protocols.is_empty());
+    }
+
+    #[test]
+    fn test_http3_validation_note_mentions_quic() {
+        let note = AlpnTester::http3_validation_note();
+        assert!(note.contains("QUIC/UDP"));
+        assert!(note.contains("not determined"));
     }
 }

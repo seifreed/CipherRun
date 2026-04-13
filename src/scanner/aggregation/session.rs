@@ -6,6 +6,52 @@ use super::ConservativeAggregator;
 use std::collections::HashSet;
 
 impl ConservativeAggregator {
+    fn aggregate_session_resumption(
+        &self,
+        selector: impl Fn(&crate::protocols::ProtocolTestResult) -> Option<bool>,
+    ) -> Option<bool> {
+        let successful_results: Vec<_> = self
+            .results
+            .values()
+            .filter(|r| r.error.is_none())
+            .collect();
+
+        if successful_results.is_empty() {
+            return None;
+        }
+
+        let mut measured_any = false;
+        let mut all_support = true;
+
+        for result in &successful_results {
+            let supported_protocols: Vec<_> = result
+                .scan_result
+                .protocols
+                .iter()
+                .filter(|protocol| protocol.supported)
+                .collect();
+
+            if supported_protocols.is_empty() {
+                return None;
+            }
+
+            for protocol in supported_protocols {
+                match selector(protocol) {
+                    Some(true) => {
+                        measured_any = true;
+                    }
+                    Some(false) => {
+                        measured_any = true;
+                        all_support = false;
+                    }
+                    None => return None,
+                }
+            }
+        }
+
+        measured_any.then_some(all_support)
+    }
+
     /// Aggregate ALPN protocols conservatively - intersection of all
     pub(super) fn aggregate_alpn_conservative(&self) -> Vec<String> {
         let successful_results: Vec<_> = self
@@ -62,77 +108,12 @@ impl ConservativeAggregator {
 
     /// Aggregate session resumption (caching) - only if ALL support it
     pub(super) fn aggregate_session_resumption_caching(&self) -> Option<bool> {
-        let successful_results: Vec<_> = self
-            .results
-            .values()
-            .filter(|r| r.error.is_none())
-            .collect();
-
-        if successful_results.is_empty() {
-            return None;
-        }
-
-        let mut measured_protocols = 0usize;
-        let mut all_support = true;
-
-        for result in &successful_results {
-            let mut backend_measured = false;
-
-            for protocol in result.scan_result.protocols.iter().filter(|p| p.supported) {
-                if let Some(supported) = protocol.session_resumption_caching {
-                    backend_measured = true;
-                    measured_protocols += 1;
-                    all_support &= supported;
-                }
-            }
-
-            if !backend_measured {
-                return None;
-            }
-        }
-
-        if measured_protocols == 0 {
-            None
-        } else {
-            Some(all_support)
-        }
+        self.aggregate_session_resumption(|protocol| protocol.session_resumption_caching)
     }
 
     /// Aggregate session resumption (tickets) - only if ALL support it
     pub(super) fn aggregate_session_resumption_tickets(&self) -> Option<bool> {
-        let successful_results: Vec<_> = self
-            .results
-            .values()
-            .filter(|r| r.error.is_none())
-            .collect();
-
-        if successful_results.is_empty() {
-            return None;
-        }
-
-        let mut measured_protocols = 0usize;
-        let mut all_support = true;
-
-        for result in &successful_results {
-            let mut backend_measured = false;
-
-            for protocol in result.scan_result.protocols.iter().filter(|p| p.supported) {
-                if let Some(supported) = protocol.session_resumption_tickets {
-                    backend_measured = true;
-                    measured_protocols += 1;
-                    all_support &= supported;
-                }
-            }
-            if !backend_measured {
-                return None;
-            }
-        }
-
-        if measured_protocols == 0 {
-            None
-        } else {
-            Some(all_support)
-        }
+        self.aggregate_session_resumption(|protocol| protocol.session_resumption_tickets)
     }
 }
 
@@ -333,5 +314,100 @@ mod tests {
         let aggregated = aggregator.aggregate();
         assert_eq!(aggregated.session_resumption_caching, Some(false));
         assert_eq!(aggregated.session_resumption_tickets, None);
+    }
+
+    #[test]
+    fn test_session_resumption_requires_every_supported_protocol() {
+        let ip1: IpAddr = Ipv4Addr::new(127, 0, 0, 1).into();
+        let ip2: IpAddr = Ipv4Addr::new(127, 0, 0, 2).into();
+
+        let protocols_ip1 = vec![
+            ProtocolTestResult {
+                protocol: Protocol::TLS12,
+                supported: true,
+                preferred: false,
+                ciphers_count: 1,
+                handshake_time_ms: None,
+                heartbeat_enabled: None,
+                session_resumption_caching: Some(false),
+                session_resumption_tickets: Some(false),
+                secure_renegotiation: None,
+            },
+            ProtocolTestResult {
+                protocol: Protocol::TLS13,
+                supported: true,
+                preferred: true,
+                ciphers_count: 1,
+                handshake_time_ms: None,
+                heartbeat_enabled: None,
+                session_resumption_caching: Some(true),
+                session_resumption_tickets: Some(true),
+                secure_renegotiation: None,
+            },
+        ];
+
+        let protocols_ip2 = vec![
+            ProtocolTestResult {
+                protocol: Protocol::TLS12,
+                supported: true,
+                preferred: false,
+                ciphers_count: 1,
+                handshake_time_ms: None,
+                heartbeat_enabled: None,
+                session_resumption_caching: Some(true),
+                session_resumption_tickets: Some(true),
+                secure_renegotiation: None,
+            },
+            ProtocolTestResult {
+                protocol: Protocol::TLS13,
+                supported: true,
+                preferred: true,
+                ciphers_count: 1,
+                handshake_time_ms: None,
+                heartbeat_enabled: None,
+                session_resumption_caching: Some(true),
+                session_resumption_tickets: Some(true),
+                secure_renegotiation: None,
+            },
+        ];
+
+        let mut results = HashMap::new();
+        results.insert(
+            ip1,
+            SingleIpScanResult {
+                ip: ip1,
+                scan_result: make_scan_result(
+                    protocols_ip1,
+                    HashMap::new(),
+                    "fp1",
+                    Grade::A,
+                    90,
+                    Vec::new(),
+                ),
+                scan_duration_ms: 1,
+                error: None,
+            },
+        );
+        results.insert(
+            ip2,
+            SingleIpScanResult {
+                ip: ip2,
+                scan_result: make_scan_result(
+                    protocols_ip2,
+                    HashMap::new(),
+                    "fp1",
+                    Grade::A,
+                    90,
+                    Vec::new(),
+                ),
+                scan_duration_ms: 1,
+                error: None,
+            },
+        );
+
+        let aggregator = ConservativeAggregator::new(results, Vec::new());
+        let aggregated = aggregator.aggregate();
+        assert_eq!(aggregated.session_resumption_caching, Some(false));
+        assert_eq!(aggregated.session_resumption_tickets, Some(false));
     }
 }

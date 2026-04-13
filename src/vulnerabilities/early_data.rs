@@ -74,6 +74,7 @@ impl<'a> EarlyDataTester<'a> {
                 max_early_data_size: None,
                 issues: vec!["Server does not support TLS 1.3 early_data extension".to_string()],
                 details: "Not vulnerable - Server does not support 0-RTT / early data".to_string(),
+                inconclusive: false,
             });
         }
 
@@ -143,6 +144,7 @@ impl<'a> EarlyDataTester<'a> {
             max_early_data_size: early_data_info.max_early_data_size,
             issues,
             details,
+            inconclusive: replay_result.inconclusive,
         })
     }
 
@@ -314,11 +316,7 @@ impl<'a> EarlyDataTester<'a> {
         let connector = tokio_rustls::TlsConnector::from(Arc::new(config));
 
         // Try to connect
-        let domain = rustls_pki_types::ServerName::try_from(self.target.hostname.as_str())
-            .map_err(|_| crate::error::TlsError::ParseError {
-                message: "Invalid DNS name".into(),
-            })?
-            .to_owned();
+        let domain = crate::utils::network::server_name_for_hostname(&self.target.hostname)?;
 
         match timeout(TLS_HANDSHAKE_TIMEOUT, connector.connect(domain, stream)).await {
             Ok(Ok(tls_stream)) => {
@@ -343,6 +341,7 @@ pub struct EarlyDataTestResult {
     pub max_early_data_size: Option<u32>,
     pub issues: Vec<String>,
     pub details: String,
+    pub inconclusive: bool,
 }
 
 #[cfg(test)]
@@ -369,6 +368,7 @@ mod tests {
             max_early_data_size: Some(16384),
             issues: vec![],
             details: "Test".to_string(),
+            inconclusive: false,
         };
         assert!(!result.vulnerable);
         assert!(result.supports_early_data);
@@ -462,6 +462,7 @@ mod tests {
             max_early_data_size: None,
             issues: vec![],
             details: "Not supported".to_string(),
+            inconclusive: false,
         };
         assert!(result.details.contains("Not supported"));
     }
@@ -475,6 +476,7 @@ mod tests {
             max_early_data_size: Some(1024),
             issues: vec!["Issue one".to_string(), "Issue two".to_string()],
             details: "Details".to_string(),
+            inconclusive: false,
         };
         assert_eq!(result.issues.len(), 2);
     }

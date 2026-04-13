@@ -58,6 +58,12 @@ impl ScanRequest {
             Some(MYSQL)
         } else if self.starttls.irc {
             Some(IRC)
+        } else if self.starttls.nntp {
+            Some(NNTP)
+        } else if self.starttls.sieve {
+            Some(SIEVE)
+        } else if self.starttls.lmtp {
+            Some(LMTP)
         } else {
             match self.starttls.protocol.as_deref() {
                 Some("smtp") => Some(SMTP),
@@ -69,6 +75,9 @@ impl ScanRequest {
                 Some("postgres") | Some("postgresql") | Some("psql") => Some(POSTGRES),
                 Some("mysql") => Some(MYSQL),
                 Some("irc") => Some(IRC),
+                Some("nntp") => Some(NNTP),
+                Some("sieve") => Some(SIEVE),
+                Some("lmtp") => Some(LMTP),
                 _ => None,
             }
         }
@@ -126,6 +135,9 @@ impl ScanRequest {
             || self.starttls.mysql
             || self.starttls.irc
             || self.starttls.xmpp_server
+            || self.starttls.nntp
+            || self.starttls.sieve
+            || self.starttls.lmtp
     }
 
     pub fn retry_config(&self) -> Option<RetryConfig> {

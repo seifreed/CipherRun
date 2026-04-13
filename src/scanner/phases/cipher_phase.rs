@@ -110,6 +110,8 @@ impl CipherPhase {
             tester = tester.with_starttls(Some(starttls_proto));
         }
 
+        tester = tester.with_sni(context.args.tls.sni_name.clone());
+
         // Enable testing all IPs if specified
         // Tests ciphers on each resolved IP address independently
         if context.args.network.test_all_ips {

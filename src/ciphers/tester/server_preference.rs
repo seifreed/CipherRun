@@ -157,6 +157,15 @@ impl CipherTester {
             Err(_) => return Ok(None),
         };
 
+        // Send RDP preamble if needed (same as perform_cipher_handshake)
+        if self.use_rdp
+            && crate::protocols::rdp::RdpPreamble::send(&mut stream)
+                .await
+                .is_err()
+        {
+            return Ok(None);
+        }
+
         if let Some(starttls_proto) = self.starttls_protocol {
             let negotiator = crate::starttls::protocols::get_negotiator(
                 starttls_proto,
@@ -169,7 +178,11 @@ impl CipherTester {
 
         let mut builder = ClientHelloBuilder::new(protocol);
         builder.add_ciphers(cipher_hexcodes);
-        let client_hello = builder.build_with_defaults(Some(&self.target.hostname))?;
+        let sni_hostname = crate::utils::network::sni_hostname_for_target(
+            &self.target.hostname,
+            self.sni_hostname.as_deref(),
+        );
+        let client_hello = builder.build_with_defaults(sni_hostname.as_deref())?;
 
         match timeout(self.read_timeout, async {
             stream.write_all(&client_hello).await?;

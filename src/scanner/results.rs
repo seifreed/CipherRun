@@ -8,8 +8,29 @@ use crate::http::tester::HeaderAnalysisResult;
 use crate::protocols::{Protocol, ProtocolTestResult};
 use crate::rating::RatingResult;
 use crate::vulnerabilities::VulnerabilityResult;
+use serde::ser::{SerializeMap, Serializer};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::hash::Hash;
+
+pub(crate) fn serialize_sorted_map<S, K, V>(
+    map: &HashMap<K, V>,
+    serializer: S,
+) -> std::result::Result<S::Ok, S::Error>
+where
+    S: Serializer,
+    K: Ord + Serialize + Eq + Hash,
+    V: Serialize,
+{
+    let mut entries: Vec<_> = map.iter().collect();
+    entries.sort_by(|(left_key, _), (right_key, _)| left_key.cmp(right_key));
+
+    let mut map_serializer = serializer.serialize_map(Some(entries.len()))?;
+    for (key, value) in entries {
+        map_serializer.serialize_entry(key, value)?;
+    }
+    map_serializer.end()
+}
 
 /// Certificate analysis result
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -100,6 +121,7 @@ pub struct ScanResults {
 
     // Protocol & Cipher results
     pub protocols: Vec<ProtocolTestResult>,
+    #[serde(serialize_with = "serialize_sorted_map")]
     pub ciphers: HashMap<Protocol, ProtocolCipherSummary>,
 
     // Certificate results (optional group)
@@ -225,20 +247,40 @@ impl ScanResults {
 
     /// Returns true when later phases clearly established a working network path.
     pub fn has_connection_evidence(&self) -> bool {
-        !self.protocols.is_empty()
-            || !self.ciphers.is_empty()
+        self.protocols.iter().any(|result| result.supported)
+            || self.ciphers
+                .values()
+                .any(|summary| !summary.supported_ciphers.is_empty())
             || self.certificate_chain.is_some()
             || self.http_headers().is_some()
+            // A completed vulnerability batch implies the scanner got far enough
+            // to exercise network-dependent checks, even when findings are negative.
             || !self.vulnerabilities.is_empty()
             || self.ja3_fingerprint().is_some()
             || self.ja3s_fingerprint().is_some()
             || self.jarm_fingerprint().is_some()
-            || self.client_simulations().is_some()
-            || self.signature_algorithms().is_some()
-            || self.key_exchange_groups().is_some()
-            || self.client_cas().is_some()
-            || self.intolerance().is_some()
-            || self.alpn_result().is_some()
+            || self
+                .client_simulations()
+                .is_some_and(|simulations| simulations.iter().any(|simulation| simulation.success))
+            || self.signature_algorithms().is_some_and(|result| {
+                result.algorithms.iter().any(|algorithm| algorithm.supported)
+            })
+            || self.key_exchange_groups().is_some_and(|result| {
+                result.measured || result.groups.iter().any(|group| group.supported)
+            })
+            || self.client_cas().is_some_and(|result| {
+                result.requires_client_auth || !result.cas.is_empty()
+            })
+            || self.intolerance().is_some_and(|result| {
+                result.extension_intolerance
+                    || result.version_intolerance
+                    || result.long_handshake_intolerance
+                    || result.incorrect_sni_alerts
+                    || result.uses_common_dh_primes
+            })
+            || self
+                .alpn_result()
+                .is_some_and(|report| report.alpn_enabled)
     }
 
     /// Ensure fingerprints sub-struct exists and return mutable reference

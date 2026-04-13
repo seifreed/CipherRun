@@ -97,7 +97,13 @@ impl From<u16> for Protocol {
             0x0302 => Protocol::TLS11,
             0x0303 => Protocol::TLS12,
             0x0304 => Protocol::TLS13,
-            _ => Protocol::TLS12, // Default to TLS 1.2
+            _ => {
+                tracing::warn!(
+                    "Unknown protocol version 0x{:04x}, defaulting to TLS 1.2",
+                    value
+                );
+                Protocol::TLS12
+            }
         }
     }
 }

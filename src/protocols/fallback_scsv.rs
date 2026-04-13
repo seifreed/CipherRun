@@ -16,6 +16,7 @@ use crate::utils::network::Target;
 /// TLS Fallback SCSV tester
 pub struct FallbackScsvTester<'a> {
     target: &'a Target,
+    sni_hostname: Option<String>,
     max_supported_protocol: Option<crate::protocols::Protocol>,
     test_all_ips: bool,
 }
@@ -24,9 +25,15 @@ impl<'a> FallbackScsvTester<'a> {
     pub fn new(target: &'a Target) -> Self {
         Self {
             target,
+            sni_hostname: None,
             max_supported_protocol: None,
             test_all_ips: false,
         }
+    }
+
+    pub fn with_sni(mut self, sni: Option<String>) -> Self {
+        self.sni_hostname = sni;
+        self
     }
 
     pub fn with_test_all_ips(mut self, enable: bool) -> Self {
@@ -36,7 +43,8 @@ impl<'a> FallbackScsvTester<'a> {
 
     pub async fn test(&mut self) -> Result<FallbackScsvTestResult> {
         tracing::debug!("Detecting maximum supported protocol version for SCSV testing");
-        let protocol_tester = ProtocolTester::new(self.target.clone());
+        let protocol_tester =
+            ProtocolTester::new(self.target.clone()).with_sni(self.sni_hostname.clone());
 
         match protocol_tester.get_preferred_protocol().await? {
             Some(max_protocol) => {

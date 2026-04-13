@@ -120,7 +120,11 @@ pub struct RatingDiff {
 pub struct ComponentRatingDiff {
     pub category: String,
     pub scan_1_score: Option<i32>,
+    pub scan_1_grade: Option<String>,
+    pub scan_1_rationale: Option<String>,
     pub scan_2_score: Option<i32>,
+    pub scan_2_grade: Option<String>,
+    pub scan_2_rationale: Option<String>,
     pub changed: bool,
 }
 

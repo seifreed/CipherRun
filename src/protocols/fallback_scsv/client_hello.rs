@@ -41,20 +41,24 @@ impl FallbackScsvTester<'_> {
         let ext_start_pos = hello.len();
         hello.extend_from_slice(&[0x00, 0x00]);
 
-        hello.extend_from_slice(&[0x00, 0x00]);
+        if let Some(hostname) = crate::utils::network::sni_hostname_for_target(
+            &self.target.hostname,
+            self.sni_hostname.as_deref(),
+        ) {
+            hello.extend_from_slice(&[0x00, 0x00]);
+            let sni_len = hostname.len() + 5;
+            hello.push(((sni_len >> 8) & 0xff) as u8);
+            hello.push((sni_len & 0xff) as u8);
 
-        let sni_len = self.target.hostname.len() + 5;
-        hello.push(((sni_len >> 8) & 0xff) as u8);
-        hello.push((sni_len & 0xff) as u8);
+            let sni_list_len = hostname.len() + 3;
+            hello.push(((sni_list_len >> 8) & 0xff) as u8);
+            hello.push((sni_list_len & 0xff) as u8);
 
-        let sni_list_len = self.target.hostname.len() + 3;
-        hello.push(((sni_list_len >> 8) & 0xff) as u8);
-        hello.push((sni_list_len & 0xff) as u8);
-
-        hello.push(0x00);
-        hello.push(((self.target.hostname.len() >> 8) & 0xff) as u8);
-        hello.push((self.target.hostname.len() & 0xff) as u8);
-        hello.extend_from_slice(self.target.hostname.as_bytes());
+            hello.push(0x00);
+            hello.push(((hostname.len() >> 8) & 0xff) as u8);
+            hello.push((hostname.len() & 0xff) as u8);
+            hello.extend_from_slice(hostname.as_bytes());
+        }
 
         let ext_len = hello.len() - ext_start_pos - 2;
         hello[ext_start_pos] = ((ext_len >> 8) & 0xff) as u8;

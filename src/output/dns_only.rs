@@ -33,10 +33,9 @@ impl DnsOnlyMode {
         // Format is typically "CN=example.com" or similar
         if !cert.subject.is_empty()
             && let Some(cn) = Self::extract_cn(&cert.subject)
+            && let Some(domain) = Self::normalize_dns_domain(&cn)
         {
-            if let Some(domain) = Self::normalize_dns_domain(&cn) {
-                domains.insert(domain);
-            }
+            domains.insert(domain);
         }
 
         // Add all Subject Alternative Names (SANs)

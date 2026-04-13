@@ -66,7 +66,9 @@ impl IntoleranceTester {
         let normal_hello = self.build_versioned_client_hello(0x0301)?;
         let normal_response = self.send_client_hello(&normal_hello).await;
 
-        let high_version_hello = self.build_versioned_client_hello(0x0303)?;
+        // Use a future/draft version (0x0305) instead of TLS 1.2 (0x0303)
+        // to properly detect version intolerance
+        let high_version_hello = self.build_versioned_client_hello(0x0305)?;
         let high_version_response = self.send_client_hello(&high_version_hello).await;
 
         Ok(matches!(

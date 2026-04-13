@@ -5,7 +5,7 @@ use crate::db::CipherRecord;
 use crate::db::connection::DatabasePool;
 use std::collections::BTreeMap;
 
-fn sort_cipher_infos(ciphers: &mut Vec<CipherInfo>) {
+fn sort_cipher_infos(ciphers: &mut [CipherInfo]) {
     ciphers.sort_by(|a, b| {
         a.name
             .cmp(&b.name)
@@ -15,7 +15,7 @@ fn sort_cipher_infos(ciphers: &mut Vec<CipherInfo>) {
     });
 }
 
-fn sort_cipher_changes(changes: &mut Vec<CipherChangeInfo>) {
+fn sort_cipher_changes(changes: &mut [CipherChangeInfo]) {
     changes.sort_by(|a, b| {
         a.current
             .protocol

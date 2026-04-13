@@ -5,7 +5,7 @@ use crate::db::ProtocolRecord;
 use crate::db::connection::DatabasePool;
 use std::collections::HashSet;
 
-fn sort_protocol_names(protocols: &mut Vec<String>) {
+fn sort_protocol_names(protocols: &mut [String]) {
     protocols.sort();
 }
 

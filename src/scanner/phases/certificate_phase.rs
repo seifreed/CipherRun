@@ -44,12 +44,21 @@ impl CertificatePhase {
         Self
     }
 
+    /// Resolve the TLS hostname used for certificate fetch and validation.
+    fn tls_hostname(context: &ScanContext) -> String {
+        context
+            .args
+            .as_ref()
+            .effective_sni(&context.target.hostname)
+    }
+
     /// Parse certificate chain from server
     ///
     /// Establishes TLS connection to server and extracts the certificate
     /// chain from the handshake. Supports both standard TLS and mTLS.
     async fn parse_certificate_chain(&self, context: &ScanContext) -> Result<CertificateChain> {
-        let target = context.target();
+        let mut target = context.target();
+        target.hostname = Self::tls_hostname(context);
 
         // Create parser with optional mTLS configuration
         let parser = if let Some(ref mtls_config) = context.mtls_config {
@@ -79,7 +88,7 @@ impl CertificatePhase {
         context: &ScanContext,
         chain: &CertificateChain,
     ) -> Result<ValidationResult> {
-        let hostname = context.target.hostname.clone();
+        let hostname = Self::tls_hostname(context);
 
         // Create validator with platform trust
         // If --no-check-certificate is set, disable strict validation
@@ -208,6 +217,23 @@ mod tests {
     fn test_certificate_phase_name() {
         let phase = CertificatePhase::new();
         assert_eq!(phase.name(), "Analyzing Certificate");
+    }
+
+    #[test]
+    fn test_certificate_phase_tls_hostname_prefers_explicit_sni() {
+        let target = crate::utils::network::Target::with_ips(
+            "93.184.216.34".to_string(),
+            443,
+            vec!["93.184.216.34".parse().unwrap()],
+        )
+        .unwrap();
+
+        let mut args = ScanRequest::default();
+        args.tls.sni_name = Some("cdn.example".to_string());
+
+        let context = ScanContext::new(target, Arc::new(args), None, None);
+
+        assert_eq!(CertificatePhase::tls_hostname(&context), "cdn.example");
     }
 
     #[tokio::test]

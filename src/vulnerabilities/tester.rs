@@ -95,14 +95,15 @@ impl SelectedVulnerabilityChecks {
     }
 }
 
-const FULL_SCAN_TEST_COUNT: usize = 27;
-const FAST_SCAN_TEST_COUNT: usize = 17;
+const FULL_SCAN_TEST_COUNT: usize = 25;
+const FAST_SCAN_TEST_COUNT: usize = 15;
 
 /// Main vulnerability scanner
 pub struct VulnerabilityScanner {
     target: Target,
     protocol_tester: ProtocolTester,
     cipher_tester: CipherTester,
+    sni_hostname: Option<String>,
     broad_scan: bool,
     fast_mode: bool,
     selected_checks: SelectedVulnerabilityChecks,
@@ -121,6 +122,7 @@ impl VulnerabilityScanner {
             target,
             protocol_tester,
             cipher_tester,
+            sni_hostname: None,
             broad_scan: true,
             fast_mode: false,
             selected_checks: SelectedVulnerabilityChecks::default(),
@@ -140,10 +142,15 @@ impl VulnerabilityScanner {
             cipher_tester = cipher_tester.with_test_all_ips(true);
         }
 
+        let sni_hostname = args.tls.sni_name.clone();
+        protocol_tester = protocol_tester.with_sni(sni_hostname.clone());
+        cipher_tester = cipher_tester.with_sni(sni_hostname.clone());
+
         Self {
             target,
             protocol_tester,
             cipher_tester,
+            sni_hostname,
             broad_scan: args.scan.vulnerabilities || args.scan.full,
             fast_mode: args.scan.fast,
             selected_checks: SelectedVulnerabilityChecks::from_request(args),
@@ -176,7 +183,7 @@ impl VulnerabilityScanner {
                     Severity::High => summary.high += 1,
                     Severity::Medium => summary.medium += 1,
                     Severity::Low => summary.low += 1,
-                    Severity::Info => {}
+                    Severity::Info => summary.info += 1,
                 }
             }
             if result.inconclusive {
@@ -228,6 +235,7 @@ pub struct VulnerabilitySummary {
     pub high: usize,
     pub medium: usize,
     pub low: usize,
+    pub info: usize,
 }
 
 impl std::fmt::Display for VulnerabilitySummary {
@@ -253,6 +261,9 @@ impl std::fmt::Display for VulnerabilitySummary {
             }
             if self.low > 0 {
                 writeln!(f, "    Low:      {}", self.low)?;
+            }
+            if self.info > 0 {
+                writeln!(f, "    Info:     {}", self.info)?;
             }
         }
 
@@ -650,6 +661,7 @@ mod tests {
             high: 1,
             medium: 0,
             low: 0,
+            info: 0,
         };
 
         let rendered = format!("{}", summary);
@@ -681,6 +693,6 @@ mod tests {
 
         let scanner = VulnerabilityScanner::with_args(dummy_target(), &request);
         assert!(scanner.broad_scan);
-        assert_eq!(scanner.planned_test_count(), 27);
+        assert_eq!(scanner.planned_test_count(), 25);
     }
 }

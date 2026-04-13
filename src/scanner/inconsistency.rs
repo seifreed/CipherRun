@@ -61,16 +61,19 @@ pub enum InconsistencyDetails {
         ips_with_support: Vec<IpAddr>,
         ips_without_support: Vec<IpAddr>,
     },
-    /// Certificate fingerprint differences
+    /// Certificate chain differences
     Certificates {
+        #[serde(serialize_with = "crate::scanner::results::serialize_sorted_map")]
         fingerprints: HashMap<IpAddr, String>,
     },
     /// Grade differences
     Grades {
+        #[serde(serialize_with = "crate::scanner::results::serialize_sorted_map")]
         grades: HashMap<IpAddr, (String, u8)>,
     },
     /// Cipher suite differences
     CipherSuites {
+        #[serde(serialize_with = "crate::scanner::results::serialize_sorted_map")]
         differences: HashMap<IpAddr, Vec<String>>,
     },
     /// Session resumption differences
@@ -81,6 +84,7 @@ pub enum InconsistencyDetails {
     },
     /// ALPN protocol differences
     Alpn {
+        #[serde(serialize_with = "crate::scanner::results::serialize_sorted_map")]
         protocols_by_ip: HashMap<IpAddr, Vec<String>>,
     },
 }
@@ -113,6 +117,17 @@ impl SingleIpScanResult {
     pub fn is_successful(&self) -> bool {
         self.error.is_none()
     }
+}
+
+fn sort_ips(mut ips: Vec<IpAddr>) -> Vec<IpAddr> {
+    ips.sort();
+    ips
+}
+
+fn sort_strings(mut values: Vec<String>) -> Vec<String> {
+    values.sort();
+    values.dedup();
+    values
 }
 
 /// Detector for identifying inconsistencies across multiple IP scan results
@@ -195,6 +210,8 @@ impl InconsistencyDetector {
 
             // If there's a discrepancy, it's an inconsistency
             if !ips_with.is_empty() && !ips_without.is_empty() {
+                let ips_with = sort_ips(ips_with);
+                let ips_without = sort_ips(ips_without);
                 let severity = match protocol {
                     Protocol::TLS13 => Severity::High,
                     Protocol::TLS12 => Severity::Medium,
@@ -210,7 +227,9 @@ impl InconsistencyDetector {
                         ips_with.len(),
                         self.successful_scan_count()
                     ),
-                    ips_affected: ips_with.iter().chain(ips_without.iter()).copied().collect(),
+                    ips_affected: sort_ips(
+                        ips_with.iter().chain(ips_without.iter()).copied().collect(),
+                    ),
                     details: InconsistencyDetails::Protocols {
                         protocol,
                         ips_with_support: ips_with,
@@ -227,35 +246,67 @@ impl InconsistencyDetector {
     fn detect_certificate_inconsistencies(&self) -> Vec<Inconsistency> {
         let mut inconsistencies = Vec::new();
         let mut fingerprints: HashMap<IpAddr, String> = HashMap::new();
+        let mut ips_without_cert: Vec<IpAddr> = Vec::new();
 
-        // Collect certificate fingerprints
+        // Collect certificate chain signatures so that intermediate differences
+        // and chain length differences are not collapsed into leaf-only matches.
         for (ip, result) in &self.results {
             if result.error.is_some() {
                 continue;
             }
 
-            if let Some(ref cert_chain) = result.scan_result.certificate_chain
-                && let Some(cert) = cert_chain.chain.leaf()
-                && let Some(ref fingerprint) = cert.fingerprint_sha256
-            {
-                fingerprints.insert(*ip, fingerprint.clone());
+            if let Some(ref cert_chain) = result.scan_result.certificate_chain {
+                fingerprints.insert(
+                    *ip,
+                    super::aggregation::certificate_chain_signature(&cert_chain.chain),
+                );
+            } else {
+                ips_without_cert.push(*ip);
             }
         }
 
-        // Check if all fingerprints are the same
-        if fingerprints.len() > 1 {
-            let unique_fingerprints: std::collections::HashSet<_> = fingerprints.values().collect();
+        // Report inconsistency if some IPs have certs and others don't,
+        // or if the certificate chains differ across IPs.
+        // Both conditions are checked independently because a scenario like
+        // "IP1 has cert A, IP2 has cert B, IP3 has no cert" should report
+        // BOTH the "missing on some IPs" and "different chains" inconsistencies.
+        if !ips_without_cert.is_empty() && !fingerprints.is_empty() {
+            // Some IPs have certificates and others don't
+            let mut all_ips: Vec<IpAddr> = fingerprints
+                .keys()
+                .copied()
+                .chain(ips_without_cert.iter().copied())
+                .collect();
+            all_ips.sort();
+            all_ips.dedup();
+            inconsistencies.push(Inconsistency {
+                inconsistency_type: InconsistencyType::Certificates,
+                severity: Severity::High,
+                description: format!(
+                    "Certificate chain present on {} backends but missing on {} backends",
+                    fingerprints.len(),
+                    ips_without_cert.len()
+                ),
+                ips_affected: all_ips,
+                details: InconsistencyDetails::Certificates {
+                    fingerprints: fingerprints.clone(),
+                },
+            });
+        }
 
-            if unique_fingerprints.len() > 1 {
+        if fingerprints.len() > 1 {
+            let unique_signatures: std::collections::HashSet<_> = fingerprints.values().collect();
+
+            if unique_signatures.len() > 1 {
                 inconsistencies.push(Inconsistency {
                     inconsistency_type: InconsistencyType::Certificates,
                     severity: Severity::High,
                     description: format!(
-                        "Different certificates detected across {} backends ({} unique certificates)",
+                        "Different certificate chains detected across {} backends ({} unique chains)",
                         fingerprints.len(),
-                        unique_fingerprints.len()
+                        unique_signatures.len()
                     ),
-                    ips_affected: fingerprints.keys().copied().collect(),
+                    ips_affected: sort_ips(fingerprints.keys().copied().collect()),
                     details: InconsistencyDetails::Certificates { fingerprints },
                 });
             }
@@ -283,6 +334,7 @@ impl InconsistencyDetector {
             }
 
             if !all_ciphers.is_empty() {
+                all_ciphers = sort_strings(all_ciphers);
                 cipher_sets.insert(*ip, all_ciphers);
             }
         }
@@ -306,7 +358,7 @@ impl InconsistencyDetector {
                             "Different cipher suites available across {} backends",
                             cipher_sets.len()
                         ),
-                        ips_affected: cipher_sets.keys().copied().collect(),
+                        ips_affected: sort_ips(cipher_sets.keys().copied().collect()),
                         details: InconsistencyDetails::CipherSuites {
                             differences: cipher_sets,
                         },
@@ -346,7 +398,7 @@ impl InconsistencyDetector {
                         "Different security grades across {} backends",
                         grades.len()
                     ),
-                    ips_affected: grades.keys().copied().collect(),
+                    ips_affected: sort_ips(grades.keys().copied().collect()),
                     details: InconsistencyDetails::Grades { grades },
                 });
             }
@@ -392,19 +444,49 @@ impl InconsistencyDetector {
             }
         }
 
-        // Detect inconsistencies in session resumption support
-        if !ips_without.is_empty() && (!ips_with_caching.is_empty() || !ips_with_tickets.is_empty())
-        {
+        // Detect inconsistencies in session resumption support:
+        // 1. Some IPs have no resumption while others have some (original check)
+        // 2. Some IPs with caching don't have tickets (tickets is a subset of caching)
+        // 3. Some IPs have tickets but not caching (caching is a subset of all successful IPs)
+        let total_successful = self.results.values().filter(|r| r.error.is_none()).count();
+
+        let has_ips_without = !ips_without.is_empty()
+            && (!ips_with_caching.is_empty() || !ips_with_tickets.is_empty());
+
+        let tickets_inconsistent =
+            !ips_with_tickets.is_empty() && ips_with_tickets.len() < ips_with_caching.len();
+
+        let caching_inconsistent =
+            !ips_with_caching.is_empty() && ips_with_caching.len() < total_successful;
+
+        if has_ips_without || tickets_inconsistent || caching_inconsistent {
+            let ips_with_caching = sort_ips(ips_with_caching);
+            let ips_with_tickets = sort_ips(ips_with_tickets);
+            let ips_without = sort_ips(ips_without);
+
+            let description = if has_ips_without {
+                "Session resumption support inconsistent across backends"
+            } else if tickets_inconsistent {
+                "Session resumption ticket support inconsistent across backends"
+            } else {
+                "Session resumption caching support inconsistent across backends"
+            };
+
             inconsistencies.push(Inconsistency {
                 inconsistency_type: InconsistencyType::SessionResumption,
                 severity: Severity::Medium,
-                description: "Session resumption support inconsistent across backends".to_string(),
-                ips_affected: ips_with_caching
-                    .iter()
-                    .chain(ips_with_tickets.iter())
-                    .chain(ips_without.iter())
-                    .copied()
-                    .collect(),
+                description: description.to_string(),
+                ips_affected: {
+                    let mut affected: Vec<IpAddr> = ips_with_caching
+                        .iter()
+                        .chain(ips_with_tickets.iter())
+                        .chain(ips_without.iter())
+                        .copied()
+                        .collect();
+                    affected.sort();
+                    affected.dedup();
+                    affected
+                },
                 details: InconsistencyDetails::SessionResumption {
                     ips_with_caching,
                     ips_with_tickets,
@@ -431,12 +513,15 @@ impl InconsistencyDetector {
                 && alpn_report.alpn_enabled
                 && !alpn_report.alpn_result.supported_protocols.is_empty()
             {
-                protocols_by_ip.insert(*ip, alpn_report.alpn_result.supported_protocols.clone());
+                protocols_by_ip.insert(
+                    *ip,
+                    sort_strings(alpn_report.alpn_result.supported_protocols.clone()),
+                );
             }
         }
 
         // Check if all IPs have ALPN enabled
-        let ips_with_alpn: Vec<IpAddr> = protocols_by_ip.keys().copied().collect();
+        let ips_with_alpn: Vec<IpAddr> = sort_ips(protocols_by_ip.keys().copied().collect());
         let total_successful_ips = self.results.values().filter(|r| r.error.is_none()).count();
 
         // Detect inconsistency if some IPs have ALPN and others don't
@@ -447,6 +532,7 @@ impl InconsistencyDetector {
                 .filter(|(ip, r)| r.error.is_none() && !protocols_by_ip.contains_key(ip))
                 .map(|(ip, _)| *ip)
                 .collect();
+            let ips_without_alpn = sort_ips(ips_without_alpn);
 
             inconsistencies.push(Inconsistency {
                 inconsistency_type: InconsistencyType::Alpn,
@@ -456,11 +542,13 @@ impl InconsistencyDetector {
                     ips_with_alpn.len(),
                     total_successful_ips
                 ),
-                ips_affected: ips_with_alpn
-                    .iter()
-                    .chain(ips_without_alpn.iter())
-                    .copied()
-                    .collect(),
+                ips_affected: sort_ips(
+                    ips_with_alpn
+                        .iter()
+                        .chain(ips_without_alpn.iter())
+                        .copied()
+                        .collect(),
+                ),
                 details: InconsistencyDetails::Alpn {
                     protocols_by_ip: protocols_by_ip.clone(),
                 },
@@ -488,7 +576,7 @@ impl InconsistencyDetector {
                             "Different ALPN protocols available across {} backends",
                             protocols_by_ip.len()
                         ),
-                        ips_affected: protocols_by_ip.keys().copied().collect(),
+                        ips_affected: sort_ips(protocols_by_ip.keys().copied().collect()),
                         details: InconsistencyDetails::Alpn { protocols_by_ip },
                     });
                 }

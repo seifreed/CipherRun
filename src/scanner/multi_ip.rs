@@ -49,6 +49,7 @@ pub type SingleIpScanResult = crate::scanner::inconsistency::SingleIpScanResult;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MultiIpScanReport {
     pub target: Target,
+    #[serde(serialize_with = "crate::scanner::results::serialize_sorted_map")]
     pub per_ip_results: HashMap<IpAddr, SingleIpScanResult>,
     pub total_ips: usize,
     pub successful_scans: usize,
@@ -178,7 +179,7 @@ impl MultiIpScanner {
             .values()
             .filter(|r| r.error.is_none())
             .count();
-        let failed_scans = total_ips - successful_scans;
+        let failed_scans = per_ip_results.len().saturating_sub(successful_scans);
 
         // Notify callback of scan summary
         if let Some(ref callback) = self.callback {

@@ -26,6 +26,7 @@ pub struct IntoleranceTestResult {
 /// TLS Intolerance Tester
 pub struct IntoleranceTester {
     pub(super) target: Target,
+    pub(super) sni_hostname: Option<String>,
     pub(super) connect_timeout: Duration,
     pub(super) read_timeout: Duration,
 }
@@ -35,9 +36,15 @@ impl IntoleranceTester {
     pub fn new(target: Target) -> Self {
         Self {
             target,
+            sni_hostname: None,
             connect_timeout: crate::constants::DEFAULT_CONNECT_TIMEOUT,
             read_timeout: crate::constants::DEFAULT_READ_TIMEOUT,
         }
+    }
+
+    pub fn with_sni(mut self, sni: Option<String>) -> Self {
+        self.sni_hostname = sni;
+        self
     }
 }
 

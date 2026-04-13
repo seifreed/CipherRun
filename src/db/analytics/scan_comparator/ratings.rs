@@ -6,6 +6,17 @@ use super::{
 };
 use crate::db::connection::DatabasePool;
 use crate::db::{RatingRecord, ScanRecord};
+use std::collections::BTreeMap;
+
+fn rating_category_rank(category: &str) -> usize {
+    match category {
+        "certificate" => 0,
+        "protocol" => 1,
+        "key_exchange" => 2,
+        "cipher" => 3,
+        _ => 4,
+    }
+}
 
 impl ScanComparator {
     pub(crate) async fn compare_ratings(
@@ -21,24 +32,56 @@ impl ScanComparator {
         let ratings1 = self.get_ratings(scan_id_1).await?;
         let ratings2 = self.get_ratings(scan_id_2).await?;
 
+        let mut ratings1_by_category: BTreeMap<String, &RatingRecord> = BTreeMap::new();
+        for rating in &ratings1 {
+            ratings1_by_category
+                .entry(rating.category.clone())
+                .or_insert(rating);
+        }
+
+        let mut ratings2_by_category: BTreeMap<String, &RatingRecord> = BTreeMap::new();
+        for rating in &ratings2 {
+            ratings2_by_category
+                .entry(rating.category.clone())
+                .or_insert(rating);
+        }
+
         let mut component_diffs = Vec::new();
 
-        let categories = vec!["certificate", "protocol", "key_exchange", "cipher"];
+        let mut categories: Vec<String> = ratings1_by_category
+            .keys()
+            .cloned()
+            .chain(ratings2_by_category.keys().cloned())
+            .collect();
+        categories.sort_by(|a, b| {
+            rating_category_rank(a)
+                .cmp(&rating_category_rank(b))
+                .then_with(|| a.cmp(b))
+        });
+        categories.dedup();
+
         for category in categories {
-            let score1 = ratings1
-                .iter()
-                .find(|r| r.category == category)
-                .map(|r| r.score);
-            let score2 = ratings2
-                .iter()
-                .find(|r| r.category == category)
-                .map(|r| r.score);
+            let rating1 = ratings1_by_category.get(&category);
+            let rating2 = ratings2_by_category.get(&category);
+
+            let score1 = rating1.map(|r| r.score);
+            let score2 = rating2.map(|r| r.score);
+            let grade1 = rating1.and_then(|r| r.grade.clone());
+            let grade2 = rating2.and_then(|r| r.grade.clone());
+            let rationale1 = rating1.and_then(|r| r.rationale.clone());
+            let rationale2 = rating2.and_then(|r| r.rationale.clone());
+
+            let changed = score1 != score2 || grade1 != grade2 || rationale1 != rationale2;
 
             component_diffs.push(ComponentRatingDiff {
-                category: category.to_string(),
+                category,
                 scan_1_score: score1,
+                scan_1_grade: grade1,
+                scan_1_rationale: rationale1,
                 scan_2_score: score2,
-                changed: score1 != score2,
+                scan_2_grade: grade2,
+                scan_2_rationale: rationale2,
+                changed,
             });
         }
 
@@ -110,7 +153,7 @@ impl ScanComparator {
         match self.db.pool() {
             DatabasePool::Postgres(pool) => {
                 let ratings = sqlx::query_as::<_, RatingRecord>(
-                    "SELECT rating_id, scan_id, category, score, grade, rationale FROM ratings WHERE scan_id = $1"
+                    "SELECT rating_id, scan_id, category, score, grade, rationale FROM ratings WHERE scan_id = $1 ORDER BY category ASC, rating_id ASC"
                 )
                 .bind(scan_id)
                 .fetch_all(pool)
@@ -120,7 +163,7 @@ impl ScanComparator {
             }
             DatabasePool::Sqlite(pool) => {
                 let ratings = sqlx::query_as::<_, RatingRecord>(
-                    "SELECT rating_id, scan_id, category, score, grade, rationale FROM ratings WHERE scan_id = ?"
+                    "SELECT rating_id, scan_id, category, score, grade, rationale FROM ratings WHERE scan_id = ? ORDER BY category ASC, rating_id ASC"
                 )
                 .bind(scan_id)
                 .fetch_all(pool)

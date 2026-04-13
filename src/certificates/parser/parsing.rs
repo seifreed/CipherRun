@@ -17,6 +17,15 @@ pub struct CertificateParser {
 }
 
 impl CertificateParser {
+    /// Build the TLS server name for a target hostname.
+    ///
+    /// This accepts DNS names and raw IP literals. IP targets are converted to
+    /// `ServerName::IpAddress`, which avoids treating them as invalid DNS
+    /// names during certificate fetches.
+    fn server_name_for_hostname(hostname: &str) -> Result<rustls_pki_types::ServerName<'static>> {
+        crate::utils::network::server_name_for_hostname(hostname)
+    }
+
     /// Create new certificate parser
     pub fn new(target: Target) -> Self {
         Self {
@@ -72,12 +81,7 @@ impl CertificateParser {
         };
 
         // Connect with TLS
-        let hostname = self.target.hostname.clone();
-        let domain = rustls_pki_types::ServerName::try_from(hostname.as_str())
-            .map_err(|_| crate::error::TlsError::ParseError {
-                message: "Invalid DNS name".into(),
-            })?
-            .to_owned();
+        let domain = Self::server_name_for_hostname(&self.target.hostname)?;
 
         let tls_stream = timeout(self.read_timeout, connector.connect(domain, stream)).await??;
 
@@ -438,5 +442,23 @@ mod tests {
         assert!(info.issuer.contains("CN=example.com"));
         assert!(info.san.iter().any(|s| s.contains("example.com")));
         assert!(info.fingerprint_sha256.is_some());
+    }
+
+    #[test]
+    fn test_server_name_for_ipv4_literal_uses_ip_address_variant() {
+        let server_name = CertificateParser::server_name_for_hostname("93.184.216.34").unwrap();
+        assert!(matches!(
+            server_name,
+            rustls_pki_types::ServerName::IpAddress(_)
+        ));
+    }
+
+    #[test]
+    fn test_server_name_for_ipv6_literal_uses_ip_address_variant() {
+        let server_name = CertificateParser::server_name_for_hostname("2001:db8::1").unwrap();
+        assert!(matches!(
+            server_name,
+            rustls_pki_types::ServerName::IpAddress(_)
+        ));
     }
 }

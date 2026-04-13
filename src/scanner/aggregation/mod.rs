@@ -8,7 +8,7 @@
 //! - Protocols: Only marked as supported if ALL IPs support them
 //! - Cipher suites: Union of all cipher suites across all IPs
 //! - Grade: Takes the WORST (lowest) grade from all IPs
-//! - Certificates: Most common certificate, or marks differences
+//! - Certificates: Most common certificate chain, or marks differences
 //!
 //! This conservative approach ensures that the aggregated result represents
 //! the weakest security posture in a load-balanced environment.
@@ -19,13 +19,44 @@ mod grade;
 mod protocols;
 mod session;
 
-use crate::certificates::parser::CertificateInfo;
+use crate::certificates::parser::{CertificateChain, CertificateInfo};
 use crate::ciphers::tester::ProtocolCipherSummary;
 use crate::protocols::{Protocol, ProtocolTestResult};
 use crate::scanner::inconsistency::{Inconsistency, SingleIpScanResult};
+use crate::scanner::results::serialize_sorted_map;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::IpAddr;
+
+pub(super) fn certificate_signature(cert: &CertificateInfo) -> String {
+    if let Some(fingerprint) = cert.fingerprint_sha256.as_ref() {
+        return format!("fp:{}", fingerprint);
+    }
+
+    if !cert.der_bytes.is_empty() {
+        return format!("der:{}", hex::encode(&cert.der_bytes));
+    }
+
+    serde_json::to_string(cert).unwrap_or_else(|_| {
+        format!(
+            "subject={};issuer={};serial={};not_before={};not_after={}",
+            cert.subject, cert.issuer, cert.serial_number, cert.not_before, cert.not_after
+        )
+    })
+}
+
+pub(super) fn certificate_chain_signature(chain: &CertificateChain) -> String {
+    if chain.certificates.is_empty() {
+        return "<empty>".to_string();
+    }
+
+    chain
+        .certificates
+        .iter()
+        .map(certificate_signature)
+        .collect::<Vec<_>>()
+        .join("\u{1f}")
+}
 
 /// Aggregated scan result representing the conservative view across all IPs
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -34,12 +65,13 @@ pub struct AggregatedScanResult {
     pub protocols: Vec<ProtocolTestResult>,
 
     /// Cipher suites (union of all ciphers across all IPs)
+    #[serde(serialize_with = "serialize_sorted_map")]
     pub ciphers: HashMap<Protocol, ProtocolCipherSummary>,
 
     /// Overall grade (WORST grade from all IPs)
     pub grade: (String, u8),
 
-    /// Most common certificate (or indication of differences)
+    /// Most common certificate chain (leaf returned, or indication of differences)
     pub certificate_info: Option<CertificateInfo>,
     pub certificate_consistent: bool,
 
@@ -115,6 +147,137 @@ mod tests {
         assert!(aggregator.check_certificate_consistency());
     }
 
+    #[test]
+    fn test_certificate_consistency_detects_different_full_chains_with_same_leaf() {
+        let ip1: IpAddr = Ipv4Addr::new(127, 0, 0, 1).into();
+        let ip2: IpAddr = Ipv4Addr::new(127, 0, 0, 2).into();
+
+        let mut results = HashMap::new();
+        results.insert(
+            ip1,
+            SingleIpScanResult {
+                ip: ip1,
+                scan_result: ScanResults {
+                    certificate_chain: Some(make_certificate_chain(&[
+                        "leaf",
+                        "intermediate-a",
+                        "root",
+                    ])),
+                    ..Default::default()
+                },
+                scan_duration_ms: 10,
+                error: None,
+            },
+        );
+        results.insert(
+            ip2,
+            SingleIpScanResult {
+                ip: ip2,
+                scan_result: ScanResults {
+                    certificate_chain: Some(make_certificate_chain(&[
+                        "leaf",
+                        "intermediate-b",
+                        "root",
+                    ])),
+                    ..Default::default()
+                },
+                scan_duration_ms: 12,
+                error: None,
+            },
+        );
+
+        let aggregator = ConservativeAggregator::new(results, vec![]);
+        let aggregated = aggregator.aggregate();
+
+        assert!(!aggregated.certificate_consistent);
+        assert_eq!(
+            aggregated
+                .certificate_info
+                .and_then(|cert| cert.fingerprint_sha256),
+            Some("leaf".to_string())
+        );
+    }
+
+    #[test]
+    fn test_aggregate_grade_conservative_prefers_certificate_over_low_numeric_score() {
+        let ip1: IpAddr = Ipv4Addr::new(127, 0, 0, 1).into();
+        let ip2: IpAddr = Ipv4Addr::new(127, 0, 0, 2).into();
+
+        let mut results = HashMap::new();
+        results.insert(
+            ip1,
+            SingleIpScanResult {
+                ip: ip1,
+                scan_result: make_scan_result(
+                    Vec::new(),
+                    HashMap::new(),
+                    "fp1",
+                    Grade::T,
+                    95,
+                    Vec::new(),
+                ),
+                scan_duration_ms: 10,
+                error: None,
+            },
+        );
+        results.insert(
+            ip2,
+            SingleIpScanResult {
+                ip: ip2,
+                scan_result: make_scan_result(
+                    Vec::new(),
+                    HashMap::new(),
+                    "fp2",
+                    Grade::A,
+                    10,
+                    Vec::new(),
+                ),
+                scan_duration_ms: 12,
+                error: None,
+            },
+        );
+
+        let aggregator = ConservativeAggregator::new(results, vec![]);
+        assert_eq!(
+            aggregator.aggregate_grade_conservative(),
+            ("T".to_string(), 95)
+        );
+    }
+
+    #[test]
+    fn test_certificate_consistency_is_false_when_some_successful_backends_lack_certificates() {
+        let ip1: IpAddr = Ipv4Addr::new(127, 0, 0, 1).into();
+        let ip2: IpAddr = Ipv4Addr::new(127, 0, 0, 2).into();
+
+        let mut results = HashMap::new();
+        results.insert(
+            ip1,
+            SingleIpScanResult {
+                ip: ip1,
+                scan_result: ScanResults {
+                    certificate_chain: Some(make_certificate("leaf-a")),
+                    ..Default::default()
+                },
+                scan_duration_ms: 10,
+                error: None,
+            },
+        );
+        results.insert(
+            ip2,
+            SingleIpScanResult {
+                ip: ip2,
+                scan_result: ScanResults::default(),
+                scan_duration_ms: 12,
+                error: None,
+            },
+        );
+
+        let aggregator = ConservativeAggregator::new(results, vec![]);
+        let aggregated = aggregator.aggregate();
+
+        assert!(!aggregated.certificate_consistent);
+    }
+
     pub(crate) fn make_cipher(
         openssl_name: &str,
         bits: u16,
@@ -161,6 +324,52 @@ mod tests {
             certificates: vec![cert],
             chain_length: 1,
             chain_size_bytes: 2,
+        };
+
+        let validation = ValidationResult {
+            valid: true,
+            issues: Vec::new(),
+            trust_chain_valid: true,
+            hostname_match: true,
+            not_expired: true,
+            signature_valid: true,
+            trusted_ca: None,
+            platform_trust: None,
+        };
+
+        CertificateAnalysisResult {
+            chain,
+            validation,
+            revocation: None,
+        }
+    }
+
+    pub(crate) fn make_certificate_chain(chain_fingerprints: &[&str]) -> CertificateAnalysisResult {
+        let certificates: Vec<_> = chain_fingerprints
+            .iter()
+            .enumerate()
+            .map(|(index, fingerprint)| {
+                let subject = format!("CN={}", fingerprint);
+                let issuer = if index + 1 == chain_fingerprints.len() {
+                    subject.clone()
+                } else {
+                    format!("CN=issuer-{}", fingerprint)
+                };
+
+                CertificateInfo {
+                    fingerprint_sha256: Some((*fingerprint).to_string()),
+                    subject,
+                    issuer,
+                    is_ca: index > 0,
+                    ..Default::default()
+                }
+            })
+            .collect();
+
+        let chain = CertificateChain {
+            chain_length: certificates.len(),
+            chain_size_bytes: certificates.len() * 2,
+            certificates,
         };
 
         let validation = ValidationResult {
@@ -488,7 +697,7 @@ mod tests {
         assert!(!summary_a.server_ordered);
         assert!(summary_a.server_preference.is_empty());
         assert!(summary_a.preferred_cipher.is_none());
-        assert_eq!(summary_a.avg_handshake_time_ms, Some(20));
+        assert_eq!(summary_a.avg_handshake_time_ms, Some(15));
         assert_eq!(summary_a.counts.total, 2);
         assert_eq!(summary_a.counts.forward_secrecy, 1);
         assert_eq!(summary_a.counts.aead, 1);

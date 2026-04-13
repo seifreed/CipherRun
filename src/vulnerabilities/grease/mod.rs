@@ -57,11 +57,20 @@ pub enum GreaseTestOutcome {
 /// - Supported groups: 0x0A0A, 0x1A1A, 0x2A2A, etc.
 pub struct GreaseTester {
     target: Target,
+    sni_hostname: Option<String>,
 }
 
 impl GreaseTester {
     pub fn new(target: Target) -> Self {
-        Self { target }
+        Self {
+            target,
+            sni_hostname: None,
+        }
+    }
+
+    pub fn with_sni(mut self, sni: Option<String>) -> Self {
+        self.sni_hostname = sni;
+        self
     }
 
     /// Test server GREASE tolerance using raw TLS ClientHello injection
@@ -187,6 +196,11 @@ impl GreaseTester {
                 result
                     .tests_performed
                     .push(format!("{} (error: {})", test_name, e));
+                result.direct_grease_test_performed = true;
+                result.details.push(format!(
+                    "{} test encountered a connection error: {}",
+                    test_name, e
+                ));
             }
         }
     }
@@ -217,12 +231,12 @@ impl GreaseTester {
 
         let connector = tokio_rustls::TlsConnector::from(Arc::new(config));
 
-        let hostname = self.target.hostname.clone();
-        let server_name = rustls::pki_types::ServerName::try_from(hostname)
-            .map_err(|_| crate::error::TlsError::ParseError {
-                message: "Invalid DNS name".into(),
-            })?
-            .to_owned();
+        let sni_host = crate::utils::network::sni_hostname_for_target(
+            &self.target.hostname,
+            self.sni_hostname.as_deref(),
+        )
+        .unwrap_or_else(|| self.target.hostname.clone());
+        let server_name = crate::utils::network::server_name_for_hostname(&sni_host)?;
 
         match timeout(
             Duration::from_secs(10),

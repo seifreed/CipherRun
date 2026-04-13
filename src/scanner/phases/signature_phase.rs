@@ -66,7 +66,8 @@ impl ScanPhase for SignaturePhase {
 
     async fn execute(&self, context: &mut ScanContext) -> Result<()> {
         // Create signature tester with target
-        let tester = SignatureTester::new(context.target());
+        let tester =
+            SignatureTester::new(context.target()).with_sni(context.args.tls.sni_name.clone());
 
         // Enumerate all supported signature algorithms
         // This tests:

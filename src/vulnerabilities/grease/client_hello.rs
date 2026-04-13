@@ -121,7 +121,12 @@ impl GreaseTester {
             }
         }
 
-        builder.add_sni(&self.target.hostname);
+        if let Some(hostname) = crate::utils::network::sni_hostname_for_target(
+            &self.target.hostname,
+            self.sni_hostname.as_deref(),
+        ) {
+            builder.add_sni(&hostname);
+        }
         builder.add_supported_groups(&[0x001d, 0x0017, 0x0018]);
         builder.add_signature_algorithms(&[
             (0x04, 0x03),
@@ -144,7 +149,12 @@ impl GreaseTester {
         let mut builder = ClientHelloBuilder::new(Protocol::TLS12);
 
         builder.add_ciphers(&[0xc02f, 0xc030, 0xc02b, 0xc02c, 0x009e, 0x009f]);
-        builder.add_sni(&self.target.hostname);
+        if let Some(hostname) = crate::utils::network::sni_hostname_for_target(
+            &self.target.hostname,
+            self.sni_hostname.as_deref(),
+        ) {
+            builder.add_sni(&hostname);
+        }
         builder.add_supported_groups(&[0x001d, 0x0017, 0x0018]);
         builder.add_signature_algorithms(&[
             (0x04, 0x03),
@@ -159,11 +169,16 @@ impl GreaseTester {
         builder.add_extended_master_secret();
         builder.add_session_ticket();
 
-        // Add GREASE extensions
+        // Add GREASE extensions per RFC 8701
         for grease_ext in GREASE_EXTENSIONS.iter().take(5) {
             builder.add_extension(crate::protocols::Extension::new(
                 *grease_ext,
-                vec![0x00, 0x01, 0x00],
+                vec![
+                    0x00,
+                    0x01,
+                    (*grease_ext >> 8) as u8,
+                    (*grease_ext & 0xff) as u8,
+                ],
             ));
         }
 
@@ -175,12 +190,23 @@ impl GreaseTester {
         let mut builder = ClientHelloBuilder::new(Protocol::TLS12);
 
         builder.add_ciphers(&[0xc02f, 0xc030, 0xc02b, 0xc02c, 0x009e, 0x009f]);
-        builder.add_sni(&self.target.hostname);
+        if let Some(hostname) = crate::utils::network::sni_hostname_for_target(
+            &self.target.hostname,
+            self.sni_hostname.as_deref(),
+        ) {
+            builder.add_sni(&hostname);
+        }
 
-        // Add valid supported groups interleaved with GREASE values
-        let mut groups = vec![0x001d, 0x0017, 0x0018];
-        // Interleave GREASE groups
-        groups.extend_from_slice(&GREASE_SUPPORTED_GROUPS[..3]);
+        // Add valid supported groups interleaved with GREASE values per RFC 8701
+        let valid_groups = [0x001d, 0x0017, 0x0018];
+        let grease_groups = &GREASE_SUPPORTED_GROUPS[..3];
+        let mut groups = Vec::new();
+        for (i, valid) in valid_groups.iter().enumerate() {
+            groups.push(*valid);
+            if i < grease_groups.len() {
+                groups.push(grease_groups[i]);
+            }
+        }
         builder.add_supported_groups(&groups);
 
         builder.add_signature_algorithms(&[
@@ -212,7 +238,12 @@ impl GreaseTester {
             }
         }
 
-        builder.add_sni(&self.target.hostname);
+        if let Some(hostname) = crate::utils::network::sni_hostname_for_target(
+            &self.target.hostname,
+            self.sni_hostname.as_deref(),
+        ) {
+            builder.add_sni(&hostname);
+        }
 
         // Add supported groups with GREASE
         let mut groups = vec![0x001d, 0x0017];

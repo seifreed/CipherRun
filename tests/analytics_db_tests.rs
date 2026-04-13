@@ -163,6 +163,17 @@ async fn insert_rating(
     score: i32,
     grade: Option<&str>,
 ) {
+    insert_rating_with_rationale(db, scan_id, category, score, grade, None).await;
+}
+
+async fn insert_rating_with_rationale(
+    db: &CipherRunDatabase,
+    scan_id: i64,
+    category: &str,
+    score: i32,
+    grade: Option<&str>,
+    rationale: Option<&str>,
+) {
     let mut qb = db.pool().query_builder();
     let query = qb.insert_query(
         "ratings",
@@ -173,7 +184,7 @@ async fn insert_rating(
         BindValue::String(category.to_string()),
         BindValue::Int32(score),
         BindValue::OptString(grade.map(|g| g.to_string())),
-        BindValue::OptString(None),
+        BindValue::OptString(rationale.map(|value| value.to_string())),
     ];
     db.pool()
         .execute(&query, bindings)
@@ -405,7 +416,89 @@ async fn test_scan_comparator_renders_component_rating_changes_without_overall_c
         .format_comparison(&comparison, "terminal")
         .expect("test assertion should succeed");
     assert!(terminal_output.contains("RATING CHANGES"));
-    assert!(terminal_output.contains("cipher: 95 → 90"));
+    assert!(terminal_output.contains("cipher:"));
+    assert!(terminal_output.contains("Fields: score"));
+    assert!(terminal_output.contains("Before: score=95 grade=A rationale=N/A"));
+    assert!(terminal_output.contains("After:  score=90 grade=A rationale=N/A"));
+}
+
+#[tokio::test]
+async fn test_scan_comparator_marks_rating_grade_and_rationale_changes_as_changed() {
+    let db = setup_db().await;
+    let now = Utc::now();
+
+    let scan1 = insert_scan(
+        &db,
+        "rating-metadata-change.test",
+        443,
+        now - Duration::days(2),
+        Some("A"),
+        Some(90),
+    )
+    .await;
+    let scan2 = insert_scan(
+        &db,
+        "rating-metadata-change.test",
+        443,
+        now - Duration::days(1),
+        Some("A"),
+        Some(90),
+    )
+    .await;
+
+    insert_rating_with_rationale(
+        &db,
+        scan1,
+        "protocol",
+        90,
+        Some("A"),
+        Some("Legacy protocol allowed"),
+    )
+    .await;
+    insert_rating_with_rationale(
+        &db,
+        scan2,
+        "protocol",
+        90,
+        Some("B"),
+        Some("TLS 1.3 required"),
+    )
+    .await;
+
+    let comparator = ScanComparator::new(Arc::clone(&db));
+    let comparison = comparator
+        .compare_scans(scan1, scan2)
+        .await
+        .expect("test assertion should succeed");
+
+    let protocol_rating = comparison
+        .rating_diff
+        .component_diffs
+        .iter()
+        .find(|component| component.category == "protocol")
+        .expect("protocol rating diff should exist");
+    assert!(protocol_rating.changed);
+    assert_eq!(protocol_rating.scan_1_score, Some(90));
+    assert_eq!(protocol_rating.scan_2_score, Some(90));
+    assert_eq!(protocol_rating.scan_1_grade.as_deref(), Some("A"));
+    assert_eq!(protocol_rating.scan_2_grade.as_deref(), Some("B"));
+    assert_eq!(
+        protocol_rating.scan_1_rationale.as_deref(),
+        Some("Legacy protocol allowed")
+    );
+    assert_eq!(
+        protocol_rating.scan_2_rationale.as_deref(),
+        Some("TLS 1.3 required")
+    );
+    assert_eq!(comparison.summary.rating_changes, 1);
+
+    let terminal_output = comparator
+        .format_comparison(&comparison, "terminal")
+        .expect("test assertion should succeed");
+    assert!(terminal_output.contains("protocol:"));
+    assert!(terminal_output.contains("Fields: grade, rationale"));
+    assert!(terminal_output.contains("Before: score=90 grade=A rationale=Legacy protocol allowed"));
+    assert!(terminal_output.contains("After:  score=90 grade=B rationale=TLS 1.3 required"));
 }
 
 #[tokio::test]
@@ -668,6 +761,53 @@ async fn test_scan_comparator_marks_vulnerability_severity_changes_as_changed() 
 }
 
 #[tokio::test]
+async fn test_scan_comparator_does_not_pair_unrelated_same_type_vulnerabilities() {
+    let db = setup_db().await;
+    let now = Utc::now();
+
+    let scan1 = insert_scan(
+        &db,
+        "unrelated-vulns.test",
+        443,
+        now - Duration::days(2),
+        Some("A"),
+        Some(90),
+    )
+    .await;
+    let scan2 = insert_scan(
+        &db,
+        "unrelated-vulns.test",
+        443,
+        now - Duration::days(1),
+        Some("A"),
+        Some(90),
+    )
+    .await;
+
+    insert_vulnerability(&db, scan1, "GenericIssue", "critical").await;
+    insert_vulnerability(&db, scan1, "GenericIssue", "high").await;
+    insert_vulnerability(&db, scan2, "GenericIssue", "low").await;
+    insert_vulnerability(&db, scan2, "GenericIssue", "info").await;
+
+    let comparator = ScanComparator::new(Arc::clone(&db));
+    let comparison = comparator
+        .compare_scans(scan1, scan2)
+        .await
+        .expect("test assertion should succeed");
+
+    assert!(comparison.vulnerability_diff.changed.is_empty());
+    assert_eq!(comparison.vulnerability_diff.new.len(), 2);
+    assert_eq!(comparison.vulnerability_diff.resolved.len(), 2);
+    assert_eq!(comparison.summary.vulnerability_changes, 4);
+
+    let terminal_output = comparator
+        .format_comparison(&comparison, "terminal")
+        .expect("test assertion should succeed");
+    assert!(terminal_output.contains("New Vulnerabilities"));
+    assert!(terminal_output.contains("Resolved Vulnerabilities"));
+}
+
+#[tokio::test]
 async fn test_scan_comparator_marks_cipher_attribute_changes_as_changed() {
     let db = setup_db().await;
     let now = Utc::now();
@@ -916,6 +1056,74 @@ async fn test_change_tracker_marks_vulnerability_severity_changes_as_changed() {
 }
 
 #[tokio::test]
+async fn test_change_tracker_does_not_pair_unrelated_same_type_vulnerabilities() {
+    let db = setup_db().await;
+    let now = Utc::now();
+
+    let scan1 = insert_scan(
+        &db,
+        "change-tracker-unrelated.test",
+        443,
+        now - Duration::days(2),
+        Some("A"),
+        Some(90),
+    )
+    .await;
+    let scan2 = insert_scan(
+        &db,
+        "change-tracker-unrelated.test",
+        443,
+        now - Duration::days(1),
+        Some("A"),
+        Some(90),
+    )
+    .await;
+
+    insert_vulnerability(&db, scan1, "GenericIssue", "critical").await;
+    insert_vulnerability(&db, scan1, "GenericIssue", "high").await;
+    insert_vulnerability(&db, scan2, "GenericIssue", "low").await;
+    insert_vulnerability(&db, scan2, "GenericIssue", "info").await;
+
+    let tracker = ChangeTracker::new(Arc::clone(&db));
+    let changes = tracker
+        .detect_changes_between(scan1, scan2)
+        .await
+        .expect("test assertion should succeed");
+
+    let vulnerability_changes: Vec<_> = changes
+        .iter()
+        .filter(|change| matches!(change.change_type, ChangeType::Vulnerability))
+        .collect();
+    assert_eq!(vulnerability_changes.len(), 4);
+    assert_eq!(
+        vulnerability_changes
+            .iter()
+            .filter(|change| change.description.starts_with("Vulnerability changed"))
+            .count(),
+        0
+    );
+    assert_eq!(
+        vulnerability_changes
+            .iter()
+            .filter(|change| change.description.starts_with("Vulnerability resolved"))
+            .count(),
+        2
+    );
+    assert_eq!(
+        vulnerability_changes
+            .iter()
+            .filter(|change| change.description.starts_with("New vulnerability detected"))
+            .count(),
+        2
+    );
+
+    let report = tracker.generate_change_report(&changes);
+    assert!(report.contains("Vulnerability resolved: GenericIssue"));
+    assert!(report.contains("New vulnerability detected: GenericIssue"));
+    assert!(!report.contains("Vulnerability changed: GenericIssue"));
+}
+
+#[tokio::test]
 async fn test_change_tracker_detects_cipher_protocol_and_attribute_changes() {
     let db = setup_db().await;
     let now = Utc::now();
@@ -980,6 +1188,62 @@ async fn test_change_tracker_detects_cipher_protocol_and_attribute_changes() {
         Some(
             "protocol=TLS 1.2, cipher=CIPHER_TWEAK, key_exchange=N/A, authentication=N/A, encryption=N/A, mac=N/A, bits=N/A, forward_secrecy=false, strength=weak"
         )
+    );
+}
+
+#[tokio::test]
+async fn test_change_tracker_detects_component_rating_changes_without_overall_change() {
+    let db = setup_db().await;
+    let now = Utc::now();
+
+    let scan1 = insert_scan(
+        &db,
+        "rating-components.test",
+        443,
+        now - Duration::days(2),
+        Some("A"),
+        Some(90),
+    )
+    .await;
+    let scan2 = insert_scan(
+        &db,
+        "rating-components.test",
+        443,
+        now - Duration::days(1),
+        Some("A"),
+        Some(90),
+    )
+    .await;
+
+    insert_rating(&db, scan1, "protocol", 90, Some("A")).await;
+    insert_rating(&db, scan2, "protocol", 70, Some("B")).await;
+    insert_rating(&db, scan1, "certificate", 95, Some("A")).await;
+    insert_rating(&db, scan2, "certificate", 95, Some("A")).await;
+
+    let tracker = ChangeTracker::new(Arc::clone(&db));
+    let changes = tracker
+        .detect_changes_between(scan1, scan2)
+        .await
+        .expect("test assertion should succeed");
+
+    let rating_changes: Vec<_> = changes
+        .iter()
+        .filter(|change| matches!(change.change_type, ChangeType::Rating))
+        .collect();
+    assert!(
+        rating_changes
+            .iter()
+            .any(|change| change.description == "Rating changed: protocol")
+    );
+    assert!(
+        rating_changes
+            .iter()
+            .all(|change| change.description != "Overall rating changed")
+    );
+    assert!(
+        rating_changes
+            .iter()
+            .all(|change| change.description != "Rating changed: certificate")
     );
 }
 
@@ -1429,7 +1693,7 @@ async fn test_get_scan_history_since_returns_all_rows_in_window() {
             443,
             Utc::now() - Duration::minutes(i as i64),
             Some("A"),
-            Some((100 - i) as i32),
+            Some(100 - i),
         )
         .await;
     }

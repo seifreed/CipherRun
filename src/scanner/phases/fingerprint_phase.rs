@@ -261,21 +261,21 @@ impl ScanPhase for FingerprintPhase {
         if context.args.should_run_ja3_fingerprint()
             && let Err(e) = self.capture_ja3(context).await
         {
-            eprintln!("  Failed to generate JA3 fingerprint: {}", e);
+            tracing::warn!("Failed to generate JA3 fingerprint: {}", e);
         }
 
         // Capture JA3S if requested
         if context.args.should_run_ja3s_fingerprint()
             && let Err(e) = self.capture_ja3s(context).await
         {
-            eprintln!("  Failed to generate JA3S fingerprint: {}", e);
+            tracing::warn!("Failed to generate JA3S fingerprint: {}", e);
         }
 
         // Capture JARM if requested
         if context.args.should_run_jarm_fingerprint()
             && let Err(e) = self.capture_jarm(context).await
         {
-            eprintln!("  Failed to generate JARM fingerprint: {}", e);
+            tracing::warn!("Failed to generate JARM fingerprint: {}", e);
         }
 
         Ok(())

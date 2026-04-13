@@ -12,4 +12,7 @@ pub struct ScanRequestStarttls {
     pub irc: bool,
     pub xmpp_server: bool,
     pub rdp: bool,
+    pub nntp: bool,
+    pub sieve: bool,
+    pub lmtp: bool,
 }

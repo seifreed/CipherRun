@@ -75,11 +75,11 @@ impl ProtocolTester {
 
         let mut builder = ClientHelloBuilder::new(protocol);
         builder.add_ciphers(&[0xc030, 0xc02f, 0x009e, 0x0035]);
-        let sni_hostname = self
-            .sni_hostname
-            .as_deref()
-            .unwrap_or(&self.target.hostname);
-        let client_hello = builder.build_with_defaults(Some(sni_hostname))?;
+        let sni_hostname = crate::utils::network::sni_hostname_for_target(
+            &self.target.hostname,
+            self.sni_hostname.as_deref(),
+        );
+        let client_hello = builder.build_with_defaults(sni_hostname.as_deref())?;
 
         let response = match timeout(self.read_timeout, async {
             stream.write_all(&client_hello).await?;

@@ -148,10 +148,7 @@ impl ClientSimulator {
         let connector = TlsConnector::from(Arc::new(config));
 
         // Connect with TLS
-        let hostname = self.target.hostname.clone();
-        let domain = rustls_pki_types::ServerName::try_from(hostname.as_str())
-            .map_err(|_| anyhow::anyhow!("Invalid DNS name"))?
-            .to_owned();
+        let domain = crate::utils::network::server_name_for_hostname(&self.target.hostname)?;
 
         let tls_stream = timeout(self.read_timeout, connector.connect(domain, stream)).await??;
 
@@ -234,7 +231,7 @@ impl ClientSimulator {
             let curve = curves.first().map(|c| c.as_str()).unwrap_or("secp256r1");
             Some(format!("ECDH {}", curve))
         } else if suite_name.contains("DHE") {
-            Some("DH 2048".to_string())
+            Some("DHE".to_string())
         } else if suite_name.contains("RSA") {
             Some("RSA".to_string())
         } else {
@@ -257,12 +254,27 @@ impl ClientSimulator {
 
             // Determine key type and size
             let key_info = if key_algo.contains("rsaEncryption") {
-                // RSA key
-                let key_size = cert.public_key().subject_public_key.data.len() * 8;
+                // RSA key — use parsed() for accurate key size (modulus bit length)
+                let key_size = match cert.public_key().parsed() {
+                    Ok(x509_parser::public_key::PublicKey::RSA(rsa)) => rsa.key_size(),
+                    _ => cert.public_key().subject_public_key.data.len() * 8,
+                };
                 format!("RSA {}", key_size)
             } else if key_algo.contains("ecPublicKey") {
-                // ECDSA key
-                "ECDSA P-256".to_string()
+                // ECDSA key — determine curve from parsed key
+                let curve_name = match cert.public_key().parsed() {
+                    Ok(x509_parser::public_key::PublicKey::EC(ec)) => match ec.key_size() {
+                        256 => "P-256",
+                        384 => "P-384",
+                        521 => "P-521",
+                        other => {
+                            tracing::debug!("Unknown EC key size: {}", other);
+                            "unknown curve"
+                        }
+                    },
+                    _ => "unknown curve",
+                };
+                format!("ECDSA {}", curve_name)
             } else {
                 "Unknown".to_string()
             };
@@ -291,10 +303,16 @@ impl ClientSimulator {
 
         // Parse TLS version preference
         let versions = match client.highest_protocol.as_deref() {
-            Some("tls1_3") => vec![&rustls::version::TLS13],
-            Some("tls1_2") => vec![&rustls::version::TLS13, &rustls::version::TLS12],
-            Some("tls1_1") => vec![&rustls::version::TLS13, &rustls::version::TLS12],
-            Some("tls1") | Some("tls1_0") => vec![&rustls::version::TLS13, &rustls::version::TLS12],
+            Some("tls1_3") => vec![&rustls::version::TLS13, &rustls::version::TLS12],
+            Some("tls1_2") => vec![&rustls::version::TLS12],
+            Some("tls1_1") | Some("tls1") | Some("tls1_0") => {
+                // rustls does not support TLS 1.0/1.1; simulate as TLS 1.2
+                tracing::warn!(
+                    "Client {} only supports TLS 1.0/1.1; simulating as TLS 1.2",
+                    client.name
+                );
+                vec![&rustls::version::TLS12]
+            }
             _ => vec![&rustls::version::TLS13, &rustls::version::TLS12], // Default
         };
 

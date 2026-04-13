@@ -1,6 +1,7 @@
 // Formatting methods for ScanComparator
 
 use super::{CipherDetailInfo, ScanComparator, ScanComparison};
+use crate::output::scanner_formatter::truncate_with_ellipsis;
 use crate::utils::network::canonical_target;
 
 fn format_cipher_detail(cipher: &CipherDetailInfo) -> String {
@@ -21,6 +22,22 @@ fn format_cipher_detail(cipher: &CipherDetailInfo) -> String {
         cipher.mac.as_deref().unwrap_or("N/A"),
         bits
     )
+}
+
+fn format_rating_detail(
+    score: Option<i32>,
+    grade: Option<&str>,
+    rationale: Option<&str>,
+) -> String {
+    let score = score
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "N/A".to_string());
+    let grade = grade.unwrap_or("N/A");
+    let rationale = rationale
+        .map(|value| truncate_with_ellipsis(value, 96))
+        .unwrap_or_else(|| "N/A".to_string());
+
+    format!("score={} grade={} rationale={}", score, grade, rationale)
 }
 
 impl ScanComparator {
@@ -100,7 +117,11 @@ impl ScanComparator {
 
         // Rating comparison
         let has_rating_changes = comp.rating_diff.overall_changed
-            || comp.rating_diff.component_diffs.iter().any(|component| component.changed);
+            || comp
+                .rating_diff
+                .component_diffs
+                .iter()
+                .any(|component| component.changed);
         if has_rating_changes {
             output.push_str("RATING CHANGES\n");
             output
@@ -121,17 +142,36 @@ impl ScanComparator {
 
             for component in &comp.rating_diff.component_diffs {
                 if component.changed {
+                    let mut changed_fields = Vec::new();
+                    if component.scan_1_score != component.scan_2_score {
+                        changed_fields.push("score");
+                    }
+                    if component.scan_1_grade != component.scan_2_grade {
+                        changed_fields.push("grade");
+                    }
+                    if component.scan_1_rationale != component.scan_2_rationale {
+                        changed_fields.push("rationale");
+                    }
+
+                    output.push_str(&format!("  {}:\n", component.category));
+                    if !changed_fields.is_empty() {
+                        output.push_str(&format!("    Fields: {}\n", changed_fields.join(", ")));
+                    }
                     output.push_str(&format!(
-                        "  {}: {} → {}\n",
-                        component.category,
-                        component
-                            .scan_1_score
-                            .map(|s| s.to_string())
-                            .unwrap_or_else(|| "N/A".to_string()),
-                        component
-                            .scan_2_score
-                            .map(|s| s.to_string())
-                            .unwrap_or_else(|| "N/A".to_string())
+                        "    Before: {}\n",
+                        format_rating_detail(
+                            component.scan_1_score,
+                            component.scan_1_grade.as_deref(),
+                            component.scan_1_rationale.as_deref()
+                        )
+                    ));
+                    output.push_str(&format!(
+                        "    After:  {}\n",
+                        format_rating_detail(
+                            component.scan_2_score,
+                            component.scan_2_grade.as_deref(),
+                            component.scan_2_rationale.as_deref()
+                        )
                     ));
                 }
             }

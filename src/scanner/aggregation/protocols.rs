@@ -118,9 +118,7 @@ fn consensus_optional_bool(values: impl IntoIterator<Item = Option<bool>>) -> Op
     let mut seen: Option<bool> = None;
 
     for value in values {
-        let Some(value) = value else {
-            return None;
-        };
+        let value = value?;
 
         match seen {
             None => seen = Some(value),

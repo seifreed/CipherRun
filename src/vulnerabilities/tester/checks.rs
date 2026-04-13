@@ -200,7 +200,7 @@ impl VulnerabilityScanner {
     pub async fn test_tls_fallback(&self) -> Result<VulnerabilityResult> {
         use crate::protocols::fallback_scsv::FallbackScsvTester;
 
-        let mut tester = FallbackScsvTester::new(&self.target);
+        let mut tester = FallbackScsvTester::new(&self.target).with_sni(self.sni_hostname.clone());
         let result = tester.test().await?;
 
         let severity = if result.vulnerable {
@@ -248,7 +248,7 @@ impl VulnerabilityScanner {
     pub async fn test_heartbleed(&self) -> Result<VulnerabilityResult> {
         use crate::vulnerabilities::heartbleed::HeartbleedTester;
 
-        let tester = HeartbleedTester::new(&self.target);
+        let tester = HeartbleedTester::new(&self.target).with_sni(self.sni_hostname.clone());
         let result = tester.test().await?;
 
         Ok(VulnerabilityResult {
@@ -446,7 +446,7 @@ impl VulnerabilityScanner {
         Ok(VulnerabilityResult {
             vuln_type: VulnerabilityType::EarlyDataReplay,
             vulnerable: result.vulnerable,
-            inconclusive: false,
+            inconclusive: result.inconclusive,
             details: result.details,
             cve: None,
             cwe: Some("CWE-294".to_string()),
@@ -480,20 +480,20 @@ impl VulnerabilityScanner {
     }
 
     pub async fn test_opossum(&self) -> Result<VulnerabilityResult> {
-        use crate::vulnerabilities::opossum::{OpossumStatus, OpossumTester};
+        use crate::vulnerabilities::opossum::OpossumTester;
 
         let tester = OpossumTester::new(self.target.clone());
         let result = tester.test().await?;
 
         Ok(VulnerabilityResult {
             vuln_type: VulnerabilityType::Opossum,
-            vulnerable: matches!(result.status, OpossumStatus::Vulnerable),
-            inconclusive: matches!(result.status, OpossumStatus::Inconclusive),
+            vulnerable: result.vulnerable,
+            inconclusive: result.inconclusive,
             details: result.details,
             cve: Some("CVE-2022-0778".to_string()),
             cwe: Some("CWE-835".to_string()),
-            severity: if matches!(result.status, OpossumStatus::Vulnerable) {
-                Severity::High
+            severity: if result.inconclusive {
+                Severity::Medium
             } else {
                 Severity::Info
             },
@@ -503,7 +503,7 @@ impl VulnerabilityScanner {
     pub async fn test_grease(&self) -> Result<VulnerabilityResult> {
         use crate::vulnerabilities::grease::GreaseTester;
 
-        let tester = GreaseTester::new(self.target.clone());
+        let tester = GreaseTester::new(self.target.clone()).with_sni(self.sni_hostname.clone());
         let result = tester.test().await?;
 
         let details = if result.details.is_empty() && result.issues.is_empty() {

@@ -14,11 +14,20 @@ use tokio::time::timeout;
 
 pub struct ClientCAsTester {
     target: Target,
+    sni_hostname: Option<String>,
 }
 
 impl ClientCAsTester {
     pub fn new(target: Target) -> Self {
-        Self { target }
+        Self {
+            target,
+            sni_hostname: None,
+        }
+    }
+
+    pub fn with_sni(mut self, sni: Option<String>) -> Self {
+        self.sni_hostname = sni;
+        self
     }
 
     pub async fn enumerate_client_cas(&self) -> Result<ClientCAsResult> {
@@ -47,7 +56,12 @@ impl ClientCAsTester {
             crate::protocols::handshake::ClientHelloBuilder::new(crate::protocols::Protocol::TLS12);
         builder.add_cipher(0xc030);
 
-        if let Ok(client_hello) = builder.build_with_defaults(Some(&self.target.hostname))
+        let sni_hostname = crate::utils::network::sni_hostname_for_target(
+            &self.target.hostname,
+            self.sni_hostname.as_deref(),
+        );
+
+        if let Ok(client_hello) = builder.build_with_defaults(sni_hostname.as_deref())
             && let Ok(response) = timeout(overall_read_timeout, async {
                 stream.write_all(&client_hello).await?;
                 self.read_tls_handshake_bytes(&mut stream, read_timeout)

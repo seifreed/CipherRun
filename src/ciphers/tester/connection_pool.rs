@@ -5,6 +5,13 @@ use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 
+/// A connection pool for cipher testing.
+///
+/// IMPORTANT: Each cipher test requires a fresh TCP connection because the
+/// TLS handshake probe leaves the stream in a post-handshake state. Pooled
+/// connections are NEVER reused across cipher tests — every `acquire()` call
+/// creates a new connection. The pool exists solely to manage connection
+/// creation parameters (address, timeouts, retry config) in one place.
 pub(crate) struct TlsConnectionPool {
     pool: Arc<Mutex<Vec<TcpStream>>>,
     addr: SocketAddr,

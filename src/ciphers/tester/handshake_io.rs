@@ -68,6 +68,9 @@ impl CipherTester {
         }
     }
 
+    /// Test cipher on all resolved IPs — returns true if ANY IP supports it (union semantics).
+    /// This ensures per-IP cipher results are preserved for the aggregation layer,
+    /// which takes the union of cipher suites across all IPs.
     pub(super) async fn try_cipher_handshake_all_ips(
         &self,
         protocol: Protocol,
@@ -79,15 +82,15 @@ impl CipherTester {
         }
 
         for addr in &addrs {
-            if !self
+            if self
                 .try_cipher_handshake_on_ip(protocol, cipher_hexcode, *addr)
                 .await?
             {
-                return Ok(false);
+                return Ok(true);
             }
         }
 
-        Ok(true)
+        Ok(false)
     }
 
     pub(super) async fn perform_cipher_handshake(
@@ -116,7 +119,11 @@ impl CipherTester {
 
         let mut builder = ClientHelloBuilder::new(protocol);
         builder.add_cipher(cipher_hexcode);
-        let client_hello = builder.build_with_defaults(Some(&self.target.hostname))?;
+        let sni_hostname = crate::utils::network::sni_hostname_for_target(
+            &self.target.hostname,
+            self.sni_hostname.as_deref(),
+        );
+        let client_hello = builder.build_with_defaults(sni_hostname.as_deref())?;
 
         match timeout(self.read_timeout, async {
             stream.write_all(&client_hello).await?;

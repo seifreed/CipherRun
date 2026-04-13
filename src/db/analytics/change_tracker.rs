@@ -2,7 +2,9 @@
 // Detects and reports changes between consecutive scans
 
 use crate::db::connection::DatabasePool;
-use crate::db::{CipherRecord, CipherRunDatabase, ProtocolRecord, ScanRecord, VulnerabilityRecord};
+use crate::db::{
+    CipherRecord, CipherRunDatabase, ProtocolRecord, RatingRecord, ScanRecord, VulnerabilityRecord,
+};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
@@ -78,7 +80,7 @@ fn detect_set_differences<T: Eq + Hash + Clone>(
     }
 }
 
-fn vulnerability_sort_key(vuln: &VulnerabilityRecord) -> (String, String, String, String) {
+fn vulnerability_sort_key(vuln: &&VulnerabilityRecord) -> (String, String, String, String) {
     (
         vuln.description.clone().unwrap_or_default(),
         vuln.cve_id.clone().unwrap_or_default(),
@@ -90,20 +92,25 @@ fn vulnerability_sort_key(vuln: &VulnerabilityRecord) -> (String, String, String
 fn vulnerability_match_score(old: &VulnerabilityRecord, new: &VulnerabilityRecord) -> usize {
     let mut score = 0;
 
-    if old.description == new.description {
+    if matches!((&old.description, &new.description), (Some(old_desc), Some(new_desc)) if old_desc == new_desc)
+    {
         score += 8;
     }
-    if old.cve_id == new.cve_id {
+    if matches!((&old.cve_id, &new.cve_id), (Some(old_cve), Some(new_cve)) if old_cve == new_cve) {
         score += 4;
     }
-    if old.affected_component == new.affected_component {
+    if matches!(
+        (&old.affected_component, &new.affected_component),
+        (Some(old_component), Some(new_component)) if old_component == new_component
+    ) {
         score += 2;
-    }
-    if old.severity == new.severity {
-        score += 1;
     }
 
     score
+}
+
+fn allows_ambiguous_zero_score_pairing(old_count: usize, new_count: usize) -> bool {
+    old_count == 1 && new_count == 1
 }
 
 fn vulnerability_record_changed(old: &VulnerabilityRecord, new: &VulnerabilityRecord) -> bool {
@@ -153,7 +160,7 @@ fn compare_change_events(a: &ChangeEvent, b: &ChangeEvent) -> Ordering {
         .then_with(|| a.current_value.cmp(&b.current_value))
 }
 
-fn sort_change_events(events: &mut Vec<ChangeEvent>) {
+fn sort_change_events(events: &mut [ChangeEvent]) {
     events.sort_by(compare_change_events);
 }
 
@@ -653,9 +660,11 @@ impl ChangeTracker {
         for vuln_type in vuln_types {
             let mut old_vulns = grouped1.remove(&vuln_type).unwrap_or_default();
             let mut new_vulns = grouped2.remove(&vuln_type).unwrap_or_default();
+            let allow_zero_score_pairing =
+                allows_ambiguous_zero_score_pairing(old_vulns.len(), new_vulns.len());
 
-            old_vulns.sort_by(|a, b| vulnerability_sort_key(a).cmp(&vulnerability_sort_key(b)));
-            new_vulns.sort_by(|a, b| vulnerability_sort_key(a).cmp(&vulnerability_sort_key(b)));
+            old_vulns.sort_by_key(vulnerability_sort_key);
+            new_vulns.sort_by_key(vulnerability_sort_key);
 
             let mut candidates = Vec::new();
             for (old_index, old_vuln) in old_vulns.iter().enumerate() {
@@ -686,6 +695,9 @@ impl ChangeTracker {
 
             for candidate in candidates {
                 if old_used[candidate.old_index] || new_used[candidate.new_index] {
+                    continue;
+                }
+                if candidate.score == 0 && !allow_zero_score_pairing {
                     continue;
                 }
 
@@ -849,6 +861,43 @@ impl ChangeTracker {
         )
     }
 
+    fn rating_category_rank(category: &str) -> usize {
+        match category {
+            "certificate" => 0,
+            "protocol" => 1,
+            "key_exchange" => 2,
+            "cipher" => 3,
+            _ => 4,
+        }
+    }
+
+    fn rating_detail(rating: &RatingRecord) -> String {
+        let mut details = vec![
+            format!("score={}", rating.score),
+            format!("grade={}", rating.grade.as_deref().unwrap_or("N/A")),
+        ];
+
+        if let Some(rationale) = &rating.rationale {
+            details.push(format!("rationale={}", rationale));
+        }
+
+        details.join(", ")
+    }
+
+    fn rating_change_severity(old: &RatingRecord, new: &RatingRecord) -> ChangeSeverity {
+        match new.score.cmp(&old.score) {
+            std::cmp::Ordering::Less => ChangeSeverity::High,
+            std::cmp::Ordering::Greater => ChangeSeverity::Low,
+            std::cmp::Ordering::Equal => {
+                if old.grade != new.grade || old.rationale != new.rationale {
+                    ChangeSeverity::Medium
+                } else {
+                    ChangeSeverity::Info
+                }
+            }
+        }
+    }
+
     async fn detect_rating_changes(
         &self,
         scan1: &ScanRecord,
@@ -856,6 +905,80 @@ impl ChangeTracker {
         timestamp: DateTime<Utc>,
     ) -> crate::Result<Vec<ChangeEvent>> {
         let mut changes = Vec::new();
+
+        let scan1_id = scan1
+            .scan_id
+            .ok_or_else(|| crate::TlsError::DatabaseError("Scan 1 missing scan_id".to_string()))?;
+        let scan2_id = scan2
+            .scan_id
+            .ok_or_else(|| crate::TlsError::DatabaseError("Scan 2 missing scan_id".to_string()))?;
+
+        let ratings1 = self.get_ratings(scan1_id).await?;
+        let ratings2 = self.get_ratings(scan2_id).await?;
+
+        let ratings1_by_category: std::collections::BTreeMap<String, RatingRecord> = ratings1
+            .into_iter()
+            .map(|rating| (rating.category.clone(), rating))
+            .collect();
+        let ratings2_by_category: std::collections::BTreeMap<String, RatingRecord> = ratings2
+            .into_iter()
+            .map(|rating| (rating.category.clone(), rating))
+            .collect();
+
+        let mut categories: Vec<String> = ratings1_by_category
+            .keys()
+            .cloned()
+            .chain(ratings2_by_category.keys().cloned())
+            .collect();
+        categories.sort_by(|a, b| {
+            Self::rating_category_rank(a)
+                .cmp(&Self::rating_category_rank(b))
+                .then_with(|| a.cmp(b))
+        });
+        categories.dedup();
+
+        for category in categories {
+            match (
+                ratings1_by_category.get(&category),
+                ratings2_by_category.get(&category),
+            ) {
+                (Some(old), Some(new))
+                    if old.score != new.score
+                        || old.grade != new.grade
+                        || old.rationale != new.rationale =>
+                {
+                    changes.push(ChangeEvent {
+                        change_type: ChangeType::Rating,
+                        severity: Self::rating_change_severity(old, new),
+                        description: format!("Rating changed: {}", category),
+                        previous_value: Some(Self::rating_detail(old)),
+                        current_value: Some(Self::rating_detail(new)),
+                        timestamp,
+                    });
+                }
+                (Some(old), None) => {
+                    changes.push(ChangeEvent {
+                        change_type: ChangeType::Rating,
+                        severity: ChangeSeverity::Medium,
+                        description: format!("Rating removed: {}", category),
+                        previous_value: Some(Self::rating_detail(old)),
+                        current_value: None,
+                        timestamp,
+                    });
+                }
+                (None, Some(new)) => {
+                    changes.push(ChangeEvent {
+                        change_type: ChangeType::Rating,
+                        severity: ChangeSeverity::Medium,
+                        description: format!("Rating added: {}", category),
+                        previous_value: None,
+                        current_value: Some(Self::rating_detail(new)),
+                        timestamp,
+                    });
+                }
+                (Some(_), Some(_)) | (None, None) => {}
+            }
+        }
 
         if scan1.overall_grade != scan2.overall_grade || scan1.overall_score != scan2.overall_score
         {
@@ -900,6 +1023,16 @@ impl ChangeTracker {
             "SELECT cipher_id, scan_id, protocol_name, cipher_name, key_exchange, authentication, encryption, mac, bits, forward_secrecy, strength FROM cipher_suites WHERE scan_id = $1",
             "SELECT cipher_id, scan_id, protocol_name, cipher_name, key_exchange, authentication, encryption, mac, bits, forward_secrecy, strength FROM cipher_suites WHERE scan_id = ?",
             "Failed to fetch ciphers",
+            scan_id
+        )?)
+    }
+
+    async fn get_ratings(&self, scan_id: i64) -> crate::Result<Vec<RatingRecord>> {
+        Ok(dual_query_fetch_all!(
+            self,
+            "SELECT rating_id, scan_id, category, score, grade, rationale FROM ratings WHERE scan_id = $1 ORDER BY category ASC, rating_id ASC",
+            "SELECT rating_id, scan_id, category, score, grade, rationale FROM ratings WHERE scan_id = ? ORDER BY category ASC, rating_id ASC",
+            "Failed to fetch ratings",
             scan_id
         )?)
     }

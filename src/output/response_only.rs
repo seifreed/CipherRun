@@ -259,7 +259,10 @@ mod tests {
 
         assert_eq!(
             lines,
-            vec!["example.comparison TLS 1.3", "example.com:443comparison TLS 1.2"]
+            vec![
+                "example.comparison TLS 1.3",
+                "example.com:443comparison TLS 1.2"
+            ]
         );
     }
 }

@@ -336,11 +336,7 @@ impl ProtocolTester {
         };
 
         let sni_host = self.sni_hostname.as_ref().unwrap_or(&self.target.hostname);
-        let domain = rustls_pki_types::ServerName::try_from(sni_host.as_str())
-            .map_err(|_| crate::error::TlsError::ParseError {
-                message: "Invalid DNS name".into(),
-            })?
-            .to_owned();
+        let domain = crate::utils::network::server_name_for_hostname(sni_host)?;
 
         match timeout(self.read_timeout, connector.connect(domain, stream)).await {
             Ok(Ok(_)) => Ok(true),

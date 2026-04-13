@@ -153,9 +153,7 @@ impl VulnerabilityScanner {
             poodle_ssl_result,
             poodle_variants_result,
             rc4_result,
-            des3_result,
             null_result,
-            export_result,
             beast_result,
             renegotiation_result,
             fallback_result,
@@ -178,9 +176,7 @@ impl VulnerabilityScanner {
             self.test_poodle_ssl(),
             self.test_poodle_variants(),
             self.test_rc4_cached(cipher_cache),
-            self.test_3des_cached(cipher_cache),
             self.test_null_ciphers_cached(cipher_cache),
-            self.test_export_ciphers_cached(cipher_cache),
             self.test_beast_cached(cipher_cache),
             self.test_renegotiation_if_enabled(),
             self.test_fallback_if_enabled(),
@@ -226,21 +222,9 @@ impl VulnerabilityScanner {
         collect_result(&mut results, rc4_result, VulnerabilityType::RC4, "RC4");
         collect_result(
             &mut results,
-            des3_result,
-            VulnerabilityType::SWEET32,
-            "3DES",
-        );
-        collect_result(
-            &mut results,
             null_result,
             VulnerabilityType::NullCipher,
             "NULL ciphers",
-        );
-        collect_result(
-            &mut results,
-            export_result,
-            VulnerabilityType::FREAK,
-            "EXPORT ciphers",
         );
         collect_result(
             &mut results,
@@ -359,9 +343,7 @@ impl VulnerabilityScanner {
             poodle_ssl_result,
             poodle_variants_result,
             rc4_result,
-            des3_result,
             null_result,
-            export_result,
             beast_result,
             renegotiation_result,
             fallback_result,
@@ -374,9 +356,7 @@ impl VulnerabilityScanner {
             self.test_poodle_ssl(),
             self.test_poodle_variants(),
             self.test_rc4_cached(cipher_cache),
-            self.test_3des_cached(cipher_cache),
             self.test_null_ciphers_cached(cipher_cache),
-            self.test_export_ciphers_cached(cipher_cache),
             self.test_beast_cached(cipher_cache),
             self.test_renegotiation_if_enabled(),
             self.test_fallback_if_enabled(),
@@ -412,21 +392,9 @@ impl VulnerabilityScanner {
         collect_result(&mut results, rc4_result, VulnerabilityType::RC4, "RC4");
         collect_result(
             &mut results,
-            des3_result,
-            VulnerabilityType::SWEET32,
-            "3DES",
-        );
-        collect_result(
-            &mut results,
             null_result,
             VulnerabilityType::NullCipher,
             "NULL ciphers",
-        );
-        collect_result(
-            &mut results,
-            export_result,
-            VulnerabilityType::FREAK,
-            "EXPORT ciphers",
         );
         collect_result(
             &mut results,
@@ -679,6 +647,7 @@ impl VulnerabilityScanner {
         ))
     }
 
+    #[allow(dead_code)] // Used by tests; removed from scan path since test_sweet32 subsumes it
     pub(super) async fn test_3des_cached(
         &self,
         cipher_cache: &HashMap<Protocol, crate::ciphers::tester::ProtocolCipherSummary>,
@@ -701,6 +670,7 @@ impl VulnerabilityScanner {
         ))
     }
 
+    #[allow(dead_code)] // Used by tests; removed from scan path since test_freak subsumes it
     pub(super) async fn test_export_ciphers_cached(
         &self,
         cipher_cache: &HashMap<Protocol, crate::ciphers::tester::ProtocolCipherSummary>,

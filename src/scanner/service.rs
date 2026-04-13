@@ -407,6 +407,30 @@ mod tests {
         assert_eq!(reconciled.error_type, Some(ErrorType::NetworkError));
     }
 
+    #[test]
+    fn reconcile_probe_status_upgrades_failure_when_only_vulnerability_results_exist() {
+        let scanner = test_scanner();
+        let preflight =
+            ProbeStatus::failure_string("Connection refused".to_string(), ErrorType::NetworkError);
+        let results = ScanResults {
+            vulnerabilities: vec![crate::vulnerabilities::VulnerabilityResult {
+                vuln_type: crate::vulnerabilities::VulnerabilityType::ROBOT,
+                vulnerable: false,
+                inconclusive: false,
+                details: "Not vulnerable".to_string(),
+                cve: None,
+                cwe: None,
+                severity: crate::vulnerabilities::Severity::Info,
+            }],
+            ..Default::default()
+        };
+
+        let reconciled = scanner.reconcile_probe_status(&preflight, &results);
+
+        assert!(reconciled.success);
+        assert_eq!(reconciled.error_type, Some(ErrorType::Warning));
+    }
+
     #[tokio::test]
     async fn initialize_preserves_explicit_cli_port_override() {
         let scanner = Scanner::with_reporter(

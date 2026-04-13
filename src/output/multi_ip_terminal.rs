@@ -15,6 +15,37 @@ use crate::scanner::multi_ip::MultiIpScanReport;
 use crate::utils::network::canonical_target;
 use colored::*;
 use std::fmt;
+use std::net::IpAddr;
+
+fn sorted_ip_entries<V>(map: &std::collections::HashMap<IpAddr, V>) -> Vec<(&IpAddr, &V)> {
+    let mut entries: Vec<_> = map.iter().collect();
+    entries.sort_by_key(|(ip, _)| **ip);
+    entries
+}
+
+fn sorted_ip_list(ips: &[IpAddr]) -> Vec<IpAddr> {
+    let mut ips = ips.to_vec();
+    ips.sort();
+    ips
+}
+
+fn join_sorted_ips(ips: &[IpAddr]) -> String {
+    sorted_ip_list(ips)
+        .into_iter()
+        .map(|ip| ip.to_string())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn join_sorted_strings(values: &[String]) -> String {
+    let mut values = values.to_vec();
+    values.sort();
+    values.join(", ")
+}
+
+fn preview_fingerprint(fingerprint: &str) -> String {
+    fingerprint.chars().take(16).collect()
+}
 
 /// Display implementation for MultiIpScanReport
 impl fmt::Display for MultiIpScanReport {
@@ -231,39 +262,29 @@ impl MultiIpScanReport {
                     f,
                     "  IPs WITH {}: {}",
                     protocol.name(),
-                    ips_with_support
-                        .iter()
-                        .map(|ip| ip.to_string())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                        .green()
+                    join_sorted_ips(ips_with_support).green()
                 )?;
                 writeln!(
                     f,
                     "  IPs WITHOUT {}: {}",
                     protocol.name(),
-                    ips_without_support
-                        .iter()
-                        .map(|ip| ip.to_string())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                        .red()
+                    join_sorted_ips(ips_without_support).red()
                 )?;
             }
             InconsistencyDetails::Certificates { fingerprints } => {
                 writeln!(f, "  Different certificates detected:")?;
-                for (ip, fingerprint) in fingerprints {
+                for (ip, fingerprint) in sorted_ip_entries(fingerprints) {
                     writeln!(
                         f,
                         "    {} -> {}",
                         ip.to_string().yellow(),
-                        fingerprint[..16].to_string().dimmed()
+                        preview_fingerprint(fingerprint).dimmed()
                     )?;
                 }
             }
             InconsistencyDetails::Grades { grades } => {
                 writeln!(f, "  Grade distribution:")?;
-                for (ip, (grade, score)) in grades {
+                for (ip, (grade, score)) in sorted_ip_entries(grades) {
                     let grade_colored = Self::color_grade(grade, *score);
                     writeln!(
                         f,
@@ -287,48 +308,27 @@ impl MultiIpScanReport {
                 ips_without,
             } => {
                 if !ips_with_caching.is_empty() {
-                    writeln!(
-                        f,
-                        "  With Caching: {}",
-                        ips_with_caching
-                            .iter()
-                            .map(|ip| ip.to_string())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )?;
+                    writeln!(f, "  With Caching: {}", join_sorted_ips(ips_with_caching))?;
                 }
                 if !ips_with_tickets.is_empty() {
-                    writeln!(
-                        f,
-                        "  With Tickets: {}",
-                        ips_with_tickets
-                            .iter()
-                            .map(|ip| ip.to_string())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )?;
+                    writeln!(f, "  With Tickets: {}", join_sorted_ips(ips_with_tickets))?;
                 }
                 if !ips_without.is_empty() {
                     writeln!(
                         f,
                         "  Without Resumption: {}",
-                        ips_without
-                            .iter()
-                            .map(|ip| ip.to_string())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                            .red()
+                        join_sorted_ips(ips_without).red()
                     )?;
                 }
             }
             InconsistencyDetails::Alpn { protocols_by_ip } => {
                 writeln!(f, "  ALPN protocols by IP:")?;
-                for (ip, protocols) in protocols_by_ip {
+                for (ip, protocols) in sorted_ip_entries(protocols_by_ip) {
                     writeln!(
                         f,
                         "    {} -> {}",
                         ip.to_string().yellow(),
-                        protocols.join(", ")
+                        join_sorted_strings(protocols)
                     )?;
                 }
             }
@@ -458,20 +458,20 @@ impl MultiIpScanReport {
         Ok(())
     }
 
-    /// Helper to color grade strings
-    fn color_grade(grade: &str, score: u8) -> colored::ColoredString {
+    /// Helper to color grade strings — derives both display text and color from the score
+    fn color_grade(_grade: &str, score: u8) -> colored::ColoredString {
         use crate::rating::Grade;
 
-        // Parse the grade based on score
+        // Always derive the grade from the score for consistency
         let grade_enum = Grade::from_score(score);
-        let grade_str = grade.to_string();
+        let display = format!("{}", grade_enum);
 
         match grade_enum {
-            Grade::APlus | Grade::A => grade_str.green().bold(),
-            Grade::AMinus | Grade::B => grade_str.blue().bold(),
-            Grade::C => grade_str.yellow(),
-            Grade::D | Grade::E | Grade::F => grade_str.red(),
-            Grade::T | Grade::M => grade_str.red().bold(),
+            Grade::APlus | Grade::A => display.green().bold(),
+            Grade::AMinus | Grade::B => display.blue().bold(),
+            Grade::C => display.yellow(),
+            Grade::D | Grade::E | Grade::F => display.red(),
+            Grade::T | Grade::M => display.red().bold(),
         }
     }
 }
@@ -675,5 +675,50 @@ mod tests {
         assert!(!output.contains("INCONSISTENCIES DETECTED"));
         assert!(!output.contains("Recommendations:"));
         assert!(output.contains("Aggregated Results"));
+    }
+
+    #[test]
+    fn test_display_certificate_inconsistency_handles_short_fingerprint() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["192.0.2.14".parse().unwrap()],
+        )
+        .unwrap();
+
+        let ip: IpAddr = "192.0.2.14".parse().unwrap();
+        let mut fingerprints = HashMap::new();
+        fingerprints.insert(ip, "<empty>".to_string());
+
+        let report = MultiIpScanReport {
+            target,
+            per_ip_results: HashMap::new(),
+            total_ips: 1,
+            successful_scans: 1,
+            failed_scans: 0,
+            total_duration_ms: 1,
+            aggregated: AggregatedScanResult {
+                protocols: Vec::new(),
+                ciphers: HashMap::new(),
+                grade: ("A".to_string(), 95),
+                certificate_info: None,
+                certificate_consistent: false,
+                inconsistencies: Vec::new(),
+                alpn_protocols: Vec::new(),
+                session_resumption_caching: Some(false),
+                session_resumption_tickets: Some(false),
+            },
+            inconsistencies: vec![Inconsistency {
+                inconsistency_type: InconsistencyType::Certificates,
+                severity: crate::vulnerabilities::Severity::High,
+                description: "Certificate mismatch".to_string(),
+                ips_affected: vec![ip],
+                details: InconsistencyDetails::Certificates { fingerprints },
+            }],
+        };
+
+        let output = format!("{}", report);
+        assert!(output.contains("Different certificates detected"));
+        assert!(output.contains("<empty>"));
     }
 }

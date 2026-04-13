@@ -62,6 +62,18 @@ pub struct StarttlsArgs {
     /// RDP mode - send RDP preamble before TLS handshake
     #[arg(long = "rdp")]
     pub rdp: bool,
+
+    /// NNTP STARTTLS mode
+    #[arg(long = "nntp")]
+    pub nntp: bool,
+
+    /// SIEVE STARTTLS mode
+    #[arg(long = "sieve")]
+    pub sieve: bool,
+
+    /// LMTP STARTTLS mode
+    #[arg(long = "lmtp")]
+    pub lmtp: bool,
 }
 
 impl StarttlsArgs {

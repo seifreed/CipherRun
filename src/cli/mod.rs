@@ -322,6 +322,9 @@ impl Args {
                 irc: self.starttls.irc,
                 xmpp_server: self.starttls.xmpp_server,
                 rdp: self.starttls.rdp,
+                nntp: self.starttls.nntp,
+                sieve: self.starttls.sieve,
+                lmtp: self.starttls.lmtp,
             },
             ct_logs: crate::application::scan_request::ScanRequestCtLogs {
                 enable: self.ct_logs.enable,

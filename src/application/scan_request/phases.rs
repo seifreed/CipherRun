@@ -48,6 +48,13 @@ impl ScanRequest {
         !self.scan.disable_rating && self.baseline_scan_requested()
     }
 
+    pub fn effective_sni(&self, default_hostname: &str) -> String {
+        self.tls
+            .sni_name
+            .clone()
+            .unwrap_or_else(|| default_hostname.to_string())
+    }
+
     pub fn should_enumerate_all_ciphers(&self) -> bool {
         self.scan.each_cipher
             || self.scan.cipher_per_proto

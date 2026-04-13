@@ -44,8 +44,12 @@ pub fn write_multi_ip_json_file(
 mod tests {
     use super::*;
     use crate::scanner::aggregation::AggregatedScanResult;
-    use crate::scanner::inconsistency::SingleIpScanResult;
+    use crate::scanner::inconsistency::{
+        Inconsistency, InconsistencyDetails, InconsistencyType, SingleIpScanResult,
+    };
+    use crate::scanner::multi_ip::MultiIpScanReport;
     use crate::utils::network::Target;
+    use crate::vulnerabilities::Severity;
     use std::collections::HashMap;
     use std::net::IpAddr;
     use std::path::PathBuf;
@@ -180,6 +184,233 @@ mod tests {
             .expect("test assertion should succeed");
         let contents = std::fs::read_to_string(path).expect("test assertion should succeed");
         assert!(contents.contains("example.com"));
+    }
+
+    #[test]
+    fn test_multi_ip_json_is_stable_for_map_insertion_order() {
+        let report_a = {
+            let target = Target::with_ips(
+                "example.com".to_string(),
+                443,
+                vec!["192.0.2.1".parse().unwrap(), "192.0.2.2".parse().unwrap()],
+            )
+            .expect("test assertion should succeed");
+
+            let ip1: IpAddr = "192.0.2.1".parse().unwrap();
+            let ip2: IpAddr = "192.0.2.2".parse().unwrap();
+            let mut per_ip_results = HashMap::new();
+            per_ip_results.insert(
+                ip1,
+                SingleIpScanResult {
+                    ip: ip1,
+                    scan_result: ScanResults::default(),
+                    scan_duration_ms: 10,
+                    error: None,
+                },
+            );
+            per_ip_results.insert(
+                ip2,
+                SingleIpScanResult {
+                    ip: ip2,
+                    scan_result: ScanResults::default(),
+                    scan_duration_ms: 20,
+                    error: None,
+                },
+            );
+
+            let mut fingerprints = HashMap::new();
+            fingerprints.insert(ip1, "aaa111".to_string());
+            fingerprints.insert(ip2, "bbb222".to_string());
+
+            MultiIpScanReport {
+                target,
+                per_ip_results,
+                total_ips: 2,
+                successful_scans: 2,
+                failed_scans: 0,
+                total_duration_ms: 30,
+                inconsistencies: vec![Inconsistency {
+                    inconsistency_type: InconsistencyType::Certificates,
+                    severity: Severity::High,
+                    description: "certs differ".to_string(),
+                    ips_affected: vec![ip1, ip2],
+                    details: InconsistencyDetails::Certificates { fingerprints },
+                }],
+                aggregated: AggregatedScanResult {
+                    protocols: Vec::new(),
+                    ciphers: HashMap::new(),
+                    grade: ("F".to_string(), 0),
+                    certificate_info: None,
+                    certificate_consistent: true,
+                    inconsistencies: Vec::new(),
+                    alpn_protocols: Vec::new(),
+                    session_resumption_caching: Some(false),
+                    session_resumption_tickets: Some(false),
+                },
+            }
+        };
+
+        let report_b = {
+            let target = Target::with_ips(
+                "example.com".to_string(),
+                443,
+                vec!["192.0.2.1".parse().unwrap(), "192.0.2.2".parse().unwrap()],
+            )
+            .expect("test assertion should succeed");
+
+            let ip1: IpAddr = "192.0.2.1".parse().unwrap();
+            let ip2: IpAddr = "192.0.2.2".parse().unwrap();
+            let mut per_ip_results = HashMap::new();
+            per_ip_results.insert(
+                ip2,
+                SingleIpScanResult {
+                    ip: ip2,
+                    scan_result: ScanResults::default(),
+                    scan_duration_ms: 20,
+                    error: None,
+                },
+            );
+            per_ip_results.insert(
+                ip1,
+                SingleIpScanResult {
+                    ip: ip1,
+                    scan_result: ScanResults::default(),
+                    scan_duration_ms: 10,
+                    error: None,
+                },
+            );
+
+            let mut fingerprints = HashMap::new();
+            fingerprints.insert(ip2, "bbb222".to_string());
+            fingerprints.insert(ip1, "aaa111".to_string());
+
+            MultiIpScanReport {
+                target,
+                per_ip_results,
+                total_ips: 2,
+                successful_scans: 2,
+                failed_scans: 0,
+                total_duration_ms: 30,
+                inconsistencies: vec![Inconsistency {
+                    inconsistency_type: InconsistencyType::Certificates,
+                    severity: Severity::High,
+                    description: "certs differ".to_string(),
+                    ips_affected: vec![ip1, ip2],
+                    details: InconsistencyDetails::Certificates { fingerprints },
+                }],
+                aggregated: AggregatedScanResult {
+                    protocols: Vec::new(),
+                    ciphers: HashMap::new(),
+                    grade: ("F".to_string(), 0),
+                    certificate_info: None,
+                    certificate_consistent: true,
+                    inconsistencies: Vec::new(),
+                    alpn_protocols: Vec::new(),
+                    session_resumption_caching: Some(false),
+                    session_resumption_tickets: Some(false),
+                },
+            }
+        };
+
+        assert_eq!(
+            generate_multi_ip_json(&report_a, true).expect("test assertion should succeed"),
+            generate_multi_ip_json(&report_b, true).expect("test assertion should succeed")
+        );
+    }
+
+    #[test]
+    fn test_multi_ip_json_is_stable_for_displayed_inconsistencies() {
+        let build_report = |reverse: bool| {
+            let target = Target::with_ips(
+                "example.com".to_string(),
+                443,
+                vec!["192.0.2.1".parse().unwrap(), "192.0.2.2".parse().unwrap()],
+            )
+            .expect("test assertion should succeed");
+
+            let ip1: IpAddr = "192.0.2.1".parse().unwrap();
+            let ip2: IpAddr = "192.0.2.2".parse().unwrap();
+            let mut per_ip_results = HashMap::new();
+            if reverse {
+                per_ip_results.insert(
+                    ip2,
+                    SingleIpScanResult {
+                        ip: ip2,
+                        scan_result: ScanResults::default(),
+                        scan_duration_ms: 20,
+                        error: None,
+                    },
+                );
+                per_ip_results.insert(
+                    ip1,
+                    SingleIpScanResult {
+                        ip: ip1,
+                        scan_result: ScanResults::default(),
+                        scan_duration_ms: 10,
+                        error: None,
+                    },
+                );
+            } else {
+                per_ip_results.insert(
+                    ip1,
+                    SingleIpScanResult {
+                        ip: ip1,
+                        scan_result: ScanResults::default(),
+                        scan_duration_ms: 10,
+                        error: None,
+                    },
+                );
+                per_ip_results.insert(
+                    ip2,
+                    SingleIpScanResult {
+                        ip: ip2,
+                        scan_result: ScanResults::default(),
+                        scan_duration_ms: 20,
+                        error: None,
+                    },
+                );
+            }
+
+            let mut fingerprints = HashMap::new();
+            if reverse {
+                fingerprints.insert(ip2, "bbb222".to_string());
+                fingerprints.insert(ip1, "aaa111".to_string());
+            } else {
+                fingerprints.insert(ip1, "aaa111".to_string());
+                fingerprints.insert(ip2, "bbb222".to_string());
+            }
+
+            MultiIpScanReport {
+                target,
+                per_ip_results,
+                total_ips: 2,
+                successful_scans: 2,
+                failed_scans: 0,
+                total_duration_ms: 30,
+                inconsistencies: vec![Inconsistency {
+                    inconsistency_type: InconsistencyType::Certificates,
+                    severity: Severity::High,
+                    description: "certs differ".to_string(),
+                    ips_affected: vec![ip1, ip2],
+                    details: InconsistencyDetails::Certificates { fingerprints },
+                }],
+                aggregated: AggregatedScanResult {
+                    protocols: Vec::new(),
+                    ciphers: HashMap::new(),
+                    grade: ("F".to_string(), 0),
+                    certificate_info: None,
+                    certificate_consistent: true,
+                    inconsistencies: Vec::new(),
+                    alpn_protocols: Vec::new(),
+                    session_resumption_caching: Some(false),
+                    session_resumption_tickets: Some(false),
+                },
+            }
+        };
+
+        let json_a = generate_multi_ip_json(&build_report(false), true).unwrap();
+        let json_b = generate_multi_ip_json(&build_report(true), true).unwrap();
+        assert_eq!(json_a, json_b);
     }
 
     #[test]

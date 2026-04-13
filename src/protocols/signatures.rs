@@ -18,11 +18,20 @@ pub struct SignatureEnumerationResult {
 
 pub struct SignatureTester {
     target: Target,
+    sni_hostname: Option<String>,
 }
 
 impl SignatureTester {
     pub fn new(target: Target) -> Self {
-        Self { target }
+        Self {
+            target,
+            sni_hostname: None,
+        }
+    }
+
+    pub fn with_sni(mut self, sni: Option<String>) -> Self {
+        self.sni_hostname = sni;
+        self
     }
 
     pub async fn enumerate_signatures(&self) -> Result<SignatureEnumerationResult> {
@@ -53,7 +62,11 @@ impl SignatureTester {
             // Add a common cipher
             builder.add_cipher(0xc030); // ECDHE-RSA-AES256-GCM-SHA384
 
-            if let Ok(client_hello) = builder.build_with_defaults(Some(&self.target.hostname)) {
+            let sni_hostname = crate::utils::network::sni_hostname_for_target(
+                &self.target.hostname,
+                self.sni_hostname.as_deref(),
+            );
+            if let Ok(client_hello) = builder.build_with_defaults(sni_hostname.as_deref()) {
                 // Send ClientHello
                 if timeout(read_timeout, async {
                     stream.write_all(&client_hello).await?;

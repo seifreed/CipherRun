@@ -51,10 +51,15 @@ impl ConservativeAggregator {
             } else {
                 None
             };
-            let avg_handshake_time_ms = protocol_summaries
+            let handshake_times: Vec<u64> = protocol_summaries
                 .iter()
                 .filter_map(|summary| summary.avg_handshake_time_ms)
-                .max();
+                .collect();
+            let avg_handshake_time_ms = if handshake_times.is_empty() {
+                None
+            } else {
+                Some(handshake_times.iter().sum::<u64>() / handshake_times.len() as u64)
+            };
 
             let mut summary = ProtocolCipherSummary {
                 protocol,

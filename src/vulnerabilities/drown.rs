@@ -92,12 +92,13 @@ impl DrownTester {
         let sslv2_status = self.test_sslv2().await?;
         let sslv2_supported = sslv2_status.is_vulnerable();
 
-        let sslv2_export = if sslv2_supported {
+        let sslv2_export_status = if sslv2_supported {
             self.test_sslv2_export_ciphers().await?
         } else {
-            false
+            Sslv2Status::NotSupported
         };
 
+        let sslv2_export = sslv2_export_status.is_vulnerable();
         let vulnerable = sslv2_supported;
 
         let details = match sslv2_status {
@@ -128,6 +129,7 @@ impl DrownTester {
             vulnerable,
             sslv2_supported,
             sslv2_export_ciphers: sslv2_export,
+            sslv2_export_status: Some(sslv2_export_status),
             sslv2_status: Some(sslv2_status),
             details,
         })
@@ -254,7 +256,7 @@ impl DrownTester {
     }
 
     /// Test for SSLv2 export ciphers (makes DROWN easier to exploit)
-    async fn test_sslv2_export_ciphers(&self) -> Result<bool> {
+    async fn test_sslv2_export_ciphers(&self) -> Result<Sslv2Status> {
         let addr = self
             .target
             .socket_addrs()
@@ -267,7 +269,7 @@ impl DrownTester {
                 .await
             {
                 Ok(s) => s,
-                Err(_) => return Ok(false),
+                Err(_) => return Ok(Sslv2Status::Inconclusive),
             };
 
         // Send SSLv2 ClientHello with export ciphers only
@@ -277,14 +279,8 @@ impl DrownTester {
         // Read response
         let mut buffer = vec![0u8; 4096];
         match timeout(Duration::from_secs(3), stream.read(&mut buffer)).await {
-            Ok(Ok(n)) if n >= 2 => {
-                // Use same analysis logic
-                Ok(matches!(
-                    Self::analyze_sslv2_response(&buffer[..n])?,
-                    Sslv2Status::Confirmed | Sslv2Status::Probable
-                ))
-            }
-            _ => Ok(false),
+            Ok(Ok(n)) if n >= 2 => Self::analyze_sslv2_response(&buffer[..n]),
+            _ => Ok(Sslv2Status::Inconclusive),
         }
     }
 
@@ -419,11 +415,6 @@ impl DrownTester {
         hello.push(0x00);
         hello.push(0x80);
 
-        // SSL_CK_DES_64_CBC_WITH_MD5 (0x060040)
-        hello.push(0x06);
-        hello.push(0x00);
-        hello.push(0x40);
-
         // Challenge (16 bytes)
         for i in 0..16 {
             hello.push((i * 17) as u8);
@@ -439,6 +430,8 @@ pub struct DrownTestResult {
     pub vulnerable: bool,
     pub sslv2_supported: bool,
     pub sslv2_export_ciphers: bool,
+    /// Detailed SSLv2 export detection status
+    pub sslv2_export_status: Option<Sslv2Status>,
     /// Detailed SSLv2 detection status (None if test was inconclusive)
     pub sslv2_status: Option<Sslv2Status>,
     pub details: String,
@@ -463,6 +456,7 @@ mod tests {
             vulnerable: false,
             sslv2_supported: false,
             sslv2_export_ciphers: false,
+            sslv2_export_status: Some(Sslv2Status::NotSupported),
             sslv2_status: Some(Sslv2Status::NotSupported),
             details: "Not vulnerable".to_string(),
         };
@@ -476,6 +470,7 @@ mod tests {
             vulnerable: true,
             sslv2_supported: true,
             sslv2_export_ciphers: false,
+            sslv2_export_status: None,
             sslv2_status: Some(Sslv2Status::Confirmed),
             details: "Vulnerable".to_string(),
         };
@@ -489,6 +484,7 @@ mod tests {
             vulnerable: true,
             sslv2_supported: true,
             sslv2_export_ciphers: false,
+            sslv2_export_status: None,
             sslv2_status: Some(Sslv2Status::Probable),
             details: "Potentially vulnerable".to_string(),
         };

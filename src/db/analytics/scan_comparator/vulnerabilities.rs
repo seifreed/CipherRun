@@ -16,7 +16,7 @@ struct VulnerabilityPairCandidate<'a> {
     new: &'a VulnerabilityRecord,
 }
 
-fn vulnerability_sort_key(vuln: &VulnerabilityRecord) -> (String, String, String, String) {
+fn vulnerability_sort_key(vuln: &&VulnerabilityRecord) -> (String, String, String, String) {
     (
         vuln.description.clone().unwrap_or_default(),
         vuln.cve_id.clone().unwrap_or_default(),
@@ -28,20 +28,25 @@ fn vulnerability_sort_key(vuln: &VulnerabilityRecord) -> (String, String, String
 fn vulnerability_match_score(old: &VulnerabilityRecord, new: &VulnerabilityRecord) -> usize {
     let mut score = 0;
 
-    if old.description == new.description {
+    if matches!((&old.description, &new.description), (Some(old_desc), Some(new_desc)) if old_desc == new_desc)
+    {
         score += 8;
     }
-    if old.cve_id == new.cve_id {
+    if matches!((&old.cve_id, &new.cve_id), (Some(old_cve), Some(new_cve)) if old_cve == new_cve) {
         score += 4;
     }
-    if old.affected_component == new.affected_component {
+    if matches!(
+        (&old.affected_component, &new.affected_component),
+        (Some(old_component), Some(new_component)) if old_component == new_component
+    ) {
         score += 2;
-    }
-    if old.severity == new.severity {
-        score += 1;
     }
 
     score
+}
+
+fn allows_ambiguous_zero_score_pairing(old_count: usize, new_count: usize) -> bool {
+    old_count == 1 && new_count == 1
 }
 
 fn vulnerability_record_changed(old: &VulnerabilityRecord, new: &VulnerabilityRecord) -> bool {
@@ -97,9 +102,11 @@ impl ScanComparator {
         for vuln_type in vuln_types {
             let mut old_vulns = grouped1.remove(&vuln_type).unwrap_or_default();
             let mut new_vulns = grouped2.remove(&vuln_type).unwrap_or_default();
+            let allow_zero_score_pairing =
+                allows_ambiguous_zero_score_pairing(old_vulns.len(), new_vulns.len());
 
-            old_vulns.sort_by(|a, b| vulnerability_sort_key(a).cmp(&vulnerability_sort_key(b)));
-            new_vulns.sort_by(|a, b| vulnerability_sort_key(a).cmp(&vulnerability_sort_key(b)));
+            old_vulns.sort_by_key(vulnerability_sort_key);
+            new_vulns.sort_by_key(vulnerability_sort_key);
 
             let mut candidates = Vec::new();
             for (old_index, old_vuln) in old_vulns.iter().enumerate() {
@@ -130,6 +137,9 @@ impl ScanComparator {
 
             for candidate in candidates {
                 if old_used[candidate.old_index] || new_used[candidate.new_index] {
+                    continue;
+                }
+                if candidate.score == 0 && !allow_zero_score_pairing {
                     continue;
                 }
 

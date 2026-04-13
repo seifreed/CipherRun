@@ -3,6 +3,7 @@
 pub mod aggregation;
 
 pub use aggregation::merge_vulnerability_result;
+pub use aggregation::merge_vulnerability_result_with_error;
 
 use serde::{Deserialize, Serialize};
 

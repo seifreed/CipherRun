@@ -110,8 +110,6 @@ impl OpossumTester {
             .first()
             .copied()
             .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
-        let hostname = self.target.hostname.clone();
-
         // Connect and try to extract OpenSSL version from server
         let stream =
             match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None)
@@ -130,11 +128,7 @@ impl OpossumTester {
             .with_no_client_auth();
 
         let connector = tokio_rustls::TlsConnector::from(Arc::new(config));
-        let server_name = rustls::pki_types::ServerName::try_from(hostname.clone())
-            .map_err(|_| crate::error::TlsError::ParseError {
-                message: "Invalid DNS name".into(),
-            })?
-            .to_owned();
+        let server_name = crate::utils::network::server_name_for_hostname(&self.target.hostname)?;
 
         // Connect with timeout to detect hanging
         match timeout(
@@ -155,7 +149,6 @@ impl OpossumTester {
     /// Test certificate parsing for malformed EC parameters
     async fn test_certificate_parsing(&self) -> Result<OpossumStatus> {
         let hostname = self.target.hostname.clone();
-
         let stream = match crate::utils::network::connect_with_timeout(
             self.target
                 .socket_addrs()
@@ -183,11 +176,7 @@ impl OpossumTester {
             .with_no_client_auth();
 
         let connector = tokio_rustls::TlsConnector::from(Arc::new(config));
-        let server_name = rustls::pki_types::ServerName::try_from(hostname.clone())
-            .map_err(|_| crate::error::TlsError::ParseError {
-                message: "Invalid DNS name".into(),
-            })?
-            .to_owned();
+        let server_name = crate::utils::network::server_name_for_hostname(&self.target.hostname)?;
 
         // Attempt connection with shorter timeout for parsing issues
         match timeout(
@@ -243,11 +232,7 @@ impl OpossumTester {
             .with_no_client_auth();
 
         let connector = tokio_rustls::TlsConnector::from(Arc::new(config));
-        let server_name = rustls::pki_types::ServerName::try_from(hostname.to_string())
-            .map_err(|_| crate::error::TlsError::ParseError {
-                message: "Invalid DNS name".into(),
-            })?
-            .to_owned();
+        let server_name = crate::utils::network::server_name_for_hostname(hostname)?;
 
         // Control handshake result interpretation:
         // - Ok(Ok(_)): Normal connection completed -> server is reachable and NOT vulnerable
