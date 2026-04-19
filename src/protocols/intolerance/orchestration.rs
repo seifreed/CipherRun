@@ -63,7 +63,7 @@ impl IntoleranceTester {
     }
 
     async fn test_version_intolerance(&self) -> Result<bool> {
-        let normal_hello = self.build_versioned_client_hello(0x0301)?;
+        let normal_hello = self.build_versioned_client_hello(0x0303)?;
         let normal_response = self.send_client_hello(&normal_hello).await;
 
         // Use a future/draft version (0x0305) instead of TLS 1.2 (0x0303)

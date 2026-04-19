@@ -61,7 +61,7 @@ impl ScanPhase for SignaturePhase {
     fn should_run(&self, args: &ScanRequest) -> bool {
         // Run if:
         // - Explicit signature enumeration requested (--show-sigs)
-        args.scan.show_sigs
+        args.scan.ciphers.show_sigs
     }
 
     async fn execute(&self, context: &mut ScanContext) -> Result<()> {
@@ -94,7 +94,7 @@ mod tests {
 
         // Test with --show-sigs flag
         let mut args = ScanRequest::default();
-        args.scan.show_sigs = true;
+        args.scan.ciphers.show_sigs = true;
         assert!(phase.should_run(&args));
 
         // Test without --show-sigs flag
@@ -103,7 +103,7 @@ mod tests {
 
         // Test with --all flag (should not enable signature enumeration)
         let mut args = ScanRequest::default();
-        args.scan.all = true;
+        args.scan.scope.all = true;
         assert!(!phase.should_run(&args));
     }
 

@@ -1,8 +1,10 @@
 // Compliance checkers - Rule evaluation logic
 
+use crate::Result;
 use crate::application::ScanAssessment;
+use crate::certificates::validator::parse_cert_date;
 use crate::compliance::{Rule, Severity, Violation};
-use anyhow::Result;
+use chrono::Utc;
 
 /// Compliance checker for evaluating rules against scan results
 pub struct ComplianceChecker;
@@ -98,22 +100,34 @@ impl ComplianceChecker {
                         evidence: format!("{} ({})", cipher_name, openssl_name),
                         severity: Severity::Critical,
                     });
-                }
+                } else {
+                    let fails_allowed_list = !rule.allowed.is_empty()
+                        && !rule.allowed.contains(cipher_name)
+                        && !rule.allowed.contains(openssl_name);
+                    let fails_allowed_patterns = !rule.allowed_patterns.is_empty()
+                        && !rule.matches_allowed_pattern(cipher_name)
+                        && !rule.matches_allowed_pattern(openssl_name);
 
-                // Check allowed patterns (if specified)
-                if !rule.allowed_patterns.is_empty()
-                    && !rule.matches_allowed_pattern(cipher_name)
-                    && !rule.matches_allowed_pattern(openssl_name)
-                {
-                    violations.push(Violation {
-                        violation_type: "Non-Compliant Cipher Suite".to_string(),
-                        description: format!(
-                            "Cipher does not match allowed patterns for {}",
-                            protocol
-                        ),
-                        evidence: format!("{} ({})", cipher_name, openssl_name),
-                        severity: Severity::High,
-                    });
+                    // Emit one violation only when the cipher is rejected by every configured list.
+                    // A cipher accepted by either allowed or allowed_patterns is compliant.
+                    let should_violate = match (fails_allowed_list, fails_allowed_patterns) {
+                        (true, true) => true,
+                        (true, false) if rule.allowed_patterns.is_empty() => true,
+                        (false, true) if rule.allowed.is_empty() => true,
+                        _ => false,
+                    };
+
+                    if should_violate {
+                        violations.push(Violation {
+                            violation_type: "Non-Compliant Cipher Suite".to_string(),
+                            description: format!(
+                                "Cipher not in allowed list or patterns for {}",
+                                protocol
+                            ),
+                            evidence: format!("{} ({})", cipher_name, openssl_name),
+                            severity: Severity::High,
+                        });
+                    }
                 }
             }
         }
@@ -129,10 +143,10 @@ impl ComplianceChecker {
             && let Some(leaf_cert) = cert_analysis.chain.leaf()
             && let Some(key_size) = leaf_cert.public_key_size
         {
-            let key_algo = &leaf_cert.public_key_algorithm;
+            let key_algo = leaf_cert.public_key_algorithm.to_lowercase();
 
             // Check RSA key size
-            if (key_algo.contains("RSA") || key_algo.contains("rsa"))
+            if key_algo.contains("rsa")
                 && let Some(min_rsa_bits) = rule.min_rsa_bits
                 && (key_size as u32) < min_rsa_bits
             {
@@ -148,7 +162,7 @@ impl ComplianceChecker {
             }
 
             // Check ECC key size
-            if (key_algo.contains("EC") || key_algo.contains("ECDSA"))
+            if (key_algo.starts_with("ec") || key_algo.contains("ecdsa"))
                 && let Some(min_ecc_bits) = rule.min_ecc_bits
                 && (key_size as u32) < min_ecc_bits
             {
@@ -176,26 +190,29 @@ impl ComplianceChecker {
         {
             let sig_algo = leaf_cert.signature_algorithm.to_lowercase();
 
-            // Check if signature algorithm is denied
-            for denied in &rule.denied {
-                if sig_algo.contains(&denied.to_lowercase()) {
-                    violations.push(Violation {
-                        violation_type: "Prohibited Signature Algorithm".to_string(),
-                        description: format!(
-                            "Certificate uses prohibited signature algorithm: {}",
-                            leaf_cert.signature_algorithm
-                        ),
-                        evidence: format!("Signature algorithm: {}", leaf_cert.signature_algorithm),
-                        severity: Severity::High,
-                    });
-                }
+            // Check if signature algorithm is denied (exact match, sig_algo already lowercased)
+            if rule.denied.iter().any(|d| sig_algo == d.to_lowercase()) {
+                violations.push(Violation {
+                    violation_type: "Prohibited Signature Algorithm".to_string(),
+                    description: format!(
+                        "Certificate uses prohibited signature algorithm: {}",
+                        leaf_cert.signature_algorithm
+                    ),
+                    evidence: format!("Signature algorithm: {}", leaf_cert.signature_algorithm),
+                    severity: Severity::High,
+                });
+            }
+
+            // If already denied, skip the allowed-list check to avoid double-counting
+            if !violations.is_empty() {
+                return Ok(violations);
             }
 
             // Check if signature algorithm is in allowed list
             if !rule.allowed.is_empty() {
                 let mut is_allowed = false;
                 for allowed in &rule.allowed {
-                    if sig_algo.contains(&allowed.to_lowercase()) {
+                    if sig_algo == allowed.to_lowercase() {
                         is_allowed = true;
                         break;
                     }
@@ -236,15 +253,12 @@ impl ComplianceChecker {
                     // TLS 1.3 ciphers (e.g. TLS_AES_128_GCM_SHA256) inherently
                     // require forward secrecy by protocol design — no key-exchange
                     // algorithm appears in the name.
-                    let is_tls13_cipher = cipher.iana_name.starts_with("TLS_")
-                        && !cipher.iana_name.contains("_RSA_")
-                        && !cipher.iana_name.contains("_ECDHE_")
-                        && !cipher.iana_name.contains("_DHE_")
-                        && !cipher.iana_name.contains("_ECDH_")
-                        && !cipher.iana_name.contains("_DH_");
+                    let is_tls13_cipher = cipher.protocol.contains("TLS13")
+                        || cipher.protocol.contains("TLSv1.3")
+                        || cipher.protocol.contains("TLS 1.3")
+                        || cipher.iana_name.starts_with("TLS_AES_")
+                        || cipher.iana_name.starts_with("TLS_CHACHA20_");
                     let has_fs = is_tls13_cipher
-                        || cipher.iana_name.starts_with("TLS_ECDHE_")
-                        || cipher.iana_name.starts_with("TLS_DHE_")
                         || cipher.iana_name.contains("_ECDHE_")
                         || cipher.iana_name.contains("_DHE_")
                         || cipher.openssl_name.starts_with("ECDHE-")
@@ -335,41 +349,22 @@ impl ComplianceChecker {
         {
             // Parse expiration date and calculate days remaining
             // This is a simplified check - in production, parse the actual date
-            if let Some(ref countdown) = leaf_cert.expiry_countdown {
-                // Extract days from countdown string.
-                // Format is "expires in 30 days", "expired 5 days ago", etc.
-                // Find the numeric token that precedes "day"/"days".
-                let is_expired = countdown.contains("expired") || countdown.contains("ago");
-                if is_expired {
-                    // Certificate is already expired — always flag regardless of format
+            if let Some(not_after) = parse_cert_date(&leaf_cert.not_after) {
+                let now = Utc::now();
+                let days_until_expiry = (not_after - now).num_days();
+
+                // Only warn about expiring-soon certs; already-expired certs are handled
+                // by check_cert_validation (require_unexpired) to avoid duplicate Critical violations.
+                if days_until_expiry >= 0 && days_until_expiry <= max_days {
                     violations.push(Violation {
-                        violation_type: "Certificate Expired".to_string(),
-                        description: format!("Certificate has already expired ({})", countdown),
+                        violation_type: "Certificate Expiring Soon".to_string(),
+                        description: format!(
+                            "Certificate expires in {} days (threshold: {} days)",
+                            days_until_expiry, max_days
+                        ),
                         evidence: format!("Certificate expires: {}", leaf_cert.not_after),
-                        severity: Severity::Critical,
+                        severity: Severity::Medium,
                     });
-                } else if countdown.contains("day") {
-                    let parts: Vec<&str> = countdown.split_whitespace().collect();
-                    let days_value = parts.windows(2).find_map(|w| {
-                        if w[1].starts_with("day") {
-                            w[0].parse::<i64>().ok()
-                        } else {
-                            None
-                        }
-                    });
-                    if let Some(days) = days_value
-                        && days <= max_days
-                    {
-                        violations.push(Violation {
-                            violation_type: "Certificate Expiring Soon".to_string(),
-                            description: format!(
-                                "Certificate expires in {} days (threshold: {} days)",
-                                days, max_days
-                            ),
-                            evidence: format!("Certificate expires: {}", leaf_cert.not_after),
-                            severity: Severity::Medium,
-                        });
-                    }
                 }
             }
         }

@@ -3,8 +3,10 @@
 use super::headers::{HeaderIssue, SecurityHeaderChecker};
 use crate::Result;
 use crate::utils::network::{Target, canonical_target};
+use crate::utils::network_runtime;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 
 /// HTTP header analysis result
@@ -163,12 +165,21 @@ impl HeaderAnalyzer {
     async fn fetch_headers(&self) -> Result<ResponseMetadata> {
         let url = target_url(&self.target);
 
-        let client = reqwest::Client::builder()
+        let mut client_builder = reqwest::Client::builder()
             .timeout(self.timeout)
             .danger_accept_invalid_certs(true) // Accept any cert since we're checking headers
             .user_agent(&self.user_agent)
-            .redirect(reqwest::redirect::Policy::none()) // Do not follow redirects
-            .build()?;
+            .redirect(reqwest::redirect::Policy::none()); // Do not follow redirects
+
+        if let Some(connect_addr) = resolved_connect_addr(&self.target)? {
+            client_builder = client_builder.resolve(self.target.hostname.as_str(), connect_addr);
+        }
+
+        if let Some(proxy) = network_runtime::current_proxy() {
+            client_builder = client_builder.proxy(reqwest::Proxy::all(proxy.url())?);
+        }
+
+        let client = client_builder.build()?;
 
         let mut request = client.get(&url);
 
@@ -223,15 +234,17 @@ impl HeaderAnalyzer {
         for (name, value) in response.headers().iter() {
             if let Ok(value_str) = value.to_str() {
                 if name.as_str().eq_ignore_ascii_case("set-cookie") {
+                    // RFC 7230 §3.2.2 prohibits combining Set-Cookie values with commas.
                     set_cookie_values.push(value_str.to_string());
+                } else {
+                    headers
+                        .entry(name.to_string())
+                        .and_modify(|existing: &mut String| {
+                            existing.push_str(", ");
+                            existing.push_str(value_str);
+                        })
+                        .or_insert_with(|| value_str.to_string());
                 }
-                headers
-                    .entry(name.to_string())
-                    .and_modify(|existing: &mut String| {
-                        existing.push_str(", ");
-                        existing.push_str(value_str);
-                    })
-                    .or_insert_with(|| value_str.to_string());
             }
         }
 
@@ -281,6 +294,19 @@ fn target_url(target: &Target) -> String {
         "https://{}/",
         canonical_target(&target.hostname, target.port)
     )
+}
+
+fn resolved_connect_addr(target: &Target) -> Result<Option<SocketAddr>> {
+    if target.hostname.parse::<IpAddr>().is_ok() {
+        Ok(None)
+    } else {
+        target
+            .socket_addrs()
+            .into_iter()
+            .next()
+            .map(Some)
+            .ok_or_else(|| anyhow::anyhow!("No resolved IP address available for target").into())
+    }
 }
 
 impl HeaderAnalysisResult {
@@ -470,6 +496,25 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn test_analyze_headers_uses_resolved_ip_for_hostname_target() {
+        let response =
+            "HTTP/1.1 200 OK\r\nServer: ResolvedIP\r\nContent-Length: 0\r\n\r\n".to_string();
+        let port = spawn_https_server(response).await;
+        let target = Target::with_ips(
+            "header-test.invalid".to_string(),
+            port,
+            vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
+        )
+        .unwrap();
+
+        let analyzer = HeaderAnalyzer::new(target);
+        let result = analyzer.analyze().await.unwrap();
+
+        assert_eq!(result.http_status_code, Some(200));
+        assert_eq!(result.server_hostname.as_deref(), Some("ResolvedIP"));
+    }
+
     #[test]
     fn test_target_url_brackets_ipv6() {
         let target = Target::with_ips(
@@ -480,6 +525,33 @@ mod tests {
         .unwrap();
 
         assert_eq!(target_url(&target), "https://[2001:db8::1]:443/");
+    }
+
+    #[test]
+    fn test_resolved_connect_addr_uses_primary_ip_for_hostname_targets() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
+        )
+        .unwrap();
+
+        assert_eq!(
+            resolved_connect_addr(&target).unwrap(),
+            Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 443))
+        );
+    }
+
+    #[test]
+    fn test_resolved_connect_addr_skips_ip_literal_targets() {
+        let target = Target::with_ips(
+            "127.0.0.1".to_string(),
+            443,
+            vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
+        )
+        .unwrap();
+
+        assert_eq!(resolved_connect_addr(&target).unwrap(), None);
     }
 
     #[test]

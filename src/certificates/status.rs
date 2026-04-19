@@ -90,11 +90,12 @@ impl CertificateStatus {
     /// Detect if certificate is expired
     fn detect_expired(validation: &ValidationResult, cert: &CertificateInfo) -> bool {
         // Check validation issues first
-        if validation
-            .issues
-            .iter()
-            .any(|issue| matches!(issue.issue_type, IssueType::Expired))
-        {
+        if validation.issues.iter().any(|issue| {
+            matches!(
+                issue.issue_type,
+                IssueType::Expired | IssueType::InvalidDate
+            )
+        }) {
             return true;
         }
 

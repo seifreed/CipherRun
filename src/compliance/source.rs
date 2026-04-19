@@ -1,22 +1,26 @@
 use crate::application::ComplianceFrameworkSource;
 use crate::compliance::framework::ComplianceFramework;
 use crate::compliance::loader::FrameworkLoader;
-use anyhow::{Context, Result};
 use std::path::Path;
 
 pub struct BuiltinFrameworkSource;
 
 impl BuiltinFrameworkSource {
-    pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<ComplianceFramework> {
-        let content = std::fs::read_to_string(&path).context(format!(
-            "Failed to read framework file: {}",
-            path.as_ref().display()
-        ))?;
-
-        FrameworkLoader::load_from_string(&content).context(format!(
-            "Failed to parse framework YAML: {}",
-            path.as_ref().display()
-        ))
+    pub fn load_from_file<P: AsRef<Path>>(path: P) -> crate::Result<ComplianceFramework> {
+        let content = std::fs::read_to_string(&path).map_err(|e| {
+            crate::error::TlsError::Other(format!(
+                "Failed to read framework file '{}': {}",
+                path.as_ref().display(),
+                e
+            ))
+        })?;
+        FrameworkLoader::load_from_string(&content).map_err(|e| {
+            crate::error::TlsError::Other(format!(
+                "Failed to parse framework YAML '{}': {}",
+                path.as_ref().display(),
+                e
+            ))
+        })
     }
 
     pub fn list_frameworks() -> Vec<(&'static str, &'static str)> {
@@ -70,9 +74,7 @@ impl ComplianceFrameworkSource for BuiltinFrameworkSource {
         let filename = Self::builtin_filename(framework_id)?;
         let data_path = format!("data/compliance/{}", filename);
         if Path::new(&data_path).exists() {
-            return Self::load_from_file(&data_path)
-                .context(format!("loading compliance framework '{}'", framework_id))
-                .map_err(Into::into);
+            return Self::load_from_file(&data_path);
         }
 
         Err(crate::error::TlsError::ConfigError {

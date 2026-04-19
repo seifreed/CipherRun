@@ -52,7 +52,7 @@ async fn insert_history_scan(
 }
 
 #[tokio::test]
-async fn test_history_route_empty() {
+async fn test_history_route_returns_not_found_when_no_history_exists() {
     let state = sqlite_state().await;
 
     let app = Router::new()
@@ -61,7 +61,7 @@ async fn test_history_route_empty() {
 
     assert_eq!(
         common::api::send_status(&app, common::api::request("GET", "/history/example.com")).await,
-        axum::http::StatusCode::OK
+        axum::http::StatusCode::NOT_FOUND
     );
 }
 
@@ -133,11 +133,11 @@ async fn test_history_route_applies_limit_and_desc_order() {
 }
 
 #[tokio::test]
-async fn test_history_route_returns_empty_for_unknown_domain() {
+async fn test_history_route_returns_not_found_for_unknown_domain() {
     let state = sqlite_state().await;
     insert_history_scan(&state, "example.com", 443, 0, "A").await;
 
-    let response = history::get_history(
+    let err = history::get_history(
         axum::extract::State(state),
         axum::extract::Path("missing.example".to_string()),
         axum::extract::Query(history::HistoryQuery {
@@ -146,11 +146,11 @@ async fn test_history_route_returns_empty_for_unknown_domain() {
         }),
     )
     .await
-    .unwrap();
-
-    let json = serde_json::to_value(response.0).unwrap();
-    assert_eq!(json["total_scans"], Value::from(0));
-    assert_eq!(json["scans"], Value::from(Vec::<Value>::new()));
+    .expect_err("unknown domain should return not found");
+    assert!(matches!(
+        err,
+        cipherrun::api::models::error::ApiError::NotFound(_)
+    ));
 }
 
 #[tokio::test]
@@ -177,11 +177,11 @@ async fn test_history_route_applies_limit_with_matching_port_only() {
 }
 
 #[tokio::test]
-async fn test_history_route_unknown_domain_stays_empty_even_with_other_matching_port() {
+async fn test_history_route_unknown_domain_returns_not_found_even_with_other_matching_port() {
     let state = sqlite_state().await;
     insert_history_scan(&state, "example.com", 8443, 0, "A").await;
 
-    let response = history::get_history(
+    let err = history::get_history(
         axum::extract::State(state),
         axum::extract::Path("missing.example".to_string()),
         axum::extract::Query(history::HistoryQuery {
@@ -190,11 +190,11 @@ async fn test_history_route_unknown_domain_stays_empty_even_with_other_matching_
         }),
     )
     .await
-    .unwrap();
-
-    let json = serde_json::to_value(response.0).unwrap();
-    assert_eq!(json["total_scans"], Value::from(0));
-    assert_eq!(json["scans"], Value::from(Vec::<Value>::new()));
+    .expect_err("unknown domain should return not found");
+    assert!(matches!(
+        err,
+        cipherrun::api::models::error::ApiError::NotFound(_)
+    ));
 }
 
 #[tokio::test]
@@ -271,12 +271,12 @@ async fn test_history_route_ignores_other_ports_when_limit_is_high() {
 }
 
 #[tokio::test]
-async fn test_history_route_zero_limit_returns_empty_even_with_matching_domain_and_port() {
+async fn test_history_route_zero_limit_returns_bad_request_even_with_matching_domain_and_port() {
     let state = sqlite_state().await;
     insert_history_scan(&state, "example.com", 443, -5, "B").await;
     insert_history_scan(&state, "example.com", 443, 0, "A").await;
 
-    let response = history::get_history(
+    let err = history::get_history(
         axum::extract::State(state),
         axum::extract::Path("example.com".to_string()),
         axum::extract::Query(history::HistoryQuery {
@@ -285,19 +285,19 @@ async fn test_history_route_zero_limit_returns_empty_even_with_matching_domain_a
         }),
     )
     .await
-    .unwrap();
-
-    let json = serde_json::to_value(response.0).unwrap();
-    assert_eq!(json["total_scans"], Value::from(0));
-    assert_eq!(json["scans"], Value::from(Vec::<Value>::new()));
+    .expect_err("zero limit should fail");
+    assert!(matches!(
+        err,
+        cipherrun::api::models::error::ApiError::BadRequest(_)
+    ));
 }
 
 #[tokio::test]
-async fn test_history_route_zero_limit_stays_empty_for_unknown_domain() {
+async fn test_history_route_zero_limit_returns_bad_request_for_unknown_domain() {
     let state = sqlite_state().await;
     insert_history_scan(&state, "example.com", 443, 0, "A").await;
 
-    let response = history::get_history(
+    let err = history::get_history(
         axum::extract::State(state),
         axum::extract::Path("missing.example".to_string()),
         axum::extract::Query(history::HistoryQuery {
@@ -306,19 +306,19 @@ async fn test_history_route_zero_limit_stays_empty_for_unknown_domain() {
         }),
     )
     .await
-    .unwrap();
-
-    let json = serde_json::to_value(response.0).unwrap();
-    assert_eq!(json["total_scans"], Value::from(0));
-    assert_eq!(json["scans"], Value::from(Vec::<Value>::new()));
+    .expect_err("zero limit should fail");
+    assert!(matches!(
+        err,
+        cipherrun::api::models::error::ApiError::BadRequest(_)
+    ));
 }
 
 #[tokio::test]
-async fn test_history_route_returns_empty_for_known_domain_when_port_does_not_match() {
+async fn test_history_route_returns_not_found_for_known_domain_when_port_does_not_match() {
     let state = sqlite_state().await;
     insert_history_scan(&state, "example.com", 443, 0, "A").await;
 
-    let response = history::get_history(
+    let err = history::get_history(
         axum::extract::State(state),
         axum::extract::Path("example.com".to_string()),
         axum::extract::Query(history::HistoryQuery {
@@ -327,11 +327,11 @@ async fn test_history_route_returns_empty_for_known_domain_when_port_does_not_ma
         }),
     )
     .await
-    .unwrap();
-
-    let json = serde_json::to_value(response.0).unwrap();
-    assert_eq!(json["total_scans"], Value::from(0));
-    assert_eq!(json["scans"], Value::from(Vec::<Value>::new()));
+    .expect_err("missing port history should return not found");
+    assert!(matches!(
+        err,
+        cipherrun::api::models::error::ApiError::NotFound(_)
+    ));
 }
 
 #[tokio::test]
@@ -401,12 +401,13 @@ async fn test_history_route_limit_one_still_ignores_other_domain_newer_scan() {
 }
 
 #[tokio::test]
-async fn test_history_route_limit_zero_stays_empty_even_with_other_domain_and_port_matches() {
+async fn test_history_route_limit_zero_returns_bad_request_even_with_other_domain_and_port_matches()
+{
     let state = sqlite_state().await;
     insert_history_scan(&state, "example.com", 443, -5, "B").await;
     insert_history_scan(&state, "other.example", 443, 0, "A").await;
 
-    let response = history::get_history(
+    let err = history::get_history(
         axum::extract::State(state),
         axum::extract::Path("example.com".to_string()),
         axum::extract::Query(history::HistoryQuery {
@@ -415,11 +416,11 @@ async fn test_history_route_limit_zero_stays_empty_even_with_other_domain_and_po
         }),
     )
     .await
-    .unwrap();
-
-    let json = serde_json::to_value(response.0).unwrap();
-    assert_eq!(json["total_scans"], Value::from(0));
-    assert_eq!(json["scans"], Value::from(Vec::<Value>::new()));
+    .expect_err("zero limit should fail");
+    assert!(matches!(
+        err,
+        cipherrun::api::models::error::ApiError::BadRequest(_)
+    ));
 }
 
 #[tokio::test]
@@ -518,6 +519,46 @@ async fn test_history_route_limit_one_ignores_newer_other_domain_and_other_port_
 }
 
 #[tokio::test]
+async fn test_history_route_rejects_domain_with_embedded_port() {
+    let state = sqlite_state().await;
+
+    let err = history::get_history(
+        axum::extract::State(state),
+        axum::extract::Path("example.com:443".to_string()),
+        axum::extract::Query(history::HistoryQuery {
+            port: 443,
+            limit: 10,
+        }),
+    )
+    .await
+    .expect_err("embedded port in domain path should fail");
+    assert!(matches!(
+        err,
+        cipherrun::api::models::error::ApiError::BadRequest(_)
+    ));
+}
+
+#[tokio::test]
+async fn test_history_route_rejects_invalid_hostname() {
+    let state = sqlite_state().await;
+
+    let err = history::get_history(
+        axum::extract::State(state),
+        axum::extract::Path("example..com".to_string()),
+        axum::extract::Query(history::HistoryQuery {
+            port: 443,
+            limit: 10,
+        }),
+    )
+    .await
+    .expect_err("invalid hostname should fail");
+    assert!(matches!(
+        err,
+        cipherrun::api::models::error::ApiError::BadRequest(_)
+    ));
+}
+
+#[tokio::test]
 async fn test_history_route_limit_two_ignores_other_domain_and_other_port_even_when_both_newer() {
     let state = sqlite_state().await;
     insert_history_scan(&state, "example.com", 443, -30, "D").await;
@@ -593,14 +634,14 @@ async fn test_history_route_limit_one_for_non_default_port_ignores_newer_other_p
 }
 
 #[tokio::test]
-async fn test_history_route_unknown_domain_non_default_port_stays_empty_with_newer_matching_noise()
-{
+async fn test_history_route_unknown_domain_non_default_port_returns_not_found_with_newer_matching_noise()
+ {
     let state = sqlite_state().await;
     insert_history_scan(&state, "example.com", 8443, -10, "B").await;
     insert_history_scan(&state, "example.com", 443, -5, "A").await;
     insert_history_scan(&state, "other.example", 8443, 0, "A+").await;
 
-    let response = history::get_history(
+    let err = history::get_history(
         axum::extract::State(state),
         axum::extract::Path("missing.example".to_string()),
         axum::extract::Query(history::HistoryQuery {
@@ -609,21 +650,21 @@ async fn test_history_route_unknown_domain_non_default_port_stays_empty_with_new
         }),
     )
     .await
-    .unwrap();
-
-    let json = serde_json::to_value(response.0).unwrap();
-    assert_eq!(json["total_scans"], Value::from(0));
-    assert_eq!(json["scans"], Value::from(Vec::<Value>::new()));
+    .expect_err("unknown domain should return not found");
+    assert!(matches!(
+        err,
+        cipherrun::api::models::error::ApiError::NotFound(_)
+    ));
 }
 
 #[tokio::test]
-async fn test_history_route_limit_zero_for_non_default_port_stays_empty_with_matching_noise() {
+async fn test_history_route_limit_zero_for_non_default_port_returns_bad_request() {
     let state = sqlite_state().await;
     insert_history_scan(&state, "example.com", 8443, -10, "B").await;
     insert_history_scan(&state, "example.com", 443, -5, "A").await;
     insert_history_scan(&state, "other.example", 8443, 0, "A+").await;
 
-    let response = history::get_history(
+    let err = history::get_history(
         axum::extract::State(state),
         axum::extract::Path("example.com".to_string()),
         axum::extract::Query(history::HistoryQuery {
@@ -632,11 +673,11 @@ async fn test_history_route_limit_zero_for_non_default_port_stays_empty_with_mat
         }),
     )
     .await
-    .unwrap();
-
-    let json = serde_json::to_value(response.0).unwrap();
-    assert_eq!(json["total_scans"], Value::from(0));
-    assert_eq!(json["scans"], Value::from(Vec::<Value>::new()));
+    .expect_err("zero limit should fail");
+    assert!(matches!(
+        err,
+        cipherrun::api::models::error::ApiError::BadRequest(_)
+    ));
 }
 
 #[tokio::test]
@@ -690,13 +731,13 @@ async fn test_history_route_limit_two_for_default_port_ignores_newer_non_default
 }
 
 #[tokio::test]
-async fn test_history_route_limit_zero_for_default_port_stays_empty_with_newer_noise() {
+async fn test_history_route_limit_zero_for_default_port_returns_bad_request() {
     let state = sqlite_state().await;
     insert_history_scan(&state, "example.com", 443, -10, "B").await;
     insert_history_scan(&state, "example.com", 8443, -5, "A").await;
     insert_history_scan(&state, "other.example", 443, 0, "A+").await;
 
-    let response = history::get_history(
+    let err = history::get_history(
         axum::extract::State(state),
         axum::extract::Path("example.com".to_string()),
         axum::extract::Query(history::HistoryQuery {
@@ -705,20 +746,39 @@ async fn test_history_route_limit_zero_for_default_port_stays_empty_with_newer_n
         }),
     )
     .await
-    .unwrap();
-
-    let json = serde_json::to_value(response.0).unwrap();
-    assert_eq!(json["total_scans"], Value::from(0));
-    assert_eq!(json["scans"], Value::from(Vec::<Value>::new()));
+    .expect_err("zero limit should fail");
+    assert!(matches!(
+        err,
+        cipherrun::api::models::error::ApiError::BadRequest(_)
+    ));
 }
 
 #[tokio::test]
-async fn test_history_route_unknown_default_port_stays_empty_with_same_domain_other_port_noise() {
+async fn test_history_route_port_zero_returns_bad_request() {
+    let state = sqlite_state().await;
+    insert_history_scan(&state, "example.com", 443, 0, "A").await;
+
+    let err = history::get_history(
+        axum::extract::State(state),
+        axum::extract::Path("example.com".to_string()),
+        axum::extract::Query(history::HistoryQuery { port: 0, limit: 10 }),
+    )
+    .await
+    .expect_err("port zero should fail");
+    assert!(matches!(
+        err,
+        cipherrun::api::models::error::ApiError::BadRequest(_)
+    ));
+}
+
+#[tokio::test]
+async fn test_history_route_unknown_default_port_returns_not_found_with_same_domain_other_port_noise()
+ {
     let state = sqlite_state().await;
     insert_history_scan(&state, "example.com", 8443, -2, "A").await;
     insert_history_scan(&state, "other.example", 443, -1, "A+").await;
 
-    let response = history::get_history(
+    let err = history::get_history(
         axum::extract::State(state),
         axum::extract::Path("missing.example".to_string()),
         axum::extract::Query(history::HistoryQuery {
@@ -727,11 +787,11 @@ async fn test_history_route_unknown_default_port_stays_empty_with_same_domain_ot
         }),
     )
     .await
-    .unwrap();
-
-    let json = serde_json::to_value(response.0).unwrap();
-    assert_eq!(json["total_scans"], Value::from(0));
-    assert_eq!(json["scans"], Value::from(Vec::<Value>::new()));
+    .expect_err("unknown domain should return not found");
+    assert!(matches!(
+        err,
+        cipherrun::api::models::error::ApiError::NotFound(_)
+    ));
 }
 
 #[tokio::test]

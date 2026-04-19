@@ -83,7 +83,7 @@ impl LogjamTester {
             .socket_addrs()
             .first()
             .copied()
-            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
+            .ok_or(crate::TlsError::NoSocketAddresses)?;
         let hostname = self.target.hostname.clone();
 
         let stream =
@@ -110,7 +110,7 @@ impl LogjamTester {
                 Ok(ssl_stream) => match ssl_stream.ssl().peer_tmp_key() {
                     Ok(tmp_key) => {
                         if tmp_key.id() == Id::DH {
-                            Ok(tmp_key.bits() <= 1024)
+                            Ok(tmp_key.bits() < 2048)
                         } else {
                             Ok(false)
                         }
@@ -167,7 +167,7 @@ impl LogjamTester {
             .socket_addrs()
             .first()
             .copied()
-            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
+            .ok_or(crate::TlsError::NoSocketAddresses)?;
         let hostname = self.target.hostname.clone();
         let cipher = cipher.to_string();
 
@@ -289,8 +289,8 @@ mod tests {
             while remaining > 0 {
                 if let Ok((socket, _)) = listener.accept().await {
                     drop(socket);
+                    remaining -= 1;
                 }
-                remaining -= 1;
             }
         });
         addr

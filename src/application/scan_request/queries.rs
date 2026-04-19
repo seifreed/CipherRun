@@ -7,12 +7,12 @@ use std::time::Duration;
 impl ScanRequest {
     pub fn protocols_to_test(&self) -> Option<Vec<Protocol>> {
         let flags = [
-            (self.scan.ssl2, Protocol::SSLv2),
-            (self.scan.ssl3, Protocol::SSLv3),
-            (self.scan.tls10, Protocol::TLS10),
-            (self.scan.tls11, Protocol::TLS11),
-            (self.scan.tls12, Protocol::TLS12),
-            (self.scan.tls13, Protocol::TLS13),
+            (self.scan.proto.ssl2, Protocol::SSLv2),
+            (self.scan.proto.ssl3, Protocol::SSLv3),
+            (self.scan.proto.tls10, Protocol::TLS10),
+            (self.scan.proto.tls11, Protocol::TLS11),
+            (self.scan.proto.tls12, Protocol::TLS12),
+            (self.scan.proto.tls13, Protocol::TLS13),
         ];
 
         let selected: Vec<Protocol> = flags
@@ -25,7 +25,7 @@ impl ScanRequest {
             return Some(selected);
         }
 
-        if self.scan.tlsall {
+        if self.scan.proto.tlsall {
             return Some(vec![
                 Protocol::TLS10,
                 Protocol::TLS11,
@@ -84,43 +84,44 @@ impl ScanRequest {
     }
 
     pub fn has_specific_scan_focus(&self) -> bool {
-        self.scan.protocols
-            || self.scan.each_cipher
-            || self.scan.cipher_per_proto
-            || self.scan.categories
-            || self.scan.forward_secrecy
-            || self.scan.server_defaults
-            || self.scan.server_preference
-            || self.scan.headers
-            || self.scan.vulnerabilities
+        self.scan.proto.enabled
+            || self.scan.ciphers.each_cipher
+            || self.scan.ciphers.cipher_per_proto
+            || self.scan.ciphers.categories
+            || self.scan.ciphers.forward_secrecy
+            || self.scan.ciphers.server_defaults
+            || self.scan.ciphers.server_preference
+            || self.scan.prefs.headers
+            || self.scan.vulns.vulnerabilities
+            || self.scan.certs.analyze_certificates
             || self.has_specific_vulnerability_focus()
             || self.has_explicit_fingerprint_focus()
             || self.fingerprint.client_simulation
-            || self.scan.ocsp
-            || self.scan.pre_handshake
-            || self.scan.probe_status
-            || self.scan.show_sigs
-            || self.scan.show_groups
-            || self.scan.show_client_cas
+            || self.scan.certs.ocsp
+            || self.scan.prefs.pre_handshake
+            || self.scan.prefs.probe_status
+            || self.scan.ciphers.show_sigs
+            || self.scan.ciphers.show_groups
+            || self.scan.ciphers.show_client_cas
     }
 
     pub fn has_specific_vulnerability_focus(&self) -> bool {
-        self.scan.heartbleed
-            || self.scan.ccs
-            || self.scan.ticketbleed
-            || self.scan.robot
-            || self.scan.renegotiation
-            || self.scan.crime
-            || self.scan.breach
-            || self.scan.poodle
-            || self.scan.fallback
-            || self.scan.sweet32
-            || self.scan.beast
-            || self.scan.lucky13
-            || self.scan.freak
-            || self.scan.logjam
-            || self.scan.drown
-            || self.scan.early_data
+        self.scan.vulns.heartbleed
+            || self.scan.vulns.ccs
+            || self.scan.vulns.ticketbleed
+            || self.scan.vulns.robot
+            || self.scan.vulns.renegotiation
+            || self.scan.vulns.crime
+            || self.scan.vulns.breach
+            || self.scan.vulns.poodle
+            || self.scan.vulns.fallback
+            || self.scan.vulns.sweet32
+            || self.scan.vulns.beast
+            || self.scan.vulns.lucky13
+            || self.scan.vulns.freak
+            || self.scan.vulns.logjam
+            || self.scan.vulns.drown
+            || self.scan.vulns.early_data
     }
 
     pub(crate) fn has_starttls_negotiation_request(&self) -> bool {

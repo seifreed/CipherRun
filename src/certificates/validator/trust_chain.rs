@@ -50,6 +50,15 @@ impl CertificateValidator {
         }
 
         let find_store_for_subject = |subject: &str| -> Option<(String, Vec<u8>)> {
+            for custom_ca in &self.additional_ca_entries {
+                if custom_ca.subject == subject {
+                    return Some((
+                        format!("Additional CA ({})", custom_ca.source),
+                        custom_ca.der.clone(),
+                    ));
+                }
+            }
+
             for store in ca_stores.all_stores() {
                 for ca_cert in &store.certificates {
                     if ca_cert.subject == subject {
@@ -70,20 +79,27 @@ impl CertificateValidator {
             return (false, None);
         };
 
-        // Check if self-signed first
+        // Check if self-signed first (single-cert chain)
         if chain.certificates.len() == 1 && last_cert.subject == last_cert.issuer {
             // Check if this self-signed cert is a known root CA
             if let Some((store_name, ca_der)) = find_store_for_subject(&last_cert.subject) {
-                // Verify the certificate is actually in our trust store by checking DER
+                // DER equality is a sufficient identity check: if every byte matches the
+                // trust store entry, the certificate IS the stored CA — no separate
+                // signature verification needed for this path.
                 if !last_cert.der_bytes.is_empty() && last_cert.der_bytes == ca_der {
                     return (true, Some(store_name));
                 }
                 // DER bytes unavailable for a known CA subject - add warning but try to verify
                 if last_cert.der_bytes.is_empty() {
-                    // Can't cryptographically verify, but subject matches a known CA
-                    // This is a medium-severity issue, not critical
+                    let strict_mode = !std::env::var("CIPHERUN_ALLOW_WEAK_CERT_VALIDATION")
+                        .map(|v| v == "true" || v == "1")
+                        .unwrap_or(false);
                     issues.push(ValidationIssue {
-                        severity: IssueSeverity::Medium,
+                        severity: if strict_mode {
+                            IssueSeverity::Critical
+                        } else {
+                            IssueSeverity::Medium
+                        },
                         issue_type: IssueType::UntrustedCA,
                         description: format!(
                             "Self-signed certificate subject matches known CA '{}' but DER bytes unavailable for cryptographic verification. \
@@ -91,7 +107,11 @@ impl CertificateValidator {
                             last_cert.subject
                         ),
                     });
-                    return (false, None);
+                    if strict_mode {
+                        return (false, None);
+                    } else {
+                        return (true, Some(store_name));
+                    }
                 }
                 // Subject matches but DER is different - potential spoofing attempt
                 issues.push(ValidationIssue {
@@ -236,7 +256,7 @@ impl CertificateValidator {
                         last_cert.issuer
                     ),
                 });
-                return (false, None);
+                return (true, Some(store_name));
             }
         }
 
@@ -245,14 +265,24 @@ impl CertificateValidator {
         // not that the last cert itself is a trusted CA. A chain where an intermediate
         // CA's subject matches a trusted CA name but is not signed by that CA is invalid.
 
-        issues.push(ValidationIssue {
-            severity: IssueSeverity::High,
-            issue_type: IssueType::UntrustedCA,
-            description: format!(
-                "Issuer not found in trusted CA stores: {}",
-                last_cert.issuer
-            ),
-        });
+        // If the last cert in a multi-cert chain is self-signed but not trusted,
+        // emit SelfSigned rather than UntrustedCA so callers see the true root cause.
+        if last_cert.subject == last_cert.issuer {
+            issues.push(ValidationIssue {
+                severity: IssueSeverity::Critical,
+                issue_type: IssueType::SelfSigned,
+                description: "Chain root is self-signed and not a known trusted CA".to_string(),
+            });
+        } else {
+            issues.push(ValidationIssue {
+                severity: IssueSeverity::High,
+                issue_type: IssueType::UntrustedCA,
+                description: format!(
+                    "Issuer not found in trusted CA stores: {}",
+                    last_cert.issuer
+                ),
+            });
+        }
 
         (false, None)
     }

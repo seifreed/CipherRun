@@ -87,18 +87,27 @@ impl DrownTester {
         Self { target }
     }
 
+    fn detailed_status(status: Sslv2Status) -> Option<Sslv2Status> {
+        match status {
+            Sslv2Status::Inconclusive => None,
+            _ => Some(status),
+        }
+    }
+
     /// Test for DROWN vulnerability
     pub async fn test(&self) -> Result<DrownTestResult> {
         let sslv2_status = self.test_sslv2().await?;
         let sslv2_supported = sslv2_status.is_vulnerable();
 
         let sslv2_export_status = if sslv2_supported {
-            self.test_sslv2_export_ciphers().await?
+            Self::detailed_status(self.test_sslv2_export_ciphers().await?)
         } else {
-            Sslv2Status::NotSupported
+            None
         };
 
-        let sslv2_export = sslv2_export_status.is_vulnerable();
+        let sslv2_export = sslv2_export_status
+            .as_ref()
+            .is_some_and(Sslv2Status::is_vulnerable);
         let vulnerable = sslv2_supported;
 
         let details = match sslv2_status {
@@ -129,8 +138,8 @@ impl DrownTester {
             vulnerable,
             sslv2_supported,
             sslv2_export_ciphers: sslv2_export,
-            sslv2_export_status: Some(sslv2_export_status),
-            sslv2_status: Some(sslv2_status),
+            sslv2_export_status,
+            sslv2_status: Self::detailed_status(sslv2_status),
             details,
         })
     }
@@ -142,7 +151,7 @@ impl DrownTester {
             .socket_addrs()
             .first()
             .copied()
-            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
+            .ok_or(crate::TlsError::NoSocketAddresses)?;
 
         let mut stream =
             match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None)
@@ -229,20 +238,30 @@ impl DrownTester {
                 Ok(Sslv2Status::Probable)
             }
             0x02 | 0x03 => {
-                // ClientMasterKey (0x02) or ClientFinished (0x03) - unusual for server response
+                // ClientMasterKey (0x02) and ClientFinished (0x03) are client→server messages.
+                // Receiving them from a server indicates protocol confusion, not SSLv2 support.
+                // Use Suspicious (is_vulnerable() == false) to avoid false positives.
                 tracing::warn!(
-                    "DROWN: Unexpected SSLv2 message type 0x{:02x} from server - SSLv2 probable",
+                    "DROWN: Client-only SSLv2 message type 0x{:02x} received from server — protocol confusion, not SSLv2 support",
                     msg_type
                 );
-                Ok(Sslv2Status::Probable)
+                Ok(Sslv2Status::Suspicious)
             }
-            0x05..=0x08 => {
-                // ServerVerify (0x05), ServerFinished (0x06), RequestCertificate (0x07), ClientCertificate (0x08)
+            0x05..=0x07 => {
+                // ServerVerify (0x05), ServerFinished (0x06), RequestCertificate (0x07)
                 tracing::debug!(
                     "DROWN: SSLv2 message type 0x{:02x} detected - SSLv2 probable",
                     msg_type
                 );
                 Ok(Sslv2Status::Probable)
+            }
+            0x08 => {
+                // ClientCertificate (0x08) is a client→server message — receiving it from a server
+                // indicates protocol confusion, not SSLv2 support.
+                tracing::warn!(
+                    "DROWN: Client-only SSLv2 message 0x08 (ClientCertificate) received from server — protocol confusion"
+                );
+                Ok(Sslv2Status::Suspicious)
             }
             _ => {
                 // Unknown message type but valid SSLv2 structure
@@ -262,7 +281,7 @@ impl DrownTester {
             .socket_addrs()
             .first()
             .copied()
-            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
+            .ok_or(crate::TlsError::NoSocketAddresses)?;
 
         let mut stream =
             match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None)
@@ -352,7 +371,7 @@ impl DrownTester {
         hello.push(0x00);
         hello.push(0x40);
 
-        // SSL_CK_RC4_128_EXPORT40_WITH_MD5
+        // SSL_CK_RC2_128_CBC_EXPORT40_WITH_MD5 (0x040080)
         hello.push(0x04);
         hello.push(0x00);
         hello.push(0x80);
@@ -368,22 +387,22 @@ impl DrownTester {
     /// Build SSLv2 ClientHello with export ciphers only
     fn build_sslv2_client_hello_export(&self) -> Vec<u8> {
         // SSLv2 ClientHello with export ciphers only
-        // 3 export ciphers * 3 bytes each = 9 bytes
+        // 2 export ciphers * 3 bytes each = 6 bytes
 
-        let cipher_specs_len: u16 = 9; // 3 ciphers * 3 bytes each
+        let cipher_specs_len: u16 = 6; // 2 ciphers * 3 bytes each
         let session_id_len: u16 = 0;
         let challenge_len: u16 = 16;
 
         // Calculate body length
-        let body_len: u16 = 1 + 2 + 2 + 2 + 2 + cipher_specs_len + challenge_len; // = 34 bytes
+        let body_len: u16 = 1 + 2 + 2 + 2 + 2 + cipher_specs_len + challenge_len; // = 31 bytes
 
         let mut hello = Vec::new();
 
         // SSLv2 record header (2-byte format with high bit set)
         let header_byte1 = 0x80 | ((body_len >> 8) & 0x7f) as u8;
         let header_byte2 = (body_len & 0xff) as u8;
-        hello.push(header_byte1); // 0x80 (since body_len = 34 < 128)
-        hello.push(header_byte2); // 0x22 (34 in hex)
+        hello.push(header_byte1); // 0x80 (since body_len = 31 < 128)
+        hello.push(header_byte2); // 0x1f (31 in hex)
 
         // Message type: CLIENT-HELLO
         hello.push(0x01);
@@ -430,7 +449,7 @@ pub struct DrownTestResult {
     pub vulnerable: bool,
     pub sslv2_supported: bool,
     pub sslv2_export_ciphers: bool,
-    /// Detailed SSLv2 export detection status
+    /// Detailed SSLv2 export detection status (None if the probe did not run or was inconclusive)
     pub sslv2_export_status: Option<Sslv2Status>,
     /// Detailed SSLv2 detection status (None if test was inconclusive)
     pub sslv2_status: Option<Sslv2Status>,
@@ -456,12 +475,28 @@ mod tests {
             vulnerable: false,
             sslv2_supported: false,
             sslv2_export_ciphers: false,
-            sslv2_export_status: Some(Sslv2Status::NotSupported),
+            sslv2_export_status: None,
             sslv2_status: Some(Sslv2Status::NotSupported),
             details: "Not vulnerable".to_string(),
         };
         assert!(!result.vulnerable);
         assert!(!result.sslv2_supported);
+    }
+
+    #[test]
+    fn test_detailed_status_omits_inconclusive() {
+        assert_eq!(
+            DrownTester::detailed_status(Sslv2Status::Inconclusive),
+            None
+        );
+        assert_eq!(
+            DrownTester::detailed_status(Sslv2Status::NotSupported),
+            Some(Sslv2Status::NotSupported)
+        );
+        assert_eq!(
+            DrownTester::detailed_status(Sslv2Status::Confirmed),
+            Some(Sslv2Status::Confirmed)
+        );
     }
 
     #[test]
@@ -588,7 +623,25 @@ mod tests {
         assert_eq!(hello[2], 0x01);
         assert_eq!(hello[3], 0x00);
         assert_eq!(hello[4], 0x02);
-        assert_eq!(hello[6], 0x09); // cipher specs length low byte
+        assert_eq!(hello[6], 0x06); // cipher specs length low byte
+    }
+
+    #[test]
+    fn test_sslv2_export_client_hello_cipher_length_matches_payload() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["93.184.216.34".parse().unwrap()],
+        )
+        .unwrap();
+
+        let tester = DrownTester::new(target);
+        let hello = tester.build_sslv2_client_hello_export();
+        let cipher_specs_len = ((hello[5] as usize) << 8) | (hello[6] as usize);
+
+        // Header(2) + fixed ClientHello fields(9) + cipher specs + challenge(16)
+        let actual_cipher_specs_len = hello.len() - 2 - 9 - 16;
+        assert_eq!(cipher_specs_len, actual_cipher_specs_len);
     }
 
     #[test]

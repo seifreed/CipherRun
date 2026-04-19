@@ -53,8 +53,10 @@ impl CipherSuite {
         // For TLS 1.2 and earlier, check for ephemeral key exchange
         self.key_exchange.contains("ECDHE")
             || self.key_exchange.contains("DHE")
+            || self.key_exchange.contains("EDH")
             || self.openssl_name.contains("ECDHE")
             || self.openssl_name.contains("DHE")
+            || self.openssl_name.contains("EDH")
             || self.iana_name.contains("ECDHE")
             || self.iana_name.contains("DHE")
     }
@@ -116,7 +118,7 @@ mod tests {
         cipher.bits = 112;
         assert_eq!(cipher.strength(), CipherStrength::Low);
 
-        cipher.bits = 192;
+        cipher.bits = 128;
         assert_eq!(cipher.strength(), CipherStrength::Medium);
 
         cipher.bits = 256;

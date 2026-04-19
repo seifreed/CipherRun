@@ -68,29 +68,28 @@ impl ChangeDetector {
         let mut changes = Vec::new();
         let now = Utc::now();
 
-        // Check serial number change (indicates renewal or replacement)
-        if previous.serial_number != current.serial_number {
-            // Check if issuer is the same (renewal) or different (issuer change)
-            if previous.issuer == current.issuer {
-                changes.push(ChangeEvent {
-                    change_type: ChangeType::Renewal,
-                    severity: ChangeSeverity::Info,
-                    description: "Certificate renewed with new serial number".to_string(),
-                    previous_value: Some(previous.serial_number.clone()),
-                    current_value: Some(current.serial_number.clone()),
-                    detected_at: now,
-                });
-            } else {
-                changes.push(ChangeEvent {
-                    change_type: ChangeType::IssuerChange,
-                    severity: ChangeSeverity::Critical,
-                    description: "Certificate issuer changed - possible security compromise"
-                        .to_string(),
-                    previous_value: Some(previous.issuer.clone()),
-                    current_value: Some(current.issuer.clone()),
-                    detected_at: now,
-                });
-            }
+        // Check issuer change first — independent of serial, because a rogue CA
+        // could re-issue a cert with the same serial under a different issuer.
+        if previous.issuer != current.issuer {
+            changes.push(ChangeEvent {
+                change_type: ChangeType::IssuerChange,
+                severity: ChangeSeverity::Critical,
+                description: "Certificate issuer changed - possible security compromise"
+                    .to_string(),
+                previous_value: Some(previous.issuer.clone()),
+                current_value: Some(current.issuer.clone()),
+                detected_at: now,
+            });
+        } else if previous.serial_number != current.serial_number {
+            // Same issuer, new serial = routine renewal
+            changes.push(ChangeEvent {
+                change_type: ChangeType::Renewal,
+                severity: ChangeSeverity::Info,
+                description: "Certificate renewed with new serial number".to_string(),
+                previous_value: Some(previous.serial_number.clone()),
+                current_value: Some(current.serial_number.clone()),
+                detected_at: now,
+            });
         }
 
         // Check key size change

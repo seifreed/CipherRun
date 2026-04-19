@@ -1,9 +1,9 @@
-use super::super::{AlpnReport, ScannerFormatter, print_section_header};
+use super::super::{AlpnReport, ScannerFormatter};
 use colored::*;
 
 impl<'a> ScannerFormatter<'a> {
     pub fn display_alpn_results(&self, alpn_report: &AlpnReport) {
-        print_section_header("ALPN Protocol Negotiation:");
+        self.print_section("ALPN Protocol Negotiation:", 50);
 
         if alpn_report.alpn_enabled {
             println!("  {} ALPN is enabled", "Y".green().bold());

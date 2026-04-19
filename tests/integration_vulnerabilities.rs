@@ -108,9 +108,9 @@ async fn test_sweet32_vulnerability_async() {
     let target = create_target("www.github.com", 443).await;
     let scanner = VulnerabilityScanner::new(target);
 
-    let result = scanner.test_3des().await;
+    let result = scanner.test_sweet32().await;
 
-    assert!(result.is_ok(), "3DES/SWEET32 test should complete");
+    assert!(result.is_ok(), "SWEET32 test should complete");
 
     if let Ok(vuln_result) = result {
         println!("SWEET32 test result: {}", vuln_result.details);

@@ -2,6 +2,8 @@
 // Copyright (C) 2025 Marc Rivero (@seifreed)
 // Licensed under GPL-3.0
 
+use crate::security::validate_hostname;
+use crate::utils::{custom_resolvers::CustomResolver, proxy::ProxyConfig};
 use clap::{CommandFactory, FromArgMatches, Parser, parser::ValueSource};
 use std::path::PathBuf;
 
@@ -31,7 +33,7 @@ pub use database_args::DatabaseArgs;
 pub use fingerprint_args::FingerprintArgs;
 pub use http_args::HttpArgs;
 pub use monitoring_args::MonitoringArgs;
-pub use network_args::NetworkArgs;
+pub use network_args::{DEFAULT_MAX_PARALLEL, NetworkArgs};
 pub use output_args::OutputArgs;
 pub use scan_args::ScanArgs;
 pub use starttls_args::StarttlsArgs;
@@ -204,6 +206,101 @@ impl Args {
     ///
     /// Returns an error if conflicting flags are used together
     pub fn validate(&self) -> anyhow::Result<()> {
+        self.compliance.validate().map_err(anyhow::Error::from)?;
+
+        if let Some(mx_domain) = &self.mx_domain {
+            validate_hostname(mx_domain).map_err(anyhow::Error::from)?;
+        }
+
+        if self.mx_domain.is_some() && self.output.json_multi_ip.is_some() {
+            anyhow::bail!(
+                "--json-multi-ip is only supported for multi-IP single-target scans, not --mx"
+            );
+        }
+
+        if self.network.scan_all_ips {
+            if self.target.is_none() || self.input_file.is_some() || self.mx_domain.is_some() {
+                anyhow::bail!("--scan-all-ips requires a single target scan");
+            }
+            if self.ip.is_some() {
+                anyhow::bail!("Cannot use --scan-all-ips with --ip");
+            }
+            if self.network.test_all_ips {
+                anyhow::bail!("Cannot use --scan-all-ips with --test-all-ips");
+            }
+            if self.network.first_ip_only {
+                anyhow::bail!("Cannot use --scan-all-ips with --first-ip-only");
+            }
+        }
+
+        if self.target.is_some()
+            && self.input_file.is_none()
+            && self.mx_domain.is_none()
+            && (self.network.parallel
+                || (self.network.max_parallel != DEFAULT_MAX_PARALLEL
+                    && self.network.max_parallel != 0))
+        {
+            anyhow::bail!("--parallel and --max-parallel are only supported with --file or --mx");
+        }
+
+        if let Some(xmpphost) = &self.starttls.xmpphost {
+            validate_hostname(xmpphost).map_err(anyhow::Error::from)?;
+
+            if !matches!(
+                self.starttls_protocol(),
+                Some(crate::starttls::StarttlsProtocol::XMPP)
+            ) {
+                anyhow::bail!("--xmpphost requires an XMPP STARTTLS mode");
+            }
+        }
+
+        if let Some(proxy) = &self.network.proxy {
+            ProxyConfig::parse(proxy)?;
+        }
+
+        if !self.network.resolvers.is_empty() {
+            CustomResolver::new(self.network.resolvers.clone())?;
+        }
+
+        if self.output.append && self.output.overwrite {
+            anyhow::bail!("Cannot combine --append with --overwrite");
+        }
+
+        if let Some(mode) = self.output.warnings.as_deref() {
+            match mode.trim().to_ascii_lowercase().as_str() {
+                "default" | "off" | "batch" => {}
+                other => {
+                    anyhow::bail!(
+                        "Invalid warning mode '{}'. Supported values: default, off, batch",
+                        other
+                    );
+                }
+            }
+        }
+
+        let effective_color = if self.output.no_colour || self.output.no_color {
+            0
+        } else {
+            self.output.color
+        };
+
+        if effective_color > 3 {
+            anyhow::bail!(
+                "Invalid color mode '{}'. Supported values: 0, 1, 2, 3",
+                self.output.color
+            );
+        }
+
+        if self.input_file.is_some()
+            && (self.output.csv.is_some()
+                || self.output.html.is_some()
+                || self.output.xml.is_some())
+        {
+            anyhow::bail!(
+                "Mass scan only supports JSON collection export (--json or --output-all); CSV/HTML/XML are not available with --file"
+            );
+        }
+
         self.to_scan_request()
             .validate_common()
             .map_err(anyhow::Error::from)
@@ -215,59 +312,74 @@ impl Args {
             port: self.port,
             ip: self.ip.clone(),
             scan: crate::application::scan_request::ScanRequestScan {
-                protocols: self.scan.protocols,
-                each_cipher: self.scan.each_cipher,
-                cipher_per_proto: self.scan.cipher_per_proto,
-                categories: self.scan.categories,
-                forward_secrecy: self.scan.forward_secrecy,
-                server_defaults: self.scan.server_defaults,
-                server_preference: self.scan.server_preference,
-                vulnerabilities: self.scan.vulnerabilities,
-                heartbleed: self.scan.heartbleed,
-                ccs: self.scan.ccs,
-                ticketbleed: self.scan.ticketbleed,
-                robot: self.scan.robot,
-                renegotiation: self.scan.renegotiation,
-                crime: self.scan.crime,
-                breach: self.scan.breach,
-                poodle: self.scan.poodle,
-                fallback: self.scan.fallback,
-                sweet32: self.scan.sweet32,
-                beast: self.scan.beast,
-                lucky13: self.scan.lucky13,
-                freak: self.scan.freak,
-                logjam: self.scan.logjam,
-                drown: self.scan.drown,
-                early_data: self.scan.early_data,
-                headers: self.scan.headers,
-                all: self.scan.all,
-                full: self.scan.full,
-                no_ciphersuites: self.scan.no_ciphersuites,
-                no_fallback: self.scan.no_fallback,
-                no_compression: self.scan.no_compression,
-                no_heartbleed: self.scan.no_heartbleed,
-                no_renegotiation: self.scan.no_renegotiation,
-                no_check_certificate: self.scan.no_check_certificate,
-                disable_rating: self.scan.disable_rating,
-                fast: self.scan.fast,
-                ocsp: self.scan.ocsp,
-                pre_handshake: self.scan.pre_handshake,
-                probe_status: self.scan.probe_status,
-                show_sigs: self.scan.show_sigs,
-                show_groups: self.scan.show_groups,
-                no_groups: self.scan.no_groups,
-                show_client_cas: self.scan.show_client_cas,
-                ssl2: self.scan.ssl2,
-                ssl3: self.scan.ssl3,
-                tls10: self.scan.tls10,
-                tls11: self.scan.tls11,
-                tls12: self.scan.tls12,
-                tls13: self.scan.tls13,
-                tlsall: self.scan.tlsall,
+                scope: crate::application::scan_request::ScanRequestScope {
+                    all: self.scan.all,
+                    full: self.scan.full,
+                },
+                proto: crate::application::scan_request::ScanRequestProto {
+                    enabled: self.scan.protocols,
+                    ssl2: self.scan.ssl2,
+                    ssl3: self.scan.ssl3,
+                    tls10: self.scan.tls10,
+                    tls11: self.scan.tls11,
+                    tls12: self.scan.tls12,
+                    tls13: self.scan.tls13,
+                    tlsall: self.scan.tlsall,
+                },
+                ciphers: crate::application::scan_request::ScanRequestCiphers {
+                    each_cipher: self.scan.each_cipher,
+                    cipher_per_proto: self.scan.cipher_per_proto,
+                    categories: self.scan.categories,
+                    forward_secrecy: self.scan.forward_secrecy,
+                    server_defaults: self.scan.server_defaults,
+                    server_preference: self.scan.server_preference,
+                    no_ciphersuites: self.scan.no_ciphersuites,
+                    show_groups: self.scan.show_groups,
+                    no_groups: self.scan.no_groups,
+                    show_sigs: self.scan.show_sigs,
+                    show_client_cas: self.scan.show_client_cas,
+                },
+                vulns: crate::application::scan_request::ScanRequestVulns {
+                    vulnerabilities: self.scan.vulnerabilities,
+                    heartbleed: self.scan.heartbleed,
+                    no_heartbleed: self.scan.no_heartbleed,
+                    ccs: self.scan.ccs,
+                    ticketbleed: self.scan.ticketbleed,
+                    robot: self.scan.robot,
+                    renegotiation: self.scan.renegotiation,
+                    no_renegotiation: self.scan.no_renegotiation,
+                    crime: self.scan.crime,
+                    no_compression: self.scan.no_compression,
+                    breach: self.scan.breach,
+                    poodle: self.scan.poodle,
+                    fallback: self.scan.fallback,
+                    no_fallback: self.scan.no_fallback,
+                    sweet32: self.scan.sweet32,
+                    beast: self.scan.beast,
+                    lucky13: self.scan.lucky13,
+                    freak: self.scan.freak,
+                    logjam: self.scan.logjam,
+                    drown: self.scan.drown,
+                    early_data: self.scan.early_data,
+                },
+                certs: crate::application::scan_request::ScanRequestCerts {
+                    analyze_certificates: false,
+                    ocsp: self.scan.ocsp,
+                    no_check_certificate: self.scan.no_check_certificate,
+                },
+                prefs: crate::application::scan_request::ScanRequestPrefs {
+                    fast: self.scan.fast,
+                    disable_rating: self.scan.disable_rating,
+                    pre_handshake: self.scan.pre_handshake,
+                    probe_status: self.scan.probe_status,
+                    headers: self.scan.headers,
+                },
             },
             network: crate::application::scan_request::ScanRequestNetwork {
                 ipv4_only: self.network.ipv4_only,
                 ipv6_only: self.network.ipv6_only,
+                proxy: self.network.proxy.clone(),
+                resolvers: self.network.resolvers.clone(),
                 test_all_ips: self.network.test_all_ips,
                 first_ip_only: self.network.first_ip_only,
                 max_concurrent_ciphers: self.network.max_concurrent_ciphers,
@@ -282,10 +394,17 @@ impl Args {
                 no_retry: self.connection.no_retry,
             },
             tls: crate::application::scan_request::ScanRequestTls {
+                openssl_path: self.tls.openssl_path.clone(),
+                openssl_timeout: self.tls.openssl_timeout,
+                ssl_native: self.tls.ssl_native,
                 bugs: self.tls.bugs,
+                local: self.tls.local,
                 phone_out: self.tls.phone_out,
                 hardfail: self.tls.hardfail,
+                add_ca: self.tls.add_ca.clone(),
                 sni_name: self.tls.sni_name.clone(),
+                random_sni: self.tls.random_sni,
+                reverse_ptr_sni: self.tls.reverse_ptr_sni,
                 mtls_cert: self.tls.mtls_cert.clone(),
                 client_key: self.tls.client_key.clone(),
                 client_key_password: self.tls.client_key_password.clone(),
@@ -311,6 +430,7 @@ impl Args {
             },
             starttls: crate::application::scan_request::ScanRequestStarttls {
                 protocol: self.starttls.protocol.clone(),
+                xmpphost: self.starttls.xmpphost.clone(),
                 smtp: self.starttls.smtp,
                 imap: self.starttls.imap,
                 pop3: self.starttls.pop3,
@@ -433,6 +553,119 @@ mod tests {
             ..Default::default()
         };
         assert!(args.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_scan_all_ips_requires_single_target() {
+        let args = Args {
+            network: NetworkArgs {
+                scan_all_ips: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(args.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_scan_all_ips_conflicts_with_test_all_ips() {
+        let args = Args {
+            target: Some("example.com:443".to_string()),
+            network: NetworkArgs {
+                scan_all_ips: true,
+                test_all_ips: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(args.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_xmpphost_requires_xmpp_starttls() {
+        let args = Args {
+            target: Some("example.com:5222".to_string()),
+            starttls: StarttlsArgs {
+                xmpphost: Some("chat.example.com".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(args.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_invalid_mx_domain() {
+        let args = Args {
+            mx_domain: Some("example..com".to_string()),
+            ..Default::default()
+        };
+        assert!(args.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_parallel_requires_mass_or_mx_mode() {
+        let args = Args {
+            target: Some("example.com:443".to_string()),
+            network: NetworkArgs {
+                parallel: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(args.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_custom_max_parallel_requires_mass_or_mx_mode() {
+        let args = Args {
+            target: Some("example.com:443".to_string()),
+            network: NetworkArgs {
+                max_parallel: DEFAULT_MAX_PARALLEL + 1,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(args.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_mx_rejects_json_multi_ip() {
+        let args = Args {
+            mx_domain: Some("example.com".to_string()),
+            output: OutputArgs {
+                json_multi_ip: Some(std::path::PathBuf::from("multi-ip.json")),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(args.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_rejects_invalid_color_mode() {
+        let args = Args::parse_with_sources_from(["cipherrun", "example.com:443", "--color", "4"])
+            .expect("parse should succeed");
+
+        assert!(args.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_accepts_supported_color_modes() {
+        for color in 0..=3 {
+            let args = Args::parse_with_sources_from([
+                "cipherrun",
+                "example.com:443",
+                "--color",
+                &color.to_string(),
+            ])
+            .expect("parse should succeed");
+
+            assert!(
+                args.validate().is_ok(),
+                "color mode {color} should be valid"
+            );
+        }
     }
 
     #[test]
@@ -591,14 +824,14 @@ mod tests {
 
         let request = args.to_scan_request();
 
-        assert!(request.scan.cipher_per_proto);
-        assert!(request.scan.server_defaults);
-        assert!(request.scan.heartbleed);
-        assert!(request.scan.disable_rating);
-        assert!(request.scan.fast);
-        assert!(request.scan.ocsp);
-        assert!(request.scan.pre_handshake);
-        assert!(request.scan.probe_status);
+        assert!(request.scan.ciphers.cipher_per_proto);
+        assert!(request.scan.ciphers.server_defaults);
+        assert!(request.scan.vulns.heartbleed);
+        assert!(request.scan.prefs.disable_rating);
+        assert!(request.scan.prefs.fast);
+        assert!(request.scan.certs.ocsp);
+        assert!(request.scan.prefs.pre_handshake);
+        assert!(request.scan.prefs.probe_status);
     }
 
     #[test]
@@ -689,5 +922,136 @@ mod tests {
 
         assert!(!args.run_default_suite());
         assert!(args.to_scan_request().should_run_client_simulation_phase());
+    }
+
+    #[test]
+    fn test_validate_rejects_invalid_compliance_format() {
+        let args = Args {
+            compliance: ComplianceArgs {
+                format: "jsno".to_string(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        assert!(args.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_rejects_invalid_policy_format() {
+        let args = Args {
+            compliance: ComplianceArgs {
+                policy_format: "cvs".to_string(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        assert!(args.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_rejects_invalid_compliance_severity() {
+        let args = Args {
+            compliance: ComplianceArgs {
+                severity: Some("info".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        assert!(args.validate().is_err());
+    }
+
+    #[test]
+    fn test_to_scan_request_preserves_proxy_and_resolvers() {
+        let args = Args {
+            network: NetworkArgs {
+                proxy: Some("proxy.example.com:8080".to_string()),
+                resolvers: vec!["8.8.8.8".to_string(), "1.1.1.1".to_string()],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let request = args.to_scan_request();
+
+        assert_eq!(
+            request.network.proxy.as_deref(),
+            Some("proxy.example.com:8080")
+        );
+        assert_eq!(
+            request.network.resolvers,
+            vec!["8.8.8.8".to_string(), "1.1.1.1".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_validate_rejects_invalid_proxy() {
+        let args = Args {
+            network: NetworkArgs {
+                proxy: Some("proxy.example.com:notaport".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        assert!(args.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_rejects_append_and_overwrite() {
+        let args = Args {
+            output: OutputArgs {
+                append: true,
+                overwrite: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        assert!(args.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_rejects_mass_scan_csv_export() {
+        let args = Args {
+            input_file: Some(std::path::PathBuf::from("targets.txt")),
+            output: OutputArgs {
+                csv: Some(std::path::PathBuf::from("report.csv")),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        assert!(args.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_rejects_mass_scan_html_export() {
+        let args = Args {
+            input_file: Some(std::path::PathBuf::from("targets.txt")),
+            output: OutputArgs {
+                html: Some(std::path::PathBuf::from("report.html")),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        assert!(args.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_rejects_mass_scan_xml_export() {
+        let args = Args {
+            input_file: Some(std::path::PathBuf::from("targets.txt")),
+            output: OutputArgs {
+                xml: Some(std::path::PathBuf::from("report.xml")),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        assert!(args.validate().is_err());
     }
 }

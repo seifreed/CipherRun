@@ -647,18 +647,6 @@ impl VulnerabilityScanner {
         ))
     }
 
-    #[allow(dead_code)] // Used by tests; removed from scan path since test_sweet32 subsumes it
-    pub(super) async fn test_3des_cached(
-        &self,
-        cipher_cache: &HashMap<Protocol, crate::ciphers::tester::ProtocolCipherSummary>,
-    ) -> Result<VulnerabilityResult> {
-        Ok(super::cipher_checks::evaluate_3des(
-            cipher_cache
-                .iter()
-                .map(|(protocol, summary)| (*protocol, summary)),
-        ))
-    }
-
     pub(super) async fn test_null_ciphers_cached(
         &self,
         cipher_cache: &HashMap<Protocol, crate::ciphers::tester::ProtocolCipherSummary>,
@@ -670,7 +658,7 @@ impl VulnerabilityScanner {
         ))
     }
 
-    #[allow(dead_code)] // Used by tests; removed from scan path since test_freak subsumes it
+    #[cfg(test)]
     pub(super) async fn test_export_ciphers_cached(
         &self,
         cipher_cache: &HashMap<Protocol, crate::ciphers::tester::ProtocolCipherSummary>,

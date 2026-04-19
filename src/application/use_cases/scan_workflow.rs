@@ -95,6 +95,14 @@ impl ScanWorkflow {
         input: ScanWorkflowInput,
         services: &ScanWorkflowServices,
     ) -> Result<ScanExecutionReport> {
+        if input.store_results && input.database_config_path.is_none() {
+            return Err(crate::TlsError::ConfigError {
+                message:
+                    "store_results=true requires a database_config_path so results can be persisted"
+                        .to_string(),
+            });
+        }
+
         let request = input.request.clone();
         let scan_results = RunScan::execute(request, services.scanner_port.as_ref()).await?;
         let assessment = if input.compliance_framework.is_some() || input.policy_path.is_some() {
@@ -130,14 +138,6 @@ impl ScanWorkflow {
             )?),
             None => None,
         };
-
-        if input.store_results && input.database_config_path.is_none() {
-            return Err(crate::TlsError::ConfigError {
-                message:
-                    "store_results=true requires a database_config_path so results can be persisted"
-                        .to_string(),
-            });
-        }
 
         let stored_scan_id = match (input.store_results, input.database_config_path.as_deref()) {
             (true, Some(config_path)) => Some(

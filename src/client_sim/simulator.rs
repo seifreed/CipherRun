@@ -3,11 +3,10 @@
 use crate::Result;
 use crate::data::client_data::{CLIENT_DB, ClientProfile};
 use crate::protocols::Protocol;
-use crate::utils::network::Target;
+use crate::utils::network::{Target, connect_with_timeout};
 use rustls::{ClientConfig, RootCertStore};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
-use tokio::net::TcpStream;
 use tokio::time::timeout;
 
 /// Extended handshake information
@@ -138,10 +137,10 @@ impl ClientSimulator {
             .socket_addrs()
             .first()
             .copied()
-            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
+            .ok_or(crate::TlsError::NoSocketAddresses)?;
 
         // Connect TCP
-        let stream = timeout(self.connect_timeout, TcpStream::connect(addr)).await??;
+        let stream = connect_with_timeout(addr, self.connect_timeout, None).await?;
 
         // Build TLS config based on client profile
         let config = self.build_client_config(client)?;
@@ -286,8 +285,10 @@ impl ClientSimulator {
                 "SHA384"
             } else if sig_algo.contains("sha512") {
                 "SHA512"
-            } else {
+            } else if sig_algo.contains("sha1") || sig_algo.contains("sha-1") {
                 "SHA1"
+            } else {
+                "Unknown"
             };
 
             Some(format!("{} ({})", key_info, hash))

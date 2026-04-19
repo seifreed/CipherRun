@@ -4,12 +4,15 @@
 
 use clap::Args;
 
+pub const DEFAULT_MAX_PARALLEL: usize = 20;
+pub const DEFAULT_MAX_CONCURRENT_CIPHERS: usize = 10;
+
 /// Network configuration options
 ///
 /// This struct contains all arguments related to network configuration,
 /// including IP version selection, proxy settings, DNS resolvers,
 /// and multi-IP scanning behavior.
-#[derive(Args, Debug, Clone, Default)]
+#[derive(Args, Debug, Clone)]
 pub struct NetworkArgs {
     /// Use only IPv4
     #[arg(short = '4')]
@@ -50,7 +53,11 @@ pub struct NetworkArgs {
     pub parallel: bool,
 
     /// Maximum parallel connections
-    #[arg(long = "max-parallel", value_name = "NUM", default_value = "20")]
+    #[arg(
+        long = "max-parallel",
+        value_name = "NUM",
+        default_value_t = DEFAULT_MAX_PARALLEL
+    )]
     pub max_parallel: usize,
 
     /// Maximum concurrent cipher tests per protocol (default: 10)
@@ -58,9 +65,26 @@ pub struct NetworkArgs {
     #[arg(
         long = "max-concurrent-ciphers",
         value_name = "NUM",
-        default_value = "10"
+        default_value_t = DEFAULT_MAX_CONCURRENT_CIPHERS
     )]
     pub max_concurrent_ciphers: usize,
+}
+
+impl Default for NetworkArgs {
+    fn default() -> Self {
+        Self {
+            ipv4_only: false,
+            ipv6_only: false,
+            proxy: None,
+            resolvers: Vec::new(),
+            test_all_ips: false,
+            first_ip_only: false,
+            scan_all_ips: false,
+            parallel: false,
+            max_parallel: DEFAULT_MAX_PARALLEL,
+            max_concurrent_ciphers: DEFAULT_MAX_CONCURRENT_CIPHERS,
+        }
+    }
 }
 
 #[cfg(test)]

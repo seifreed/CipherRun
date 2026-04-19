@@ -96,13 +96,13 @@ mod tests {
 
         // Test with baseline
         let mut args = ScanRequest::default();
-        args.scan.all = true;
+        args.scan.scope.all = true;
         assert!(phase.should_run(&args));
 
         // Specific-focus scans should not implicitly enable ALPN testing.
         let mut args = ScanRequest::default();
-        args.scan.all = true;
-        args.scan.show_sigs = true;
+        args.scan.scope.all = true;
+        args.scan.ciphers.show_sigs = true;
         assert!(!phase.should_run(&args));
 
         // Test without --all flag

@@ -17,11 +17,11 @@ impl<'a> ScannerFormatter<'a> {
 
             println!(
                 "\n{} - {} ciphers{}",
-                protocol.to_string().cyan().bold(),
+                self.section_header(&protocol.to_string()),
                 summary.counts.total,
                 timing_info
             );
-            println!("{}", "-".repeat(50));
+            println!("{}", "-".repeat(self.expand_width(50)));
 
             if summary.counts.total == 0 {
                 println!("  {}", "No ciphers supported".red());
@@ -74,7 +74,7 @@ impl<'a> ScannerFormatter<'a> {
     }
 
     fn display_category_focus(&self, summary: &ProtocolCipherSummary) {
-        println!("  {}", "Category Summary:".cyan());
+        println!("  {}", self.section_header("Category Summary:"));
         display_cipher_strength_distribution(&summary.counts);
         println!(
             "\n  Total by category: null={}, export={}, low={}, medium={}, high={}",
@@ -87,7 +87,7 @@ impl<'a> ScannerFormatter<'a> {
     }
 
     fn display_forward_secrecy_focus(&self, summary: &ProtocolCipherSummary) {
-        println!("  {}", "Forward Secrecy Focus:".cyan());
+        println!("  {}", self.section_header("Forward Secrecy Focus:"));
         display_cipher_security_features(&summary.counts);
 
         let non_fs: Vec<_> = summary
@@ -115,7 +115,7 @@ impl<'a> ScannerFormatter<'a> {
     }
 
     fn display_server_preference_focus(&self, summary: &ProtocolCipherSummary) {
-        println!("  {}", "Server Preference Focus:".cyan());
+        println!("  {}", self.section_header("Server Preference Focus:"));
         self.display_cipher_ordering(summary);
 
         if summary.server_preference.is_empty() {

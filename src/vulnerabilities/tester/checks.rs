@@ -33,15 +33,6 @@ impl VulnerabilityScanner {
         ))
     }
 
-    pub async fn test_3des(&self) -> Result<VulnerabilityResult> {
-        let summaries = self.collect_protocol_cipher_summaries().await?;
-        Ok(super::cipher_checks::evaluate_3des(
-            summaries
-                .iter()
-                .map(|(protocol, summary)| (*protocol, summary)),
-        ))
-    }
-
     pub async fn test_null_ciphers(&self) -> Result<VulnerabilityResult> {
         let summaries = self.collect_protocol_cipher_summaries().await?;
         Ok(super::cipher_checks::evaluate_null(
@@ -422,8 +413,8 @@ impl VulnerabilityScanner {
 
         Ok(VulnerabilityResult {
             vuln_type: VulnerabilityType::LUCKY13,
-            vulnerable: result.vulnerable || result.partially_vulnerable,
-            inconclusive: result.inconclusive,
+            vulnerable: result.vulnerable,
+            inconclusive: result.inconclusive || result.partially_vulnerable,
             details: result.details,
             cve: Some("CVE-2013-0169".to_string()),
             cwe: Some("CWE-208".to_string()),
@@ -467,7 +458,7 @@ impl VulnerabilityScanner {
         Ok(VulnerabilityResult {
             vuln_type: VulnerabilityType::PaddingOracle2016,
             vulnerable: result.vulnerable,
-            inconclusive: false,
+            inconclusive: result.cbc_supported && !result.vulnerable,
             details: result.details,
             cve: Some("CVE-2016-2107".to_string()),
             cwe: Some("CWE-203".to_string()),
@@ -619,38 +610,6 @@ mod tests {
         assert!(result.vulnerable);
         assert_eq!(result.severity, Severity::Medium);
         assert!(result.details.contains("RC4"));
-    }
-
-    // --- evaluate_3des ---
-
-    #[test]
-    fn evaluate_3des_empty_summaries() {
-        let result = super::super::cipher_checks::evaluate_3des(std::iter::empty());
-        assert!(!result.vulnerable);
-        assert_eq!(result.severity, Severity::Info);
-    }
-
-    #[test]
-    fn evaluate_3des_with_des_cipher() {
-        let ciphers = vec![make_cipher("3DES-CBC", 168, false)];
-        let summary = summary_with_ciphers(Protocol::TLS12, ciphers, CipherCounts::default());
-        let result = super::super::cipher_checks::evaluate_3des(std::iter::once((
-            Protocol::TLS12,
-            &summary,
-        )));
-        assert!(result.vulnerable);
-        assert_eq!(result.severity, Severity::Medium);
-    }
-
-    #[test]
-    fn evaluate_3des_without_des() {
-        let ciphers = vec![make_cipher("AES128-GCM", 128, false)];
-        let summary = summary_with_ciphers(Protocol::TLS12, ciphers, CipherCounts::default());
-        let result = super::super::cipher_checks::evaluate_3des(std::iter::once((
-            Protocol::TLS12,
-            &summary,
-        )));
-        assert!(!result.vulnerable);
     }
 
     // --- evaluate_null ---

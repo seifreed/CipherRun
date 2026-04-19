@@ -3,11 +3,13 @@
 use crate::api::jobs::{JobQueue, ScanJob};
 use crate::api::models::request::ScanOptions;
 use crate::api::models::response::{ProgressMessage, ScanStatus};
+use crate::api::presenters::target_input::scan_request_from_target_and_options;
 use crate::api::state::ApiStats;
 use crate::application::ScanRequest;
 use crate::scanner::{ScanResults, Scanner};
 use crate::utils::network::canonical_target;
 use anyhow::Result;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{RwLock, Semaphore, broadcast};
@@ -22,6 +24,12 @@ pub struct ScanExecutor {
     stats: Option<Arc<RwLock<ApiStats>>>,
     shutdown_tx: tokio::sync::watch::Sender<bool>,
     shutdown_rx: tokio::sync::watch::Receiver<bool>,
+}
+
+#[derive(Debug)]
+pub(crate) struct ValidatedWebhook {
+    host: String,
+    resolved_addrs: Vec<SocketAddr>,
 }
 
 impl ScanExecutor {
@@ -125,18 +133,22 @@ impl ScanExecutor {
 
         info!("Starting scan job {} for target {}", job.id, job.target);
 
-        // Mark job as started
+        // Mark job as started. Use update_job_preserving_cancelled so that a
+        // cancellation arriving between the check above and this write is not
+        // silently overwritten by the Started status.
         job.mark_started();
-        if let Err(e) = queue.update_job(&job).await {
-            error!("Failed to update job status: {}", e);
-        }
-
-        // Re-verify job wasn't cancelled between initial check and mark_started
-        if let Ok(Some(current)) = queue.get_job(&job.id).await
-            && matches!(current.status, ScanStatus::Cancelled)
-        {
-            info!("Job {} cancelled during startup, aborting", job.id);
-            return;
+        match queue.update_job_preserving_cancelled(&job).await {
+            Ok(true) => {}
+            Ok(false) => {
+                info!(
+                    "Job {} was cancelled before it could start, aborting",
+                    job.id
+                );
+                return;
+            }
+            Err(e) => {
+                error!("Failed to update job status: {}", e);
+            }
         }
 
         // Send progress update
@@ -272,7 +284,7 @@ impl ScanExecutor {
         job: &ScanJob,
         progress_tx: &broadcast::Sender<ProgressMessage>,
     ) -> Result<ScanResults> {
-        let request = Self::options_to_request(&job.target, &job.options);
+        let request = Self::options_to_request(&job.target, &job.options)?;
 
         let _ = progress_tx.send(ProgressMessage::new(&job.id, 5, "Initializing scanner"));
 
@@ -296,38 +308,9 @@ impl ScanExecutor {
         Ok(results)
     }
 
-    fn options_to_request(target: &str, options: &ScanOptions) -> ScanRequest {
-        ScanRequest {
-            target: Some(target.to_string()),
-            scan: crate::application::scan_request::ScanRequestScan {
-                protocols: options.test_protocols || options.full_scan,
-                each_cipher: options.test_ciphers || options.full_scan,
-                vulnerabilities: options.test_vulnerabilities || options.full_scan,
-                headers: options.test_http_headers || options.full_scan,
-                all: options.full_scan,
-                full: options.full_scan,
-                ..Default::default()
-            },
-            network: crate::application::scan_request::ScanRequestNetwork {
-                ipv4_only: options.ipv4_only,
-                ipv6_only: options.ipv6_only,
-                ..Default::default()
-            },
-            connection: crate::application::scan_request::ScanRequestConnection {
-                socket_timeout: Some(options.timeout_seconds),
-                ..Default::default()
-            },
-            fingerprint: crate::application::scan_request::ScanRequestFingerprint {
-                client_simulation: options.client_simulation || options.full_scan,
-                ..Default::default()
-            },
-            starttls: crate::application::scan_request::ScanRequestStarttls {
-                protocol: options.starttls_protocol.clone(),
-                ..Default::default()
-            },
-            ip: options.ip.clone(),
-            ..Default::default()
-        }
+    fn options_to_request(target: &str, options: &ScanOptions) -> Result<ScanRequest> {
+        scan_request_from_target_and_options(target, options)
+            .map_err(|error| anyhow::anyhow!(error.to_string()))
     }
 
     fn send_progress(&self, job: &ScanJob, progress: u8, stage: &str) {
@@ -338,74 +321,12 @@ impl ScanExecutor {
     /// Send webhook notification.
     /// Validates the URL against SSRF before making the request.
     async fn send_webhook(webhook_url: &str, job: &ScanJob) -> Result<()> {
-        // Parse and validate webhook URL to prevent SSRF
-        let url: url::Url = webhook_url
-            .parse()
-            .map_err(|e| anyhow::anyhow!("Invalid webhook URL: {}", e))?;
-
-        // Only allow http/https schemes
-        match url.scheme() {
-            "http" | "https" => {}
-            scheme => anyhow::bail!(
-                "Webhook URL scheme '{}' not allowed (only http/https)",
-                scheme
-            ),
-        }
-
-        // Resolve hostname and check all IPs against SSRF blocklist
-        let host = url
-            .host_str()
-            .ok_or_else(|| anyhow::anyhow!("Webhook URL has no host"))?;
-
-        // Block obvious private hostnames and IP literals
-        if host == "localhost"
-            || host.ends_with(".local")
-            || host.ends_with(".internal")
-            || host == "127.0.0.1"
-            || host == "::1"
-        {
-            anyhow::bail!("Webhook URL points to private/local host: {}", host);
-        }
-
-        // Also check if host is an IP literal pointing to a private address
-        if let Ok(ip) = host.parse::<std::net::IpAddr>()
-            && crate::security::input_validation::is_private_ip(&ip)
-        {
-            anyhow::bail!(
-                "Webhook URL uses private/internal IP literal {} (SSRF blocked)",
-                ip
-            );
-        }
-
-        // Resolve DNS and check all resulting IPs
-        // IMPORTANT: If DNS resolution fails, reject the request to prevent SSRF bypass
-        // via DNS rebinding or resolver misconfiguration
-        let lookup_target = webhook_lookup_target(host, url.port_or_known_default().unwrap_or(80));
-        let addrs: Vec<_> = tokio::net::lookup_host(lookup_target)
-            .await
-            .map_err(|e| anyhow::anyhow!("Webhook DNS resolution failed for {}: {} (SSRF protection requires successful DNS resolution)", host, e))?
-            .collect();
-
-        if addrs.is_empty() {
-            anyhow::bail!(
-                "Webhook DNS resolution returned no addresses for {} (SSRF blocked)",
-                host
-            );
-        }
-
-        for addr in &addrs {
-            if crate::security::input_validation::is_private_ip(&addr.ip()) {
-                anyhow::bail!(
-                    "Webhook URL resolves to private/internal IP {} (SSRF blocked)",
-                    addr.ip()
-                );
-            }
-        }
+        let validated = validate_webhook_url(webhook_url).await?;
 
         // Pin resolved IPs to prevent DNS rebinding TOCTOU attacks
         let mut client_builder = reqwest::Client::builder().timeout(Duration::from_secs(10));
-        for addr in &addrs {
-            client_builder = client_builder.resolve(host, *addr);
+        for addr in &validated.resolved_addrs {
+            client_builder = client_builder.resolve(&validated.host, *addr);
         }
         let client = client_builder.build()?;
 
@@ -448,6 +369,78 @@ impl Clone for ScanExecutor {
     }
 }
 
+pub(crate) async fn validate_webhook_url(webhook_url: &str) -> Result<ValidatedWebhook> {
+    // Parse and validate webhook URL to prevent SSRF
+    let url: url::Url = webhook_url
+        .parse()
+        .map_err(|e| anyhow::anyhow!("Invalid webhook URL: {}", e))?;
+
+    // Only allow http/https schemes
+    match url.scheme() {
+        "http" | "https" => {}
+        scheme => anyhow::bail!(
+            "Webhook URL scheme '{}' not allowed (only http/https)",
+            scheme
+        ),
+    }
+
+    // Resolve hostname and check all IPs against SSRF blocklist
+    let host = url
+        .host_str()
+        .ok_or_else(|| anyhow::anyhow!("Webhook URL has no host"))?
+        .to_string();
+
+    // Block obvious private hostnames and IP literals
+    if host == "localhost"
+        || host.ends_with(".local")
+        || host.ends_with(".internal")
+        || host == "127.0.0.1"
+        || host == "::1"
+    {
+        anyhow::bail!("Webhook URL points to private/local host: {}", host);
+    }
+
+    // Also check if host is an IP literal pointing to a private address
+    if let Ok(ip) = host.parse::<std::net::IpAddr>()
+        && crate::security::input_validation::is_private_ip(&ip)
+    {
+        anyhow::bail!(
+            "Webhook URL uses private/internal IP literal {} (SSRF blocked)",
+            ip
+        );
+    }
+
+    // Resolve DNS and check all resulting IPs
+    // IMPORTANT: If DNS resolution fails, reject the request to prevent SSRF bypass
+    // via DNS rebinding or resolver misconfiguration
+    let lookup_target = webhook_lookup_target(&host, url.port_or_known_default().unwrap_or(80));
+    let resolved_addrs: Vec<_> = tokio::net::lookup_host(lookup_target)
+        .await
+        .map_err(|e| anyhow::anyhow!("Webhook DNS resolution failed for {}: {} (SSRF protection requires successful DNS resolution)", host, e))?
+        .collect();
+
+    if resolved_addrs.is_empty() {
+        anyhow::bail!(
+            "Webhook DNS resolution returned no addresses for {} (SSRF blocked)",
+            host
+        );
+    }
+
+    for addr in &resolved_addrs {
+        if crate::security::input_validation::is_private_ip(&addr.ip()) {
+            anyhow::bail!(
+                "Webhook URL resolves to private/internal IP {} (SSRF blocked)",
+                addr.ip()
+            );
+        }
+    }
+
+    Ok(ValidatedWebhook {
+        host,
+        resolved_addrs,
+    })
+}
+
 fn webhook_lookup_target(host: &str, port: u16) -> String {
     canonical_target(host, port)
 }
@@ -468,25 +461,28 @@ mod tests {
             starttls_protocol: Some("smtp".to_string()),
             ipv4_only: true,
             ipv6_only: false,
-            ip: Some("192.0.2.1".to_string()),
+            ip: Some("8.8.8.8".to_string()),
             full_scan: false,
             ..Default::default()
         };
 
-        let request = ScanExecutor::options_to_request("example.com:443", &options);
+        let request = ScanExecutor::options_to_request("example.com:443", &options)
+            .expect("request should build");
 
         assert_eq!(request.target.as_deref(), Some("example.com:443"));
+        assert_eq!(request.connection.connect_timeout, Some(12));
         assert_eq!(request.connection.socket_timeout, Some(12));
-        assert!(request.scan.protocols);
-        assert!(request.scan.each_cipher);
-        assert!(request.scan.vulnerabilities);
-        assert!(request.scan.headers);
+        assert!(request.scan.proto.enabled);
+        assert!(request.scan.ciphers.each_cipher);
+        assert!(request.scan.vulns.vulnerabilities);
+        assert!(!request.scan.certs.analyze_certificates);
+        assert!(request.scan.prefs.headers);
         assert!(request.fingerprint.client_simulation);
         assert_eq!(request.starttls.protocol.as_deref(), Some("smtp"));
         assert!(request.network.ipv4_only);
         assert!(!request.network.ipv6_only);
-        assert_eq!(request.ip.as_deref(), Some("192.0.2.1"));
-        assert!(!request.scan.all);
+        assert_eq!(request.ip.as_deref(), Some("8.8.8.8"));
+        assert!(!request.scan.scope.all);
     }
 
     #[test]
@@ -496,27 +492,28 @@ mod tests {
             ..Default::default()
         };
 
-        let request = ScanExecutor::options_to_request("example.com", &options);
+        let request = ScanExecutor::options_to_request("example.com", &options)
+            .expect("request should build");
 
-        assert!(request.scan.protocols);
-        assert!(request.scan.each_cipher);
-        assert!(request.scan.vulnerabilities);
-        assert!(request.scan.headers);
+        assert!(request.scan.proto.enabled);
+        assert!(request.scan.ciphers.each_cipher);
+        assert!(request.scan.vulns.vulnerabilities);
+        assert!(request.scan.certs.analyze_certificates);
+        assert!(request.scan.prefs.headers);
         assert!(request.fingerprint.client_simulation);
-        assert!(request.scan.all);
+        assert!(request.scan.scope.all);
     }
 
     #[test]
     fn test_options_to_request_minimal() {
         let options = ScanOptions::default();
-        let request = ScanExecutor::options_to_request("example.com:443", &options);
+        let err = ScanExecutor::options_to_request("example.com:443", &options)
+            .expect_err("empty scan options should fail");
 
-        assert_eq!(request.target.as_deref(), Some("example.com:443"));
-        assert!(!request.scan.protocols);
-        assert!(!request.scan.each_cipher);
-        assert!(!request.scan.vulnerabilities);
-        assert!(!request.scan.headers);
-        assert!(!request.scan.all);
+        assert!(
+            err.to_string()
+                .contains("Scan options must enable at least one scan phase")
+        );
     }
 
     #[test]
@@ -526,11 +523,28 @@ mod tests {
             ..Default::default()
         };
 
-        let request = ScanExecutor::options_to_request("example.com", &options);
+        let err = ScanExecutor::options_to_request("example.com", &options)
+            .expect_err("address-family-only options should fail without scan workload");
 
-        assert!(request.network.ipv6_only);
-        assert!(!request.network.ipv4_only);
-        assert!(request.starttls.protocol.is_none());
+        assert!(
+            err.to_string()
+                .contains("Scan options must enable at least one scan phase")
+        );
+    }
+
+    #[test]
+    fn test_options_to_request_maps_analyze_certificates() {
+        let options = ScanOptions {
+            analyze_certificates: true,
+            ..Default::default()
+        };
+
+        let request = ScanExecutor::options_to_request("example.com", &options)
+            .expect("request should build");
+
+        assert!(request.scan.certs.analyze_certificates);
+        assert!(!request.scan.proto.enabled);
+        assert!(!request.scan.scope.full);
     }
 
     #[test]
@@ -547,5 +561,23 @@ mod tests {
             webhook_lookup_target("[2001:db8::1]", 443),
             "[2001:db8::1]:443"
         );
+    }
+
+    #[tokio::test]
+    async fn test_validate_webhook_url_rejects_private_hostnames() {
+        let err = validate_webhook_url("https://localhost/callback")
+            .await
+            .expect_err("localhost should fail");
+
+        assert!(err.to_string().contains("private/local host"));
+    }
+
+    #[tokio::test]
+    async fn test_validate_webhook_url_rejects_invalid_scheme() {
+        let err = validate_webhook_url("ftp://example.com/callback")
+            .await
+            .expect_err("invalid scheme should fail");
+
+        assert!(err.to_string().contains("only http/https"));
     }
 }

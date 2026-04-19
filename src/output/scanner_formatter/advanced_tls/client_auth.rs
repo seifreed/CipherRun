@@ -1,11 +1,9 @@
-use super::super::{
-    ClientCAsResult, ScannerFormatter, print_section_header, truncate_with_ellipsis,
-};
+use super::super::{ClientCAsResult, ScannerFormatter, truncate_with_ellipsis};
 use colored::*;
 
 impl<'a> ScannerFormatter<'a> {
     pub fn display_client_cas_results(&self, results: &ClientCAsResult) {
-        print_section_header("Client Certificate CAs:");
+        self.print_section("Client Certificate CAs:", 50);
 
         if !results.requires_client_auth {
             println!(
@@ -43,7 +41,7 @@ impl<'a> ScannerFormatter<'a> {
             println!("     Org: {}", org.cyan());
         }
 
-        let dn_preview = truncate_with_ellipsis(&ca.distinguished_name, 60);
+        let dn_preview = truncate_with_ellipsis(&ca.distinguished_name, self.expand_width(60));
         println!("     DN:  {}", dn_preview.dimmed());
     }
 }

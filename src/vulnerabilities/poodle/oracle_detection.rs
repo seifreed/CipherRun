@@ -10,8 +10,25 @@ pub(super) fn detect_response_oracle(
     responses_a: &[ServerResponse],
     responses_b: &[ServerResponse],
 ) -> bool {
+    const MIN_TIMING_SAMPLES: usize = 3;
     if responses_a.is_empty() || responses_b.is_empty() {
         return false;
+    }
+
+    // Require minimum samples before timing analysis to avoid stddev=0 false positives
+    // (with 1 sample, variance=0 and any >10ms diff would trigger the timing oracle check)
+    let enough_for_timing =
+        responses_a.len() >= MIN_TIMING_SAMPLES && responses_b.len() >= MIN_TIMING_SAMPLES;
+
+    // Asymmetric: one set consistently (majority) produces alerts and the other doesn't.
+    // Using any() would trigger on a single noisy alert; require >50% for signal.
+    let alert_ratio = |responses: &[ServerResponse]| {
+        responses.iter().filter(|r| r.alert_type.is_some()).count() as f64 / responses.len() as f64
+    };
+    let majority_has_alerts_a = alert_ratio(responses_a) > 0.5;
+    let majority_has_alerts_b = alert_ratio(responses_b) > 0.5;
+    if majority_has_alerts_a != majority_has_alerts_b {
+        return true;
     }
 
     // Check for different alert types using proper categorical comparison
@@ -32,7 +49,11 @@ pub(super) fn detect_response_oracle(
         }
     }
 
-    // Check for timing differences as secondary indicator
+    // Check for timing differences as secondary indicator (requires sufficient samples)
+    if !enough_for_timing {
+        return false;
+    }
+
     let avg_time_a =
         responses_a.iter().map(|r| r.response_time_ms).sum::<f64>() / responses_a.len() as f64;
     let avg_time_b =
@@ -43,13 +64,15 @@ pub(super) fn detect_response_oracle(
         .iter()
         .map(|r| (r.response_time_ms - avg_time_a).powi(2))
         .sum::<f64>()
-        / (responses_a.len() as f64).max(1.0);
+        / (responses_a.len() as f64 - 1.0).max(1.0);
     let variance_b: f64 = responses_b
         .iter()
         .map(|r| (r.response_time_ms - avg_time_b).powi(2))
         .sum::<f64>()
-        / (responses_b.len() as f64).max(1.0);
-    let combined_stddev = (variance_a + variance_b).sqrt();
+        / (responses_b.len() as f64 - 1.0).max(1.0);
+    let combined_stddev = (variance_a / (responses_a.len() as f64).max(1.0)
+        + variance_b / (responses_b.len() as f64).max(1.0))
+    .sqrt();
     let diff = (avg_time_a - avg_time_b).abs();
 
     // Require difference > 2*stddev + 10ms minimum to account for jitter

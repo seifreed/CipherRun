@@ -1,10 +1,10 @@
-use super::{RatingResult, ScannerFormatter, format_ssl_grade, print_section_header};
+use super::{RatingResult, ScannerFormatter, format_ssl_grade};
 use colored::*;
 
 impl<'a> ScannerFormatter<'a> {
     /// Display SSL Labs rating results
     pub fn display_rating_results(&self, rating: &RatingResult) {
-        print_section_header("SSL Labs Rating:");
+        self.print_section("SSL Labs Rating:", 50);
 
         let grade_colored = format_ssl_grade(&rating.grade);
         println!("\n  {}", grade_colored);
@@ -19,7 +19,7 @@ impl<'a> ScannerFormatter<'a> {
 
     /// Display rating component scores
     fn display_rating_components(&self, rating: &RatingResult) {
-        println!("\n{}", "  Component Scores:".cyan());
+        println!("\n{}", self.section_header("  Component Scores:"));
         println!("    Certificate:    {}/100", rating.certificate_score);
         println!("    Protocols:      {}/100", rating.protocol_score);
         println!("    Key Exchange:   {}/100", rating.key_exchange_score);
@@ -28,7 +28,11 @@ impl<'a> ScannerFormatter<'a> {
 
     /// Display rating warnings
     fn display_rating_warnings(&self, rating: &RatingResult) {
-        if !rating.warnings.is_empty() {
+        if self.warning_mode() == super::WarningMode::Off {
+            return;
+        }
+
+        if !rating.warnings.is_empty() && self.warning_mode() != super::WarningMode::Batch {
             println!("\n{}", "  Warnings:".yellow());
             for warning in &rating.warnings {
                 println!("    ! {}", warning.red());

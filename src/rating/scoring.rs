@@ -84,6 +84,36 @@ impl RatingCalculator {
         let key_exchange_score = Self::calculate_key_exchange_score(ciphers);
         let cipher_strength_score = Self::calculate_cipher_strength_score(ciphers);
 
+        // SSLv2 support → unconditional grade F (protocol_score is forced to 0 by SSLv2).
+        // The weighted average cannot enforce this: (0×30 + 100×30 + 100×40)/100 = 70 = B.
+        if protocol_score == 0 {
+            return RatingResult {
+                grade: Grade::F,
+                score: 0,
+                certificate_score,
+                protocol_score,
+                key_exchange_score,
+                cipher_strength_score,
+                warnings: vec!["SSLv2 supported — unconditional grade F".to_string()],
+            };
+        }
+
+        // NULL or EXPORT ciphers → unconditional grade F regardless of other scores.
+        // The weighted average cannot enforce this guarantee (e.g. 100/100/0 → 60 = C).
+        if cipher_strength_score == 0 {
+            return RatingResult {
+                grade: Grade::F,
+                score: 0,
+                certificate_score,
+                protocol_score,
+                key_exchange_score,
+                cipher_strength_score,
+                warnings: vec![
+                    "NULL or EXPORT ciphers supported — unconditional grade F".to_string(),
+                ],
+            };
+        }
+
         // Calculate overall score (weighted average)
         // SSL Labs methodology: Protocol 30%, Key Exchange 30%, Cipher 40%
         // Certificate is NOT included in overall score calculation
@@ -104,7 +134,9 @@ impl RatingCalculator {
         }
 
         // Apply vulnerability penalties (excludes TLS_FALLBACK_SCSV as of 2025)
-        let (score, warnings) = Self::apply_vulnerability_penalties(score, vulnerabilities);
+        let (score_after_vulns, warnings) =
+            Self::apply_vulnerability_penalties(score, vulnerabilities);
+        let mut score = score_after_vulns;
 
         // Determine grade
         let mut grade = Grade::from_score(score);
@@ -112,13 +144,17 @@ impl RatingCalculator {
         // Check for certificate issues that override grade.
         // Priority: expired/untrusted (Grade T) takes precedence over mismatch (Grade M),
         // because an expired cert is a more severe trust failure.
+        // Score is also zeroed to avoid contradictory { grade: T, score: 96 } output.
         if let Some(cert) = certificate {
             if !cert.not_expired {
                 grade = Grade::T; // Certificate expired — most critical
+                score = 0;
             } else if !cert.trust_chain_valid {
                 grade = Grade::T; // Trust chain invalid
+                score = 0;
             } else if !cert.hostname_match {
                 grade = Grade::M; // Certificate name mismatch
+                score = 0;
             }
         }
         // Note: certificate=None means cert evaluation was skipped (e.g. protocol-only scan).
@@ -179,8 +215,7 @@ impl RatingCalculator {
     ///
     /// SSL Labs Compatibility Mode (2025):
     /// - Protocol score contributes 30% to overall score
-    /// - Without TLS 1.3, protocol score is heavily penalized
-    /// - Without TLS 1.3, OVERALL score is also capped at 84 (enforced in calculate())
+    /// - Without TLS 1.3, OVERALL score is capped at 84 (enforced in calculate())
     /// - This aligns with SSL Labs 2025 methodology where TLS 1.3 is mandatory for A/A+ grades
     fn calculate_protocol_score(protocols: &[ProtocolTestResult]) -> u8 {
         let mut score = 100u8;
@@ -205,18 +240,6 @@ impl RatingCalculator {
 
         if !has_modern_tls {
             score = score.saturating_sub(20);
-        }
-
-        // SSL Labs Compatibility: Heavy penalty if TLS 1.3 is not supported
-        // SSL Labs policy: "Without TLS 1.3, maximum grade is A-"
-        // Apply -15 penalty for missing TLS 1.3 (in addition to overall cap at 84)
-        let has_tls13 = protocols
-            .iter()
-            .any(|p| p.supported && p.protocol == Protocol::TLS13);
-
-        if !has_tls13 {
-            // Penalize by 15 points for missing TLS 1.3
-            score = score.saturating_sub(15);
         }
 
         score
@@ -270,7 +293,7 @@ impl RatingCalculator {
     fn calculate_cipher_strength_score(ciphers: &HashMap<Protocol, ProtocolCipherSummary>) -> u8 {
         let mut score = 100u8;
         let mut total_ciphers = 0;
-        let mut weak_ciphers = 0; // low + medium strength
+        let mut weak_ciphers = 0; // low strength only (< 128-bit)
         let mut aead_count = 0;
 
         for summary in ciphers.values() {
@@ -286,7 +309,7 @@ impl RatingCalculator {
 
             // Aggregate counts across all protocols
             total_ciphers += summary.counts.total;
-            weak_ciphers += summary.counts.low_strength + summary.counts.medium_strength;
+            weak_ciphers += summary.counts.low_strength;
             aead_count += summary.counts.aead;
         }
 
@@ -439,8 +462,8 @@ mod tests {
 
     #[test]
     fn test_protocol_score_without_tls13_gets_penalty() {
-        // Server with only TLS 1.2 (no TLS 1.3) gets -15 penalty
-        // Start: 100, Penalty: -15 = 85
+        // Server with only TLS 1.2 (no TLS 1.3): no penalty in protocol_score.
+        // The A- cap is enforced at the overall score level in calculate().
         let protocols = vec![ProtocolTestResult {
             protocol: Protocol::TLS12,
             supported: true,
@@ -454,8 +477,8 @@ mod tests {
         }];
         let score = RatingCalculator::calculate_protocol_score(&protocols);
         assert_eq!(
-            score, 85,
-            "Server without TLS 1.3 should get -15 penalty (100-15=85)"
+            score, 100,
+            "Server without TLS 1.3 should get no penalty in protocol score (cap is applied at overall level)"
         );
     }
 
@@ -499,17 +522,17 @@ mod tests {
             },
         ];
         let score = RatingCalculator::calculate_protocol_score(&protocols);
-        // Score: 100 - 5 (TLS 1.0) - 3 (TLS 1.1) - 15 (no TLS 1.3) = 77
+        // Score: 100 - 5 (TLS 1.0) - 3 (TLS 1.1) = 92 (no TLS 1.3 cap applied at overall level)
         assert_eq!(
-            score, 77,
-            "Server without TLS 1.3 gets cumulative penalties"
+            score, 92,
+            "Server without TLS 1.3 gets cumulative protocol penalties (TLS 1.0 and 1.1 only)"
         );
     }
 
     #[test]
     fn test_protocol_score_sslv3_with_penalties() {
         // Server with SSLv3 and TLS 1.2 (no TLS 1.3)
-        // Initial score 100 - 20 (SSLv3) - 15 (no TLS 1.3) = 65
+        // Initial score 100 - 20 (SSLv3) = 80 (no TLS 1.3 cap applied at overall level)
         let protocols = vec![
             ProtocolTestResult {
                 protocol: Protocol::SSLv3,
@@ -536,8 +559,8 @@ mod tests {
         ];
         let score = RatingCalculator::calculate_protocol_score(&protocols);
         assert_eq!(
-            score, 65,
-            "Server with SSLv3 and no TLS 1.3 gets heavy penalties"
+            score, 80,
+            "Server with SSLv3 and no TLS 1.3 gets SSLv3 penalty only (TLS 1.3 cap at overall level)"
         );
     }
 
@@ -570,6 +593,44 @@ mod tests {
         ];
         let score = RatingCalculator::calculate_protocol_score(&protocols);
         assert_eq!(score, 0, "SSLv2 support should result in instant fail");
+    }
+
+    #[test]
+    fn test_sslv2_forces_grade_f_in_calculate() {
+        // SSLv2 support must produce Grade F even when cipher/key-exchange scores are high.
+        // Before fix: (0×30 + 100×30 + 100×40)/100 = 70 → Grade B (wrong).
+        // After fix: protocol_score==0 triggers early-return with Grade F.
+        use std::collections::HashMap;
+
+        let protocols = vec![
+            ProtocolTestResult {
+                protocol: Protocol::SSLv2,
+                supported: true,
+                preferred: false,
+                ciphers_count: 20,
+                handshake_time_ms: None,
+                heartbeat_enabled: None,
+                session_resumption_caching: None,
+                session_resumption_tickets: None,
+                secure_renegotiation: None,
+            },
+            ProtocolTestResult {
+                protocol: Protocol::TLS13,
+                supported: true,
+                preferred: true,
+                ciphers_count: 5,
+                handshake_time_ms: None,
+                heartbeat_enabled: None,
+                session_resumption_caching: None,
+                session_resumption_tickets: None,
+                secure_renegotiation: None,
+            },
+        ];
+
+        let ciphers = HashMap::new();
+        let result = RatingCalculator::calculate(&protocols, &ciphers, None, &[]);
+        assert_eq!(result.grade, Grade::F, "SSLv2 must produce Grade F");
+        assert_eq!(result.score, 0, "SSLv2 must produce score 0");
     }
 
     #[test]

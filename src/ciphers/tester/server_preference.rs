@@ -5,7 +5,6 @@ use super::{
 use super::{CIPHER_SUITE_BASE_OFFSET, SERVER_HELLO_MIN_SIZE, SESSION_ID_LENGTH_OFFSET};
 use crate::ciphers::CipherSuite;
 use crate::protocols::{Protocol, handshake::ClientHelloBuilder};
-use anyhow::Context;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -144,7 +143,7 @@ impl CipherTester {
             .socket_addrs()
             .first()
             .copied()
-            .context("No socket addresses available for target")?;
+            .ok_or(crate::TlsError::NoSocketAddresses)?;
 
         let mut stream = match crate::utils::network::connect_with_timeout(
             addr,
@@ -169,7 +168,7 @@ impl CipherTester {
         if let Some(starttls_proto) = self.starttls_protocol {
             let negotiator = crate::starttls::protocols::get_negotiator(
                 starttls_proto,
-                self.target.hostname.clone(),
+                self.starttls_negotiation_hostname(),
             );
             if negotiator.negotiate_starttls(&mut stream).await.is_err() {
                 return Ok(None);
@@ -204,10 +203,10 @@ impl CipherTester {
     /// Returns `None` if the response is not a valid ServerHello or lacks
     /// enough bytes to extract the cipher suite.
     fn parse_server_hello_cipher(response: &[u8], bytes_read: usize) -> Option<u16> {
-        if bytes_read < SERVER_HELLO_MIN_SIZE
-            || response[0] != CONTENT_TYPE_HANDSHAKE
-            || response[5] != HANDSHAKE_TYPE_SERVER_HELLO
-        {
+        if bytes_read < SERVER_HELLO_MIN_SIZE {
+            return None;
+        }
+        if response[0] != CONTENT_TYPE_HANDSHAKE || response[5] != HANDSHAKE_TYPE_SERVER_HELLO {
             return None;
         }
 

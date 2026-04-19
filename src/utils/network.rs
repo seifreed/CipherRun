@@ -12,6 +12,7 @@ use tokio::time::timeout;
 
 // Import SSRF validation for DNS rebinding protection
 use crate::security::input_validation::ssrf::validate_resolved_ips;
+use crate::utils::{network_runtime, proxy::connect_via_proxy};
 
 /// Target information
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -304,15 +305,9 @@ pub async fn test_connection(
     retry_config: Option<&super::retry::RetryConfig>,
 ) -> Result<()> {
     let connect_op = || async {
-        let effective_timeout = retry_config
-            .and_then(|config| config.adaptive.as_ref())
-            .map(|adaptive| adaptive.connect_timeout())
-            .unwrap_or(connect_timeout);
-
-        timeout(effective_timeout, TcpStream::connect(addr))
+        connect_once(addr, connect_timeout, retry_config)
             .await
-            .context("Connection timeout")??;
-        Ok(())
+            .map(|_| ())
     };
 
     if let Some(config) = retry_config {
@@ -340,17 +335,7 @@ pub async fn connect_with_timeout(
     connect_timeout: Duration,
     retry_config: Option<&super::retry::RetryConfig>,
 ) -> Result<TcpStream> {
-    let connect_op = || async {
-        let effective_timeout = retry_config
-            .and_then(|config| config.adaptive.as_ref())
-            .map(|adaptive| adaptive.connect_timeout())
-            .unwrap_or(connect_timeout);
-
-        let stream = timeout(effective_timeout, TcpStream::connect(addr))
-            .await
-            .context("Connection timeout")??;
-        Ok(stream)
-    };
+    let connect_op = || async { connect_once(addr, connect_timeout, retry_config).await };
 
     if let Some(config) = retry_config {
         // Use retry logic with exponential backoff
@@ -359,6 +344,33 @@ pub async fn connect_with_timeout(
         // No retry - fail immediately
         connect_op().await
     }
+}
+
+async fn connect_once(
+    addr: SocketAddr,
+    connect_timeout: Duration,
+    retry_config: Option<&super::retry::RetryConfig>,
+) -> Result<TcpStream> {
+    let effective_timeout = retry_config
+        .and_then(|config| config.adaptive.as_ref())
+        .map(|adaptive| adaptive.connect_timeout())
+        .unwrap_or(connect_timeout);
+
+    if let Some(proxy) = network_runtime::current_proxy() {
+        return connect_via_proxy(
+            &proxy,
+            &addr.ip().to_string(),
+            addr.port(),
+            effective_timeout,
+        )
+        .await
+        .context("Proxy connection failed");
+    }
+
+    timeout(effective_timeout, TcpStream::connect(addr))
+        .await
+        .context("Connection timeout")?
+        .map_err(Into::into)
 }
 
 /// Parse port from string

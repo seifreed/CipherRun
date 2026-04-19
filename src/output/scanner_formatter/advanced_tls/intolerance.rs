@@ -1,11 +1,9 @@
-use super::super::{
-    IntoleranceTestResult, ScannerFormatter, build_intolerance_checks, print_section_header,
-};
+use super::super::{IntoleranceTestResult, ScannerFormatter, build_intolerance_checks};
 use colored::*;
 
 impl<'a> ScannerFormatter<'a> {
     pub fn display_intolerance_results(&self, results: &IntoleranceTestResult) {
-        print_section_header("TLS Intolerance Tests:");
+        self.print_section("TLS Intolerance Tests:", 50);
 
         let checks = build_intolerance_checks(results);
         let issues_found = checks.iter().filter(|c| c.is_intolerant).count();
@@ -14,7 +12,7 @@ impl<'a> ScannerFormatter<'a> {
             check.display(&results.details);
         }
 
-        println!("\n{}", "=".repeat(50));
+        println!("\n{}", self.divider(50));
         if issues_found == 0 {
             println!("{}", "Y No TLS intolerance issues detected!".green().bold());
         } else {

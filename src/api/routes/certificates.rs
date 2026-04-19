@@ -16,27 +16,41 @@ use crate::api::{
 use crate::application::{
     CertificateInventoryQuery, CertificateInventoryRecord, CertificateInventorySort,
 };
+use crate::security::validate_hostname;
 use axum::{
     Json,
     extract::{Path, Query, State},
 };
 use std::sync::Arc;
 
-fn inventory_query_from_api(query: &CertificateQuery) -> CertificateInventoryQuery {
+fn inventory_query_from_api(
+    query: &CertificateQuery,
+) -> Result<CertificateInventoryQuery, ApiError> {
+    if let Some(hostname) = query.hostname.as_deref() {
+        validate_hostname(hostname)
+            .map_err(|err| ApiError::BadRequest(format!("Invalid hostname filter: {}", err)))?;
+    }
+
     let sort = match query.sort.as_str() {
         "expiry_desc" => CertificateInventorySort::ExpiryDesc,
         "issued_asc" => CertificateInventorySort::IssuedAsc,
         "issued_desc" => CertificateInventorySort::IssuedDesc,
-        _ => CertificateInventorySort::ExpiryAsc,
+        "expiry_asc" => CertificateInventorySort::ExpiryAsc,
+        other => {
+            return Err(ApiError::BadRequest(format!(
+                "Invalid sort '{}'. Supported values: expiry_asc, expiry_desc, issued_asc, issued_desc",
+                other
+            )));
+        }
     };
 
-    CertificateInventoryQuery {
+    Ok(CertificateInventoryQuery {
         limit: query.limit,
         offset: query.offset,
         sort,
         hostname: query.hostname.clone(),
         expiring_within_days: query.expiring_within_days,
-    }
+    })
 }
 
 fn present_inventory_record(record: CertificateInventoryRecord) -> CertificateSummary {
@@ -64,7 +78,8 @@ fn present_inventory_record(record: CertificateInventoryRecord) -> CertificateSu
         CertificateQuery
     ),
     responses(
-        (status = 200, description = "Certificate list", body = CertificateListResponse)
+        (status = 200, description = "Certificate list", body = CertificateListResponse),
+        (status = 400, description = "Invalid query parameters", body = ApiErrorResponse)
     ),
     security(
         ("api_key" = [])
@@ -75,8 +90,8 @@ pub async fn list_certificates(
     Query(query): Query<CertificateQuery>,
 ) -> Result<Json<CertificateListResponse>, ApiError> {
     let inventory_service = inventory_service_from_state(&state)?;
-    let inventory_page =
-        load_inventory_page(&inventory_service, &inventory_query_from_api(&query)).await?;
+    let inventory_query = inventory_query_from_api(&query)?;
+    let inventory_page = load_inventory_page(&inventory_service, &inventory_query).await?;
 
     Ok(Json(present_certificate_list(
         inventory_page.total,
@@ -122,7 +137,10 @@ pub async fn get_certificate(
 
 #[cfg(test)]
 mod tests {
+    use super::inventory_query_from_api;
+    use crate::api::models::request::CertificateQuery;
     use crate::api::presenters::certificates::{CertificateView, present_certificate_summary};
+    use crate::application::CertificateInventorySort;
     use chrono::Utc;
 
     #[test]
@@ -153,5 +171,48 @@ mod tests {
             hostnames: Vec::new(),
         });
         assert_eq!(summary.common_name, subject);
+    }
+
+    #[test]
+    fn inventory_query_accepts_supported_sort_values() {
+        let query = CertificateQuery {
+            sort: "issued_desc".to_string(),
+            ..Default::default()
+        };
+
+        let inventory_query =
+            inventory_query_from_api(&query).expect("sort should map successfully");
+
+        assert_eq!(inventory_query.sort, CertificateInventorySort::IssuedDesc);
+    }
+
+    #[test]
+    fn inventory_query_rejects_invalid_sort_values() {
+        let query = CertificateQuery {
+            sort: "invalid".to_string(),
+            ..Default::default()
+        };
+
+        assert!(inventory_query_from_api(&query).is_err());
+    }
+
+    #[test]
+    fn inventory_query_rejects_hostname_with_port() {
+        let query = CertificateQuery {
+            hostname: Some("example.com:443".to_string()),
+            ..Default::default()
+        };
+
+        assert!(inventory_query_from_api(&query).is_err());
+    }
+
+    #[test]
+    fn inventory_query_rejects_invalid_hostname_filter() {
+        let query = CertificateQuery {
+            hostname: Some("example..com".to_string()),
+            ..Default::default()
+        };
+
+        assert!(inventory_query_from_api(&query).is_err());
     }
 }

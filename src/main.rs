@@ -13,10 +13,16 @@
 
 use cipherrun::Args;
 use cipherrun::commands::{CommandExit, CommandRouter};
+use cipherrun::external::openssl_client::OpenSslClient;
 use cipherrun::utils::PathExt;
+use clap::CommandFactory;
+use colored::control;
 use std::process::ExitCode;
+use std::sync::{Arc, Mutex};
 use tracing::{Level, info};
 use tracing_subscriber::FmtSubscriber;
+use tracing_subscriber::fmt::MakeWriter;
+use tracing_subscriber::fmt::writer::{BoxMakeWriter, MakeWriterExt};
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -35,20 +41,28 @@ async fn run_cli() -> anyhow::Result<CommandExit> {
         .install_default()
         .expect("Failed to install rustls crypto provider");
 
-    // Initialize logging - respect RUST_LOG environment variable
-    let log_level = std::env::var("RUST_LOG")
-        .ok()
-        .and_then(|s| s.parse::<Level>().ok())
-        .unwrap_or(Level::INFO);
-
-    let subscriber = FmtSubscriber::builder().with_max_level(log_level).finish();
-    tracing::subscriber::set_global_default(subscriber).expect("Failed to set subscriber");
+    let raw_arg_count = std::env::args_os().count();
 
     // Parse command line arguments
     let mut args = Args::parse_with_sources()?;
 
+    if raw_arg_count == 1 {
+        let mut command = Args::command();
+        command.print_help()?;
+        println!();
+        return Ok(CommandExit::success());
+    }
+
+    // Handle --no-colour / --no-color (disable colored output)
+    if args.output.no_colour || args.output.no_color {
+        args.output.color = 0;
+    }
+
     // Validate CLI arguments for conflicting flags
     args.validate()?;
+
+    apply_output_preferences(&args);
+    initialize_logging(&args)?;
 
     // Handle --version (display version and exit)
     if args.version {
@@ -97,11 +111,6 @@ async fn run_cli() -> anyhow::Result<CommandExit> {
         return Ok(CommandExit::success());
     }
 
-    // Handle --no-colour / --no-color (disable colored output)
-    if args.output.no_colour || args.output.no_color {
-        args.output.color = 0;
-    }
-
     // Handle --show-ciphers (list ciphers and exit)
     if args.scan.show_ciphers {
         use cipherrun::data::CIPHER_DB;
@@ -123,6 +132,22 @@ async fn run_cli() -> anyhow::Result<CommandExit> {
         return Ok(CommandExit::success());
     }
 
+    // Handle --local (list local OpenSSL ciphers and exit)
+    if args.tls.local {
+        let openssl = if let Some(path) = &args.tls.openssl_path {
+            OpenSslClient::with_path(path.to_str_anyhow()?.to_string())
+        } else {
+            OpenSslClient::new()
+        };
+
+        println!("OpenSSL: {}", openssl.get_version()?);
+        for cipher in openssl.list_local_ciphers()? {
+            println!("{}", cipher);
+        }
+
+        return Ok(CommandExit::success());
+    }
+
     // Validate routing before creating command
     CommandRouter::validate_routing(&args)?;
 
@@ -131,4 +156,122 @@ async fn run_cli() -> anyhow::Result<CommandExit> {
 
     info!("Executing command: {}", command.name());
     command.execute().await.map_err(Into::into)
+}
+
+fn initialize_logging(args: &Args) -> anyhow::Result<()> {
+    let log_level = resolve_log_level(
+        std::env::var("RUST_LOG").ok().as_deref(),
+        args.output.verbose,
+    );
+
+    let writer: BoxMakeWriter = if let Some(path) = &args.output.logfile {
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)?;
+        let file_writer = SharedFileWriter::new(file);
+        BoxMakeWriter::new(std::io::stderr.and(file_writer))
+    } else {
+        BoxMakeWriter::new(std::io::stderr)
+    };
+
+    let subscriber = FmtSubscriber::builder()
+        .with_max_level(log_level)
+        .with_writer(writer)
+        .finish();
+    tracing::subscriber::set_global_default(subscriber).expect("Failed to set subscriber");
+    Ok(())
+}
+
+fn resolve_log_level(rust_log: Option<&str>, verbose: u8) -> Level {
+    rust_log
+        .and_then(|value| value.parse::<Level>().ok())
+        .unwrap_or(match verbose {
+            0 => Level::INFO,
+            1 => Level::DEBUG,
+            _ => Level::TRACE,
+        })
+}
+
+fn color_output_enabled(mode: u8) -> bool {
+    mode != 0
+}
+
+fn apply_output_preferences(args: &Args) {
+    control::set_override(color_output_enabled(args.output.color));
+}
+
+#[derive(Clone)]
+struct SharedFileWriter {
+    file: Arc<Mutex<std::fs::File>>,
+}
+
+impl SharedFileWriter {
+    fn new(file: std::fs::File) -> Self {
+        Self {
+            file: Arc::new(Mutex::new(file)),
+        }
+    }
+}
+
+struct SharedFileGuard {
+    file: Arc<Mutex<std::fs::File>>,
+}
+
+impl<'a> MakeWriter<'a> for SharedFileWriter {
+    type Writer = SharedFileGuard;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        SharedFileGuard {
+            file: Arc::clone(&self.file),
+        }
+    }
+}
+
+impl std::io::Write for SharedFileGuard {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let mut file = self.file.lock().expect("logfile mutex poisoned");
+        std::io::Write::write(&mut *file, buf)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        let mut file = self.file.lock().expect("logfile mutex poisoned");
+        std::io::Write::flush(&mut *file)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{color_output_enabled, resolve_log_level};
+    use tracing::Level;
+
+    #[test]
+    fn test_resolve_log_level_defaults_to_info() {
+        assert_eq!(resolve_log_level(None, 0), Level::INFO);
+    }
+
+    #[test]
+    fn test_resolve_log_level_uses_verbose_when_env_missing() {
+        assert_eq!(resolve_log_level(None, 1), Level::DEBUG);
+        assert_eq!(resolve_log_level(None, 2), Level::TRACE);
+        assert_eq!(resolve_log_level(None, 5), Level::TRACE);
+    }
+
+    #[test]
+    fn test_resolve_log_level_prefers_rust_log() {
+        assert_eq!(resolve_log_level(Some("ERROR"), 2), Level::ERROR);
+    }
+
+    #[test]
+    fn test_resolve_log_level_falls_back_on_invalid_rust_log() {
+        assert_eq!(resolve_log_level(Some("not-a-level"), 1), Level::DEBUG);
+    }
+
+    #[test]
+    fn test_color_output_enabled() {
+        assert!(!color_output_enabled(0));
+        assert!(color_output_enabled(1));
+        assert!(color_output_enabled(2));
+        assert!(color_output_enabled(3));
+    }
 }

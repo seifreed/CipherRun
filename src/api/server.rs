@@ -1,8 +1,8 @@
 // API Server Implementation
 
+use crate::Result;
 use crate::api::{config::ApiConfig, middleware, routes, state::AppState};
 use crate::utils::network::canonical_target;
-use anyhow::Result;
 use axum::{
     Router, middleware as axum_middleware,
     routing::{delete, get, post},

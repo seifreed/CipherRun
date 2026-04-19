@@ -1,5 +1,24 @@
 use super::*;
 
+/// Extract the first CN value from a lowercased DN string (e.g. "cn=example.com, o=corp").
+/// Returns the CN value without leading/trailing whitespace, or None if not found.
+fn extract_cn_value(subject_lower: &str) -> Option<&str> {
+    for (pos, _) in subject_lower.match_indices("cn=") {
+        let before_ok = pos == 0
+            || subject_lower[..pos].ends_with(", ")
+            || subject_lower[..pos].ends_with(',')
+            || subject_lower[..pos].ends_with('/');
+        if !before_ok {
+            continue;
+        }
+        let value_start = pos + "cn=".len();
+        let rest = &subject_lower[value_start..];
+        let value_end = rest.find([',', '/']).unwrap_or(rest.len());
+        return Some(rest[..value_end].trim());
+    }
+    None
+}
+
 impl CertificateValidator {
     /// Check hostname match
     pub(crate) fn check_hostname(
@@ -52,23 +71,26 @@ impl CertificateValidator {
             }
         }
 
-        // Check Common Name in subject (exact match with DN boundary)
+        // Check Common Name in subject (exact match or wildcard with DN boundary)
         let subject_lower = cert.subject.to_lowercase();
-        let cn_prefix = format!("cn={}", hostname_lower);
-        if let Some(pos) = subject_lower.find(&cn_prefix) {
-            // Verify CN= is preceded by a DN boundary (start of string, comma, slash, or space)
-            let before_ok = pos == 0
-                || subject_lower[..pos].ends_with(", ")
-                || subject_lower[..pos].ends_with(',')
-                || subject_lower[..pos].ends_with('/')
-                || subject_lower[..pos].ends_with(' ');
-            // Verify the CN value ends at a DN boundary (comma, end of string, or slash)
-            let after = pos + cn_prefix.len();
-            let after_ok = after == subject_lower.len()
-                || subject_lower[after..].starts_with(',')
-                || subject_lower[after..].starts_with('/');
-            if before_ok && after_ok {
+        if let Some(cn_value) = extract_cn_value(&subject_lower) {
+            // Normalize trailing dot (FQDN format) to match the normalized hostname
+            let cn_value = cn_value.trim_end_matches('.');
+            if cn_value == hostname_lower {
                 return true;
+            }
+            // Apply wildcard matching when CN is e.g. "*.example.com"
+            if let Some(wildcard_domain) = cn_value
+                .strip_prefix("*.")
+                .filter(|d| !d.is_empty() && d.contains('.'))
+            {
+                let domain_suffix = format!(".{}", wildcard_domain);
+                if hostname_lower.ends_with(&domain_suffix) {
+                    let prefix = &hostname_lower[..hostname_lower.len() - domain_suffix.len()];
+                    if !prefix.is_empty() && !prefix.contains('.') {
+                        return true;
+                    }
+                }
             }
         }
 

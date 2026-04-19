@@ -40,47 +40,6 @@ pub(crate) fn evaluate_rc4<'a>(
     }
 }
 
-pub(crate) fn evaluate_3des<'a>(
-    summaries: impl IntoIterator<Item = (Protocol, &'a ProtocolCipherSummary)>,
-) -> VulnerabilityResult {
-    let mut vulnerable = false;
-    let mut details = Vec::new();
-
-    for (protocol, summary) in summaries {
-        let count = summary
-            .supported_ciphers
-            .iter()
-            .filter(|c| c.encryption.contains("3DES") || c.encryption.contains("DES"))
-            .count();
-
-        if count > 0 {
-            vulnerable = true;
-            details.push(format!("{}: {} 3DES/DES cipher(s)", protocol, count));
-        }
-    }
-
-    VulnerabilityResult {
-        vuln_type: VulnerabilityType::SWEET32,
-        vulnerable,
-        inconclusive: false,
-        details: if vulnerable {
-            format!(
-                "Server supports 3DES/DES ciphers (SWEET32): {}",
-                details.join(", ")
-            )
-        } else {
-            "Server does not support 3DES/DES ciphers".to_string()
-        },
-        cve: Some("CVE-2016-2183".to_string()),
-        cwe: Some("CWE-327".to_string()),
-        severity: if vulnerable {
-            Severity::Medium
-        } else {
-            Severity::Info
-        },
-    }
-}
-
 pub(crate) fn evaluate_null<'a>(
     summaries: impl IntoIterator<Item = (Protocol, &'a ProtocolCipherSummary)>,
 ) -> VulnerabilityResult {
@@ -141,13 +100,13 @@ pub(crate) fn evaluate_export<'a>(
         inconclusive: false,
         details: if vulnerable {
             format!(
-                "Server supports EXPORT ciphers (FREAK/LOGJAM): {}",
+                "Server supports EXPORT ciphers (FREAK CVE-2015-0204 / LOGJAM CVE-2015-4000): {}",
                 details.join(", ")
             )
         } else {
             "Server does not support EXPORT ciphers".to_string()
         },
-        cve: Some("CVE-2015-0204, CVE-2015-4000".to_string()),
+        cve: Some("CVE-2015-0204".to_string()),
         cwe: Some("CWE-327".to_string()),
         severity: if vulnerable {
             Severity::High

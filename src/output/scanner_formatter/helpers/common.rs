@@ -27,8 +27,3 @@ pub(crate) fn truncate_with_ellipsis(s: &str, max_len: usize) -> String {
         s.to_string()
     }
 }
-
-pub(crate) fn print_section_header(title: &str) {
-    println!("\n{}", title.cyan().bold());
-    println!("{}", "=".repeat(50));
-}

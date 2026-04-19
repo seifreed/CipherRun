@@ -7,17 +7,15 @@ impl CertificateValidator {
         cert: &CertificateInfo,
         issues: &mut Vec<ValidationIssue>,
     ) {
-        // Skip warnings if requested
-        if self.skip_warnings {
-            return;
-        }
-
         if let Some(key_size) = cert.public_key_size {
             let alg = cert.public_key_algorithm.to_lowercase();
-            let is_ec = alg.contains("ec") || alg.contains("ecdsa");
+            let is_ec = alg.starts_with("ec")
+                || alg.contains("ecpublickey")
+                || alg.contains("ecdsa")
+                || alg == "id-ecpublickey";
 
             if is_ec {
-                // EC keys: 224 bits is the minimum acceptable; 256+ is recommended
+                // EC keys: below 224 is always a High severity finding regardless of skip_warnings
                 if key_size < 224 {
                     issues.push(ValidationIssue {
                         severity: IssueSeverity::High,
@@ -27,7 +25,7 @@ impl CertificateValidator {
                             key_size
                         ),
                     });
-                } else if key_size < 256 {
+                } else if key_size < 256 && !self.skip_warnings {
                     issues.push(ValidationIssue {
                         severity: IssueSeverity::Low,
                         issue_type: IssueType::ShortKeyLength,
@@ -38,7 +36,7 @@ impl CertificateValidator {
                     });
                 }
             } else {
-                // RSA/DSA keys: 2048 bits minimum; 3072+ recommended
+                // RSA/DSA keys: below 2048 is always a High severity finding regardless of skip_warnings
                 if key_size < 2048 {
                     issues.push(ValidationIssue {
                         severity: IssueSeverity::High,
@@ -48,7 +46,7 @@ impl CertificateValidator {
                             key_size
                         ),
                     });
-                } else if key_size < 3072 {
+                } else if key_size < 3072 && !self.skip_warnings {
                     issues.push(ValidationIssue {
                         severity: IssueSeverity::Low,
                         issue_type: IssueType::ShortKeyLength,
@@ -131,7 +129,7 @@ mod tests {
     }
 
     #[test]
-    fn test_key_strength_skip_warnings() {
+    fn test_key_strength_skip_warnings_still_reports_high() {
         let validator = CertificateValidator::with_skip_warnings("example.com".to_string(), true);
         let mut issues = Vec::new();
 
@@ -142,6 +140,28 @@ mod tests {
         cert.public_key_size = Some(1024);
 
         validator.check_key_strength(&cert, &mut issues);
-        assert!(issues.is_empty());
+        // skip_warnings must NOT suppress High-severity key weakness findings
+        assert!(!issues.is_empty());
+        assert!(
+            issues
+                .iter()
+                .any(|i| matches!(i.severity, IssueSeverity::High))
+        );
+    }
+
+    #[test]
+    fn test_key_strength_skip_warnings_suppresses_low() {
+        let validator = CertificateValidator::with_skip_warnings("example.com".to_string(), true);
+        let mut issues = Vec::new();
+
+        let mut cert = base_cert(
+            "2024-01-01 00:00:00 +0000".to_string(),
+            "2025-01-01 00:00:00 +0000".to_string(),
+        );
+        // 2048-bit RSA is acceptable but below the 3072 recommendation (Low severity)
+        cert.public_key_size = Some(2048);
+
+        validator.check_key_strength(&cert, &mut issues);
+        assert!(issues.is_empty(), "Low-severity advisory should be skipped");
     }
 }

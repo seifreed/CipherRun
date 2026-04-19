@@ -41,22 +41,16 @@ impl<'a> PoodleTester<'a> {
     /// Test for all POODLE vulnerability variants
     pub async fn test(&self) -> Result<PoodleTestResult> {
         let ssl3_supported = self.test_ssl3().await?;
-        let tls_poodle = if !ssl3_supported {
-            self.test_tls_poodle().await?
-        } else {
-            None
-        };
+        let tls_poodle = self.test_tls_poodle().await?;
 
         let vulnerable = ssl3_supported || tls_poodle == Some(true);
 
-        let details = if ssl3_supported {
-            "Vulnerable: SSL 3.0 is supported (CVE-2014-3566)".to_string()
-        } else if tls_poodle == Some(true) {
-            "Vulnerable: TLS implementation vulnerable to POODLE (CVE-2014-8730)".to_string()
-        } else if tls_poodle.is_none() {
-            "SSL 3.0 disabled. TLS POODLE test is inconclusive because active CBC padding manipulation is not implemented".to_string()
-        } else {
-            "Not vulnerable: SSL 3.0 disabled and CBC-based TLS POODLE was not observed".to_string()
+        let details = match (ssl3_supported, tls_poodle) {
+            (true, Some(true)) => "Vulnerable: SSL 3.0 supported (CVE-2014-3566) AND TLS POODLE detected (CVE-2014-8730)".to_string(),
+            (true, _) => "Vulnerable: SSL 3.0 is supported (CVE-2014-3566)".to_string(),
+            (false, Some(true)) => "Vulnerable: TLS implementation vulnerable to POODLE (CVE-2014-8730)".to_string(),
+            (false, None) => "SSL 3.0 disabled. TLS POODLE test is inconclusive because active CBC padding manipulation is not implemented".to_string(),
+            (false, Some(false)) => "Not vulnerable: SSL 3.0 disabled and CBC-based TLS POODLE was not observed".to_string(),
         };
 
         Ok(PoodleTestResult {
@@ -71,15 +65,32 @@ impl<'a> PoodleTester<'a> {
     /// Test for all POODLE variants including newer CBC padding oracles
     pub async fn test_all_variants(&self) -> Result<PoodleTestResult> {
         let ssl3_supported = self.test_ssl3().await?;
-        let tls_poodle = self.test_tls_poodle().await?;
+
+        // Check CBC connectivity once (same check test_tls_poodle does internally).
+        let config = VulnSslConfig::tls10_with_ciphers("AES128-SHA:AES256-SHA:DES-CBC3-SHA");
+        let cbc_connected = test_vuln_ssl_connection(self.target, config)
+            .await
+            .map_err(crate::TlsError::from)?;
+
+        // Run each sub-test once and reuse results for both tls_poodle and variants list.
+        let zombie = self.test_zombie_poodle().await?;
+        let golden = self.test_goldendoodle().await?;
+        let sleeping = self.test_sleeping_poodle().await?;
+        let openssl_0len = self.test_openssl_0length().await?;
+
+        let tls_poodle = if cbc_connected {
+            Some(zombie.vulnerable || golden.vulnerable || sleeping.vulnerable)
+        } else {
+            None
+        };
 
         let variants = vec![
             Self::ssl3_variant_result(ssl3_supported),
             Self::tls_variant_result(tls_poodle),
-            self.test_zombie_poodle().await?,
-            self.test_goldendoodle().await?,
-            self.test_sleeping_poodle().await?,
-            self.test_openssl_0length().await?,
+            zombie,
+            golden,
+            sleeping,
+            openssl_0len,
         ];
 
         let vulnerable = variants.iter().any(|v| v.vulnerable);
@@ -146,7 +157,7 @@ impl<'a> PoodleTester<'a> {
             .map_err(crate::TlsError::from)?;
 
         if !connected {
-            return Ok(Some(false));
+            return Ok(None);
         }
 
         let zombie = self.test_zombie_poodle().await?;
@@ -219,7 +230,11 @@ impl<'a> PoodleTester<'a> {
             variant,
             vulnerable: oracle_detected,
             details: if oracle_detected {
-                format!("{} ({} iterations)", vulnerable_msg, ITERATIONS)
+                format!(
+                    "{} ({} iterations)",
+                    vulnerable_msg,
+                    responses_a.len().min(responses_b.len())
+                )
             } else {
                 not_vulnerable_msg.to_string()
             },
@@ -327,7 +342,7 @@ impl<'a> PoodleTester<'a> {
             )
         } else if !analysis.timing_reliable {
             format!(
-                "Timing measurement unreliable (CV valid={:.2}, invalid={:.2}). \
+                "Inconclusive - Timing measurement unreliable (CV valid={:.2}, invalid={:.2}). \
                  Diff={:.2}ms - high variance suggests network jitter, not timing oracle.",
                 vs.coefficient_of_variation, is.coefficient_of_variation, analysis.timing_diff_ms
             )
@@ -712,18 +727,46 @@ mod tests {
 
     #[test]
     fn test_detect_response_oracle_timing_difference() {
-        let responses_a = vec![ServerResponse {
-            connection_accepted: true,
-            alert_type: None,
-            response_time_ms: 1.0,
-            shows_differential_behavior: false,
-        }];
-        let responses_b = vec![ServerResponse {
-            connection_accepted: true,
-            alert_type: None,
-            response_time_ms: 25.0,
-            shows_differential_behavior: false,
-        }];
+        let responses_a = vec![
+            ServerResponse {
+                connection_accepted: true,
+                alert_type: None,
+                response_time_ms: 1.0,
+                shows_differential_behavior: false,
+            },
+            ServerResponse {
+                connection_accepted: true,
+                alert_type: None,
+                response_time_ms: 1.5,
+                shows_differential_behavior: false,
+            },
+            ServerResponse {
+                connection_accepted: true,
+                alert_type: None,
+                response_time_ms: 1.2,
+                shows_differential_behavior: false,
+            },
+        ];
+        let responses_b = vec![
+            ServerResponse {
+                connection_accepted: true,
+                alert_type: None,
+                response_time_ms: 50.0,
+                shows_differential_behavior: false,
+            },
+            ServerResponse {
+                connection_accepted: true,
+                alert_type: None,
+                response_time_ms: 52.0,
+                shows_differential_behavior: false,
+            },
+            ServerResponse {
+                connection_accepted: true,
+                alert_type: None,
+                response_time_ms: 51.0,
+                shows_differential_behavior: false,
+            },
+        ];
 
         assert!(oracle_detection::detect_response_oracle(
             &responses_a,

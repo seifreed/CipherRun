@@ -14,10 +14,7 @@
 
 use crate::Result;
 use crate::utils::network::Target;
-use crate::utils::timing::{TimingOracleConfig, TimingSampleSet, detect_timing_oracle};
-use std::io::{Read, Write};
 use std::time::Duration;
-use tokio::time::Instant;
 
 /// Padding oracle timing analysis result
 #[derive(Debug, Clone)]
@@ -116,7 +113,7 @@ impl<'a> PaddingOracle2016Tester<'a> {
             .socket_addrs()
             .first()
             .copied()
-            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
+            .ok_or(crate::TlsError::NoSocketAddresses)?;
 
         // AES-CBC cipher suites (explicitly exclude GCM which is AEAD)
         let aes_cbc_ciphers = "AES128-SHA:AES256-SHA:AES128-SHA256:AES256-SHA256";
@@ -154,206 +151,26 @@ impl<'a> PaddingOracle2016Tester<'a> {
 
     /// Perform timing analysis to detect padding oracle
     ///
-    /// Strategy:
-    /// 1. Send multiple requests with valid padding
-    /// 2. Send multiple requests with invalid padding
-    /// 3. Measure response times for each
-    /// 4. Use statistical analysis to detect timing differences
-    ///
-    /// Returns (valid_avg, invalid_avg, oracle_detected, inconclusive)
+    /// NOTE: This test is marked INCONCLUSIVE by design. A real CBC padding oracle
+    /// test requires encrypting the crafted padding variants under the session keys
+    /// negotiated during the TLS handshake. OpenSSL's Rust bindings do not expose
+    /// session keys, so we cannot build properly encrypted CBC records. Sending
+    /// plaintext bytes to the raw TCP stream after the handshake produces a malformed
+    /// TLS record that any server rejects identically regardless of vulnerability.
+    /// Manual testing with testssl.sh or a dedicated POODLE/padding oracle tool is
+    /// required for a conclusive result.
     async fn perform_timing_analysis(&self) -> Result<PaddingOracleTimingResult> {
-        const SAMPLES: usize = 25;
-        const MIN_SAMPLES: usize = 15;
-        const TIMING_THRESHOLD_MS: f64 = 15.0;
-
-        let mut valid_timings = TimingSampleSet::with_capacity(SAMPLES);
-        let mut invalid_timings = TimingSampleSet::with_capacity(SAMPLES);
-
-        for _ in 0..SAMPLES {
-            if let Ok(time) = self.send_padded_request(true).await {
-                valid_timings.push(time);
-            }
-            if let Ok(time) = self.send_padded_request(false).await {
-                invalid_timings.push(time);
-            }
-            tokio::time::sleep(Duration::from_millis(150)).await;
-        }
-
-        let config = TimingOracleConfig {
-            min_samples: MIN_SAMPLES,
-            timing_threshold_ms: TIMING_THRESHOLD_MS,
-            cv_max: 0.4,
-            significance_base_ms: TIMING_THRESHOLD_MS,
-        };
-
-        let analysis = match detect_timing_oracle(&valid_timings, &invalid_timings, &config) {
-            Some(result) => result,
-            None => {
-                return Ok(PaddingOracleTimingResult {
-                    valid_avg_ms: 0.0,
-                    invalid_avg_ms: 0.0,
-                    oracle_detected: false,
-                    inconclusive: true,
-                    details: format!(
-                        "Insufficient timing samples (valid: {}, invalid: {}, need: {}). \
-                         Network conditions prevented reliable timing measurement.",
-                        valid_timings.len(),
-                        invalid_timings.len(),
-                        MIN_SAMPLES
-                    ),
-                });
-            }
-        };
-
-        let vs = &analysis.valid_stats;
-        let is = &analysis.invalid_stats;
-
-        let details = if !analysis.timing_reliable {
-            format!(
-                "Timing measurements unreliable (CV valid: {:.2}, invalid: {:.2}). \
-                 High variance suggests network jitter. Diff: {:.2}ms. \
-                 Manual testing recommended.",
-                vs.coefficient_of_variation, is.coefficient_of_variation, analysis.timing_diff_ms
-            )
-        } else if analysis.oracle_detected {
-            format!(
-                "Padding oracle DETECTED: timing difference {:.2}ms exceeds threshold ({:.1}ms). \
-                 Valid padding avg: {:.2}ms (σ={:.2}ms), Invalid padding avg: {:.2}ms (σ={:.2}ms). \
-                 Statistical significance confirmed.",
-                analysis.timing_diff_ms,
-                TIMING_THRESHOLD_MS,
-                vs.mean,
-                vs.stddev,
-                is.mean,
-                is.stddev
-            )
-        } else {
-            format!(
-                "No padding oracle detected: timing difference {:.2}ms below threshold ({:.1}ms). \
-                 Valid padding avg: {:.2}ms, Invalid padding avg: {:.2}ms.",
-                analysis.timing_diff_ms, TIMING_THRESHOLD_MS, vs.mean, is.mean
-            )
-        };
-
         Ok(PaddingOracleTimingResult {
-            valid_avg_ms: vs.mean,
-            invalid_avg_ms: is.mean,
-            oracle_detected: analysis.oracle_detected,
-            inconclusive: !analysis.timing_reliable,
-            details,
+            valid_avg_ms: 0.0,
+            invalid_avg_ms: 0.0,
+            oracle_detected: false,
+            inconclusive: true,
+            details: "CBC padding oracle timing test requires session key access to encrypt \
+                      crafted padding variants. OpenSSL bindings do not expose session keys; \
+                      unencrypted payloads are rejected identically by any server. \
+                      Use testssl.sh or a dedicated tool for a conclusive result."
+                .to_string(),
         })
-    }
-
-    /// Send encrypted application data with valid or invalid padding
-    ///
-    /// Returns the time taken for the server to respond (in milliseconds)
-    async fn send_padded_request(&self, valid_padding: bool) -> Result<f64> {
-        use openssl::ssl::{SslConnector, SslMethod, SslVersion};
-
-        let addr = self
-            .target
-            .socket_addrs()
-            .first()
-            .copied()
-            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
-        let start = Instant::now();
-
-        let stream =
-            match crate::utils::network::connect_with_timeout(addr, self.connect_timeout, None)
-                .await
-            {
-                Ok(s) => s,
-                Err(_) => {
-                    let elapsed = start.elapsed().as_secs_f64() * 1000.0;
-                    return Ok(elapsed);
-                }
-            };
-
-        let std_stream = stream.into_std()?;
-        std_stream.set_nonblocking(false)?;
-
-        let mut builder = SslConnector::builder(SslMethod::tls())?;
-        builder.set_cipher_list("AES128-SHA:AES256-SHA")?;
-        builder.set_min_proto_version(Some(SslVersion::TLS1))?;
-        builder.set_max_proto_version(Some(SslVersion::TLS1_2))?;
-
-        let connector = builder.build();
-
-        match connector.connect(&self.target.hostname, std_stream) {
-            Ok(mut ssl_stream) => {
-                // Build application data with specific padding
-                let app_data = self.build_application_data(valid_padding);
-
-                // Send the crafted data (synchronous write)
-                let write_result = ssl_stream.get_mut().write_all(&app_data);
-
-                if write_result.is_err() {
-                    // Connection error - still measure time
-                    let elapsed = start.elapsed().as_secs_f64() * 1000.0;
-                    return Ok(elapsed);
-                }
-
-                // Try to read response (server should send alert for invalid padding)
-                let mut buffer = vec![0u8; 1024];
-                let _ = ssl_stream.get_mut().read(&mut buffer);
-
-                // Measure total time
-                let elapsed = start.elapsed().as_secs_f64() * 1000.0;
-                Ok(elapsed)
-            }
-            Err(_) => {
-                let elapsed = start.elapsed().as_secs_f64() * 1000.0;
-                Ok(elapsed)
-            }
-        }
-    }
-
-    /// Build TLS Application Data record with controlled padding
-    ///
-    /// For valid padding: proper PKCS#7 padding
-    /// For invalid padding: incorrect padding bytes
-    fn build_application_data(&self, valid_padding: bool) -> Vec<u8> {
-        let mut data = Vec::new();
-
-        // TLS Record header
-        data.push(0x17); // Content Type: Application Data
-        data.push(0x03); // Version: TLS 1.2
-        data.push(0x03);
-
-        // Record length (will be updated)
-        let length_pos = data.len();
-        data.push(0x00);
-        data.push(0x00);
-
-        // Encrypted payload (simulated - just random data + padding)
-        // In a real scenario, this would be AES-CBC encrypted
-        const PAYLOAD_LEN: usize = 32; // 32 bytes of "encrypted" data
-        data.extend_from_slice(&[0x41; PAYLOAD_LEN]); // Dummy encrypted data
-
-        // Add MAC (20 bytes for HMAC-SHA1)
-        data.extend_from_slice(&[0x00; 20]);
-
-        // Add padding
-        if valid_padding {
-            // Valid PKCS#7 padding: 7 bytes of 0x06 (padding value = length - 1)
-            let padding_len = 7;
-            for _ in 0..padding_len {
-                data.push((padding_len - 1) as u8);
-            }
-        } else {
-            // Invalid padding: wrong padding values
-            let padding_len = 7;
-            for i in 0..padding_len {
-                data.push((i * 11) as u8); // Invalid padding bytes
-            }
-        }
-
-        // Update record length
-        let record_len = data.len() - 5; // Exclude 5-byte header
-        data[length_pos] = ((record_len >> 8) & 0xff) as u8;
-        data[length_pos + 1] = (record_len & 0xff) as u8;
-
-        data
     }
 }
 
@@ -371,93 +188,6 @@ pub struct PaddingOracle2016Result {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_build_application_data_valid() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["127.0.0.1".parse().unwrap()],
-        )
-        .unwrap();
-        let tester = PaddingOracle2016Tester::new(&target);
-
-        let valid_data = tester.build_application_data(true);
-
-        // Check record type
-        assert_eq!(valid_data[0], 0x17); // Application Data
-
-        // Check version
-        assert_eq!(valid_data[1], 0x03);
-        assert_eq!(valid_data[2], 0x03);
-
-        // Verify valid padding at the end
-        let padding_byte = valid_data[valid_data.len() - 1];
-        let padding_len = (padding_byte + 1) as usize;
-
-        // All padding bytes should be equal
-        for i in 1..=padding_len {
-            assert_eq!(valid_data[valid_data.len() - i], padding_byte);
-        }
-    }
-
-    #[test]
-    fn test_build_application_data_invalid() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["127.0.0.1".parse().unwrap()],
-        )
-        .unwrap();
-        let tester = PaddingOracle2016Tester::new(&target);
-
-        let invalid_data = tester.build_application_data(false);
-
-        // Check record type
-        assert_eq!(invalid_data[0], 0x17);
-
-        // Invalid padding should have different bytes at the end
-        let last_7_bytes = &invalid_data[invalid_data.len() - 7..];
-
-        // Verify padding is NOT uniform (invalid)
-        let first_byte = last_7_bytes[0];
-        let has_different_bytes = last_7_bytes.iter().any(|&b| b != first_byte);
-        assert!(
-            has_different_bytes,
-            "Invalid padding should have varying bytes"
-        );
-    }
-
-    #[test]
-    fn test_application_data_length_field_matches_payload() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["127.0.0.1".parse().unwrap()],
-        )
-        .unwrap();
-        let tester = PaddingOracle2016Tester::new(&target);
-
-        for valid_padding in [true, false] {
-            let data = tester.build_application_data(valid_padding);
-            let record_len = ((data[3] as usize) << 8) | (data[4] as usize);
-            assert_eq!(record_len, data.len() - 5);
-        }
-    }
-
-    #[tokio::test]
-    #[ignore] // Requires network access
-    async fn test_padding_oracle_modern_server() {
-        let target = Target::parse("www.google.com:443")
-            .await
-            .expect("test assertion should succeed");
-        let tester = PaddingOracle2016Tester::new(&target);
-
-        let result = tester.test().await.expect("test assertion should succeed");
-
-        // Google should not be vulnerable (patched OpenSSL)
-        assert!(!result.vulnerable);
-    }
 
     #[test]
     fn test_result_structure() {
@@ -518,5 +248,20 @@ mod tests {
             average_invalid_timing_ms: 0.0,
         };
         assert!(result.details.contains("Not vulnerable"));
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires network access
+    async fn test_padding_oracle_modern_server() {
+        let target = Target::parse("www.google.com:443")
+            .await
+            .expect("test assertion should succeed");
+        let tester = PaddingOracle2016Tester::new(&target);
+
+        let result = tester.test().await.expect("test assertion should succeed");
+
+        // CVE-2016-2107 test is inconclusive by design (see perform_timing_analysis)
+        assert!(!result.vulnerable);
+        assert!(!result.timing_oracle_detected);
     }
 }

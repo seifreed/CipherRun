@@ -108,6 +108,7 @@ impl CipherPhase {
         // Must perform application protocol handshake before TLS
         if let Some(starttls_proto) = context.args.starttls_protocol() {
             tester = tester.with_starttls(Some(starttls_proto));
+            tester = tester.with_starttls_hostname(context.args.starttls.xmpphost.clone());
         }
 
         tester = tester.with_sni(context.args.tls.sni_name.clone());
@@ -206,12 +207,12 @@ mod tests {
 
         // Test with --each-cipher flag
         let mut args = ScanRequest::default();
-        args.scan.each_cipher = true;
+        args.scan.ciphers.each_cipher = true;
         assert!(phase.should_run(&args));
 
         // Test with --all flag
         let mut args = ScanRequest::default();
-        args.scan.all = true;
+        args.scan.scope.all = true;
         assert!(phase.should_run(&args));
 
         // Target alone should not imply baseline scanning
@@ -223,8 +224,8 @@ mod tests {
 
         // Test with --no-ciphersuites (should not run)
         let mut args = ScanRequest::default();
-        args.scan.all = true;
-        args.scan.no_ciphersuites = true;
+        args.scan.scope.all = true;
+        args.scan.ciphers.no_ciphersuites = true;
         assert!(!phase.should_run(&args));
 
         // Test with no relevant flags

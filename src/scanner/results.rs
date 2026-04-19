@@ -102,6 +102,8 @@ pub struct ScanMetadata {
     pub sni_generation_method: Option<SniMethod>,
     pub probe_status: crate::scanner::probe_status::ProbeStatus,
     pub inconsistencies: Option<Vec<crate::scanner::inconsistency::Inconsistency>>,
+    #[serde(skip)]
+    pub human_warnings: Vec<String>,
 
     /// Full multi-IP scan report (only populated for multi-IP scans)
     /// This is used by the command layer for JSON export of per-IP results.
@@ -302,6 +304,11 @@ impl ScanResults {
     /// Ensure advanced sub-struct exists and return mutable reference
     pub fn advanced_mut(&mut self) -> &mut AdvancedResults {
         self.advanced.get_or_insert_with(AdvancedResults::default)
+    }
+
+    /// Record a human-facing warning for terminal presentation.
+    pub fn add_human_warning(&mut self, warning: impl Into<String>) {
+        self.scan_metadata.human_warnings.push(warning.into());
     }
 }
 

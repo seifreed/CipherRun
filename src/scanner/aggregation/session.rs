@@ -22,6 +22,7 @@ impl ConservativeAggregator {
 
         let mut measured_any = false;
         let mut all_support = true;
+        let mut had_unknown = false;
 
         for result in &successful_results {
             let supported_protocols: Vec<_> = result
@@ -32,7 +33,9 @@ impl ConservativeAggregator {
                 .collect();
 
             if supported_protocols.is_empty() {
-                return None;
+                // Skip IPs with no supported protocols rather than aborting.
+                // An IP with no TLS protocols has no session resumption data to contribute.
+                continue;
             }
 
             for protocol in supported_protocols {
@@ -44,9 +47,15 @@ impl ConservativeAggregator {
                         measured_any = true;
                         all_support = false;
                     }
-                    None => return None,
+                    None => {
+                        had_unknown = true;
+                    }
                 }
             }
+        }
+
+        if had_unknown && all_support {
+            return None;
         }
 
         measured_any.then_some(all_support)

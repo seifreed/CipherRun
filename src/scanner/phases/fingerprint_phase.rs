@@ -130,8 +130,12 @@ impl FingerprintPhase {
         let ja3s_db = match Ja3sDatabase::load_default() {
             Ok(db) => db,
             Err(e) => {
-                eprintln!("Warning: Failed to load JA3S database: {}", e);
-                eprintln!("Continuing without JA3S signature matching");
+                context
+                    .results
+                    .add_human_warning(format!("Failed to load JA3S database: {}", e));
+                context
+                    .results
+                    .add_human_warning("Continuing without JA3S signature matching");
                 Ja3sDatabase::empty()
             }
         };
@@ -209,8 +213,12 @@ impl FingerprintPhase {
                 }
             })?)
             .unwrap_or_else(|e| {
-                eprintln!("Warning: Failed to load custom JARM database: {}", e);
-                eprintln!("Falling back to builtin database");
+                context
+                    .results
+                    .add_human_warning(format!("Failed to load custom JARM database: {}", e));
+                context
+                    .results
+                    .add_human_warning("Falling back to builtin database");
                 JarmDatabase::builtin()
             })
         } else {
@@ -293,19 +301,19 @@ mod tests {
 
         // Test with --ja3 flag (explicit)
         let mut args = ScanRequest::default();
-        args.scan.all = false;
+        args.scan.scope.all = false;
         args.fingerprint.explicit_ja3 = true;
         assert!(phase.should_run(&args));
 
         // Test with --ja3s flag (explicit)
         let mut args = ScanRequest::default();
-        args.scan.all = false;
+        args.scan.scope.all = false;
         args.fingerprint.explicit_ja3s = true;
         assert!(phase.should_run(&args));
 
         // Test with --jarm flag (explicit)
         let mut args = ScanRequest::default();
-        args.scan.all = false;
+        args.scan.scope.all = false;
         args.fingerprint.explicit_jarm = true;
         assert!(phase.should_run(&args));
 
@@ -318,7 +326,7 @@ mod tests {
 
         // Baseline enables implicit default fingerprints.
         let mut args = ScanRequest::default();
-        args.scan.all = true;
+        args.scan.scope.all = true;
         assert!(
             phase.should_run(&args),
             "Baseline should enable default fingerprints"
@@ -326,7 +334,7 @@ mod tests {
 
         // Test with all fingerprint flags explicitly disabled
         let mut args = ScanRequest::default();
-        args.scan.all = true;
+        args.scan.scope.all = true;
         args.fingerprint.ja3 = false;
         args.fingerprint.ja3s = false;
         args.fingerprint.jarm = false;
@@ -337,7 +345,7 @@ mod tests {
 
         // Test with --all=false and no explicit fingerprint request
         let mut args = ScanRequest::default();
-        args.scan.all = false;
+        args.scan.scope.all = false;
         assert!(
             !phase.should_run(&args),
             "Should not run with --all=false and implicit defaults only"
@@ -354,7 +362,7 @@ mod tests {
     fn test_fingerprint_phase_should_run_multiple_flags() {
         let phase = FingerprintPhase::new();
         let mut args = ScanRequest::default();
-        args.scan.all = false;
+        args.scan.scope.all = false;
         args.fingerprint.explicit_ja3 = true;
         args.fingerprint.explicit_jarm = true;
         assert!(phase.should_run(&args));

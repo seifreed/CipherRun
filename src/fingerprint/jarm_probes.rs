@@ -402,16 +402,8 @@ fn reorder_ciphers(mut ciphers: Vec<[u8; 2]>, order: CipherOrder) -> Vec<[u8; 2]
         }
         CipherOrder::TopHalf => {
             let len = ciphers.len();
-            if len % 2 == 1 {
-                let mid = len / 2;
-                let mut result = vec![ciphers[mid]];
-                let reversed: Vec<_> = ciphers.into_iter().rev().collect();
-                result.extend_from_slice(&reversed[0..(len / 2)]);
-                result
-            } else {
-                let reversed: Vec<_> = ciphers.into_iter().rev().collect();
-                reversed[0..(len / 2)].to_vec()
-            }
+            let reversed: Vec<_> = ciphers.into_iter().rev().collect();
+            reversed[0..(len / 2)].to_vec()
         }
         CipherOrder::BottomHalf => {
             let len = ciphers.len();

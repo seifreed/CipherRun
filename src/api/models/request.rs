@@ -11,8 +11,8 @@ pub struct ScanRequest {
     pub target: String,
 
     /// Optional scan options
-    #[serde(default)]
-    pub options: ScanOptions,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub options: Option<ScanOptions>,
 
     /// Optional webhook URL to call when scan completes
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -45,7 +45,7 @@ pub struct ScanOptions {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub starttls_protocol: Option<String>,
 
-    /// Connection timeout in seconds
+    /// Connection and socket timeout in seconds
     pub timeout_seconds: u64,
 
     /// Use IPv4 only
@@ -111,6 +111,18 @@ impl ScanOptions {
             client_simulation: false,
             ..Default::default()
         }
+    }
+
+    /// Returns true when the API payload enables at least one real scan phase.
+    pub fn has_requested_scan_work(&self) -> bool {
+        self.test_protocols
+            || self.test_ciphers
+            || self.test_vulnerabilities
+            || self.analyze_certificates
+            || self.test_http_headers
+            || self.client_simulation
+            || self.starttls_protocol.is_some()
+            || self.full_scan
     }
 }
 
@@ -239,6 +251,35 @@ mod tests {
     }
 
     #[test]
+    fn test_scan_request_defaults_options_to_none() {
+        let json = r#"{ "target": "example.com:443" }"#;
+        let req: ScanRequest = serde_json::from_str(json).expect("test assertion should succeed");
+        assert_eq!(req.target, "example.com:443");
+        assert!(req.options.is_none());
+        assert!(req.webhook_url.is_none());
+    }
+
+    #[test]
+    fn test_scan_options_workload_detection() {
+        assert!(!ScanOptions::default().has_requested_scan_work());
+        assert!(ScanOptions::quick().has_requested_scan_work());
+        assert!(
+            ScanOptions {
+                analyze_certificates: true,
+                ..Default::default()
+            }
+            .has_requested_scan_work()
+        );
+        assert!(
+            ScanOptions {
+                starttls_protocol: Some("smtp".to_string()),
+                ..Default::default()
+            }
+            .has_requested_scan_work()
+        );
+    }
+
+    #[test]
     fn test_policy_request_default_enabled() {
         let json = r#"{ "name": "Policy", "rules": "rules" }"#;
         let req: PolicyRequest = serde_json::from_str(json).expect("test assertion should succeed");
@@ -253,17 +294,6 @@ mod tests {
         assert_eq!(query.sort, "expiry_asc");
         assert!(query.hostname.is_none());
         assert!(query.expiring_within_days.is_none());
-    }
-
-    #[test]
-    fn test_scan_request_defaults_options() {
-        let json = r#"{ "target": "example.com:443" }"#;
-        let req: ScanRequest = serde_json::from_str(json).expect("test assertion should succeed");
-        assert_eq!(req.target, "example.com:443");
-        // ScanOptions::default() doesn't set timeout_seconds explicitly,
-        // but the serde default function sets it to 30
-        assert_eq!(req.options.timeout_seconds, 30);
-        assert!(req.webhook_url.is_none());
     }
 
     #[test]

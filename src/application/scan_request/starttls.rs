@@ -1,6 +1,7 @@
 #[derive(Debug, Clone, Default)]
 pub struct ScanRequestStarttls {
     pub protocol: Option<String>,
+    pub xmpphost: Option<String>,
     pub smtp: bool,
     pub imap: bool,
     pub pop3: bool,

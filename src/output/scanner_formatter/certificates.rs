@@ -9,8 +9,7 @@ use colored::*;
 impl<'a> ScannerFormatter<'a> {
     /// Display certificate analysis results
     pub fn display_certificate_results(&self, result: &CertificateAnalysisResult) {
-        println!("\n{}", "Certificate Analysis:".cyan().bold());
-        println!("{}", "=".repeat(50));
+        self.print_section("Certificate Analysis:", 50);
 
         if let Some(cert) = result.chain.leaf() {
             self.display_certificate_info(cert);
@@ -26,7 +25,7 @@ impl<'a> ScannerFormatter<'a> {
 
     /// Display certificate information (subject, issuer, validity, key details)
     fn display_certificate_info(&self, cert: &CertificateInfo) {
-        println!("\n{}", "Certificate Information:".cyan());
+        println!("\n{}", self.section_header("Certificate Information:"));
         println!("  Subject:    {}", cert.subject);
         println!("  Issuer:     {}", cert.issuer);
         println!("  Valid From: {}", cert.not_before);
@@ -74,6 +73,10 @@ impl<'a> ScannerFormatter<'a> {
 
     /// Display certificate warnings (e.g., Debian weak key)
     fn display_certificate_warnings(&self, cert: &CertificateInfo) {
+        if self.warning_mode() != super::WarningMode::Default {
+            return;
+        }
+
         if let Some(true) = cert.debian_weak_key {
             println!(
                 "  {}",
@@ -96,7 +99,7 @@ impl<'a> ScannerFormatter<'a> {
 
     /// Display certificate chain summary and optional full chain details
     fn display_chain_summary(&self, chain: &CertificateChain) {
-        println!("\n{}", "Certificate Chain:".cyan());
+        println!("\n{}", self.section_header("Certificate Chain:"));
         println!("  Chain Length: {} certificates", chain.chain_length);
         println!("  Chain Size:   {} bytes", chain.chain_size_bytes);
         println!(
@@ -115,7 +118,7 @@ impl<'a> ScannerFormatter<'a> {
 
     /// Display full certificate chain details
     fn display_full_certificate_chain(&self, chain: &CertificateChain) {
-        println!("\n  {}", "Full Certificate Chain:".cyan());
+        println!("\n  {}", self.section_header("Full Certificate Chain:"));
         let chain_len = chain.certificates.len();
 
         for (i, cert) in chain.certificates.iter().enumerate() {
@@ -141,7 +144,7 @@ impl<'a> ScannerFormatter<'a> {
 
     /// Display certificate validation status and issues
     fn display_validation_status(&self, validation: &ValidationResult) {
-        println!("\n{}", "Validation:".cyan());
+        println!("\n{}", self.section_header("Validation:"));
         let validation_status = if validation.valid {
             "Y Valid".green().bold()
         } else {
@@ -188,7 +191,7 @@ impl<'a> ScannerFormatter<'a> {
 
     /// Display revocation status (OCSP/CRL)
     fn display_revocation_status(&self, revocation: &RevocationResult) {
-        println!("\n{}", "Revocation Status:".cyan());
+        println!("\n{}", self.section_header("Revocation Status:"));
         let status_str = format_revocation_status(&revocation.status);
         println!("  Status:        {}", status_str);
         println!("  Method:        {:?}", revocation.method);
@@ -210,7 +213,7 @@ impl<'a> ScannerFormatter<'a> {
     fn display_ocsp_details(&self, revocation: &RevocationResult) {
         use crate::certificates::revocation::{RevocationMethod, RevocationStatus};
 
-        println!("\n  {}", "OCSP Details:".cyan());
+        println!("\n  {}", self.section_header("OCSP Details:"));
 
         println!(
             "    Must-Staple:  {}",
@@ -356,7 +359,7 @@ impl<'a> ScannerFormatter<'a> {
 
         if status.trusted {
             if let Some(ref root) = status.trusted_root {
-                let root_display = truncate_with_ellipsis(root, 50);
+                let root_display = truncate_with_ellipsis(root, self.expand_width(50));
                 println!(
                     "    {} {} - {}",
                     status_symbol,
@@ -367,7 +370,7 @@ impl<'a> ScannerFormatter<'a> {
                 println!("    {} {}", status_symbol, platform_name.cyan());
             }
         } else {
-            let message_display = truncate_with_ellipsis(&status.message, 50);
+            let message_display = truncate_with_ellipsis(&status.message, self.expand_width(50));
             println!(
                 "    {} {} - {}",
                 status_symbol,

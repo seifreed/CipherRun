@@ -12,6 +12,7 @@ use crate::application::{CertificateFilters, ScanRequest};
 use crate::certificates::status::CertificateStatus;
 use crate::scanner::{ScanResults, Scanner};
 use crate::utils::network::split_target_host_port;
+use crate::utils::network_runtime;
 use colored::*;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use std::sync::Arc;
@@ -209,10 +210,13 @@ impl MassScanner {
                 pb.set_message(format!("Scanning {}", target_for_task));
 
                 let result: Result<_> =
-                    match MassScanner::create_scanner(&request, &target_for_task) {
-                        Ok(s) => s.run().await,
-                        Err(e) => Err(e),
-                    };
+                    network_runtime::scope_proxy(request.network.proxy.clone(), async {
+                        match MassScanner::create_scanner(&request, &target_for_task) {
+                            Ok(s) => s.run().await,
+                            Err(e) => Err(e),
+                        }
+                    })
+                    .await;
 
                 pb.finish_and_clear();
                 (target_for_task, result)
@@ -601,7 +605,7 @@ mod tests {
     #[test]
     fn test_mass_scanner_creation() {
         let mut request = ScanRequest::default();
-        request.scan.all = true;
+        request.scan.scope.all = true;
         let targets = vec!["example.com:443".to_string(), "google.com:443".to_string()];
         let scanner = MassScanner::new(request, MassScanConfig::default(), targets);
         assert_eq!(scanner.targets.len(), 2);
@@ -700,7 +704,16 @@ mod tests {
 
     #[test]
     fn test_create_scanner_sets_target_and_quiet() {
-        let request = Arc::new(ScanRequest::default());
+        let request = Arc::new(ScanRequest {
+            scan: crate::application::scan_request::ScanRequestScan {
+                prefs: crate::application::scan_request::ScanRequestPrefs {
+                    probe_status: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        });
         let scanner =
             MassScanner::create_scanner(&request, "example.com:443").expect("should build scanner");
         assert_eq!(scanner.request.target.as_deref(), Some("example.com:443"));

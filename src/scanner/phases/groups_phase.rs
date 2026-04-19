@@ -62,7 +62,7 @@ impl ScanPhase for GroupsPhase {
         // Run if:
         // - Explicit group enumeration requested (--show-groups)
         // - AND not explicitly disabled (--no-groups)
-        args.scan.show_groups && !args.scan.no_groups
+        args.scan.ciphers.show_groups && !args.scan.ciphers.no_groups
     }
 
     async fn execute(&self, context: &mut ScanContext) -> Result<()> {
@@ -93,13 +93,13 @@ mod tests {
 
         // Test with --show-groups flag
         let mut args = ScanRequest::default();
-        args.scan.show_groups = true;
+        args.scan.ciphers.show_groups = true;
         assert!(phase.should_run(&args));
 
         // Test with --show-groups but also --no-groups (disabled)
         let mut args = ScanRequest::default();
-        args.scan.show_groups = true;
-        args.scan.no_groups = true;
+        args.scan.ciphers.show_groups = true;
+        args.scan.ciphers.no_groups = true;
         assert!(!phase.should_run(&args));
 
         // Test without --show-groups flag
@@ -108,7 +108,7 @@ mod tests {
 
         // Test with --all flag (should not enable group enumeration)
         let mut args = ScanRequest::default();
-        args.scan.all = true;
+        args.scan.scope.all = true;
         assert!(!phase.should_run(&args));
     }
 

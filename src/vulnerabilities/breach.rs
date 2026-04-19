@@ -65,7 +65,7 @@ impl BreachTester {
             .socket_addrs()
             .first()
             .copied()
-            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
+            .ok_or(crate::TlsError::NoSocketAddresses)?;
 
         // First establish TLS connection
         let stream =
@@ -112,7 +112,9 @@ impl BreachTester {
                         lower.starts_with("content-encoding:")
                             && (lower.contains("gzip")
                                 || lower.contains("deflate")
-                                || lower.contains("br"))
+                                || lower.contains("br")
+                                || lower.contains("zstd")
+                                || lower.contains("compress"))
                     });
                     Ok(compressed)
                 } else {
@@ -130,7 +132,7 @@ impl BreachTester {
             .socket_addrs()
             .first()
             .copied()
-            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
+            .ok_or(crate::TlsError::NoSocketAddresses)?;
 
         let stream =
             match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None)
@@ -169,8 +171,17 @@ impl BreachTester {
 
                 if n > 0 {
                     let response = String::from_utf8_lossy(&buffer[..n]);
-                    // Check if our marker is reflected in the response
-                    Ok(response.contains(marker))
+                    // Require a 2xx response: 404/error pages that echo the URL in their
+                    // body would otherwise trigger a false positive for dynamic content.
+                    let is_success = response.starts_with("HTTP/")
+                        && response[5..]
+                            .split_once(' ')
+                            .map(|x| x.1)
+                            .and_then(|rest| rest.split_whitespace().next())
+                            .and_then(|code| code.parse::<u16>().ok())
+                            .map(|code| (200..300).contains(&code))
+                            .unwrap_or(false);
+                    Ok(is_success && response.contains(marker))
                 } else {
                     Ok(false)
                 }
@@ -186,7 +197,7 @@ impl BreachTester {
             .socket_addrs()
             .first()
             .copied()
-            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
+            .ok_or(crate::TlsError::NoSocketAddresses)?;
 
         let stream =
             match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None)

@@ -2,7 +2,7 @@
 
 use crate::api::models::{request::ScanOptions, response::ScanStatus};
 use crate::scanner::ScanResults;
-use anyhow::Result;
+use crate::{Result, tls_bail};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -210,7 +210,7 @@ impl JobQueue for InMemoryJobQueue {
         let mut jobs = self.jobs.write().await;
 
         if queue.len() >= self.max_capacity {
-            anyhow::bail!("Job queue is full");
+            tls_bail!("Job queue is full");
         }
 
         let job_id = job.id.clone();

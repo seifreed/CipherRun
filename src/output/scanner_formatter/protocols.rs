@@ -4,8 +4,8 @@ use colored::*;
 impl<'a> ScannerFormatter<'a> {
     /// Display protocol test results
     pub fn display_protocol_results(&self, results: &[ProtocolTestResult]) {
-        println!("\n{}", "Protocol Support:".cyan().bold());
-        println!("{}", "-".repeat(50));
+        println!("\n{}", self.section_header("Protocol Support:"));
+        println!("{}", "-".repeat(self.expand_width(50)));
 
         for result in results {
             self.display_single_protocol_result(result);
@@ -42,8 +42,8 @@ impl<'a> ScannerFormatter<'a> {
         let supported_protocols = results.iter().filter(|r| r.supported).count();
 
         if supported_protocols > 0 {
-            println!("\n{}", "Protocol Features:".cyan().bold());
-            println!("{}", "-".repeat(50));
+            println!("\n{}", self.section_header("Protocol Features:"));
+            println!("{}", "-".repeat(self.expand_width(50)));
 
             for result in results {
                 if result.supported {

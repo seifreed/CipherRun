@@ -58,7 +58,7 @@ async fn test_scan_create_with_valid_target() {
 
     let (status, body) = create_scan(&mut router, Some("test-user-key"), scan_request).await;
 
-    assert_eq!(status, StatusCode::OK);
+    assert_eq!(status, StatusCode::CREATED);
     assert!(body["scan_id"].is_string());
     assert_eq!(body["status"], "queued");
     assert_eq!(body["target"], "example.com:443");
@@ -97,6 +97,126 @@ async fn test_scan_create_with_malformed_target() {
 }
 
 #[tokio::test]
+async fn test_scan_create_rejects_conflicting_ip_family_options() {
+    let mut router = create_test_router();
+    let scan_request = scan_request_payload(
+        "example.com:443",
+        serde_json::json!({
+            "test_protocols": true,
+            "ipv4_only": true,
+            "ipv6_only": true
+        }),
+    );
+
+    let (status, body) = create_scan(&mut router, Some("test-user-key"), scan_request).await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_bad_request_message(&body, "Cannot enable both IPv4-only and IPv6-only scanning");
+}
+
+#[tokio::test]
+async fn test_scan_create_rejects_zero_timeout() {
+    let mut router = create_test_router();
+    let scan_request = scan_request_payload(
+        "example.com:443",
+        serde_json::json!({
+            "test_protocols": true,
+            "timeout_seconds": 0
+        }),
+    );
+
+    let (status, body) = create_scan(&mut router, Some("test-user-key"), scan_request).await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_bad_request_message(&body, "Socket timeout must be greater than 0 seconds");
+}
+
+#[tokio::test]
+async fn test_scan_create_rejects_private_ip_override() {
+    let mut router = create_test_router();
+    let scan_request = scan_request_payload(
+        "example.com:443",
+        serde_json::json!({
+            "test_protocols": true,
+            "ip": "127.0.0.1"
+        }),
+    );
+
+    let (status, body) = create_scan(&mut router, Some("test-user-key"), scan_request).await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_bad_request_message(&body, "Invalid IP override");
+}
+
+#[tokio::test]
+async fn test_scan_create_rejects_private_webhook_url() {
+    let mut router = create_test_router();
+    let scan_request = serde_json::json!({
+        "target": "example.com:443",
+        "options": {
+            "test_protocols": true
+        },
+        "webhook_url": "https://localhost/callback"
+    });
+
+    let (status, body) = create_scan(&mut router, Some("test-user-key"), scan_request).await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_bad_request_message(&body, "Invalid webhook_url");
+}
+
+#[tokio::test]
+async fn test_scan_create_rejects_malformed_ip_override() {
+    let mut router = create_test_router();
+    let scan_request = scan_request_payload(
+        "example.com:443",
+        serde_json::json!({
+            "test_protocols": true,
+            "ip": "not-an-ip"
+        }),
+    );
+
+    let (status, body) = create_scan(&mut router, Some("test-user-key"), scan_request).await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_bad_request_message(&body, "Invalid IP override");
+}
+
+#[tokio::test]
+async fn test_scan_create_accepts_starttls_protocol_only() {
+    let mut router = create_test_router();
+    let scan_request = scan_request_payload(
+        "mail.example.com:25",
+        serde_json::json!({
+            "starttls_protocol": "smtp"
+        }),
+    );
+
+    let (status, body) = create_scan(&mut router, Some("test-user-key"), scan_request).await;
+
+    assert_eq!(status, StatusCode::CREATED);
+    assert!(body["scan_id"].is_string());
+    assert_eq!(body["target"], "mail.example.com:25");
+}
+
+#[tokio::test]
+async fn test_scan_delete_nonexistent_returns_404() {
+    let mut router = create_test_router();
+    let (status, body) = send_request(
+        &mut router,
+        "DELETE",
+        "/api/v1/scan/nonexistent-scan-id-12345",
+        Some("test-user-key"),
+        None,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body["error"], "NOT_FOUND");
+    assert!(body["message"].as_str().unwrap().contains("not found"));
+}
+
+#[tokio::test]
 async fn test_scan_get_nonexistent_returns_404() {
     let mut router = create_test_router();
     let (status, body) = send_request(
@@ -125,7 +245,7 @@ async fn test_scan_create_and_get_status() {
     );
 
     let (status, body) = create_scan(&mut router, Some("test-user-key"), scan_request).await;
-    assert_eq!(status, StatusCode::OK);
+    assert_eq!(status, StatusCode::CREATED);
     let scan_id = body["scan_id"].as_str().unwrap();
 
     let (status, body) = send_request(

@@ -15,7 +15,7 @@ impl CertificateValidator {
         let Some(not_before) = parse_cert_date(&cert.not_before) else {
             issues.push(ValidationIssue {
                 severity: IssueSeverity::High,
-                issue_type: IssueType::NotYetValid,
+                issue_type: IssueType::InvalidDate,
                 description: format!(
                     "Certificate date format could not be parsed (not_before: '{}'). \
                      Treating as invalid — unparseable dates cannot be trusted.",
@@ -29,7 +29,7 @@ impl CertificateValidator {
         let Some(not_after) = parse_cert_date(&cert.not_after) else {
             issues.push(ValidationIssue {
                 severity: IssueSeverity::High,
-                issue_type: IssueType::Expired,
+                issue_type: IssueType::InvalidDate,
                 description: format!(
                     "Certificate date format could not be parsed (not_after: '{}'). \
                      Treating as invalid — unparseable dates cannot be trusted.",
@@ -64,10 +64,10 @@ impl CertificateValidator {
 
         // Check if certificate expires soon (within 30 days)
         let days_until_expiry = (not_after - now).num_days();
-        if days_until_expiry < 30 && !self.skip_warnings {
+        if days_until_expiry <= 30 && !self.skip_warnings {
             issues.push(ValidationIssue {
                 severity: IssueSeverity::Medium,
-                issue_type: IssueType::Expired,
+                issue_type: IssueType::ExpiringSoon,
                 description: format!(
                     "Certificate expires soon ({} days remaining)",
                     days_until_expiry
@@ -113,26 +113,42 @@ mod tests {
     #[test]
     fn test_expiration_checks() {
         let validator = CertificateValidator::new("example.com".to_string());
-        let mut issues = Vec::new();
 
-        let future = (Utc::now() + chrono::Duration::days(10))
+        // Certificate not yet valid (not_before in the future)
+        let mut issues = Vec::new();
+        let future_start = (Utc::now() + chrono::Duration::days(10))
             .format("%Y-%m-%d %H:%M:%S +0000")
             .to_string();
-        let past = (Utc::now() - chrono::Duration::days(10))
+        let future_end = (Utc::now() + chrono::Duration::days(375))
             .format("%Y-%m-%d %H:%M:%S +0000")
             .to_string();
-
-        let cert = base_cert(future.clone(), future.clone());
+        let cert = base_cert(future_start, future_end);
         assert!(!validator.check_expiration(&cert, &mut issues));
+        assert!(
+            issues
+                .iter()
+                .any(|i| matches!(i.issue_type, IssueType::NotYetValid))
+        );
 
+        // Expired certificate (not_after in the past)
         let mut issues = Vec::new();
-        let cert = base_cert(past.clone(), past.clone());
+        let past_start = (Utc::now() - chrono::Duration::days(375))
+            .format("%Y-%m-%d %H:%M:%S +0000")
+            .to_string();
+        let past_end = (Utc::now() - chrono::Duration::days(10))
+            .format("%Y-%m-%d %H:%M:%S +0000")
+            .to_string();
+        let cert = base_cert(past_start, past_end);
         assert!(!validator.check_expiration(&cert, &mut issues));
-        assert!(!issues.is_empty());
+        assert!(
+            issues
+                .iter()
+                .any(|i| matches!(i.issue_type, IssueType::Expired))
+        );
     }
 
     #[test]
-    fn test_expiration_with_invalid_dates_returns_true() {
+    fn test_expiration_with_invalid_dates_returns_false() {
         let validator = CertificateValidator::new("example.com".to_string());
         let mut issues = Vec::new();
 
@@ -141,9 +157,11 @@ mod tests {
         assert!(!validator.check_expiration(&cert, &mut issues));
         // Should have high-severity issues about unparseable dates
         assert!(!issues.is_empty());
-        assert!(issues.iter().any(|i| matches!(
-            i.issue_type,
-            IssueType::NotYetValid | IssueType::Expired
-        ) && i.description.contains("could not be parsed")));
+        assert!(
+            issues
+                .iter()
+                .any(|i| matches!(i.issue_type, IssueType::InvalidDate)
+                    && i.description.contains("could not be parsed"))
+        );
     }
 }

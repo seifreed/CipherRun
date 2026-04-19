@@ -47,7 +47,7 @@ impl TicketbleedTester {
             .socket_addrs()
             .first()
             .copied()
-            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
+            .ok_or(crate::TlsError::NoSocketAddresses)?;
 
         match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None).await {
             Ok(mut stream) => {
@@ -124,47 +124,67 @@ impl TicketbleedTester {
 
     /// Extract session ticket data from server's NewSessionTicket message
     fn extract_session_ticket(&self, response: &[u8]) -> Option<Vec<u8>> {
-        // Search for NewSessionTicket handshake message (type 0x04)
-        // TLS record: [0x16, ver_hi, ver_lo, len_hi, len_lo, 0x04, ...]
-        for i in 0..response.len().saturating_sub(10) {
-            if response[i] == 0x16 && i + 5 < response.len() && response[i + 5] == 0x04 {
-                // NewSessionTicket: type(1) + length(3) + lifetime(4) + ticket_length(2) + ticket
-                let hs_start = i + 5;
-                if hs_start + 4 > response.len() {
-                    continue;
-                }
-                let hs_len = ((response[hs_start + 1] as usize) << 16)
-                    | ((response[hs_start + 2] as usize) << 8)
-                    | (response[hs_start + 3] as usize);
+        let mut offset = 0;
+        while offset + 5 <= response.len() {
+            let content_type = response[offset];
+            let record_len =
+                u16::from_be_bytes([response[offset + 3], response[offset + 4]]) as usize;
+            let record_end = offset + 5 + record_len;
+            if record_end > response.len() {
+                break;
+            }
+            if content_type == 0x16 {
+                let hs_start = offset + 5;
+                if hs_start < record_end && response[hs_start] == 0x04 {
+                    // NewSessionTicket: type(1) + length(3) + lifetime(4) + ticket_length(2) + ticket
+                    if hs_start + 4 > response.len() {
+                        offset = record_end;
+                        continue;
+                    }
+                    let hs_len = ((response[hs_start + 1] as usize) << 16)
+                        | ((response[hs_start + 2] as usize) << 8)
+                        | (response[hs_start + 3] as usize);
 
-                let ticket_len_offset = hs_start + 4 + 4; // skip type+length+lifetime
-                if ticket_len_offset + 2 > response.len() {
-                    continue;
-                }
-                let ticket_len = u16::from_be_bytes([
-                    response[ticket_len_offset],
-                    response[ticket_len_offset + 1],
-                ]) as usize;
+                    let ticket_len_offset = hs_start + 4 + 4; // skip type+length+lifetime
+                    if ticket_len_offset + 2 > response.len() {
+                        offset = record_end;
+                        continue;
+                    }
+                    let ticket_len = u16::from_be_bytes([
+                        response[ticket_len_offset],
+                        response[ticket_len_offset + 1],
+                    ]) as usize;
 
-                let ticket_start = ticket_len_offset + 2;
-                let ticket_end = ticket_start + ticket_len;
-                if ticket_end <= response.len() && ticket_len > 0 && ticket_len <= hs_len {
-                    return Some(response[ticket_start..ticket_end].to_vec());
+                    let ticket_start = ticket_len_offset + 2;
+                    let ticket_end = ticket_start + ticket_len;
+                    if ticket_end <= response.len() && ticket_len > 0 && ticket_len <= hs_len {
+                        return Some(response[ticket_start..ticket_end].to_vec());
+                    }
                 }
             }
+            offset = record_end;
         }
         None
     }
 
     /// Parse NewSessionTicket message from server response
     fn parse_new_session_ticket(&self, response: &[u8]) -> Result<bool> {
-        // Look for Handshake type 0x04 (NewSessionTicket)
-        // Loop bound ensures i + 10 <= response.len(), so i + 5 is always valid
-        for i in 0..response.len().saturating_sub(10) {
-            if response[i] == 0x16 && response[i + 5] == 0x04 {
-                // NewSessionTicket
-                return Ok(true);
+        let mut offset = 0;
+        while offset + 5 <= response.len() {
+            let content_type = response[offset];
+            let record_len =
+                u16::from_be_bytes([response[offset + 3], response[offset + 4]]) as usize;
+            let record_end = offset + 5 + record_len;
+            if record_end > response.len() {
+                break;
             }
+            if content_type == 0x16 {
+                let hs_start = offset + 5;
+                if hs_start < record_end && response[hs_start] == 0x04 {
+                    return Ok(true);
+                }
+            }
+            offset = record_end;
         }
         Ok(false)
     }
@@ -184,18 +204,26 @@ impl TicketbleedTester {
     /// 3. Valid ticket structure anomalies
     fn detect_memory_leak(&self, response: &[u8]) -> Result<bool> {
         // Look for NewSessionTicket with anomalous length
-        // Loop bound ensures i + 10 <= response.len() so all accesses within loop are safe
-        for i in 0..response.len().saturating_sub(10) {
-            if response[i] == 0x16 && response[i + 5] == 0x04 {
+        // TLS record layout from offset i:
+        //   i+0: content type (0x16), i+1-2: version, i+3-4: record len
+        //   i+5: hs type (0x04), i+6-8: 3-byte hs len, i+9-12: lifetime hint
+        //   i+13-14: ticket_len (u16), i+15+: ticket data
+        // Loop bound ensures i+15 is always accessible.
+        for i in 0..response.len().saturating_sub(15) {
+            if response[i] == 0x16 && i + 15 < response.len() && response[i + 5] == 0x04 {
                 // NewSessionTicket found (handshake type 0x04)
-                // We're guaranteed i + 10 <= response.len() by loop bound
 
-                let ticket_len = u16::from_be_bytes([response[i + 8], response[i + 9]]) as usize;
+                let ticket_len = u16::from_be_bytes([response[i + 13], response[i + 14]]) as usize;
 
                 // F5 BIG-IP vulnerable versions leak 31 bytes
                 // But we should look for any anomalous ticket data
-                if ticket_len > 0 && i + 10 + ticket_len <= response.len() {
-                    let ticket_data = &response[i + 10..i + 10 + ticket_len];
+                if ticket_len > 0 && i + 15 + ticket_len <= response.len() {
+                    // Ticketbleed leaks at least 31 bytes of uninitialized memory.
+                    // Tickets shorter than 32 bytes are too small for reliable heuristic analysis.
+                    if ticket_len < 32 {
+                        continue;
+                    }
+                    let ticket_data = &response[i + 15..i + 15 + ticket_len];
 
                     // Heuristic 1: High proportion of null bytes (uninitialized memory)
                     let null_count = ticket_data.iter().filter(|&&b| b == 0).count();
@@ -215,24 +243,18 @@ impl TicketbleedTester {
                         .count();
                     let non_printable_ratio = non_printable as f64 / ticket_data.len() as f64;
 
-                    // Heuristic 4: Session tickets typically start with a structured format
-                    // (lifetime hint, session ID, etc). Leaked memory may not follow this.
-                    // TLS session tickets should have specific structure:
-                    // - Lifetime (4 bytes)
-                    // - Ticket length (2 bytes)
-                    // - Ticket data
-                    // An additional check: valid tickets typically have reasonable lifetime
-                    let has_valid_lifetime = if ticket_data.len() >= 4 {
+                    // Heuristic 4: Valid NewSessionTicket messages have a reasonable lifetime_hint.
+                    // The lifetime_hint field is at response[i+9..i+13] (NewSessionTicket envelope),
+                    // NOT inside ticket_data (which is the opaque encrypted blob).
+                    let has_valid_lifetime = {
                         let lifetime = u32::from_be_bytes([
-                            ticket_data[0],
-                            ticket_data[1],
-                            ticket_data[2],
-                            ticket_data[3],
+                            response[i + 9],
+                            response[i + 10],
+                            response[i + 11],
+                            response[i + 12],
                         ]);
                         // Valid lifetime should be reasonable (< 7 days = 604800 seconds)
                         lifetime > 0 && lifetime < 604800
-                    } else {
-                        false
                     };
 
                     // Combine heuristics:
@@ -240,11 +262,27 @@ impl TicketbleedTester {
                     // - Very low unique byte ratio (< 10%) suggests repetitive patterns
                     // - High non-printable ratio (> 50%) suggests binary data leak
                     // - Missing valid ticket structure
-                    let is_suspicious = null_ratio > 0.25 ||
-                        unique_ratio < 0.10 ||
-                        (non_printable_ratio > 0.50 && !has_valid_lifetime) ||
-                        // Suspicious if we have long runs of identical bytes
-                        Self::has_long_repeating_sequence(ticket_data, 8);
+                    //
+                    // When the ticket has a valid lifetime header, require at least 2 corroborating
+                    // signals before flagging — servers that legitimately pad with zeros would
+                    // otherwise produce false positives from null_ratio alone.
+                    let is_suspicious = if has_valid_lifetime {
+                        let signal_count = [
+                            null_ratio > 0.25,
+                            unique_ratio < 0.10,
+                            non_printable_ratio > 0.50,
+                            Self::has_long_repeating_sequence(ticket_data, 8),
+                        ]
+                        .iter()
+                        .filter(|&&x| x)
+                        .count();
+                        signal_count >= 2
+                    } else {
+                        null_ratio > 0.25
+                            || unique_ratio < 0.10
+                            || non_printable_ratio > 0.50
+                            || Self::has_long_repeating_sequence(ticket_data, 8)
+                    };
 
                     if is_suspicious {
                         // Log detection details for debugging
@@ -328,9 +366,15 @@ mod tests {
         .unwrap();
 
         let tester = TicketbleedTester::new(target);
+        // Well-formed TLS record: content_type=0x16, version=0x03 0x03, record_len=0x00 0x01
+        // Handshake: type=0x04 (NewSessionTicket)
         let mut response = vec![0u8; 16];
-        response[0] = 0x16; // Handshake record
-        response[5] = 0x04; // NewSessionTicket
+        response[0] = 0x16; // content_type: Handshake
+        response[1] = 0x03; // version hi
+        response[2] = 0x03; // version lo
+        response[3] = 0x00; // record_len hi
+        response[4] = 0x0b; // record_len lo = 11 (enough to hold hs type byte)
+        response[5] = 0x04; // hs_type: NewSessionTicket
 
         assert!(tester.parse_new_session_ticket(&response).unwrap());
         assert!(
@@ -351,21 +395,36 @@ mod tests {
 
         let tester = TicketbleedTester::new(target);
 
-        let mut response = vec![0u8; 32];
+        // TLS NewSessionTicket layout from byte 0:
+        //   [0]=0x16 (handshake), [1-2]=version, [3-4]=record_len
+        //   [5]=0x04 (NewSessionTicket), [6-8]=hs_len, [9-12]=lifetime_hint
+        //   [13-14]=ticket_len (u16), [15+]=ticket_data
+        //
+        // Ticketbleed leaks at least 31 bytes, so tickets shorter than 32 bytes
+        // are not analysed (too small for meaningful heuristics). Use 40-byte ticket.
+        const TICKET_LEN: u8 = 40;
+        let mut response = vec![0u8; 15 + TICKET_LEN as usize];
         response[0] = 0x16;
         response[5] = 0x04;
-        response[8] = 0x00;
-        response[9] = 0x08; // ticket length 8
-        response[10..18].copy_from_slice(&[0x00, 0x00, 0x00, 0xaa, 0xbb, 0xcc, 0xdd, 0xee]);
+        response[13] = 0x00;
+        response[14] = TICKET_LEN; // ticket_len = 40
+        // High null-byte ratio (> 25%) in ticket data → suspicious (memory leak pattern)
+        for b in &mut response[15..15 + TICKET_LEN as usize] {
+            *b = 0x00; // all nulls → 100% null ratio
+        }
+        response[15] = 0xaa; // one non-null to avoid divide-by-zero edge case
 
         assert!(tester.detect_memory_leak(&response).unwrap());
 
-        let mut clean = vec![0u8; 32];
+        let mut clean = vec![0u8; 15 + TICKET_LEN as usize];
         clean[0] = 0x16;
         clean[5] = 0x04;
-        clean[8] = 0x00;
-        clean[9] = 0x08;
-        clean[10..18].copy_from_slice(&[0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x11, 0x22]);
+        clean[13] = 0x00;
+        clean[14] = TICKET_LEN;
+        // Normal high-entropy ticket data (printable ASCII cycling) → not suspicious
+        for (i, b) in clean[15..15 + TICKET_LEN as usize].iter_mut().enumerate() {
+            *b = 0x41 + (i % 26) as u8; // 'A'..'Z' cycling — no nulls, no non-printable
+        }
 
         assert!(!tester.detect_memory_leak(&clean).unwrap());
     }

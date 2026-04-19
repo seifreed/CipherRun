@@ -94,19 +94,19 @@ mod tests {
 
         // Test with baseline
         let mut args = ScanRequest::default();
-        args.scan.all = true;
+        args.scan.scope.all = true;
         assert!(phase.should_run(&args));
 
         // Test with explicit client simulation and baseline disabled
         let mut args = ScanRequest::default();
-        args.scan.all = false;
+        args.scan.scope.all = false;
         args.fingerprint.client_simulation = true;
         assert!(phase.should_run(&args));
 
         // Specific-focus scans should not implicitly enable client simulation.
         let mut args = ScanRequest::default();
-        args.scan.all = true;
-        args.scan.show_sigs = true;
+        args.scan.scope.all = true;
+        args.scan.ciphers.show_sigs = true;
         assert!(!phase.should_run(&args));
 
         // Test without --all flag

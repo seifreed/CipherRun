@@ -89,6 +89,7 @@ impl ProtocolPhase {
         // Examples: SMTP, IMAP, POP3, FTP, LDAP, XMPP
         if let Some(starttls_proto) = context.args.starttls_protocol() {
             tester = tester.with_starttls(Some(starttls_proto));
+            tester = tester.with_starttls_hostname(context.args.starttls.xmpphost.clone());
         }
 
         // Set custom SNI if specified
@@ -164,12 +165,12 @@ mod tests {
 
         // Test with --protocols flag
         let mut args = ScanRequest::default();
-        args.scan.protocols = true;
+        args.scan.proto.enabled = true;
         assert!(phase.should_run(&args));
 
         // Test with --all flag
         let mut args = ScanRequest::default();
-        args.scan.all = true;
+        args.scan.scope.all = true;
         assert!(phase.should_run(&args));
 
         // Target alone should not imply baseline scanning
@@ -197,7 +198,7 @@ mod tests {
         args.starttls.rdp = true;
         args.tls.bugs = true;
         args.tls.sni_name = Some("sni.example".to_string());
-        args.scan.tls12 = true;
+        args.scan.proto.tls12 = true;
         args.network.test_all_ips = true;
 
         let context = build_context(args);

@@ -67,7 +67,7 @@ impl CipherTestConfig {
         };
 
         Self {
-            test_all_ciphers: request.scan.each_cipher,
+            test_all_ciphers: request.scan.ciphers.each_cipher,
             max_concurrent,
             timeout: Duration::from_secs(request.connection.socket_timeout.unwrap_or(10)),
         }
@@ -153,7 +153,7 @@ mod tests {
     fn test_cipher_config_custom_max() {
         let mut request = ScanRequest::default();
         request.network.max_concurrent_ciphers = 3;
-        request.scan.each_cipher = true;
+        request.scan.ciphers.each_cipher = true;
         request.connection.socket_timeout = Some(15);
 
         let config = CipherTestConfig::from_request(&request);

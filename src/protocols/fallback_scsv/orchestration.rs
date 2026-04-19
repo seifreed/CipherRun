@@ -161,7 +161,7 @@ impl FallbackScsvTester<'_> {
                 .socket_addrs()
                 .first()
                 .copied()
-                .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
+                .ok_or(crate::TlsError::NoSocketAddresses)?;
             self.test_scsv_on_ip(test_version, addr).await
         }
     }

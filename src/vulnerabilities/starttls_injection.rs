@@ -41,7 +41,9 @@ impl StarttlsInjectionTester {
     fn find_response_code_at_line_start(response: &str, code: &str) -> Option<usize> {
         let mut pos = 0;
         for line in response.lines() {
-            if line.starts_with(code) {
+            if let Some(after) = line.strip_prefix(code)
+                && (after.is_empty() || after.starts_with(' ') || after.starts_with('-'))
+            {
                 return Some(pos);
             }
             // +1 for the newline character that .lines() removes
@@ -57,7 +59,7 @@ impl StarttlsInjectionTester {
             .socket_addrs()
             .first()
             .copied()
-            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
+            .ok_or(crate::TlsError::NoSocketAddresses)?;
 
         // Try to connect with timeout
         let stream =
@@ -81,7 +83,10 @@ impl StarttlsInjectionTester {
         let mut buf = vec![0u8; 4096];
 
         // Read server greeting
-        let n = timeout(Duration::from_secs(2), stream.read(&mut buf)).await??;
+        let n = match timeout(Duration::from_secs(2), stream.read(&mut buf)).await {
+            Ok(Ok(n)) => n,
+            _ => return Ok(false),
+        };
         let response = String::from_utf8_lossy(&buf[..n]);
 
         if !response.starts_with("220") {
@@ -90,7 +95,10 @@ impl StarttlsInjectionTester {
 
         // Send EHLO
         stream.write_all(b"EHLO test.local\r\n").await?;
-        let _n = timeout(Duration::from_secs(2), stream.read(&mut buf)).await??;
+        match timeout(Duration::from_secs(2), stream.read(&mut buf)).await {
+            Ok(Ok(_)) => {}
+            _ => return Ok(false),
+        }
 
         // Send STARTTLS followed immediately by injected command
         // A vulnerable server will execute the injected command before TLS upgrade
@@ -98,7 +106,10 @@ impl StarttlsInjectionTester {
         stream.write_all(injection_payload).await?;
 
         // Read response
-        let n = timeout(Duration::from_secs(2), stream.read(&mut buf)).await??;
+        let n = match timeout(Duration::from_secs(2), stream.read(&mut buf)).await {
+            Ok(Ok(n)) => n,
+            _ => return Ok(false),
+        };
         let response = String::from_utf8_lossy(&buf[..n]);
 
         // If server accepts the injected MAIL FROM before TLS, it's vulnerable.
@@ -127,7 +138,7 @@ impl StarttlsInjectionTester {
             .socket_addrs()
             .first()
             .copied()
-            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
+            .ok_or(crate::TlsError::NoSocketAddresses)?;
 
         let stream =
             match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None)
@@ -145,7 +156,10 @@ impl StarttlsInjectionTester {
         let mut buf = vec![0u8; 4096];
 
         // Read server greeting
-        let n = timeout(Duration::from_secs(2), stream.read(&mut buf)).await??;
+        let n = match timeout(Duration::from_secs(2), stream.read(&mut buf)).await {
+            Ok(Ok(n)) => n,
+            _ => return Ok(false),
+        };
         let response = String::from_utf8_lossy(&buf[..n]);
 
         if !response.starts_with("* OK") {
@@ -154,7 +168,10 @@ impl StarttlsInjectionTester {
 
         // Send CAPABILITY to check STARTTLS support
         stream.write_all(b"a001 CAPABILITY\r\n").await?;
-        let n = timeout(Duration::from_secs(2), stream.read(&mut buf)).await??;
+        let n = match timeout(Duration::from_secs(2), stream.read(&mut buf)).await {
+            Ok(Ok(n)) => n,
+            _ => return Ok(false),
+        };
         let response = String::from_utf8_lossy(&buf[..n]);
 
         if !response.contains("STARTTLS") {
@@ -165,7 +182,10 @@ impl StarttlsInjectionTester {
         let injection_payload = b"a002 STARTTLS\r\na003 LOGIN test test\r\n";
         stream.write_all(injection_payload).await?;
 
-        let n = timeout(Duration::from_secs(2), stream.read(&mut buf)).await??;
+        let n = match timeout(Duration::from_secs(2), stream.read(&mut buf)).await {
+            Ok(Ok(n)) => n,
+            _ => return Ok(false),
+        };
         let response = String::from_utf8_lossy(&buf[..n]);
 
         // Vulnerable if server processes LOGIN before TLS upgrade
@@ -186,7 +206,7 @@ impl StarttlsInjectionTester {
             .socket_addrs()
             .first()
             .copied()
-            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
+            .ok_or(crate::TlsError::NoSocketAddresses)?;
 
         let stream =
             match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None)
@@ -204,7 +224,10 @@ impl StarttlsInjectionTester {
         let mut buf = vec![0u8; 4096];
 
         // Read server greeting
-        let n = timeout(Duration::from_secs(2), stream.read(&mut buf)).await??;
+        let n = match timeout(Duration::from_secs(2), stream.read(&mut buf)).await {
+            Ok(Ok(n)) => n,
+            _ => return Ok(false),
+        };
         let response = String::from_utf8_lossy(&buf[..n]);
 
         if !response.starts_with("+OK") {
@@ -213,7 +236,10 @@ impl StarttlsInjectionTester {
 
         // Check STLS support
         stream.write_all(b"CAPA\r\n").await?;
-        let n = timeout(Duration::from_secs(2), stream.read(&mut buf)).await??;
+        let n = match timeout(Duration::from_secs(2), stream.read(&mut buf)).await {
+            Ok(Ok(n)) => n,
+            _ => return Ok(false),
+        };
         let response = String::from_utf8_lossy(&buf[..n]);
 
         if !response.contains("STLS") {
@@ -224,7 +250,10 @@ impl StarttlsInjectionTester {
         let injection_payload = b"STLS\r\nUSER injection\r\n";
         stream.write_all(injection_payload).await?;
 
-        let n = timeout(Duration::from_secs(2), stream.read(&mut buf)).await??;
+        let n = match timeout(Duration::from_secs(2), stream.read(&mut buf)).await {
+            Ok(Ok(n)) => n,
+            _ => return Ok(false),
+        };
         let response = String::from_utf8_lossy(&buf[..n]);
 
         // Vulnerable if USER command is processed before TLS

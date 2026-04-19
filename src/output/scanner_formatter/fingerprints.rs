@@ -1,13 +1,13 @@
 use super::{
     Ja3Fingerprint, Ja3Signature, Ja3sFingerprint, Ja3sSignature, JarmFingerprint,
-    ScannerFormatter, format_threat_level, print_section_header,
+    ScannerFormatter, format_threat_level,
 };
 use colored::*;
 
 impl<'a> ScannerFormatter<'a> {
     /// Display JA3 fingerprint results
     pub fn display_ja3_results(&self, ja3: &Ja3Fingerprint, signature: Option<&Ja3Signature>) {
-        print_section_header("JA3 Fingerprint:");
+        self.print_section("JA3 Fingerprint:", 50);
 
         println!("  JA3 Hash:       {}", ja3.ja3_hash.green().bold());
         println!(
@@ -33,8 +33,8 @@ impl<'a> ScannerFormatter<'a> {
 
     /// Display JA3 signature match
     fn display_ja3_signature_match(&self, signature: Option<&Ja3Signature>) {
-        println!("\n{}", "Database Match:".cyan().bold());
-        println!("{}", "-".repeat(50));
+        println!("\n{}", self.section_header("Database Match:"));
+        println!("{}", "-".repeat(self.expand_width(50)));
 
         if let Some(sig) = signature {
             let threat_color = format_threat_level(&sig.threat_level);
@@ -58,7 +58,7 @@ impl<'a> ScannerFormatter<'a> {
 
     /// Display JA3S fingerprint results
     pub fn display_ja3s_results(&self, ja3s: &Ja3sFingerprint, signature: Option<&Ja3sSignature>) {
-        print_section_header("JA3S Fingerprint:");
+        self.print_section("JA3S Fingerprint:", 50);
 
         println!("  JA3S Hash:      {}", ja3s.ja3s_hash.green().bold());
         println!(
@@ -86,8 +86,8 @@ impl<'a> ScannerFormatter<'a> {
 
     /// Display JA3S signature match
     fn display_ja3s_signature_match(&self, signature: Option<&Ja3sSignature>) {
-        println!("\n{}", "Database Match:".cyan().bold());
-        println!("{}", "-".repeat(50));
+        println!("\n{}", self.section_header("Database Match:"));
+        println!("{}", "-".repeat(self.expand_width(50)));
 
         if let Some(sig) = signature {
             println!("  Name:         {}", sig.name.green().bold());
@@ -117,8 +117,7 @@ impl<'a> ScannerFormatter<'a> {
 
     /// Display JARM fingerprint results
     pub fn display_jarm_results(&self, jarm: &JarmFingerprint) {
-        println!("\n{}", "JARM Fingerprint:".cyan().bold());
-        println!("{}", "=".repeat(80));
+        self.print_section("JARM Fingerprint:", 80);
 
         println!("  JARM Hash:      {}", jarm.hash.green().bold());
 
@@ -133,8 +132,8 @@ impl<'a> ScannerFormatter<'a> {
     /// Display JARM signature match
     fn display_jarm_signature_match(&self, jarm: &JarmFingerprint) {
         if let Some(ref sig) = jarm.signature {
-            println!("\n{}", "Database Match:".green().bold());
-            println!("{}", "-".repeat(80));
+            println!("\n{}", self.section_header("Database Match:"));
+            println!("{}", "-".repeat(self.expand_width(80)));
             println!("  Name:           {}", sig.name.green().bold());
             println!("  Server Type:    {}", sig.server_type.yellow());
 
@@ -156,8 +155,8 @@ impl<'a> ScannerFormatter<'a> {
                 }
             }
         } else {
-            println!("\n{}", "Database Match:".cyan().bold());
-            println!("{}", "-".repeat(80));
+            println!("\n{}", self.section_header("Database Match:"));
+            println!("{}", "-".repeat(self.expand_width(80)));
             println!("  {} No match found in signature database", "i".cyan());
             println!("  This is a unique or unknown JARM fingerprint");
         }

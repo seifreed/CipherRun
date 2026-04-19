@@ -69,7 +69,7 @@ impl<'a> CrimeTester<'a> {
             .socket_addrs()
             .first()
             .copied()
-            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
+            .ok_or(crate::TlsError::NoSocketAddresses)?;
 
         let mut stream =
             match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None)
@@ -87,13 +87,20 @@ impl<'a> CrimeTester<'a> {
         let mut buffer = vec![0u8; 4096];
         match timeout(Duration::from_secs(3), stream.read(&mut buffer)).await {
             Ok(Ok(n)) if n > 11 => {
+                // Validate the TLS record length so we only parse within the first record
+                let record_len = u16::from_be_bytes([buffer[3], buffer[4]]) as usize;
+                if record_len + 5 > n {
+                    // Truncated record — ServerHello split across reads, treat as inconclusive
+                    return Ok(false);
+                }
                 if buffer[0] == 0x16 && buffer[5] == 0x02 && n > 43 {
                     let session_id_len = buffer[43] as usize;
                     if session_id_len > 32 {
                         return Ok(false);
                     }
                     let cipher_offset = 44 + session_id_len;
-                    if n > cipher_offset + 2 {
+                    // Ensure cipher_offset is within the first TLS record body (5+record_len)
+                    if cipher_offset + 2 < 5 + record_len && n > cipher_offset + 2 {
                         let compression_method = buffer[cipher_offset + 2];
                         tracing::debug!("Server compression method: {}", compression_method);
                         return Ok(compression_method == 0x01);
@@ -126,7 +133,7 @@ impl<'a> CrimeTester<'a> {
             .socket_addrs()
             .first()
             .copied()
-            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
+            .ok_or(crate::TlsError::NoSocketAddresses)?;
 
         let mut stream =
             match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None)
@@ -165,10 +172,17 @@ impl<'a> CrimeTester<'a> {
                     return Ok(false);
                 }
 
+                // Validate TLS record length before parsing extensions
+                let record_len = u16::from_be_bytes([data[3], data[4]]) as usize;
+                if record_len + 5 > n {
+                    return Ok(false); // truncated record — inconclusive
+                }
+                let record_end = 5 + record_len;
+
                 let ext_total =
                     u16::from_be_bytes([data[ext_len_offset], data[ext_len_offset + 1]]) as usize;
                 let ext_start = ext_len_offset + 2;
-                let ext_end = (ext_start + ext_total).min(n);
+                let ext_end = (ext_start + ext_total).min(record_end);
 
                 // Walk extensions structurally looking for NPN (0x3374)
                 let mut pos = ext_start;

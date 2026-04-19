@@ -44,14 +44,15 @@ impl Lucky13Tester {
         let details = if !cbc_supported {
             "Not vulnerable - CBC ciphers not supported".to_string()
         } else if inconclusive {
-            "INCONCLUSIVE: CBC ciphers supported but timing analysis was unreliable due to network conditions. \
+            "INCONCLUSIVE: CBC ciphers supported but Lucky13 timing analysis is not yet implemented \
+             (timing measurements reflect RSA processing, not MAC verification). \
              Manual testing recommended.".to_string()
         } else if timing_result {
             "Vulnerable to Lucky13 (CVE-2013-0169) - CBC ciphers with timing oracle detected"
                 .to_string()
         } else {
-            "Partially vulnerable - CBC ciphers supported but no timing oracle detected. \
-             Server may still be vulnerable to more advanced timing attacks."
+            "CBC ciphers supported but no timing oracle detected. \
+             Not conclusively vulnerable; manual verification recommended for high-security environments."
                 .to_string()
         };
 
@@ -76,7 +77,7 @@ impl Lucky13Tester {
             .socket_addrs()
             .first()
             .copied()
-            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
+            .ok_or(crate::TlsError::NoSocketAddresses)?;
 
         // Test with various CBC ciphers
         let cbc_ciphers = "AES128-SHA:AES256-SHA:AES128-SHA256:AES256-SHA256:DES-CBC3-SHA";
@@ -103,6 +104,14 @@ impl Lucky13Tester {
     /// Returns (timing_oracle_detected, inconclusive)
     /// Uses proper statistical analysis with warmup, sufficient samples, and CV checks
     async fn test_timing_oracle(&self) -> Result<(bool, bool)> {
+        // The ClientKeyExchange in test_mac_timing sends a dummy pre-master secret
+        // (not a valid RSA-encrypted PMS). Servers abort during RSA decryption before
+        // reaching CBC MAC verification, so measured timings reflect RSA error handling
+        // rather than MAC padding processing. Until a proper OpenSSL-session-based
+        // injection is implemented, return inconclusive to avoid false results.
+        return Ok((false, true));
+
+        #[allow(unreachable_code)]
         // Warmup phase: discard initial samples to allow cache warmup
         for _ in 0..Self::WARMUP_SAMPLES {
             let _ = self.test_mac_timing(true).await;
@@ -174,31 +183,39 @@ impl Lucky13Tester {
         let timing_reliable = short_cv < Self::COEFFICIENT_OF_VARIATION_MAX
             && long_cv < Self::COEFFICIENT_OF_VARIATION_MAX;
 
-        // Calculate timing difference
-        let timing_diff = (avg_short - avg_long).abs();
+        // If timing measurements are unreliable (high CV), return inconclusive regardless
+        // of direction — we cannot make any statistical claims with noisy data.
+        if !timing_reliable {
+            return Ok((false, true));
+        }
+
+        // Lucky13 signature: short padding is processed FASTER than long padding
+        // (fewer MAC blocks hashed). If the direction is reversed, it is not Lucky13.
+        // If the difference is within the minimum threshold, timing is indistinguishable.
+        if avg_short > avg_long {
+            return Ok((false, false));
+        }
+        if (avg_long - avg_short) < Self::MIN_TIMING_THRESHOLD_MS {
+            return Ok((false, true));
+        }
+        let timing_diff = avg_long - avg_short;
         let timing_diff_percent = if avg_long > 0.0 {
             (timing_diff / avg_long) * 100.0
         } else {
             0.0
         };
 
-        // Statistical significance: difference should be > combined std dev
-        let combined_stddev = (short_variance + long_variance).sqrt();
+        // Statistical significance: use standard error of the difference of means (SEM)
+        let combined_stddev = (short_variance / short_n + long_variance / long_n).sqrt();
         let statistically_significant =
             timing_diff > 2.0 * combined_stddev + Self::MIN_TIMING_THRESHOLD_MS;
 
         // Timing oracle detected if:
-        // 1. Timing measurements are reliable (low CV)
+        // 1. Timing measurements are reliable (low CV) — already checked above
         // 2. Difference is statistically significant
         // 3. Percentage difference exceeds threshold
-        let oracle_detected = timing_reliable
-            && statistically_significant
-            && timing_diff_percent > Self::TIMING_THRESHOLD_PERCENT;
-
-        // If timing is not reliable, report as inconclusive
-        if !timing_reliable {
-            return Ok((false, true));
-        }
+        let oracle_detected =
+            statistically_significant && timing_diff_percent > Self::TIMING_THRESHOLD_PERCENT;
 
         Ok((oracle_detected, false))
     }
@@ -210,7 +227,7 @@ impl Lucky13Tester {
             .socket_addrs()
             .first()
             .copied()
-            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
+            .ok_or(crate::TlsError::NoSocketAddresses)?;
 
         match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None).await {
             Ok(mut stream) => {
@@ -220,7 +237,12 @@ impl Lucky13Tester {
 
                 // Read ServerHello, Certificate, ServerHelloDone
                 let mut buffer = vec![0u8; 8192];
-                timeout(Duration::from_secs(3), stream.read(&mut buffer)).await??;
+                if timeout(Duration::from_secs(3), stream.read(&mut buffer))
+                    .await
+                    .is_err()
+                {
+                    return Err(crate::error::TlsError::Other("Read timeout".to_string()));
+                }
 
                 // Send ClientKeyExchange
                 let client_key_exchange = self.build_client_key_exchange();

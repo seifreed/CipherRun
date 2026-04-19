@@ -55,7 +55,7 @@ impl SessionResumptionTester {
             resumed_handshake_times.iter().sum::<f64>() / resumed_handshake_times.len() as f64;
 
         let improvement = if avg_full > 0.0 {
-            ((avg_full - avg_resumed) / avg_full) * 100.0
+            ((avg_full - avg_resumed) / avg_full * 100.0).max(0.0)
         } else {
             0.0
         };

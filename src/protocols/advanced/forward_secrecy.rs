@@ -146,13 +146,14 @@ impl ProtocolAdvancedTester {
             .socket_addrs()
             .first()
             .copied()
-            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
+            .ok_or(crate::TlsError::NoSocketAddresses)?;
         let connect_timeout = Duration::from_secs(10);
 
         let stream =
             crate::utils::network::connect_with_timeout(addr, connect_timeout, None).await?;
 
         let std_stream = stream.into_std()?;
+        std_stream.set_nonblocking(false)?;
         let builder = SslConnector::builder(SslMethod::tls())?;
         let connector = builder.build();
         let ssl_stream = connector.connect(&self.target.hostname, std_stream)?;

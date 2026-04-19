@@ -59,8 +59,15 @@ impl<'a> RenegotiationTester<'a> {
         } else if matches!(insecure_result, InsecureRenegotiationResult::Detected) {
             RenegotiationSupport::InsecureRenegotiation
         } else {
-            // Check if renegotiation is supported at all using OpenSSL
-            self.test_renegotiation_support().await?
+            // secure_extension is false: server didn't echo RFC 5746 in ServerHello.
+            // test_renegotiation_support() uses OpenSSL (which always includes RFC 5746)
+            // and returns SecureRenegotiation whenever TLS works — but a successful TLS
+            // handshake here doesn't imply the server truly supports RFC 5746 (we already
+            // know it didn't echo the extension). Cap SecureRenegotiation to NotSupported.
+            match self.test_renegotiation_support().await? {
+                RenegotiationSupport::SecureRenegotiation => RenegotiationSupport::NotSupported,
+                other => other,
+            }
         };
 
         let vulnerable = matches!(support, RenegotiationSupport::InsecureRenegotiation);
@@ -119,7 +126,7 @@ impl<'a> RenegotiationTester<'a> {
             .socket_addrs()
             .first()
             .copied()
-            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
+            .ok_or(crate::TlsError::NoSocketAddresses)?;
 
         match crate::utils::network::connect_with_timeout(addr, DEFAULT_READ_TIMEOUT, None).await {
             Ok(stream) => {
@@ -158,7 +165,7 @@ impl<'a> RenegotiationTester<'a> {
             .socket_addrs()
             .first()
             .copied()
-            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
+            .ok_or(crate::TlsError::NoSocketAddresses)?;
 
         match crate::utils::network::connect_with_timeout(addr, DEFAULT_READ_TIMEOUT, None).await {
             Ok(mut stream) => {
@@ -209,10 +216,10 @@ impl<'a> RenegotiationTester<'a> {
                         }
                         Ok(InsecureRenegotiationResult::NotDetected)
                     }
-                    _ => Ok(InsecureRenegotiationResult::NotDetected),
+                    _ => Ok(InsecureRenegotiationResult::Inconclusive),
                 }
             }
-            _ => Ok(InsecureRenegotiationResult::NotDetected),
+            _ => Ok(InsecureRenegotiationResult::Inconclusive),
         }
     }
 
@@ -223,7 +230,7 @@ impl<'a> RenegotiationTester<'a> {
             .socket_addrs()
             .first()
             .copied()
-            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
+            .ok_or(crate::TlsError::NoSocketAddresses)?;
 
         match crate::utils::network::connect_with_timeout(addr, DEFAULT_READ_TIMEOUT, None).await {
             Ok(mut stream) => {

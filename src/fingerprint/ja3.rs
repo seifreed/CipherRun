@@ -177,7 +177,7 @@ impl Ja3Fingerprint {
     /// Get a human-readable description of the SSL/TLS version
     pub fn ssl_version_name(&self) -> &'static str {
         match self.ssl_version {
-            0x0200 => "SSL 2.0",
+            0x0002 => "SSL 2.0",
             0x0300 => "SSL 3.0",
             0x0301 => "TLS 1.0",
             0x0302 => "TLS 1.1",

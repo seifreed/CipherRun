@@ -128,8 +128,8 @@ mod tests {
             while remaining > 0 {
                 if let Ok((socket, _)) = listener.accept().await {
                     drop(socket);
+                    remaining -= 1;
                 }
-                remaining -= 1;
             }
         });
         addr

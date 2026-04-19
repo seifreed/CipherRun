@@ -43,7 +43,7 @@ impl ProtocolDetector {
 
         let mut stream = timeout(connect_timeout, TcpStream::connect((host, port)))
             .await
-            .map_err(|_| anyhow::anyhow!("Connection timeout"))??;
+            .map_err(|_| crate::TlsError::Other("Connection timeout".to_string()))??;
 
         let mut banner = vec![0u8; 1024];
         let n = timeout(read_timeout, stream.read(&mut banner))

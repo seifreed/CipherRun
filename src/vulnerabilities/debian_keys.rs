@@ -144,15 +144,9 @@ impl DebianKeyDetector {
     /// NOTE: These are EXAMPLE hashes for demonstration. The actual weak key
     /// database contains ~32,000 entries and would require external loading.
     fn load_sample_weak_keys() -> Vec<String> {
-        vec![
-            // Sample RSA 1024-bit weak key fingerprints
-            // In reality, these would be actual SHA256 hashes from the database
-            // Format: SHA256 hash of public key DER encoding
-            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_string(),
-            "d7a8fbb307d7809469ca9abcb0082e4f8d5651e46d3cdb762d02d0bf37c9e592".to_string(),
-            "e7f6c011776e8db7cd330b54174fd76f7d0216b612387a5ffcfb81e6f0919683".to_string(),
-            // Full detection requires loading ~32,000 entries from external source
-        ]
+        // The real Debian weak key database (~32,000 entries) requires external loading.
+        // Use DebianKeyDetector::load_from_hashes() or with_hashes() to supply real fingerprints.
+        vec![]
     }
 
     /// Get the number of weak keys in the current blacklist
@@ -242,9 +236,10 @@ mod tests {
     #[test]
     fn test_detector_creation() {
         let detector = DebianKeyDetector::new();
-        assert!(
-            detector.blacklist_size() > 0,
-            "Detector should have sample weak keys"
+        assert_eq!(
+            detector.blacklist_size(),
+            0,
+            "Default detector has no keys; load real fingerprints via load_from_hashes()"
         );
     }
 
@@ -317,7 +312,7 @@ mod tests {
     #[test]
     fn test_default_implementation() {
         let detector = DebianKeyDetector::default();
-        assert!(detector.blacklist_size() > 0);
+        assert_eq!(detector.blacklist_size(), 0);
     }
 
     #[test]

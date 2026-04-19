@@ -61,7 +61,7 @@ impl ScanPhase for ClientCasPhase {
     fn should_run(&self, args: &ScanRequest) -> bool {
         // Run if:
         // - Explicit client CA enumeration requested (--show-client-cas)
-        args.scan.show_client_cas
+        args.scan.ciphers.show_client_cas
     }
 
     async fn execute(&self, context: &mut ScanContext) -> Result<()> {
@@ -93,7 +93,7 @@ mod tests {
 
         // Test with --show-client-cas flag
         let mut args = ScanRequest::default();
-        args.scan.show_client_cas = true;
+        args.scan.ciphers.show_client_cas = true;
         assert!(phase.should_run(&args));
 
         // Test without --show-client-cas flag
@@ -102,7 +102,7 @@ mod tests {
 
         // Test with --all flag (should not enable client CA enumeration)
         let mut args = ScanRequest::default();
-        args.scan.all = true;
+        args.scan.scope.all = true;
         assert!(!phase.should_run(&args));
     }
 

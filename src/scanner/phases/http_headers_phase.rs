@@ -58,7 +58,7 @@ impl HttpHeadersPhase {
     ///
     /// Custom headers format: "Header-Name: Header-Value"
     /// Example: --header "Authorization: Bearer token123"
-    fn configure_analyzer(&self, context: &ScanContext) -> HeaderAnalyzer {
+    fn configure_analyzer(&self, context: &mut ScanContext) -> HeaderAnalyzer {
         let target = context.target();
 
         // Create base analyzer
@@ -75,10 +75,10 @@ impl HttpHeadersPhase {
                     if parts.len() == 2 {
                         Some((parts[0].trim().to_string(), parts[1].trim().to_string()))
                     } else {
-                        eprintln!(
-                            "Warning: Invalid header format '{}', expected 'Name: Value'",
+                        context.results.add_human_warning(format!(
+                            "Invalid header format '{}', expected 'Name: Value'",
                             h
-                        );
+                        ));
                         None
                     }
                 })
@@ -161,18 +161,18 @@ mod tests {
 
         // Test with --headers flag
         let mut args = ScanRequest::default();
-        args.scan.headers = true;
+        args.scan.prefs.headers = true;
         assert!(phase.should_run(&args));
 
         // Test with --all flag
         let mut args = ScanRequest::default();
-        args.scan.all = true;
+        args.scan.scope.all = true;
         assert!(phase.should_run(&args));
 
         // Specific-focus scans should not implicitly enable header analysis.
         let mut args = ScanRequest::default();
-        args.scan.all = true;
-        args.scan.show_sigs = true;
+        args.scan.scope.all = true;
+        args.scan.ciphers.show_sigs = true;
         assert!(!phase.should_run(&args));
 
         // Test with target specified (default scan, should NOT run)
@@ -197,17 +197,25 @@ mod tests {
     fn test_http_headers_phase_configure_analyzer_custom_headers() {
         let mut args = ScanRequest::default();
         args.http.custom_headers = vec!["X-Test: value".to_string(), "BrokenHeader".to_string()];
-        let context = build_context(args);
+        let mut context = build_context(args);
         let phase = HttpHeadersPhase::new();
-        let _analyzer = phase.configure_analyzer(&context);
+        let _analyzer = phase.configure_analyzer(&mut context);
+        assert!(
+            context
+                .results
+                .scan_metadata
+                .human_warnings
+                .iter()
+                .any(|warning| warning.contains("BrokenHeader"))
+        );
     }
 
     #[test]
     fn test_http_headers_phase_configure_analyzer_sneaky() {
         let mut args = ScanRequest::default();
         args.http.sneaky = true;
-        let context = build_context(args);
+        let mut context = build_context(args);
         let phase = HttpHeadersPhase::new();
-        let _analyzer = phase.configure_analyzer(&context);
+        let _analyzer = phase.configure_analyzer(&mut context);
     }
 }

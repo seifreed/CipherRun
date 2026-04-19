@@ -7,15 +7,16 @@ impl CertificateValidator {
         cert: &CertificateInfo,
         issues: &mut Vec<ValidationIssue>,
     ) {
-        // Skip warnings if requested
-        if self.skip_warnings {
-            return;
-        }
-
         let sig_alg = cert.signature_algorithm.to_lowercase();
 
         // Check for weak algorithms
-        if sig_alg.contains("md5") {
+        if sig_alg.contains("md2") || sig_alg.contains("md4") {
+            issues.push(ValidationIssue {
+                severity: IssueSeverity::Critical,
+                issue_type: IssueType::WeakSignature,
+                description: "Certificate uses MD2/MD4 signature (broken)".to_string(),
+            });
+        } else if sig_alg.contains("md5") {
             issues.push(ValidationIssue {
                 severity: IssueSeverity::Critical,
                 issue_type: IssueType::WeakSignature,

@@ -73,7 +73,7 @@ impl Parser {
                 message: format!("Failed to decode leaf_input: {}", e),
             })?;
 
-        if leaf_bytes.len() < 43 {
+        if leaf_bytes.len() < 15 {
             return Err(TlsError::ParseError {
                 message: format!("Leaf input too short: {} bytes", leaf_bytes.len()),
             });
@@ -130,17 +130,33 @@ impl Parser {
             }
         };
 
-        // Extract certificate DER
-        // For X509: next 3 bytes are length (24-bit big-endian), then DER
-        // For PreCert: similar structure
-        if leaf_bytes.len() < 15 {
-            return Err(TlsError::ParseError {
-                message: "Leaf too short for certificate".to_string(),
-            });
-        }
-
-        let cert_len = u32::from_be_bytes([0, leaf_bytes[12], leaf_bytes[13], leaf_bytes[14]]);
-        let cert_start = 15;
+        // Extract certificate DER.
+        // RFC 6962 TimestampedEntry layout after the entry_type (bytes 10-11):
+        //   X.509:   3-byte length at bytes 12-14, DER starts at byte 15
+        //   PreCert: 32-byte issuer_key_hash at bytes 12-43,
+        //            then 3-byte TBS length at bytes 44-46, TBS starts at byte 47
+        let (cert_len, cert_start) = match cert_type {
+            CertType::X509Certificate => {
+                if leaf_bytes.len() < 15 {
+                    return Err(TlsError::ParseError {
+                        message: "Leaf too short for X.509 certificate".to_string(),
+                    });
+                }
+                let len = u32::from_be_bytes([0, leaf_bytes[12], leaf_bytes[13], leaf_bytes[14]]);
+                (len, 15usize)
+            }
+            CertType::PreCertificate => {
+                if leaf_bytes.len() < 47 {
+                    return Err(TlsError::ParseError {
+                        message:
+                            "Leaf too short for PreCertificate (need issuer_key_hash + length)"
+                                .to_string(),
+                    });
+                }
+                let len = u32::from_be_bytes([0, leaf_bytes[44], leaf_bytes[45], leaf_bytes[46]]);
+                (len, 47usize)
+            }
+        };
         let cert_end = cert_start + cert_len as usize;
 
         if cert_end > leaf_bytes.len() {

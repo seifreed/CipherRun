@@ -12,20 +12,35 @@ use crate::Result;
 use crate::data::CA_STORES;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 
 /// Parse a certificate date string into a DateTime<Utc>.
 /// Supports multiple date formats commonly found in certificates.
 pub fn parse_cert_date(date_str: &str) -> Option<DateTime<Utc>> {
-    const FORMATS: &[&str] = &[
-        "%b %d %H:%M:%S %Y %Z", // e.g., "Jan 01 00:00:00 2024 GMT"
-        "%Y-%m-%d %H:%M:%S %z", // e.g., "2024-01-01 00:00:00 +00:00"
-    ];
+    use chrono::NaiveDateTime;
 
-    for format in FORMATS {
-        if let Ok(dt) = DateTime::parse_from_str(date_str, format) {
+    // Offset-aware formats (e.g., "2024-01-01 00:00:00 +0000")
+    const AWARE_FORMATS: &[&str] = &["%Y-%m-%d %H:%M:%S %z"];
+    for fmt in AWARE_FORMATS {
+        if let Ok(dt) = DateTime::parse_from_str(date_str, fmt) {
             return Some(dt.with_timezone(&Utc));
         }
     }
+
+    // OpenSSL ASN.1 format "Jan 01 00:00:00 2024 GMT" — chrono cannot parse %Z,
+    // so strip the trailing timezone word and parse as NaiveDateTime assuming UTC.
+    let trimmed = date_str.trim();
+    let without_tz = trimmed.rsplit_once(' ').map(|(s, _)| s).unwrap_or(trimmed);
+    const NAIVE_FORMATS: &[&str] = &[
+        "%b %d %H:%M:%S %Y", // zero-padded day:  "Jan 01 00:00:00 2024"
+        "%b %e %H:%M:%S %Y", // space-padded day: "Jan  1 00:00:00 2024"
+    ];
+    for fmt in NAIVE_FORMATS {
+        if let Ok(dt) = NaiveDateTime::parse_from_str(without_tz, fmt) {
+            return Some(dt.and_utc());
+        }
+    }
+
     None
 }
 
@@ -84,7 +99,9 @@ pub enum IssueType {
     ChainIncomplete,
     WeakSignature,
     ShortKeyLength,
+    ExpiringSoon,
     MissingExtension,
+    InvalidDate,
 }
 
 /// Certificate validator
@@ -93,6 +110,14 @@ pub struct CertificateValidator {
     skip_warnings: bool,
     /// Optional trust store validator for multi-platform validation
     trust_validator: Option<TrustStoreValidator>,
+    additional_ca_entries: Vec<AdditionalCaEntry>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct AdditionalCaEntry {
+    pub source: String,
+    pub subject: String,
+    pub der: Vec<u8>,
 }
 
 impl CertificateValidator {
@@ -102,6 +127,7 @@ impl CertificateValidator {
             hostname,
             skip_warnings: false,
             trust_validator: None,
+            additional_ca_entries: Vec::new(),
         }
     }
 
@@ -111,6 +137,7 @@ impl CertificateValidator {
             hostname,
             skip_warnings: skip,
             trust_validator: None,
+            additional_ca_entries: Vec::new(),
         }
     }
 
@@ -120,6 +147,7 @@ impl CertificateValidator {
             hostname,
             skip_warnings: false,
             trust_validator: Some(TrustStoreValidator::new()?),
+            additional_ca_entries: Vec::new(),
         })
     }
 
@@ -137,7 +165,78 @@ impl CertificateValidator {
             } else {
                 None
             },
+            additional_ca_entries: Vec::new(),
         })
+    }
+
+    pub fn with_platform_trust_and_additional_ca(hostname: String, path: &Path) -> Result<Self> {
+        let mut validator = Self::with_platform_trust(hostname)?;
+        validator.additional_ca_entries = Self::load_additional_ca_entries(path)?;
+        Ok(validator)
+    }
+
+    pub fn with_config_and_additional_ca(
+        hostname: String,
+        skip_warnings: bool,
+        enable_platform_trust: bool,
+        path: &Path,
+    ) -> Result<Self> {
+        let mut validator = Self::with_config(hostname, skip_warnings, enable_platform_trust)?;
+        validator.additional_ca_entries = Self::load_additional_ca_entries(path)?;
+        Ok(validator)
+    }
+
+    fn load_additional_ca_entries(path: &Path) -> Result<Vec<AdditionalCaEntry>> {
+        let mut entries = Vec::new();
+
+        if path.is_dir() {
+            for item in std::fs::read_dir(path)? {
+                let item = item?;
+                if item.file_type()?.is_file() {
+                    Self::load_additional_ca_file(&item.path(), &mut entries)?;
+                }
+            }
+        } else {
+            Self::load_additional_ca_file(path, &mut entries)?;
+        }
+
+        if entries.is_empty() {
+            return Err(crate::TlsError::Other(format!(
+                "No CA certificates could be loaded from {}",
+                path.display()
+            )));
+        }
+
+        Ok(entries)
+    }
+
+    fn load_additional_ca_file(path: &Path, entries: &mut Vec<AdditionalCaEntry>) -> Result<()> {
+        let bytes = std::fs::read(path)?;
+        let certificates = match openssl::x509::X509::stack_from_pem(&bytes) {
+            Ok(certs) => certs,
+            Err(_) => match openssl::x509::X509::from_pem(&bytes) {
+                Ok(cert) => vec![cert],
+                Err(_) => match openssl::x509::X509::from_der(&bytes) {
+                    Ok(cert) => vec![cert],
+                    Err(err) => {
+                        tracing::debug!("Skipping additional CA file {}: {}", path.display(), err);
+                        return Ok(());
+                    }
+                },
+            },
+        };
+
+        for certificate in certificates {
+            let der = certificate.to_der()?;
+            let parsed = super::parser::CertificateParser::parse_certificate(&der)?;
+            entries.push(AdditionalCaEntry {
+                source: path.display().to_string(),
+                subject: parsed.subject,
+                der,
+            });
+        }
+
+        Ok(())
     }
 
     /// Validate certificate chain
@@ -180,6 +279,10 @@ impl CertificateValidator {
 
         // 4. Check signature algorithm
         self.check_signature_algorithm(leaf, &mut issues);
+        let signature_valid = !issues
+            .iter()
+            .any(|i| matches!(i.issue_type, IssueType::WeakSignature));
+        valid &= signature_valid;
 
         // 5. Validate trust chain
         let (trust_chain_valid, trusted_ca) = self.validate_trust_chain(chain, &mut issues);
@@ -217,7 +320,7 @@ impl CertificateValidator {
             trust_chain_valid,
             hostname_match,
             not_expired,
-            signature_valid: true, // Simplified for now
+            signature_valid,
             trusted_ca,
             platform_trust,
         })

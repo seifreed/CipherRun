@@ -129,6 +129,10 @@ pub enum TlsError {
     #[error("PEM parsing error: {0}")]
     PemError(#[from] pem::PemError),
 
+    /// No socket addresses available for the target (DNS resolved but yielded no usable addresses)
+    #[error("No socket addresses available for target")]
+    NoSocketAddresses,
+
     /// Generic error with context
     #[error("{0}")]
     Other(String),

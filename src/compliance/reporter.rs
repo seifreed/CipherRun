@@ -1,7 +1,7 @@
 // Compliance reporter - Generates reports in various formats
 
+use crate::Result;
 use crate::compliance::{ComplianceReport, ComplianceStatus, RequirementStatus, Severity};
-use anyhow::Result;
 use colored::*;
 
 /// Reporter for generating compliance reports in various formats
@@ -136,13 +136,13 @@ impl Reporter {
         }
 
         // Passed requirements summary
-        if report.summary.passed > 0 {
+        let passed_reqs: Vec<_> = report
+            .requirements
+            .iter()
+            .filter(|r| r.status == RequirementStatus::Pass)
+            .collect();
+        if !passed_reqs.is_empty() {
             output.push_str(&format!("\n{}\n", "Passed Requirements:".green().bold()));
-            let passed_reqs: Vec<_> = report
-                .requirements
-                .iter()
-                .filter(|r| r.status == RequirementStatus::Pass)
-                .collect();
 
             for req in passed_reqs.iter().take(5) {
                 output.push_str(&format!(

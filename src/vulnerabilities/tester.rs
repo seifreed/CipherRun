@@ -22,52 +22,52 @@ struct SelectedVulnerabilityChecks {
 impl SelectedVulnerabilityChecks {
     fn from_request(args: &ScanRequest) -> Self {
         let mut enabled = HashSet::new();
-        if args.scan.heartbleed {
+        if args.scan.vulns.heartbleed {
             enabled.insert(VulnerabilityType::Heartbleed);
         }
-        if args.scan.ccs {
+        if args.scan.vulns.ccs {
             enabled.insert(VulnerabilityType::CCSInjection);
         }
-        if args.scan.ticketbleed {
+        if args.scan.vulns.ticketbleed {
             enabled.insert(VulnerabilityType::Ticketbleed);
         }
-        if args.scan.robot {
+        if args.scan.vulns.robot {
             enabled.insert(VulnerabilityType::ROBOT);
         }
-        if args.scan.renegotiation {
+        if args.scan.vulns.renegotiation {
             enabled.insert(VulnerabilityType::Renegotiation);
         }
-        if args.scan.crime {
+        if args.scan.vulns.crime {
             enabled.insert(VulnerabilityType::CRIME);
         }
-        if args.scan.breach {
+        if args.scan.vulns.breach {
             enabled.insert(VulnerabilityType::BREACH);
         }
-        if args.scan.poodle {
+        if args.scan.vulns.poodle {
             enabled.insert(VulnerabilityType::POODLE);
         }
-        if args.scan.fallback {
+        if args.scan.vulns.fallback {
             enabled.insert(VulnerabilityType::TLSFallback);
         }
-        if args.scan.sweet32 {
+        if args.scan.vulns.sweet32 {
             enabled.insert(VulnerabilityType::SWEET32);
         }
-        if args.scan.beast {
+        if args.scan.vulns.beast {
             enabled.insert(VulnerabilityType::BEAST);
         }
-        if args.scan.lucky13 {
+        if args.scan.vulns.lucky13 {
             enabled.insert(VulnerabilityType::LUCKY13);
         }
-        if args.scan.freak {
+        if args.scan.vulns.freak {
             enabled.insert(VulnerabilityType::FREAK);
         }
-        if args.scan.logjam {
+        if args.scan.vulns.logjam {
             enabled.insert(VulnerabilityType::LOGJAM);
         }
-        if args.scan.drown {
+        if args.scan.vulns.drown {
             enabled.insert(VulnerabilityType::DROWN);
         }
-        if args.scan.early_data {
+        if args.scan.vulns.early_data {
             enabled.insert(VulnerabilityType::EarlyDataReplay);
         }
         Self { enabled }
@@ -151,13 +151,13 @@ impl VulnerabilityScanner {
             protocol_tester,
             cipher_tester,
             sni_hostname,
-            broad_scan: args.scan.vulnerabilities || args.scan.full,
-            fast_mode: args.scan.fast,
+            broad_scan: args.scan.vulns.vulnerabilities || args.scan.scope.full,
+            fast_mode: args.scan.prefs.fast,
             selected_checks: SelectedVulnerabilityChecks::from_request(args),
-            skip_fallback: args.scan.no_fallback,
-            skip_compression: args.scan.no_compression,
-            skip_heartbleed: args.scan.no_heartbleed,
-            skip_renegotiation: args.scan.no_renegotiation,
+            skip_fallback: args.scan.vulns.no_fallback,
+            skip_compression: args.scan.vulns.no_compression,
+            skip_heartbleed: args.scan.vulns.no_heartbleed,
+            skip_renegotiation: args.scan.vulns.no_renegotiation,
         }
     }
 
@@ -422,13 +422,6 @@ mod tests {
         );
         assert!(
             scanner
-                .test_3des_cached(&cache)
-                .await
-                .expect("ok")
-                .vulnerable
-        );
-        assert!(
-            scanner
                 .test_null_ciphers_cached(&cache)
                 .await
                 .expect("ok")
@@ -541,9 +534,9 @@ mod tests {
         scanner.skip_renegotiation = true;
 
         let summary = scanner.summarize_execution(&[]);
-        assert_eq!(summary.total_expected, 23);
+        assert_eq!(summary.total_expected, 21);
         assert_eq!(summary.total_tested, 0);
-        assert_eq!(summary.total_not_executed, 23);
+        assert_eq!(summary.total_not_executed, 21);
     }
 
     #[test]
@@ -673,8 +666,8 @@ mod tests {
     #[test]
     fn test_with_args_uses_selective_mode_for_specific_flag() {
         let mut request = ScanRequest::default();
-        request.scan.all = true;
-        request.scan.heartbleed = true;
+        request.scan.scope.all = true;
+        request.scan.vulns.heartbleed = true;
 
         let scanner = VulnerabilityScanner::with_args(dummy_target(), &request);
         assert!(!scanner.broad_scan);
@@ -689,7 +682,7 @@ mod tests {
     #[test]
     fn test_with_args_keeps_broad_mode_for_full_scan() {
         let mut request = ScanRequest::default();
-        request.scan.full = true;
+        request.scan.scope.full = true;
 
         let scanner = VulnerabilityScanner::with_args(dummy_target(), &request);
         assert!(scanner.broad_scan);

@@ -16,13 +16,29 @@ impl CipherTester {
             return cipher.protocol.contains("SSLv2");
         }
 
-        // For TLS 1.0/1.1/1.2, most ciphers are backward-compatible, so we test
-        // them against older protocols too. Only exclude TLS 1.3-only and SSLv2 ciphers.
-        // However, some TLS 1.2-specific ciphers (like AES-GCM suites) were never
-        // defined for older protocols. We use explicit protocol matching here:
-        // if a cipher's protocol string exactly matches a newer version and the
-        // target protocol is older, we still test it (the handshake will simply
-        // fail if the server doesn't support it).
+        // For TLS 1.0/1.1, exclude ciphers defined only for TLS 1.2+.
+        // AES-GCM and other TLS 1.2-only suites (RFC 5288/5289) are not valid
+        // for older protocol versions — testing them wastes probes and can produce
+        // false positives if a server mistakenly accepts them.
+        if matches!(
+            protocol,
+            Protocol::TLS10 | Protocol::TLS11 | Protocol::SSLv3
+        ) {
+            // Exclude ciphers that are EXCLUSIVELY TLS 1.2+.
+            // The cipher DB stores a single protocol value (e.g. "TLSv1.2"), never
+            // comma-separated, so we check for TLS 1.2/TLS12 without the presence
+            // of any older version string.
+            let is_tls12_exclusive = (cipher.protocol.contains("TLSv1.2")
+                || cipher.protocol.contains("TLS12"))
+                && !cipher.protocol.contains("TLSv1.1")
+                && !cipher.protocol.contains("TLSv1.0");
+            return !cipher.protocol.contains("TLS13")
+                && !cipher.protocol.contains("TLSv1.3")
+                && !cipher.protocol.contains("SSLv2")
+                && !is_tls12_exclusive;
+        }
+
+        // TLS 1.2: exclude TLS 1.3-only and SSLv2 ciphers.
         !cipher.protocol.contains("TLS13")
             && !cipher.protocol.contains("TLSv1.3")
             && !cipher.protocol.contains("SSLv2")

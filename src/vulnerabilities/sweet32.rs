@@ -36,10 +36,13 @@ impl Sweet32Tester {
                     blowfish_ciphers.len()
                 ));
             }
-            format!(
-                "Vulnerable to Sweet32 (CVE-2016-2183): {}",
-                parts.join(", ")
-            )
+            let cve = match (des3_ciphers.is_empty(), blowfish_ciphers.is_empty()) {
+                (false, false) => "CVE-2016-2183, CVE-2016-6329",
+                (false, true) => "CVE-2016-2183",
+                (true, false) => "CVE-2016-6329",
+                (true, true) => unreachable!(),
+            };
+            format!("Vulnerable to Sweet32 ({}): {}", cve, parts.join(", "))
         } else {
             "Not vulnerable - No 64-bit block ciphers (3DES, Blowfish) supported".to_string()
         };
@@ -107,7 +110,7 @@ impl Sweet32Tester {
             .socket_addrs()
             .first()
             .copied()
-            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
+            .ok_or(crate::TlsError::NoSocketAddresses)?;
 
         let stream =
             match crate::utils::network::connect_with_timeout(addr, Duration::from_secs(3), None)

@@ -26,34 +26,36 @@ fn merge_unique_details(existing: &mut String, new: &str) {
 /// Merges a new vulnerability result into an existing one.
 ///
 /// Merge rules:
-/// - If new is vulnerable but existing is not: replace existing entirely
+/// - If new is confirmed-vulnerable and existing is not: replace existing entirely
+/// - If new is inconclusive-vulnerable and existing is confirmed-not-vulnerable: keep existing
 /// - If both are vulnerable: take worse severity and merge details
 /// - If one is confirmed vulnerable and the other is inconclusive: confirmed result wins
 /// - If new is not vulnerable: only update details if more informative (e.g., "Inconclusive")
 /// - If either result came from a scan with errors, mark as inconclusive
 pub fn merge_vulnerability_result(existing: &mut VulnerabilityResult, new: &VulnerabilityResult) {
-    // Case 1: New result is vulnerable, existing is not - replace entirely
+    // Case 1: New result is vulnerable, existing is not
     if new.vulnerable && !existing.vulnerable {
-        *existing = new.clone();
+        // Only replace if new is confirmed OR existing was also inconclusive.
+        // A confirmed negative beats an inconclusive positive.
+        if !new.inconclusive || existing.inconclusive {
+            *existing = new.clone();
+        }
         return;
     }
 
     // Case 2: Both are vulnerable - merge details and take worse severity
     if new.vulnerable && existing.vulnerable {
-        if new.severity > existing.severity {
+        if !new.inconclusive && existing.inconclusive {
+            // New is confirmed, existing was inconclusive: use new's severity since the
+            // existing severity was never actually proven — keeping it would inflate confidence.
             existing.severity = new.severity;
-        }
-        // If one result is confirmed (not inconclusive) and the other is inconclusive,
-        // the confirmed result should take precedence - clear inconclusive flag
-        if !new.inconclusive {
-            // New result is confirmed - use it as the authoritative result
             existing.inconclusive = false;
-        } else if !existing.inconclusive {
-            // Existing result is confirmed - keep it as authoritative
-            // (inconclusive already false, no action needed)
         } else {
-            // Both are inconclusive - preserve the inconclusive status
-            existing.inconclusive = true;
+            // Both confirmed, or existing confirmed: take the worse (higher) severity.
+            if new.severity > existing.severity {
+                existing.severity = new.severity;
+            }
+            // Both inconclusive: stay inconclusive (no change needed).
         }
         merge_unique_details(&mut existing.details, &new.details);
         return;
@@ -64,7 +66,7 @@ pub fn merge_vulnerability_result(existing: &mut VulnerabilityResult, new: &Vuln
         // If new result is inconclusive, propagate that status
         if new.inconclusive && !existing.inconclusive {
             existing.inconclusive = true;
-            existing.details.clone_from(&new.details);
+            merge_unique_details(&mut existing.details, &new.details);
         }
         // Note: We rely on the `inconclusive` boolean flag, not string content.
         // String checks like `details.contains("Inconclusive")` are unreliable
@@ -265,6 +267,43 @@ mod tests {
             "Confirmed vulnerable should clear inconclusive"
         );
         assert_eq!(existing.severity, Severity::High);
+    }
+
+    #[test]
+    fn test_merge_confirmed_lower_severity_replaces_inconclusive_higher() {
+        // existing=inconclusive+High, new=confirmed+Medium
+        // The confirmed Medium should win: keeping High would misrepresent confidence.
+        let mut existing = VulnerabilityResult {
+            vuln_type: VulnerabilityType::Heartbleed,
+            vulnerable: true,
+            inconclusive: true,
+            details: "Timing inconclusive - possibly High".to_string(),
+            cve: None,
+            cwe: None,
+            severity: Severity::High,
+        };
+        let new = VulnerabilityResult {
+            vuln_type: VulnerabilityType::Heartbleed,
+            vulnerable: true,
+            inconclusive: false,
+            details: "Confirmed Medium".to_string(),
+            cve: None,
+            cwe: None,
+            severity: Severity::Medium,
+        };
+
+        merge_vulnerability_result(&mut existing, &new);
+
+        assert!(existing.vulnerable);
+        assert!(
+            !existing.inconclusive,
+            "Confirmed new should clear inconclusive"
+        );
+        assert_eq!(
+            existing.severity,
+            Severity::Medium,
+            "Confirmed Medium should replace unproven High"
+        );
     }
 
     #[test]

@@ -48,7 +48,7 @@ impl NpnTester {
             .socket_addrs()
             .first()
             .copied()
-            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
+            .ok_or(crate::TlsError::NoSocketAddresses)?;
 
         match crate::utils::network::connect_with_timeout(addr, Duration::from_secs(5), None).await
         {

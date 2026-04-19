@@ -2,6 +2,7 @@
 // Copyright (C) 2025 Marc Rivero (@seifreed)
 // Licensed under GPL-3.0
 
+use super::scan_exporter::{ExportKind, ScanExporter};
 use super::{Command, CommandExit};
 use crate::{Args, Result, TlsError};
 use async_trait::async_trait;
@@ -15,7 +16,7 @@ use tracing::info;
 /// - Scanning multiple targets in parallel or serial mode
 /// - Applying certificate validation filters
 /// - Generating summary reports
-/// - Exporting results to various formats
+/// - Exporting collection results to JSON
 pub struct MassScanCommand {
     args: Args,
 }
@@ -71,7 +72,7 @@ impl Command for MassScanCommand {
         let filtered_results = MassScanner::filter_results(&certificate_filters, results);
 
         // Display filter status if filters were applied
-        if certificate_filters.has_filters() {
+        if certificate_filters.has_filters() && !self.args.output.quiet {
             println!(
                 "\n{} Applied certificate filters: {}",
                 "".cyan(),
@@ -85,26 +86,42 @@ impl Command for MassScanCommand {
             );
         }
 
-        // Display summary
-        println!("{}", MassScanner::generate_summary(&filtered_results));
-
-        // Export if requested (use filtered results)
-        if let Some(json_file) = &self.args.output.json {
-            let json_file_str = json_file.to_str().ok_or_else(|| TlsError::InvalidInput {
-                message: "Invalid JSON output file path".to_string(),
-            })?;
-            MassScanner::export_all_json(
-                &filtered_results,
-                json_file_str,
-                self.args.output.json_pretty,
-            )?;
-            println!("✓ Results exported to JSON: {}", json_file.display());
+        if !self.args.output.quiet {
+            println!("{}", MassScanner::generate_summary(&filtered_results));
         }
 
-        if self.args.output.csv.is_some() || self.args.output.html.is_some() {
-            println!(
-                "Note: CSV and HTML export for mass scans will export individual results per target"
-            );
+        // Export if requested (use filtered results)
+        let exporter = ScanExporter::new(&self.args);
+        if let Some(json_file) = exporter.collection_json_output_path() {
+            use serde_json::json;
+
+            let json_results: Vec<_> = filtered_results
+                .iter()
+                .map(|(target, result)| {
+                    json!({
+                        "target": target,
+                        "success": result.is_ok(),
+                        "results": result.as_ref().ok(),
+                        "error": result.as_ref().err().map(|e| e.to_string()),
+                    })
+                })
+                .collect();
+
+            let json_data = json!({
+                "scan_type": "mass_scan",
+                "total_targets": filtered_results.len(),
+                "successful_scans": filtered_results.iter().filter(|(_, r)| r.is_ok()).count(),
+                "failed_scans": filtered_results.iter().filter(|(_, r)| r.is_err()).count(),
+                "timestamp": chrono::Utc::now().to_rfc3339(),
+                "results": json_results,
+            });
+
+            let json = if self.args.output.json_pretty {
+                serde_json::to_string_pretty(&json_data)?
+            } else {
+                serde_json::to_string(&json_data)?
+            };
+            exporter.write_text_file(&json_file, &json, "JSON", ExportKind::Json)?;
         }
 
         Ok(CommandExit::success())

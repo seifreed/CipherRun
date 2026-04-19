@@ -1,5 +1,6 @@
 // API State Management
 
+use crate::Result;
 use crate::api::{
     config::ApiConfig,
     jobs::{InMemoryJobQueue, JobQueue, ScanExecutor},
@@ -7,7 +8,6 @@ use crate::api::{
     models::response::ProgressMessage,
 };
 use crate::db::DatabasePool;
-use anyhow::Result;
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -266,13 +266,13 @@ impl AppState {
     }
 
     /// Get active scans count
-    pub async fn active_scans(&self) -> usize {
-        self.job_queue.active_jobs_count().await.unwrap_or(0)
+    pub async fn active_scans(&self) -> Result<usize> {
+        self.job_queue.active_jobs_count().await
     }
 
     /// Get queued scans count
-    pub async fn queued_scans(&self) -> usize {
-        self.job_queue.queue_length().await.unwrap_or(0)
+    pub async fn queued_scans(&self) -> Result<usize> {
+        self.job_queue.queue_length().await
     }
 
     /// Subscribe to scan progress

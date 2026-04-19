@@ -224,6 +224,21 @@ impl ComplianceReport {
             .filter(|r| r.severity == severity)
             .collect()
     }
+
+    /// Return a filtered copy of the report for presentation-only use.
+    ///
+    /// Summary and overall status are preserved so output filters do not
+    /// change evaluation semantics or process exit codes.
+    pub fn filtered_by_minimum_severity(&self, minimum: Severity) -> Self {
+        let mut filtered = self.clone();
+        filtered.requirements = self
+            .requirements
+            .iter()
+            .filter(|requirement| requirement.severity >= minimum)
+            .cloned()
+            .collect();
+        filtered
+    }
 }
 
 #[cfg(test)]
@@ -287,5 +302,49 @@ mod tests {
         assert_eq!(report.summary.passed, 1);
         assert_eq!(report.summary.failed, 1);
         assert_eq!(report.overall_status, ComplianceStatus::Fail);
+    }
+
+    #[test]
+    fn test_filtered_by_minimum_severity_preserves_summary_and_status() {
+        let framework = ComplianceFramework {
+            id: "test".to_string(),
+            name: "Test Framework".to_string(),
+            version: "1.0".to_string(),
+            description: "Test".to_string(),
+            organization: "Test Org".to_string(),
+            effective_date: None,
+            requirements: vec![],
+        };
+
+        let mut report = ComplianceReport::new(&framework, "test.com:443".to_string());
+        report.add_requirement_result(RequirementResult {
+            requirement_id: "REQ-LOW".to_string(),
+            name: "Low".to_string(),
+            description: String::new(),
+            category: "protocols".to_string(),
+            severity: Severity::Low,
+            status: RequirementStatus::Pass,
+            violations: vec![],
+            remediation: String::new(),
+        });
+        report.add_requirement_result(RequirementResult {
+            requirement_id: "REQ-HIGH".to_string(),
+            name: "High".to_string(),
+            description: String::new(),
+            category: "protocols".to_string(),
+            severity: Severity::High,
+            status: RequirementStatus::Fail,
+            violations: vec![],
+            remediation: String::new(),
+        });
+        report.finalize();
+
+        let filtered = report.filtered_by_minimum_severity(Severity::High);
+
+        assert_eq!(filtered.overall_status, report.overall_status);
+        assert_eq!(filtered.summary.total, report.summary.total);
+        assert_eq!(filtered.summary.failed, report.summary.failed);
+        assert_eq!(filtered.requirements.len(), 1);
+        assert_eq!(filtered.requirements[0].requirement_id, "REQ-HIGH");
     }
 }

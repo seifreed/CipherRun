@@ -1,0 +1,7 @@
+[advisories]
+# RUSTSEC-2023-0071: rsa crate Marvin Attack (timing side-channel in RSA decryption).
+# No fix available upstream. In Cargo.lock because sqlx 0.8.x resolves sqlx-mysql
+# unconditionally at the lockfile level even when the mysql feature is disabled.
+# rsa is not compiled into our binary (cargo tree confirms it is unreachable).
+# Track sqlx 0.9 release for upstream resolution.
+ignore = ["RUSTSEC-2023-0071"]

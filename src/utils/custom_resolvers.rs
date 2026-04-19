@@ -7,7 +7,11 @@
 /// - Testing behind corporate proxies with custom DNS
 /// - Avoiding DNS spoofing or poisoning from ISP DNS
 use crate::Result;
-use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
+use hickory_resolver::TokioResolver;
+use hickory_resolver::config::{NameServerConfig, ResolverConfig};
+use hickory_resolver::name_server::TokioConnectionProvider;
+use hickory_resolver::proto::xfer::Protocol;
+use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
 use std::time::Duration;
 use tokio::net::TcpStream;
@@ -77,6 +81,16 @@ impl CustomResolver {
         self
     }
 
+    fn build_resolver(&self) -> TokioResolver {
+        let mut config = ResolverConfig::new();
+        for resolver in &self.resolvers {
+            config.add_name_server(NameServerConfig::new(*resolver, Protocol::Udp));
+            config.add_name_server(NameServerConfig::new(*resolver, Protocol::Tcp));
+        }
+
+        TokioResolver::builder_with_config(config, TokioConnectionProvider::default()).build()
+    }
+
     /// Resolve a hostname to IP addresses using custom resolvers
     ///
     /// Attempts to resolve the hostname using each configured resolver.
@@ -99,24 +113,23 @@ impl CustomResolver {
     /// }
     /// ```
     pub async fn resolve(&self, hostname: &str) -> Result<Vec<IpAddr>> {
-        // For each resolver, attempt DNS queries via TCP
-        // This is a simplified approach that uses TCP for DNS queries to the specified resolvers
+        let resolver = self.build_resolver();
+        let response = tokio::time::timeout(self.query_timeout, resolver.lookup_ip(hostname))
+            .await
+            .map_err(|_| crate::TlsError::InvalidHandshake {
+                details: format!(
+                    "Timed out resolving hostname '{}' with custom resolvers",
+                    hostname
+                ),
+            })?
+            .map_err(|error| crate::TlsError::InvalidHandshake {
+                details: format!(
+                    "Failed to resolve hostname '{}' with custom resolvers: {}",
+                    hostname, error
+                ),
+            })?;
 
-        let mut all_ips = Vec::new();
-
-        for resolver_addr in &self.resolvers {
-            match self.query_resolver_tcp(hostname, *resolver_addr).await {
-                Ok(ips) => {
-                    all_ips.extend(ips);
-                }
-                Err(e) => {
-                    tracing::debug!("Failed to query resolver {}: {}", resolver_addr, e);
-                    // Continue to next resolver
-                }
-            }
-        }
-
-        // Deduplicate results
+        let mut all_ips: Vec<IpAddr> = response.iter().collect();
         all_ips.sort();
         all_ips.dedup();
 
@@ -132,43 +145,50 @@ impl CustomResolver {
         Ok(all_ips)
     }
 
-    /// Query a DNS resolver via TCP with a simple approach
-    async fn query_resolver_tcp(
-        &self,
-        hostname: &str,
-        resolver: SocketAddr,
-    ) -> Result<Vec<IpAddr>> {
-        // Simplified: Try to establish TCP connection to resolver
-        // In a full implementation, this would construct DNS packets and parse responses
-        // For now, use system resolver as fallback for the specified address
+    /// Resolve MX records for a domain using the configured resolvers.
+    pub async fn lookup_mx(&self, hostname: &str) -> Result<Vec<(u16, String)>> {
+        let resolver = self.build_resolver();
+        let response = tokio::time::timeout(self.query_timeout, resolver.mx_lookup(hostname))
+            .await
+            .map_err(|_| crate::TlsError::InvalidHandshake {
+                details: format!(
+                    "Timed out resolving MX records for '{}' with custom resolvers",
+                    hostname
+                ),
+            })?
+            .map_err(|error| crate::TlsError::InvalidHandshake {
+                details: format!(
+                    "Failed to resolve MX records for '{}' with custom resolvers: {}",
+                    hostname, error
+                ),
+            })?;
 
-        match tokio::time::timeout(self.query_timeout, TcpStream::connect(resolver)).await {
-            Ok(Ok(_)) => {
-                // Resolver is reachable, use system DNS for actual resolution
-                // This is a simplified implementation
-                match hostname.to_socket_addrs() {
-                    Ok(addrs) => {
-                        let ips: Vec<IpAddr> = addrs.map(|addr| addr.ip()).collect();
-                        if ips.is_empty() {
-                            Err(crate::TlsError::InvalidHandshake {
-                                details: format!("No IPs resolved for {}", hostname),
-                            })
-                        } else {
-                            Ok(ips)
-                        }
-                    }
-                    Err(e) => Err(crate::TlsError::InvalidHandshake {
-                        details: format!("Resolution failed: {}", e),
-                    }),
-                }
-            }
-            Ok(Err(e)) => Err(crate::TlsError::InvalidHandshake {
-                details: format!("Connection failed: {}", e),
-            }),
-            Err(_) => Err(crate::TlsError::InvalidHandshake {
-                details: "DNS query timeout".to_string(),
-            }),
+        let mut records: Vec<(u16, String)> = response
+            .iter()
+            .map(|record| {
+                (
+                    record.preference(),
+                    record
+                        .exchange()
+                        .to_utf8()
+                        .trim_end_matches('.')
+                        .to_string(),
+                )
+            })
+            .collect();
+        records.sort_by_key(|(priority, hostname)| (*priority, hostname.clone()));
+        records.dedup();
+
+        if records.is_empty() {
+            return Err(crate::TlsError::InvalidHandshake {
+                details: format!(
+                    "No MX records found for '{}' with custom resolvers",
+                    hostname
+                ),
+            });
         }
+
+        Ok(records)
     }
 
     /// Get the list of configured resolvers

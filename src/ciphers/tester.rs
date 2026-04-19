@@ -88,6 +88,7 @@ pub struct CipherTester {
     sleep_duration: Option<Duration>,
     use_rdp: bool,
     starttls_protocol: Option<crate::starttls::StarttlsProtocol>,
+    starttls_hostname: Option<String>,
     sni_hostname: Option<String>,
     test_all_ips: bool,
     retry_config: Option<crate::utils::retry::RetryConfig>,
@@ -108,6 +109,7 @@ impl CipherTester {
             sleep_duration: None,
             use_rdp,
             starttls_protocol: None,
+            starttls_hostname: None,
             sni_hostname: None,
             test_all_ips: false,
             retry_config: None,
@@ -147,6 +149,11 @@ impl CipherTester {
         self
     }
 
+    pub fn with_starttls_hostname(mut self, hostname: Option<String>) -> Self {
+        self.starttls_hostname = hostname;
+        self
+    }
+
     pub fn with_sni(mut self, sni: Option<String>) -> Self {
         self.sni_hostname = sni;
         self
@@ -175,6 +182,12 @@ impl CipherTester {
     pub fn with_connection_pool_size(mut self, size: usize) -> Self {
         self.connection_pool_size = size;
         self
+    }
+
+    fn starttls_negotiation_hostname(&self) -> String {
+        self.starttls_hostname
+            .clone()
+            .unwrap_or_else(|| self.target.hostname.clone())
     }
 }
 

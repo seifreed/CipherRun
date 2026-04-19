@@ -1,12 +1,11 @@
 use super::super::{
     GroupEnumerationResult, ScannerFormatter, SignatureEnumerationResult, format_status_indicator,
-    print_section_header,
 };
 use colored::*;
 
 impl<'a> ScannerFormatter<'a> {
     pub fn display_signature_results(&self, results: &SignatureEnumerationResult) {
-        print_section_header("Signature Algorithms:");
+        self.print_section("Signature Algorithms:", 50);
 
         let supported: Vec<_> = results.algorithms.iter().filter(|a| a.supported).collect();
         let total = results.algorithms.len();
@@ -23,7 +22,7 @@ impl<'a> ScannerFormatter<'a> {
     pub fn display_group_results(&self, results: &GroupEnumerationResult) {
         use crate::protocols::groups::GroupType;
 
-        print_section_header("Key Exchange Groups:");
+        self.print_section("Key Exchange Groups:", 50);
 
         if !results.measured {
             println!("  Status:    {}", "Inconclusive".yellow().bold());

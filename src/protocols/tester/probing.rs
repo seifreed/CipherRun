@@ -28,9 +28,7 @@ impl ProtocolTester {
                 self.test_protocol_all_ips(protocol).await?
             } else {
                 let addr =
-                    self.target.socket_addrs().first().copied().ok_or_else(|| {
-                        anyhow::anyhow!("No socket addresses available for target")
-                    })?;
+                    self.target.socket_addrs().first().copied().ok_or(crate::TlsError::NoSocketAddresses)?;
                 self.test_protocol_on_ip(protocol, addr).await?
             };
 
@@ -91,12 +89,10 @@ impl ProtocolTester {
             protocol
         );
 
-        let mut all_support = true;
-        let mut any_tested = false;
+        let mut any_supported = false;
         let mut per_ip_results = Vec::new();
 
         for (idx, addr) in addrs.iter().enumerate() {
-            any_tested = true;
             let ip_supports = self.test_protocol_on_ip(protocol, *addr).await?;
 
             tracing::debug!(
@@ -115,8 +111,8 @@ impl ProtocolTester {
 
             per_ip_results.push((addr.ip(), ip_supports));
 
-            if !ip_supports {
-                all_support = false;
+            if ip_supports {
+                any_supported = true;
             }
         }
 
@@ -143,7 +139,7 @@ impl ProtocolTester {
             }
         }
 
-        Ok(any_tested && all_support)
+        Ok(any_supported)
     }
 
     pub(super) async fn test_protocol_on_ip(
@@ -182,7 +178,7 @@ impl ProtocolTester {
                 if let Some(starttls_proto) = self.starttls_protocol {
                     let negotiator = crate::starttls::protocols::get_negotiator(
                         starttls_proto,
-                        self.target.hostname.clone(),
+                        self.starttls_negotiation_hostname(),
                     );
                     if negotiator.negotiate_starttls(&mut stream).await.is_err() {
                         return Ok(false);
@@ -198,7 +194,18 @@ impl ProtocolTester {
                 })
                 .await
                 {
-                    Ok(Ok(n)) if n > 0 => Ok(response[0] & 0x80 == 0x80),
+                    Ok(Ok(n)) if n >= 3 => {
+                        let first = response[0];
+                        let second = response[1];
+                        let msg_type = response[2];
+                        let is_sslv2_header = (first & 0x80) != 0;
+                        let record_len = ((first & 0x7f) as usize) << 8 | second as usize;
+                        let reasonable = record_len > 0 && record_len <= 16384;
+                        // Only treat as SSLv2 when the message type is a known SSLv2 *non-error* type;
+                        // 0x00 is SSLv2 Error — server rejected the handshake, not supporting SSLv2.
+                        let known_type = matches!(msg_type, 0x02..=0x08);
+                        Ok(is_sslv2_header && reasonable && known_type)
+                    }
                     _ => Ok(false),
                 }
             }
@@ -247,7 +254,7 @@ impl ProtocolTester {
         if let Some(starttls_proto) = self.starttls_protocol {
             let negotiator = crate::starttls::protocols::get_negotiator(
                 starttls_proto,
-                self.target.hostname.clone(),
+                self.starttls_negotiation_hostname(),
             );
             if negotiator.negotiate_starttls(&mut stream).await.is_err() {
                 return Ok(false);
@@ -312,7 +319,7 @@ impl ProtocolTester {
         if let Some(starttls_proto) = self.starttls_protocol {
             let negotiator = crate::starttls::protocols::get_negotiator(
                 starttls_proto,
-                self.target.hostname.clone(),
+                self.starttls_negotiation_hostname(),
             );
             if negotiator.negotiate_starttls(&mut stream).await.is_err() {
                 return Ok(false);

@@ -42,7 +42,7 @@ impl CipherTester {
                 .socket_addrs()
                 .first()
                 .copied()
-                .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
+                .ok_or(crate::TlsError::NoSocketAddresses)?;
             self.try_cipher_handshake_on_ip_with_pool(protocol, cipher_hexcode, addr, pool)
                 .await
         }
@@ -62,7 +62,7 @@ impl CipherTester {
                 .socket_addrs()
                 .first()
                 .copied()
-                .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
+                .ok_or(crate::TlsError::NoSocketAddresses)?;
             self.try_cipher_handshake_on_ip(protocol, cipher_hexcode, addr)
                 .await
         }
@@ -82,11 +82,12 @@ impl CipherTester {
         }
 
         for addr in &addrs {
-            if self
+            match self
                 .try_cipher_handshake_on_ip(protocol, cipher_hexcode, *addr)
-                .await?
+                .await
             {
-                return Ok(true);
+                Ok(true) => return Ok(true),
+                Ok(false) | Err(_) => continue,
             }
         }
 
@@ -110,7 +111,7 @@ impl CipherTester {
         if let Some(starttls_proto) = self.starttls_protocol {
             let negotiator = crate::starttls::protocols::get_negotiator(
                 starttls_proto,
-                self.target.hostname.clone(),
+                self.starttls_negotiation_hostname(),
             );
             if negotiator.negotiate_starttls(stream).await.is_err() {
                 return Ok(false);

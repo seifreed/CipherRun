@@ -31,6 +31,21 @@ impl ScanRequest {
             });
         }
 
+        if let Some(proxy) = &self.network.proxy {
+            crate::utils::proxy::ProxyConfig::parse(proxy).map_err(|error| {
+                TlsError::InvalidInput {
+                    message: format!("Invalid proxy configuration: {}", error),
+                }
+            })?;
+        }
+
+        if !self.network.resolvers.is_empty() {
+            crate::utils::custom_resolvers::CustomResolver::new(self.network.resolvers.clone())
+                .map_err(|error| TlsError::InvalidInput {
+                    message: format!("Invalid custom resolver list: {}", error),
+                })?;
+        }
+
         if matches!(self.connection.socket_timeout, Some(0)) {
             return Err(TlsError::InvalidInput {
                 message: "Socket timeout must be greater than 0 seconds.".to_string(),
@@ -40,6 +55,12 @@ impl ScanRequest {
         if matches!(self.connection.connect_timeout, Some(0)) {
             return Err(TlsError::InvalidInput {
                 message: "Connect timeout must be greater than 0 seconds.".to_string(),
+            });
+        }
+
+        if matches!(self.tls.openssl_timeout, Some(0)) {
+            return Err(TlsError::InvalidInput {
+                message: "OpenSSL timeout must be greater than 0 seconds.".to_string(),
             });
         }
 
@@ -61,28 +82,58 @@ impl ScanRequest {
             });
         }
 
-        if self.scan.heartbleed && self.scan.no_heartbleed {
+        if self.scan.vulns.heartbleed && self.scan.vulns.no_heartbleed {
             return Err(TlsError::InvalidInput {
                 message: "Cannot combine Heartbleed testing with --no-heartbleed.".to_string(),
             });
         }
 
-        if self.scan.fallback && self.scan.no_fallback {
+        if self.scan.vulns.fallback && self.scan.vulns.no_fallback {
             return Err(TlsError::InvalidInput {
                 message: "Cannot combine TLS fallback testing with --no-fallback.".to_string(),
             });
         }
 
-        if self.scan.renegotiation && self.scan.no_renegotiation {
+        if self.scan.vulns.renegotiation && self.scan.vulns.no_renegotiation {
             return Err(TlsError::InvalidInput {
                 message: "Cannot combine renegotiation testing with --no-renegotiation."
                     .to_string(),
             });
         }
 
-        if self.scan.crime && self.scan.no_compression {
+        if self.scan.vulns.crime && self.scan.vulns.no_compression {
             return Err(TlsError::InvalidInput {
                 message: "Cannot combine CRIME testing with --no-compression.".to_string(),
+            });
+        }
+
+        if self.tls.hardfail && !self.tls.phone_out {
+            return Err(TlsError::InvalidInput {
+                message: "Cannot use --hardfail without --phone-out.".to_string(),
+            });
+        }
+
+        if self.tls.ssl_native && !self.tls.local && !self.should_run_certificate_phase() {
+            return Err(TlsError::InvalidInput {
+                message: "--ssl-native requires a scan that runs certificate analysis or --local."
+                    .to_string(),
+            });
+        }
+
+        if (self.tls.openssl_path.is_some() || self.tls.openssl_timeout.is_some())
+            && !self.tls.local
+            && !self.tls.ssl_native
+        {
+            return Err(TlsError::InvalidInput {
+                message:
+                    "--openssl and --openssl-timeout are only used with --ssl-native or --local."
+                        .to_string(),
+            });
+        }
+
+        if self.tls.add_ca.is_some() && !self.should_run_certificate_phase() {
+            return Err(TlsError::InvalidInput {
+                message: "--add-ca requires a scan that runs certificate analysis.".to_string(),
             });
         }
 
@@ -95,6 +146,9 @@ impl ScanRequest {
         match self.target.as_deref().map(str::trim) {
             Some("") | None => Err(TlsError::InvalidInput {
                 message: "A target is required for scan execution.".to_string(),
+            }),
+            Some(_) if !self.has_effective_scan_workload() => Err(TlsError::InvalidInput {
+                message: "Scan request must enable at least one effective scan phase.".to_string(),
             }),
             Some(_) => Ok(()),
         }

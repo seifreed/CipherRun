@@ -886,7 +886,10 @@ fn scanner_core_does_not_depend_on_args_directly() {
         "src/scanner/config.rs",
         "src/scanner/service.rs",
         "src/scanner/builders.rs",
-        "src/scanner/orchestration.rs",
+        "src/scanner/orchestration/mod.rs",
+        "src/scanner/orchestration/multi_ip.rs",
+        "src/scanner/orchestration/aggregation.rs",
+        "src/scanner/orchestration/certificate.rs",
         "src/scanner/results.rs",
     ] {
         assert_file_has_no_forbidden_pattern(
@@ -1043,8 +1046,30 @@ fn certificate_routes_use_shared_presenters_for_http_responses() {
 fn compliance_route_uses_adapter_not_direct_scanner() {
     assert_file_has_no_forbidden_pattern(
         "src/api/routes/compliance.rs",
+        &[
+            "Scanner::new(",
+            "use crate::scanner::Scanner",
+            "use crate::scanner::DefaultScannerPort",
+        ],
+        "Compliance route must depend on scanner port abstractions via adapters, not concrete Scanner or DefaultScannerPort.",
+    );
+}
+
+#[test]
+fn policy_route_uses_adapter_not_direct_scanner() {
+    assert_file_has_no_forbidden_pattern(
+        "src/api/routes/policies.rs",
         &["Scanner::new(", "use crate::scanner::Scanner"],
-        "Compliance route must use the compliance adapter instead of creating Scanner directly (dependency inversion).",
+        "Policy route must depend on scanner port abstractions via adapters, not concrete Scanner.",
+    );
+}
+
+#[test]
+fn compliance_domain_does_not_use_anyhow_result() {
+    assert_no_forbidden_pattern(
+        "src/compliance",
+        &["use anyhow::Result", "anyhow::Result"],
+        "Compliance domain must use crate::Result<T>, not anyhow::Result — use tls_bail! and TlsError instead.",
     );
 }
 

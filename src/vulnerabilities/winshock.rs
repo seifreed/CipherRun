@@ -57,7 +57,7 @@ impl WinshockTester {
             .socket_addrs()
             .first()
             .copied()
-            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
+            .ok_or(crate::TlsError::NoSocketAddresses)?;
 
         let stream =
             match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None)
@@ -81,15 +81,21 @@ impl WinshockTester {
                     .map(|c| c.name().to_string())
                     .unwrap_or_default();
 
-                // Schannel has specific cipher preferences
+                // Schannel's top-negotiated ciphers. We check exact equality on the
+                // negotiated cipher (not substring) to avoid flagging servers that merely
+                // support these widely-used suites but prefer something else first.
                 let schannel_ciphers = [
                     "ECDHE-RSA-AES256-SHA384",
                     "ECDHE-RSA-AES128-SHA256",
                     "AES256-SHA256",
                     "AES128-SHA256",
+                    "ECDHE-RSA-AES256-GCM-SHA384",
+                    "ECDHE-RSA-AES128-GCM-SHA256",
+                    "ECDHE-ECDSA-AES256-GCM-SHA384",
+                    "ECDHE-ECDSA-AES128-GCM-SHA256",
                 ];
 
-                let likely_schannel = schannel_ciphers.iter().any(|&sc| cipher.contains(sc));
+                let likely_schannel = schannel_ciphers.contains(&cipher.as_str());
 
                 Ok(likely_schannel)
             }
@@ -104,7 +110,7 @@ impl WinshockTester {
             .socket_addrs()
             .first()
             .copied()
-            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
+            .ok_or(crate::TlsError::NoSocketAddresses)?;
 
         let mut stream =
             match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None)
@@ -130,22 +136,10 @@ impl WinshockTester {
                 let mut response = vec![0u8; 1024];
                 match timeout(Duration::from_secs(2), stream.read(&mut response)).await {
                     Ok(Ok(n)) if n > 0 => {
-                        // Server responded - check for specific error patterns
-                        // A vulnerable server may return specific error codes
-                        // or close connection gracefully after processing
-                        let response_str = String::from_utf8_lossy(&response[..n]);
-
-                        // Check for specific Windows/Schannel error indicators
-                        // Not vulnerable if server returns proper error
-                        if response_str.contains("alert")
-                            || response_str.contains("handshake failure")
-                        {
-                            Ok(false) // Proper error handling
-                        } else {
-                            // Server continued normally - may or may not be vulnerable
-                            // Winshock causes memory corruption, need more evidence
-                            Ok(false)
-                        }
+                        // Any server response (TLS alert 0x15 or other) means it handled
+                        // the malformed CKE without crashing. TCP RST (below) is the
+                        // primary Winshock indicator.
+                        Ok(false)
                     }
                     Ok(Ok(_)) => {
                         // Empty response - connection closed without error
@@ -161,9 +155,10 @@ impl WinshockTester {
                         if error_str.contains("reset by peer")
                             || error_str.contains("connection reset")
                         {
-                            // Potential vulnerability - but too many false positives
-                            // Mark as not vulnerable and recommend manual testing
-                            Ok(false)
+                            // Winshock causes memory corruption → process crash → TCP RST.
+                            // A connection reset after sending the malformed CKE is the
+                            // primary positive indicator for CVE-2014-6321.
+                            Ok(true)
                         } else {
                             // Timeout, DNS errors, etc. - not vulnerability indicators
                             Ok(false)

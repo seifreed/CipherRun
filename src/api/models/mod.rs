@@ -16,7 +16,7 @@ mod tests {
     fn test_api_models_reexports_basic() {
         let req = ScanRequest {
             target: "example.com:443".to_string(),
-            options: ScanOptions::quick(),
+            options: Some(ScanOptions::quick()),
             webhook_url: None,
         };
 

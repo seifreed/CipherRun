@@ -7,7 +7,6 @@ use crate::compliance::{
 
 pub fn present_compliance_report(
     framework: &ComplianceFramework,
-    target: &str,
     report: &ComplianceReport,
     detailed: bool,
 ) -> ComplianceCheckResponse {
@@ -15,7 +14,7 @@ pub fn present_compliance_report(
         framework_id: framework.id.clone(),
         framework_name: framework.name.clone(),
         framework_version: framework.version.clone(),
-        target: target.to_string(),
+        target: report.target.clone(),
         status: compliance_status(report.overall_status).to_string(),
         summary: ComplianceSummary {
             total: report.summary.total,
@@ -109,7 +108,7 @@ mod tests {
         };
         let report = ComplianceReport::new(&framework, "example.com:443".to_string());
 
-        let response = present_compliance_report(&framework, "example.com:443", &report, false);
+        let response = present_compliance_report(&framework, &report, false);
 
         assert!(response.requirements.is_none());
         assert_eq!(response.status, "pass");
@@ -145,7 +144,7 @@ mod tests {
         });
         report.finalize();
 
-        let response = present_compliance_report(&framework, "example.com:443", &report, true);
+        let response = present_compliance_report(&framework, &report, true);
         let requirements = response
             .requirements
             .expect("requirements should be present");
@@ -191,7 +190,7 @@ mod tests {
         });
         report.finalize();
 
-        let response = present_compliance_report(&framework, "example.com:443", &report, true);
+        let response = present_compliance_report(&framework, &report, true);
         let requirements = response
             .requirements
             .expect("requirements should be present");
@@ -214,7 +213,7 @@ mod tests {
         };
         let report = ComplianceReport::new(&framework, "example.com:443".to_string());
 
-        let response = present_compliance_report(&framework, "example.com:443", &report, true);
+        let response = present_compliance_report(&framework, &report, true);
 
         assert_eq!(response.summary.total, 0);
         assert_eq!(response.summary.compliance_percentage, 0.0);
@@ -251,7 +250,7 @@ mod tests {
         });
         report.finalize();
 
-        let response = present_compliance_report(&framework, "example.com:443", &report, true);
+        let response = present_compliance_report(&framework, &report, true);
         let requirement = &response
             .requirements
             .expect("requirements should be present")[0];

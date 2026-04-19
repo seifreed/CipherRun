@@ -314,19 +314,7 @@ fn extract_extension_info(data: &[u8], offset: usize, server_hello_length: usize
     }
 
     let ecnt_start = offset + 49;
-    let elen = u16::from_be_bytes([data[offset + 47], data[offset + 48]]) as usize;
-
-    // Limit extension length to prevent integer overflow and excessive iteration
-    // Maximum reasonable extension length is 16KB (typical TLS max)
-    const MAX_EXTENSION_LENGTH: usize = 16384;
-    if elen > MAX_EXTENSION_LENGTH {
-        tracing::warn!(
-            "Extension length {} exceeds maximum at offset {}, potential malicious response",
-            elen,
-            offset
-        );
-        return "|".to_string();
-    }
+    let elen = potential_ext_len as usize;
 
     // Check for overflow in emax calculation
     let emax = match ecnt_start.checked_add(elen) {

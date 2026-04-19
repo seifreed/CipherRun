@@ -250,11 +250,6 @@ fn test_router_priority_7_mass_scan() {
 }
 
 #[test]
-fn test_router_priority_8_scan_default() {
-    assert_eq!(route_name(Args::default()), "ScanCommand");
-}
-
-#[test]
 fn test_router_priority_8_scan_with_target() {
     assert_eq!(
         route_name(build_args(|args| {
@@ -462,7 +457,7 @@ fn test_validate_analytics_compare_standalone() {
 
 #[test]
 fn test_validate_empty_args() {
-    validate_ok(Args::default());
+    assert!(CommandRouter::validate_routing(&Args::default()).is_err());
 }
 
 // ============================================================================
@@ -524,7 +519,9 @@ fn test_router_analytics_multiple_operations() {
 
 #[test]
 fn test_command_trait_object_from_router() {
-    let args = Args::default();
+    let args = build_args(|args| {
+        args.target = Some("example.com:443".to_string());
+    });
     let cmd = route_command(args);
     // Verify we can call trait methods on the boxed command
     assert_eq!(cmd.name(), "ScanCommand");
@@ -791,7 +788,10 @@ fn test_comprehensive_routing_coverage_all_commands() {
             build_args(|args| args.input_file = Some(PathBuf::from("targets.txt"))),
             "MassScanCommand",
         ),
-        (Args::default(), "ScanCommand"),
+        (
+            build_args(|args| args.target = Some("example.com:443".to_string())),
+            "ScanCommand",
+        ),
     ];
 
     for (args, expected_name) in command_configs {

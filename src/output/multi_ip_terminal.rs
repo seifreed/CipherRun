@@ -458,20 +458,15 @@ impl MultiIpScanReport {
         Ok(())
     }
 
-    /// Helper to color grade strings — derives both display text and color from the score
-    fn color_grade(_grade: &str, score: u8) -> colored::ColoredString {
-        use crate::rating::Grade;
-
-        // Always derive the grade from the score for consistency
-        let grade_enum = Grade::from_score(score);
-        let display = format!("{}", grade_enum);
-
-        match grade_enum {
-            Grade::APlus | Grade::A => display.green().bold(),
-            Grade::AMinus | Grade::B => display.blue().bold(),
-            Grade::C => display.yellow(),
-            Grade::D | Grade::E | Grade::F => display.red(),
-            Grade::T | Grade::M => display.red().bold(),
+    /// Helper to color grade strings using the explicit aggregated grade.
+    fn color_grade(grade: &str, _score: u8) -> colored::ColoredString {
+        match grade {
+            "A+" | "A" => grade.green().bold(),
+            "A-" | "B" => grade.blue().bold(),
+            "C" => grade.yellow(),
+            "D" | "E" | "F" => grade.red(),
+            "T" | "M" => grade.red().bold(),
+            _ => grade.normal(),
         }
     }
 }
@@ -489,6 +484,13 @@ mod tests {
 
         let grade = MultiIpScanReport::color_grade("F", 10).to_string();
         assert!(grade.contains('F'));
+    }
+
+    #[test]
+    fn test_color_grade_preserves_explicit_grade_when_score_disagrees() {
+        let grade = MultiIpScanReport::color_grade("T", 95).to_string();
+        assert!(grade.contains('T'));
+        assert!(!grade.contains("A+"));
     }
 
     #[test]

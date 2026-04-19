@@ -27,6 +27,10 @@ pub enum CvssSeverity {
 impl CvssSeverity {
     pub fn from_score(score: f64) -> Self {
         match score {
+            s if s < 0.0 => {
+                tracing::warn!("CVSS score is negative ({s}), treating as None");
+                CvssSeverity::None
+            }
             0.0 => CvssSeverity::None,
             s if s < 4.0 => CvssSeverity::Low,
             s if s < 7.0 => CvssSeverity::Medium,

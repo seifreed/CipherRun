@@ -36,61 +36,81 @@ impl SignatureTester {
 
     pub async fn enumerate_signatures(&self) -> Result<SignatureEnumerationResult> {
         use crate::protocols::Protocol;
+        use crate::protocols::handshake::{ClientHelloBuilder, ServerHelloParser};
         use std::time::Duration;
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         use tokio::time::timeout;
 
-        // Try to connect and read server's supported signature algorithms
         let addr = self
             .target
             .socket_addrs()
             .first()
             .copied()
-            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
+            .ok_or(crate::TlsError::NoSocketAddresses)?;
         let connect_timeout = Duration::from_secs(10);
         let read_timeout = Duration::from_secs(5);
 
-        let mut detected_sigs = Vec::new();
+        let sni_hostname = crate::utils::network::sni_hostname_for_target(
+            &self.target.hostname,
+            self.sni_hostname.as_deref(),
+        );
 
-        // Connect and send ClientHello with signature_algorithms extension
-        if let Ok(mut stream) =
-            crate::utils::network::connect_with_timeout(addr, connect_timeout, None).await
-        {
-            // Build ClientHello with all signature algorithms
-            let mut builder = crate::protocols::handshake::ClientHelloBuilder::new(Protocol::TLS12);
+        // Probe each algorithm individually: send a ClientHello advertising only that
+        // one algorithm in the signature_algorithms extension. A ServerHello response
+        // (not a TLS Alert) means the server accepts that algorithm for its certificate.
+        // (hash_byte, sig_byte) pairs corresponding to IANA two-byte code points.
+        let algo_pairs: &[(u16, u8, u8)] = &[
+            (0x0401, 0x04, 0x01), // rsa_pkcs1_sha256
+            (0x0501, 0x05, 0x01), // rsa_pkcs1_sha384
+            (0x0601, 0x06, 0x01), // rsa_pkcs1_sha512
+            (0x0403, 0x04, 0x03), // ecdsa_secp256r1_sha256
+            (0x0503, 0x05, 0x03), // ecdsa_secp384r1_sha384
+            (0x0603, 0x06, 0x03), // ecdsa_secp521r1_sha512
+            (0x0804, 0x08, 0x04), // rsa_pss_rsae_sha256
+            (0x0805, 0x08, 0x05), // rsa_pss_rsae_sha384
+            (0x0806, 0x08, 0x06), // rsa_pss_rsae_sha512
+            (0x0807, 0x08, 0x07), // ed25519
+            (0x0808, 0x08, 0x08), // ed448
+        ];
 
-            // Add a common cipher
+        let mut detected_sigs: Vec<u16> = Vec::new();
+
+        for &(iana_value, hash_byte, sig_byte) in algo_pairs {
+            let Ok(mut stream) =
+                crate::utils::network::connect_with_timeout(addr, connect_timeout, None).await
+            else {
+                continue;
+            };
+
+            // Build ClientHello with only this one signature algorithm so the server
+            // must use a certificate signed with a compatible algorithm or reject.
+            let mut builder = ClientHelloBuilder::new(Protocol::TLS12);
             builder.add_cipher(0xc030); // ECDHE-RSA-AES256-GCM-SHA384
+            if let Some(sni) = sni_hostname.as_deref() {
+                builder.add_sni(sni);
+            }
+            builder.add_supported_groups(&[0x001d, 0x0017, 0x0018, 0x0019]);
+            builder.add_signature_algorithms(&[(hash_byte, sig_byte)]);
+            builder.add_session_ticket();
+            builder.add_renegotiation_info();
 
-            let sni_hostname = crate::utils::network::sni_hostname_for_target(
-                &self.target.hostname,
-                self.sni_hostname.as_deref(),
-            );
-            if let Ok(client_hello) = builder.build_with_defaults(sni_hostname.as_deref()) {
-                // Send ClientHello
-                if timeout(read_timeout, async {
-                    stream.write_all(&client_hello).await?;
+            let Ok(client_hello) = builder.build() else {
+                continue;
+            };
 
-                    // Read ServerHello
-                    let mut response = vec![0u8; 4096];
-                    let n = stream.read(&mut response).await?;
+            let probe = timeout(read_timeout, async {
+                stream.write_all(&client_hello).await?;
+                let mut response = vec![0u8; 4096];
+                let n = stream.read(&mut response).await?;
+                response.truncate(n);
+                Ok::<Vec<u8>, anyhow::Error>(response)
+            })
+            .await;
 
-                    if n > 0 && response[0] == 0x16 {
-                        // Parse signature algorithms from ServerHello extensions
-                        // This is simplified - full parsing would extract from extensions
-                        Ok::<_, crate::error::TlsError>(response)
-                    } else {
-                        Err(crate::error::TlsError::UnexpectedResponse {
-                            details: "Invalid response".into(),
-                        })
-                    }
-                })
-                .await
-                .is_ok()
-                {
-                    // Server responded, mark some common algorithms as supported
-                    detected_sigs.extend([0x0401, 0x0403, 0x0804, 0x0805, 0x0806]);
-                }
+            if let Ok(Ok(response)) = probe
+                && ServerHelloParser::parse(&response).is_ok()
+            {
+                detected_sigs.push(iana_value);
             }
         }
 
@@ -186,18 +206,9 @@ mod tests {
             .await
             .expect("test assertion should succeed");
 
-        let supported = result
-            .algorithms
-            .iter()
-            .filter(|a| a.supported)
-            .map(|a| a.iana_value)
-            .collect::<Vec<_>>();
-
-        assert!(supported.contains(&0x0401));
-        assert!(supported.contains(&0x0403));
-        assert!(supported.contains(&0x0804));
-        assert!(supported.contains(&0x0805));
-        assert!(supported.contains(&0x0806));
+        // Mock server sends a malformed/minimal response; probes should fail and
+        // no algorithms should be detected as supported against this fake server.
+        assert!(result.algorithms.iter().all(|a| !a.supported));
     }
 
     #[tokio::test]

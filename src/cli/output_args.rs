@@ -39,7 +39,7 @@ pub struct OutputArgs {
     #[arg(long = "xml", value_name = "FILE")]
     pub xml: Option<PathBuf>,
 
-    /// Output all formats with basename (like nmap -oA)
+    /// Output all supported formats with basename (like nmap -oA)
     #[arg(short = 'o', long = "output-all", value_name = "BASENAME")]
     pub output_all: Option<PathBuf>,
 

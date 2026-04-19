@@ -1,11 +1,15 @@
 mod common;
 
+use async_trait::async_trait;
 use cipherrun::application::ScanRequest;
+use cipherrun::application::ports::ScannerPort;
 use cipherrun::application::use_cases::scan_workflow::{ScanWorkflowInput, ScanWorkflowServices};
 use cipherrun::application::use_cases::{RunScan, ScanWorkflow};
 use cipherrun::compliance::{BuiltinFrameworkSource, engine::DefaultComplianceEvaluator};
+use cipherrun::scanner::ScanResults;
 use common::mock_scanner::MockScannerPort;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 fn mock_services(scanner: Arc<MockScannerPort>) -> ScanWorkflowServices {
     ScanWorkflowServices {
@@ -15,6 +19,19 @@ fn mock_services(scanner: Arc<MockScannerPort>) -> ScanWorkflowServices {
         policy_source: None,
         policy_evaluator: None,
         scan_results_store_factory: None,
+    }
+}
+
+struct CountingScannerPort {
+    calls: Arc<AtomicUsize>,
+    results: ScanResults,
+}
+
+#[async_trait]
+impl ScannerPort for CountingScannerPort {
+    async fn scan(&self, _request: ScanRequest) -> cipherrun::Result<ScanResults> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Ok(self.results.clone())
     }
 }
 
@@ -87,8 +104,23 @@ async fn test_run_scan_with_injected_scanner() {
 
 #[tokio::test]
 async fn test_workflow_rejects_store_without_db_config() {
-    let mock = Arc::new(MockScannerPort::default_success());
-    let services = mock_services(mock);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let scanner = Arc::new(CountingScannerPort {
+        calls: calls.clone(),
+        results: ScanResults {
+            target: "mock.example.com:443".to_string(),
+            scan_time_ms: 100,
+            ..Default::default()
+        },
+    });
+    let services = ScanWorkflowServices {
+        scanner_port: scanner,
+        compliance_framework_source: None,
+        compliance_evaluator: None,
+        policy_source: None,
+        policy_evaluator: None,
+        scan_results_store_factory: None,
+    };
 
     let input = ScanWorkflowInput {
         store_results: true,
@@ -105,4 +137,5 @@ async fn test_workflow_rejects_store_without_db_config() {
     assert!(result.is_err());
     let err = result.err().unwrap();
     assert!(err.to_string().contains("database_config_path"));
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
 }

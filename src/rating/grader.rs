@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 /// SSL Labs rating grade
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Grade {
     #[serde(rename = "A+")]
     APlus,
@@ -20,6 +20,24 @@ pub enum Grade {
 }
 
 impl Grade {
+    /// Numeric rank: higher = better grade (APlus=9, T=0).
+    /// T (untrusted cert) is ranked below M (hostname mismatch) because
+    /// a broken trust chain is a more severe failure than a name mismatch.
+    pub fn rank(self) -> u8 {
+        match self {
+            Grade::APlus => 9,
+            Grade::A => 8,
+            Grade::AMinus => 7,
+            Grade::B => 6,
+            Grade::C => 5,
+            Grade::D => 4,
+            Grade::E => 3,
+            Grade::F => 2,
+            Grade::M => 1,
+            Grade::T => 0,
+        }
+    }
+
     /// Get color for grade
     pub fn color(&self) -> &'static str {
         match self {
@@ -59,6 +77,18 @@ impl Grade {
             20..=34 => Grade::E,
             _ => Grade::F,
         }
+    }
+}
+
+impl Ord for Grade {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.rank().cmp(&other.rank())
+    }
+}
+
+impl PartialOrd for Grade {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
     }
 }
 

@@ -58,16 +58,24 @@ impl<'a> ScanPresenter<'a> {
     }
 
     pub fn render_scan_results(&self, cli_view: &ScanCliView<'_>) {
+        if self.args.output.quiet {
+            return;
+        }
         if cli_view.should_render_results() {
             ScanResultsPresenter::new(self.args).render(cli_view);
         }
     }
 
     fn render_post_processing(&self, cli_view: &ScanCliView<'_>) -> Result<CommandExit> {
+        let post_view = cli_view.post_view();
+
+        if self.args.output.quiet {
+            return Ok(ScanPostPresenter::new(self.args).exit_for_post_view(&post_view));
+        }
         if !cli_view.should_render_post_processing() {
             return Ok(CommandExit::success());
         }
-        let post_view = cli_view.post_view();
+
         ScanPostPresenter::new(self.args).render(&post_view)
     }
 
@@ -76,6 +84,9 @@ impl<'a> ScanPresenter<'a> {
         cli_view: &ScanCliView<'_>,
         artifacts: Option<&ScanArtifactsOutcome>,
     ) {
+        if self.args.output.quiet {
+            return;
+        }
         if !cli_view.should_render_post_scan_notices_for(artifacts.is_some()) {
             return;
         }

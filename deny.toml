@@ -70,11 +70,17 @@ yanked = "warn"
 
 # Advisories to ignore with documented reasons
 ignore = [
-    # RUSTSEC-2025-0134: rustls-pemfile is unmaintained
-    # This is a direct dependency used for PEM parsing. The crate is archived but
-    # still functional. Migration to rustls-pki-types PemObject API is planned
-    # but not yet implemented. The functionality is stable and poses no security risk.
-    { id = "RUSTSEC-2025-0134", reason = "Functional but archived; migration to rustls-pki-types planned" },
+    # RUSTSEC-2023-0071: rsa crate Marvin Attack (timing side-channel)
+    # No fix available upstream. Transitive dependency via sqlx-mysql 0.8.x.
+    # Not exploitable in our context: rsa is used only for MySQL auth handshake,
+    # not for any user-facing key operations. Track sqlx 0.9 for resolution.
+    { id = "RUSTSEC-2023-0071", reason = "No fix available; transitive via sqlx-mysql; not user-facing" },
+
+    # RUSTSEC-2026-0097: rand 0.8.5 unsound with custom logger
+    # Transitive dependency via sqlx-postgres/sqlx-mysql. We use rand 0.10 directly.
+    # The unsoundness only triggers when a custom global logger uses rand::rng() during
+    # initialization — not applicable in this codebase.
+    { id = "RUSTSEC-2026-0097", reason = "Transitive via sqlx 0.8; unsoundness not triggered in our code" },
 ]
 
 # =============================================================================

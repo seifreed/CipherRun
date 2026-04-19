@@ -28,9 +28,18 @@ impl<'a> CipherRule<'a> {
         if let Some(ref min_strength) = self.policy.min_strength {
             for (protocol, summary) in self.results {
                 let weak_ciphers = match min_strength.as_str() {
-                    "HIGH" => summary.counts.low_strength + summary.counts.medium_strength,
-                    "MEDIUM" => summary.counts.low_strength,
-                    "LOW" => 0,
+                    "HIGH" => {
+                        summary.counts.null_ciphers
+                            + summary.counts.export_ciphers
+                            + summary.counts.low_strength
+                            + summary.counts.medium_strength
+                    }
+                    "MEDIUM" => {
+                        summary.counts.null_ciphers
+                            + summary.counts.export_ciphers
+                            + summary.counts.low_strength
+                    }
+                    "LOW" => summary.counts.null_ciphers + summary.counts.export_ciphers,
                     _ => 0,
                 };
 
@@ -61,7 +70,10 @@ impl<'a> CipherRule<'a> {
         // Check forward secrecy requirement
         if let Some(true) = self.policy.require_forward_secrecy {
             for (protocol, summary) in self.results {
-                let non_fs_count = summary.counts.total - summary.counts.forward_secrecy;
+                let non_fs_count = summary
+                    .counts
+                    .total
+                    .saturating_sub(summary.counts.forward_secrecy);
                 if non_fs_count > 0 {
                     violations.push(
                         PolicyViolation::new(
@@ -89,7 +101,7 @@ impl<'a> CipherRule<'a> {
         // Check AEAD requirement
         if let Some(true) = self.policy.require_aead {
             for (protocol, summary) in self.results {
-                let non_aead_count = summary.counts.total - summary.counts.aead;
+                let non_aead_count = summary.counts.total.saturating_sub(summary.counts.aead);
                 if non_aead_count > 0 {
                     violations.push(
                         PolicyViolation::new(

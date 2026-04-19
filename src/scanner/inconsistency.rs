@@ -453,8 +453,10 @@ impl InconsistencyDetector {
         let has_ips_without = !ips_without.is_empty()
             && (!ips_with_caching.is_empty() || !ips_with_tickets.is_empty());
 
+        // Compare against total_successful (not ips_with_caching.len()) because a server
+        // can support tickets without session-cache resumption — the two sets are independent.
         let tickets_inconsistent =
-            !ips_with_tickets.is_empty() && ips_with_tickets.len() < ips_with_caching.len();
+            !ips_with_tickets.is_empty() && ips_with_tickets.len() < total_successful;
 
         let caching_inconsistent =
             !ips_with_caching.is_empty() && ips_with_caching.len() < total_successful;
@@ -553,7 +555,6 @@ impl InconsistencyDetector {
                     protocols_by_ip: protocols_by_ip.clone(),
                 },
             });
-            return inconsistencies;
         }
 
         // If we have at least 2 IPs with ALPN, check for protocol differences

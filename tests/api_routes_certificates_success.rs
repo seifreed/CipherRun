@@ -169,3 +169,43 @@ async fn test_get_certificate_success_and_not_found() {
         .expect_err("test assertion should fail");
     assert!(err.to_string().contains("not found"));
 }
+
+#[tokio::test]
+async fn test_list_certificates_rejects_hostname_filter_with_port() {
+    let state = setup_state().await;
+
+    let err = list_certificates(
+        State(state),
+        Query(CertificateQuery {
+            hostname: Some("example.com:443".to_string()),
+            ..CertificateQuery::default()
+        }),
+    )
+    .await
+    .expect_err("hostname filter with port should fail");
+
+    assert!(matches!(
+        err,
+        cipherrun::api::models::error::ApiError::BadRequest(_)
+    ));
+}
+
+#[tokio::test]
+async fn test_list_certificates_rejects_invalid_hostname_filter() {
+    let state = setup_state().await;
+
+    let err = list_certificates(
+        State(state),
+        Query(CertificateQuery {
+            hostname: Some("example..com".to_string()),
+            ..CertificateQuery::default()
+        }),
+    )
+    .await
+    .expect_err("invalid hostname filter should fail");
+
+    assert!(matches!(
+        err,
+        cipherrun::api::models::error::ApiError::BadRequest(_)
+    ));
+}

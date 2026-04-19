@@ -46,11 +46,12 @@ pub(super) fn analyze_banner(banner: &str) -> (ApplicationProtocol, f64) {
         return (ApplicationProtocol::FtpStartTls, 0.90);
     }
 
-    if lower.contains("<stream:stream") || lower.contains("<?xml") && lower.contains("jabber") {
+    if (lower.contains("<stream:stream") || lower.contains("<?xml")) && lower.contains("jabber") {
         return (ApplicationProtocol::XmppStartTls, 0.90);
     }
 
-    if banner.len() > 10 && banner.as_bytes()[4] == 0x0a {
+    // MySQL greeting: 3-byte payload length + 1-byte sequence number (always 0x00) + protocol version (0x0a for v10)
+    if banner.len() > 10 && banner.as_bytes()[3] == 0x00 && banner.as_bytes()[4] == 0x0a {
         return (ApplicationProtocol::Mysql, 0.85);
     }
 

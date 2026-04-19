@@ -78,10 +78,6 @@ impl OpossumTester {
         };
 
         let details = match status {
-            OpossumStatus::Vulnerable => {
-                // This branch is now unreachable, but kept for completeness
-                "Behavior consistent with an Opossum-like parsing hang (requires manual verification)".to_string()
-            }
             OpossumStatus::Inconclusive => {
                 "Opossum test inconclusive - CVE-2022-0778 is a client-side parsing vulnerability \
                  that cannot be reliably detected via remote scanning. Manual verification of \
@@ -89,14 +85,15 @@ impl OpossumTester {
                     .to_string()
             }
             OpossumStatus::NotVulnerable => "No Opossum-like parsing hang observed".to_string(),
+            // Vulnerable is always downgraded to Inconclusive above; this arm is unreachable.
+            OpossumStatus::Vulnerable => {
+                unreachable!("Vulnerable is always downgraded to Inconclusive")
+            }
         };
 
         Ok(OpossumTestResult {
             vulnerable: false, // Never report as definitively vulnerable via remote scan
-            inconclusive: matches!(
-                status,
-                OpossumStatus::Inconclusive | OpossumStatus::Vulnerable
-            ),
+            inconclusive: matches!(status, OpossumStatus::Inconclusive),
             status,
             details,
         })
@@ -109,7 +106,7 @@ impl OpossumTester {
             .socket_addrs()
             .first()
             .copied()
-            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
+            .ok_or(crate::TlsError::NoSocketAddresses)?;
         // Connect and try to extract OpenSSL version from server
         let stream =
             match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None)
@@ -154,7 +151,7 @@ impl OpossumTester {
                 .socket_addrs()
                 .first()
                 .copied()
-                .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?,
+                .ok_or(crate::TlsError::NoSocketAddresses)?,
             TLS_HANDSHAKE_TIMEOUT,
             None,
         )
@@ -190,9 +187,7 @@ impl OpossumTester {
             Err(_) => {
                 if self
                     .control_handshake_completes_without_hang(
-                        self.target.socket_addrs().first().copied().ok_or_else(|| {
-                            anyhow::anyhow!("No socket addresses available for target")
-                        })?,
+                        self.target.socket_addrs().first().copied().ok_or(crate::TlsError::NoSocketAddresses)?,
                         &hostname,
                     )
                     .await?

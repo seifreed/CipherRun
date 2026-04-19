@@ -17,7 +17,8 @@ use std::sync::Arc;
     path = "/api/v1/stats",
     tag = "stats",
     responses(
-        (status = 200, description = "API statistics", body = StatsResponse)
+        (status = 200, description = "API statistics", body = StatsResponse),
+        (status = 500, description = "Failed to load statistics from configured dependencies")
     ),
     security(
         ("api_key" = [])
@@ -191,5 +192,17 @@ mod tests {
         assert!(response.top_domains.len() >= 2);
         assert_eq!(response.top_domains[0].domain, "alpha.example");
         assert_eq!(response.top_domains[0].scan_count, 2);
+    }
+
+    #[tokio::test]
+    async fn test_get_stats_returns_internal_error_when_configured_db_fails() {
+        let state = build_state_with_db().await;
+        let pool = state.db_pool.as_ref().unwrap().clone();
+        pool.close().await;
+
+        let err = get_stats(State(state))
+            .await
+            .expect_err("configured db failure should bubble up");
+        assert!(matches!(err, ApiError::Internal(_)));
     }
 }

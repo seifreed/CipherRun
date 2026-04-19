@@ -13,15 +13,60 @@ pub use model::{
 
 use crate::Result;
 use crate::utils::network::Target;
+use std::time::Duration;
+
+const CIPHER_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// Legacy compatibility tester
 pub struct LegacyCompatTester {
-    _target: Target,
+    target: Target,
 }
 
 impl LegacyCompatTester {
     pub fn new(target: Target) -> Self {
-        Self { _target: target }
+        Self { target }
+    }
+
+    /// Test if a specific cipher suite is supported by the server.
+    /// Returns Ok(false) on any connection or negotiation failure.
+    async fn test_cipher_support(&self, cipher: &str) -> Result<bool> {
+        use openssl::ssl::{SslConnector, SslMethod, SslVersion};
+
+        let addr = match self.target.socket_addrs().first().copied() {
+            Some(a) => a,
+            None => return Ok(false),
+        };
+        let hostname = self.target.hostname.clone();
+        let cipher = cipher.to_string();
+
+        let stream =
+            match crate::utils::network::connect_with_timeout(addr, CIPHER_TIMEOUT, None).await {
+                Ok(s) => s,
+                Err(_) => return Ok(false),
+            };
+
+        let std_stream = stream.into_std()?;
+        std_stream.set_nonblocking(false)?;
+
+        let result = tokio::task::spawn_blocking(move || -> Result<bool> {
+            let mut builder = SslConnector::builder(SslMethod::tls())?;
+
+            if cipher.starts_with("EXP") || cipher.starts_with("SSL_CK") {
+                let _ = builder.set_min_proto_version(Some(SslVersion::SSL3));
+            }
+
+            match builder.set_cipher_list(&cipher) {
+                Ok(_) => {
+                    let connector = builder.build();
+                    Ok(connector.connect(&hostname, std_stream).is_ok())
+                }
+                Err(_) => Ok(false),
+            }
+        })
+        .await
+        .map_err(|e| crate::error::TlsError::Other(format!("spawn_blocking failed: {e}")))??;
+
+        Ok(result)
     }
 
     /// Run complete legacy compatibility tests
@@ -59,20 +104,30 @@ impl LegacyCompatTester {
     }
 
     async fn test_sslv2_support(&self) -> Result<Sslv2Test> {
-        let _sslv2_ciphers = [
-            "SSL_CK_RC4_128_WITH_MD5",
-            "SSL_CK_RC4_128_EXPORT40_WITH_MD5",
-            "SSL_CK_RC2_128_CBC_WITH_MD5",
-            "SSL_CK_RC2_128_CBC_EXPORT40_WITH_MD5",
-            "SSL_CK_IDEA_128_CBC_WITH_MD5",
-            "SSL_CK_DES_64_CBC_WITH_MD5",
-            "SSL_CK_DES_192_EDE3_CBC_WITH_MD5",
+        // SSLv2 cannot be negotiated via modern OpenSSL (removed at compile time).
+        // We attempt using the OpenSSL 2-cipher name format; any connection success
+        // indicates SSLv2 support.  In practice this always returns false on modern
+        // systems, and the DROWN tester (raw-socket SSLv2 ClientHello) is the
+        // authoritative SSLv2 detection path.
+        let sslv2_openssl_ciphers = [
+            "RC4-MD5",
+            "EXP-RC4-MD5",
+            "RC2-CBC-MD5",
+            "EXP-RC2-CBC-MD5",
+            "IDEA-CBC-MD5",
+            "DES-CBC-MD5",
+            "DES-CBC3-MD5",
         ];
 
-        let supported = false;
-        let cipher_count = 0;
-        let ciphers = Vec::new();
+        let mut ciphers = Vec::new();
+        for cipher in &sslv2_openssl_ciphers {
+            if self.test_cipher_support(cipher).await? {
+                ciphers.push(cipher.to_string());
+            }
+        }
 
+        let supported = !ciphers.is_empty();
+        let cipher_count = ciphers.len();
         let security_concern = if supported {
             SecurityConcern::Critical
         } else {
@@ -88,7 +143,7 @@ impl LegacyCompatTester {
     }
 
     async fn test_weak_ciphers(&self) -> Result<WeakCipherTest> {
-        let weak_cipher_names = vec![
+        let weak_cipher_names = [
             "DES-CBC-SHA",
             "DES-CBC3-SHA",
             "EDH-RSA-DES-CBC-SHA",
@@ -102,15 +157,24 @@ impl LegacyCompatTester {
             "IDEA-CBC-MD5",
         ];
 
-        let des_support = false;
-        let rc2_support = false;
-        let md5_mac_support = false;
-        let weak_ciphers_found = Vec::new();
+        let mut des_support = false;
+        let mut rc2_support = false;
+        let mut md5_mac_support = false;
+        let mut weak_ciphers_found = Vec::new();
 
         for cipher in &weak_cipher_names {
-            cipher.contains("DES");
-            cipher.contains("RC2");
-            if cipher.contains("MD5") {}
+            if self.test_cipher_support(cipher).await? {
+                weak_ciphers_found.push(cipher.to_string());
+                if cipher.contains("DES") {
+                    des_support = true;
+                }
+                if cipher.contains("RC2") {
+                    rc2_support = true;
+                }
+                if cipher.contains("MD5") {
+                    md5_mac_support = true;
+                }
+            }
         }
 
         let security_concern = if !weak_ciphers_found.is_empty() {
@@ -129,23 +193,40 @@ impl LegacyCompatTester {
     }
 
     async fn test_export_ciphers(&self) -> Result<ExportCipherTest> {
-        let _export_cipher_names = [
+        // 40-bit export ciphers (EXP prefix, no 1024 suffix)
+        let export_40bit_names = [
             "EXP-RC4-MD5",
             "EXP-RC2-CBC-MD5",
             "EXP-DES-CBC-SHA",
             "EXP-EDH-RSA-DES-CBC-SHA",
             "EXP-EDH-DSS-DES-CBC-SHA",
+        ];
+        // 56-bit export ciphers (EXP1024 prefix)
+        let export_56bit_names = [
             "EXP1024-DES-CBC-SHA",
             "EXP1024-RC4-SHA",
             "EXP1024-RC2-CBC-MD5",
         ];
 
-        let export_40bit = false;
-        let export_56bit = false;
-        let export_ciphers_found = Vec::new();
-        let freak_vulnerable = false;
+        let mut export_40bit = false;
+        let mut export_56bit = false;
+        let mut export_ciphers_found = Vec::new();
 
-        let security_concern = if !export_ciphers_found.is_empty() {
+        for cipher in &export_40bit_names {
+            if self.test_cipher_support(cipher).await? {
+                export_ciphers_found.push(cipher.to_string());
+                export_40bit = true;
+            }
+        }
+        for cipher in &export_56bit_names {
+            if self.test_cipher_support(cipher).await? {
+                export_ciphers_found.push(cipher.to_string());
+                export_56bit = true;
+            }
+        }
+
+        let freak_vulnerable = !export_ciphers_found.is_empty();
+        let security_concern = if freak_vulnerable {
             SecurityConcern::Critical
         } else {
             SecurityConcern::None
@@ -161,7 +242,7 @@ impl LegacyCompatTester {
     }
 
     async fn test_null_ciphers(&self) -> Result<NullCipherTest> {
-        let _null_cipher_names = [
+        let null_cipher_names = [
             "NULL-MD5",
             "NULL-SHA",
             "NULL-SHA256",
@@ -170,9 +251,15 @@ impl LegacyCompatTester {
             "ECDHE-ECDSA-NULL-SHA",
         ];
 
-        let null_encryption = false;
-        let null_ciphers_found = Vec::new();
+        let mut null_ciphers_found = Vec::new();
 
+        for cipher in &null_cipher_names {
+            if self.test_cipher_support(cipher).await? {
+                null_ciphers_found.push(cipher.to_string());
+            }
+        }
+
+        let null_encryption = !null_ciphers_found.is_empty();
         let security_concern = if null_encryption {
             SecurityConcern::Critical
         } else {
@@ -187,7 +274,7 @@ impl LegacyCompatTester {
     }
 
     async fn test_anonymous_dh(&self) -> Result<AnonymousDhTest> {
-        let _anonymous_cipher_names = [
+        let anonymous_cipher_names = [
             "ADH-AES256-SHA256",
             "ADH-AES128-SHA256",
             "ADH-AES256-SHA",
@@ -202,9 +289,20 @@ impl LegacyCompatTester {
             "AECDH-NULL-SHA",
         ];
 
-        let adh_support = false;
-        let aecdh_support = false;
-        let anonymous_ciphers_found = Vec::new();
+        let mut adh_support = false;
+        let mut aecdh_support = false;
+        let mut anonymous_ciphers_found = Vec::new();
+
+        for cipher in &anonymous_cipher_names {
+            if self.test_cipher_support(cipher).await? {
+                anonymous_ciphers_found.push(cipher.to_string());
+                if cipher.starts_with("ADH-") {
+                    adh_support = true;
+                } else if cipher.starts_with("AECDH-") {
+                    aecdh_support = true;
+                }
+            }
+        }
 
         let security_concern = if adh_support || aecdh_support {
             SecurityConcern::Critical

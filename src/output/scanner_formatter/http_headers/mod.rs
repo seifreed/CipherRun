@@ -7,8 +7,7 @@ use std::collections::HashMap;
 
 impl<'a> ScannerFormatter<'a> {
     pub fn display_http_headers_results(&self, result: &HeaderAnalysisResult) {
-        println!("\n{}", "HTTP Security Headers:".cyan().bold());
-        println!("{}", "=".repeat(50));
+        self.print_section("HTTP Security Headers:", 50);
 
         self.display_http_response_metadata(result);
 
@@ -55,7 +54,7 @@ impl<'a> ScannerFormatter<'a> {
     fn display_http_issues(&self, result: &HeaderAnalysisResult) {
         use crate::http::headers::IssueSeverity;
 
-        println!("\n{}", "  Issues:".yellow());
+        println!("\n{}", self.section_header("  Issues:"));
 
         let mut by_severity: HashMap<IssueSeverity, Vec<_>> = HashMap::new();
         for issue in &result.issues {

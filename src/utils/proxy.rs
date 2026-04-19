@@ -77,6 +77,20 @@ impl ProxyConfig {
             .map(|ip| SocketAddr::new(ip, self.port))
             .collect())
     }
+
+    pub fn authority(&self) -> String {
+        canonical_target(&self.host, self.port)
+    }
+
+    pub fn url(&self) -> String {
+        match (&self.username, &self.password) {
+            (Some(username), Some(password)) => {
+                format!("http://{}:{}@{}", username, password, self.authority())
+            }
+            (Some(username), None) => format!("http://{}@{}", username, self.authority()),
+            _ => format!("http://{}", self.authority()),
+        }
+    }
 }
 
 /// Connect to target through HTTP CONNECT proxy
@@ -104,15 +118,30 @@ pub async fn connect_via_proxy(
         .await
         .context("Proxy response timeout")??;
 
-    // Parse status line
-    if !status_line.contains("200") {
+    // Parse HTTP status code from "HTTP/1.x NNN Reason" — substring matching "200"
+    // would accept any response body or reason phrase that happens to contain "200".
+    let status_code: u16 = status_line
+        .split(' ')
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    if !(200..300).contains(&status_code) {
         crate::tls_bail!("Proxy CONNECT failed: {}", status_line.trim());
     }
 
-    // Read remaining headers until empty line
+    // Read remaining headers until empty line.
+    // Guard against a slow or malicious proxy sending headers indefinitely.
+    const MAX_PROXY_HEADERS: usize = 100;
+    let mut header_count = 0usize;
     loop {
         let mut header = String::new();
-        reader.read_line(&mut header).await?;
+        timeout(Duration::from_secs(10), reader.read_line(&mut header))
+            .await
+            .context("Proxy header read timeout")??;
+        header_count += 1;
+        if header_count > MAX_PROXY_HEADERS {
+            crate::tls_bail!("Proxy returned too many response headers");
+        }
         if header.trim().is_empty() {
             break;
         }

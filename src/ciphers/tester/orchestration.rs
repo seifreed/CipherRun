@@ -237,7 +237,11 @@ impl CipherTester {
                 }
                 Err(e) => {
                     let err_msg = e.to_string().to_lowercase();
-                    if err_msg.contains("network is down") || err_msg.contains("os error 50") {
+                    if err_msg.contains("network is down")
+                        || err_msg.contains("os error 50")   // macOS ENETDOWN
+                        || err_msg.contains("os error 100")
+                    // Linux ENETDOWN
+                    {
                         batch_enetdown += 1;
                         retry_queue.push(cipher);
                     } else {
@@ -330,7 +334,11 @@ impl CipherTester {
         let server_ordered = !server_preference.is_empty();
 
         let preferred_cipher = if !server_preference.is_empty() {
-            CIPHER_DB.get_by_hexcode(&server_preference[0])
+            supported
+                .iter()
+                .find(|c| c.hexcode == server_preference[0])
+                .cloned()
+                .or_else(|| CIPHER_DB.get_by_hexcode(&server_preference[0]))
         } else {
             supported.first().cloned()
         };
@@ -428,10 +436,12 @@ mod tests {
     }
 
     #[test]
-    fn tls12_cipher_compatible_with_tls10() {
+    fn tls12_cipher_not_compatible_with_tls10() {
         let tester = CipherTester::new(dummy_target());
         let cipher = tls12_cipher("002F", "AES128-CBC", 128);
-        assert!(tester.is_cipher_compatible_with_protocol(&cipher, Protocol::TLS10));
+        // TLS 1.2-only ciphers must not be tested against TLS 1.0 — they were never
+        // defined for older protocol versions and would pollute cipher support reports.
+        assert!(!tester.is_cipher_compatible_with_protocol(&cipher, Protocol::TLS10));
     }
 
     #[test]

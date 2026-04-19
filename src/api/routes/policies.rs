@@ -4,6 +4,7 @@ use super::policy_storage::{
     build_policy_content, policy_dir_from_state, read_policy_with_metadata, sanitized_policy_path,
 };
 use crate::api::{
+    adapters::policy as policy_adapter,
     models::{
         error::{ApiError, ApiErrorResponse},
         request::{PolicyEvaluationRequest, PolicyRequest},
@@ -12,18 +13,17 @@ use crate::api::{
     presenters::{
         policy::present_policy_evaluation,
         policy_response::{present_created_policy, present_loaded_policy},
-        target_input::scan_request_from_target,
+        target_input::scan_request_from_target_and_options,
     },
     state::AppState,
 };
-use crate::application::use_cases::EvaluatePolicy;
-use crate::application::{PolicySource, ScanAssessment};
+use crate::application::PolicySource as _;
 use crate::policy::FilesystemPolicySource;
 use crate::policy::parser::PolicyLoader;
-use crate::scanner::Scanner;
 use axum::{
     Json,
     extract::{Path, State},
+    http::StatusCode,
 };
 use chrono::Utc;
 use std::fs;
@@ -58,7 +58,7 @@ fn existing_policy_path(policy_dir: &std::path::Path, id: &str) -> Result<PathBu
 pub async fn create_policy(
     State(state): State<Arc<AppState>>,
     Json(request): Json<PolicyRequest>,
-) -> Result<Json<PolicyResponse>, ApiError> {
+) -> Result<(StatusCode, Json<PolicyResponse>), ApiError> {
     let policy_dir = policy_dir_from_state(&state)?;
 
     fs::create_dir_all(policy_dir)
@@ -81,7 +81,10 @@ pub async fn create_policy(
     fs::write(&policy_path, policy_content)
         .map_err(|e| ApiError::Internal(format!("Failed to write policy file: {}", e)))?;
 
-    Ok(Json(present_created_policy(policy_id, request, now)))
+    Ok((
+        StatusCode::CREATED,
+        Json(present_created_policy(policy_id, request, now)),
+    ))
 }
 
 /// Get policy
@@ -136,6 +139,7 @@ pub async fn get_policy(
     request_body = PolicyEvaluationRequest,
     responses(
         (status = 200, description = "Policy evaluation result", body = PolicyEvaluationResponse),
+        (status = 400, description = "Invalid target or scan options", body = ApiErrorResponse),
         (status = 404, description = "Policy not found", body = ApiErrorResponse)
     ),
     security(
@@ -154,21 +158,10 @@ pub async fn evaluate_policy(
         .load_policy(&policy_path)
         .map_err(|e| ApiError::Internal(format!("Failed to load policy: {}", e)))?;
 
-    let request = scan_request_from_target(&request.target)?;
+    let scan_request = scan_request_from_target_and_options(&request.target, &request.options)?;
 
-    let scanner = Scanner::new(request)
-        .map_err(|e| ApiError::Internal(format!("Failed to create scanner: {}", e)))?;
-
-    let scan_results = scanner
-        .run()
-        .await
-        .map_err(|e| ApiError::Internal(format!("Scan failed: {}", e)))?;
-
-    // Evaluate policy against scan results
-    let assessment = ScanAssessment::from_scan_results(&scan_results);
-    let evaluator = crate::policy::evaluator::DefaultPolicyEvaluator;
-    let policy_result = EvaluatePolicy::execute(&evaluator, &policy, &assessment)
-        .map_err(|e| ApiError::Internal(format!("Policy evaluation failed: {}", e)))?;
+    let (scan_results, policy_result) =
+        policy_adapter::run_policy_check_with_defaults(&policy, scan_request).await?;
 
     Ok(Json(present_policy_evaluation(
         id,
@@ -210,7 +203,7 @@ mod tests {
     use crate::api::config::ApiConfig;
     use crate::api::jobs::{InMemoryJobQueue, ScanExecutor};
     use crate::api::middleware::rate_limit::PerKeyRateLimiter;
-    use crate::api::models::request::PolicyRequest;
+    use crate::api::models::request::{PolicyEvaluationRequest, PolicyRequest};
     use crate::api::routes::policy_storage::parse_policy_file_content;
     use crate::api::state::{ApiStats, AppState};
     use axum::Json;
@@ -265,10 +258,9 @@ protocols:
             enabled: true,
         };
 
-        let created = create_policy(State(state.clone()), Json(request))
+        let (_, Json(created)) = create_policy(State(state.clone()), Json(request))
             .await
-            .expect("policy creation should succeed")
-            .0;
+            .expect("policy creation should succeed");
 
         let fetched = get_policy(State(state), Path(created.id.clone()))
             .await
@@ -315,6 +307,141 @@ protocols:
             .expect_err("missing policy should error");
 
         assert!(matches!(err, ApiError::NotFound(_)));
+        let _ = std::fs::remove_dir_all(&policy_dir);
+    }
+
+    #[tokio::test]
+    async fn test_evaluate_policy_rejects_empty_scan_options() {
+        let policy_dir = std::env::temp_dir().join("cipherrun_policy_tests_evaluate_empty");
+        let _ = std::fs::remove_dir_all(&policy_dir);
+        let state = build_state(policy_dir.clone());
+
+        let create_request = PolicyRequest {
+            name: "Test Policy".to_string(),
+            description: None,
+            rules: sample_policy_yaml(),
+            enabled: true,
+        };
+        let (_, Json(created)) = create_policy(State(state.clone()), Json(create_request))
+            .await
+            .expect("policy creation should succeed");
+
+        let err = evaluate_policy(
+            State(state),
+            Path(created.id),
+            Json(PolicyEvaluationRequest {
+                target: "example.com:443".to_string(),
+                options: Default::default(),
+            }),
+        )
+        .await
+        .expect_err("empty scan options should fail");
+
+        assert!(matches!(err, ApiError::BadRequest(_)));
+        let _ = std::fs::remove_dir_all(&policy_dir);
+    }
+
+    #[tokio::test]
+    async fn test_evaluate_policy_rejects_invalid_common_options() {
+        let policy_dir = std::env::temp_dir().join("cipherrun_policy_tests_evaluate_invalid");
+        let _ = std::fs::remove_dir_all(&policy_dir);
+        let state = build_state(policy_dir.clone());
+
+        let create_request = PolicyRequest {
+            name: "Test Policy".to_string(),
+            description: None,
+            rules: sample_policy_yaml(),
+            enabled: true,
+        };
+        let (_, Json(created)) = create_policy(State(state.clone()), Json(create_request))
+            .await
+            .expect("policy creation should succeed");
+
+        let err = evaluate_policy(
+            State(state),
+            Path(created.id),
+            Json(PolicyEvaluationRequest {
+                target: "example.com:443".to_string(),
+                options: crate::api::models::request::ScanOptions {
+                    test_protocols: true,
+                    timeout_seconds: 0,
+                    ..Default::default()
+                },
+            }),
+        )
+        .await
+        .expect_err("invalid scan options should fail");
+
+        assert!(matches!(err, ApiError::BadRequest(_)));
+        let _ = std::fs::remove_dir_all(&policy_dir);
+    }
+
+    #[tokio::test]
+    async fn test_evaluate_policy_maps_runtime_invalid_input_to_bad_request() {
+        let policy_dir = std::env::temp_dir().join("cipherrun_policy_tests_evaluate_invalid_ip");
+        let _ = std::fs::remove_dir_all(&policy_dir);
+        let state = build_state(policy_dir.clone());
+
+        let create_request = PolicyRequest {
+            name: "Test Policy".to_string(),
+            description: None,
+            rules: sample_policy_yaml(),
+            enabled: true,
+        };
+        let (_, Json(created)) = create_policy(State(state.clone()), Json(create_request))
+            .await
+            .expect("policy creation should succeed");
+
+        let err = evaluate_policy(
+            State(state),
+            Path(created.id),
+            Json(PolicyEvaluationRequest {
+                target: "example.com:443".to_string(),
+                options: crate::api::models::request::ScanOptions {
+                    test_protocols: true,
+                    ip: Some("not-an-ip".to_string()),
+                    ..Default::default()
+                },
+            }),
+        )
+        .await
+        .expect_err("invalid IP override should fail");
+
+        assert!(matches!(err, ApiError::BadRequest(_)));
+        let _ = std::fs::remove_dir_all(&policy_dir);
+    }
+
+    #[tokio::test]
+    async fn test_evaluate_policy_rejects_private_target() {
+        let policy_dir = std::env::temp_dir().join("cipherrun_policy_tests_evaluate_private");
+        let _ = std::fs::remove_dir_all(&policy_dir);
+        let state = build_state(policy_dir.clone());
+
+        let create_request = PolicyRequest {
+            name: "Test Policy".to_string(),
+            description: None,
+            rules: sample_policy_yaml(),
+            enabled: true,
+        };
+        let (_, Json(created)) = create_policy(State(state.clone()), Json(create_request))
+            .await
+            .expect("policy creation should succeed");
+
+        let err = evaluate_policy(
+            State(state),
+            Path(created.id),
+            Json(PolicyEvaluationRequest {
+                target: "127.0.0.1:443".to_string(),
+                options: crate::api::models::request::ScanOptions {
+                    test_protocols: true,
+                    ..Default::default()
+                },
+            }),
+        )
+        .await
+        .expect_err("private target should fail");
+
+        assert!(matches!(err, ApiError::BadRequest(_)));
         let _ = std::fs::remove_dir_all(&policy_dir);
     }
 

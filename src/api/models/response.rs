@@ -98,14 +98,20 @@ pub struct HealthResponse {
     pub uptime_seconds: u64,
 
     /// Current number of active scans
-    pub active_scans: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_scans: Option<usize>,
 
     /// Queued scans
-    pub queued_scans: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub queued_scans: Option<usize>,
 
     /// Database connection status
     #[serde(skip_serializing_if = "Option::is_none")]
     pub database: Option<String>,
+
+    /// Job queue health status
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub queue: Option<String>,
 }
 
 /// Statistics response
@@ -449,15 +455,17 @@ mod tests {
             status: "ok".to_string(),
             version: "0.1.0".to_string(),
             uptime_seconds: 10,
-            active_scans: 2,
-            queued_scans: 1,
+            active_scans: Some(2),
+            queued_scans: Some(1),
             database: Some("connected".to_string()),
+            queue: Some("connected".to_string()),
         };
 
         let json = serde_json::to_string(&resp).expect("serialize");
         let decoded: HealthResponse = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(decoded.status, "ok");
         assert_eq!(decoded.database.as_deref(), Some("connected"));
+        assert_eq!(decoded.queue.as_deref(), Some("connected"));
     }
 
     #[test]

@@ -16,6 +16,7 @@ pub struct OpenSslClientOptions {
     pub host: String,
     pub port: u16,
     pub starttls: Option<String>,
+    pub xmpphost: Option<String>,
     pub servername: Option<String>,
     pub cipher: Option<String>,
     pub tls_version: Option<String>,
@@ -39,6 +40,7 @@ impl Default for OpenSslClientOptions {
             host: String::new(),
             port: 443,
             starttls: None,
+            xmpphost: None,
             servername: None,
             cipher: None,
             tls_version: None,
@@ -125,6 +127,13 @@ impl OpenSslClient {
             cmd.arg(protocol);
         }
 
+        if let Some(ref xmpphost) = options.xmpphost {
+            validate_hostname(xmpphost)
+                .map_err(|e| crate::error::TlsError::Other(format!("Invalid xmpphost: {}", e)))?;
+            cmd.arg("-xmpphost");
+            cmd.arg(xmpphost);
+        }
+
         // Add SNI servername
         if let Some(ref servername) = options.servername {
             // SECURITY: Validate servername to prevent command injection
@@ -190,18 +199,25 @@ impl OpenSslClient {
 
         // Add verify locations
         if let Some(ref locations) = options.verify_locations {
-            cmd.arg("-CAfile");
+            validate_file_path_arg(locations, "-CAfile/-CApath")?;
+            cmd.arg(if std::path::Path::new(locations).is_dir() {
+                "-CApath"
+            } else {
+                "-CAfile"
+            });
             cmd.arg(locations);
         }
 
         // Add client certificate
         if let Some(ref cert) = options.cert {
+            validate_file_path_arg(cert, "-cert")?;
             cmd.arg("-cert");
             cmd.arg(cert);
         }
 
         // Add client key
         if let Some(ref key) = options.key {
+            validate_file_path_arg(key, "-key")?;
             cmd.arg("-key");
             cmd.arg(key);
         }
@@ -246,7 +262,9 @@ impl OpenSslClient {
         let exit_code = output.status.code().unwrap_or(-1);
         let success = output.status.success();
 
-        let connection_info = if success {
+        // OpenSSL may exit non-zero even after a completed handshake (e.g. server closes
+        // the connection first). Parse connection info whenever stdout has content.
+        let connection_info = if !stdout.is_empty() {
             Some(parse_connection_info(&stdout))
         } else {
             None
@@ -337,6 +355,37 @@ impl OpenSslClient {
             ))
         }
     }
+
+    /// List local OpenSSL ciphers available on this host.
+    pub fn list_local_ciphers(&self) -> Result<Vec<String>> {
+        let output = Command::new(&self.openssl_path)
+            .args(["ciphers", "-v", "ALL"])
+            .output()?;
+
+        if !output.status.success() {
+            return Err(crate::error::TlsError::Other(
+                "Failed to list local OpenSSL ciphers".to_string(),
+            ));
+        }
+
+        Ok(String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(ToString::to_string)
+            .collect())
+    }
+}
+
+fn validate_file_path_arg(value: &str, flag: &str) -> crate::Result<()> {
+    if value.starts_with('-') {
+        crate::tls_bail!(
+            "Invalid value for {}: '{}' looks like a flag, not a file path",
+            flag,
+            value
+        );
+    }
+    Ok(())
 }
 
 fn parse_connection_info(stdout: &str) -> ConnectionInfo {

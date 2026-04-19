@@ -1,10 +1,10 @@
-use super::{ClientSimulationResult, ScannerFormatter, print_section_header};
+use super::{ClientSimulationResult, ScannerFormatter};
 use colored::*;
 
 impl<'a> ScannerFormatter<'a> {
     /// Display client simulation results
     pub fn display_client_simulation_results(&self, results: &[ClientSimulationResult]) {
-        print_section_header("Client Simulation:");
+        self.print_section("Client Simulation:", 50);
 
         let mut successful = 0;
         let mut failed = 0;
@@ -59,7 +59,7 @@ impl<'a> ScannerFormatter<'a> {
 
     /// Display client simulation totals
     fn display_client_sim_totals(&self, total: usize, successful: usize, failed: usize) {
-        println!("\n{}", "=".repeat(50));
+        println!("\n{}", self.divider(50));
         println!(
             "  Total: {} | {} Successful | {} Failed",
             total,

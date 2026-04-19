@@ -63,7 +63,7 @@ impl CcsInjectionTester {
             .socket_addrs()
             .first()
             .copied()
-            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
+            .ok_or(crate::TlsError::NoSocketAddresses)?;
 
         match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None).await {
             Ok(mut stream) => {
@@ -113,40 +113,71 @@ impl CcsInjectionTester {
                 // CertificateStatus, ServerKeyExchange, CertificateRequest, ServerHelloDone, etc.)
                 const MAX_HANDSHAKE_MESSAGES: u8 = 15;
                 let mut reads_remaining: u8 = MAX_HANDSHAKE_MESSAGES;
+                // Accumulate bytes across reads so TLS records split across multiple
+                // read() calls are reassembled before parsing.
+                let mut accumulated: Vec<u8> = Vec::new();
                 loop {
-                    let mut response = vec![0u8; 1024];
-                    match timeout(Duration::from_secs(2), stream.read(&mut response)).await {
+                    let mut read_buf = vec![0u8; 1024];
+                    match timeout(Duration::from_secs(2), stream.read(&mut read_buf)).await {
                         Ok(Ok(n)) if n > 0 => {
-                            if response[0] == CONTENT_TYPE_ALERT {
-                                // Alert = server rejected our premature CCS → not vulnerable
-                                break Ok(TestStatus::NotVulnerable);
-                            } else if response[0] == CONTENT_TYPE_CHANGE_CIPHER_SPEC {
-                                // Server sent CCS in response to our premature CCS.
-                                // This is the actual indicator of CVE-2014-0224.
-                                break Ok(TestStatus::Vulnerable);
-                            } else if response[0] == CONTENT_TYPE_HANDSHAKE && n >= 6 {
-                                let handshake_type = response[5];
-                                // 0x0B = Certificate, 0x0C = ServerKeyExchange, 0x0E = ServerHelloDone
-                                // These are normal handshake continuation, NOT a response to CCS.
-                                if matches!(handshake_type, 0x0B | 0x0C | 0x0D | 0x0E | 0x02) {
-                                    reads_remaining -= 1;
-                                    if reads_remaining == 0 {
-                                        // Too many handshake messages without CCS/Alert
-                                        tracing::debug!(
-                                            "Reached max handshake message limit ({}), assuming not vulnerable",
-                                            MAX_HANDSHAKE_MESSAGES
-                                        );
-                                        break Ok(TestStatus::NotVulnerable);
-                                    }
-                                    continue;
-                                } else {
-                                    // Unexpected handshake message after CCS — inconclusive
-                                    break Ok(TestStatus::Inconclusive);
+                            accumulated.extend_from_slice(&read_buf[..n]);
+                            // A single read() may return multiple concatenated TLS records.
+                            // Scan all complete records; carry forward any partial tail.
+                            let mut offset = 0usize;
+                            let mut result: Option<TestStatus> = None;
+                            while offset + 5 <= accumulated.len() {
+                                let record_type = accumulated[offset];
+                                let record_len = u16::from_be_bytes([
+                                    accumulated[offset + 3],
+                                    accumulated[offset + 4],
+                                ]) as usize;
+
+                                if offset + 5 + record_len > accumulated.len() {
+                                    // Record not yet complete — wait for more data
+                                    break;
                                 }
-                            } else {
-                                // Unknown response type — inconclusive
-                                break Ok(TestStatus::Inconclusive);
+
+                                if record_type == CONTENT_TYPE_ALERT {
+                                    result = Some(TestStatus::NotVulnerable);
+                                    break;
+                                } else if record_type == CONTENT_TYPE_CHANGE_CIPHER_SPEC {
+                                    result = Some(TestStatus::Vulnerable);
+                                    break;
+                                } else if record_type == CONTENT_TYPE_HANDSHAKE
+                                    && offset + 6 <= accumulated.len()
+                                {
+                                    let handshake_type = accumulated[offset + 5];
+                                    if matches!(handshake_type, 0x0B | 0x0C | 0x0D | 0x0E | 0x02) {
+                                        // Normal handshake continuation — skip this record
+                                        reads_remaining = reads_remaining.saturating_sub(1);
+                                        if reads_remaining == 0 {
+                                            tracing::debug!(
+                                                "Reached max handshake message limit ({}), assuming not vulnerable",
+                                                MAX_HANDSHAKE_MESSAGES
+                                            );
+                                            result = Some(TestStatus::NotVulnerable);
+                                            break;
+                                        }
+                                        offset += 5 + record_len;
+                                        continue;
+                                    } else {
+                                        result = Some(TestStatus::Inconclusive);
+                                        break;
+                                    }
+                                } else {
+                                    result = Some(TestStatus::Inconclusive);
+                                    break;
+                                }
                             }
+
+                            // Discard fully processed bytes; keep the partial record tail
+                            accumulated.drain(..offset);
+
+                            if let Some(status) = result {
+                                break Ok(status);
+                            }
+                            // All complete records were handshake continuations; read more
+                            continue;
                         }
                         Ok(Ok(_)) => {
                             // Zero bytes — connection closed, not vulnerable

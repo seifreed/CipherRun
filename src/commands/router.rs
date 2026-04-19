@@ -28,6 +28,23 @@ use crate::{Args, Result, TlsError};
 pub struct CommandRouter;
 
 impl CommandRouter {
+    fn has_routable_action(args: &Args) -> bool {
+        args.api_server.enable
+            || args.monitoring.enable
+            || args.monitoring.test_alert
+            || args.ct_logs.enable
+            || args.compare.is_some()
+            || args.changes.is_some()
+            || args.trends.is_some()
+            || args.dashboard.is_some()
+            || args.database.init
+            || args.database.cleanup_days.is_some()
+            || args.database.history.is_some()
+            || args.mx_domain.is_some()
+            || args.input_file.is_some()
+            || args.target.is_some()
+    }
+
     /// Route CLI arguments to the appropriate Command
     ///
     /// # Arguments
@@ -38,7 +55,7 @@ impl CommandRouter {
     ///
     /// # Routing Logic
     /// The router checks flags in order of priority and returns the first matching command:
-    /// - If no specific mode is detected, defaults to ScanCommand
+    /// - If no specific mode is detected but a target is present, defaults to ScanCommand
     /// - Multiple modes can be active (e.g., database + scanning), router handles precedence
     ///
     /// # Errors
@@ -154,6 +171,12 @@ impl CommandRouter {
             });
         }
 
+        if !Self::has_routable_action(args) {
+            return Err(TlsError::InvalidInput {
+                message: "No target or operational mode specified.".to_string(),
+            });
+        }
+
         Ok(())
     }
 }
@@ -246,8 +269,11 @@ mod tests {
     }
 
     #[test]
-    fn test_route_scan_default() {
-        let args = Args::default();
+    fn test_route_scan_target() {
+        let args = Args {
+            target: Some("example.com:443".to_string()),
+            ..Default::default()
+        };
         let cmd = CommandRouter::route(args).expect("test assertion should succeed");
         assert_eq!(cmd.name(), "ScanCommand");
     }
@@ -291,6 +317,12 @@ mod tests {
             ..Default::default()
         };
         let result = CommandRouter::validate_routing(&args);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_requires_target_or_mode() {
+        let result = CommandRouter::validate_routing(&Args::default());
         assert!(result.is_err());
     }
 }

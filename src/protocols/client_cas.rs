@@ -36,7 +36,7 @@ impl ClientCAsTester {
             .socket_addrs()
             .first()
             .copied()
-            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
+            .ok_or(crate::TlsError::NoSocketAddresses)?;
         let connect_timeout = Duration::from_secs(10);
         let overall_read_timeout = Duration::from_secs(10);
         let read_timeout = Duration::from_secs(2);

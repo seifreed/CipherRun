@@ -49,8 +49,12 @@ impl<'a> HeartbleedTester<'a> {
     /// Test for Heartbleed vulnerability
     /// CVE-2014-0160: TLS Heartbeat Extension memory disclosure
     pub async fn test(&self) -> Result<HeartbleedResult> {
+        let mut any_tested = false;
         for protocol in [Protocol::TLS10, Protocol::TLS11, Protocol::TLS12] {
             let result = self.test_protocol(protocol).await?;
+            if result.tested {
+                any_tested = true;
+            }
             if result.vulnerable {
                 return Ok(result);
             }
@@ -60,8 +64,12 @@ impl<'a> HeartbleedTester<'a> {
             vulnerable: false,
             bytes_received: 0,
             bytes_sent: 3,
-            details: "Not vulnerable - No memory leak detected across TLS 1.0/1.1/1.2".to_string(),
-            tested: true,
+            details: if any_tested {
+                "Not vulnerable - No memory leak detected across TLS 1.0/1.1/1.2".to_string()
+            } else {
+                "Unable to test - No TLS protocol connection succeeded (inconclusive)".to_string()
+            },
+            tested: any_tested,
         })
     }
 
@@ -72,7 +80,7 @@ impl<'a> HeartbleedTester<'a> {
             .socket_addrs()
             .first()
             .copied()
-            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
+            .ok_or(crate::TlsError::NoSocketAddresses)?;
 
         // Connect TCP
         let mut stream =
@@ -185,6 +193,9 @@ impl<'a> HeartbleedTester<'a> {
                 return true;
             }
 
+            if pos + ext_len > ext_end {
+                break;
+            }
             pos += ext_len;
         }
 
@@ -239,7 +250,8 @@ impl<'a> HeartbleedTester<'a> {
 
     /// Send malicious heartbeat request and check for memory leak
     async fn send_malicious_heartbeat(&self, stream: &mut TcpStream) -> Result<HeartbleedResult> {
-        const HEARTBEAT_PAYLOAD_SENT: usize = 16387;
+        const HEARTBEAT_CLAIMED_PAYLOAD_LEN: usize = 16387; // claimed in TLS record header (3 + 16384)
+        const HEARTBEAT_BYTES_SENT: usize = 8; // actual bytes sent (5 TLS header + 1 type + 2 length)
         // Minimum suspicious response threshold.
         // A legitimate heartbeat response echoes our 3 bytes payload plus 3 bytes header (type + length).
         // TLS record overhead: 5 bytes (content type + version + length).
@@ -297,7 +309,7 @@ impl<'a> HeartbleedTester<'a> {
                 return Ok(HeartbleedResult {
                     vulnerable: false,
                     bytes_received: 0,
-                    bytes_sent: HEARTBEAT_PAYLOAD_SENT,
+                    bytes_sent: HEARTBEAT_BYTES_SENT,
                     details:
                         "Connection error during heartbeat test - server may have closed connection"
                             .to_string(),
@@ -308,7 +320,7 @@ impl<'a> HeartbleedTester<'a> {
                 return Ok(HeartbleedResult {
                     vulnerable: false,
                     bytes_received: 0,
-                    bytes_sent: HEARTBEAT_PAYLOAD_SENT,
+                    bytes_sent: HEARTBEAT_BYTES_SENT,
                     details:
                         "Timeout waiting for heartbeat response - server may have closed connection"
                             .to_string(),
@@ -324,19 +336,18 @@ impl<'a> HeartbleedTester<'a> {
 
         // If response doesn't look like a valid heartbeat response, it's suspicious
         // (server might be returning an error or TLS alert)
-        let vulnerable = n > MIN_SUSPICIOUS_RESPONSE && is_valid_heartbeat_response;
+        let vulnerable = n >= MIN_SUSPICIOUS_RESPONSE && is_valid_heartbeat_response;
         let details = if vulnerable {
             if n < WARNING_THRESHOLD {
                 format!(
-                    "VULNERABLE: Heartbleed detected with {} bytes. \
-                     NOTE: Response size is small ({} bytes), manual verification recommended. \
-                     Received {} bytes (sent {} bytes).",
-                    n, n, n, HEARTBEAT_PAYLOAD_SENT
+                    "VULNERABLE: Heartbleed detected. Received {} bytes (sent {} bytes, claimed {} bytes in heartbeat). \
+                     NOTE: Response size is small, manual verification recommended.",
+                    n, HEARTBEAT_BYTES_SENT, HEARTBEAT_CLAIMED_PAYLOAD_LEN
                 )
             } else {
                 format!(
-                    "VULNERABLE: Heartbleed detected. Received {} bytes (sent {} bytes). Memory leak confirmed.",
-                    n, HEARTBEAT_PAYLOAD_SENT
+                    "VULNERABLE: Heartbleed detected. Received {} bytes (sent {} bytes, claimed {} bytes). Memory leak confirmed.",
+                    n, HEARTBEAT_BYTES_SENT, HEARTBEAT_CLAIMED_PAYLOAD_LEN
                 )
             }
         } else if n == 0 {
@@ -352,17 +363,20 @@ impl<'a> HeartbleedTester<'a> {
             )
         } else {
             format!(
-                "Not vulnerable - Received {} bytes (expected echo of {} bytes, threshold: {})",
-                n, HEARTBEAT_PAYLOAD_SENT, MIN_SUSPICIOUS_RESPONSE
+                "Not vulnerable - Received {} bytes (sent {} bytes, claimed {} bytes, threshold: {})",
+                n, HEARTBEAT_BYTES_SENT, HEARTBEAT_CLAIMED_PAYLOAD_LEN, MIN_SUSPICIOUS_RESPONSE
             )
         };
 
         Ok(HeartbleedResult {
             vulnerable,
             bytes_received: n,
-            bytes_sent: HEARTBEAT_PAYLOAD_SENT,
+            bytes_sent: HEARTBEAT_BYTES_SENT,
             details,
-            tested: n > 0, // Test is conclusive only if we received data
+            // n=0: server sent nothing → conclusive (not vulnerable)
+            // n 1..MIN_SUSPICIOUS_RESPONSE: ambiguous partial response → inconclusive
+            // n>=MIN_SUSPICIOUS_RESPONSE: enough data to classify
+            tested: n == 0 || n >= MIN_SUSPICIOUS_RESPONSE,
         })
     }
 }

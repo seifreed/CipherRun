@@ -110,23 +110,47 @@ impl Rule {
             return true;
         }
 
+        let mut has_valid = false;
         for pattern in &self.allowed_patterns {
-            if let Ok(re) = regex::Regex::new(pattern)
-                && re.is_match(value)
-            {
-                return true;
+            match regex::Regex::new(pattern) {
+                Ok(re) => {
+                    has_valid = true;
+                    if re.is_match(value) {
+                        return true;
+                    }
+                }
+                Err(e) => tracing::warn!("Invalid allowed_pattern '{}': {}", pattern, e),
             }
+        }
+        if !has_valid {
+            tracing::error!(
+                "All allowed_patterns are invalid regexes — skipping pattern check (fail-open)"
+            );
+            return true;
         }
         false
     }
 
     /// Check if a value matches denied patterns
+    ///
+    /// Fails closed: an invalid regex in denied_patterns is treated as a match
+    /// so a misconfigured rule cannot silently allow a forbidden value.
     pub fn matches_denied_pattern(&self, value: &str) -> bool {
         for pattern in &self.denied_patterns {
-            if let Ok(re) = regex::Regex::new(pattern)
-                && re.is_match(value)
-            {
-                return true;
+            match regex::Regex::new(pattern) {
+                Ok(re) => {
+                    if re.is_match(value) {
+                        return true;
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Invalid denied_pattern '{}': {} — treating as match (fail-closed)",
+                        pattern,
+                        e
+                    );
+                    return true;
+                }
             }
         }
         false
@@ -135,10 +159,10 @@ impl Rule {
     /// Check if a value matches preferred patterns
     pub fn matches_preferred_pattern(&self, value: &str) -> bool {
         for pattern in &self.preferred_patterns {
-            if let Ok(re) = regex::Regex::new(pattern)
-                && re.is_match(value)
-            {
-                return true;
+            match regex::Regex::new(pattern) {
+                Ok(re) if re.is_match(value) => return true,
+                Err(e) => tracing::warn!("Invalid preferred_pattern '{}': {}", pattern, e),
+                _ => {}
             }
         }
         false
@@ -263,7 +287,8 @@ mod tests {
             custom_params: HashMap::new(),
         };
 
-        assert!(!rule.matches_allowed_pattern("TLS_AES_128_GCM_SHA256"));
+        // All patterns invalid → fail-open: don't block everything due to misconfiguration
+        assert!(rule.matches_allowed_pattern("TLS_AES_128_GCM_SHA256"));
     }
 
     #[test]

@@ -364,6 +364,56 @@ fn test_aggregate_vulnerabilities_preserves_all_detail_segments_deterministicall
 }
 
 #[test]
+fn test_aggregate_vulnerabilities_marks_results_inconclusive_when_backend_fails() {
+    let ip1: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+    let ip2: std::net::IpAddr = "127.0.0.2".parse().unwrap();
+
+    let successful_scan = ScanResults {
+        vulnerabilities: vec![VulnerabilityResult {
+            vuln_type: VulnerabilityType::RC4,
+            vulnerable: false,
+            inconclusive: false,
+            details: "Not vulnerable".to_string(),
+            cve: None,
+            cwe: None,
+            severity: Severity::Info,
+        }],
+        ..Default::default()
+    };
+
+    let mut results = HashMap::new();
+    results.insert(
+        ip1,
+        crate::scanner::inconsistency::SingleIpScanResult {
+            ip: ip1,
+            scan_result: successful_scan,
+            scan_duration_ms: 10,
+            error: None,
+        },
+    );
+    results.insert(
+        ip2,
+        crate::scanner::inconsistency::SingleIpScanResult {
+            ip: ip2,
+            scan_result: ScanResults::default(),
+            scan_duration_ms: 11,
+            error: Some("connection reset".to_string()),
+        },
+    );
+
+    let aggregated = Scanner::aggregate_vulnerabilities(&results);
+
+    assert_eq!(aggregated.len(), 1);
+    assert!(!aggregated[0].vulnerable);
+    assert!(aggregated[0].inconclusive);
+    assert!(
+        aggregated[0]
+            .details
+            .contains("incomplete backend coverage")
+    );
+}
+
+#[test]
 fn test_select_common_certificate_chain_prefers_matching_fingerprint() {
     let mut results = HashMap::new();
 
@@ -999,6 +1049,10 @@ fn test_build_conservative_multi_ip_result_respects_disable_rating() {
 fn test_build_conservative_multi_ip_result_aggregates_probe_metadata() {
     let args = Args {
         target: Some("example.com".to_string()),
+        scan: crate::cli::ScanArgs {
+            all: true,
+            ..Default::default()
+        },
         ..Default::default()
     };
     let scanner = Scanner::new(args.to_scan_request()).expect("test assertion should succeed");
@@ -1107,6 +1161,10 @@ fn test_build_conservative_multi_ip_result_aggregates_probe_metadata() {
 fn test_build_conservative_multi_ip_result_keeps_success_with_failed_ips() {
     let args = Args {
         target: Some("example.com".to_string()),
+        scan: crate::cli::ScanArgs {
+            all: true,
+            ..Default::default()
+        },
         ..Default::default()
     };
     let scanner = Scanner::new(args.to_scan_request()).expect("test assertion should succeed");
@@ -1197,6 +1255,10 @@ fn test_build_conservative_multi_ip_result_keeps_success_with_failed_ips() {
 fn test_build_conservative_multi_ip_result_uses_stable_probe_fallback() {
     let args = Args {
         target: Some("example.com".to_string()),
+        scan: crate::cli::ScanArgs {
+            all: true,
+            ..Default::default()
+        },
         ..Default::default()
     };
     let scanner = Scanner::new(args.to_scan_request()).expect("test assertion should succeed");
@@ -1286,6 +1348,7 @@ fn test_build_conservative_multi_ip_result_partial_success_without_probe_attempt
     let args = Args {
         target: Some("example.com".to_string()),
         scan: crate::cli::ScanArgs {
+            all: true,
             disable_rating: true,
             ..Default::default()
         },

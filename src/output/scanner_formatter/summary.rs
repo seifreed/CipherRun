@@ -12,9 +12,10 @@ impl<'a> ScannerFormatter<'a> {
     pub fn display_results_summary(&self, results: &crate::scanner::ScanResults) {
         let presentation_mode = self.args.output_presentation_mode();
 
-        println!("\n{}", "=".repeat(60).cyan());
-        println!("{}", "Scan Complete".cyan().bold());
-        println!("{}", "=".repeat(60).cyan());
+        let divider = self.divider(60);
+        println!("\n{}", divider.cyan());
+        println!("{}", self.section_header("Scan Complete"));
+        println!("{}", divider.cyan());
         let target_display = if presentation_mode.is_response_only() {
             split_target_host_port(&results.target)
                 .map(|(hostname, _)| display_target_host(&hostname))
@@ -43,7 +44,11 @@ impl<'a> ScannerFormatter<'a> {
         self.display_rating_summary(results.ssl_rating());
         self.display_ja3_summary(results.ja3_fingerprint(), results.ja3_match());
 
-        println!("{}", "=".repeat(60).cyan());
+        if matches!(self.warning_mode(), super::WarningMode::Batch) {
+            self.display_batched_warnings(results);
+        }
+
+        println!("{}", self.divider(60).cyan());
     }
 
     /// Display certificate summary in results
@@ -130,6 +135,20 @@ impl<'a> ScannerFormatter<'a> {
                 "Unknown client".dimmed().to_string()
             };
             println!("JA3 Fingerprint: {} ({})", ja3.ja3_hash.green(), match_str);
+        }
+    }
+
+    fn display_batched_warnings(&self, results: &crate::scanner::ScanResults) {
+        let warnings = self.collect_human_warnings(results);
+
+        if warnings.is_empty() {
+            return;
+        }
+
+        println!("\n{}", self.section_header("Warnings"));
+        println!("{}", "-".repeat(self.expand_width(50)));
+        for warning in warnings {
+            println!("  ! {}", warning.yellow());
         }
     }
 }

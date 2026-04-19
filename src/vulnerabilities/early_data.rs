@@ -150,19 +150,10 @@ impl<'a> EarlyDataTester<'a> {
 
     /// Test if server supports early_data extension (0x002a)
     async fn test_early_data_support(&self) -> Result<bool> {
-        // This is a simplified check
-        // In a real implementation, we would:
-        // 1. Complete a full TLS 1.3 handshake
-        // 2. Check if NewSessionTicket contains early_data extension
-        // 3. Store the session ticket
-
-        // For now, we'll use rustls to attempt a TLS 1.3 connection
-        // and check if the server supports TLS 1.3 (required for 0-RTT)
-
-        match self.connect_tls13().await {
-            Ok(supports_tls13) => Ok(supports_tls13),
-            Err(_) => Ok(false),
-        }
+        // TLS 1.3 connectivity is NOT equivalent to early_data support.
+        // Actual detection requires parsing the early_data extension (0x002a) from
+        // the NewSessionTicket message (RFC 8446 §4.6.1) — not yet implemented.
+        self.check_early_data_extension_in_handshake().await
     }
 
     /// Get max_early_data_size from TLS 1.3 session ticket
@@ -218,11 +209,59 @@ impl<'a> EarlyDataTester<'a> {
     }
 
     /// Check if server hello contains early_data extension (0x002a)
+    ///
+    /// Sends a raw TLS 1.3 ClientHello offering early_data support and parses
+    /// the ServerHello for extension 0x002a. Per RFC 8446, the definitive signal
+    /// appears in EncryptedExtensions (which requires session keys to decrypt);
+    /// this check catches non-standard servers that include it in the cleartext
+    /// ServerHello. Standard TLS 1.3 servers will return false here.
     async fn check_early_data_extension_in_handshake(&self) -> Result<bool> {
-        // This would require inspecting the ServerHello for extension 0x002a
-        // For now, we conservatively return false and rely on separate detection
-        // A full implementation would parse the ServerHello extensions
-        Ok(false)
+        use crate::protocols::handshake::{ClientHelloBuilder, ServerHelloParser};
+        use crate::protocols::{Extension, Protocol};
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let addr = self
+            .target
+            .socket_addrs()
+            .first()
+            .copied()
+            .ok_or(crate::TlsError::NoSocketAddresses)?;
+
+        let mut stream =
+            match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None)
+                .await
+            {
+                Ok(s) => s,
+                Err(_) => return Ok(false),
+            };
+
+        let mut builder = ClientHelloBuilder::new(Protocol::TLS13);
+        // Offer early_data (0x002a) in ClientHello so servers know we accept it.
+        builder.add_extension(Extension::new(0x002a, vec![]));
+
+        let hostname = &self.target.hostname;
+        let client_hello = match builder.build_with_defaults(Some(hostname)) {
+            Ok(ch) => ch,
+            Err(_) => return Ok(false),
+        };
+
+        let response = match timeout(TLS_HANDSHAKE_TIMEOUT, async {
+            stream.write_all(&client_hello).await?;
+            let mut buf = vec![0u8; 8192];
+            let n = stream.read(&mut buf).await?;
+            buf.truncate(n);
+            Ok::<Vec<u8>, anyhow::Error>(buf)
+        })
+        .await
+        {
+            Ok(Ok(resp)) if !resp.is_empty() => resp,
+            _ => return Ok(false),
+        };
+
+        match ServerHelloParser::parse(&response) {
+            Ok(server_hello) => Ok(server_hello.has_extension(0x002a)),
+            Err(_) => Ok(false),
+        }
     }
 
     /// Test replay attack by sending the same 0-RTT data twice
@@ -294,7 +333,7 @@ impl<'a> EarlyDataTester<'a> {
             .socket_addrs()
             .first()
             .copied()
-            .ok_or_else(|| anyhow::anyhow!("No socket addresses available for target"))?;
+            .ok_or(crate::TlsError::NoSocketAddresses)?;
 
         // Connect TCP
         let stream =

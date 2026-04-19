@@ -239,13 +239,18 @@ impl PolicyResult {
 
     /// Format the result for display
     pub fn format(&self, format: &str) -> crate::Result<String> {
-        match format {
+        match format.trim().to_ascii_lowercase().as_str() {
             "json" => serde_json::to_string_pretty(self).map_err(|e| crate::TlsError::ParseError {
                 message: format!("Failed to serialize policy result to JSON: {}", e),
             }),
             "csv" => self.to_csv(),
             "terminal" => self.to_terminal(),
-            _ => self.to_terminal(),
+            other => Err(crate::TlsError::InvalidInput {
+                message: format!(
+                    "Invalid policy format '{}'. Supported values: terminal, json, csv",
+                    other
+                ),
+            }),
         }
     }
 
@@ -536,5 +541,27 @@ mod tests {
         let result = PolicyResult::new(policy, Vec::new());
         let csv = result.format("csv").expect("test assertion should succeed");
         assert!(csv.starts_with("Rule Path,Rule Name,Action,Description,Evidence,Remediation"));
+    }
+
+    #[test]
+    fn test_policy_result_rejects_invalid_format() {
+        let policy = Policy {
+            name: "Empty Policy".to_string(),
+            version: "1.0".to_string(),
+            description: None,
+            organization: None,
+            effective_date: None,
+            extends: None,
+            protocols: None,
+            ciphers: None,
+            certificates: None,
+            vulnerabilities: None,
+            rating: None,
+            compliance: None,
+            exceptions: Vec::new(),
+        };
+
+        let result = PolicyResult::new(policy, Vec::new());
+        assert!(result.format("yaml").is_err());
     }
 }

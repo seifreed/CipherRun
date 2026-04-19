@@ -1,11 +1,11 @@
 // Compliance engine - Orchestrates compliance evaluation
 
+use crate::Result;
 use crate::application::ScanAssessment;
 use crate::compliance::{
     ComplianceChecker, ComplianceFramework, ComplianceReport, Requirement, RequirementResult,
     RequirementStatus, Severity, Violation,
 };
-use anyhow::Result;
 
 /// Compliance engine that evaluates scan results against a framework
 pub struct ComplianceEngine {
@@ -28,12 +28,11 @@ impl ComplianceEngine {
             let status = if violations.is_empty() {
                 RequirementStatus::Pass
             } else {
-                // Check if any violation is critical
-                let has_critical = violations
+                let has_fail = violations
                     .iter()
-                    .any(|v| matches!(v.severity, Severity::Critical));
+                    .any(|v| matches!(v.severity, Severity::Critical | Severity::High));
 
-                if has_critical {
+                if has_fail {
                     RequirementStatus::Fail
                 } else {
                     RequirementStatus::Warning
@@ -77,8 +76,7 @@ impl ComplianceEngine {
                 _ => {
                     return Err(crate::TlsError::ConfigError {
                         message: format!("Unknown compliance rule type: {}", rule.rule_type),
-                    }
-                    .into());
+                    });
                 }
             };
 
@@ -104,7 +102,7 @@ impl crate::application::ComplianceEvaluatorPort for DefaultComplianceEvaluator 
         assessment: &ScanAssessment,
     ) -> crate::Result<ComplianceReport> {
         let engine = ComplianceEngine::new(framework.clone());
-        Ok(engine.evaluate(assessment)?)
+        engine.evaluate(assessment)
     }
 }
 

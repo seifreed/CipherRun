@@ -2,8 +2,19 @@
 
 use crate::Args;
 use crate::Result;
+use crate::rating::RatingCalculator;
+use crate::scanner::{
+    CertificateAnalysisResult, RatingResults, aggregation::ConservativeAggregator,
+    inconsistency::SingleIpScanResult,
+};
 use crate::scanner::{ScanResults, Scanner};
+use crate::utils::custom_resolvers::CustomResolver;
+use crate::utils::network::canonical_target;
+use crate::vulnerabilities::{VulnerabilityResult, merge_vulnerability_result};
 use colored::*;
+use futures::stream::{self, StreamExt};
+use std::collections::HashMap;
+use std::net::{IpAddr, Ipv6Addr};
 use std::process::Command;
 use std::str;
 
@@ -17,35 +28,50 @@ pub struct MxRecord {
 /// MX Record tester for mail domains
 pub struct MxTester {
     domain: String,
+    resolvers: Vec<String>,
 }
 
 impl MxTester {
     pub fn new(domain: String) -> Self {
-        Self { domain }
+        Self::with_resolvers(domain, Vec::new())
+    }
+
+    pub fn with_resolvers(domain: String, resolvers: Vec<String>) -> Self {
+        Self { domain, resolvers }
     }
 
     /// Query MX records for the domain
-    pub fn query_mx_records(&self) -> Result<Vec<MxRecord>> {
+    pub async fn query_mx_records(&self) -> Result<Vec<MxRecord>> {
         println!(
             "\n{} MX records for {}...",
             "Querying".cyan().bold(),
             self.domain.yellow()
         );
 
-        // Use dig or nslookup to get MX records
-        let output = Command::new("dig")
-            .args(["+short", "MX", &self.domain])
-            .output();
+        let mx_records = if self.resolvers.is_empty() {
+            // Use dig or nslookup to get MX records
+            let output = Command::new("dig")
+                .args(["+short", "MX", &self.domain])
+                .output();
 
-        let mx_records = if let Ok(output) = output {
-            self.parse_dig_output(&output.stdout)?
+            if let Ok(output) = output {
+                self.parse_dig_output(&output.stdout)?
+            } else {
+                // Fallback to nslookup if dig is not available
+                let output = Command::new("nslookup")
+                    .args(["-type=MX", &self.domain])
+                    .output()?;
+
+                self.parse_nslookup_output(&output.stdout)?
+            }
         } else {
-            // Fallback to nslookup if dig is not available
-            let output = Command::new("nslookup")
-                .args(["-type=MX", &self.domain])
-                .output()?;
-
-            self.parse_nslookup_output(&output.stdout)?
+            let resolver = CustomResolver::new(self.resolvers.clone())?;
+            resolver
+                .lookup_mx(&self.domain)
+                .await?
+                .into_iter()
+                .map(|(priority, hostname)| MxRecord { priority, hostname })
+                .collect()
         };
 
         if mx_records.is_empty() {
@@ -131,7 +157,7 @@ impl MxTester {
 
     /// Scan all MX records
     pub async fn scan_all_mx(&self, args: Args) -> Result<Vec<(MxRecord, Result<ScanResults>)>> {
-        let mx_records = self.query_mx_records()?;
+        let mx_records = self.query_mx_records().await?;
 
         println!("\n{}", "=".repeat(80).cyan());
         println!(
@@ -141,6 +167,25 @@ impl MxTester {
         );
         println!("{}\n", "=".repeat(80).cyan());
 
+        let results = if args.network.parallel {
+            println!(
+                "{} Running MX scans in parallel (max {} concurrent)\n",
+                "[*]".cyan(),
+                args.network.max_parallel.max(1)
+            );
+            self.scan_all_mx_parallel(&mx_records, &args).await?
+        } else {
+            self.scan_all_mx_serial(&mx_records, &args).await?
+        };
+
+        Ok(results)
+    }
+
+    async fn scan_all_mx_serial(
+        &self,
+        mx_records: &[MxRecord],
+        args: &Args,
+    ) -> Result<Vec<(MxRecord, Result<ScanResults>)>> {
         let mut results = Vec::new();
 
         for (idx, record) in mx_records.iter().enumerate() {
@@ -153,34 +198,83 @@ impl MxTester {
                 record.priority
             );
 
-            // Create modified args for this MX host
-            let mut mx_args = args.clone();
-            mx_args.target = Some(format!("{}:25", record.hostname));
-            mx_args.output.quiet = true;
-
-            // Create scanner and run
-            let result = match Scanner::new(mx_args.to_scan_request()) {
-                Ok(scanner) => scanner.run().await,
-                Err(e) => Err(e),
-            };
-
-            match &result {
-                Ok(scan_results) => {
-                    println!("  {} Scan completed", "✓".green());
-                    if let Some(rating) = scan_results.ssl_rating() {
-                        println!("  {} SSL Labs Grade: {}", "→".blue(), rating.grade);
-                    }
-                }
-                Err(e) => {
-                    println!("  {} Scan failed: {}", "✗".red(), e);
-                }
-            }
-
+            let result = self.scan_mx_record(args, record).await;
+            Self::print_scan_result(&result);
             results.push((record.clone(), result));
             println!();
         }
 
         Ok(results)
+    }
+
+    async fn scan_all_mx_parallel(
+        &self,
+        mx_records: &[MxRecord],
+        args: &Args,
+    ) -> Result<Vec<(MxRecord, Result<ScanResults>)>> {
+        let max_parallel = args.network.max_parallel.max(1);
+        let mut completed = 0usize;
+
+        let mut results =
+            stream::iter(mx_records.iter().cloned().enumerate().map(|(idx, record)| {
+                let args = args.clone();
+                async move {
+                    let result = Self::scan_mx_record_static(&args, &record).await;
+                    (idx, record, result)
+                }
+            }))
+            .buffer_unordered(max_parallel);
+
+        let mut collected = Vec::with_capacity(mx_records.len());
+        while let Some((idx, record, result)) = results.next().await {
+            completed += 1;
+            println!(
+                "{} Completed MX {}/{}: {} (priority {})",
+                "[+]".green(),
+                completed,
+                mx_records.len(),
+                record.hostname.yellow(),
+                record.priority
+            );
+            Self::print_scan_result(&result);
+            println!();
+            collected.push((idx, record, result));
+        }
+
+        collected.sort_by_key(|(idx, _, _)| *idx);
+        Ok(collected
+            .into_iter()
+            .map(|(_, record, result)| (record, result))
+            .collect())
+    }
+
+    async fn scan_mx_record(&self, args: &Args, record: &MxRecord) -> Result<ScanResults> {
+        Self::scan_mx_record_static(args, record).await
+    }
+
+    async fn scan_mx_record_static(args: &Args, record: &MxRecord) -> Result<ScanResults> {
+        let mut mx_args = args.clone();
+        mx_args.target = Some(format!("{}:25", record.hostname));
+        mx_args.output.quiet = true;
+
+        match Scanner::new(mx_args.to_scan_request()) {
+            Ok(scanner) => scanner.run().await,
+            Err(e) => Err(e),
+        }
+    }
+
+    fn print_scan_result(result: &Result<ScanResults>) {
+        match result {
+            Ok(scan_results) => {
+                println!("  {} Scan completed", "✓".green());
+                if let Some(rating) = scan_results.ssl_rating() {
+                    println!("  {} SSL Labs Grade: {}", "→".blue(), rating.grade);
+                }
+            }
+            Err(e) => {
+                println!("  {} Scan failed: {}", "✗".red(), e);
+            }
+        }
     }
 
     /// Generate MX scan summary
@@ -284,12 +378,183 @@ impl MxTester {
 
         summary
     }
+
+    /// Build a conservative aggregated scan result across all successful MX hosts.
+    ///
+    /// The aggregate is used for post-processing features such as compliance,
+    /// policy evaluation, storage and non-JSON exports.
+    pub fn aggregate_scan_results(
+        &self,
+        results: &[(MxRecord, Result<ScanResults>)],
+    ) -> Result<ScanResults> {
+        Self::aggregate_scan_results_for_domain(&self.domain, results)
+    }
+
+    pub fn aggregate_scan_results_for_domain(
+        domain: &str,
+        results: &[(MxRecord, Result<ScanResults>)],
+    ) -> Result<ScanResults> {
+        let successful_results: Vec<&ScanResults> = results
+            .iter()
+            .filter_map(|(_, result)| result.as_ref().ok())
+            .collect();
+
+        if successful_results.is_empty() {
+            return Err(crate::error::TlsError::Other(format!(
+                "All MX scans failed for domain: {}",
+                domain
+            )));
+        }
+
+        let mut per_backend_results = HashMap::new();
+        for (index, scan_result) in successful_results.iter().enumerate() {
+            let ip = synthetic_backend_ip(index);
+            per_backend_results.insert(
+                ip,
+                SingleIpScanResult {
+                    ip,
+                    scan_result: (*scan_result).clone(),
+                    scan_duration_ms: scan_result.scan_time_ms,
+                    error: None,
+                },
+            );
+        }
+
+        let aggregated = ConservativeAggregator::new(per_backend_results, Vec::new()).aggregate();
+        let certificate_chain = select_common_certificate_chain(&successful_results);
+        let vulnerabilities = aggregate_vulnerabilities(results);
+
+        let mut aggregate = ScanResults {
+            target: canonical_target(domain, 25),
+            scan_time_ms: successful_results
+                .iter()
+                .map(|result| result.scan_time_ms)
+                .sum(),
+            protocols: aggregated.protocols,
+            ciphers: aggregated.ciphers,
+            certificate_chain,
+            vulnerabilities,
+            ..Default::default()
+        };
+
+        let certificate_validation = aggregate
+            .certificate_chain
+            .as_ref()
+            .map(|cert| &cert.validation);
+        aggregate.rating = Some(RatingResults {
+            ssl_rating: Some(RatingCalculator::calculate(
+                &aggregate.protocols,
+                &aggregate.ciphers,
+                certificate_validation,
+                &aggregate.vulnerabilities,
+            )),
+        });
+
+        Ok(aggregate)
+    }
+}
+
+fn synthetic_backend_ip(index: usize) -> IpAddr {
+    let high = ((index >> 16) & 0xffff) as u16;
+    let low = ((index & 0xffff) as u16).saturating_add(1);
+    IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, high, low))
+}
+
+fn select_common_certificate_chain(results: &[&ScanResults]) -> Option<CertificateAnalysisResult> {
+    let mut chains: HashMap<String, (usize, CertificateAnalysisResult)> = HashMap::new();
+
+    for result in results {
+        let Some(chain) = result.certificate_chain.as_ref() else {
+            continue;
+        };
+        let signature = certificate_chain_signature(chain);
+        let entry = chains
+            .entry(signature)
+            .or_insert_with(|| (0, chain.clone()));
+        entry.0 += 1;
+    }
+
+    chains
+        .into_iter()
+        .max_by_key(|(_, (count, _))| *count)
+        .map(|(_, (_, chain))| chain)
+}
+
+fn certificate_chain_signature(chain: &CertificateAnalysisResult) -> String {
+    if chain.chain.certificates.is_empty() {
+        return "<empty>".to_string();
+    }
+
+    chain
+        .chain
+        .certificates
+        .iter()
+        .map(|certificate| {
+            if let Some(fingerprint) = certificate.fingerprint_sha256.as_ref() {
+                return format!("fp:{fingerprint}");
+            }
+
+            if !certificate.der_bytes.is_empty() {
+                return format!("der:{}", hex::encode(&certificate.der_bytes));
+            }
+
+            format!(
+                "subject={};issuer={};serial={};not_before={};not_after={}",
+                certificate.subject,
+                certificate.issuer,
+                certificate.serial_number,
+                certificate.not_before,
+                certificate.not_after
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\u{1f}")
+}
+
+fn aggregate_vulnerabilities(
+    results: &[(MxRecord, Result<ScanResults>)],
+) -> Vec<VulnerabilityResult> {
+    let mut aggregated: Vec<VulnerabilityResult> = Vec::new();
+    let incomplete_coverage = results.iter().any(|(_, result)| result.is_err());
+
+    for (_, result) in results {
+        let Ok(scan_result) = result else {
+            continue;
+        };
+
+        for vulnerability in &scan_result.vulnerabilities {
+            if let Some(existing) = aggregated
+                .iter_mut()
+                .find(|item| item.vuln_type == vulnerability.vuln_type)
+            {
+                merge_vulnerability_result(existing, vulnerability);
+            } else {
+                aggregated.push(vulnerability.clone());
+            }
+        }
+    }
+
+    if incomplete_coverage {
+        for vulnerability in &mut aggregated {
+            vulnerability.inconclusive = true;
+            if !vulnerability.details.contains("incomplete MX coverage") {
+                vulnerability.details = format!(
+                    "{}; incomplete MX coverage - at least one MX host failed during scanning",
+                    vulnerability.details
+                );
+            }
+        }
+    }
+
+    aggregated.sort_by_key(|vulnerability| vulnerability.vuln_type.sort_key());
+    aggregated
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::error::TlsError;
+    use crate::protocols::{Protocol, ProtocolTestResult};
     use crate::rating::grader::Grade;
     use crate::rating::scoring::RatingResult;
     use crate::scanner::{RatingResults, ScanResults};
@@ -536,5 +801,100 @@ mod tests {
             .expect("test assertion should succeed");
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].hostname, "mx.example.com");
+    }
+
+    #[test]
+    fn test_aggregate_scan_results_for_domain_is_conservative() {
+        let supported = ProtocolTestResult {
+            protocol: Protocol::TLS12,
+            supported: true,
+            preferred: false,
+            ciphers_count: 0,
+            handshake_time_ms: None,
+            heartbeat_enabled: None,
+            session_resumption_caching: None,
+            session_resumption_tickets: None,
+            secure_renegotiation: None,
+        };
+        let unsupported = ProtocolTestResult {
+            supported: false,
+            ..supported.clone()
+        };
+
+        let results: Vec<(MxRecord, Result<ScanResults>)> = vec![
+            (
+                MxRecord {
+                    priority: 10,
+                    hostname: "mx1.example.com".to_string(),
+                },
+                Ok(ScanResults {
+                    protocols: vec![supported],
+                    ..Default::default()
+                }),
+            ),
+            (
+                MxRecord {
+                    priority: 20,
+                    hostname: "mx2.example.com".to_string(),
+                },
+                Ok(ScanResults {
+                    protocols: vec![unsupported],
+                    ..Default::default()
+                }),
+            ),
+        ];
+
+        let aggregate =
+            MxTester::aggregate_scan_results_for_domain("example.com", &results).unwrap();
+
+        assert_eq!(aggregate.target, "example.com:25");
+        assert!(
+            aggregate
+                .protocols
+                .iter()
+                .any(|protocol| protocol.protocol == Protocol::TLS12 && !protocol.supported)
+        );
+    }
+
+    #[test]
+    fn test_aggregate_scan_results_marks_vulnerabilities_inconclusive_when_mx_fails() {
+        let results: Vec<(MxRecord, Result<ScanResults>)> = vec![
+            (
+                MxRecord {
+                    priority: 10,
+                    hostname: "mx1.example.com".to_string(),
+                },
+                Ok(ScanResults {
+                    vulnerabilities: vec![crate::vulnerabilities::VulnerabilityResult {
+                        vuln_type: crate::vulnerabilities::VulnerabilityType::Heartbleed,
+                        vulnerable: false,
+                        inconclusive: false,
+                        details: "not vulnerable".to_string(),
+                        cve: None,
+                        cwe: None,
+                        severity: crate::vulnerabilities::Severity::High,
+                    }],
+                    ..Default::default()
+                }),
+            ),
+            (
+                MxRecord {
+                    priority: 20,
+                    hostname: "mx2.example.com".to_string(),
+                },
+                Err(TlsError::Other("connection failed".to_string())),
+            ),
+        ];
+
+        let aggregate =
+            MxTester::aggregate_scan_results_for_domain("example.com", &results).unwrap();
+
+        assert_eq!(aggregate.vulnerabilities.len(), 1);
+        assert!(aggregate.vulnerabilities[0].inconclusive);
+        assert!(
+            aggregate.vulnerabilities[0]
+                .details
+                .contains("incomplete MX coverage")
+        );
     }
 }

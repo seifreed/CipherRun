@@ -53,7 +53,9 @@ impl ConservativeAggregator {
                     .collect::<HashSet<_>>()
                     .len();
 
-                let preferred = protocol_results.iter().all(|result| result.preferred);
+                let preferred_count = protocol_results.iter().filter(|r| r.preferred).count();
+                let preferred =
+                    !protocol_results.is_empty() && preferred_count * 2 > protocol_results.len();
                 let handshake_time_ms = protocol_results
                     .iter()
                     .filter_map(|result| result.handshake_time_ms)

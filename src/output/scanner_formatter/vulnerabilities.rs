@@ -1,4 +1,4 @@
-use super::{ScannerFormatter, VulnerabilityResult, print_section_header};
+use super::{ScannerFormatter, VulnerabilityResult};
 use colored::*;
 use std::collections::HashMap;
 
@@ -27,11 +27,13 @@ fn ordered_vulnerability_severity_counts(
 impl<'a> ScannerFormatter<'a> {
     /// Display vulnerability results
     pub fn display_vulnerability_results(&self, results: &[VulnerabilityResult]) {
-        print_section_header("Vulnerability Assessment:");
+        println!("\n{}", self.section_header("Vulnerability Assessment:"));
+        println!("{}", "=".repeat(self.expand_width(50)));
 
         let mut vulnerable_count = 0;
         let mut inconclusive_count = 0;
         let mut by_severity: HashMap<crate::vulnerabilities::Severity, usize> = HashMap::new();
+        let show_inconclusive_inline = self.show_warnings_inline();
 
         for result in results {
             if result.vulnerable {
@@ -40,11 +42,18 @@ impl<'a> ScannerFormatter<'a> {
                 self.display_single_vulnerability(result);
             } else if result.inconclusive {
                 inconclusive_count += 1;
-                self.display_single_vulnerability(result);
+                if show_inconclusive_inline {
+                    self.display_single_vulnerability(result);
+                }
             }
         }
 
-        self.display_vulnerability_summary(vulnerable_count, inconclusive_count, &by_severity);
+        self.display_vulnerability_summary(
+            vulnerable_count,
+            inconclusive_count,
+            &by_severity,
+            show_inconclusive_inline,
+        );
     }
 
     /// Display a single vulnerability result
@@ -61,6 +70,17 @@ impl<'a> ScannerFormatter<'a> {
             println!("  CVE:      {}", cve);
         }
         println!("  Details:  {}", result.details);
+
+        if self.args.output.hints {
+            if let Some(hint) =
+                crate::utils::hints::get_vulnerability_hint(&format!("{:?}", result.vuln_type))
+            {
+                println!("  Hint:     {}", hint.remediation);
+            } else {
+                let hint = crate::utils::hints::get_severity_hint(result.severity);
+                println!("  Hint:     {}", hint.remediation);
+            }
+        }
     }
 
     /// Display vulnerability summary
@@ -69,12 +89,15 @@ impl<'a> ScannerFormatter<'a> {
         vulnerable_count: usize,
         inconclusive_count: usize,
         by_severity: &HashMap<crate::vulnerabilities::Severity, usize>,
+        show_inconclusive_inline: bool,
     ) {
         use crate::vulnerabilities::Severity;
 
-        println!("\n{}", "=".repeat(50));
+        println!("\n{}", "=".repeat(self.expand_width(50)));
         if vulnerable_count == 0 && inconclusive_count == 0 {
             println!("{}", "Y No vulnerabilities found!".green().bold());
+        } else if vulnerable_count == 0 && inconclusive_count > 0 && !show_inconclusive_inline {
+            println!("{}", "? No confirmed vulnerabilities found".yellow().bold());
         } else {
             if vulnerable_count > 0 {
                 println!(
@@ -83,7 +106,7 @@ impl<'a> ScannerFormatter<'a> {
                     vulnerable_count.to_string().red().bold()
                 );
             }
-            if inconclusive_count > 0 {
+            if inconclusive_count > 0 && show_inconclusive_inline {
                 println!(
                     "{} {} inconclusive vulnerability check(s)",
                     "?".yellow().bold(),

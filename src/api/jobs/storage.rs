@@ -1,7 +1,7 @@
 // Job Storage - Persistence layer for jobs
 
+use crate::Result;
 use crate::api::jobs::ScanJob;
-use anyhow::Result;
 
 /// Job storage trait for persisting jobs
 pub trait JobStorage: Send + Sync {

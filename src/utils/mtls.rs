@@ -2,9 +2,10 @@
 
 use crate::Result;
 use rustls::{ClientConfig, RootCertStore};
-use rustls_pki_types::{CertificateDer, PrivateKeyDer};
-use std::fs::File;
-use std::io::BufReader;
+use rustls_pki_types::{
+    CertificateDer, PrivateKeyDer, PrivatePkcs1KeyDer, PrivatePkcs8KeyDer, PrivateSec1KeyDer,
+};
+use std::fs;
 use std::path::Path;
 use std::sync::Arc;
 use tokio_rustls::TlsConnector;
@@ -25,6 +26,39 @@ impl Clone for MtlsConfig {
     }
 }
 
+fn parse_certs(pem_bytes: &[u8]) -> crate::Result<Vec<CertificateDer<'static>>> {
+    let items = pem::parse_many(pem_bytes).map_err(|e| crate::error::TlsError::MtlsError {
+        message: format!("Failed to parse PEM: {}", e),
+    })?;
+    Ok(items
+        .into_iter()
+        .filter(|p| p.tag() == "CERTIFICATE")
+        .map(|p| CertificateDer::from(p.into_contents()))
+        .collect())
+}
+
+fn parse_keys(pem_bytes: &[u8]) -> crate::Result<Vec<PrivateKeyDer<'static>>> {
+    let items = pem::parse_many(pem_bytes).map_err(|e| crate::error::TlsError::MtlsError {
+        message: format!("Failed to parse PEM: {}", e),
+    })?;
+    let mut keys = Vec::new();
+    for item in items {
+        match item.tag() {
+            "PRIVATE KEY" => keys.push(PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(
+                item.into_contents(),
+            ))),
+            "RSA PRIVATE KEY" => keys.push(PrivateKeyDer::Pkcs1(PrivatePkcs1KeyDer::from(
+                item.into_contents(),
+            ))),
+            "EC PRIVATE KEY" => keys.push(PrivateKeyDer::Sec1(PrivateSec1KeyDer::from(
+                item.into_contents(),
+            ))),
+            _ => warn!("Skipping unsupported PEM item in mTLS config"),
+        }
+    }
+    Ok(keys)
+}
+
 impl MtlsConfig {
     /// Load mTLS configuration from separate certificate and key files
     pub fn from_separate_files<P: AsRef<Path>>(
@@ -32,54 +66,23 @@ impl MtlsConfig {
         key_path: P,
         _key_password: Option<&str>,
     ) -> Result<Self> {
-        // Load certificates
-        let cert_file =
-            File::open(cert_path.as_ref()).map_err(|e| crate::error::TlsError::MtlsError {
+        let cert_bytes =
+            fs::read(cert_path.as_ref()).map_err(|e| crate::error::TlsError::MtlsError {
                 message: format!("Failed to open certificate file: {}", e),
             })?;
-        let mut cert_reader = BufReader::new(cert_file);
-
-        let certs: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut cert_reader)
-            .collect::<std::result::Result<Vec<_>, std::io::Error>>()
-            .map_err(|e| crate::error::TlsError::MtlsError {
-                message: format!("Failed to parse certificates: {}", e),
-            })?;
-
+        let certs = parse_certs(&cert_bytes)?;
         if certs.is_empty() {
             crate::tls_bail!("No certificates found in certificate file");
         }
 
-        // Load private key
-        let key_file =
-            File::open(key_path.as_ref()).map_err(|e| crate::error::TlsError::MtlsError {
+        let key_bytes =
+            fs::read(key_path.as_ref()).map_err(|e| crate::error::TlsError::MtlsError {
                 message: format!("Failed to open private key file: {}", e),
             })?;
-        let mut key_reader = BufReader::new(key_file);
-
-        let mut keys = Vec::new();
-        for item in rustls_pemfile::read_all(&mut key_reader) {
-            match item {
-                Ok(rustls_pemfile::Item::Pkcs8Key(key)) => {
-                    keys.push(PrivateKeyDer::Pkcs8(key));
-                }
-                Ok(rustls_pemfile::Item::Pkcs1Key(key)) => {
-                    keys.push(PrivateKeyDer::Pkcs1(key));
-                }
-                Ok(rustls_pemfile::Item::Sec1Key(key)) => {
-                    keys.push(PrivateKeyDer::Sec1(key));
-                }
-                Ok(_) | Err(_) => {
-                    warn!("Skipping unsupported PEM item in mTLS config");
-                }
-            }
-        }
-
+        let keys = parse_keys(&key_bytes)?;
         if keys.is_empty() {
             crate::tls_bail!("No private key found in key file");
         }
-
-        // Note: Password-protected keys would require additional processing
-        // For now, we only support unencrypted keys
 
         Ok(Self {
             cert_chain: certs,
@@ -91,48 +94,18 @@ impl MtlsConfig {
         })
     }
 
-    /// Load mTLS configuration from a PEM file
-    /// The PEM file should contain both the certificate chain and the private key
+    /// Load mTLS configuration from a PEM file containing both cert chain and private key
     pub fn from_pem_file<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let file = File::open(path.as_ref()).map_err(|e| crate::error::TlsError::MtlsError {
+        let pem_bytes = fs::read(path.as_ref()).map_err(|e| crate::error::TlsError::MtlsError {
             message: format!("Failed to open mTLS PEM file: {}", e),
         })?;
-        let mut reader = BufReader::new(file);
 
-        // Read all certificates from the PEM file
-        let certs: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut reader)
-            .collect::<std::result::Result<Vec<_>, std::io::Error>>()
-            .map_err(|e| crate::error::TlsError::MtlsError {
-                message: format!("Failed to parse certificates from PEM: {}", e),
-            })?;
-
+        let certs = parse_certs(&pem_bytes)?;
         if certs.is_empty() {
             crate::tls_bail!("No certificates found in PEM file");
         }
 
-        // Reset reader to beginning for key parsing
-        let file = File::open(path.as_ref())?;
-        let mut reader = BufReader::new(file);
-
-        // Try to read private key (support multiple formats)
-        let mut keys = Vec::new();
-
-        // Try PKCS8 format first
-        for item in rustls_pemfile::read_all(&mut reader) {
-            match item {
-                Ok(rustls_pemfile::Item::Pkcs8Key(key)) => {
-                    keys.push(PrivateKeyDer::Pkcs8(key));
-                }
-                Ok(rustls_pemfile::Item::Pkcs1Key(key)) => {
-                    keys.push(PrivateKeyDer::Pkcs1(key));
-                }
-                Ok(rustls_pemfile::Item::Sec1Key(key)) => {
-                    keys.push(PrivateKeyDer::Sec1(key));
-                }
-                _ => {}
-            }
-        }
-
+        let keys = parse_keys(&pem_bytes)?;
         if keys.is_empty() {
             crate::tls_bail!("No private key found in PEM file");
         }
@@ -228,10 +201,8 @@ mod tests {
 
     #[test]
     fn test_mtls_config_parsing() {
-        // Create a temporary PEM file with a test certificate and key
         let mut temp_file = NamedTempFile::new().expect("test assertion should succeed");
 
-        // This is a minimal test - in practice you'd use real cert/key pairs
         let pem_data = r#"-----BEGIN CERTIFICATE-----
 MIIBkTCB+wIJAKHHCgVZU6RqMA0GCSqGSIb3DQEBCwUAMBkxFzAVBgNVBAMMDnRl
 c3QtY2VydGlmaWNhdGUwHhcNMjMwMTAxMDAwMDAwWhcNMjQwMTAxMDAwMDAwWjAZ
@@ -255,11 +226,7 @@ KHvHJKYnrKyB
         write!(temp_file, "{}", pem_data).expect("test assertion should succeed");
         temp_file.flush().expect("test assertion should succeed");
 
-        // This test might fail with real validation, but tests the parsing logic
         let result = MtlsConfig::from_pem_file(temp_file.path());
-
-        // The parsing should at least attempt to read the file
-        // Real validation would require valid cert/key pairs
         if let Ok(config) = result {
             assert!(!config.cert_chain.is_empty());
         }
@@ -268,7 +235,6 @@ KHvHJKYnrKyB
     #[test]
     fn test_build_standard_connector() {
         let connector = build_standard_tls_connector();
-        // Just verify it builds successfully
         assert!(std::mem::size_of_val(&connector) > 0);
     }
 

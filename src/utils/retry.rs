@@ -284,7 +284,6 @@ fn is_retriable(error: &anyhow::Error) -> bool {
     // Non-retriable patterns (permanent failures)
     let non_retriable_patterns = [
         "connection refused",
-        "refused",
         "failed to lookup",
         "name or service not known",
         "invalid dns name",

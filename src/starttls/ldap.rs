@@ -66,7 +66,7 @@ impl StarttlsNegotiator for LdapNegotiator {
             // LDAP ExtendedResponse structure:
             // [0x30, len, 0x02, 0x01, msgid, 0x78, len, 0x0a, 0x01, resultCode]
             // resultCode (success = 0x00) is at offset 9
-            if response[5] == 0x78 && response[7..10].contains(&0x00) {
+            if response[5] == 0x78 && response[9] == 0x00 {
                 return Ok(());
             }
         }

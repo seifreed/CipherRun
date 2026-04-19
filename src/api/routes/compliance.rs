@@ -6,11 +6,12 @@ use crate::api::{
     presenters::compliance::present_compliance_report,
     state::AppState,
 };
-use crate::compliance::BuiltinFrameworkSource;
-use crate::scanner::DefaultScannerPort;
+use crate::compliance::{BuiltinFrameworkSource, ComplianceFramework, ComplianceReport, Reporter};
 use axum::{
     Json,
     extract::{Path, Query, State},
+    http::{StatusCode, header},
+    response::{IntoResponse, Response},
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -34,6 +35,53 @@ pub struct ComplianceQuery {
 
 fn default_format() -> String {
     "json".to_string()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ComplianceResponseFormat {
+    Json,
+    Terminal,
+    Csv,
+}
+
+impl ComplianceResponseFormat {
+    fn parse(value: &str) -> Result<Self, ApiError> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "json" => Ok(Self::Json),
+            "terminal" => Ok(Self::Terminal),
+            "csv" => Ok(Self::Csv),
+            other => Err(ApiError::BadRequest(format!(
+                "Unsupported compliance format '{}'. Supported formats: json, terminal, csv",
+                other
+            ))),
+        }
+    }
+
+    fn render(
+        self,
+        framework: &ComplianceFramework,
+        report: &ComplianceReport,
+        detailed: bool,
+    ) -> Result<Response, ApiError> {
+        match self {
+            Self::Json => {
+                Ok(Json(present_compliance_report(framework, report, detailed)).into_response())
+            }
+            Self::Terminal => Ok((
+                StatusCode::OK,
+                [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+                Reporter::to_terminal(report),
+            )
+                .into_response()),
+            Self::Csv => Ok((
+                StatusCode::OK,
+                [(header::CONTENT_TYPE, "text/csv; charset=utf-8")],
+                Reporter::to_csv(report)
+                    .map_err(|e| ApiError::Internal(format!("Failed to render CSV: {}", e)))?,
+            )
+                .into_response()),
+        }
+    }
 }
 
 /// Compliance check response
@@ -140,7 +188,11 @@ pub struct ViolationDetail {
         ComplianceQuery
     ),
     responses(
-        (status = 200, description = "Compliance report", body = ComplianceCheckResponse),
+        (status = 200, description = "Compliance report", content(
+            (ComplianceCheckResponse = "application/json"),
+            (String = "text/plain"),
+            (String = "text/csv")
+        )),
         (status = 400, description = "Invalid framework or target", body = ApiErrorResponse),
         (status = 404, description = "Framework not found", body = ApiErrorResponse)
     ),
@@ -152,28 +204,22 @@ pub async fn check_compliance(
     State(_state): State<Arc<AppState>>,
     Path(framework_id): Path<String>,
     Query(query): Query<ComplianceQuery>,
-) -> Result<Json<ComplianceCheckResponse>, ApiError> {
+) -> Result<Response, ApiError> {
     // Validate target is provided
     let target = query
         .target
         .as_ref()
         .ok_or_else(|| ApiError::BadRequest("Target parameter is required".to_string()))?;
+    let format = ComplianceResponseFormat::parse(&query.format)?;
 
     // Load compliance framework via adapter
     let framework = compliance_adapter::load_framework(&BuiltinFrameworkSource, &framework_id)?;
 
     // Run scan and evaluate compliance via adapter
-    let scanner = DefaultScannerPort;
-    let evaluator = crate::compliance::engine::DefaultComplianceEvaluator;
     let (_assessment, report) =
-        compliance_adapter::run_compliance_check(&scanner, &evaluator, &framework, target).await?;
+        compliance_adapter::run_compliance_check_with_defaults(&framework, target).await?;
 
-    Ok(Json(present_compliance_report(
-        &framework,
-        target,
-        &report,
-        query.detailed,
-    )))
+    format.render(&framework, &report, query.detailed)
 }
 
 #[cfg(test)]
@@ -183,6 +229,11 @@ mod tests {
     use crate::api::jobs::{InMemoryJobQueue, ScanExecutor};
     use crate::api::middleware::rate_limit::PerKeyRateLimiter;
     use crate::api::state::{ApiStats, AppState};
+    use crate::compliance::{
+        ComplianceFramework, ComplianceReport, RequirementResult as ComplianceRequirementResult,
+        RequirementStatus, Severity, Violation,
+    };
+    use axum::body::to_bytes;
     use axum::extract::{Path, Query, State};
     use std::sync::Arc;
     use std::time::Instant;
@@ -205,6 +256,40 @@ mod tests {
             db_pool: None,
             policy_dir: None,
         })
+    }
+
+    fn test_framework() -> ComplianceFramework {
+        ComplianceFramework {
+            id: "pci-dss-v4".to_string(),
+            name: "PCI DSS".to_string(),
+            version: "4.0".to_string(),
+            description: String::new(),
+            organization: String::new(),
+            effective_date: None,
+            requirements: Vec::new(),
+        }
+    }
+
+    fn test_report() -> ComplianceReport {
+        let framework = test_framework();
+        let mut report = ComplianceReport::new(&framework, "example.com:443".to_string());
+        report.add_requirement_result(ComplianceRequirementResult {
+            requirement_id: "REQ-1".to_string(),
+            name: "Strong TLS".to_string(),
+            description: String::new(),
+            category: "protocols".to_string(),
+            severity: Severity::High,
+            status: RequirementStatus::Fail,
+            violations: vec![Violation {
+                violation_type: "protocol".to_string(),
+                description: "TLS 1.0 enabled".to_string(),
+                evidence: "tls1.0".to_string(),
+                severity: Severity::High,
+            }],
+            remediation: "Disable TLS 1.0".to_string(),
+        });
+        report.finalize();
+        report
     }
 
     #[tokio::test]
@@ -243,6 +328,38 @@ mod tests {
         assert!(matches!(err, ApiError::NotFound(_)));
     }
 
+    #[tokio::test]
+    async fn test_check_compliance_invalid_format() {
+        let state = build_state();
+        let query = ComplianceQuery {
+            target: Some("example.com:443".to_string()),
+            format: "yaml".to_string(),
+            detailed: false,
+        };
+
+        let err = check_compliance(State(state), Path("pci-dss-v4".to_string()), Query(query))
+            .await
+            .expect_err("invalid format should error");
+
+        assert!(matches!(err, ApiError::BadRequest(_)));
+    }
+
+    #[tokio::test]
+    async fn test_check_compliance_rejects_private_target() {
+        let state = build_state();
+        let query = ComplianceQuery {
+            target: Some("127.0.0.1:443".to_string()),
+            format: "json".to_string(),
+            detailed: false,
+        };
+
+        let err = check_compliance(State(state), Path("pci-dss-v4".to_string()), Query(query))
+            .await
+            .expect_err("private target should error");
+
+        assert!(matches!(err, ApiError::BadRequest(_)));
+    }
+
     #[test]
     fn test_default_format_is_json() {
         assert_eq!(default_format(), "json");
@@ -255,5 +372,98 @@ mod tests {
         assert!(query.target.is_none());
         assert_eq!(query.format, "json");
         assert!(!query.detailed);
+    }
+
+    #[test]
+    fn test_parse_compliance_response_format() {
+        assert_eq!(
+            ComplianceResponseFormat::parse("json").expect("json should parse"),
+            ComplianceResponseFormat::Json
+        );
+        assert_eq!(
+            ComplianceResponseFormat::parse("TERMINAL").expect("terminal should parse"),
+            ComplianceResponseFormat::Terminal
+        );
+        assert_eq!(
+            ComplianceResponseFormat::parse(" csv ").expect("csv should parse"),
+            ComplianceResponseFormat::Csv
+        );
+        assert!(matches!(
+            ComplianceResponseFormat::parse("xml"),
+            Err(ApiError::BadRequest(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_render_compliance_response_json() {
+        let framework = test_framework();
+        let report = test_report();
+
+        let response = ComplianceResponseFormat::Json
+            .render(&framework, &report, true)
+            .expect("json render should succeed");
+
+        let content_type = response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned);
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("response body should read");
+        let json: serde_json::Value =
+            serde_json::from_slice(&body).expect("body should be valid json");
+
+        assert_eq!(content_type.as_deref(), Some("application/json"));
+        assert_eq!(json["framework_id"], "pci-dss-v4");
+        assert_eq!(json["target"], "example.com:443");
+    }
+
+    #[tokio::test]
+    async fn test_render_compliance_response_terminal() {
+        let framework = test_framework();
+        let report = test_report();
+
+        let response = ComplianceResponseFormat::Terminal
+            .render(&framework, &report, true)
+            .expect("terminal render should succeed");
+
+        let content_type = response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned);
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("response body should read");
+        let text = String::from_utf8(body.to_vec()).expect("body should be utf-8");
+
+        assert_eq!(content_type.as_deref(), Some("text/plain; charset=utf-8"));
+        assert!(text.contains("Compliance Report"));
+        assert!(text.contains("PCI DSS"));
+    }
+
+    #[tokio::test]
+    async fn test_render_compliance_response_csv() {
+        let framework = test_framework();
+        let report = test_report();
+
+        let response = ComplianceResponseFormat::Csv
+            .render(&framework, &report, true)
+            .expect("csv render should succeed");
+
+        let content_type = response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned);
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("response body should read");
+        let csv = String::from_utf8(body.to_vec()).expect("body should be utf-8");
+
+        assert_eq!(content_type.as_deref(), Some("text/csv; charset=utf-8"));
+        assert!(csv.contains("Requirement ID,Name,Category,Severity,Status,Violations,Evidence"));
+        assert!(csv.contains("\"REQ-1\""));
     }
 }

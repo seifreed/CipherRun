@@ -1,9 +1,15 @@
 use super::{CipherDetails, CipherStrength, FsGrade, Rc4BiasesAnalysis};
 
 pub(super) fn analyze_cipher_details(cipher_name: &str) -> CipherDetails {
-    let forward_secrecy = cipher_name.contains("ECDHE") || cipher_name.contains("DHE");
+    let forward_secrecy = cipher_name.contains("ECDHE")
+        || cipher_name.contains("DHE")
+        || cipher_name.starts_with("TLS_AES_")
+        || cipher_name.starts_with("TLS_CHACHA20_");
 
-    let key_exchange = if cipher_name.starts_with("TLS_") || cipher_name.contains("ECDHE") {
+    let key_exchange = if cipher_name.starts_with("TLS_AES_")
+        || cipher_name.starts_with("TLS_CHACHA20_")
+        || cipher_name.contains("ECDHE")
+    {
         "ECDHE".to_string()
     } else if cipher_name.contains("DHE") {
         "DHE".to_string()
@@ -13,15 +19,15 @@ pub(super) fn analyze_cipher_details(cipher_name: &str) -> CipherDetails {
         "Unknown".to_string()
     };
 
-    let encryption = if cipher_name.contains("AES256-GCM") {
+    let encryption = if cipher_name.contains("AES_256_GCM") || cipher_name.contains("AES256-GCM") {
         "AES-256-GCM".to_string()
-    } else if cipher_name.contains("AES128-GCM") {
+    } else if cipher_name.contains("AES_128_GCM") || cipher_name.contains("AES128-GCM") {
         "AES-128-GCM".to_string()
     } else if cipher_name.contains("AES256") {
         "AES-256-CBC".to_string()
     } else if cipher_name.contains("AES128") {
         "AES-128-CBC".to_string()
-    } else if cipher_name.contains("CHACHA20") {
+    } else if cipher_name.contains("CHACHA20") || cipher_name.contains("POLY1305") {
         "ChaCha20-Poly1305".to_string()
     } else if cipher_name.contains("3DES") {
         "3DES".to_string()
@@ -63,6 +69,10 @@ pub(super) fn classify_cipher_strength(
     enc: &str,
     mac: &str,
 ) -> CipherStrength {
+    if cipher.starts_with("TLS_AES_") || cipher.starts_with("TLS_CHACHA20_") {
+        return CipherStrength::VeryStrong;
+    }
+
     if cipher.contains("EXP")
         || cipher.contains("NULL")
         || cipher.contains("DES-CBC-")
@@ -71,7 +81,7 @@ pub(super) fn classify_cipher_strength(
         return CipherStrength::Weak;
     }
 
-    if cipher.contains("3DES") || cipher.contains("RC4") || (!fs && !cipher.starts_with("TLS_")) {
+    if cipher.contains("3DES") || cipher.contains("RC4") || !fs {
         return CipherStrength::Medium;
     }
 

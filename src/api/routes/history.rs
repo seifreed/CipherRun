@@ -10,6 +10,7 @@ use crate::api::{
     presenters::history::present_scan_history,
     state::AppState,
 };
+use crate::security::{validate_hostname, validate_port};
 use axum::{
     Json,
     extract::{Path, Query, State},
@@ -37,12 +38,18 @@ fn default_limit() -> usize {
 }
 
 impl HistoryQuery {
-    /// Validate and return a sanitized query
-    fn validated(self) -> Self {
-        Self {
-            port: self.port,
-            limit: self.limit.min(MAX_HISTORY_LIMIT),
+    /// Validate query parameters against the API contract.
+    fn validate(self) -> Result<Self, ApiError> {
+        validate_port(self.port).map_err(|err| ApiError::BadRequest(err.to_string()))?;
+
+        if self.limit == 0 || self.limit > MAX_HISTORY_LIMIT {
+            return Err(ApiError::BadRequest(format!(
+                "Invalid limit: must be between 1 and {}.",
+                MAX_HISTORY_LIMIT
+            )));
         }
+
+        Ok(self)
     }
 }
 
@@ -62,17 +69,36 @@ mod tests {
     fn test_history_query_limit_bounds() {
         let query = HistoryQuery {
             port: 443,
-            limit: 5000,
+            limit: MAX_HISTORY_LIMIT,
         };
-        let validated = query.validated();
+        let validated = query.validate().expect("validation should succeed");
         assert_eq!(validated.limit, MAX_HISTORY_LIMIT);
 
         let query = HistoryQuery {
             port: 443,
             limit: 0,
         };
-        let validated = query.validated();
-        assert_eq!(validated.limit, 0);
+        let err = query.validate().expect_err("zero limit should fail");
+        assert!(matches!(err, ApiError::BadRequest(_)));
+    }
+
+    #[test]
+    fn test_history_query_rejects_limit_above_contract_max() {
+        let query = HistoryQuery {
+            port: 443,
+            limit: MAX_HISTORY_LIMIT + 1,
+        };
+
+        let err = query.validate().expect_err("limit above max should fail");
+        assert!(matches!(err, ApiError::BadRequest(_)));
+    }
+
+    #[test]
+    fn test_history_query_rejects_invalid_port() {
+        let query = HistoryQuery { port: 0, limit: 10 };
+
+        let err = query.validate().expect_err("port zero should fail");
+        assert!(matches!(err, ApiError::BadRequest(_)));
     }
 }
 
@@ -84,12 +110,13 @@ mod tests {
     path = "/api/v1/history/{domain}",
     tag = "history",
     params(
-        ("domain" = String, Path, description = "Domain name"),
-        ("port" = Option<u16>, Query, description = "Port number (default: 443)"),
-        ("limit" = Option<usize>, Query, description = "Number of results (default: 10, max: 1000)")
+        ("domain" = String, Path, description = "Hostname or IP address"),
+        ("port" = Option<u16>, Query, description = "Port number (default: 443, valid range: 1-65535)"),
+        ("limit" = Option<usize>, Query, description = "Number of results (default: 10, min: 1, max: 1000)")
     ),
     responses(
         (status = 200, description = "Scan history", body = ScanHistoryResponse),
+        (status = 400, description = "Invalid query parameters", body = ApiErrorResponse),
         (status = 404, description = "No history found", body = ApiErrorResponse)
     ),
     security(
@@ -101,17 +128,20 @@ pub async fn get_history(
     Path(domain): Path<String>,
     Query(query): Query<HistoryQuery>,
 ) -> Result<Json<ScanHistoryResponse>, ApiError> {
-    // Validate limit to prevent DoS
-    let query = query.validated();
+    let query = query.validate()?;
 
-    // Validate domain format to prevent injection
-    if domain.is_empty() || domain.len() > 253 {
-        return Err(ApiError::BadRequest("Invalid domain name".to_string()));
-    }
+    validate_hostname(&domain).map_err(|err| ApiError::BadRequest(err.to_string()))?;
 
     let service = history_service_from_state(&state)?;
     let history_query = history_query_from_api(domain.clone(), &query);
     let scans = load_scan_history(&service, &history_query).await?;
+
+    if scans.is_empty() {
+        return Err(ApiError::NotFound(format!(
+            "No scan history found for {}:{}",
+            domain, query.port
+        )));
+    }
 
     Ok(Json(present_scan_history(domain, query.port, scans)))
 }

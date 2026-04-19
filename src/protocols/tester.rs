@@ -26,6 +26,7 @@ pub struct ProtocolTester {
     pub(super) use_rdp: bool,
     pub(super) enable_bugs_mode: bool,
     pub(super) starttls_protocol: Option<crate::starttls::StarttlsProtocol>,
+    pub(super) starttls_hostname: Option<String>,
     pub(super) sni_hostname: Option<String>,
     pub(super) protocol_filter: Option<Vec<Protocol>>,
     pub(super) test_all_ips: bool,
@@ -44,6 +45,7 @@ impl ProtocolTester {
             use_rdp,
             enable_bugs_mode: false,
             starttls_protocol: None,
+            starttls_hostname: None,
             sni_hostname: None,
             protocol_filter: None,
             test_all_ips: false,
@@ -62,6 +64,7 @@ impl ProtocolTester {
             use_rdp,
             enable_bugs_mode: false,
             starttls_protocol: None,
+            starttls_hostname: None,
             sni_hostname: None,
             protocol_filter: None,
             test_all_ips: false,
@@ -76,6 +79,11 @@ impl ProtocolTester {
 
     pub fn with_starttls(mut self, protocol: Option<crate::starttls::StarttlsProtocol>) -> Self {
         self.starttls_protocol = protocol;
+        self
+    }
+
+    pub fn with_starttls_hostname(mut self, hostname: Option<String>) -> Self {
+        self.starttls_hostname = hostname;
         self
     }
 
@@ -112,6 +120,12 @@ impl ProtocolTester {
     pub fn with_retry_config(mut self, config: Option<crate::utils::retry::RetryConfig>) -> Self {
         self.retry_config = config;
         self
+    }
+
+    pub(super) fn starttls_negotiation_hostname(&self) -> String {
+        self.starttls_hostname
+            .clone()
+            .unwrap_or_else(|| self.target.hostname.clone())
     }
 
     pub async fn get_preferred_protocol(&self) -> Result<Option<Protocol>> {
@@ -357,7 +371,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_test_all_ips_returns_false_on_inconsistent_support() {
+    async fn test_test_all_ips_reports_supported_when_any_ip_supports() {
+        // Union semantics: protocol is "supported" if ANY IP in the target supports it.
+        // This ensures security scanners surface vulnerabilities present on any backend,
+        // even in mixed CDN/load-balancer setups.
         let addr = spawn_sslv2_dummy_server().await;
         let target = Target::with_ips(
             "example.test".to_string(),
@@ -375,7 +392,7 @@ mod tests {
             .await
             .expect("test assertion should succeed");
 
-        assert!(!result.supported);
+        assert!(result.supported);
     }
 
     #[tokio::test]
