@@ -68,7 +68,9 @@ pub fn scan_request_from_target_and_options(
                 full: options.full_scan,
             },
             proto: crate::application::scan_request::ScanRequestProto {
-                enabled: options.test_protocols || options.full_scan || options.starttls_protocol.is_some(),
+                enabled: options.test_protocols
+                    || options.full_scan
+                    || options.starttls_protocol.is_some(),
                 ..Default::default()
             },
             ciphers: crate::application::scan_request::ScanRequestCiphers {

@@ -8,9 +8,9 @@
 /// - Avoiding DNS spoofing or poisoning from ISP DNS
 use crate::Result;
 use hickory_resolver::TokioResolver;
-use hickory_resolver::config::{NameServerConfig, ResolverConfig};
-use hickory_resolver::name_server::TokioConnectionProvider;
-use hickory_resolver::proto::xfer::Protocol;
+use hickory_resolver::config::{ConnectionConfig, NameServerConfig, ResolverConfig};
+use hickory_resolver::net::runtime::TokioRuntimeProvider;
+use hickory_resolver::proto::rr::RData;
 use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
 use std::time::Duration;
@@ -81,14 +81,28 @@ impl CustomResolver {
         self
     }
 
-    fn build_resolver(&self) -> TokioResolver {
-        let mut config = ResolverConfig::new();
-        for resolver in &self.resolvers {
-            config.add_name_server(NameServerConfig::new(*resolver, Protocol::Udp));
-            config.add_name_server(NameServerConfig::new(*resolver, Protocol::Tcp));
-        }
+    fn build_resolver(&self) -> Result<TokioResolver> {
+        let name_servers = self
+            .resolvers
+            .iter()
+            .map(|resolver| {
+                let mut udp = ConnectionConfig::udp();
+                udp.port = resolver.port();
 
-        TokioResolver::builder_with_config(config, TokioConnectionProvider::default()).build()
+                let mut tcp = ConnectionConfig::tcp();
+                tcp.port = resolver.port();
+
+                NameServerConfig::new(resolver.ip(), true, vec![udp, tcp])
+            })
+            .collect();
+
+        let config = ResolverConfig::from_parts(None, Vec::new(), name_servers);
+
+        TokioResolver::builder_with_config(config, TokioRuntimeProvider::default())
+            .build()
+            .map_err(|error| crate::TlsError::ConfigError {
+                message: format!("Failed to initialize custom DNS resolver: {error}"),
+            })
     }
 
     /// Resolve a hostname to IP addresses using custom resolvers
@@ -113,7 +127,7 @@ impl CustomResolver {
     /// }
     /// ```
     pub async fn resolve(&self, hostname: &str) -> Result<Vec<IpAddr>> {
-        let resolver = self.build_resolver();
+        let resolver = self.build_resolver()?;
         let response = tokio::time::timeout(self.query_timeout, resolver.lookup_ip(hostname))
             .await
             .map_err(|_| crate::TlsError::InvalidHandshake {
@@ -147,7 +161,7 @@ impl CustomResolver {
 
     /// Resolve MX records for a domain using the configured resolvers.
     pub async fn lookup_mx(&self, hostname: &str) -> Result<Vec<(u16, String)>> {
-        let resolver = self.build_resolver();
+        let resolver = self.build_resolver()?;
         let response = tokio::time::timeout(self.query_timeout, resolver.mx_lookup(hostname))
             .await
             .map_err(|_| crate::TlsError::InvalidHandshake {
@@ -164,16 +178,14 @@ impl CustomResolver {
             })?;
 
         let mut records: Vec<(u16, String)> = response
+            .answers()
             .iter()
-            .map(|record| {
-                (
-                    record.preference(),
-                    record
-                        .exchange()
-                        .to_utf8()
-                        .trim_end_matches('.')
-                        .to_string(),
-                )
+            .filter_map(|record| match &record.data {
+                RData::MX(mx) => Some((
+                    mx.preference,
+                    mx.exchange.to_utf8().trim_end_matches('.').to_string(),
+                )),
+                _ => None,
             })
             .collect();
         records.sort_by_key(|(priority, hostname)| (*priority, hostname.clone()));

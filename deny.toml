@@ -16,14 +16,14 @@
 # Controls how the dependency graph is constructed for analysis.
 [graph]
 # Target platforms to check. Empty means check all targets.
-# Uncomment to restrict checks to specific platforms:
-# targets = [
-#     "x86_64-unknown-linux-gnu",
-#     "x86_64-apple-darwin",
-#     "aarch64-apple-darwin",
-#     "x86_64-pc-windows-msvc",
-# ]
-targets = []
+# Restrict checks to the platforms covered by project CI instead of every
+# target supported by transitive dependencies. This keeps cargo-deny aligned
+# with the actual support matrix and avoids Android/WASI-only noise.
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "x86_64-pc-windows-msvc",
+    "aarch64-apple-darwin",
+]
 
 # Include all features when building dependency graph
 all-features = false
@@ -69,24 +69,12 @@ unsound = "workspace"
 yanked = "warn"
 
 # Advisories to ignore with documented reasons
-ignore = [
-    # RUSTSEC-2023-0071: rsa crate Marvin Attack (timing side-channel)
-    # No fix available upstream. Transitive dependency via sqlx-mysql 0.8.x.
-    # Not exploitable in our context: rsa is used only for MySQL auth handshake,
-    # not for any user-facing key operations. Track sqlx 0.9 for resolution.
-    { id = "RUSTSEC-2023-0071", reason = "No fix available; transitive via sqlx-mysql; not user-facing" },
-
-    # RUSTSEC-2026-0097: rand 0.8.5 unsound with custom logger
-    # Transitive dependency via sqlx-postgres/sqlx-mysql. We use rand 0.10 directly.
-    # The unsoundness only triggers when a custom global logger uses rand::rng() during
-    # initialization — not applicable in this codebase.
-    { id = "RUSTSEC-2026-0097", reason = "Transitive via sqlx 0.8; unsoundness not triggered in our code" },
-]
+ignore = []
 
 # =============================================================================
 # [licenses] - License compliance checks
 # =============================================================================
-# CipherRun is licensed under GPL-3.0, which is a copyleft license.
+# CipherRun is licensed under GPL-3.0-or-later, which is a copyleft license.
 # We allow GPL-3.0-compatible licenses including:
 # - Permissive licenses (MIT, Apache-2.0, BSD, ISC, Zlib, etc.)
 # - Public domain dedications (CC0-1.0, Unlicense, 0BSD)
@@ -101,8 +89,8 @@ confidence-threshold = 0.8
 # Explicitly allowed licenses (GPL-3.0 compatible)
 # See: https://spdx.org/licenses/
 allow = [
-    # The project's own license (deprecated SPDX identifier still used in ecosystem)
-    "GPL-3.0",
+    # The project's own license
+    "GPL-3.0-or-later",
 
     # Permissive licenses - fully compatible with GPL-3.0
     "MIT",
@@ -128,13 +116,6 @@ allow = [
     # Unicode license - permissive, used by unicode-ident and ICU data
     "Unicode-3.0",
 
-    # OpenSSL license - used by aws-lc-sys/aws-lc-rs (rust TLS backend)
-    # This is a permissive license compatible with GPL-3.0
-    "OpenSSL",
-
-    # LGPL - can be linked with GPL-3.0 (may be used by transitive deps)
-    "LGPL-2.1-or-later",
-
     # CDLA - Community Data License Agreement (permissive variant)
     "CDLA-Permissive-2.0",
 ]
@@ -157,9 +138,9 @@ registries = []
 # Controls which crates are allowed/denied and how duplicate versions are handled.
 [bans]
 # Multiple versions of the same crate
-# Set to "warn" because some duplicates are unavoidable in the Rust ecosystem
-# (e.g., transitive dependencies pulling different major versions)
-multiple-versions = "warn"
+# Deny duplicates by default, then carve out the small set of transitive
+# version splits that are currently unavoidable on the supported CI matrix.
+multiple-versions = "deny"
 
 # Wildcard version requirements (e.g., version = "*")
 # Allow because this check is informational
@@ -192,24 +173,31 @@ skip = [
 
     # getrandom: v0.2 vs v0.3 split in the ecosystem
     { crate = "getrandom@0.2", reason = "Older version required by some transitive dependencies" },
-
-    # thiserror: v1 vs v2 transition in progress across ecosystem
-    { crate = "thiserror@1", reason = "Ecosystem transition from v1 to v2 in progress" },
-
-    # socket2: Different versions for different async runtimes
-    { crate = "socket2@0.5", reason = "Different versions used by hyper/tokio ecosystem" },
-
-    # unicode-width: v0.1 vs v0.2 ecosystem split
-    { crate = "unicode-width@0.1", reason = "Older version required by some text formatting crates" },
-
-    # webpki-roots: v0.26 vs v1.0 major version bump
-    { crate = "webpki-roots@0.26", reason = "Project uses 0.26, tokio-rustls uses 1.0" },
-
-    # dashmap: v5 vs v6 - governor requires v5
-    { crate = "dashmap@5", reason = "governor crate requires dashmap 5.x" },
+    { crate = "getrandom@0.3", reason = "tungstenite/criterion still depend on rand 0.9 while hickory and tempfile use getrandom 0.4" },
 
     # nom: v7 vs v8 ecosystem transition
     { crate = "nom@7", reason = "Project uses v7, transitive deps use v8" },
+
+    # macOS TLS/DNS stacks currently land on two core-foundation lines
+    { crate = "core-foundation@0.9", reason = "system-configuration via hickory/hyper-util is still on 0.9 while native-tls/rustls-platform-verifier require 0.10" },
+
+    # RustCrypto 0.10 digests are still required by axum ws and sqlx transitive deps
+    { crate = "cpufeatures@0.2", reason = "sha1/sha2 0.10 remain in the graph through axum websocket and sqlx dependencies" },
+
+    # governor/sqlx/indexmap each pin different hashbrown/foldhash lines
+    { crate = "foldhash@0.1", reason = "sqlx transitively pins hashbrown 0.15 while governor/indexmap use newer foldhash" },
+    { crate = "hashbrown@0.16", reason = "governor currently depends on hashbrown 0.16 while the broader ecosystem is on 0.17" },
+
+    # Randomness stack split across sqlx, axum ws and hickory
+    { crate = "rand@0.8", reason = "sqlx-postgres still depends on rand 0.8" },
+    { crate = "rand@0.9", reason = "axum websocket/tungstenite currently depend on rand 0.9" },
+    { crate = "rand_chacha@0.3", reason = "sqlx-postgres still depends on rand_chacha 0.3" },
+    { crate = "rand_chacha@0.9", reason = "axum websocket/tungstenite currently depend on rand_chacha 0.9" },
+    { crate = "rand_core@0.6", reason = "sqlx-postgres still depends on rand_core 0.6" },
+    { crate = "rand_core@0.9", reason = "axum websocket/tungstenite currently depend on rand_core 0.9" },
+
+    # Windows support matrix still spans old and new windows-sys lines
+    { crate = "windows-sys@0.48", reason = "sqlx-postgres depends on etcetera/windows-sys 0.48 while the rest of the Windows stack is already on 0.61" },
 ]
 
 # Skip entire dependency trees for these crates

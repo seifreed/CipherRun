@@ -187,7 +187,11 @@ impl OpossumTester {
             Err(_) => {
                 if self
                     .control_handshake_completes_without_hang(
-                        self.target.socket_addrs().first().copied().ok_or(crate::TlsError::NoSocketAddresses)?,
+                        self.target
+                            .socket_addrs()
+                            .first()
+                            .copied()
+                            .ok_or(crate::TlsError::NoSocketAddresses)?,
                         &hostname,
                     )
                     .await?

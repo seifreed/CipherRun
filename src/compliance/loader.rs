@@ -8,11 +8,10 @@ pub struct FrameworkLoader;
 
 impl FrameworkLoader {
     pub fn load_from_string(yaml_content: &str) -> crate::Result<ComplianceFramework> {
-        let framework: ComplianceFramework = serde_yaml::from_str(yaml_content).map_err(|e| {
-            TlsError::ParseError {
+        let framework: ComplianceFramework =
+            serde_yaml::from_str(yaml_content).map_err(|e| TlsError::ParseError {
                 message: format!("Failed to deserialize compliance framework YAML: {}", e),
-            }
-        })?;
+            })?;
         Self::validate_regex_patterns(&framework)?;
         Ok(framework)
     }
@@ -49,7 +48,9 @@ impl FrameworkLoader {
         Ok(())
     }
 
-    pub fn load_from_file<P: AsRef<std::path::Path>>(path: P) -> crate::Result<ComplianceFramework> {
+    pub fn load_from_file<P: AsRef<std::path::Path>>(
+        path: P,
+    ) -> crate::Result<ComplianceFramework> {
         crate::compliance::source::BuiltinFrameworkSource::load_from_file(path)
     }
 

@@ -23,14 +23,17 @@ impl ProtocolTester {
     pub async fn test_protocol(&self, protocol: Protocol) -> Result<ProtocolTestResult> {
         let start = std::time::Instant::now();
 
-        let supported =
-            if self.test_all_ips {
-                self.test_protocol_all_ips(protocol).await?
-            } else {
-                let addr =
-                    self.target.socket_addrs().first().copied().ok_or(crate::TlsError::NoSocketAddresses)?;
-                self.test_protocol_on_ip(protocol, addr).await?
-            };
+        let supported = if self.test_all_ips {
+            self.test_protocol_all_ips(protocol).await?
+        } else {
+            let addr = self
+                .target
+                .socket_addrs()
+                .first()
+                .copied()
+                .ok_or(crate::TlsError::NoSocketAddresses)?;
+            self.test_protocol_on_ip(protocol, addr).await?
+        };
 
         let handshake_time_ms = if supported {
             Some(start.elapsed().as_millis() as u64)

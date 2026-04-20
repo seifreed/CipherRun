@@ -115,7 +115,7 @@ Connect to the WebSocket endpoint to receive JSON progress messages:
             email = "security@cipherrun.io"
         ),
         license(
-            name = "GPL-3.0",
+            name = "GPL-3.0-or-later",
             url = "https://www.gnu.org/licenses/gpl-3.0.en.html"
         )
     ),

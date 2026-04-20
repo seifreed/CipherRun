@@ -100,12 +100,13 @@ impl ProtocolAdvancedTester {
             .copied()
             .ok_or(crate::TlsError::NoSocketAddresses)?;
         let connect_timeout = Duration::from_secs(10);
+        let handshake_timeout = Duration::from_secs(2);
 
         let stream =
             crate::utils::network::connect_with_timeout(addr, connect_timeout, None).await?;
 
-        let std_stream = stream.into_std()?;
-        std_stream.set_nonblocking(false)?;
+        let std_stream =
+            crate::utils::network::into_blocking_std_stream(stream, handshake_timeout)?;
 
         let mut builder = SslConnector::builder(SslMethod::tls())?;
         builder.set_cipher_list(cipher)?;
@@ -137,12 +138,13 @@ impl ProtocolAdvancedTester {
             .copied()
             .ok_or(crate::TlsError::NoSocketAddresses)?;
         let connect_timeout = Duration::from_secs(10);
+        let handshake_timeout = Duration::from_secs(2);
 
         let stream =
             crate::utils::network::connect_with_timeout(addr, connect_timeout, None).await?;
 
-        let std_stream = stream.into_std()?;
-        std_stream.set_nonblocking(false)?;
+        let std_stream =
+            crate::utils::network::into_blocking_std_stream(stream, handshake_timeout)?;
 
         let mut builder = SslConnector::builder(SslMethod::tls())?;
         builder.set_min_proto_version(Some(protocol))?;

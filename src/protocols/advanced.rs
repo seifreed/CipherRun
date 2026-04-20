@@ -231,7 +231,11 @@ mod tests {
             while remaining > 0 {
                 if let Ok((stream, _)) = listener.accept().await {
                     let acceptor = acceptor.clone();
-                    let _ = acceptor.accept(stream).await;
+                    let _ = tokio::time::timeout(
+                        std::time::Duration::from_millis(250),
+                        acceptor.accept(stream),
+                    )
+                    .await;
                 }
                 remaining -= 1;
             }

@@ -106,6 +106,26 @@ cipherrun -t imap mail.example.com:143
 
 ---
 
+## QA
+
+```bash
+cargo fmt --all --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test
+cargo audit
+cargo deny check
+cargo +nightly udeps
+cargo tarpaulin --engine llvm --all-features --all-targets --no-fail-fast --out Xml
+cargo bench
+cargo fuzz list
+cargo fuzz build parsed_input
+cargo outdated
+```
+
+Criterion benchmarks live in `benches/`, and `cargo-fuzz` targets plus seed corpora live in `fuzz/`.
+
+---
+
 ## Output Formats
 
 ```
@@ -151,7 +171,7 @@ If you find CipherRun useful, consider supporting its development:
 
 ## License
 
-This project is licensed under **GPL-3.0** - see the [LICENSE](LICENSE) file for details.
+This project is licensed under **GPL-3.0-or-later** - see the [LICENSE](LICENSE) file for details.
 
 **Attribution Required:**
 - Author: **Marc Rivero** | [@seifreed](https://github.com/seifreed)

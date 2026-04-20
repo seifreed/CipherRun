@@ -6,11 +6,26 @@ fn maps_full_scan_options_into_internal_request() {
     let request = ScanRequest {
         target: Some("example.com:443".to_string()),
         scan: ScanRequestScan {
-            proto: ScanRequestProto { enabled: true, ..Default::default() },
-            ciphers: ScanRequestCiphers { each_cipher: true, ..Default::default() },
-            vulns: ScanRequestVulns { vulnerabilities: true, ..Default::default() },
-            prefs: ScanRequestPrefs { headers: true, ..Default::default() },
-            scope: ScanRequestScope { all: true, full: true },
+            proto: ScanRequestProto {
+                enabled: true,
+                ..Default::default()
+            },
+            ciphers: ScanRequestCiphers {
+                each_cipher: true,
+                ..Default::default()
+            },
+            vulns: ScanRequestVulns {
+                vulnerabilities: true,
+                ..Default::default()
+            },
+            prefs: ScanRequestPrefs {
+                headers: true,
+                ..Default::default()
+            },
+            scope: ScanRequestScope {
+                all: true,
+                full: true,
+            },
             ..Default::default()
         },
         fingerprint: ScanRequestFingerprint {
@@ -33,7 +48,11 @@ fn maps_full_scan_options_into_internal_request() {
 fn builds_protocol_filter_from_flags() {
     let request = ScanRequest {
         scan: ScanRequestScan {
-            proto: ScanRequestProto { ssl2: true, tls13: true, ..Default::default() },
+            proto: ScanRequestProto {
+                ssl2: true,
+                tls13: true,
+                ..Default::default()
+            },
             ..Default::default()
         },
         ..Default::default()
@@ -80,7 +99,10 @@ fn allows_probe_status_only_scan_requests() {
     let request = ScanRequest {
         target: Some("example.com:443".to_string()),
         scan: ScanRequestScan {
-            prefs: ScanRequestPrefs { probe_status: true, ..Default::default() },
+            prefs: ScanRequestPrefs {
+                probe_status: true,
+                ..Default::default()
+            },
             ..Default::default()
         },
         ..Default::default()
@@ -110,7 +132,10 @@ fn rejects_ssl_native_without_certificate_phase() {
             ..Default::default()
         },
         scan: ScanRequestScan {
-            proto: ScanRequestProto { enabled: true, ..Default::default() },
+            proto: ScanRequestProto {
+                enabled: true,
+                ..Default::default()
+            },
             ..Default::default()
         },
         ..Default::default()
@@ -127,7 +152,10 @@ fn rejects_additional_ca_without_certificate_phase() {
             ..Default::default()
         },
         scan: ScanRequestScan {
-            proto: ScanRequestProto { enabled: true, ..Default::default() },
+            proto: ScanRequestProto {
+                enabled: true,
+                ..Default::default()
+            },
             ..Default::default()
         },
         ..Default::default()
@@ -141,7 +169,10 @@ fn baseline_scan_requires_all_without_specific_focus() {
     let request = ScanRequest {
         target: Some("example.com:443".to_string()),
         scan: ScanRequestScan {
-            scope: ScanRequestScope { all: true, ..Default::default() },
+            scope: ScanRequestScope {
+                all: true,
+                ..Default::default()
+            },
             ..Default::default()
         },
         ..Default::default()
@@ -160,8 +191,14 @@ fn specific_vulnerability_focus_disables_baseline_scan() {
     let request = ScanRequest {
         target: Some("example.com:443".to_string()),
         scan: ScanRequestScan {
-            scope: ScanRequestScope { all: true, ..Default::default() },
-            vulns: ScanRequestVulns { heartbleed: true, ..Default::default() },
+            scope: ScanRequestScope {
+                all: true,
+                ..Default::default()
+            },
+            vulns: ScanRequestVulns {
+                heartbleed: true,
+                ..Default::default()
+            },
             ..Default::default()
         },
         ..Default::default()
@@ -181,7 +218,10 @@ fn explicit_positive_fingerprint_focus_disables_baseline_scan() {
     let request = ScanRequest {
         target: Some("example.com:443".to_string()),
         scan: ScanRequestScan {
-            scope: ScanRequestScope { all: true, ..Default::default() },
+            scope: ScanRequestScope {
+                all: true,
+                ..Default::default()
+            },
             ..Default::default()
         },
         fingerprint: ScanRequestFingerprint {
@@ -212,7 +252,10 @@ fn explicit_negative_fingerprint_flag_does_not_disable_baseline_scan() {
     let request = ScanRequest {
         target: Some("example.com:443".to_string()),
         scan: ScanRequestScan {
-            scope: ScanRequestScope { all: true, ..Default::default() },
+            scope: ScanRequestScope {
+                all: true,
+                ..Default::default()
+            },
             ..Default::default()
         },
         fingerprint: ScanRequestFingerprint {
@@ -249,7 +292,10 @@ fn all_false_disables_baseline_scan_even_with_target() {
     let request = ScanRequest {
         target: Some("example.com:443".to_string()),
         scan: ScanRequestScan {
-            scope: ScanRequestScope { all: false, ..Default::default() },
+            scope: ScanRequestScope {
+                all: false,
+                ..Default::default()
+            },
             ..Default::default()
         },
         ..Default::default()
@@ -267,7 +313,10 @@ fn all_false_disables_baseline_scan_even_with_target() {
 fn cipher_focus_requests_full_enumeration() {
     let request = ScanRequest {
         scan: ScanRequestScan {
-            ciphers: ScanRequestCiphers { server_preference: true, ..Default::default() },
+            ciphers: ScanRequestCiphers {
+                server_preference: true,
+                ..Default::default()
+            },
             ..Default::default()
         },
         ..Default::default()
@@ -281,8 +330,14 @@ fn ocsp_runs_certificate_phase_without_baseline() {
     let request = ScanRequest {
         target: Some("example.com:443".to_string()),
         scan: ScanRequestScan {
-            scope: ScanRequestScope { all: true, ..Default::default() },
-            certs: ScanRequestCerts { ocsp: true, ..Default::default() },
+            scope: ScanRequestScope {
+                all: true,
+                ..Default::default()
+            },
+            certs: ScanRequestCerts {
+                ocsp: true,
+                ..Default::default()
+            },
             ..Default::default()
         },
         ..Default::default()
@@ -298,7 +353,10 @@ fn explicit_certificate_analysis_runs_without_baseline() {
     let request = ScanRequest {
         target: Some("example.com:443".to_string()),
         scan: ScanRequestScan {
-            certs: ScanRequestCerts { analyze_certificates: true, ..Default::default() },
+            certs: ScanRequestCerts {
+                analyze_certificates: true,
+                ..Default::default()
+            },
             ..Default::default()
         },
         ..Default::default()
@@ -315,8 +373,14 @@ fn probe_status_focus_disables_baseline_scan() {
     let request = ScanRequest {
         target: Some("example.com:443".to_string()),
         scan: ScanRequestScan {
-            scope: ScanRequestScope { all: true, ..Default::default() },
-            prefs: ScanRequestPrefs { probe_status: true, ..Default::default() },
+            scope: ScanRequestScope {
+                all: true,
+                ..Default::default()
+            },
+            prefs: ScanRequestPrefs {
+                probe_status: true,
+                ..Default::default()
+            },
             ..Default::default()
         },
         ..Default::default()
@@ -336,8 +400,14 @@ fn pre_handshake_focus_disables_baseline_scan() {
     let request = ScanRequest {
         target: Some("example.com:443".to_string()),
         scan: ScanRequestScan {
-            scope: ScanRequestScope { all: true, ..Default::default() },
-            prefs: ScanRequestPrefs { pre_handshake: true, ..Default::default() },
+            scope: ScanRequestScope {
+                all: true,
+                ..Default::default()
+            },
+            prefs: ScanRequestPrefs {
+                pre_handshake: true,
+                ..Default::default()
+            },
             ..Default::default()
         },
         ..Default::default()
@@ -360,7 +430,10 @@ fn explicit_client_simulation_runs_without_baseline() {
     let request = ScanRequest {
         target: Some("example.com:443".to_string()),
         scan: ScanRequestScan {
-            scope: ScanRequestScope { all: false, ..Default::default() },
+            scope: ScanRequestScope {
+                all: false,
+                ..Default::default()
+            },
             ..Default::default()
         },
         fingerprint: ScanRequestFingerprint {
@@ -383,8 +456,14 @@ fn explicit_header_focus_runs_without_other_advanced_baseline_phases() {
     let request = ScanRequest {
         target: Some("example.com:443".to_string()),
         scan: ScanRequestScan {
-            scope: ScanRequestScope { all: true, ..Default::default() },
-            prefs: ScanRequestPrefs { headers: true, ..Default::default() },
+            scope: ScanRequestScope {
+                all: true,
+                ..Default::default()
+            },
+            prefs: ScanRequestPrefs {
+                headers: true,
+                ..Default::default()
+            },
             ..Default::default()
         },
         ..Default::default()
@@ -402,8 +481,14 @@ fn signature_focus_does_not_drag_advanced_baseline_phases() {
     let request = ScanRequest {
         target: Some("example.com:443".to_string()),
         scan: ScanRequestScan {
-            scope: ScanRequestScope { all: true, ..Default::default() },
-            ciphers: ScanRequestCiphers { show_sigs: true, ..Default::default() },
+            scope: ScanRequestScope {
+                all: true,
+                ..Default::default()
+            },
+            ciphers: ScanRequestCiphers {
+                show_sigs: true,
+                ..Default::default()
+            },
             ..Default::default()
         },
         ..Default::default()
@@ -421,7 +506,10 @@ fn all_false_disables_implicit_default_fingerprints() {
     let request = ScanRequest {
         target: Some("example.com:443".to_string()),
         scan: ScanRequestScan {
-            scope: ScanRequestScope { all: false, ..Default::default() },
+            scope: ScanRequestScope {
+                all: false,
+                ..Default::default()
+            },
             ..Default::default()
         },
         ..Default::default()
@@ -438,7 +526,10 @@ fn explicit_fingerprint_request_survives_all_false() {
     let request = ScanRequest {
         target: Some("example.com:443".to_string()),
         scan: ScanRequestScan {
-            scope: ScanRequestScope { all: false, ..Default::default() },
+            scope: ScanRequestScope {
+                all: false,
+                ..Default::default()
+            },
             ..Default::default()
         },
         fingerprint: ScanRequestFingerprint {

@@ -6,20 +6,28 @@ use crate::error::TlsError;
 use crate::utils::sni_generator::SniGenerator;
 use hickory_resolver::TokioResolver;
 use hickory_resolver::config::*;
-use hickory_resolver::name_server::TokioConnectionProvider;
+use hickory_resolver::net::runtime::TokioRuntimeProvider;
+use hickory_resolver::proto::rr::RData;
 use std::net::IpAddr;
 
 /// Reverse PTR lookup utilities
 pub struct ReversePtrLookup;
 
 impl ReversePtrLookup {
+    fn build_resolver() -> Result<TokioResolver> {
+        TokioResolver::builder_with_config(
+            ResolverConfig::default(),
+            TokioRuntimeProvider::default(),
+        )
+        .build()
+        .map_err(|error| TlsError::ConfigError {
+            message: format!("Failed to initialize DNS resolver: {error}"),
+        })
+    }
+
     /// Perform reverse PTR lookup for IP address
     pub async fn lookup_ptr(ip: &IpAddr) -> Result<String> {
-        let resolver = TokioResolver::builder_with_config(
-            ResolverConfig::default(),
-            TokioConnectionProvider::default(),
-        )
-        .build();
+        let resolver = Self::build_resolver()?;
 
         let lookup =
             resolver
@@ -32,20 +40,22 @@ impl ReversePtrLookup {
 
         // Get first PTR record
         let ptr_name = lookup
+            .answers()
             .iter()
-            .next()
+            .find_map(|record| match &record.data {
+                RData::PTR(ptr) => Some(ptr.to_string()),
+                _ => None,
+            })
             .ok_or_else(|| TlsError::DnsResolutionFailed {
                 hostname: ip.to_string(),
                 source: std::io::Error::new(std::io::ErrorKind::NotFound, "No PTR records found"),
             })?;
 
-        let hostname = ptr_name.to_string();
-
         // Remove trailing dot if present
-        let hostname = if hostname.ends_with('.') {
-            hostname[..hostname.len() - 1].to_string()
+        let hostname = if ptr_name.ends_with('.') {
+            ptr_name[..ptr_name.len() - 1].to_string()
         } else {
-            hostname
+            ptr_name
         };
 
         // Validate hostname format
@@ -155,11 +165,7 @@ impl ReversePtrLookup {
         let hostname = Self::lookup_ptr(ip).await?;
 
         // Perform forward lookup
-        let resolver = TokioResolver::builder_with_config(
-            ResolverConfig::default(),
-            TokioConnectionProvider::default(),
-        )
-        .build();
+        let resolver = Self::build_resolver()?;
 
         match ip {
             IpAddr::V4(_) => {
@@ -170,8 +176,15 @@ impl ReversePtrLookup {
                     }
                 })?;
 
-                for resolved_ip in lookup.iter() {
-                    if IpAddr::V4(resolved_ip.0) == *ip {
+                for resolved_ip in lookup
+                    .answers()
+                    .iter()
+                    .filter_map(|record| match &record.data {
+                        RData::A(ipv4) => Some(IpAddr::V4(ipv4.0)),
+                        _ => None,
+                    })
+                {
+                    if resolved_ip == *ip {
                         return Ok(true);
                     }
                 }
@@ -184,8 +197,15 @@ impl ReversePtrLookup {
                     }
                 })?;
 
-                for resolved_ip in lookup.iter() {
-                    if IpAddr::V6(resolved_ip.0) == *ip {
+                for resolved_ip in lookup
+                    .answers()
+                    .iter()
+                    .filter_map(|record| match &record.data {
+                        RData::AAAA(ipv6) => Some(IpAddr::V6(ipv6.0)),
+                        _ => None,
+                    })
+                {
+                    if resolved_ip == *ip {
                         return Ok(true);
                     }
                 }

@@ -1,6 +1,6 @@
 // CipherRun - A fast, modular, and scalable TLS/SSL security scanner
 // Copyright (C) 2024 CipherRun Team
-// Licensed under GPL-2.0
+// Licensed under GPL-3.0-or-later
 
 //! CipherRun is a comprehensive TLS/SSL security scanner written in Rust.
 //! It provides extensive testing capabilities for TLS/SSL protocols, ciphers,

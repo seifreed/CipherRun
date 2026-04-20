@@ -1,0 +1,28 @@
+[package]
+name = "cipherrun-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4.12"
+
+[dependencies.cipherrun]
+path = ".."
+
+[[bin]]
+name = "parsed_input"
+path = "fuzz_targets/parsed_input.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "framework_loader"
+path = "fuzz_targets/framework_loader.rs"
+test = false
+doc = false
+bench = false

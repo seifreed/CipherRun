@@ -1,6 +1,6 @@
 // CipherRun - A fast, modular, and scalable TLS/SSL security scanner
 // Copyright (C) 2024 CipherRun Team
-// Licensed under GPL-2.0
+// Licensed under GPL-3.0-or-later
 
 //! TLS/SSL Protocol Constants
 //!
@@ -624,7 +624,7 @@ pub fn handshake_type_name(handshake_type: u8) -> &'static str {
 /// Convert protocol version to human-readable string
 pub fn protocol_version_name(version: u16) -> &'static str {
     match version {
-        VERSION_SSL_2_0 => "SSL 2.0",
+        VERSION_SSL_2_0 | 0x0200 => "SSL 2.0",
         VERSION_SSL_3_0 => "SSL 3.0",
         VERSION_TLS_1_0 => "TLS 1.0",
         VERSION_TLS_1_1 => "TLS 1.1",

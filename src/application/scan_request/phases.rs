@@ -21,7 +21,9 @@ impl ScanRequest {
     }
 
     pub fn should_run_certificate_phase(&self) -> bool {
-        self.baseline_scan_requested() || self.scan.certs.ocsp || self.scan.certs.analyze_certificates
+        self.baseline_scan_requested()
+            || self.scan.certs.ocsp
+            || self.scan.certs.analyze_certificates
     }
 
     pub fn should_run_http_headers_phase(&self) -> bool {
@@ -41,7 +43,9 @@ impl ScanRequest {
     }
 
     pub fn should_run_vulnerability_phase(&self) -> bool {
-        self.scan.scope.full || self.scan.vulns.vulnerabilities || self.has_specific_vulnerability_focus()
+        self.scan.scope.full
+            || self.scan.vulns.vulnerabilities
+            || self.has_specific_vulnerability_focus()
     }
 
     pub fn should_calculate_rating(&self) -> bool {

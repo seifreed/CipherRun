@@ -4,7 +4,7 @@ version = "0.3.0"
 edition = "2024"
 authors = ["Marc Rivero <@seifreed>"]
 description = "A fast, modular, and scalable TLS/SSL security scanner written in Rust"
-license = "GPL-3.0"
+license = "GPL-3.0-or-later"
 repository = "https://github.com/seifreed/cipherrun"
 homepage = "https://github.com/seifreed/cipherrun"
 documentation = "https://docs.rs/cipherrun"
@@ -52,11 +52,11 @@ rustls = { version = "0.23.38", features = ["ring"] }
 rustls-pki-types = "1.10"
 tokio-rustls = "0.26"
 webpki-roots = "1.0.7"
-openssl = { version = "0.10.77", features = ["vendored"] }
+openssl = { version = "0.10.78", features = ["vendored"] }
 native-tls = "0.2"
 
 # Networking
-hickory-resolver = "0.25"
+hickory-resolver = "0.26"
 ipnetwork = "0.21"
 
 # HTTP client
@@ -67,8 +67,8 @@ hyper = { version = "1.5", features = ["full"] }
 ring = "0.17"
 x509-parser = "0.18"
 pem = "3.0"
-sha2 = "0.11"
-sha1 = "0.11"
+sha2 = "0.10"
+sha1 = "0.10"
 md5 = "0.8"
 
 # Serialization
@@ -86,7 +86,7 @@ utoipa-swagger-ui = { version = "9.0", features = ["axum"] }
 uuid = { version = "1.23", features = ["v4", "serde"] }
 
 # Rate limiting
-governor = "0.10"
+governor = { version = "0.10", default-features = false, features = ["std", "dashmap", "quanta"] }
 dashmap = "6.1"
 
 # CLI
@@ -142,6 +142,7 @@ futures = "0.3"
 bloomfilter = "3.0"
 
 [dev-dependencies]
+criterion = "0.8.2"
 rcgen = "0.14"
 tokio-tungstenite = "0.29"
 
@@ -166,3 +167,11 @@ opt-level = 0
 
 [profile.bench]
 inherits = "release"
+
+[[bench]]
+name = "input_parsing"
+harness = false
+
+[[bench]]
+name = "compliance"
+harness = false

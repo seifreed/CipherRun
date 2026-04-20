@@ -11,7 +11,8 @@ use crate::scanner::ScanResults;
 use crate::utils::network::{Target, canonical_target};
 use hickory_resolver::TokioResolver;
 use hickory_resolver::config::*;
-use hickory_resolver::name_server::TokioConnectionProvider;
+use hickory_resolver::net::runtime::TokioRuntimeProvider;
+use hickory_resolver::proto::rr::RData;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::net::IpAddr;
@@ -24,6 +25,17 @@ pub struct AnycastScanner {
 }
 
 impl AnycastScanner {
+    fn build_resolver() -> Result<TokioResolver> {
+        TokioResolver::builder_with_config(
+            ResolverConfig::default(),
+            TokioRuntimeProvider::default(),
+        )
+        .build()
+        .map_err(|error| TlsError::ConfigError {
+            message: format!("Failed to initialize DNS resolver: {error}"),
+        })
+    }
+
     /// Create new anycast scanner
     pub fn new(hostname: String, port: u16, args: Args) -> Self {
         Self {
@@ -98,11 +110,7 @@ impl AnycastScanner {
 
     /// Resolve all A and AAAA records for hostname
     async fn resolve_all_ips(&self) -> Result<Vec<IpAddr>> {
-        let resolver = TokioResolver::builder_with_config(
-            ResolverConfig::default(),
-            TokioConnectionProvider::default(),
-        )
-        .build();
+        let resolver = Self::build_resolver()?;
 
         let mut ips = Vec::new();
 
@@ -110,8 +118,15 @@ impl AnycastScanner {
         if !self.args.network.ipv6_only {
             match resolver.ipv4_lookup(&self.hostname).await {
                 Ok(lookup) => {
-                    for ipv4 in lookup.iter() {
-                        ips.push(IpAddr::V4(ipv4.0));
+                    for ipv4 in lookup
+                        .answers()
+                        .iter()
+                        .filter_map(|record| match &record.data {
+                            RData::A(ipv4) => Some(IpAddr::V4(ipv4.0)),
+                            _ => None,
+                        })
+                    {
+                        ips.push(ipv4);
                     }
                 }
                 Err(_) => {
@@ -124,8 +139,15 @@ impl AnycastScanner {
         if !self.args.network.ipv4_only {
             match resolver.ipv6_lookup(&self.hostname).await {
                 Ok(lookup) => {
-                    for ipv6 in lookup.iter() {
-                        ips.push(IpAddr::V6(ipv6.0));
+                    for ipv6 in lookup
+                        .answers()
+                        .iter()
+                        .filter_map(|record| match &record.data {
+                            RData::AAAA(ipv6) => Some(IpAddr::V6(ipv6.0)),
+                            _ => None,
+                        })
+                    {
+                        ips.push(ipv6);
                     }
                 }
                 Err(_) => {

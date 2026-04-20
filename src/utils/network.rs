@@ -3,7 +3,7 @@
 use anyhow::{Context, Result};
 use hickory_resolver::TokioResolver;
 use hickory_resolver::config::*;
-use hickory_resolver::name_server::TokioConnectionProvider;
+use hickory_resolver::net::runtime::TokioRuntimeProvider;
 use openssl::ssl::{SslConnector, SslMethod, SslStream, SslVersion};
 use std::net::{IpAddr, Ipv6Addr, SocketAddr, TcpStream as StdTcpStream};
 use std::time::Duration;
@@ -263,9 +263,10 @@ async fn resolve_hostname_with_ssrf_check(
     tracing::debug!("DNS cache miss for {}, performing lookup", hostname);
     let resolver = TokioResolver::builder_with_config(
         ResolverConfig::default(),
-        TokioConnectionProvider::default(),
+        TokioRuntimeProvider::default(),
     )
-    .build();
+    .build()
+    .context("failed to initialize DNS resolver")?;
 
     let response = resolver
         .lookup_ip(hostname)
@@ -371,6 +372,30 @@ async fn connect_once(
         .await
         .context("Connection timeout")?
         .map_err(Into::into)
+}
+
+/// Convert a Tokio TCP stream into a blocking std stream with socket timeouts.
+///
+/// OpenSSL handshakes in this codebase run on blocking sockets. Without explicit
+/// read/write timeouts, some negative-handshake paths can wait indefinitely for
+/// peer data and stall tests or scans.
+pub fn into_blocking_std_stream(
+    stream: TcpStream,
+    socket_timeout: Duration,
+) -> Result<StdTcpStream> {
+    let std_stream = stream
+        .into_std()
+        .context("failed to convert Tokio TCP stream to std::net::TcpStream")?;
+    std_stream
+        .set_nonblocking(false)
+        .context("failed to switch TCP stream to blocking mode")?;
+    std_stream
+        .set_read_timeout(Some(socket_timeout))
+        .context("failed to configure TCP read timeout")?;
+    std_stream
+        .set_write_timeout(Some(socket_timeout))
+        .context("failed to configure TCP write timeout")?;
+    Ok(std_stream)
 }
 
 /// Parse port from string
@@ -517,8 +542,7 @@ pub async fn try_vuln_ssl_connection(
         Ok(Err(_)) | Err(_) => return Ok(VulnSslResult::Failed),
     };
 
-    let std_stream = stream.into_std()?;
-    std_stream.set_nonblocking(false)?;
+    let std_stream = into_blocking_std_stream(stream, Duration::from_secs(config.timeout_secs))?;
 
     // Wrap blocking SSL operations in spawn_blocking to avoid blocking async runtime
     let result = tokio::task::spawn_blocking(move || -> Result<VulnSslResult> {
@@ -586,8 +610,7 @@ pub async fn test_cipher_support(
         Ok(Err(_)) | Err(_) => return Ok(false),
     };
 
-    let std_stream = stream.into_std()?;
-    std_stream.set_nonblocking(false)?;
+    let std_stream = into_blocking_std_stream(stream, Duration::from_secs(timeout_secs))?;
 
     // Wrap blocking SSL operations in spawn_blocking to avoid blocking async runtime
     let result = tokio::task::spawn_blocking(move || -> Result<bool> {

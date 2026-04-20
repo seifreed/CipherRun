@@ -1,0 +1,32 @@
+id: fuzz-framework
+name: Fuzz Framework
+version: "1.0"
+description: Seed framework for cargo-fuzz
+organization: CipherRun
+effective_date:
+requirements:
+  - id: FZ-1
+    name: Require TLS 1.2+
+    description: Reject deprecated protocol versions
+    category: Protocol Security
+    severity: high
+    remediation: Disable legacy TLS versions
+    rules:
+      - rule_type: ProtocolVersion
+        allowed: []
+        denied:
+          - SSLv2
+          - SSLv3
+          - TLS 1.0
+          - TLS 1.1
+        allowed_patterns: []
+        denied_patterns: []
+        preferred_patterns: []
+        min_rsa_bits:
+        min_ecc_bits:
+        required:
+        require_valid_chain:
+        require_unexpired:
+        require_hostname_match:
+        max_days_until_expiration:
+        custom_params: {}

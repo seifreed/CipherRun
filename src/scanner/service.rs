@@ -542,7 +542,10 @@ mod tests {
                 target: Some("93.184.216.34:443".to_string()),
                 port: Some(8443),
                 scan: ScanRequestScan {
-                    prefs: crate::application::scan_request::ScanRequestPrefs { probe_status: true, ..Default::default() },
+                    prefs: crate::application::scan_request::ScanRequestPrefs {
+                        probe_status: true,
+                        ..Default::default()
+                    },
                     ..Default::default()
                 },
                 ..Default::default()
@@ -568,7 +571,10 @@ mod tests {
                 target: Some("example.com:443".to_string()),
                 ip: Some("198.51.100.20".to_string()),
                 scan: ScanRequestScan {
-                    prefs: crate::application::scan_request::ScanRequestPrefs { probe_status: true, ..Default::default() },
+                    prefs: crate::application::scan_request::ScanRequestPrefs {
+                        probe_status: true,
+                        ..Default::default()
+                    },
                     ..Default::default()
                 },
                 ..Default::default()
@@ -598,7 +604,10 @@ mod tests {
                 target: Some("example.com:443".to_string()),
                 ip: Some("198.51.100.20".to_string()),
                 scan: ScanRequestScan {
-                    prefs: crate::application::scan_request::ScanRequestPrefs { probe_status: true, ..Default::default() },
+                    prefs: crate::application::scan_request::ScanRequestPrefs {
+                        probe_status: true,
+                        ..Default::default()
+                    },
                     ..Default::default()
                 },
                 ..Default::default()

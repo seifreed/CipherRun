@@ -122,12 +122,13 @@ impl ServerDefaultsAdvancedTester {
             .copied()
             .ok_or(crate::TlsError::NoSocketAddresses)?;
         let connect_timeout = Duration::from_secs(10);
+        let handshake_timeout = Duration::from_secs(2);
 
         let stream =
             crate::utils::network::connect_with_timeout(addr, connect_timeout, None).await?;
 
-        let std_stream = stream.into_std()?;
-        std_stream.set_nonblocking(false)?;
+        let std_stream =
+            crate::utils::network::into_blocking_std_stream(stream, handshake_timeout)?;
 
         let mut builder = SslConnector::builder(SslMethod::tls())?;
         builder.set_cipher_list(&cipher_list.join(":"))?;
@@ -153,12 +154,13 @@ impl ServerDefaultsAdvancedTester {
             .copied()
             .ok_or(crate::TlsError::NoSocketAddresses)?;
         let connect_timeout = Duration::from_secs(10);
+        let handshake_timeout = Duration::from_secs(2);
 
         let stream =
             crate::utils::network::connect_with_timeout(addr, connect_timeout, None).await?;
 
-        let std_stream = stream.into_std()?;
-        std_stream.set_nonblocking(false)?;
+        let std_stream =
+            crate::utils::network::into_blocking_std_stream(stream, handshake_timeout)?;
 
         let mut builder = SslConnector::builder(SslMethod::tls())?;
         builder.set_cipher_list("DHE-RSA-AES256-SHA:DHE-RSA-AES128-SHA:EDH-RSA-DES-CBC3-SHA")?;
@@ -271,12 +273,13 @@ impl ServerDefaultsAdvancedTester {
             .copied()
             .ok_or(crate::TlsError::NoSocketAddresses)?;
         let connect_timeout = Duration::from_secs(10);
+        let handshake_timeout = Duration::from_secs(2);
 
         let stream =
             crate::utils::network::connect_with_timeout(addr, connect_timeout, None).await?;
 
-        let std_stream = stream.into_std()?;
-        std_stream.set_nonblocking(false)?;
+        let std_stream =
+            crate::utils::network::into_blocking_std_stream(stream, handshake_timeout)?;
 
         let mut builder = SslConnector::builder(SslMethod::tls())?;
         builder.set_cipher_list("ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256")?;
@@ -306,12 +309,13 @@ impl ServerDefaultsAdvancedTester {
             .copied()
             .ok_or(crate::TlsError::NoSocketAddresses)?;
         let connect_timeout = Duration::from_secs(10);
+        let handshake_timeout = Duration::from_secs(2);
 
         let stream =
             crate::utils::network::connect_with_timeout(addr, connect_timeout, None).await?;
 
-        let std_stream = stream.into_std()?;
-        std_stream.set_nonblocking(false)?;
+        let std_stream =
+            crate::utils::network::into_blocking_std_stream(stream, handshake_timeout)?;
 
         let builder = SslConnector::builder(SslMethod::tls())?;
         let connector = builder.build();
@@ -461,7 +465,11 @@ mod tests {
             while remaining > 0 {
                 if let Ok((stream, _)) = listener.accept().await {
                     let acceptor = acceptor.clone();
-                    let _ = acceptor.accept(stream).await;
+                    let _ = tokio::time::timeout(
+                        std::time::Duration::from_millis(250),
+                        acceptor.accept(stream),
+                    )
+                    .await;
                 }
                 remaining -= 1;
             }
