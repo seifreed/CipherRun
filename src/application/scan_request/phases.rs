@@ -107,6 +107,10 @@ impl ScanRequest {
             || self.should_run_jarm_fingerprint()
     }
 
+    pub fn should_run_pqc_readiness_phase(&self) -> bool {
+        self.scan.ciphers.pqc_readiness || self.scan.scope.full
+    }
+
     pub fn has_effective_scan_workload(&self) -> bool {
         self.should_run_protocol_phase()
             || self.should_run_cipher_phase()

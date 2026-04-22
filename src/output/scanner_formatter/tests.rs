@@ -1,4 +1,5 @@
 use super::*;
+use crate::pqc::{PqcLevel, PqcReadinessAssessment};
 use crate::certificates::parser::{CertificateChain, CertificateInfo};
 use crate::certificates::revocation::{RevocationMethod, RevocationResult, RevocationStatus};
 use crate::certificates::trust_stores::{
@@ -803,6 +804,7 @@ fn test_misc_display_helpers_and_fingerprints() {
                 group_type: GroupType::EllipticCurve,
                 bits: 256,
                 supported: true,
+                quantum_vulnerable: true,
             },
             KeyExchangeGroup {
                 name: "ffdhe2048".to_string(),
@@ -810,6 +812,7 @@ fn test_misc_display_helpers_and_fingerprints() {
                 group_type: GroupType::FiniteField,
                 bits: 2048,
                 supported: false,
+                quantum_vulnerable: true,
             },
         ],
         measured: true,
@@ -862,4 +865,52 @@ fn test_misc_display_helpers_and_fingerprints() {
         }),
     };
     formatter.display_jarm_results(&jarm);
+}
+
+#[test]
+fn test_pqc_section_none_level_renders_without_panic() {
+    let args = Args::default();
+    let formatter = ScannerFormatter::new(&args);
+    let assessment = PqcReadinessAssessment {
+        score: 0,
+        level: PqcLevel::None,
+        pq_safe_groups: vec![],
+        quantum_vulnerable_only: true,
+        hndl_risk: true,
+        recommendations: vec!["Deploy X25519MLKEM768.".to_string()],
+    };
+    formatter.display_pqc_readiness_results(&assessment);
+}
+
+#[test]
+fn test_pqc_section_full_level_renders_without_panic() {
+    let args = Args::default();
+    let formatter = ScannerFormatter::new(&args);
+    let assessment = PqcReadinessAssessment {
+        score: 90,
+        level: PqcLevel::Full,
+        pq_safe_groups: vec!["X25519MLKEM768".to_string()],
+        quantum_vulnerable_only: false,
+        hndl_risk: false,
+        recommendations: vec![],
+    };
+    formatter.display_pqc_readiness_results(&assessment);
+}
+
+#[test]
+fn test_pqc_section_with_recommendations_renders_without_panic() {
+    let args = Args::default();
+    let formatter = ScannerFormatter::new(&args);
+    let assessment = PqcReadinessAssessment {
+        score: 30,
+        level: PqcLevel::Partial,
+        pq_safe_groups: vec![],
+        quantum_vulnerable_only: true,
+        hndl_risk: true,
+        recommendations: vec![
+            "Enable TLS 1.3.".to_string(),
+            "Deploy X25519MLKEM768.".to_string(),
+        ],
+    };
+    formatter.display_pqc_readiness_results(&assessment);
 }

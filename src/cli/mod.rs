@@ -21,6 +21,7 @@ mod network_args;
 mod output_args;
 mod scan_args;
 mod starttls_args;
+mod subcommands;
 mod tls_config_args;
 
 // Re-export sub-structs
@@ -37,6 +38,7 @@ pub use network_args::{DEFAULT_MAX_PARALLEL, NetworkArgs};
 pub use output_args::OutputArgs;
 pub use scan_args::ScanArgs;
 pub use starttls_args::StarttlsArgs;
+pub use subcommands::CipherRunSubcommand;
 pub use tls_config_args::TlsConfigArgs;
 
 #[derive(Debug, Clone, Default)]
@@ -73,6 +75,10 @@ pub struct ExplicitFingerprintFlags {
 #[command(name = "cipherrun")]
 #[command(about = "Fast, modular TLS/SSL security scanner", long_about = None)]
 pub struct Args {
+    // ============ Subcommands ============
+    #[command(subcommand)]
+    pub subcommand: Option<CipherRunSubcommand>,
+
     // ============ Target Specification and Input ============
     /// Target URI (host:port or URL)
     #[arg(value_name = "URI")]
@@ -338,6 +344,7 @@ impl Args {
                     no_groups: self.scan.no_groups,
                     show_sigs: self.scan.show_sigs,
                     show_client_cas: self.scan.show_client_cas,
+                    pqc_readiness: self.scan.pqc_readiness,
                 },
                 vulns: crate::application::scan_request::ScanRequestVulns {
                     vulnerabilities: self.scan.vulnerabilities,

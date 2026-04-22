@@ -159,6 +159,10 @@ pub struct ScanArgs {
     #[arg(long = "show-client-cas")]
     pub show_client_cas: bool,
 
+    /// Analyze post-quantum cryptography readiness (also enabled by --full)
+    #[arg(long = "pq-readiness")]
+    pub pqc_readiness: bool,
+
     /// List all ciphers supported by CipherRun and exit
     #[arg(long = "show-ciphers")]
     pub show_ciphers: bool,

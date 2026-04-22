@@ -48,6 +48,8 @@ pub struct EllipticCurve {
     pub post_quantum: bool,
     /// Hybrid (classical + PQ)
     pub hybrid: bool,
+    /// Vulnerable to quantum attack (Shor's algorithm breaks classical ECDH/DH)
+    pub quantum_vulnerable: bool,
 }
 
 /// Database of elliptic curves
@@ -117,6 +119,7 @@ impl CurvesDatabase {
         let bits = Self::extract_bits(&short_name, &full_name);
         let post_quantum = Self::is_post_quantum(&short_name);
         let hybrid = Self::is_hybrid(&short_name);
+        let quantum_vulnerable = !post_quantum && !hybrid;
 
         Ok(EllipticCurve {
             id,
@@ -125,6 +128,7 @@ impl CurvesDatabase {
             bits,
             post_quantum,
             hybrid,
+            quantum_vulnerable,
         })
     }
 
@@ -234,6 +238,18 @@ mod tests {
         assert!(CurvesDatabase::is_post_quantum("MLKEM768"));
         assert!(CurvesDatabase::is_hybrid("X25519MLKEM768"));
         assert!(!CurvesDatabase::is_post_quantum("X25519"));
+    }
+
+    #[test]
+    fn test_quantum_vulnerable_flag() {
+        let data = "0x00,0x1d - X25519  Curve25519\n0x11,0xec - X25519MLKEM768  X25519MLKEM768";
+        let db = CurvesDatabase::parse(data).expect("test assertion should succeed");
+
+        let x25519 = db.get_by_name("x25519").expect("x25519 should exist");
+        assert!(x25519.quantum_vulnerable, "X25519 is quantum-vulnerable");
+
+        let hybrid = db.get_by_name("x25519mlkem768").expect("hybrid should exist");
+        assert!(!hybrid.quantum_vulnerable, "X25519MLKEM768 is not quantum-vulnerable");
     }
 
     #[test]

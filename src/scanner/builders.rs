@@ -30,4 +30,5 @@ pub(crate) fn build_phase_orchestrator(
         .add_phase(Box::new(phases::ClientCasPhase::new()))
         .add_phase(Box::new(phases::IntolerancePhase::new()))
         .add_phase(Box::new(phases::AlpnPhase::new()))
+        .add_phase(Box::new(phases::PqcReadinessPhase::new()))
 }

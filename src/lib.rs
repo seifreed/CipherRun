@@ -25,6 +25,7 @@ pub mod http;
 pub mod input;
 pub mod monitor;
 pub mod output;
+pub mod pqc;
 pub mod policy;
 pub mod protocols;
 pub mod rating;

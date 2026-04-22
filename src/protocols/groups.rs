@@ -18,6 +18,8 @@ pub struct KeyExchangeGroup {
     pub group_type: GroupType,
     pub bits: u16,
     pub supported: bool,
+    /// True for classical groups (ECDH, DHE, finite-field) — broken by Shor's algorithm
+    pub quantum_vulnerable: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,13 +43,14 @@ impl GroupTester {
 
         // Common key exchange groups
         let groups = vec![
-            // Elliptic Curves
+            // Elliptic Curves — quantum-vulnerable (Shor's algorithm)
             KeyExchangeGroup {
                 name: "secp256r1 (P-256)".to_string(),
                 iana_value: 23,
                 group_type: GroupType::EllipticCurve,
                 bits: 256,
                 supported: false,
+                quantum_vulnerable: true,
             },
             KeyExchangeGroup {
                 name: "secp384r1 (P-384)".to_string(),
@@ -55,6 +58,7 @@ impl GroupTester {
                 group_type: GroupType::EllipticCurve,
                 bits: 384,
                 supported: false,
+                quantum_vulnerable: true,
             },
             KeyExchangeGroup {
                 name: "secp521r1 (P-521)".to_string(),
@@ -62,6 +66,7 @@ impl GroupTester {
                 group_type: GroupType::EllipticCurve,
                 bits: 521,
                 supported: false,
+                quantum_vulnerable: true,
             },
             KeyExchangeGroup {
                 name: "x25519".to_string(),
@@ -69,6 +74,7 @@ impl GroupTester {
                 group_type: GroupType::EllipticCurve,
                 bits: 253,
                 supported: false,
+                quantum_vulnerable: true,
             },
             KeyExchangeGroup {
                 name: "x448".to_string(),
@@ -76,14 +82,16 @@ impl GroupTester {
                 group_type: GroupType::EllipticCurve,
                 bits: 448,
                 supported: false,
+                quantum_vulnerable: true,
             },
-            // Finite Field (DHE)
+            // Finite Field (DHE) — quantum-vulnerable (Shor's algorithm)
             KeyExchangeGroup {
                 name: "ffdhe2048".to_string(),
                 iana_value: 256,
                 group_type: GroupType::FiniteField,
                 bits: 2048,
                 supported: false,
+                quantum_vulnerable: true,
             },
             KeyExchangeGroup {
                 name: "ffdhe3072".to_string(),
@@ -91,6 +99,7 @@ impl GroupTester {
                 group_type: GroupType::FiniteField,
                 bits: 3072,
                 supported: false,
+                quantum_vulnerable: true,
             },
             KeyExchangeGroup {
                 name: "ffdhe4096".to_string(),
@@ -98,6 +107,7 @@ impl GroupTester {
                 group_type: GroupType::FiniteField,
                 bits: 4096,
                 supported: false,
+                quantum_vulnerable: true,
             },
             KeyExchangeGroup {
                 name: "ffdhe6144".to_string(),
@@ -105,6 +115,7 @@ impl GroupTester {
                 group_type: GroupType::FiniteField,
                 bits: 6144,
                 supported: false,
+                quantum_vulnerable: true,
             },
             KeyExchangeGroup {
                 name: "ffdhe8192".to_string(),
@@ -112,21 +123,24 @@ impl GroupTester {
                 group_type: GroupType::FiniteField,
                 bits: 8192,
                 supported: false,
+                quantum_vulnerable: true,
             },
-            // Post-Quantum
+            // Post-Quantum hybrid groups — quantum-safe
             KeyExchangeGroup {
                 name: "X25519Kyber768Draft00".to_string(),
                 iana_value: 0x6399,
                 group_type: GroupType::PostQuantum,
                 bits: 768,
                 supported: false,
+                quantum_vulnerable: false,
             },
             KeyExchangeGroup {
                 name: "X25519MLKEM768".to_string(),
-                iana_value: 0x11EB,
+                iana_value: 0x11EC,
                 group_type: GroupType::PostQuantum,
                 bits: 768,
                 supported: false,
+                quantum_vulnerable: false,
             },
         ];
 

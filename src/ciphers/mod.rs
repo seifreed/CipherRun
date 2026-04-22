@@ -66,6 +66,13 @@ impl CipherSuite {
             || self.encryption.contains("CCM")
             || self.encryption.contains("CHACHA20")
     }
+
+    /// Quantum-safety is determined by the negotiated key exchange *group*, not the cipher suite.
+    /// Classical ECDHE/DHE/RSA are all broken by Shor's algorithm regardless of cipher strength.
+    /// Check `KeyExchangeGroup::quantum_vulnerable` for the actual negotiated group assessment.
+    pub fn is_quantum_safe(&self) -> bool {
+        false
+    }
 }
 
 impl fmt::Display for CipherStrength {

@@ -105,6 +105,7 @@ impl<'a> ScanFeatureView<'a> {
             || self.group_results().is_some()
             || self.client_ca_results().is_some()
             || self.intolerance_results().is_some()
+            || self.pqc_readiness().is_some()
     }
 
     pub fn client_simulations(
@@ -131,6 +132,10 @@ impl<'a> ScanFeatureView<'a> {
         &self,
     ) -> Option<&'a crate::protocols::intolerance::IntoleranceTestResult> {
         self.results.intolerance()
+    }
+
+    pub fn pqc_readiness(&self) -> Option<&'a crate::pqc::PqcReadinessAssessment> {
+        self.results.pqc_readiness()
     }
 }
 

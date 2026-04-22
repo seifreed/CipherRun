@@ -89,6 +89,7 @@ pub struct AdvancedResults {
     pub ct_log_source: Option<String>,
     /// CT log index (if certificate discovered via CT logs)
     pub ct_log_index: Option<u64>,
+    pub pqc_readiness: Option<crate::pqc::PqcReadinessAssessment>,
 }
 
 /// Scan metadata - Multi-IP scan information and connection metadata
@@ -304,6 +305,11 @@ impl ScanResults {
     /// Ensure advanced sub-struct exists and return mutable reference
     pub fn advanced_mut(&mut self) -> &mut AdvancedResults {
         self.advanced.get_or_insert_with(AdvancedResults::default)
+    }
+
+    /// Get PQC readiness assessment (convenience accessor)
+    pub fn pqc_readiness(&self) -> Option<&crate::pqc::PqcReadinessAssessment> {
+        self.advanced.as_ref().and_then(|a| a.pqc_readiness.as_ref())
     }
 
     /// Record a human-facing warning for terminal presentation.

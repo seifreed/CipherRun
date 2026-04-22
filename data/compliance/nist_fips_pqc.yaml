@@ -1,0 +1,105 @@
+id: nist-fips-pqc
+name: NIST FIPS 203/204 Post-Quantum Readiness
+version: "2024"
+description: Checks TLS endpoint readiness against NIST FIPS 203 (ML-KEM) and FIPS 204 (ML-DSA) post-quantum standards
+organization: NIST
+effective_date: "2024-08-13"
+requirements:
+  - id: FIPS-PQC-1.1
+    name: Prohibited — Standalone RSA Key Exchange
+    description: TLS_RSA_* cipher suites use static RSA key exchange broken by Shor's algorithm
+    category: Post-Quantum Key Exchange
+    severity: critical
+    remediation: "Remove TLS_RSA_* cipher suites; use ECDHE or PQC hybrid key exchange instead"
+    rules:
+      - type: CipherSuite
+        denied_patterns:
+          - "^TLS_RSA_WITH_.*"
+          - "RSA_WITH"
+
+  - id: FIPS-PQC-1.2
+    name: Prohibited — Export-grade and NULL cipher suites
+    description: Export and NULL ciphers provide no quantum-resistant security
+    category: Cipher Security
+    severity: critical
+    remediation: "Remove all EXPORT and NULL cipher suites"
+    rules:
+      - type: CipherSuite
+        denied_patterns:
+          - ".*EXPORT.*"
+          - ".*NULL.*"
+
+  - id: FIPS-PQC-1.3
+    name: Prohibited — 3DES (TDEA) cipher suites
+    description: 3DES is deprecated and quantum-vulnerable; forbidden per NIST SP 800-131A
+    category: Cipher Security
+    severity: high
+    remediation: "Remove all 3DES/DES cipher suites; use AES-256-GCM or ChaCha20-Poly1305"
+    rules:
+      - type: CipherSuite
+        denied_patterns:
+          - ".*DES.*"
+          - ".*3DES.*"
+
+  - id: FIPS-PQC-1.4
+    name: Prohibited — RC4 cipher suites
+    description: RC4 is cryptographically broken
+    category: Cipher Security
+    severity: critical
+    remediation: "Remove all RC4 cipher suites"
+    rules:
+      - type: CipherSuite
+        denied_patterns:
+          - ".*RC4.*"
+
+  - id: FIPS-PQC-2.1
+    name: TLS 1.3 Support Required
+    description: TLS 1.3 is required for PQC hybrid key exchange group negotiation (RFC 8446)
+    category: Protocol Version
+    severity: high
+    remediation: "Enable TLS 1.3 support on your server"
+    rules:
+      - type: ProtocolVersion
+        allowed:
+          - "TLS 1.3"
+          - "TLS 1.2"
+        denied:
+          - "SSLv2"
+          - "SSLv3"
+          - "TLS 1.0"
+          - "TLS 1.1"
+
+  - id: FIPS-PQC-3.1
+    name: Certificate RSA Key Size — Minimum 3072 bits
+    description: RSA-2048 provides ~112-bit classical security; NIST recommends 3072+ through 2030
+    category: Certificate Key Strength
+    severity: high
+    remediation: "Reissue certificate with RSA-3072 or RSA-4096 key, or migrate to ECDSA P-384"
+    rules:
+      - type: CertificateKeySize
+        min_rsa_bits: 3072
+
+  - id: FIPS-PQC-3.2
+    name: Prohibited — SHA-1 Certificate Signatures
+    description: SHA-1 is cryptographically weak and prohibited by NIST SP 800-131A Rev 3
+    category: Certificate Signature Algorithm
+    severity: high
+    remediation: "Reissue certificate with SHA-256 or stronger signature algorithm"
+    rules:
+      - type: SignatureAlgorithm
+        denied:
+          - sha1WithRSAEncryption
+          - ecdsa-with-SHA1
+          - id-dsa-with-sha1
+
+  - id: FIPS-PQC-3.3
+    name: Certificate Validity
+    description: Certificate must be valid, unexpired, and hostname must match
+    category: Certificate Validation
+    severity: critical
+    remediation: "Renew or replace the certificate"
+    rules:
+      - type: CertificateValidation
+        require_valid_chain: true
+        require_unexpired: true
+        require_hostname_match: true

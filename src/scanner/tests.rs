@@ -144,6 +144,7 @@ fn test_scan_results_connection_evidence_requires_successful_subtests() {
                 group_type: crate::protocols::groups::GroupType::EllipticCurve,
                 bits: 253,
                 supported: false,
+                quantum_vulnerable: true,
             }],
             measured: false,
             details: "No negotiation".to_string(),

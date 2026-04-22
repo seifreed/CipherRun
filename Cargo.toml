@@ -175,3 +175,7 @@ harness = false
 [[bench]]
 name = "compliance"
 harness = false
+
+[[bench]]
+name = "pqc_bench"
+harness = false

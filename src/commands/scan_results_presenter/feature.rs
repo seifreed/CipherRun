@@ -22,5 +22,8 @@ impl ScanResultsPresenter<'_> {
         if let Some(intolerance) = view.intolerance_results() {
             formatter.display_intolerance_results(intolerance);
         }
+        if let Some(pqc) = view.pqc_readiness() {
+            formatter.display_pqc_readiness_results(pqc);
+        }
     }
 }

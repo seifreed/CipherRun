@@ -4,8 +4,9 @@
 
 use super::{
     AnalyticsCommand, ApiServerCommand, Command, CtLogsCommand, DatabaseCommand, MassScanCommand,
-    MonitorCommand, MxTestCommand, ScanCommand,
+    MonitorCommand, MxTestCommand, PqcScanCommand, ScanCommand,
 };
+use crate::cli::CipherRunSubcommand;
 use crate::{Args, Result, TlsError};
 
 /// CommandRouter determines which Command to execute based on CLI arguments
@@ -29,7 +30,8 @@ pub struct CommandRouter;
 
 impl CommandRouter {
     fn has_routable_action(args: &Args) -> bool {
-        args.api_server.enable
+        args.subcommand.is_some()
+            || args.api_server.enable
             || args.monitoring.enable
             || args.monitoring.test_alert
             || args.ct_logs.enable
@@ -62,6 +64,11 @@ impl CommandRouter {
     /// Returns a TlsError if invalid argument combinations are detected
     pub fn route(args: Args) -> Result<Box<dyn Command>> {
         Self::validate_routing(&args)?;
+
+        // Priority 0: Subcommands
+        if let Some(CipherRunSubcommand::Pqc { ssh, vpn, code }) = args.subcommand.clone() {
+            return Ok(Box::new(PqcScanCommand::new(ssh, vpn, code)));
+        }
 
         // Priority 1: API server mode
         if args.api_server.enable {
@@ -185,6 +192,20 @@ impl CommandRouter {
 mod tests {
     use super::*;
     use crate::cli::{ApiServerArgs, CtLogsArgs, DatabaseArgs, MonitoringArgs};
+
+    #[test]
+    fn test_route_pqc_subcommand() {
+        let args = Args {
+            subcommand: Some(crate::cli::CipherRunSubcommand::Pqc {
+                ssh: None,
+                vpn: None,
+                code: None,
+            }),
+            ..Default::default()
+        };
+        let cmd = CommandRouter::route(args).expect("test assertion should succeed");
+        assert_eq!(cmd.name(), "PqcScanCommand");
+    }
 
     #[test]
     fn test_route_api_server() {

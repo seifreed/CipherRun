@@ -11,4 +11,5 @@ pub struct ScanRequestCiphers {
     pub no_groups: bool,
     pub show_sigs: bool,
     pub show_client_cas: bool,
+    pub pqc_readiness: bool,
 }

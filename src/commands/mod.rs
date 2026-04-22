@@ -13,6 +13,7 @@ mod database;
 mod mass_scan;
 mod monitor;
 mod mx_test;
+mod pqc_scan;
 mod scan;
 mod scan_exporter;
 mod scan_notice_presenter;
@@ -31,6 +32,7 @@ pub use database::DatabaseCommand;
 pub use mass_scan::MassScanCommand;
 pub use monitor::MonitorCommand;
 pub use mx_test::MxTestCommand;
+pub use pqc_scan::PqcScanCommand;
 pub use scan::ScanCommand;
 
 #[cfg(test)]

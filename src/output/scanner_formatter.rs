@@ -18,6 +18,7 @@ mod fingerprints;
 mod header;
 mod helpers;
 mod http_headers;
+mod pqc_readiness;
 mod protocols;
 mod rating;
 mod summary;
