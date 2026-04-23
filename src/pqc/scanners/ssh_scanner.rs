@@ -56,6 +56,11 @@ impl SshScanner {
             recommendations.push(
                 "Add mlkem768nistp256-sha256@openssh.com or sntrup761x25519-sha512@openssh.com to KexAlgorithms.".to_string(),
             );
+        } else if !vulnerable.is_empty() {
+            recommendations.push(format!(
+                "Remove classical-only algorithms ({}) from KexAlgorithms/HostKeyAlgorithms to complete the PQC transition.",
+                vulnerable.join(", ")
+            ));
         }
 
         let score = if safe.is_empty() {
@@ -116,5 +121,31 @@ mod tests {
         assert!(is_ssh_pqc_kex("mlkem768nistp256-sha256@openssh.com"));
         assert!(is_ssh_pqc_kex("sntrup761x25519-sha512@openssh.com"));
         assert!(!is_ssh_pqc_kex("curve25519-sha256"));
+    }
+
+    #[test]
+    fn test_ssh_mixed_config_generates_removal_recommendation() {
+        use std::io::Write;
+        let mut f = tempfile::NamedTempFile::new().expect("create temp file");
+        writeln!(
+            f,
+            "KexAlgorithms mlkem768nistp256-sha256@openssh.com,curve25519-sha256,ecdh-sha2-nistp256"
+        )
+        .expect("write config");
+
+        let result = SshScanner::scan(f.path()).expect("scan should succeed");
+        assert_eq!(result.score, 50, "mixed config must score 50");
+        assert!(
+            !result.pqc_safe.is_empty() && !result.quantum_vulnerable.is_empty(),
+            "mixed config should populate both safe and vulnerable lists"
+        );
+        assert!(
+            result
+                .recommendations
+                .iter()
+                .any(|r| r.contains("Remove") && r.contains("curve25519-sha256")),
+            "mixed config must emit an actionable removal recommendation; got {:?}",
+            result.recommendations
+        );
     }
 }

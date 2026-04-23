@@ -299,8 +299,15 @@ fn extract_extension_info(data: &[u8], offset: usize, server_hello_length: usize
         return "|".to_string();
     }
 
-    // Check extensions fit within the TLS record (record content starts at byte 5)
-    if offset + 49 > 5 + server_hello_length {
+    // S7 fix: `server_hello_length` is read from the *first* TLS record header
+    // (bytes 3..5). On fragmented responses — where ServerHello + Certificate
+    // span multiple records — this value covers only the first record, so the
+    // bound `5 + server_hello_length` truncates the extension region and
+    // produces a misaligned JARM fingerprint. The real bound is `data.len()`,
+    // and the `emax` computation below (ecnt_start + elen) already gates the
+    // extension-iteration loop against the declared extension length.
+    let _ = server_hello_length;
+    if offset + 49 > data.len() {
         return "|".to_string();
     }
 

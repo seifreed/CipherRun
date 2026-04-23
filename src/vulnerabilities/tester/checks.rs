@@ -105,11 +105,12 @@ impl VulnerabilityScanner {
                 Some(VulnerabilityResult {
                     vuln_type,
                     vulnerable: variant_result.vulnerable,
-                    inconclusive: !variant_result.vulnerable
-                        && variant_result
-                            .details
-                            .to_ascii_lowercase()
-                            .contains("inconclusive"),
+                    // V3 fix: propagate the explicit `inconclusive` flag instead of
+                    // sniffing the details string for the substring "inconclusive".
+                    // The string check missed variant wording like "Insufficient
+                    // timing samples" which would otherwise classify a failed
+                    // probe as confirmed-not-vulnerable.
+                    inconclusive: variant_result.inconclusive,
                     details: variant_result.details,
                     cve: Some(variant_result.variant.cve().to_string()),
                     cwe: Some("CWE-310".to_string()),
@@ -288,7 +289,7 @@ impl VulnerabilityScanner {
         Ok(VulnerabilityResult {
             vuln_type: VulnerabilityType::Ticketbleed,
             vulnerable: result.vulnerable,
-            inconclusive: false,
+            inconclusive: result.inconclusive,
             details: result.details,
             cve: Some("CVE-2016-9244".to_string()),
             cwe: Some("CWE-200".to_string()),
@@ -330,7 +331,7 @@ impl VulnerabilityScanner {
         Ok(VulnerabilityResult {
             vuln_type: VulnerabilityType::BREACH,
             vulnerable: result.vulnerable,
-            inconclusive: false,
+            inconclusive: result.inconclusive,
             details: result.details,
             cve: Some("CVE-2013-3587".to_string()),
             cwe: Some("CWE-200".to_string()),
@@ -476,6 +477,15 @@ impl VulnerabilityScanner {
         let tester = OpossumTester::new(self.target.clone());
         let result = tester.test().await?;
 
+        // V2: severity must track `vulnerable`, not `inconclusive`. The Opossum
+        // tester always reports `vulnerable=false` (remote detection is not
+        // reliable), so the effective verdict is Info in both the inconclusive
+        // and not-vulnerable cases — the `details` string conveys the uncertainty.
+        let severity = if result.vulnerable {
+            Severity::Medium
+        } else {
+            Severity::Info
+        };
         Ok(VulnerabilityResult {
             vuln_type: VulnerabilityType::Opossum,
             vulnerable: result.vulnerable,
@@ -483,11 +493,7 @@ impl VulnerabilityScanner {
             details: result.details,
             cve: Some("CVE-2022-0778".to_string()),
             cwe: Some("CWE-835".to_string()),
-            severity: if result.inconclusive {
-                Severity::Medium
-            } else {
-                Severity::Info
-            },
+            severity,
         })
     }
 

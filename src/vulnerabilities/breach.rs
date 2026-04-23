@@ -21,17 +21,30 @@ impl BreachTester {
 
     /// Test for BREACH vulnerability
     pub async fn test(&self) -> Result<BreachTestResult> {
-        let compression_enabled = self.test_http_compression().await?;
-        let dynamic_content = self.test_dynamic_content().await?;
-        let sensitive_data = self.test_sensitive_data_reflection().await?;
+        // V11 fix: each sub-test returns an Option so the caller can distinguish
+        // "probe completed and observed X" from "probe could not run". A single
+        // TCP/TLS failure previously collapsed to `false` in every axis, making
+        // an unreachable server report as "not vulnerable" (a false negative for
+        // compliance dashboards).
+        let compression = self.test_http_compression().await?;
+        let dynamic = self.test_dynamic_content().await?;
+        let sensitive = self.test_sensitive_data_reflection().await?;
 
-        // BREACH requires all three conditions:
+        let inconclusive = compression.is_none() || dynamic.is_none() || sensitive.is_none();
+        let compression_enabled = compression.unwrap_or(false);
+        let dynamic_content = dynamic.unwrap_or(false);
+        let sensitive_data = sensitive.unwrap_or(false);
+
+        // BREACH requires all three conditions simultaneously:
         // 1. HTTP compression enabled
         // 2. Dynamic content (user input reflected)
         // 3. Sensitive data in responses
-        let vulnerable = compression_enabled && dynamic_content && sensitive_data;
+        let vulnerable =
+            !inconclusive && compression_enabled && dynamic_content && sensitive_data;
 
-        let details = if vulnerable {
+        let details = if inconclusive {
+            "Inconclusive - one or more BREACH probes could not complete (TCP/TLS error or empty HTTP response)".to_string()
+        } else if vulnerable {
             "Vulnerable to BREACH (CVE-2013-3587): HTTP compression enabled with dynamic content containing secrets".to_string()
         } else if compression_enabled {
             let mut reasons = Vec::new();
@@ -51,6 +64,7 @@ impl BreachTester {
 
         Ok(BreachTestResult {
             vulnerable,
+            inconclusive,
             compression_enabled,
             dynamic_content,
             sensitive_data_reflection: sensitive_data,
@@ -58,8 +72,10 @@ impl BreachTester {
         })
     }
 
-    /// Test if HTTP compression is enabled
-    async fn test_http_compression(&self) -> Result<bool> {
+    /// Test if HTTP compression is enabled. Returns `None` when the probe could
+    /// not complete (TCP/TLS error, empty response) — the caller treats this as
+    /// inconclusive rather than "compression disabled".
+    async fn test_http_compression(&self) -> Result<Option<bool>> {
         let addr = self
             .target
             .socket_addrs()
@@ -73,7 +89,7 @@ impl BreachTester {
                 .await
             {
                 Ok(s) => s,
-                Err(_) => return Ok(false),
+                Err(_) => return Ok(None),
             };
 
         let std_stream = stream.into_std()?;
@@ -116,17 +132,17 @@ impl BreachTester {
                                 || lower.contains("zstd")
                                 || lower.contains("compress"))
                     });
-                    Ok(compressed)
+                    Ok(Some(compressed))
                 } else {
-                    Ok(false)
+                    Ok(None)
                 }
             }
-            Err(_) => Ok(false),
+            Err(_) => Ok(None),
         }
     }
 
     /// Test if server reflects user input (dynamic content)
-    async fn test_dynamic_content(&self) -> Result<bool> {
+    async fn test_dynamic_content(&self) -> Result<Option<bool>> {
         let addr = self
             .target
             .socket_addrs()
@@ -139,7 +155,7 @@ impl BreachTester {
                 .await
             {
                 Ok(s) => s,
-                Err(_) => return Ok(false),
+                Err(_) => return Ok(None),
             };
 
         let std_stream = stream.into_std()?;
@@ -181,17 +197,17 @@ impl BreachTester {
                             .and_then(|code| code.parse::<u16>().ok())
                             .map(|code| (200..300).contains(&code))
                             .unwrap_or(false);
-                    Ok(is_success && response.contains(marker))
+                    Ok(Some(is_success && response.contains(marker)))
                 } else {
-                    Ok(false)
+                    Ok(None)
                 }
             }
-            Err(_) => Ok(false),
+            Err(_) => Ok(None),
         }
     }
 
     /// Test if sensitive data might be reflected in responses
-    async fn test_sensitive_data_reflection(&self) -> Result<bool> {
+    async fn test_sensitive_data_reflection(&self) -> Result<Option<bool>> {
         let addr = self
             .target
             .socket_addrs()
@@ -204,7 +220,7 @@ impl BreachTester {
                 .await
             {
                 Ok(s) => s,
-                Err(_) => return Ok(false),
+                Err(_) => return Ok(None),
             };
 
         let std_stream = stream.into_std()?;
@@ -238,12 +254,12 @@ impl BreachTester {
                     let response = String::from_utf8_lossy(&buffer[..n]);
                     // Check for sensitive data with more precise matching
                     let has_sensitive = Self::detect_sensitive_patterns(&response);
-                    Ok(has_sensitive)
+                    Ok(Some(has_sensitive))
                 } else {
-                    Ok(false)
+                    Ok(None)
                 }
             }
-            Err(_) => Ok(false),
+            Err(_) => Ok(None),
         }
     }
 
@@ -302,6 +318,10 @@ impl BreachTester {
 #[derive(Debug, Clone)]
 pub struct BreachTestResult {
     pub vulnerable: bool,
+    /// True when one or more sub-probes could not complete (TCP/TLS failure
+    /// or empty HTTP response). Prevents reporting unreachable servers as
+    /// confirmed-not-vulnerable.
+    pub inconclusive: bool,
     pub compression_enabled: bool,
     pub dynamic_content: bool,
     pub sensitive_data_reflection: bool,
@@ -319,6 +339,7 @@ mod tests {
             compression_enabled: true,
             dynamic_content: true,
             sensitive_data_reflection: true,
+            inconclusive: false,
             details: "Test".to_string(),
         };
         assert!(result.vulnerable);
@@ -334,6 +355,7 @@ mod tests {
             compression_enabled: false,
             dynamic_content: true,
             sensitive_data_reflection: true,
+            inconclusive: false,
             details: "Not vulnerable".to_string(),
         };
         assert!(!result.vulnerable);
@@ -347,10 +369,39 @@ mod tests {
             compression_enabled: true,
             dynamic_content: false,
             sensitive_data_reflection: true,
+            inconclusive: false,
             details: "Partial".to_string(),
         };
         // Needs all three conditions for full vulnerability
         assert!(!result.vulnerable);
         assert!(result.compression_enabled);
+    }
+
+    #[test]
+    fn test_breach_inconclusive_when_probes_fail() {
+        // V11 regression: an unreachable server must not be classified as
+        // confirmed-not-vulnerable. Probe failures on all three axes surface
+        // via `inconclusive=true`.
+        use std::net::{IpAddr, Ipv4Addr};
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            1,
+            vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
+        )
+        .expect("target should build");
+
+        let rt = tokio::runtime::Runtime::new().expect("runtime");
+        let result = rt.block_on(async {
+            BreachTester::new(target)
+                .test()
+                .await
+                .expect("probe should not error")
+        });
+        assert!(!result.vulnerable);
+        assert!(
+            result.inconclusive,
+            "unreachable target must yield inconclusive BREACH verdict; got details={}",
+            result.details
+        );
     }
 }

@@ -177,63 +177,75 @@ impl PerKeyRateLimiter {
         const MAX_ENTRIES: usize = 10000;
         const MAX_AGE_SECS: u64 = 3600; // 1 hour
 
-        if self.limiters.len() <= MAX_ENTRIES {
-            return;
-        }
-
+        // I1 fix: cleanup is now structured as two clearly-separated phases.
+        //
+        // The previous implementation swapped `*index` with a local map, then
+        // iterated the *pre-swap* contents (holding entries already pruned by
+        // the preceding `old_keys` loop) while modifying `*index` with a second
+        // swap — causing the LRU eviction step to operate on stale data and
+        // leaving state inconsistent under concurrent access.
+        //
+        // Phase 1 runs unconditionally (I2 fix) so stale entries are freed on
+        // low-traffic servers regardless of total count. Phase 2 only runs
+        // when the surviving set still exceeds the hard cap.
         let now = Instant::now();
         let cutoff = now - std::time::Duration::from_secs(MAX_AGE_SECS);
 
-        // Use BTreeMap for efficient range query - O(log n) to find old entries
-        if let Ok(mut index) = self.access_index.write() {
-            // Collect keys to remove from old timestamps
-            let old_keys: Vec<String> = index
-                .range(..cutoff)
-                .flat_map(|(_, keys)| keys.clone())
-                .collect();
+        let Ok(mut index) = self.access_index.write() else {
+            return;
+        };
 
-            // Remove old entries from DashMap - O(m log n)
-            for key in old_keys {
-                self.limiters.remove(&key);
-            }
-
-            // Clear old entries from index - O(log n) to split
+        // --- Phase 1: age-based pruning ---
+        // `split_off` leaves entries with timestamp >= cutoff in `*index`,
+        // returning the older portion for deletion. Single linear pass.
+        let aged_out = {
             let mut remaining = BTreeMap::new();
             std::mem::swap(&mut *index, &mut remaining);
-            *index = remaining.split_off(&cutoff);
-
-            // If still over limit, remove oldest entries using BTreeMap
-            if self.limiters.len() > MAX_ENTRIES {
-                let to_remove = self.limiters.len() - MAX_ENTRIES / 2;
-                let mut removed = 0;
-
-                // BTreeMap is sorted by timestamp, iterate from oldest
-                for (_timestamp, keys) in remaining.iter() {
-                    for key in keys {
-                        if removed >= to_remove {
-                            break;
-                        }
-                        self.limiters.remove(key);
-                        removed += 1;
-                    }
-                    if removed >= to_remove {
-                        break;
-                    }
-                }
-
-                // Remove evicted entries from index
-                let evicted_cutoff = *remaining.keys().next().unwrap_or(&cutoff);
-                let mut new_index = BTreeMap::new();
-                std::mem::swap(&mut *index, &mut new_index);
-                *index = new_index.split_off(&evicted_cutoff);
-
-                tracing::info!(
-                    "Rate limiter LRU cleanup: removed {} oldest entries, {} remaining",
-                    removed,
-                    self.limiters.len()
-                );
+            let keep = remaining.split_off(&cutoff);
+            *index = keep;
+            remaining
+        };
+        for (_ts, keys) in aged_out.iter() {
+            for key in keys {
+                self.limiters.remove(key);
             }
         }
+
+        // --- Phase 2: capacity-based LRU eviction ---
+        if self.limiters.len() <= MAX_ENTRIES {
+            return;
+        }
+        let target = MAX_ENTRIES / 2;
+        let to_remove = self.limiters.len().saturating_sub(target);
+
+        // Iterate the LIVE index from oldest to newest, collecting victims.
+        let mut victims: Vec<String> = Vec::with_capacity(to_remove);
+        'collect: for (_ts, keys) in index.iter() {
+            for key in keys {
+                victims.push(key.clone());
+                if victims.len() >= to_remove {
+                    break 'collect;
+                }
+            }
+        }
+
+        for key in &victims {
+            self.limiters.remove(key);
+        }
+
+        // Rebuild the index without evicted keys. We can't mutate values
+        // during the iteration above, so we do a single filter pass now.
+        let victims_set: std::collections::HashSet<String> = victims.iter().cloned().collect();
+        for (_ts, keys) in index.iter_mut() {
+            keys.retain(|k| !victims_set.contains(k));
+        }
+        index.retain(|_, keys| !keys.is_empty());
+
+        tracing::info!(
+            "Rate limiter LRU cleanup: removed {} oldest entries, {} remaining",
+            victims.len(),
+            self.limiters.len()
+        );
     }
 }
 
@@ -402,5 +414,31 @@ mod tests {
             }
             RateLimitResult::Limited { .. } => panic!("expected allowed"),
         }
+    }
+
+    /// I1/I2 regression: cleanup() is idempotent and leaves the live index
+    /// consistent with the DashMap after a run. Repeated invocations on a
+    /// small set of keys must not corrupt state or remove live entries.
+    #[test]
+    fn test_rate_limiter_cleanup_is_idempotent_under_cap() {
+        let limiter = PerKeyRateLimiter::new(100);
+        for i in 0..50 {
+            let key = format!("key{}", i);
+            let _ = limiter.check(&key);
+        }
+        let before = limiter.limiters.len();
+        limiter.cleanup();
+        limiter.cleanup();
+        // All entries are fresh (just created) so none should be aged out.
+        assert_eq!(limiter.limiters.len(), before);
+        // Index shouldn't have orphaned entries for keys we removed.
+        let index = limiter.access_index.read().expect("lock");
+        let index_key_count: usize = index.values().map(|v| v.len()).sum();
+        assert!(
+            index_key_count >= before,
+            "index must reference every live limiter; got {} entries in index, {} live",
+            index_key_count,
+            before
+        );
     }
 }

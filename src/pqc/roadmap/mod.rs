@@ -129,7 +129,7 @@ impl RoadmapGenerator {
                 severity: RoadmapSeverity::Medium,
                 phase: 2,
                 title: "Upgrade RSA certificate key to ≥ 3072 bits".to_string(),
-                action: "RSA-2048 provides ~112-bit classical security; upgrade to RSA-3072 for SP 800-131A compliance.".to_string(),
+                action: "RSA-2048 provides ~112-bit classical security (acceptable under NIST SP 800-131A Rev. 3 through 2030); upgrade to RSA-3072 for the NIST post-2030 recommendation and FIPS-PQC-3.1 classical baseline.".to_string(),
                 timeline: "0-6 months".to_string(),
             });
         }

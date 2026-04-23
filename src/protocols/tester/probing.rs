@@ -78,6 +78,17 @@ impl ProtocolTester {
         })
     }
 
+    /// S8 note: union semantics are intentional for protocol enumeration in
+    /// security scanning. If ANY backend in a load-balanced deployment accepts
+    /// a protocol, the attacker's view of the deployment includes that path —
+    /// so reporting it as "supported" is the security-correct verdict. An
+    /// intersection reading ("is TLS 1.3 available everywhere?") is a distinct
+    /// property; the caller can read the per-IP inconsistency warnings in the
+    /// log, or (future work) consume a per-IP result map.
+    ///
+    /// The conservative-aggregation contract documented in the architecture
+    /// guards refers to the ScanResults layer (ConservativeAggregator), not to
+    /// this per-protocol probe. See `test_test_all_ips_reports_supported_when_any_ip_supports`.
     pub(super) async fn test_protocol_all_ips(&self, protocol: Protocol) -> Result<bool> {
         let addrs = self.target.socket_addrs();
 

@@ -50,9 +50,32 @@ pub(super) fn analyze_banner(banner: &str) -> (ApplicationProtocol, f64) {
         return (ApplicationProtocol::XmppStartTls, 0.90);
     }
 
-    // MySQL greeting: 3-byte payload length + 1-byte sequence number (always 0x00) + protocol version (0x0a for v10)
+    // MySQL greeting: 3-byte little-endian payload length + 1-byte sequence
+    // number (always 0x00 for the first server packet) + protocol version
+    // (0x0a for v10) + null-terminated ASCII version string.
+    //
+    // S6 fix: the previous check only verified `bytes[3]==0x00 && bytes[4]==0x0a`
+    // which matches any binary protocol with a nullish byte at offset 3 and
+    // 0x0a at offset 4. We now also validate a plausible packet-length field
+    // and that the version string at offset 5 consists of printable ASCII
+    // (digits, dots, letters, hyphens) — matching real MySQL greetings like
+    // "5.7.38-log" or "8.0.31".
     if banner.len() > 10 && banner.as_bytes()[3] == 0x00 && banner.as_bytes()[4] == 0x0a {
-        return (ApplicationProtocol::Mysql, 0.85);
+        let b = banner.as_bytes();
+        let pkt_len = u32::from_le_bytes([b[0], b[1], b[2], 0]) as usize;
+        let version_ok = b[5..]
+            .iter()
+            .take_while(|&&byte| byte != 0x00)
+            .take(32)
+            .all(|&byte| {
+                byte.is_ascii_digit()
+                    || byte == b'.'
+                    || byte == b'-'
+                    || byte.is_ascii_alphabetic()
+            });
+        if pkt_len > 0 && pkt_len < 1024 && version_ok {
+            return (ApplicationProtocol::Mysql, 0.95);
+        }
     }
 
     if lower.contains("postgresql") {
@@ -98,4 +121,56 @@ pub(super) fn requires_starttls(protocol: ApplicationProtocol) -> bool {
             | ApplicationProtocol::XmppStartTls
             | ApplicationProtocol::LdapStartTls
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Build a MySQL-shaped banner as an ASCII-safe &str (no bytes >= 0x80).
+    fn mysql_banner_str(version: &str) -> String {
+        let mut out = String::new();
+        let payload_len = 1 + version.len() + 1; // proto + version + NUL
+        out.push((payload_len & 0x7f) as u8 as char);
+        out.push(0u8 as char);
+        out.push(0u8 as char);
+        out.push(0u8 as char); // sequence
+        out.push(0x0au8 as char); // protocol v10
+        out.push_str(version);
+        out.push(0u8 as char);
+        out.push_str("   "); // pad to >10 bytes
+        out
+    }
+
+    #[test]
+    fn test_mysql_detection_accepts_realistic_banner() {
+        let banner = mysql_banner_str("8.0.31");
+        let (proto, conf) = analyze_banner(&banner);
+        assert_eq!(proto, ApplicationProtocol::Mysql);
+        assert!(conf >= 0.90);
+    }
+
+    #[test]
+    fn test_mysql_detection_rejects_binary_protocol_with_incidental_bytes() {
+        // S6 regression: a banner where byte[3]==0x00 and byte[4]==0x0a but
+        // byte[5..] contains non-version-string bytes (BEL, bare control
+        // characters) must NOT be classified as MySQL. Previously the
+        // two-byte check alone would false-positive on any binary protocol
+        // with a coincidental 0x00/0x0a pair.
+        let mut bogus = String::new();
+        bogus.push(0x05u8 as char); // payload_len[0] = 5 (plausible)
+        bogus.push(0u8 as char);
+        bogus.push(0u8 as char);
+        bogus.push(0u8 as char); // sequence=0x00
+        bogus.push(0x0au8 as char); // 0x0a at offset 4 (coincidence)
+        for _ in 0..8 {
+            bogus.push(0x07u8 as char); // BEL bytes — not version chars
+        }
+        let (proto, _conf) = analyze_banner(&bogus);
+        assert_ne!(
+            proto,
+            ApplicationProtocol::Mysql,
+            "non-MySQL banner with coincidental header bytes must not match"
+        );
+    }
 }

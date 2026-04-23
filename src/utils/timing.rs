@@ -112,7 +112,16 @@ pub fn detect_timing_oracle(
     let timing_reliable = valid_stats.coefficient_of_variation < config.cv_max
         && invalid_stats.coefficient_of_variation < config.cv_max;
 
-    let combined_stddev = (valid_stats.variance + invalid_stats.variance).sqrt();
+    // I9 fix: the proper quantity here is the standard error of the DIFFERENCE
+    // of two sample means — `sqrt(var1/n1 + var2/n2)`. The previous code
+    // computed `sqrt(var1 + var2)` which, for symmetric sample sizes,
+    // over-estimates the dispersion by a factor of ~sqrt(n). That inflated the
+    // significance threshold `2*combined_stddev + base`, producing false
+    // negatives for real timing oracles.
+    let n_valid = (valid_stats.count as f64).max(1.0);
+    let n_invalid = (invalid_stats.count as f64).max(1.0);
+    let combined_stddev =
+        (valid_stats.variance / n_valid + invalid_stats.variance / n_invalid).sqrt();
     let statistically_significant =
         timing_diff > 2.0 * combined_stddev + config.significance_base_ms;
 

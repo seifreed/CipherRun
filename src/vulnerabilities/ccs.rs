@@ -112,11 +112,26 @@ impl CcsInjectionTester {
                 // Allow up to 15 handshake messages for complex handshakes (Certificate,
                 // CertificateStatus, ServerKeyExchange, CertificateRequest, ServerHelloDone, etc.)
                 const MAX_HANDSHAKE_MESSAGES: u8 = 15;
+                // V7 fix: an outer iteration cap bounds total wall time on
+                // servers that dribble bytes one at a time. `reads_remaining`
+                // only decrements when a FULL handshake record is consumed, so
+                // an adversarial peer could otherwise loop forever by always
+                // leaving the tail record incomplete.
+                const MAX_TOTAL_ITERATIONS: u32 = 100;
                 let mut reads_remaining: u8 = MAX_HANDSHAKE_MESSAGES;
+                let mut total_iterations: u32 = 0;
                 // Accumulate bytes across reads so TLS records split across multiple
                 // read() calls are reassembled before parsing.
                 let mut accumulated: Vec<u8> = Vec::new();
                 loop {
+                    total_iterations += 1;
+                    if total_iterations > MAX_TOTAL_ITERATIONS {
+                        tracing::warn!(
+                            "CCS: exceeded {} outer read iterations — aborting probe as inconclusive",
+                            MAX_TOTAL_ITERATIONS
+                        );
+                        break Ok(TestStatus::Inconclusive);
+                    }
                     let mut read_buf = vec![0u8; 1024];
                     match timeout(Duration::from_secs(2), stream.read(&mut read_buf)).await {
                         Ok(Ok(n)) if n > 0 => {

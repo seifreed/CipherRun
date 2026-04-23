@@ -92,8 +92,15 @@ impl ChangeDetector {
             });
         }
 
-        // Check key size change
-        if previous.public_key_size != current.public_key_size {
+        // I6 fix: suppress key-size and signature-algorithm change events when
+        // the certificate was replaced entirely (issuer change or renewal).
+        // In those cases the IssuerChange/Renewal event already describes the
+        // transition; emitting an additional KeySizeChange produces redundant
+        // alerts for a single replacement.
+        let same_cert_identity = previous.issuer == current.issuer
+            && previous.serial_number == current.serial_number;
+
+        if same_cert_identity && previous.public_key_size != current.public_key_size {
             changes.push(ChangeEvent {
                 change_type: ChangeType::KeySizeChange,
                 severity: ChangeSeverity::High,
@@ -104,8 +111,9 @@ impl ChangeDetector {
             });
         }
 
-        // Check signature algorithm change
-        if previous.signature_algorithm != current.signature_algorithm {
+        // Check signature algorithm change (only when cert identity is stable,
+        // for the same reason as KeySizeChange above).
+        if same_cert_identity && previous.signature_algorithm != current.signature_algorithm {
             changes.push(ChangeEvent {
                 change_type: ChangeType::SignatureAlgorithmChange,
                 severity: ChangeSeverity::Medium,
@@ -332,6 +340,52 @@ mod tests {
         assert_eq!(changes.len(), 1);
         assert!(matches!(changes[0].change_type, ChangeType::KeySizeChange));
         assert_eq!(changes[0].severity, ChangeSeverity::High);
+    }
+
+    #[test]
+    fn test_issuer_change_suppresses_key_size_change_event() {
+        // I6 regression: when the certificate is replaced (new issuer + new
+        // serial), the IssuerChange event is sufficient. Emitting an extra
+        // KeySizeChange is redundant and inflates alert counts.
+        let detector = ChangeDetector::new();
+        let previous = create_test_cert("123", "CN=Let's Encrypt", Some(2048), vec![]);
+        let current = create_test_cert("456", "CN=DigiCert", Some(4096), vec![]);
+
+        let changes = detector.detect_changes(&previous, &current);
+
+        assert!(
+            changes
+                .iter()
+                .any(|c| matches!(c.change_type, ChangeType::IssuerChange)),
+            "IssuerChange must be emitted"
+        );
+        assert!(
+            !changes
+                .iter()
+                .any(|c| matches!(c.change_type, ChangeType::KeySizeChange)),
+            "KeySizeChange must be suppressed when cert identity changed"
+        );
+    }
+
+    #[test]
+    fn test_renewal_suppresses_key_size_change_event() {
+        let detector = ChangeDetector::new();
+        let previous = create_test_cert("123", "CN=Let's Encrypt", Some(2048), vec![]);
+        let current = create_test_cert("456", "CN=Let's Encrypt", Some(4096), vec![]);
+
+        let changes = detector.detect_changes(&previous, &current);
+
+        assert!(
+            changes
+                .iter()
+                .any(|c| matches!(c.change_type, ChangeType::Renewal))
+        );
+        assert!(
+            !changes
+                .iter()
+                .any(|c| matches!(c.change_type, ChangeType::KeySizeChange)),
+            "KeySizeChange must be suppressed on routine renewal"
+        );
     }
 
     #[test]
