@@ -174,6 +174,9 @@ pub fn parse_delay(s: &str) -> Result<Duration> {
     if let Some(value_str) = s.strip_suffix('s') {
         // Support floating point seconds
         let seconds: f64 = value_str.trim().parse()?;
+        if !seconds.is_finite() || seconds < 0.0 {
+            anyhow::bail!("Invalid delay value: {}", s);
+        }
         let millis = (seconds * 1000.0) as u64;
         return Ok(Duration::from_millis(millis));
     }
@@ -343,6 +346,12 @@ mod tests {
         assert!(parse_delay("invalid").is_err());
         assert!(parse_delay("abc ms").is_err());
         assert!(parse_delay("").is_err());
+    }
+
+    #[test]
+    fn test_parse_delay_rejects_non_finite_seconds() {
+        assert!(parse_delay("NaNs").is_err());
+        assert!(parse_delay("infs").is_err());
     }
 
     #[test]

@@ -196,20 +196,23 @@ impl PerKeyRateLimiter {
         };
 
         // --- Phase 1: age-based pruning ---
-        // `split_off` leaves entries with timestamp >= cutoff in `*index`,
-        // returning the older portion for deletion. Single linear pass.
-        let aged_out = {
-            let mut remaining = BTreeMap::new();
-            std::mem::swap(&mut *index, &mut remaining);
-            let keep = remaining.split_off(&cutoff);
-            *index = keep;
-            remaining
-        };
-        for (_ts, keys) in aged_out.iter() {
-            for key in keys {
-                self.limiters.remove(key);
-            }
+        // The DashMap entry is the source of truth for the latest access time.
+        // The BTreeMap index can contain older timestamps for the same key, so
+        // never remove a live limiter solely because a stale index row aged out.
+        let aged_keys: Vec<String> = self
+            .limiters
+            .iter()
+            .filter(|entry| entry.last_access < cutoff)
+            .map(|entry| entry.key().clone())
+            .collect();
+
+        for key in aged_keys {
+            self.limiters.remove(&key);
         }
+
+        // Rebuild the index from live limiter timestamps. This removes duplicate
+        // stale rows and keeps the capacity-based LRU pass aligned with reality.
+        Self::rebuild_access_index(&self.limiters, &mut index);
 
         // --- Phase 2: capacity-based LRU eviction ---
         if self.limiters.len() <= MAX_ENTRIES {
@@ -246,6 +249,19 @@ impl PerKeyRateLimiter {
             victims.len(),
             self.limiters.len()
         );
+    }
+
+    fn rebuild_access_index(
+        limiters: &DashMap<String, RateLimitEntry>,
+        index: &mut BTreeMap<Instant, Vec<String>>,
+    ) {
+        index.clear();
+        for entry in limiters.iter() {
+            index
+                .entry(entry.last_access)
+                .or_default()
+                .push(entry.key().clone());
+        }
     }
 }
 
@@ -440,5 +456,41 @@ mod tests {
             index_key_count,
             before
         );
+    }
+
+    #[test]
+    fn test_rate_limiter_cleanup_keeps_recent_key_with_stale_index_row() {
+        let limiter = PerKeyRateLimiter::new(100);
+        let key = "recent-key";
+        let _ = limiter.check(key);
+
+        let fresh_access = Instant::now();
+        if let Some(mut entry) = limiter.limiters.get_mut(key) {
+            entry.last_access = fresh_access;
+        }
+
+        {
+            let mut index = limiter.access_index.write().expect("lock");
+            index.clear();
+            index.insert(
+                fresh_access - std::time::Duration::from_secs(7200),
+                vec![key.to_string()],
+            );
+            index.insert(fresh_access, vec![key.to_string()]);
+        }
+
+        limiter.cleanup();
+
+        assert!(
+            limiter.limiters.contains_key(key),
+            "cleanup must not remove a key whose live last_access is fresh"
+        );
+
+        let index = limiter.access_index.read().expect("lock");
+        let indexed_count: usize = index
+            .values()
+            .map(|keys| keys.iter().filter(|k| *k == key).count())
+            .sum();
+        assert_eq!(indexed_count, 1, "cleanup should collapse stale index rows");
     }
 }

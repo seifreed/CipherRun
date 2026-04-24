@@ -1,5 +1,4 @@
 use super::*;
-use crate::pqc::{PqcLevel, PqcReadinessAssessment};
 use crate::certificates::parser::{CertificateChain, CertificateInfo};
 use crate::certificates::revocation::{RevocationMethod, RevocationResult, RevocationStatus};
 use crate::certificates::trust_stores::{
@@ -21,6 +20,7 @@ use crate::http::headers_advanced::{
     HstsAnalysis, ReverseProxyDetection,
 };
 use crate::http::tester::{HeaderAnalysisResult, SecurityGrade};
+use crate::pqc::{PqcLevel, PqcReadinessAssessment};
 use crate::protocols::alpn::{AlpnReport, AlpnResult};
 use crate::protocols::client_cas::{ClientCA, ClientCAsResult};
 use crate::protocols::groups::{GroupEnumerationResult, GroupType, KeyExchangeGroup};

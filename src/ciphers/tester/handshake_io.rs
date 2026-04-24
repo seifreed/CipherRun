@@ -107,9 +107,7 @@ impl CipherTester {
         // If we ever got a conclusive `Ok(false)` from at least one IP we can
         // report "not supported" — the cipher genuinely failed somewhere. But if
         // every IP errored, there's no evidence and we must propagate the error.
-        if !any_conclusive_negative
-            && let Some(err) = last_error
-        {
+        if !any_conclusive_negative && let Some(err) = last_error {
             return Err(err);
         }
         Ok(false)

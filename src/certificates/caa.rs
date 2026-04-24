@@ -110,7 +110,7 @@ impl CaaChecker {
         let mut records = Vec::new();
 
         for line in output_str.lines() {
-            if line.is_empty() {
+            if line.trim().is_empty() {
                 continue;
             }
 
@@ -119,8 +119,8 @@ impl CaaChecker {
             if parts.len() >= 3
                 && let Ok(flags) = parts[0].parse::<u8>()
             {
-                let tag = parts[1].to_string();
-                let value = parts[2..].join(" ").trim_matches('"').to_string();
+                let tag = parts[1].to_ascii_lowercase();
+                let value = Self::normalize_caa_value(&parts[2..].join(" "));
 
                 records.push(CaaRecord { flags, tag, value });
             }
@@ -135,23 +135,32 @@ impl CaaChecker {
         let mut records = Vec::new();
 
         for line in output_str.lines() {
-            if line.contains("has CAA record") {
+            if let Some(record_part) = Self::split_after_case_insensitive(line, "has CAA record") {
                 // Format: example.com has CAA record 0 issue "ca.example.com"
-                if let Some(record_part) = line.split("has CAA record").nth(1) {
-                    let parts: Vec<&str> = record_part.split_whitespace().collect();
-                    if parts.len() >= 3
-                        && let Ok(flags) = parts[0].parse::<u8>()
-                    {
-                        let tag = parts[1].to_string();
-                        let value = parts[2..].join(" ").trim_matches('"').to_string();
+                let parts: Vec<&str> = record_part.split_whitespace().collect();
+                if parts.len() >= 3
+                    && let Ok(flags) = parts[0].parse::<u8>()
+                {
+                    let tag = parts[1].to_ascii_lowercase();
+                    let value = Self::normalize_caa_value(&parts[2..].join(" "));
 
-                        records.push(CaaRecord { flags, tag, value });
-                    }
+                    records.push(CaaRecord { flags, tag, value });
                 }
             }
         }
 
         Ok(records)
+    }
+
+    fn normalize_caa_value(value: &str) -> String {
+        value.trim().trim_matches('"').to_string()
+    }
+
+    fn split_after_case_insensitive<'a>(line: &'a str, marker: &str) -> Option<&'a str> {
+        let line_lower = line.to_ascii_lowercase();
+        let marker_lower = marker.to_ascii_lowercase();
+        let index = line_lower.find(&marker_lower)?;
+        Some(&line[index + marker.len()..])
     }
 
     /// Analyze CAA records for security issues
@@ -161,10 +170,10 @@ impl CaaChecker {
         let mut has_iodef = false;
 
         for record in &result.records {
-            match record.tag.as_str() {
+            match record.tag.to_ascii_lowercase().as_str() {
                 "issue" => {
                     has_issue = true;
-                    if record.value == ";" {
+                    if record.value.trim() == ";" {
                         result.issues.push(
                             "CAA record explicitly forbids ALL certificate issuance".to_string(),
                         );
@@ -214,8 +223,9 @@ impl CaaChecker {
         let mut recognized_cas = Vec::new();
 
         for record in &result.records {
+            let value = record.value.to_ascii_lowercase();
             for ca in &common_cas {
-                if record.value.contains(ca) {
+                if value.contains(ca) {
                     recognized_cas.push(*ca);
                 }
             }
@@ -318,6 +328,19 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_dig_caa_output_normalizes_tags() {
+        let checker = CaaChecker::new("example.com".to_string());
+        let output = b"0 ISSUE \"LetsEncrypt.org\"";
+        let records = checker
+            .parse_dig_caa_output(output)
+            .expect("parse should succeed");
+
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].tag, "issue");
+        assert_eq!(records[0].value, "LetsEncrypt.org");
+    }
+
+    #[test]
     fn test_parse_dig_caa_output_skips_invalid_lines() {
         let checker = CaaChecker::new("example.com".to_string());
         let output = b"bad line\n0 issue \"letsencrypt.org\"";
@@ -339,6 +362,19 @@ mod tests {
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].tag, "iodef");
         assert_eq!(records[0].value, "mailto:security@example.com");
+    }
+
+    #[test]
+    fn test_parse_host_caa_output_is_case_insensitive() {
+        let checker = CaaChecker::new("example.com".to_string());
+        let output = b"example.com HAS CAA RECORD 0 ISSUEWILD \"Ca.Example.com\"";
+        let records = checker
+            .parse_host_caa_output(output)
+            .expect("parse should succeed");
+
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].tag, "issuewild");
+        assert_eq!(records[0].value, "Ca.Example.com");
     }
 
     #[test]
@@ -382,6 +418,50 @@ mod tests {
                 .recommendations
                 .iter()
                 .any(|rec| rec.contains("issuewild"))
+        );
+    }
+
+    #[test]
+    fn test_analyze_caa_records_treats_tags_and_ca_domains_case_insensitively() {
+        let checker = CaaChecker::new("example.com".to_string());
+        let mut result = CaaCheckResult {
+            has_caa_records: true,
+            records: vec![
+                CaaRecord {
+                    flags: 0,
+                    tag: "ISSUE".to_string(),
+                    value: "LetsEncrypt.org".to_string(),
+                },
+                CaaRecord {
+                    flags: 0,
+                    tag: "IODEF".to_string(),
+                    value: "mailto:security@example.com".to_string(),
+                },
+            ],
+            compliant: true,
+            issues: Vec::new(),
+            recommendations: Vec::new(),
+        };
+
+        checker.analyze_caa_records(&mut result);
+
+        assert!(
+            !result
+                .issues
+                .iter()
+                .any(|issue| issue.contains("Unknown CAA tag"))
+        );
+        assert!(
+            !result
+                .issues
+                .iter()
+                .any(|issue| issue.contains("No 'issue'"))
+        );
+        assert!(
+            result
+                .recommendations
+                .iter()
+                .any(|rec| rec.contains("Authorized CAs: letsencrypt.org"))
         );
     }
 

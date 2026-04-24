@@ -46,14 +46,18 @@ impl StarttlsNegotiator for IrcNegotiator {
         loop {
             let response = Self::read_response(&mut reader).await?;
             line_count += 1;
+            let response_lower = response.to_ascii_lowercase();
 
-            if response.to_lowercase().contains("tls") {
+            if has_irc_capability(&response, "tls") {
                 starttls_supported = true;
             }
 
             // Break on the final CAP LS line (no asterisk before the colon)
             // Multi-line continuation has "CAP * LS *" while final has "CAP * LS :"
-            if response.contains("CAP") && response.contains("LS") && !response.contains("LS *") {
+            if response_lower.contains("cap")
+                && response_lower.contains("ls")
+                && !response_lower.contains("ls *")
+            {
                 break;
             }
 
@@ -89,6 +93,17 @@ impl StarttlsNegotiator for IrcNegotiator {
     fn protocol(&self) -> StarttlsProtocol {
         StarttlsProtocol::IRC
     }
+}
+
+fn has_irc_capability(response: &str, capability: &str) -> bool {
+    let capability_list = response
+        .rsplit_once(':')
+        .map(|(_, list)| list)
+        .unwrap_or(response);
+
+    capability_list
+        .split_whitespace()
+        .any(|token| token.eq_ignore_ascii_case(capability))
 }
 
 /// IRCS is IRC with implicit TLS (not STARTTLS)
@@ -139,6 +154,10 @@ mod tests {
     }
 
     async fn spawn_irc_server() -> (u16, JoinHandle<()>) {
+        spawn_irc_server_with_cap_line(b"CAP * LS :multi-prefix tls\r\n").await
+    }
+
+    async fn spawn_irc_server_with_cap_line(cap_line: &'static [u8]) -> (u16, JoinHandle<()>) {
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("listener should bind");
@@ -150,10 +169,7 @@ mod tests {
                 let mut line = String::new();
 
                 let _ = reader.read_line(&mut line).await;
-                let _ = reader
-                    .get_mut()
-                    .write_all(b"CAP * LS :multi-prefix tls\r\n")
-                    .await;
+                let _ = reader.get_mut().write_all(cap_line).await;
                 let _ = reader.get_mut().flush().await;
 
                 line.clear();
@@ -181,6 +197,51 @@ mod tests {
             .negotiate_starttls(&mut stream)
             .await
             .expect("test assertion should succeed");
+
+        let _ = handle.await;
+    }
+
+    #[tokio::test]
+    async fn test_irc_negotiation_accepts_lowercase_cap_ls_final_line() {
+        let (port, handle) =
+            spawn_irc_server_with_cap_line(b"cap * ls :multi-prefix tls\r\n").await;
+        let mut stream = TcpStream::connect(("127.0.0.1", port))
+            .await
+            .expect("test assertion should succeed");
+
+        let negotiator = IrcNegotiator::new();
+        tokio::time::timeout(
+            std::time::Duration::from_millis(250),
+            negotiator.negotiate_starttls(&mut stream),
+        )
+        .await
+        .expect("negotiation should not wait for more CAP LS lines")
+        .expect("test assertion should succeed");
+
+        let _ = handle.await;
+    }
+
+    #[tokio::test]
+    async fn test_irc_negotiation_does_not_treat_notls_as_tls_capability() {
+        let (port, handle) =
+            spawn_irc_server_with_cap_line(b"CAP * LS :multi-prefix notls\r\n").await;
+        let mut stream = TcpStream::connect(("127.0.0.1", port))
+            .await
+            .expect("test assertion should succeed");
+
+        let negotiator = IrcNegotiator::new();
+        let result = tokio::time::timeout(
+            std::time::Duration::from_millis(250),
+            negotiator.negotiate_starttls(&mut stream),
+        )
+        .await
+        .expect("negotiation should not wait for STARTTLS");
+
+        assert!(
+            result.is_err(),
+            "notls must not be accepted as the tls capability"
+        );
+        drop(stream);
 
         let _ = handle.await;
     }

@@ -11,8 +11,8 @@
 // - Anycast deployment analysis
 
 use anyhow::{Context, Result};
+use ring::digest::{SHA256, digest};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -438,10 +438,8 @@ fn raw_hash_to_fuzzy_hash(raw: &str) -> String {
     }
 
     // Hash the ALPN and extensions portion
-    let mut hasher = Sha256::new();
-    hasher.update(alpex.as_bytes());
-    let hash_result = hasher.finalize();
-    let hash_hex = hex::encode(hash_result);
+    let hash_result = digest(&SHA256, alpex.as_bytes());
+    let hash_hex = hex::encode(hash_result.as_ref());
 
     // Append first 32 characters of SHA256 hash
     fhash.push_str(&hash_hex[0..32]);

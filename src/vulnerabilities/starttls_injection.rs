@@ -52,6 +52,17 @@ impl StarttlsInjectionTester {
         None
     }
 
+    fn line_has_ascii_token(line: &str, token: &str) -> bool {
+        line.split(|c: char| !c.is_ascii_alphanumeric())
+            .any(|part| part.eq_ignore_ascii_case(token))
+    }
+
+    fn response_has_ascii_token(response: &str, token: &str) -> bool {
+        response
+            .lines()
+            .any(|line| Self::line_has_ascii_token(line, token))
+    }
+
     /// Test SMTP STARTTLS injection
     pub async fn test_smtp_injection(&self) -> Result<bool> {
         let addr = self
@@ -174,7 +185,7 @@ impl StarttlsInjectionTester {
         };
         let response = String::from_utf8_lossy(&buf[..n]);
 
-        if !response.contains("STARTTLS") {
+        if !Self::response_has_ascii_token(&response, "STARTTLS") {
             return Ok(false);
         }
 
@@ -242,7 +253,7 @@ impl StarttlsInjectionTester {
         };
         let response = String::from_utf8_lossy(&buf[..n]);
 
-        if !response.contains("STLS") {
+        if !Self::response_has_ascii_token(&response, "STLS") {
             return Ok(false);
         }
 
@@ -277,7 +288,7 @@ impl StarttlsInjectionTester {
             // by checking if it mentions user/authentication
             let has_user_response = response
                 .lines()
-                .skip_while(|line| !line.contains("STLS"))
+                .skip_while(|line| !Self::line_has_ascii_token(line, "STLS"))
                 .any(|line| {
                     line.contains("+OK")
                         && (line.to_lowercase().contains("user")
@@ -514,10 +525,62 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_imap_starttls_capability_is_case_insensitive() {
+        let port = start_scripted_server(
+            b"* OK IMAP4rev1\r\n",
+            vec![
+                b"* CAPABILITY IMAP4rev1 starttls\r\na001 OK\r\n",
+                b"a002 OK Begin TLS\r\na003 OK LOGIN\r\n",
+            ],
+        )
+        .await;
+
+        let target = Target::with_ips(
+            "127.0.0.1".to_string(),
+            port,
+            vec!["127.0.0.1".parse().expect("valid IP")],
+        )
+        .expect("test assertion should succeed");
+        let tester = StarttlsInjectionTester::new(target);
+
+        let vulnerable = tester
+            .test_imap_injection()
+            .await
+            .expect("test assertion should succeed");
+        assert!(vulnerable);
+    }
+
+    #[tokio::test]
     async fn test_pop3_injection_vulnerable() {
         let port = start_scripted_server(
             b"+OK POP3 server\r\n",
             vec![b"+OK CAPA\r\nSTLS\r\n.\r\n", b"+OK STLS\r\n+OK USER\r\n"],
+        )
+        .await;
+
+        let target = Target::with_ips(
+            "127.0.0.1".to_string(),
+            port,
+            vec!["127.0.0.1".parse().expect("valid IP")],
+        )
+        .expect("test assertion should succeed");
+        let tester = StarttlsInjectionTester::new(target);
+
+        let vulnerable = tester
+            .test_pop3_injection()
+            .await
+            .expect("test assertion should succeed");
+        assert!(vulnerable);
+    }
+
+    #[tokio::test]
+    async fn test_pop3_stls_capability_is_case_insensitive() {
+        let port = start_scripted_server(
+            b"+OK POP3 server\r\n",
+            vec![
+                b"+OK CAPA\r\nstls\r\n.\r\n",
+                b"+OK stls\r\n+OK user accepted\r\n",
+            ],
         )
         .await;
 

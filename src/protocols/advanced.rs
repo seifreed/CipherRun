@@ -165,6 +165,16 @@ mod tests {
     }
 
     #[test]
+    fn test_analyze_cipher_details_is_case_insensitive() {
+        let cipher = analysis::analyze_cipher_details("tls_aes_128_gcm_sha256");
+        assert_eq!(cipher.key_exchange, "ECDHE");
+        assert_eq!(cipher.encryption, "AES-128-GCM");
+        assert_eq!(cipher.mac, "AEAD");
+        assert!(cipher.forward_secrecy);
+        assert_eq!(cipher.strength, CipherStrength::VeryStrong);
+    }
+
+    #[test]
     fn test_analyze_cipher_details_rsa_cbc() {
         let cipher = analysis::analyze_cipher_details("RSA-AES256-SHA");
         assert_eq!(cipher.key_exchange, "RSA");

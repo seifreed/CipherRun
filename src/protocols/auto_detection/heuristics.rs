@@ -68,10 +68,7 @@ pub(super) fn analyze_banner(banner: &str) -> (ApplicationProtocol, f64) {
             .take_while(|&&byte| byte != 0x00)
             .take(32)
             .all(|&byte| {
-                byte.is_ascii_digit()
-                    || byte == b'.'
-                    || byte == b'-'
-                    || byte.is_ascii_alphabetic()
+                byte.is_ascii_digit() || byte == b'.' || byte == b'-' || byte.is_ascii_alphabetic()
             });
         if pkt_len > 0 && pkt_len < 1024 && version_ok {
             return (ApplicationProtocol::Mysql, 0.95);

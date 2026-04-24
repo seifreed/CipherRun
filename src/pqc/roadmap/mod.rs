@@ -92,7 +92,11 @@ impl RoadmapGenerator {
             .advanced
             .as_ref()
             .and_then(|a| a.key_exchange_groups.as_ref())
-            .map(|g| g.groups.iter().any(|grp| grp.supported && !grp.quantum_vulnerable))
+            .map(|g| {
+                g.groups
+                    .iter()
+                    .any(|grp| grp.supported && !grp.quantum_vulnerable)
+            })
             .unwrap_or(false);
 
         if !has_pqc_group {
@@ -167,6 +171,11 @@ mod tests {
         let results = ScanResults::default();
         let roadmap = RoadmapGenerator::from_scan(&results);
         assert!(!roadmap.steps.is_empty());
-        assert!(roadmap.steps.iter().any(|s| s.title.contains("X25519MLKEM768")));
+        assert!(
+            roadmap
+                .steps
+                .iter()
+                .any(|s| s.title.contains("X25519MLKEM768"))
+        );
     }
 }

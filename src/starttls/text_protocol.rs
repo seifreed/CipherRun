@@ -233,7 +233,7 @@ async fn read_tagged_capabilities(
     let mut supported = false;
     loop {
         let line = response::read_line(reader).await?;
-        if line.to_uppercase().contains(cap.starttls_marker) {
+        if has_capability_token(&line, cap.starttls_marker) {
             supported = true;
         }
         if line.starts_with(ok_prefix) {
@@ -281,7 +281,7 @@ async fn read_dot_terminated_capabilities(
         if trimmed == "." {
             break;
         }
-        if trimmed.to_uppercase().contains(cap.starttls_marker) {
+        if has_capability_token(trimmed, cap.starttls_marker) {
             supported = true;
         }
     }
@@ -305,7 +305,7 @@ async fn read_multiline_capabilities(
                 ),
             });
         }
-        if line.to_uppercase().contains(cap.starttls_marker) {
+        if has_capability_token(&line, cap.starttls_marker) {
             supported = true;
         }
         // Last line: "NNN " (space after code, not dash "NNN-")
@@ -327,11 +327,34 @@ async fn read_until_prefix_capabilities(
         if line.starts_with(prefix) {
             break;
         }
-        if line.to_uppercase().contains(cap.starttls_marker) {
+        if has_capability_token(&line, cap.starttls_marker) {
             supported = true;
         }
     }
     Ok(supported)
+}
+
+fn has_capability_token(line: &str, marker: &str) -> bool {
+    let marker = marker.trim();
+    line.split_whitespace().any(|token| {
+        let token = strip_status_prefix(token);
+        let token = token.trim_matches(|c: char| {
+            matches!(c, '"' | '\'' | ':' | ';' | ',' | '(' | ')' | '[' | ']')
+        });
+        token.eq_ignore_ascii_case(marker)
+    })
+}
+
+fn strip_status_prefix(token: &str) -> &str {
+    let bytes = token.as_bytes();
+    if bytes.len() > 4
+        && bytes[..3].iter().all(u8::is_ascii_digit)
+        && matches!(bytes[3], b'-' | b' ')
+    {
+        &token[4..]
+    } else {
+        token
+    }
 }
 
 async fn validate_success(
@@ -359,4 +382,21 @@ async fn validate_success(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn capability_token_matching_avoids_substring_false_positives() {
+        assert!(has_capability_token("250-STARTTLS", "STARTTLS"));
+        assert!(has_capability_token(
+            "* CAPABILITY IMAP4rev1 starttls",
+            "STARTTLS"
+        ));
+        assert!(has_capability_token("\"STARTTLS\"", "STARTTLS"));
+        assert!(!has_capability_token("250-NOSTARTTLS", "STARTTLS"));
+        assert!(!has_capability_token("XSTARTTLS", "STARTTLS"));
+    }
 }

@@ -3,6 +3,7 @@
 use crate::certificates::parser::CertificateInfo;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 
 /// Types of certificate changes
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -59,6 +60,12 @@ impl ChangeDetector {
         Self {}
     }
 
+    fn normalized_san_set(sans: &[String]) -> HashSet<String> {
+        sans.iter()
+            .map(|san| san.trim_end_matches('.').to_ascii_lowercase())
+            .collect()
+    }
+
     /// Detect changes between two certificates
     pub fn detect_changes(
         &self,
@@ -97,8 +104,8 @@ impl ChangeDetector {
         // In those cases the IssuerChange/Renewal event already describes the
         // transition; emitting an additional KeySizeChange produces redundant
         // alerts for a single replacement.
-        let same_cert_identity = previous.issuer == current.issuer
-            && previous.serial_number == current.serial_number;
+        let same_cert_identity =
+            previous.issuer == current.issuer && previous.serial_number == current.serial_number;
 
         if same_cert_identity && previous.public_key_size != current.public_key_size {
             changes.push(ChangeEvent {
@@ -125,8 +132,8 @@ impl ChangeDetector {
         }
 
         // Check SAN changes
-        let prev_sans: std::collections::HashSet<_> = previous.san.iter().collect();
-        let curr_sans: std::collections::HashSet<_> = current.san.iter().collect();
+        let prev_sans = Self::normalized_san_set(&previous.san);
+        let curr_sans = Self::normalized_san_set(&current.san);
 
         if prev_sans != curr_sans {
             let added: Vec<_> = curr_sans.difference(&prev_sans).collect();
@@ -414,6 +421,28 @@ mod tests {
         assert_eq!(changes.len(), 1);
         assert!(matches!(changes[0].change_type, ChangeType::SANChange));
         assert_eq!(changes[0].severity, ChangeSeverity::Medium);
+    }
+
+    #[test]
+    fn test_san_case_only_changes_do_not_emit_change() {
+        let detector = ChangeDetector::new();
+
+        let previous = create_test_cert(
+            "123",
+            "CN=Let's Encrypt",
+            Some(2048),
+            vec!["WWW.Example.COM".to_string()],
+        );
+        let current = create_test_cert(
+            "123",
+            "CN=Let's Encrypt",
+            Some(2048),
+            vec!["www.example.com".to_string()],
+        );
+
+        let changes = detector.detect_changes(&previous, &current);
+
+        assert!(changes.is_empty(), "{changes:?}");
     }
 
     #[test]

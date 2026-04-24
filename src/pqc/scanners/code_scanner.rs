@@ -48,7 +48,12 @@ static PATTERNS: LazyLock<Vec<PqcCodePattern>> = LazyLock::new(|| {
             "RSA",
             "High",
         ),
-        mk("crypto.createECDH", r"crypto\.createECDH\b", "ECDH (classical)", "High"),
+        mk(
+            "crypto.createECDH",
+            r"crypto\.createECDH\b",
+            "ECDH (classical)",
+            "High",
+        ),
         mk("EC_KEY_new", r"\bEC_KEY_new\b", "ECDH (OpenSSL C)", "High"),
         mk("DH_new", r"\bDH_new\b", "DH (classical)", "High"),
         mk(

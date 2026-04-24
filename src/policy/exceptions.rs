@@ -45,7 +45,10 @@ impl ExceptionMatcher {
         let hostname = split_target_host_port(target)
             .map(|(hostname, _)| hostname)
             .unwrap_or_else(|_| target.to_string());
-        let hostname = hostname.as_str();
+        let hostname_lower = hostname.to_ascii_lowercase();
+        let pattern_lower = pattern.to_ascii_lowercase();
+        let hostname = hostname_lower.as_str();
+        let pattern = pattern_lower.as_str();
 
         // Exact match
         if pattern == hostname {
@@ -181,6 +184,28 @@ mod tests {
 
         assert!(matcher.matches_domain("example.com", "example.com"));
         assert!(!matcher.matches_domain("subdomain.example.com", "example.com"));
+    }
+
+    #[test]
+    fn test_domain_matching_is_case_insensitive() {
+        let exception = PolicyException {
+            domain: Some("*.Example.COM".to_string()),
+            rules: vec!["protocols.prohibited".to_string()],
+            reason: "Case insensitive DNS match".to_string(),
+            expires: None,
+            approved_by: "Admin".to_string(),
+            ticket: None,
+        };
+
+        let matcher = ExceptionMatcher::new(vec![exception]);
+
+        assert!(matcher.matches_domain("API.example.com:443", "*.Example.COM"));
+        assert!(matcher.matches_domain("EXAMPLE.com", "*.Example.COM"));
+        assert!(
+            matcher
+                .is_exception("API.example.com:443", "protocols.prohibited")
+                .is_some()
+        );
     }
 
     #[test]

@@ -417,6 +417,14 @@ mod tests {
     }
 
     #[test]
+    fn protocol_compatibility_is_case_insensitive() {
+        let tester = CipherTester::new(dummy_target());
+        let cipher = make_cipher("1301", "tlsv1.3", "aesgcm", 256, false, "any");
+        assert!(tester.is_cipher_compatible_with_protocol(&cipher, Protocol::TLS13));
+        assert!(!tester.is_cipher_compatible_with_protocol(&cipher, Protocol::TLS12));
+    }
+
+    #[test]
     fn tls13_cipher_not_compatible_with_tls12() {
         let tester = CipherTester::new(dummy_target());
         let cipher = make_cipher("1301", "TLS13", "AESGCM", 256, false, "any");

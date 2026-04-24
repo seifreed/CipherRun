@@ -131,7 +131,7 @@ impl MxTester {
         let mut records = Vec::new();
 
         for line in output_str.lines() {
-            if line.contains("mail exchanger") {
+            if line.to_ascii_lowercase().contains("mail exchanger") {
                 // Format: "example.com    mail exchanger = 10 mx.example.com."
                 let Some((_, right_side)) = line.split_once('=') else {
                     continue;
@@ -594,6 +594,19 @@ mod tests {
         assert_eq!(records.len(), 2);
         assert_eq!(records[0].priority, 5);
         assert_eq!(records[0].hostname, "mx1.example.com");
+    }
+
+    #[test]
+    fn test_parse_nslookup_output_is_case_insensitive() {
+        let tester = MxTester::new("example.com".to_string());
+        let output = b"example.com\tMAIL EXCHANGER = 15 MX.EXAMPLE.COM.\n";
+
+        let records = tester
+            .parse_nslookup_output(output)
+            .expect("test assertion should succeed");
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].priority, 15);
+        assert_eq!(records[0].hostname, "MX.EXAMPLE.COM");
     }
 
     #[test]

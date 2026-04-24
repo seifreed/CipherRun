@@ -23,7 +23,9 @@ impl VpnScanner {
 
         for line in content.lines() {
             let trimmed = line.trim();
-            if trimmed.starts_with('#') || trimmed.is_empty() { continue; }
+            if trimmed.starts_with('#') || trimmed.is_empty() {
+                continue;
+            }
             let lower = trimmed.to_lowercase();
             if lower.starts_with("cipher ") || lower.starts_with("tls-cipher ") {
                 vulnerable.push(trimmed.to_string());
@@ -32,12 +34,19 @@ impl VpnScanner {
 
         // WireGuard uses X25519 (classical) — inherently quantum-vulnerable
         if vpn_type == "WireGuard" {
-            vulnerable.push("X25519 key exchange (WireGuard default — quantum-vulnerable)".to_string());
-            recommendations.push("WireGuard does not yet support PQC. Monitor wireguard-go for ML-KEM integration.".to_string());
+            vulnerable
+                .push("X25519 key exchange (WireGuard default — quantum-vulnerable)".to_string());
+            recommendations.push(
+                "WireGuard does not yet support PQC. Monitor wireguard-go for ML-KEM integration."
+                    .to_string(),
+            );
         }
 
         if recommendations.is_empty() {
-            recommendations.push("Migrate VPN to a stack supporting hybrid PQC key exchange when available.".to_string());
+            recommendations.push(
+                "Migrate VPN to a stack supporting hybrid PQC key exchange when available."
+                    .to_string(),
+            );
         }
 
         // `pqc_safe` is not populated by this scanner yet, so we cannot credit any
@@ -64,7 +73,10 @@ impl VpnScanner {
 fn detect_vpn_type(content: &str) -> String {
     if content.contains("[Interface]") && content.contains("PrivateKey") {
         "WireGuard".to_string()
-    } else if content.contains("dev tun") || content.contains("dev tap") || content.contains("tls-auth") {
+    } else if content.contains("dev tun")
+        || content.contains("dev tap")
+        || content.contains("tls-auth")
+    {
         "OpenVPN".to_string()
     } else {
         "Unknown".to_string()
@@ -92,10 +104,7 @@ mod tests {
             "absence of cipher evidence must not award a readiness score"
         );
         assert!(
-            result
-                .recommendations
-                .iter()
-                .any(|r| r.contains("unknown")),
+            result.recommendations.iter().any(|r| r.contains("unknown")),
             "scanner should flag the unknown crypto state explicitly"
         );
     }

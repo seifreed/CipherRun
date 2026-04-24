@@ -308,7 +308,10 @@ mod tests {
         let parsed = scanner
             .parse_handshake_response(&record)
             .expect("parser must not panic on version bytes < 0x02");
-        assert_eq!(parsed.protocol_version, Some("Unknown (0x0100)".to_string()));
+        assert_eq!(
+            parsed.protocol_version,
+            Some("Unknown (0x0100)".to_string())
+        );
     }
 
     #[test]

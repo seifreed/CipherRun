@@ -50,6 +50,8 @@ impl<'a> PolicyLoader<'a> {
             policy = self.merge_policies(base_policy, policy)?;
         }
 
+        self.normalize_policy_values(&mut policy);
+
         // Validate the policy
         self.validate(&policy)?;
 
@@ -59,7 +61,8 @@ impl<'a> PolicyLoader<'a> {
     /// Load policy from YAML string
     pub fn load_from_string(yaml_content: &str) -> Result<Policy> {
         let loader = PolicyLoader::from_source(".", &NoopPolicyDocumentSource);
-        let policy = loader.parse_policy_document(yaml_content)?;
+        let mut policy = loader.parse_policy_document(yaml_content)?;
+        loader.normalize_policy_values(&mut policy);
         loader.validate(&policy)?;
 
         Ok(policy)
@@ -122,6 +125,20 @@ impl<'a> PolicyLoader<'a> {
         };
 
         Ok(merged)
+    }
+
+    fn normalize_policy_values(&self, policy: &mut Policy) {
+        if let Some(ref mut cipher_policy) = policy.ciphers
+            && let Some(ref mut min_strength) = cipher_policy.min_strength
+        {
+            *min_strength = min_strength.trim().to_ascii_uppercase();
+        }
+
+        if let Some(ref mut rating_policy) = policy.rating
+            && let Some(ref mut min_grade) = rating_policy.min_grade
+        {
+            *min_grade = min_grade.trim().to_ascii_uppercase();
+        }
     }
 
     /// Validate policy structure and values
@@ -278,6 +295,28 @@ policy:
     }
 
     #[test]
+    fn test_min_strength_is_normalized_before_evaluation() {
+        let yaml = r#"
+policy:
+  name: "Test Policy"
+  version: "1.0"
+  ciphers:
+    min_strength: " high "
+    action: FAIL
+"#;
+
+        let policy = PolicyLoader::load_from_string(yaml).expect("policy should parse");
+        assert_eq!(
+            policy
+                .ciphers
+                .expect("cipher policy")
+                .min_strength
+                .expect("min strength"),
+            "HIGH"
+        );
+    }
+
+    #[test]
     fn test_validate_regex_patterns() {
         let yaml = r#"
 policy:
@@ -376,6 +415,28 @@ policy:
         assert!(result.is_ok());
         let policy = result.expect("test assertion should succeed");
         assert!(policy.rating.is_some());
+    }
+
+    #[test]
+    fn test_rating_min_grade_is_normalized() {
+        let yaml = r#"
+policy:
+  name: "Test Policy"
+  version: "1.0"
+  rating:
+    min_grade: " a- "
+    action: FAIL
+"#;
+
+        let policy = PolicyLoader::load_from_string(yaml).expect("policy should parse");
+        assert_eq!(
+            policy
+                .rating
+                .expect("rating policy")
+                .min_grade
+                .expect("min grade"),
+            "A-"
+        );
     }
 
     #[test]

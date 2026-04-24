@@ -426,6 +426,14 @@ mod tests {
         assert!(ephemeral);
     }
 
+    #[test]
+    fn test_analyze_cipher_kex_is_case_insensitive() {
+        let (algo, ephemeral, params) = analyze_cipher_kex("ecdhe-rsa-aes256-gcm-sha384");
+        assert_eq!(algo, "ECDHE");
+        assert!(ephemeral);
+        assert!(matches!(params, KeyExchangeParams::Ecdhe { .. }));
+    }
+
     fn install_crypto_provider() {
         static ONCE: Once = Once::new();
         ONCE.call_once(|| {

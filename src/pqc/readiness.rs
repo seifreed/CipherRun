@@ -1,8 +1,8 @@
 // PQC Readiness Assessment and Scoring
 
 use crate::certificates::parser::CertificateChain;
-use crate::protocols::{Protocol, ProtocolTestResult};
 use crate::protocols::groups::GroupEnumerationResult;
+use crate::protocols::{Protocol, ProtocolTestResult};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -80,7 +80,8 @@ impl PqcReadinessScorer {
                 }
             } else {
                 recommendations.push(
-                    "Deploy X25519MLKEM768 as a preferred key share in TLS 1.3 (IANA 0x11EC).".to_string(),
+                    "Deploy X25519MLKEM768 as a preferred key share in TLS 1.3 (IANA 0x11EC)."
+                        .to_string(),
                 );
             }
         } else {
@@ -99,15 +100,24 @@ impl PqcReadinessScorer {
             score = score.saturating_add(30);
         } else {
             recommendations.push(
-                "Migrate to a hybrid/PQC certificate (ML-DSA, Falcon) when your CA supports it.".to_string(),
+                "Migrate to a hybrid/PQC certificate (ML-DSA, Falcon) when your CA supports it."
+                    .to_string(),
             );
         }
 
         // --- TLS 1.3 exclusive bonus ---
-        let has_tls13 = protocols.iter().any(|p| p.protocol == Protocol::TLS13 && p.supported);
+        let has_tls13 = protocols
+            .iter()
+            .any(|p| p.protocol == Protocol::TLS13 && p.supported);
         let has_legacy = protocols.iter().any(|p| {
-            matches!(p.protocol, Protocol::SSLv2 | Protocol::SSLv3 | Protocol::TLS10 | Protocol::TLS11 | Protocol::TLS12)
-                && p.supported
+            matches!(
+                p.protocol,
+                Protocol::SSLv2
+                    | Protocol::SSLv3
+                    | Protocol::TLS10
+                    | Protocol::TLS11
+                    | Protocol::TLS12
+            ) && p.supported
         });
 
         if has_tls13 && !has_legacy {
@@ -213,7 +223,12 @@ mod tests {
     fn test_hndl_risk_true_when_quantum_vulnerable_only() {
         let assessment = PqcReadinessScorer::assess(None, None, &[]);
         assert!(assessment.hndl_risk);
-        assert!(assessment.recommendations.iter().any(|r| r.contains("HNDL")));
+        assert!(
+            assessment
+                .recommendations
+                .iter()
+                .any(|r| r.contains("HNDL"))
+        );
     }
 
     #[test]
@@ -254,7 +269,10 @@ mod tests {
         ]);
         let assessment = PqcReadinessScorer::assess(Some(&g), None, &[]);
         // 30 (PQ present) + 20 (majority bonus) = 50, no cert, no TLS13
-        assert_eq!(assessment.score, 50, "equal-split should earn majority bonus");
+        assert_eq!(
+            assessment.score, 50,
+            "equal-split should earn majority bonus"
+        );
     }
 
     #[test]

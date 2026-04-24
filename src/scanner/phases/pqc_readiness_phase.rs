@@ -9,11 +9,15 @@ use async_trait::async_trait;
 pub struct PqcReadinessPhase;
 
 impl PqcReadinessPhase {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 }
 
 impl Default for PqcReadinessPhase {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[async_trait]
@@ -33,11 +37,7 @@ impl ScanPhase for PqcReadinessPhase {
             .as_ref()
             .and_then(|a| a.key_exchange_groups.as_ref());
 
-        let cert_chain = context
-            .results
-            .certificate_chain
-            .as_ref()
-            .map(|c| &c.chain);
+        let cert_chain = context.results.certificate_chain.as_ref().map(|c| &c.chain);
 
         let assessment = PqcReadinessScorer::assess(groups, cert_chain, &context.results.protocols);
         context.results.advanced_mut().pqc_readiness = Some(assessment);
@@ -51,7 +51,10 @@ mod tests {
 
     #[test]
     fn test_pqc_readiness_phase_name() {
-        assert_eq!(PqcReadinessPhase::new().name(), "Analyzing Post-Quantum Readiness");
+        assert_eq!(
+            PqcReadinessPhase::new().name(),
+            "Analyzing Post-Quantum Readiness"
+        );
     }
 
     #[test]

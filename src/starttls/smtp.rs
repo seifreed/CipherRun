@@ -171,4 +171,51 @@ mod tests {
 
         server.await.expect("test server task should complete");
     }
+
+    #[tokio::test]
+    async fn test_smtp_does_not_treat_nostarttls_as_starttls_capability() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test listener should bind to localhost");
+        let addr = listener
+            .local_addr()
+            .expect("test listener should have local addr");
+
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener
+                .accept()
+                .await
+                .expect("test server should accept connection");
+            stream
+                .write_all(b"220 ready\r\n")
+                .await
+                .expect("test server should write response");
+
+            let mut buffer = vec![0u8; 256];
+            let _ = stream
+                .read(&mut buffer)
+                .await
+                .expect("test should read EHLO");
+
+            stream
+                .write_all(b"250-localhost\r\n250-NOSTARTTLS\r\n250 OK\r\n")
+                .await
+                .expect("test server should write capabilities");
+
+            let _ = stream.read(&mut buffer).await;
+        });
+
+        let mut client = TcpStream::connect(addr)
+            .await
+            .expect("test client should connect");
+        let negotiator = SmtpNegotiator::new("example.com".to_string());
+        let err = negotiator
+            .negotiate_starttls(&mut client)
+            .await
+            .expect_err("NOSTARTTLS must not enable STARTTLS");
+        assert!(format!("{err}").contains("does not support STARTTLS"));
+        drop(client);
+
+        server.await.expect("test server task should complete");
+    }
 }

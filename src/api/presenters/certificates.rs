@@ -52,8 +52,9 @@ fn parse_san(san_json: Option<&str>) -> Vec<String> {
 fn extract_cn_from_subject(subject: &str) -> String {
     subject
         .split(',')
-        .find(|part| part.trim().starts_with("CN="))
-        .and_then(|cn_part| cn_part.split('=').nth(1))
+        .filter_map(|part| part.trim().split_once('='))
+        .find(|(key, _)| key.trim().eq_ignore_ascii_case("CN"))
+        .map(|(_, value)| value)
         .unwrap_or(subject)
         .trim()
         .to_string()
@@ -79,6 +80,22 @@ mod tests {
         assert_eq!(summary.common_name, "example.com");
         assert_eq!(summary.san.len(), 2);
         assert!(summary.is_expiring_soon);
+    }
+
+    #[test]
+    fn summary_extracts_common_name_with_spaces_around_equals() {
+        let now = Utc::now();
+        let summary = present_certificate_summary(CertificateView {
+            fingerprint: "fp".to_string(),
+            subject: "C=US, O=Example, CN = spaced.example.com".to_string(),
+            issuer: "Example CA".to_string(),
+            not_before: now,
+            not_after: now + chrono::Duration::days(10),
+            san_json: None,
+            hostnames: Vec::new(),
+        });
+
+        assert_eq!(summary.common_name, "spaced.example.com");
     }
 
     #[test]

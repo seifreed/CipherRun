@@ -116,12 +116,14 @@ impl<'a> CertificateRule<'a> {
         if let Some(ref prohibited_sigs) = self.policy.prohibited_signature_algorithms
             && let Some(cert) = leaf_cert
         {
+            let signature_algorithm = cert.signature_algorithm.to_uppercase();
             for prohibited in prohibited_sigs {
-                if cert
-                    .signature_algorithm
-                    .to_uppercase()
-                    .contains(&prohibited.to_uppercase())
-                {
+                let prohibited = prohibited.trim();
+                if prohibited.is_empty() {
+                    continue;
+                }
+
+                if signature_algorithm.contains(&prohibited.to_uppercase()) {
                     violations.push(
                         PolicyViolation::new(
                             "certificates.prohibited_signature_algorithms",
@@ -340,6 +342,32 @@ mod tests {
             min_key_size: None,
             max_days_until_expiry: None,
             prohibited_signature_algorithms: Some(vec!["SHA1".to_string()]),
+            require_valid_trust_chain: None,
+            require_san: None,
+            require_hostname_match: None,
+            action: PolicyAction::Fail,
+        };
+
+        let mut cert_result = create_test_cert_result();
+        cert_result.chain.certificates[0].signature_algorithm = "SHA1-RSA".to_string();
+
+        let rule = CertificateRule::new(&policy, Some(&cert_result));
+        let violations = rule
+            .evaluate("example.com:443")
+            .expect("test assertion should succeed");
+
+        assert_eq!(
+            violations[0].rule_path,
+            "certificates.prohibited_signature_algorithms"
+        );
+    }
+
+    #[test]
+    fn test_prohibited_signature_algorithm_trims_policy_values() {
+        let policy = CertificatePolicy {
+            min_key_size: None,
+            max_days_until_expiry: None,
+            prohibited_signature_algorithms: Some(vec![" sha1 ".to_string()]),
             require_valid_trust_chain: None,
             require_san: None,
             require_hostname_match: None,

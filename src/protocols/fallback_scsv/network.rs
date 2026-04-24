@@ -167,7 +167,6 @@ impl FallbackScsvTester<'_> {
             }
         }
     }
-
 }
 
 /// Aggregate per-IP SCSV results into a single verdict.
@@ -218,7 +217,8 @@ mod tests {
         // overridden by another IP that returned not_supported. Reporting
         // a downgrade vulnerability without conclusive evidence is a false
         // positive in a security scanner.
-        let result = aggregate_scsv_support(/*all_support=*/ false, /*inconclusive=*/ true);
+        let result =
+            aggregate_scsv_support(/*all_support=*/ false, /*inconclusive=*/ true);
         assert!(
             result.inconclusive,
             "inconclusive must win when at least one IP was inconclusive"

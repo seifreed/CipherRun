@@ -39,8 +39,7 @@ impl BreachTester {
         // 1. HTTP compression enabled
         // 2. Dynamic content (user input reflected)
         // 3. Sensitive data in responses
-        let vulnerable =
-            !inconclusive && compression_enabled && dynamic_content && sensitive_data;
+        let vulnerable = !inconclusive && compression_enabled && dynamic_content && sensitive_data;
 
         let details = if inconclusive {
             "Inconclusive - one or more BREACH probes could not complete (TCP/TLS error or empty HTTP response)".to_string()
@@ -275,12 +274,12 @@ impl BreachTester {
 
         // Check for CSRF tokens in HTML attributes (more precise)
         // Look for actual HTML attributes, not just the word "csrf"
-        if response.contains("csrf-token=")
-            || response.contains("csrf_token=")
-            || response.contains("_csrf=")
-            || response.contains("name=\"csrf")
-            || response.contains("name='csrf")
-            || response.contains("csrfmiddlewaretoken")
+        if response_lower.contains("csrf-token=")
+            || response_lower.contains("csrf_token=")
+            || response_lower.contains("_csrf=")
+            || response_lower.contains("name=\"csrf")
+            || response_lower.contains("name='csrf")
+            || response_lower.contains("csrfmiddlewaretoken")
         {
             return true;
         }
@@ -290,10 +289,10 @@ impl BreachTester {
         if response_lower.contains("phpsessid=")
             || response_lower.contains("jsessionid=")
             || response_lower.contains("asp.net_sessionid=")
-            || response.contains("sessionId=")
-            || response.contains("session_id=")
-            || response.contains("name=\"session")
-            || response.contains("name='session")
+            || response_lower.contains("sessionid=")
+            || response_lower.contains("session_id=")
+            || response_lower.contains("name=\"session")
+            || response_lower.contains("name='session")
         {
             return true;
         }
@@ -302,10 +301,10 @@ impl BreachTester {
         if response_lower.contains("authorization:")
             || response_lower.contains("x-auth-token:")
             || response_lower.contains("x-api-key:")
-            || response.contains("api_key=")
-            || response.contains("access_token=")
-            || response.contains("name=\"token")
-            || response.contains("name='token")
+            || response_lower.contains("api_key=")
+            || response_lower.contains("access_token=")
+            || response_lower.contains("name=\"token")
+            || response_lower.contains("name='token")
         {
             return true;
         }
@@ -375,6 +374,22 @@ mod tests {
         // Needs all three conditions for full vulnerability
         assert!(!result.vulnerable);
         assert!(result.compression_enabled);
+    }
+
+    #[test]
+    fn test_detect_sensitive_patterns_is_case_insensitive() {
+        assert!(BreachTester::detect_sensitive_patterns(
+            r#"<input NAME="CSRFToken" value="abc">"#
+        ));
+        assert!(BreachTester::detect_sensitive_patterns(
+            "HTTP/1.1 200 OK\r\nX-API-Key: abc\r\n\r\n"
+        ));
+        assert!(BreachTester::detect_sensitive_patterns(
+            r#"<form><input Name='SessionId' value='abc'></form>"#
+        ));
+        assert!(BreachTester::detect_sensitive_patterns(
+            "https://example.test/callback?Access_Token=abc"
+        ));
     }
 
     #[test]

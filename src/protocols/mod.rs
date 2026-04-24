@@ -74,15 +74,17 @@ impl FromStr for Protocol {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
+        let normalized = s.trim().to_ascii_lowercase().replace(' ', "");
+
+        match normalized.as_str() {
             // Standard display format with spaces
-            "SSLv2" | "SSL 2.0" => Ok(Protocol::SSLv2),
-            "SSLv3" | "SSL 3.0" => Ok(Protocol::SSLv3),
-            "TLS 1.0" | "TLSv1.0" | "TLSv1" => Ok(Protocol::TLS10),
-            "TLS 1.1" | "TLSv1.1" => Ok(Protocol::TLS11),
-            "TLS 1.2" | "TLSv1.2" => Ok(Protocol::TLS12),
-            "TLS 1.3" | "TLSv1.3" => Ok(Protocol::TLS13),
-            "QUIC" => Ok(Protocol::QUIC),
+            "sslv2" | "ssl2.0" => Ok(Protocol::SSLv2),
+            "sslv3" | "ssl3.0" => Ok(Protocol::SSLv3),
+            "tls1.0" | "tlsv1.0" | "tlsv1" => Ok(Protocol::TLS10),
+            "tls1.1" | "tlsv1.1" => Ok(Protocol::TLS11),
+            "tls1.2" | "tlsv1.2" => Ok(Protocol::TLS12),
+            "tls1.3" | "tlsv1.3" => Ok(Protocol::TLS13),
+            "quic" => Ok(Protocol::QUIC),
             _ => Err(format!("Unknown protocol: {}", s)),
         }
     }
