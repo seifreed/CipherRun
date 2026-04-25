@@ -6,6 +6,7 @@ use crate::certificates::validator::parse_cert_date;
 use crate::compliance::{Rule, Severity, Violation};
 use crate::protocols::Protocol;
 use chrono::Utc;
+use std::str::FromStr;
 
 /// Compliance checker for evaluating rules against scan results
 pub struct ComplianceChecker;
@@ -86,6 +87,23 @@ impl ComplianceChecker {
                     .parse::<Protocol>()
                     .is_ok_and(|configured_protocol| configured_protocol == protocol)
         })
+    }
+
+    fn normalize_signature_algorithm_name(value: &str) -> String {
+        value
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric())
+            .flat_map(|c| c.to_uppercase())
+            .collect()
+    }
+
+    fn signature_algorithm_matches(configured: &str, observed: &str) -> bool {
+        let configured = Self::normalize_signature_algorithm_name(configured);
+        if configured.is_empty() {
+            return false;
+        }
+
+        Self::normalize_signature_algorithm_name(observed).contains(&configured)
     }
 
     /// Check cipher suite compliance
@@ -206,10 +224,9 @@ impl ComplianceChecker {
         if let Some(cert_analysis) = &results.certificate_chain
             && let Some(leaf_cert) = cert_analysis.chain.leaf()
         {
-            let sig_algo = leaf_cert.signature_algorithm.to_lowercase();
-
-            // Check if signature algorithm is denied (exact match, sig_algo already lowercased)
-            if rule.denied.iter().any(|d| sig_algo == d.to_lowercase()) {
+            if rule.denied.iter().any(|denied| {
+                Self::signature_algorithm_matches(denied, &leaf_cert.signature_algorithm)
+            }) {
                 violations.push(Violation {
                     violation_type: "Prohibited Signature Algorithm".to_string(),
                     description: format!(
@@ -228,13 +245,9 @@ impl ComplianceChecker {
 
             // Check if signature algorithm is in allowed list
             if !rule.allowed.is_empty() {
-                let mut is_allowed = false;
-                for allowed in &rule.allowed {
-                    if sig_algo == allowed.to_lowercase() {
-                        is_allowed = true;
-                        break;
-                    }
-                }
+                let is_allowed = rule.allowed.iter().any(|allowed| {
+                    Self::signature_algorithm_matches(allowed, &leaf_cert.signature_algorithm)
+                });
 
                 if !is_allowed {
                     violations.push(Violation {
@@ -263,21 +276,22 @@ impl ComplianceChecker {
         }
 
         for (protocol, cipher_summary) in &results.ciphers {
+            let protocol_bucket_is_tls13 =
+                *protocol == Protocol::TLS13 || cipher_summary.protocol == Protocol::TLS13;
+
             // Collect all ciphers without forward secrecy for this protocol
             let non_fs_ciphers: Vec<_> = cipher_summary
                 .supported_ciphers
                 .iter()
                 .filter(|cipher| {
-                    let protocol = cipher.protocol.to_ascii_uppercase();
                     let iana_name = cipher.iana_name.to_ascii_uppercase();
                     let openssl_name = cipher.openssl_name.to_ascii_uppercase();
 
                     // TLS 1.3 ciphers (e.g. TLS_AES_128_GCM_SHA256) inherently
                     // require forward secrecy by protocol design — no key-exchange
                     // algorithm appears in the name.
-                    let is_tls13_cipher = protocol.contains("TLS13")
-                        || protocol.contains("TLSV1.3")
-                        || protocol.contains("TLS 1.3")
+                    let is_tls13_cipher = protocol_bucket_is_tls13
+                        || matches!(Protocol::from_str(&cipher.protocol), Ok(Protocol::TLS13))
                         || iana_name.starts_with("TLS_AES_")
                         || iana_name.starts_with("TLS_CHACHA20_");
                     let has_fs = is_tls13_cipher
@@ -729,6 +743,60 @@ mod tests {
     }
 
     #[test]
+    fn test_check_forward_secrecy_uses_protocol_bucket_for_tls13_ciphers() {
+        let rule = Rule {
+            rule_type: "ForwardSecrecy".to_string(),
+            allowed: vec![],
+            denied: vec![],
+            allowed_patterns: vec![],
+            denied_patterns: vec![],
+            preferred_patterns: vec![],
+            min_rsa_bits: None,
+            min_ecc_bits: None,
+            required: Some(true),
+            require_valid_chain: None,
+            require_unexpired: None,
+            require_hostname_match: None,
+            max_days_until_expiration: None,
+            custom_params: HashMap::new(),
+        };
+
+        let cipher = CipherSuite {
+            hexcode: "0x00c6".to_string(),
+            openssl_name: "TLS_SM4_GCM_SM3".to_string(),
+            iana_name: "TLS_SM4_GCM_SM3".to_string(),
+            protocol: "TLS-1-3".to_string(),
+            key_exchange: "".to_string(),
+            authentication: "any".to_string(),
+            encryption: "SM4-GCM".to_string(),
+            mac: "AEAD".to_string(),
+            bits: 128,
+            export: false,
+        };
+        let mut ciphers = HashMap::new();
+        ciphers.insert(
+            Protocol::TLS13,
+            ProtocolCipherSummary {
+                protocol: Protocol::TLS13,
+                supported_ciphers: vec![cipher],
+                server_ordered: false,
+                server_preference: vec![],
+                preferred_cipher: None,
+                counts: CipherCounts::default(),
+                avg_handshake_time_ms: None,
+            },
+        );
+        let results = ScanAssessment {
+            ciphers,
+            ..Default::default()
+        };
+
+        let violations = ComplianceChecker::check_forward_secrecy(&rule, &results)
+            .expect("test assertion should succeed");
+        assert!(violations.is_empty(), "{violations:?}");
+    }
+
+    #[test]
     fn test_check_ciphers_exact_lists_are_case_insensitive() {
         let cipher = CipherSuite {
             hexcode: "0x1301".to_string(),
@@ -800,6 +868,76 @@ mod tests {
             .expect("test assertion should succeed");
         assert_eq!(violations.len(), 1);
         assert_eq!(violations[0].violation_type, "Prohibited Cipher Suite");
+    }
+
+    #[test]
+    fn test_check_signature_denied_matches_hyphenated_alias() {
+        let rule = Rule {
+            rule_type: "SignatureAlgorithm".to_string(),
+            allowed: vec![],
+            denied: vec!["SHA1".to_string()],
+            allowed_patterns: vec![],
+            denied_patterns: vec![],
+            preferred_patterns: vec![],
+            min_rsa_bits: None,
+            min_ecc_bits: None,
+            required: None,
+            require_valid_chain: None,
+            require_unexpired: None,
+            require_hostname_match: None,
+            max_days_until_expiration: None,
+            custom_params: HashMap::new(),
+        };
+        let mut results =
+            create_certificate_assessment("2027-01-01 00:00:00 +0000".to_string(), true);
+        results
+            .certificate_chain
+            .as_mut()
+            .unwrap()
+            .chain
+            .certificates[0]
+            .signature_algorithm = "SHA-1-RSA".to_string();
+
+        let violations = ComplianceChecker::check_signature(&rule, &results)
+            .expect("test assertion should succeed");
+        assert_eq!(violations.len(), 1);
+        assert_eq!(
+            violations[0].violation_type,
+            "Prohibited Signature Algorithm"
+        );
+    }
+
+    #[test]
+    fn test_check_signature_allowed_matches_separator_alias() {
+        let rule = Rule {
+            rule_type: "SignatureAlgorithm".to_string(),
+            allowed: vec!["SHA1-RSA".to_string()],
+            denied: vec![],
+            allowed_patterns: vec![],
+            denied_patterns: vec![],
+            preferred_patterns: vec![],
+            min_rsa_bits: None,
+            min_ecc_bits: None,
+            required: None,
+            require_valid_chain: None,
+            require_unexpired: None,
+            require_hostname_match: None,
+            max_days_until_expiration: None,
+            custom_params: HashMap::new(),
+        };
+        let mut results =
+            create_certificate_assessment("2027-01-01 00:00:00 +0000".to_string(), true);
+        results
+            .certificate_chain
+            .as_mut()
+            .unwrap()
+            .chain
+            .certificates[0]
+            .signature_algorithm = "SHA-1-RSA".to_string();
+
+        let violations = ComplianceChecker::check_signature(&rule, &results)
+            .expect("test assertion should succeed");
+        assert!(violations.is_empty(), "{violations:?}");
     }
 
     #[test]

@@ -6,6 +6,7 @@ use crate::db::{CipherRunDatabase, ScanRecord};
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::str::FromStr;
 use std::sync::Arc;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -215,7 +216,7 @@ impl DashboardGenerator {
                 for protocol in protocols {
                     if protocol.enabled {
                         *protocol_counts
-                            .entry(protocol.protocol_name.clone())
+                            .entry(canonical_protocol_label(&protocol.protocol_name))
                             .or_insert(0) += 1;
                     }
                 }
@@ -497,6 +498,12 @@ fn severity_priority(severity: &str) -> usize {
         "info" => 4,
         _ => 5,
     }
+}
+
+fn canonical_protocol_label(protocol: &str) -> String {
+    crate::protocols::Protocol::from_str(protocol)
+        .map(|protocol| protocol.name().to_string())
+        .unwrap_or_else(|_| protocol.to_string())
 }
 
 fn normalized_cipher_strength_category(strength: &str) -> &'static str {

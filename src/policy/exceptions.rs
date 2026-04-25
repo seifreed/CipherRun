@@ -32,7 +32,11 @@ impl ExceptionMatcher {
             }
 
             // Check if rule matches
-            if exception.rules.contains(&rule_path.to_string()) {
+            if exception
+                .rules
+                .iter()
+                .any(|rule| Self::matches_rule_path(rule, rule_path))
+            {
                 return Some(exception);
             }
         }
@@ -45,8 +49,8 @@ impl ExceptionMatcher {
         let hostname = split_target_host_port(target)
             .map(|(hostname, _)| hostname)
             .unwrap_or_else(|_| target.to_string());
-        let hostname_lower = hostname.to_ascii_lowercase();
-        let pattern_lower = pattern.to_ascii_lowercase();
+        let hostname_lower = hostname.trim().to_ascii_lowercase();
+        let pattern_lower = pattern.trim().to_ascii_lowercase();
         let hostname = hostname_lower.as_str();
         let pattern = pattern_lower.as_str();
 
@@ -81,6 +85,12 @@ impl ExceptionMatcher {
         }
 
         false
+    }
+
+    fn matches_rule_path(configured_rule: &str, rule_path: &str) -> bool {
+        configured_rule
+            .trim()
+            .eq_ignore_ascii_case(rule_path.trim())
     }
 
     /// Check if an exception has expired
@@ -204,6 +214,26 @@ mod tests {
         assert!(
             matcher
                 .is_exception("API.example.com:443", "protocols.prohibited")
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn test_exception_match_trims_domain_and_rule_path() {
+        let exception = PolicyException {
+            domain: Some(" example.com ".to_string()),
+            rules: vec![" Protocols.Prohibited ".to_string()],
+            reason: "Formatting tolerant exception".to_string(),
+            expires: None,
+            approved_by: "Admin".to_string(),
+            ticket: None,
+        };
+
+        let matcher = ExceptionMatcher::new(vec![exception]);
+
+        assert!(
+            matcher
+                .is_exception("example.com:443", "protocols.prohibited")
                 .is_some()
         );
     }

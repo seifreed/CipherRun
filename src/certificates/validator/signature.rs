@@ -7,22 +7,22 @@ impl CertificateValidator {
         cert: &CertificateInfo,
         issues: &mut Vec<ValidationIssue>,
     ) {
-        let sig_alg = cert.signature_algorithm.to_lowercase();
+        let sig_alg = normalize_signature_algorithm_name(&cert.signature_algorithm);
 
         // Check for weak algorithms
-        if sig_alg.contains("md2") || sig_alg.contains("md4") {
+        if sig_alg.contains("MD2") || sig_alg.contains("MD4") {
             issues.push(ValidationIssue {
                 severity: IssueSeverity::Critical,
                 issue_type: IssueType::WeakSignature,
                 description: "Certificate uses MD2/MD4 signature (broken)".to_string(),
             });
-        } else if sig_alg.contains("md5") {
+        } else if sig_alg.contains("MD5") {
             issues.push(ValidationIssue {
                 severity: IssueSeverity::Critical,
                 issue_type: IssueType::WeakSignature,
                 description: "Certificate uses MD5 signature (broken)".to_string(),
             });
-        } else if sig_alg.contains("sha1") {
+        } else if sig_alg.contains("SHA1") {
             issues.push(ValidationIssue {
                 severity: IssueSeverity::High,
                 issue_type: IssueType::WeakSignature,
@@ -30,6 +30,14 @@ impl CertificateValidator {
             });
         }
     }
+}
+
+fn normalize_signature_algorithm_name(value: &str) -> String {
+    value
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .flat_map(|c| c.to_uppercase())
+        .collect()
 }
 
 #[cfg(test)]
@@ -82,6 +90,24 @@ mod tests {
         let mut issues = Vec::new();
         cert.signature_algorithm = "sha1WithRSAEncryption".to_string();
         validator.check_signature_algorithm(&cert, &mut issues);
+        assert!(issues.iter().any(|i| {
+            matches!(i.issue_type, IssueType::WeakSignature)
+                && matches!(i.severity, IssueSeverity::High)
+        }));
+    }
+
+    #[test]
+    fn test_signature_algorithm_detects_hyphenated_sha1_alias() {
+        let validator = CertificateValidator::new("example.com".to_string());
+        let mut issues = Vec::new();
+        let mut cert = base_cert(
+            "2024-01-01 00:00:00 +0000".to_string(),
+            "2025-01-01 00:00:00 +0000".to_string(),
+        );
+        cert.signature_algorithm = "sha-1WithRSAEncryption".to_string();
+
+        validator.check_signature_algorithm(&cert, &mut issues);
+
         assert!(issues.iter().any(|i| {
             matches!(i.issue_type, IssueType::WeakSignature)
                 && matches!(i.severity, IssueSeverity::High)

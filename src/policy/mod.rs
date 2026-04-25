@@ -189,11 +189,58 @@ pub enum PolicyOverallResult {
     Warning,
 }
 
+impl Policy {
+    fn configured_check_count(&self) -> u32 {
+        let mut count = 0;
+
+        if let Some(ref protocols) = self.protocols {
+            count += count_items(&protocols.required);
+            count += count_items(&protocols.prohibited);
+        }
+
+        if let Some(ref ciphers) = self.ciphers {
+            count += u32::from(ciphers.min_strength.is_some());
+            count += u32::from(ciphers.require_forward_secrecy == Some(true));
+            count += u32::from(ciphers.require_aead == Some(true));
+            count += count_items(&ciphers.prohibited_patterns);
+            count += count_items(&ciphers.required_patterns);
+        }
+
+        if let Some(ref certificates) = self.certificates {
+            count += u32::from(certificates.min_key_size.is_some());
+            count += u32::from(certificates.max_days_until_expiry.is_some());
+            count += count_items(&certificates.prohibited_signature_algorithms);
+            count += u32::from(certificates.require_valid_trust_chain == Some(true));
+            count += u32::from(certificates.require_san == Some(true));
+            count += u32::from(certificates.require_hostname_match == Some(true));
+        }
+
+        if let Some(ref vulnerabilities) = self.vulnerabilities {
+            count += 1; // Inconclusive vulnerability gate is always evaluated.
+            count += u32::from(vulnerabilities.max_critical.is_some());
+            count += u32::from(vulnerabilities.max_high.is_some());
+            count += u32::from(vulnerabilities.max_medium.is_some());
+            count += count_items(&vulnerabilities.prohibited);
+        }
+
+        if let Some(ref rating) = self.rating {
+            count += u32::from(rating.min_grade.is_some());
+            count += u32::from(rating.min_score.is_some());
+        }
+
+        count
+    }
+}
+
+fn count_items<T>(items: &Option<Vec<T>>) -> u32 {
+    items.as_ref().map_or(0, |items| items.len() as u32)
+}
+
 impl PolicyResult {
     pub fn new(policy: Policy, violations: Vec<violation::PolicyViolation>) -> Self {
-        let mut failed = 0;
-        let mut warnings = 0;
-        let mut info = 0;
+        let mut failed = 0_u32;
+        let mut warnings = 0_u32;
+        let mut info = 0_u32;
 
         for violation in &violations {
             match violation.action {
@@ -211,8 +258,9 @@ impl PolicyResult {
             PolicyOverallResult::Pass
         };
 
-        let total_checks = violations.len() as u32;
-        let passed = total_checks - failed - warnings - info;
+        let counted_outcomes = failed + warnings + info;
+        let total_checks = policy.configured_check_count().max(counted_outcomes);
+        let passed = total_checks.saturating_sub(counted_outcomes);
 
         Self {
             policy_name: policy.name,

@@ -144,13 +144,13 @@ impl<'a> PolicyLoader<'a> {
     /// Validate policy structure and values
     fn validate(&self, policy: &Policy) -> Result<()> {
         // Validate name and version are not empty
-        if policy.name.is_empty() {
+        if policy.name.trim().is_empty() {
             return Err(crate::TlsError::ConfigError {
                 message: "Policy name cannot be empty".to_string(),
             });
         }
 
-        if policy.version.is_empty() {
+        if policy.version.trim().is_empty() {
             return Err(crate::TlsError::ConfigError {
                 message: "Policy version cannot be empty".to_string(),
             });
@@ -223,13 +223,13 @@ impl<'a> PolicyLoader<'a> {
 
         // Validate exceptions
         for exception in &policy.exceptions {
-            if exception.reason.is_empty() {
+            if exception.reason.trim().is_empty() {
                 return Err(crate::TlsError::ConfigError {
                     message: "Exception reason cannot be empty".to_string(),
                 });
             }
 
-            if exception.approved_by.is_empty() {
+            if exception.approved_by.trim().is_empty() {
                 return Err(crate::TlsError::ConfigError {
                     message: "Exception approved_by cannot be empty".to_string(),
                 });
@@ -357,6 +357,47 @@ policy:
 policy:
   name: ""
   version: "1.0"
+"#;
+
+        let result = PolicyLoader::load_from_string(yaml);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_whitespace_only_policy_name_is_invalid() {
+        let yaml = r#"
+policy:
+  name: "   "
+  version: "1.0"
+"#;
+
+        let result = PolicyLoader::load_from_string(yaml);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_whitespace_only_policy_version_is_invalid() {
+        let yaml = r#"
+policy:
+  name: "Test Policy"
+  version: "   "
+"#;
+
+        let result = PolicyLoader::load_from_string(yaml);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_whitespace_only_exception_audit_fields_are_invalid() {
+        let yaml = r#"
+policy:
+  name: "Test Policy"
+  version: "1.0"
+  exceptions:
+    - domain: "example.com"
+      rules: ["protocols.prohibited"]
+      reason: "   "
+      approved_by: "   "
 "#;
 
         let result = PolicyLoader::load_from_string(yaml);

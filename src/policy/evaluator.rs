@@ -201,6 +201,38 @@ impl PolicyEvaluator {
                     )),
                 );
             }
+        } else {
+            if let Some(ref min_grade_str) = policy.min_grade {
+                violations.push(
+                    PolicyViolation::new(
+                        "rating.min_grade",
+                        "Minimum SSL Labs Grade",
+                        policy.action,
+                        format!(
+                            "SSL Labs grade is required but no rating result is available (minimum: {})",
+                            min_grade_str
+                        ),
+                    )
+                    .with_evidence("No SSL Labs rating result available")
+                    .with_remediation("Run a scan mode that calculates SSL Labs rating"),
+                );
+            }
+
+            if let Some(min_score) = policy.min_score {
+                violations.push(
+                    PolicyViolation::new(
+                        "rating.min_score",
+                        "Minimum SSL Labs Score",
+                        policy.action,
+                        format!(
+                            "SSL Labs score is required but no rating result is available (minimum: {})",
+                            min_score
+                        ),
+                    )
+                    .with_evidence("No SSL Labs rating result available")
+                    .with_remediation("Run a scan mode that calculates SSL Labs rating"),
+                );
+            }
         }
 
         Ok(violations)
@@ -317,6 +349,56 @@ mod tests {
 
         assert!(result.has_violations());
         assert!(!result.violations.is_empty());
+    }
+
+    #[test]
+    fn test_evaluator_summary_counts_passing_configured_checks() {
+        let policy = Policy {
+            name: "Test Policy".to_string(),
+            version: "1.0".to_string(),
+            description: None,
+            organization: None,
+            effective_date: None,
+            extends: None,
+            protocols: Some(ProtocolPolicy {
+                required: Some(vec!["TLSv1.2".to_string()]),
+                prohibited: None,
+                action: PolicyAction::Fail,
+            }),
+            ciphers: None,
+            certificates: None,
+            vulnerabilities: None,
+            rating: None,
+            compliance: None,
+            exceptions: Vec::new(),
+        };
+
+        let mut results = ScanAssessment {
+            target: "example.com:443".to_string(),
+            ..Default::default()
+        };
+        results.protocols = vec![ProtocolTestResult {
+            protocol: Protocol::TLS12,
+            supported: true,
+            preferred: false,
+            ciphers_count: 0,
+            heartbeat_enabled: None,
+            handshake_time_ms: None,
+            session_resumption_caching: None,
+            session_resumption_tickets: None,
+            secure_renegotiation: None,
+        }];
+
+        let evaluator = PolicyEvaluator::new(policy);
+        let result = evaluator
+            .evaluate(&results)
+            .expect("test assertion should succeed");
+
+        assert!(!result.has_violations());
+        assert!(result.violations.is_empty());
+        assert_eq!(result.summary.total_checks, 1);
+        assert_eq!(result.summary.passed, 1);
+        assert_eq!(result.summary.failed, 0);
     }
 
     #[test]
@@ -439,6 +521,55 @@ mod tests {
             .expect("test assertion should succeed");
 
         assert!(result.has_violations());
+        assert!(
+            result
+                .violations
+                .iter()
+                .any(|v| v.rule_path == "rating.min_score")
+        );
+    }
+
+    #[test]
+    fn test_missing_rating_fails_configured_rating_checks() {
+        let policy = Policy {
+            name: "Test Policy".to_string(),
+            version: "1.0".to_string(),
+            description: None,
+            organization: None,
+            effective_date: None,
+            extends: None,
+            protocols: None,
+            ciphers: None,
+            certificates: None,
+            vulnerabilities: None,
+            rating: Some(crate::policy::RatingPolicy {
+                min_grade: Some("A".to_string()),
+                min_score: Some(90),
+                action: PolicyAction::Fail,
+            }),
+            compliance: None,
+            exceptions: Vec::new(),
+        };
+        let results = ScanAssessment {
+            target: "example.com:443".to_string(),
+            ..Default::default()
+        };
+
+        let evaluator = PolicyEvaluator::new(policy);
+        let result = evaluator
+            .evaluate(&results)
+            .expect("test assertion should succeed");
+
+        assert!(result.has_violations());
+        assert_eq!(result.summary.total_checks, 2);
+        assert_eq!(result.summary.failed, 2);
+        assert_eq!(result.summary.passed, 0);
+        assert!(
+            result
+                .violations
+                .iter()
+                .any(|v| v.rule_path == "rating.min_grade")
+        );
         assert!(
             result
                 .violations

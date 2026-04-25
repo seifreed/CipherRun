@@ -1627,6 +1627,44 @@ async fn test_dashboard_summary_counts_all_issues_before_truncation() {
 }
 
 #[tokio::test]
+async fn test_dashboard_protocol_distribution_normalizes_protocol_name_variants() {
+    let db = setup_db().await;
+    let now = Utc::now();
+    let scan1 = insert_scan(
+        &db,
+        "dashboard-protocol-format.test",
+        443,
+        now - Duration::days(2),
+        Some("A"),
+        Some(92),
+    )
+    .await;
+    let scan2 = insert_scan(
+        &db,
+        "dashboard-protocol-format.test",
+        443,
+        now - Duration::days(1),
+        Some("A"),
+        Some(93),
+    )
+    .await;
+
+    insert_protocol(&db, scan1, "TLS 1.3", true, true).await;
+    insert_protocol(&db, scan2, "TLSv1.3", true, true).await;
+
+    let generator = DashboardGenerator::new(Arc::clone(&db));
+    let dashboard = generator
+        .generate_dashboard("dashboard-protocol-format.test", 443, 30)
+        .await
+        .expect("test assertion should succeed");
+
+    assert_eq!(dashboard.protocol_distribution.len(), 1);
+    assert_eq!(dashboard.protocol_distribution[0].label, "TLS 1.3");
+    assert_eq!(dashboard.protocol_distribution[0].value, 2);
+    assert!((dashboard.protocol_distribution[0].percentage - 100.0).abs() < 1e-9);
+}
+
+#[tokio::test]
 async fn test_dashboard_top_issue_uses_worst_observed_severity() {
     let db = setup_db().await;
     let older_scan = insert_scan(

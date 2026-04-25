@@ -110,6 +110,10 @@ impl<'a> ProtocolRule<'a> {
         protocol_name: &str,
         protocol_match: Option<&Protocol>,
     ) -> bool {
+        if self.protocol_supported_by_any_result(protocol_name, protocol_match) {
+            return true;
+        }
+
         if let Some(expected_protocol) = protocol_match {
             self.any_supported_protocols
                 .iter()
@@ -178,6 +182,35 @@ mod tests {
         }];
 
         let rule = ProtocolRule::new(&policy, &results, &[Protocol::TLS10]);
+        let violations = rule
+            .evaluate("example.com:443")
+            .expect("test assertion should succeed");
+
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].rule_path, "protocols.prohibited");
+    }
+
+    #[test]
+    fn test_prohibited_protocol_uses_direct_results_when_any_supported_list_is_empty() {
+        let policy = ProtocolPolicy {
+            required: None,
+            prohibited: Some(vec!["TLSv1.0".to_string()]),
+            action: PolicyAction::Fail,
+        };
+
+        let results = vec![ProtocolTestResult {
+            protocol: Protocol::TLS10,
+            supported: true,
+            heartbeat_enabled: None,
+            handshake_time_ms: None,
+            ciphers_count: 0,
+            preferred: false,
+            session_resumption_caching: None,
+            session_resumption_tickets: None,
+            secure_renegotiation: None,
+        }];
+
+        let rule = ProtocolRule::new(&policy, &results, &[]);
         let violations = rule
             .evaluate("example.com:443")
             .expect("test assertion should succeed");
