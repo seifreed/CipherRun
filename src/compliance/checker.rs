@@ -120,8 +120,8 @@ impl ComplianceChecker {
                     });
                 } else {
                     let fails_allowed_list = !rule.allowed.is_empty()
-                        && !rule.allowed.contains(cipher_name)
-                        && !rule.allowed.contains(openssl_name);
+                        && !rule.is_allowed(cipher_name)
+                        && !rule.is_allowed(openssl_name);
                     let fails_allowed_patterns = !rule.allowed_patterns.is_empty()
                         && !rule.matches_allowed_pattern(cipher_name)
                         && !rule.matches_allowed_pattern(openssl_name);
@@ -377,7 +377,7 @@ impl ComplianceChecker {
 
                 // Only warn about expiring-soon certs; already-expired certs are handled
                 // by check_cert_validation (require_unexpired) to avoid duplicate Critical violations.
-                if days_until_expiry >= 0 && days_until_expiry <= max_days {
+                if now <= not_after && days_until_expiry <= max_days {
                     violations.push(Violation {
                         violation_type: "Certificate Expiring Soon".to_string(),
                         description: format!(
@@ -428,14 +428,66 @@ impl ComplianceChecker {
 mod tests {
     use super::*;
     use crate::application::ScanAssessment;
+    use crate::certificates::parser::{CertificateChain, CertificateInfo};
+    use crate::certificates::validator::ValidationResult;
     use crate::ciphers::CipherSuite;
     use crate::ciphers::tester::{CipherCounts, ProtocolCipherSummary};
     use crate::compliance::Rule;
     use crate::protocols::{Protocol, ProtocolTestResult};
+    use crate::scanner::CertificateAnalysisResult;
     use crate::vulnerabilities::{
         Severity as VulnSeverity, VulnerabilityResult, VulnerabilityType,
     };
     use std::collections::HashMap;
+
+    fn create_certificate_assessment(not_after: String, not_expired: bool) -> ScanAssessment {
+        let cert = CertificateInfo {
+            subject: "CN=example.com".to_string(),
+            issuer: "CN=Test CA".to_string(),
+            serial_number: "123456".to_string(),
+            not_before: "2024-01-01 00:00:00 +0000".to_string(),
+            not_after,
+            expiry_countdown: None,
+            signature_algorithm: "SHA256-RSA".to_string(),
+            public_key_algorithm: "RSA".to_string(),
+            public_key_size: Some(2048),
+            rsa_exponent: None,
+            san: vec!["example.com".to_string()],
+            is_ca: false,
+            key_usage: vec![],
+            extended_key_usage: vec![],
+            extended_validation: false,
+            ev_oids: vec![],
+            pin_sha256: None,
+            fingerprint_sha256: None,
+            debian_weak_key: None,
+            aia_url: None,
+            certificate_transparency: Some("Yes (certificate)".to_string()),
+            der_bytes: vec![],
+        };
+
+        ScanAssessment {
+            certificate_chain: Some(CertificateAnalysisResult {
+                chain: CertificateChain {
+                    certificates: vec![cert],
+                    chain_length: 1,
+                    chain_size_bytes: 1000,
+                },
+                validation: ValidationResult {
+                    valid: not_expired,
+                    issues: Vec::new(),
+                    trust_chain_valid: true,
+                    hostname_match: true,
+                    not_expired,
+                    signature_valid: true,
+                    trusted_ca: None,
+                    platform_trust: None,
+                },
+                revocation: None,
+            }),
+            ..Default::default()
+        }
+    }
 
     #[test]
     fn test_check_protocols_denied() {
@@ -672,6 +724,108 @@ mod tests {
         };
 
         let violations = ComplianceChecker::check_forward_secrecy(&rule, &results)
+            .expect("test assertion should succeed");
+        assert!(violations.is_empty(), "{violations:?}");
+    }
+
+    #[test]
+    fn test_check_ciphers_exact_lists_are_case_insensitive() {
+        let cipher = CipherSuite {
+            hexcode: "0x1301".to_string(),
+            openssl_name: "TLS_AES_128_GCM_SHA256".to_string(),
+            iana_name: "TLS_AES_128_GCM_SHA256".to_string(),
+            protocol: "TLSv1.3".to_string(),
+            key_exchange: "".to_string(),
+            authentication: "any".to_string(),
+            encryption: "aesgcm".to_string(),
+            mac: "aead".to_string(),
+            bits: 128,
+            export: false,
+        };
+        let mut ciphers = HashMap::new();
+        ciphers.insert(
+            Protocol::TLS13,
+            ProtocolCipherSummary {
+                protocol: Protocol::TLS13,
+                supported_ciphers: vec![cipher],
+                server_ordered: false,
+                server_preference: vec![],
+                preferred_cipher: None,
+                counts: CipherCounts::default(),
+                avg_handshake_time_ms: None,
+            },
+        );
+        let results = ScanAssessment {
+            ciphers,
+            ..Default::default()
+        };
+
+        let allowed_rule = Rule {
+            rule_type: "CipherSuite".to_string(),
+            allowed: vec!["tls_aes_128_gcm_sha256".to_string()],
+            denied: vec![],
+            allowed_patterns: vec![],
+            denied_patterns: vec![],
+            preferred_patterns: vec![],
+            min_rsa_bits: None,
+            min_ecc_bits: None,
+            required: None,
+            require_valid_chain: None,
+            require_unexpired: None,
+            require_hostname_match: None,
+            max_days_until_expiration: None,
+            custom_params: HashMap::new(),
+        };
+        let violations = ComplianceChecker::check_ciphers(&allowed_rule, &results)
+            .expect("test assertion should succeed");
+        assert!(violations.is_empty(), "{violations:?}");
+
+        let denied_rule = Rule {
+            rule_type: "CipherSuite".to_string(),
+            allowed: vec![],
+            denied: vec!["tls_aes_128_gcm_sha256".to_string()],
+            allowed_patterns: vec![],
+            denied_patterns: vec![],
+            preferred_patterns: vec![],
+            min_rsa_bits: None,
+            min_ecc_bits: None,
+            required: None,
+            require_valid_chain: None,
+            require_unexpired: None,
+            require_hostname_match: None,
+            max_days_until_expiration: None,
+            custom_params: HashMap::new(),
+        };
+        let violations = ComplianceChecker::check_ciphers(&denied_rule, &results)
+            .expect("test assertion should succeed");
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].violation_type, "Prohibited Cipher Suite");
+    }
+
+    #[test]
+    fn test_check_cert_expiration_does_not_warn_for_recently_expired_certificates() {
+        let rule = Rule {
+            rule_type: "CertificateExpiration".to_string(),
+            allowed: vec![],
+            denied: vec![],
+            allowed_patterns: vec![],
+            denied_patterns: vec![],
+            preferred_patterns: vec![],
+            min_rsa_bits: None,
+            min_ecc_bits: None,
+            required: None,
+            require_valid_chain: None,
+            require_unexpired: None,
+            require_hostname_match: None,
+            max_days_until_expiration: Some(30),
+            custom_params: HashMap::new(),
+        };
+        let not_after = (Utc::now() - chrono::Duration::hours(1))
+            .format("%Y-%m-%d %H:%M:%S %z")
+            .to_string();
+        let results = create_certificate_assessment(not_after, false);
+
+        let violations = ComplianceChecker::check_cert_expiration(&rule, &results)
             .expect("test assertion should succeed");
         assert!(violations.is_empty(), "{violations:?}");
     }

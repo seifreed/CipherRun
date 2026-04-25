@@ -3,6 +3,15 @@
 
 use super::trend_analyzer::{CipherStrengthData, TrendAnalyzer};
 
+fn cipher_strength_category(strength: &str) -> &'static str {
+    match strength.to_ascii_lowercase().as_str() {
+        "weak" | "low" | "export" | "null" => "weak",
+        "medium" => "medium",
+        "strong" | "high" => "strong",
+        _ => "unknown",
+    }
+}
+
 impl TrendAnalyzer {
     /// Analyze cipher strength trend over time
     pub async fn analyze_cipher_strength_trend(
@@ -29,14 +38,15 @@ impl TrendAnalyzer {
 
                 let weak = ciphers
                     .iter()
-                    .filter(|c| {
-                        c.strength == "weak" || c.strength == "export" || c.strength == "null"
-                    })
+                    .filter(|c| cipher_strength_category(&c.strength) == "weak")
                     .count();
-                let medium = ciphers.iter().filter(|c| c.strength == "medium").count();
+                let medium = ciphers
+                    .iter()
+                    .filter(|c| cipher_strength_category(&c.strength) == "medium")
+                    .count();
                 let strong = ciphers
                     .iter()
-                    .filter(|c| c.strength == "strong" || c.strength == "high")
+                    .filter(|c| cipher_strength_category(&c.strength) == "strong")
                     .count();
 
                 weak_counts.push(weak);
@@ -219,5 +229,35 @@ mod tests {
             .await
             .expect("cipher trend should succeed");
         assert_eq!(cipher.data_points.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_cipher_strength_trend_counts_low_strength_as_weak() {
+        let db = setup_db().await;
+        let hostname = "low-cipher.example.com";
+        let port = 443;
+
+        let scan = insert_scan(
+            &db,
+            hostname,
+            port,
+            Utc::now() - Duration::days(1),
+            Some("C"),
+            Some(55),
+        )
+        .await;
+
+        insert_cipher(&db, scan, "TLS 1.2", "TLS_RSA_WITH_3DES_EDE_CBC_SHA", "low").await;
+
+        let analyzer = TrendAnalyzer::new(db.clone());
+
+        let cipher = analyzer
+            .analyze_cipher_strength_trend(hostname, port, 30)
+            .await
+            .expect("cipher trend should succeed");
+        assert_eq!(cipher.data_points.len(), 1);
+        assert_eq!(cipher.data_points[0].1.weak, 1);
+        assert_eq!(cipher.data_points[0].1.medium, 0);
+        assert_eq!(cipher.data_points[0].1.strong, 0);
     }
 }

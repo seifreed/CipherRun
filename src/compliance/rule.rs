@@ -89,7 +89,7 @@ impl Rule {
     /// Check if a value is allowed by this rule
     pub fn is_allowed(&self, value: &str) -> bool {
         if !self.allowed.is_empty() {
-            self.allowed.contains(&value.to_string())
+            list_contains_normalized(&self.allowed, value)
         } else {
             true // If no allow list, everything is allowed by default
         }
@@ -98,7 +98,7 @@ impl Rule {
     /// Check if a value is denied by this rule
     pub fn is_denied(&self, value: &str) -> bool {
         if !self.denied.is_empty() {
-            self.denied.contains(&value.to_string())
+            list_contains_normalized(&self.denied, value)
         } else {
             false
         }
@@ -112,7 +112,7 @@ impl Rule {
 
         let mut has_valid = false;
         for pattern in &self.allowed_patterns {
-            match regex::Regex::new(pattern) {
+            match compile_rule_pattern(pattern) {
                 Ok(re) => {
                     has_valid = true;
                     if re.is_match(value) {
@@ -137,7 +137,7 @@ impl Rule {
     /// so a misconfigured rule cannot silently allow a forbidden value.
     pub fn matches_denied_pattern(&self, value: &str) -> bool {
         for pattern in &self.denied_patterns {
-            match regex::Regex::new(pattern) {
+            match compile_rule_pattern(pattern) {
                 Ok(re) => {
                     if re.is_match(value) {
                         return true;
@@ -159,7 +159,7 @@ impl Rule {
     /// Check if a value matches preferred patterns
     pub fn matches_preferred_pattern(&self, value: &str) -> bool {
         for pattern in &self.preferred_patterns {
-            match regex::Regex::new(pattern) {
+            match compile_rule_pattern(pattern) {
                 Ok(re) if re.is_match(value) => return true,
                 Err(e) => tracing::warn!("Invalid preferred_pattern '{}': {}", pattern, e),
                 _ => {}
@@ -167,6 +167,18 @@ impl Rule {
         }
         false
     }
+}
+
+fn compile_rule_pattern(pattern: &str) -> Result<regex::Regex, regex::Error> {
+    regex::RegexBuilder::new(pattern)
+        .case_insensitive(true)
+        .build()
+}
+
+fn list_contains_normalized(list: &[String], value: &str) -> bool {
+    let value = value.trim();
+    list.iter()
+        .any(|configured| configured.trim().eq_ignore_ascii_case(value))
 }
 
 #[cfg(test)]
@@ -246,6 +258,29 @@ mod tests {
     }
 
     #[test]
+    fn test_rule_denied_patterns_are_case_insensitive() {
+        let rule = Rule {
+            rule_type: "CipherSuite".to_string(),
+            allowed: vec![],
+            denied: vec![],
+            allowed_patterns: vec![],
+            denied_patterns: vec![".*_NULL_.*".to_string(), ".*_EXPORT_.*".to_string()],
+            preferred_patterns: vec![],
+            min_rsa_bits: None,
+            min_ecc_bits: None,
+            required: None,
+            require_valid_chain: None,
+            require_unexpired: None,
+            require_hostname_match: None,
+            max_days_until_expiration: None,
+            custom_params: HashMap::new(),
+        };
+
+        assert!(rule.matches_denied_pattern("tls_rsa_with_null_sha"));
+        assert!(rule.matches_denied_pattern("tls_rsa_export_with_des40_cbc_sha"));
+    }
+
+    #[test]
     fn test_rule_allowed_patterns() {
         let rule = Rule {
             rule_type: "CipherSuite".to_string(),
@@ -266,6 +301,28 @@ mod tests {
 
         assert!(rule.matches_allowed_pattern("TLS_AES_128_GCM_SHA256"));
         assert!(!rule.matches_allowed_pattern("SSLv3"));
+    }
+
+    #[test]
+    fn test_rule_allowed_patterns_are_case_insensitive() {
+        let rule = Rule {
+            rule_type: "CipherSuite".to_string(),
+            allowed: vec![],
+            denied: vec![],
+            allowed_patterns: vec!["TLS_.*".to_string()],
+            denied_patterns: vec![],
+            preferred_patterns: vec![],
+            min_rsa_bits: None,
+            min_ecc_bits: None,
+            required: None,
+            require_valid_chain: None,
+            require_unexpired: None,
+            require_hostname_match: None,
+            max_days_until_expiration: None,
+            custom_params: HashMap::new(),
+        };
+
+        assert!(rule.matches_allowed_pattern("tls_aes_128_gcm_sha256"));
     }
 
     #[test]
@@ -312,5 +369,27 @@ mod tests {
 
         assert!(rule.matches_preferred_pattern("TLS_AES_128_GCM_SHA256"));
         assert!(!rule.matches_preferred_pattern("TLS_CHACHA20_POLY1305_SHA256"));
+    }
+
+    #[test]
+    fn test_rule_preferred_patterns_are_case_insensitive() {
+        let rule = Rule {
+            rule_type: "CipherSuite".to_string(),
+            allowed: vec![],
+            denied: vec![],
+            allowed_patterns: vec![],
+            denied_patterns: vec![],
+            preferred_patterns: vec!["TLS_AES_.*".to_string()],
+            min_rsa_bits: None,
+            min_ecc_bits: None,
+            required: None,
+            require_valid_chain: None,
+            require_unexpired: None,
+            require_hostname_match: None,
+            max_days_until_expiration: None,
+            custom_params: HashMap::new(),
+        };
+
+        assert!(rule.matches_preferred_pattern("tls_aes_128_gcm_sha256"));
     }
 }

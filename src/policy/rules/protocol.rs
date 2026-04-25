@@ -244,6 +244,63 @@ mod tests {
     }
 
     #[test]
+    fn test_required_protocol_with_underscore_alias_is_satisfied() {
+        let policy = ProtocolPolicy {
+            required: Some(vec!["tls1_2".to_string()]),
+            prohibited: None,
+            action: PolicyAction::Fail,
+        };
+
+        let results = vec![ProtocolTestResult {
+            protocol: Protocol::TLS12,
+            supported: true,
+            heartbeat_enabled: None,
+            handshake_time_ms: None,
+            ciphers_count: 0,
+            preferred: false,
+            session_resumption_caching: None,
+            session_resumption_tickets: None,
+            secure_renegotiation: None,
+        }];
+
+        let rule = ProtocolRule::new(&policy, &results, &[Protocol::TLS12]);
+        let violations = rule
+            .evaluate("example.com:443")
+            .expect("test assertion should succeed");
+
+        assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn test_prohibited_protocol_with_underscore_alias_is_detected() {
+        let policy = ProtocolPolicy {
+            required: None,
+            prohibited: Some(vec!["tls1_2".to_string()]),
+            action: PolicyAction::Fail,
+        };
+
+        let results = vec![ProtocolTestResult {
+            protocol: Protocol::TLS12,
+            supported: true,
+            heartbeat_enabled: None,
+            handshake_time_ms: None,
+            ciphers_count: 0,
+            preferred: false,
+            session_resumption_caching: None,
+            session_resumption_tickets: None,
+            secure_renegotiation: None,
+        }];
+
+        let rule = ProtocolRule::new(&policy, &results, &[Protocol::TLS12]);
+        let violations = rule
+            .evaluate("example.com:443")
+            .expect("test assertion should succeed");
+
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].rule_path, "protocols.prohibited");
+    }
+
+    #[test]
     fn test_prohibited_protocol_not_supported_no_violation() {
         let policy = ProtocolPolicy {
             required: None,

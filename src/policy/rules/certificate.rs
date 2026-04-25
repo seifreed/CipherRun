@@ -81,33 +81,36 @@ impl<'a> CertificateRule<'a> {
             // and ISO format ("2024-01-01 00:00:00 +00:00").
             if let Some(not_after) = parse_cert_date(&cert.not_after) {
                 let now = Utc::now();
-                let days_remaining = (not_after - now).num_days();
 
-                if days_remaining < 0 {
+                if now > not_after {
+                    let days_expired = (now - not_after).num_days();
                     violations.push(
                         PolicyViolation::new(
                             "certificates.max_days_until_expiry",
                             "Certificate Expiry Check",
                             self.policy.action,
-                            format!("Certificate expired {} days ago", -days_remaining),
+                            format!("Certificate expired {} days ago", days_expired),
                         )
                         .with_evidence(format!("Valid until: {}", cert.not_after))
                         .with_remediation("Renew certificate immediately - it has already expired"),
                     );
-                } else if days_remaining < max_days {
-                    violations.push(
-                        PolicyViolation::new(
-                            "certificates.max_days_until_expiry",
-                            "Certificate Expiry Check",
-                            self.policy.action,
-                            format!(
-                                "Certificate expires in {} days (threshold: {} days)",
-                                days_remaining, max_days
-                            ),
-                        )
-                        .with_evidence(format!("Valid until: {}", cert.not_after))
-                        .with_remediation("Renew certificate before expiration"),
-                    );
+                } else {
+                    let days_remaining = (not_after - now).num_days();
+                    if days_remaining < max_days {
+                        violations.push(
+                            PolicyViolation::new(
+                                "certificates.max_days_until_expiry",
+                                "Certificate Expiry Check",
+                                self.policy.action,
+                                format!(
+                                    "Certificate expires in {} days (threshold: {} days)",
+                                    days_remaining, max_days
+                                ),
+                            )
+                            .with_evidence(format!("Valid until: {}", cert.not_after))
+                            .with_remediation("Renew certificate before expiration"),
+                        );
+                    }
                 }
             }
         }
@@ -314,6 +317,40 @@ mod tests {
 
         assert!(!violations.is_empty());
         assert_eq!(violations[0].rule_path, "certificates.require_san");
+    }
+
+    #[test]
+    fn test_recently_expired_certificate_is_reported_as_expired() {
+        let policy = CertificatePolicy {
+            min_key_size: None,
+            max_days_until_expiry: Some(30),
+            prohibited_signature_algorithms: None,
+            require_valid_trust_chain: None,
+            require_san: None,
+            require_hostname_match: None,
+            action: PolicyAction::Fail,
+        };
+
+        let mut cert_result = create_test_cert_result();
+        cert_result.chain.certificates[0].not_after = (Utc::now() - chrono::Duration::hours(1))
+            .format("%Y-%m-%d %H:%M:%S %z")
+            .to_string();
+
+        let rule = CertificateRule::new(&policy, Some(&cert_result));
+        let violations = rule
+            .evaluate("example.com:443")
+            .expect("test assertion should succeed");
+
+        assert_eq!(violations.len(), 1);
+        assert_eq!(
+            violations[0].rule_path,
+            "certificates.max_days_until_expiry"
+        );
+        assert!(
+            violations[0].description.contains("expired"),
+            "{:?}",
+            violations[0]
+        );
     }
 
     #[test]

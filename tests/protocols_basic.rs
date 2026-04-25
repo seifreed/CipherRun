@@ -33,6 +33,9 @@ fn test_protocol_from_str() {
     assert_eq!(Protocol::from_str("TLSv1.3").unwrap(), Protocol::TLS13);
     assert_eq!(Protocol::from_str("SSL 3.0").unwrap(), Protocol::SSLv3);
     assert_eq!(Protocol::from_str(" tls 1.2 ").unwrap(), Protocol::TLS12);
+    assert_eq!(Protocol::from_str("tls1_2").unwrap(), Protocol::TLS12);
+    assert_eq!(Protocol::from_str("TLS-1-3").unwrap(), Protocol::TLS13);
+    assert_eq!(Protocol::from_str("SSLv3_0").unwrap(), Protocol::SSLv3);
     assert_eq!(Protocol::from_str("quic").unwrap(), Protocol::QUIC);
     assert!(Protocol::from_str("NOPE").is_err());
 }

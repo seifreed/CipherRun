@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::io::{BufRead, BufReader};
+use std::net::IpAddr;
 use std::path::Path;
 
 pub use crate::monitor::types::AlertThresholds;
@@ -17,6 +18,19 @@ const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;
 
 /// Maximum number of domains in inventory
 const MAX_DOMAINS: usize = 100_000;
+
+pub(crate) fn canonical_inventory_key(hostname: &str, port: u16) -> String {
+    let hostname = hostname
+        .strip_prefix('[')
+        .and_then(|value| value.strip_suffix(']'))
+        .unwrap_or(hostname);
+    let normalized_hostname = hostname
+        .parse::<IpAddr>()
+        .map(|ip| ip.to_string())
+        .unwrap_or_else(|_| hostname.to_ascii_lowercase());
+
+    canonical_target(&normalized_hostname, port)
+}
 
 /// Monitored domain configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -70,7 +84,7 @@ impl MonitoredDomain {
 
     /// Get domain identifier
     pub fn identifier(&self) -> String {
-        canonical_target(&self.hostname, self.port)
+        canonical_inventory_key(&self.hostname, self.port)
     }
 }
 
@@ -98,8 +112,8 @@ impl CertificateInventory {
     /// If no port is specified, defaults to 443.
     fn normalize_key(hostname: &str) -> String {
         match split_target_host_port(hostname) {
-            Ok((hostname, port)) => canonical_target(&hostname, port.unwrap_or(443)),
-            Err(_) => hostname.to_string(),
+            Ok((hostname, port)) => canonical_inventory_key(&hostname, port.unwrap_or(443)),
+            Err(_) => hostname.to_ascii_lowercase(),
         }
     }
 
@@ -410,6 +424,22 @@ mod tests {
         let retrieved = inventory.get_domain("example.com");
         assert!(retrieved.is_some());
         assert_eq!(retrieved.unwrap().hostname, "example.com");
+    }
+
+    #[test]
+    fn test_inventory_domain_lookup_and_remove_are_case_insensitive() {
+        let mut inventory = CertificateInventory::new();
+        inventory
+            .add_domain(MonitoredDomain::new("Example.COM".to_string(), 443))
+            .expect("test assertion should succeed");
+
+        assert!(inventory.get_domain("example.com").is_some());
+        assert!(inventory.get_domain("EXAMPLE.COM:443").is_some());
+
+        inventory
+            .remove_domain("example.com")
+            .expect("test assertion should succeed");
+        assert_eq!(inventory.len(), 0);
     }
 
     #[test]

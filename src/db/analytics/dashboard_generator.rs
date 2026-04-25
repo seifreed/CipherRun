@@ -267,12 +267,7 @@ impl DashboardGenerator {
             if let Some(scan_id) = scan.scan_id {
                 let ciphers = self.get_ciphers(scan_id).await?;
                 for cipher in ciphers {
-                    let strength_category = match cipher.strength.as_str() {
-                        "weak" | "export" | "null" => "weak",
-                        "medium" => "medium",
-                        "strong" | "high" => "strong",
-                        _ => "unknown",
-                    };
+                    let strength_category = normalized_cipher_strength_category(&cipher.strength);
                     *strength_counts
                         .entry(strength_category.to_string())
                         .or_insert(0) += 1;
@@ -501,6 +496,15 @@ fn severity_priority(severity: &str) -> usize {
         "low" => 3,
         "info" => 4,
         _ => 5,
+    }
+}
+
+fn normalized_cipher_strength_category(strength: &str) -> &'static str {
+    match strength.to_ascii_lowercase().as_str() {
+        "weak" | "low" | "export" | "null" => "weak",
+        "medium" => "medium",
+        "strong" | "high" => "strong",
+        _ => "unknown",
     }
 }
 

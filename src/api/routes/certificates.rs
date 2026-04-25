@@ -23,12 +23,21 @@ use axum::{
 };
 use std::sync::Arc;
 
+const MAX_CERTIFICATE_LIMIT: usize = 1000;
+
 fn inventory_query_from_api(
     query: &CertificateQuery,
 ) -> Result<CertificateInventoryQuery, ApiError> {
     if let Some(hostname) = query.hostname.as_deref() {
         validate_hostname(hostname)
             .map_err(|err| ApiError::BadRequest(format!("Invalid hostname filter: {}", err)))?;
+    }
+
+    if query.limit == 0 || query.limit > MAX_CERTIFICATE_LIMIT {
+        return Err(ApiError::BadRequest(format!(
+            "Invalid limit: must be between 1 and {}.",
+            MAX_CERTIFICATE_LIMIT
+        )));
     }
 
     let sort = match query.sort.as_str() {
@@ -137,7 +146,7 @@ pub async fn get_certificate(
 
 #[cfg(test)]
 mod tests {
-    use super::inventory_query_from_api;
+    use super::{MAX_CERTIFICATE_LIMIT, inventory_query_from_api};
     use crate::api::models::request::CertificateQuery;
     use crate::api::presenters::certificates::{CertificateView, present_certificate_summary};
     use crate::application::CertificateInventorySort;
@@ -190,6 +199,39 @@ mod tests {
     fn inventory_query_rejects_invalid_sort_values() {
         let query = CertificateQuery {
             sort: "invalid".to_string(),
+            ..Default::default()
+        };
+
+        assert!(inventory_query_from_api(&query).is_err());
+    }
+
+    #[test]
+    fn inventory_query_accepts_contract_max_limit() {
+        let query = CertificateQuery {
+            limit: MAX_CERTIFICATE_LIMIT,
+            ..Default::default()
+        };
+
+        let inventory_query =
+            inventory_query_from_api(&query).expect("max limit should be accepted");
+
+        assert_eq!(inventory_query.limit, MAX_CERTIFICATE_LIMIT);
+    }
+
+    #[test]
+    fn inventory_query_rejects_zero_limit() {
+        let query = CertificateQuery {
+            limit: 0,
+            ..Default::default()
+        };
+
+        assert!(inventory_query_from_api(&query).is_err());
+    }
+
+    #[test]
+    fn inventory_query_rejects_limit_above_contract_max() {
+        let query = CertificateQuery {
+            limit: MAX_CERTIFICATE_LIMIT + 1,
             ..Default::default()
         };
 

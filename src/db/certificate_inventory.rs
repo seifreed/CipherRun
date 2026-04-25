@@ -50,21 +50,40 @@ struct CertificateListQuery {
     order_by: &'static str,
 }
 
+#[derive(Clone, Copy)]
+enum SqlDialect {
+    Postgres,
+    Sqlite,
+}
+
+impl SqlDialect {
+    fn placeholder(self, position: usize) -> String {
+        match self {
+            Self::Postgres => format!("${}", position),
+            Self::Sqlite => "?".to_string(),
+        }
+    }
+}
+
 pub async fn list_certificates(
     pool: &DatabasePool,
     query: &CertificateInventoryQuery,
 ) -> crate::Result<CertificateInventoryPage> {
-    let query_parts = build_certificate_list_query(query);
-
     let (total, certificates) = match pool {
-        DatabasePool::Postgres(pool) => (
-            fetch_certificate_count_postgres(pool, &query_parts).await?,
-            fetch_certificate_list_postgres(pool, query, &query_parts).await?,
-        ),
-        DatabasePool::Sqlite(pool) => (
-            fetch_certificate_count_sqlite(pool, &query_parts).await?,
-            fetch_certificate_list_sqlite(pool, query, &query_parts).await?,
-        ),
+        DatabasePool::Postgres(pool) => {
+            let query_parts = build_certificate_list_query_for_dialect(query, SqlDialect::Postgres);
+            (
+                fetch_certificate_count_postgres(pool, &query_parts).await?,
+                fetch_certificate_list_postgres(pool, query, &query_parts).await?,
+            )
+        }
+        DatabasePool::Sqlite(pool) => {
+            let query_parts = build_certificate_list_query(query);
+            (
+                fetch_certificate_count_sqlite(pool, &query_parts).await?,
+                fetch_certificate_list_sqlite(pool, query, &query_parts).await?,
+            )
+        }
     };
 
     Ok(CertificateInventoryPage {
@@ -84,17 +103,29 @@ pub async fn get_certificate(
 }
 
 fn build_certificate_list_query(query: &CertificateInventoryQuery) -> CertificateListQuery {
+    build_certificate_list_query_for_dialect(query, SqlDialect::Sqlite)
+}
+
+fn build_certificate_list_query_for_dialect(
+    query: &CertificateInventoryQuery,
+    dialect: SqlDialect,
+) -> CertificateListQuery {
     let mut where_clauses = Vec::new();
     let mut params = Vec::new();
 
     if let Some(ref hostname) = query.hostname {
-        where_clauses.push("EXISTS (SELECT 1 FROM scan_certificates sc JOIN scans s ON sc.scan_id = s.scan_id WHERE sc.cert_id = c.cert_id AND s.target_hostname = ?)");
+        let placeholder = dialect.placeholder(params.len() + 1);
+        where_clauses.push(format!(
+            "EXISTS (SELECT 1 FROM scan_certificates sc JOIN scans s ON sc.scan_id = s.scan_id WHERE sc.cert_id = c.cert_id AND s.target_hostname = {})",
+            placeholder
+        ));
         params.push(hostname.clone());
     }
 
     if let Some(days) = query.expiring_within_days {
         let cutoff_date = Utc::now() + chrono::Duration::days(days as i64);
-        where_clauses.push("c.not_after <= ?");
+        let placeholder = dialect.placeholder(params.len() + 1);
+        where_clauses.push(format!("c.not_after <= {}", placeholder));
         params.push(cutoff_date.to_rfc3339());
     }
 
@@ -109,6 +140,14 @@ fn build_certificate_list_query(query: &CertificateInventoryQuery) -> Certificat
         params,
         order_by: query.sort.as_order_by(),
     }
+}
+
+fn normalize_fingerprint_lookup(fingerprint: &str) -> String {
+    fingerprint
+        .chars()
+        .filter(|c| *c != ':')
+        .flat_map(|c| c.to_uppercase())
+        .collect()
 }
 
 async fn fetch_certificate_count_postgres(
@@ -204,6 +243,8 @@ async fn fetch_certificate_list_postgres(
     query: &CertificateInventoryQuery,
     query_parts: &CertificateListQuery,
 ) -> crate::Result<Vec<CertificateInventoryRecord>> {
+    let limit_placeholder = SqlDialect::Postgres.placeholder(query_parts.params.len() + 1);
+    let offset_placeholder = SqlDialect::Postgres.placeholder(query_parts.params.len() + 2);
     let list_query = format!(
         r#"
         SELECT
@@ -220,12 +261,16 @@ async fn fetch_certificate_list_postgres(
         {}
         GROUP BY c.cert_id, c.fingerprint_sha256, c.subject, c.issuer, c.not_before, c.not_after, c.san_domains
         ORDER BY {}
-        LIMIT $1 OFFSET $2
+        LIMIT {} OFFSET {}
         "#,
-        query_parts.where_clause, query_parts.order_by
+        query_parts.where_clause, query_parts.order_by, limit_placeholder, offset_placeholder
     );
 
-    let rows = sqlx::query(&list_query)
+    let mut stmt = sqlx::query(&list_query);
+    for param in &query_parts.params {
+        stmt = stmt.bind(param);
+    }
+    let rows = stmt
         .bind(query.limit as i64)
         .bind(query.offset as i64)
         .fetch_all(pool)
@@ -289,6 +334,7 @@ async fn fetch_certificate_detail_postgres(
     pool: &sqlx::PgPool,
     fingerprint: &str,
 ) -> crate::Result<Option<CertificateInventoryRecord>> {
+    let normalized_fingerprint = normalize_fingerprint_lookup(fingerprint);
     let row = sqlx::query(
         r#"
         SELECT
@@ -302,11 +348,11 @@ async fn fetch_certificate_detail_postgres(
         FROM certificates c
         LEFT JOIN scan_certificates sc ON c.cert_id = sc.cert_id
         LEFT JOIN scans s ON sc.scan_id = s.scan_id
-        WHERE c.fingerprint_sha256 = $1
+        WHERE REPLACE(UPPER(c.fingerprint_sha256), ':', '') = $1
         GROUP BY c.cert_id, c.fingerprint_sha256, c.subject, c.issuer, c.not_before, c.not_after, c.san_domains
         "#,
     )
-    .bind(fingerprint)
+    .bind(normalized_fingerprint)
     .fetch_optional(pool)
     .await
     .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to fetch certificate: {}", e)))?;
@@ -318,6 +364,7 @@ async fn fetch_certificate_detail_sqlite(
     pool: &sqlx::SqlitePool,
     fingerprint: &str,
 ) -> crate::Result<Option<CertificateInventoryRecord>> {
+    let normalized_fingerprint = normalize_fingerprint_lookup(fingerprint);
     let row = sqlx::query(
         r#"
         SELECT
@@ -331,11 +378,11 @@ async fn fetch_certificate_detail_sqlite(
         FROM certificates c
         LEFT JOIN scan_certificates sc ON c.cert_id = sc.cert_id
         LEFT JOIN scans s ON sc.scan_id = s.scan_id
-        WHERE c.fingerprint_sha256 = ?
+        WHERE REPLACE(UPPER(c.fingerprint_sha256), ':', '') = ?
         GROUP BY c.cert_id
         "#,
     )
-    .bind(fingerprint)
+    .bind(normalized_fingerprint)
     .fetch_optional(pool)
     .await
     .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to fetch certificate: {}", e)))?;
@@ -379,6 +426,32 @@ mod tests {
         assert_eq!(built.params.len(), 2);
         assert_eq!(built.params[0], "example.com");
         assert_eq!(built.order_by, "c.not_before DESC");
+    }
+
+    #[test]
+    fn query_builder_uses_postgres_placeholders_for_postgres_filters() {
+        let query = CertificateInventoryQuery {
+            limit: 10,
+            offset: 5,
+            sort: CertificateInventorySort::ExpiryAsc,
+            hostname: Some("example.com".to_string()),
+            expiring_within_days: Some(30),
+        };
+
+        let built = build_certificate_list_query_for_dialect(&query, SqlDialect::Postgres);
+
+        assert!(built.where_clause.contains("s.target_hostname = $1"));
+        assert!(built.where_clause.contains("c.not_after <= $2"));
+        assert!(!built.where_clause.contains('?'));
+        assert_eq!(built.params.len(), 2);
+    }
+
+    #[test]
+    fn fingerprint_lookup_normalization_ignores_case_and_colons() {
+        assert_eq!(
+            normalize_fingerprint_lookup("aa:BB:00:ff"),
+            normalize_fingerprint_lookup("AABB00FF")
+        );
     }
 
     #[tokio::test]

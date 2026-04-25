@@ -91,6 +91,45 @@ async fn test_scan_history_limit() {
 }
 
 #[tokio::test]
+async fn test_scan_history_rejects_non_positive_limit() {
+    let config = DatabaseConfig::sqlite(common::sqlite::unique_sqlite_db_path("cipherruntest"));
+    let db = CipherRunDatabase::new(&config).await.unwrap();
+
+    for i in 1..=2 {
+        let results = ScanResults {
+            target: "limit-validation.com:443".to_string(),
+            scan_time_ms: i * 100,
+            ..Default::default()
+        };
+        db.store_scan(&PersistedScan::from_scan_results(&results))
+            .await
+            .unwrap();
+    }
+
+    let zero_error = db
+        .get_scan_history("limit-validation.com", 443, 0)
+        .await
+        .expect_err("zero limit should be rejected");
+    assert!(
+        zero_error
+            .to_string()
+            .contains("History limit must be positive")
+    );
+
+    let negative_error = db
+        .get_scan_history("limit-validation.com", 443, -1)
+        .await
+        .expect_err("negative limit must not act as unlimited history");
+    assert!(
+        negative_error
+            .to_string()
+            .contains("History limit must be positive")
+    );
+
+    db.close().await;
+}
+
+#[tokio::test]
 async fn test_latest_scan_retrieval() {
     let config = DatabaseConfig::sqlite(common::sqlite::unique_sqlite_db_path("cipherruntest"));
     let db = CipherRunDatabase::new(&config).await.unwrap();
@@ -168,6 +207,25 @@ async fn test_cleanup_old_scans_is_noop_on_empty_database() {
     let deleted = db.cleanup_old_scans(30).await.unwrap();
 
     assert_eq!(deleted, 0);
+
+    db.close().await;
+}
+
+#[tokio::test]
+async fn test_cleanup_old_scans_rejects_negative_days() {
+    let config = DatabaseConfig::sqlite(common::sqlite::unique_sqlite_db_path("cipherruntest"));
+    let db = CipherRunDatabase::new(&config).await.unwrap();
+
+    let error = db
+        .cleanup_old_scans(-7)
+        .await
+        .expect_err("negative retention would move the cutoff into the future");
+
+    assert!(
+        error
+            .to_string()
+            .contains("Cleanup days cannot be negative")
+    );
 
     db.close().await;
 }

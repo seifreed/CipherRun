@@ -1,6 +1,7 @@
 // Scheduling Engine - Manages scan intervals and timing
 
-use crate::monitor::inventory::MonitoredDomain;
+use crate::monitor::inventory::{MonitoredDomain, canonical_inventory_key};
+use crate::utils::network::split_target_host_port;
 use chrono::{DateTime, Duration, Utc};
 use rand::RngExt;
 use std::collections::HashMap;
@@ -79,12 +80,12 @@ impl SchedulingEngine {
 
     /// Internal method to schedule next scan with jitter
     fn schedule_next_scan_internal(&mut self, identifier: &str, interval_seconds: u64) {
+        let identifier = canonical_schedule_key(identifier);
         let clamped_seconds = interval_seconds.min(i64::MAX as u64) as i64;
         let interval_with_jitter = self.add_jitter(Duration::seconds(clamped_seconds));
         let next_scan = Utc::now() + interval_with_jitter;
 
-        self.next_scan_times
-            .insert(identifier.to_string(), next_scan);
+        self.next_scan_times.insert(identifier, next_scan);
     }
 
     /// Add jitter to duration to prevent thundering herd
@@ -109,7 +110,8 @@ impl SchedulingEngine {
 
     /// Get next scan time for a domain
     pub fn next_scan_time(&self, identifier: &str) -> Option<DateTime<Utc>> {
-        self.next_scan_times.get(identifier).copied()
+        let identifier = canonical_schedule_key(identifier);
+        self.next_scan_times.get(&identifier).copied()
     }
 
     /// Get time until next scan for a domain
@@ -125,7 +127,8 @@ impl SchedulingEngine {
 
     /// Clear schedule for a domain
     pub fn clear_schedule(&mut self, identifier: &str) {
-        self.next_scan_times.remove(identifier);
+        let identifier = canonical_schedule_key(identifier);
+        self.next_scan_times.remove(&identifier);
     }
 
     /// Clear all schedules
@@ -140,8 +143,8 @@ impl SchedulingEngine {
 
     /// Reschedule a domain for immediate scan
     pub fn schedule_immediate(&mut self, identifier: &str) {
-        self.next_scan_times
-            .insert(identifier.to_string(), Utc::now());
+        let identifier = canonical_schedule_key(identifier);
+        self.next_scan_times.insert(identifier, Utc::now());
     }
 
     /// Get domains scheduled in the next N seconds
@@ -153,6 +156,13 @@ impl SchedulingEngine {
             .filter(|&(_, time)| time <= &threshold)
             .map(|(id, _)| id.clone())
             .collect()
+    }
+}
+
+fn canonical_schedule_key(identifier: &str) -> String {
+    match split_target_host_port(identifier) {
+        Ok((hostname, port)) => canonical_inventory_key(&hostname, port.unwrap_or(443)),
+        Err(_) => identifier.to_ascii_lowercase(),
     }
 }
 
@@ -225,6 +235,21 @@ mod tests {
 
         assert_eq!(scheduler.scheduled_count(), 1);
         assert!(scheduler.next_scan_time("example.com:443").is_some());
+    }
+
+    #[test]
+    fn test_schedule_next_scan_normalizes_domain_identifier_case() {
+        let mut scheduler = SchedulingEngine::new();
+        let domains = vec![create_test_domain("example.com", 3600)];
+
+        scheduler.schedule_next_scan("Example.COM:443", 3600);
+
+        assert_eq!(scheduler.scheduled_count(), 1);
+        assert!(scheduler.next_scan_time("example.com:443").is_some());
+        assert!(scheduler.get_domains_to_scan(&domains).is_empty());
+
+        scheduler.clear_schedule("EXAMPLE.com:443");
+        assert_eq!(scheduler.scheduled_count(), 0);
     }
 
     #[test]

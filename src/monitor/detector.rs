@@ -1,6 +1,7 @@
 // Certificate Change Detector
 
 use crate::certificates::parser::CertificateInfo;
+use crate::certificates::validator::parse_cert_date;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -160,54 +161,19 @@ impl ChangeDetector {
         // Check expiry date changes
         if previous.not_after != current.not_after {
             // Parse dates to determine if extended or shortened
-            let is_extended = {
-                let parse_date = |s: &str| -> Option<chrono::DateTime<chrono::Utc>> {
-                    use chrono::NaiveDateTime;
-                    // Try RFC3339: "2025-01-01T00:00:00Z"
-                    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
-                        return Some(dt.with_timezone(&chrono::Utc));
-                    }
-                    // Try "YYYY-MM-DD HH:MM:SS UTC" format
-                    if let Ok(dt) = NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S UTC") {
-                        return Some(dt.and_utc());
-                    }
-                    // Try without timezone suffix
-                    let cleaned = s.replace(" UTC", "").replace(" GMT", "");
-                    if let Ok(dt) = NaiveDateTime::parse_from_str(&cleaned, "%Y-%m-%d %H:%M:%S") {
-                        return Some(dt.and_utc());
-                    }
-                    // Try ISO format with offset: "2025-01-01 00:00:00 +0000"
-                    if let Ok(dt) = chrono::DateTime::parse_from_str(
-                        &format!("{} +0000", s),
-                        "%Y-%m-%d %H:%M:%S %z",
-                    ) {
-                        return Some(dt.with_timezone(&chrono::Utc));
-                    }
-                    // Try OpenSSL format: "Jan  1 00:00:00 2025 GMT"
-                    if s.ends_with(" GMT") || s.ends_with(" UTC") {
-                        let without_tz = s.replace(" GMT", "").replace(" UTC", "");
-                        if let Ok(dt) =
-                            NaiveDateTime::parse_from_str(&without_tz, "%b %d %H:%M:%S %Y")
-                        {
-                            return Some(dt.and_utc());
-                        }
-                    }
+            let is_extended = match (
+                parse_cert_date(&previous.not_after),
+                parse_cert_date(&current.not_after),
+            ) {
+                (Some(prev), Some(curr)) => Some(curr > prev),
+                _ => {
+                    // Cannot reliably compare dates — skip emitting a directional change event
+                    tracing::warn!(
+                        "Could not parse certificate dates for comparison: '{}' vs '{}', skipping expiry direction detection",
+                        previous.not_after,
+                        current.not_after
+                    );
                     None
-                };
-                match (
-                    parse_date(&previous.not_after),
-                    parse_date(&current.not_after),
-                ) {
-                    (Some(prev), Some(curr)) => Some(curr > prev),
-                    _ => {
-                        // Cannot reliably compare dates — skip emitting a directional change event
-                        tracing::warn!(
-                            "Could not parse certificate dates for comparison: '{}' vs '{}', skipping expiry direction detection",
-                            previous.not_after,
-                            current.not_after
-                        );
-                        None
-                    }
                 }
             };
 
@@ -546,6 +512,23 @@ mod tests {
             changes
                 .iter()
                 .any(|c| matches!(c.change_type, ChangeType::ExpiryExtended))
+        );
+    }
+
+    #[test]
+    fn test_detect_expiry_extended_with_numeric_timezone_offset() {
+        let detector = ChangeDetector::new();
+        let mut previous = create_test_cert("123", "CN=Let's Encrypt", Some(2048), vec![]);
+        let mut current = previous.clone();
+        previous.not_after = "2025-01-01 00:00:00 +0000".to_string();
+        current.not_after = "2026-01-01 00:00:00 +0000".to_string();
+
+        let changes = detector.detect_changes(&previous, &current);
+        assert!(
+            changes
+                .iter()
+                .any(|c| matches!(c.change_type, ChangeType::ExpiryExtended)),
+            "{changes:?}"
         );
     }
 }

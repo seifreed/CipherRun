@@ -30,10 +30,10 @@ impl TrendAnalyzer {
 
                 let has_tls13 = protocols
                     .iter()
-                    .any(|p| p.protocol_name.contains("TLS 1.3") && p.enabled);
+                    .any(|p| p.enabled && is_tls_version(&p.protocol_name, "1.3"));
                 let has_tls12 = protocols
                     .iter()
-                    .any(|p| p.protocol_name.contains("TLS 1.2") && p.enabled);
+                    .any(|p| p.enabled && is_tls_version(&p.protocol_name, "1.2"));
 
                 tls13_adoption.push((scan.scan_timestamp, has_tls13));
                 tls12_usage.push((scan.scan_timestamp, has_tls12));
@@ -42,9 +42,9 @@ impl TrendAnalyzer {
                     .iter()
                     .filter(|p| {
                         p.enabled
-                            && (p.protocol_name.contains("SSLv")
-                                || p.protocol_name.contains("TLS 1.0")
-                                || p.protocol_name.contains("TLS 1.1"))
+                            && (is_ssl_protocol(&p.protocol_name)
+                                || is_tls_version(&p.protocol_name, "1.0")
+                                || is_tls_version(&p.protocol_name, "1.1"))
                     })
                     .map(|p| p.protocol_name.clone())
                     .collect();
@@ -114,6 +114,25 @@ impl TrendAnalyzer {
 
         summary
     }
+}
+
+fn normalized_protocol_name(protocol: &str) -> String {
+    protocol
+        .chars()
+        .filter(|c| !c.is_ascii_whitespace() && *c != '_' && *c != '-')
+        .flat_map(|c| c.to_uppercase())
+        .collect()
+}
+
+fn is_tls_version(protocol: &str, version: &str) -> bool {
+    let normalized = normalized_protocol_name(protocol);
+    normalized.contains(&format!("TLS{}", version))
+        || normalized.contains(&format!("TLSV{}", version))
+}
+
+fn is_ssl_protocol(protocol: &str) -> bool {
+    let normalized = normalized_protocol_name(protocol);
+    normalized.starts_with("SSL") || normalized.contains("SSLV")
 }
 
 #[cfg(test)]
@@ -257,5 +276,45 @@ mod tests {
             .await
             .expect("protocol trend should succeed");
         assert!(protocol.summary.contains("TLS 1.3 adoption"));
+    }
+
+    #[tokio::test]
+    async fn test_protocol_trend_normalizes_common_protocol_name_variants() {
+        let db = setup_db().await;
+        let hostname = "variant.example.com";
+        let port = 443;
+        let scan = insert_scan(
+            &db,
+            hostname,
+            port,
+            Utc::now() - Duration::days(1),
+            Some("B"),
+            Some(80),
+        )
+        .await;
+
+        insert_protocol(&db, scan, "TLSv1.3", true, true).await;
+        insert_protocol(&db, scan, "tlsv1.2", true, false).await;
+        insert_protocol(&db, scan, "TLSv1.0", true, false).await;
+        insert_protocol(&db, scan, "sslv3", true, false).await;
+
+        let analyzer = TrendAnalyzer::new(db.clone());
+        let protocol = analyzer
+            .analyze_protocol_trend(hostname, port, 30)
+            .await
+            .expect("protocol trend should succeed");
+
+        assert_eq!(
+            protocol.tls13_adoption,
+            vec![(protocol.tls13_adoption[0].0, true)]
+        );
+        assert_eq!(
+            protocol.tls12_usage,
+            vec![(protocol.tls12_usage[0].0, true)]
+        );
+        assert_eq!(
+            protocol.legacy_protocols[0].1,
+            vec!["TLSv1.0".to_string(), "sslv3".to_string()]
+        );
     }
 }
