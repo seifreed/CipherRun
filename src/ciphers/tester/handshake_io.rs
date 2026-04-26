@@ -180,7 +180,7 @@ impl CipherTester {
         {
             Ok(result) => result,
             Err(_) => Err(crate::TlsError::Timeout {
-                duration: self.read_timeout,
+                duration: Some(self.read_timeout),
             }),
         }
     }

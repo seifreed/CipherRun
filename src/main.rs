@@ -27,7 +27,11 @@ use tracing_subscriber::fmt::writer::{BoxMakeWriter, MakeWriterExt};
 #[tokio::main]
 async fn main() -> ExitCode {
     match run_cli().await {
-        Ok(exit) => ExitCode::from(exit.code().clamp(0, 255) as u8),
+        Ok(exit) => {
+            let code = exit.code();
+            let u8_code = if code < 0 { 1 } else { code.clamp(0, 255) as u8 };
+            ExitCode::from(u8_code)
+        }
         Err(err) => {
             eprintln!("Error: {}", err);
             ExitCode::from(1)

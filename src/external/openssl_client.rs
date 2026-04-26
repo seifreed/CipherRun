@@ -290,7 +290,9 @@ impl OpenSslClient {
         };
 
         let result = self.run(&options)?;
-        Ok(result.success)
+        // OpenSSL may exit non-zero even after a completed handshake;
+        // connection_info is only present when the handshake succeeded.
+        Ok(result.connection_info.is_some())
     }
 
     /// Get full certificate chain
@@ -325,7 +327,9 @@ impl OpenSslClient {
         };
 
         let result = self.run(&options)?;
-        Ok(result.success)
+        // OpenSSL may exit non-zero even after a completed handshake;
+        // connection_info is only present when the handshake succeeded.
+        Ok(result.connection_info.is_some())
     }
 
     /// Test client certificate authentication
@@ -340,7 +344,9 @@ impl OpenSslClient {
         };
 
         let result = self.run(&options)?;
-        Ok(result.success)
+        // OpenSSL may exit non-zero even after a completed handshake;
+        // connection_info is only present when the handshake succeeded.
+        Ok(result.connection_info.is_some())
     }
 
     /// Get OpenSSL version

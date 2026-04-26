@@ -29,7 +29,7 @@ impl IntoleranceTester {
                 Ok(response)
             }
             _ => Err(TlsError::Timeout {
-                duration: self.read_timeout,
+                duration: Some(self.read_timeout),
             }),
         }
     }

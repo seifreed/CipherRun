@@ -59,7 +59,7 @@ impl ProtocolDetector {
         let n = timeout(read_timeout, stream.read(&mut banner))
             .await
             .map_err(|_| crate::TlsError::Timeout {
-                duration: read_timeout,
+                duration: Some(read_timeout),
             })??;
 
         let banner_str = String::from_utf8_lossy(&banner[..n]).to_string();
@@ -92,7 +92,7 @@ impl ProtocolDetector {
         let n = timeout(read_timeout, stream.read(&mut response))
             .await
             .map_err(|_| crate::TlsError::Timeout {
-                duration: read_timeout,
+                duration: Some(read_timeout),
             })??;
 
         let response_str = String::from_utf8_lossy(&response[..n]).to_string();

@@ -54,7 +54,7 @@ impl PreHandshakeScanner {
         let bytes_read = timeout(self.timeout_duration, stream.read(&mut response_buffer))
             .await
             .map_err(|_| TlsError::Timeout {
-                duration: self.timeout_duration,
+                duration: Some(self.timeout_duration),
             })?
             .map_err(|e| TlsError::IoError { source: e })?;
 

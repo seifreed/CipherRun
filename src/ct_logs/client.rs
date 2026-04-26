@@ -162,6 +162,12 @@ impl CtClient {
                     if response.status().is_success() {
                         return Ok(response);
                     } else if response.status() == 429 {
+                        if attempt == MAX_RETRIES - 1 {
+                            return Err(TlsError::HttpError {
+                                status: response.status().as_u16(),
+                                details: format!("Rate limited after {} retries: {}", MAX_RETRIES, response.status()),
+                            });
+                        }
                         // Rate limited - wait and retry
                         warn!(
                             "Rate limited (429), retrying after {:?} (attempt {}/{})",
@@ -174,6 +180,12 @@ impl CtClient {
                         last_error = Some(format!("Rate limited: {}", response.status()));
                         continue;
                     } else if response.status().is_server_error() {
+                        if attempt == MAX_RETRIES - 1 {
+                            return Err(TlsError::HttpError {
+                                status: response.status().as_u16(),
+                                details: format!("Server error after {} retries: {}", MAX_RETRIES, response.status()),
+                            });
+                        }
                         // Server error - retry
                         warn!(
                             "Server error ({}), retrying after {:?} (attempt {}/{})",

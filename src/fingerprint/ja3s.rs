@@ -77,7 +77,7 @@ impl Ja3sFingerprint {
     /// Get TLS version name
     pub fn version_name(&self) -> String {
         match self.ssl_version {
-            0x0002 | 0x0200 => "SSL 2.0".to_string(),
+            0x0002 => "SSL 2.0".to_string(),
             0x0300 => "SSL 3.0".to_string(),
             0x0301 => "TLS 1.0".to_string(),
             0x0302 => "TLS 1.1".to_string(),
