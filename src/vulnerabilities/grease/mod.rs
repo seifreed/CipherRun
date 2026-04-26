@@ -249,11 +249,9 @@ impl GreaseTester {
                 Err(_) => return Ok(false),
             };
 
-        let mut root_store = rustls::RootCertStore::empty();
-        root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-
         let config = rustls::ClientConfig::builder()
-            .with_root_certificates(root_store)
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(GreaseNoVerifier))
             .with_no_client_auth();
 
         let connector = tokio_rustls::TlsConnector::from(Arc::new(config));
@@ -325,12 +323,58 @@ pub struct GreaseReport {
     pub recommendations: Vec<String>,
 }
 
+#[derive(Debug)]
+struct GreaseNoVerifier;
+
+impl rustls::client::danger::ServerCertVerifier for GreaseNoVerifier {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &rustls::pki_types::CertificateDer<'_>,
+        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
+        _server_name: &rustls::pki_types::ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: rustls::pki_types::UnixTime,
+    ) -> std::result::Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> std::result::Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> std::result::Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        vec![
+            rustls::SignatureScheme::RSA_PKCS1_SHA256,
+            rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
+            rustls::SignatureScheme::RSA_PKCS1_SHA384,
+            rustls::SignatureScheme::ECDSA_NISTP384_SHA384,
+            rustls::SignatureScheme::RSA_PKCS1_SHA512,
+            rustls::SignatureScheme::ECDSA_NISTP521_SHA512,
+        ]
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::net::IpAddr;
     use std::sync::Once;
     use tokio::net::TcpListener;
+    use tokio_rustls::TlsAcceptor;
 
     fn install_crypto_provider() {
         static ONCE: Once = Once::new();
@@ -522,6 +566,56 @@ mod tests {
             }
         });
         addr
+    }
+
+    async fn spawn_self_signed_tls_server(max_accepts: usize) -> std::net::SocketAddr {
+        let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
+        let cert_der = cert.cert.der().clone();
+        let key_der = rustls::pki_types::PrivateKeyDer::Pkcs8(
+            rustls::pki_types::PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der()),
+        );
+
+        let config = rustls::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(vec![cert_der], key_der)
+            .unwrap();
+
+        let acceptor = TlsAcceptor::from(std::sync::Arc::new(config));
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            let mut remaining = max_accepts;
+            while remaining > 0 {
+                if let Ok((stream, _)) = listener.accept().await {
+                    let acceptor = acceptor.clone();
+                    let _ = tokio::time::timeout(
+                        std::time::Duration::from_millis(500),
+                        acceptor.accept(stream),
+                    )
+                    .await;
+                }
+                remaining -= 1;
+            }
+        });
+
+        addr
+    }
+
+    #[tokio::test]
+    async fn test_grease_baseline_ignores_certificate_validation_errors() {
+        install_crypto_provider();
+        let addr = spawn_self_signed_tls_server(1).await;
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            addr.port(),
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .unwrap();
+
+        let tester = GreaseTester::new(target);
+        let baseline_ok = tester.test_baseline_connection().await.unwrap();
+        assert!(baseline_ok);
     }
 
     #[tokio::test]

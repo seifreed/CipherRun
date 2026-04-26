@@ -26,6 +26,13 @@ enum SchannelDetectionStatus {
     Inconclusive,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MalformedHandshakeStatus {
+    Vulnerable,
+    Handled,
+    Inconclusive,
+}
+
 impl WinshockTester {
     pub fn new(target: Target) -> Self {
         Self { target }
@@ -45,23 +52,53 @@ impl WinshockTester {
             });
         }
 
-        let schannel_detected = schannel_status == SchannelDetectionStatus::Detected;
-        let vulnerable = schannel_detected && self.test_malformed_handshake().await?;
-
-        let details = if vulnerable {
-            "Vulnerable to Winshock (MS14-066, CVE-2014-6321) - Server crashes or behaves abnormally with malformed handshake".to_string()
-        } else if schannel_detected {
-            "Schannel detected but Winshock test passed - Likely patched or protected".to_string()
+        let malformed_status = if schannel_status == SchannelDetectionStatus::Detected {
+            Some(self.test_malformed_handshake().await?)
         } else {
-            "Not vulnerable - Schannel not detected".to_string()
+            None
         };
 
-        Ok(WinshockTestResult {
-            vulnerable,
-            schannel_detected,
-            inconclusive: false,
-            details,
-        })
+        Ok(Self::build_result(schannel_status, malformed_status))
+    }
+
+    fn build_result(
+        schannel_status: SchannelDetectionStatus,
+        malformed_status: Option<MalformedHandshakeStatus>,
+    ) -> WinshockTestResult {
+        let schannel_detected = schannel_status == SchannelDetectionStatus::Detected;
+
+        match (schannel_status, malformed_status) {
+            (SchannelDetectionStatus::Detected, Some(MalformedHandshakeStatus::Vulnerable)) => {
+                WinshockTestResult {
+                    vulnerable: true,
+                    schannel_detected: true,
+                    inconclusive: false,
+                    details: "Vulnerable to Winshock (MS14-066, CVE-2014-6321) - Server crashes or behaves abnormally with malformed handshake".to_string(),
+                }
+            }
+            (SchannelDetectionStatus::Detected, Some(MalformedHandshakeStatus::Handled)) => {
+                WinshockTestResult {
+                    vulnerable: false,
+                    schannel_detected: true,
+                    inconclusive: false,
+                    details: "Schannel detected but Winshock test passed - Likely patched or protected".to_string(),
+                }
+            }
+            (SchannelDetectionStatus::Detected, Some(MalformedHandshakeStatus::Inconclusive)) => {
+                WinshockTestResult {
+                    vulnerable: false,
+                    schannel_detected: true,
+                    inconclusive: true,
+                    details: "Winshock test inconclusive - Schannel was detected, but malformed handshake probe did not produce conclusive evidence".to_string(),
+                }
+            }
+            _ => WinshockTestResult {
+                vulnerable: false,
+                schannel_detected,
+                inconclusive: false,
+                details: "Not vulnerable - Schannel not detected".to_string(),
+            },
+        }
     }
 
     /// Detect if server is using Microsoft Schannel
@@ -122,7 +159,7 @@ impl WinshockTester {
     }
 
     /// Test with malformed handshake that triggers Winshock
-    async fn test_malformed_handshake(&self) -> Result<bool> {
+    async fn test_malformed_handshake(&self) -> Result<MalformedHandshakeStatus> {
         let addr = self
             .target
             .socket_addrs()
@@ -135,11 +172,14 @@ impl WinshockTester {
                 .await
             {
                 Ok(s) => s,
-                Err(_) => return Ok(false),
+                Err(_) => return Ok(MalformedHandshakeStatus::Inconclusive),
             };
 
         // Send normal ClientHello first
         let client_hello = self.build_client_hello();
+        if client_hello.is_empty() {
+            return Ok(MalformedHandshakeStatus::Inconclusive);
+        }
         stream.write_all(&client_hello).await?;
 
         // Read ServerHello
@@ -157,11 +197,11 @@ impl WinshockTester {
                         // Any server response (TLS alert 0x15 or other) means it handled
                         // the malformed CKE without crashing. TCP RST (below) is the
                         // primary Winshock indicator.
-                        Ok(false)
+                        Ok(MalformedHandshakeStatus::Handled)
                     }
                     Ok(Ok(_)) => {
                         // Empty response - connection closed without error
-                        Ok(false)
+                        Ok(MalformedHandshakeStatus::Handled)
                     }
                     Ok(Err(e)) => {
                         // Connection error - analyze the error type
@@ -176,16 +216,15 @@ impl WinshockTester {
                             // Winshock causes memory corruption → process crash → TCP RST.
                             // A connection reset after sending the malformed CKE is the
                             // primary positive indicator for CVE-2014-6321.
-                            Ok(true)
+                            Ok(MalformedHandshakeStatus::Vulnerable)
                         } else {
-                            // Timeout, DNS errors, etc. - not vulnerability indicators
-                            Ok(false)
+                            Ok(MalformedHandshakeStatus::Inconclusive)
                         }
                     }
-                    Err(_) => Ok(false), // Timeout
+                    Err(_) => Ok(MalformedHandshakeStatus::Inconclusive),
                 }
             }
-            _ => Ok(false),
+            _ => Ok(MalformedHandshakeStatus::Inconclusive),
         }
     }
 
@@ -330,6 +369,19 @@ mod tests {
         };
         let debug = format!("{:?}", result);
         assert!(debug.contains("schannel_detected"));
+    }
+
+    #[test]
+    fn test_winshock_schannel_probe_failure_is_inconclusive() {
+        let result = WinshockTester::build_result(
+            SchannelDetectionStatus::Detected,
+            Some(MalformedHandshakeStatus::Inconclusive),
+        );
+
+        assert!(!result.vulnerable);
+        assert!(result.schannel_detected);
+        assert!(result.inconclusive);
+        assert!(result.details.contains("inconclusive"));
     }
 
     #[tokio::test]

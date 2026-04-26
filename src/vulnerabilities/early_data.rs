@@ -33,6 +33,8 @@ pub struct EarlyDataSizeInfo {
     pub max_early_data_size: Option<u32>,
     /// Whether the value was estimated (heuristic) vs actually parsed from ticket
     pub is_estimated: bool,
+    /// Whether support could not be determined due to an operational failure
+    pub inconclusive: bool,
 }
 
 /// Result of 0-RTT replay attack testing
@@ -55,6 +57,13 @@ pub struct EarlyDataTester<'a> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EarlyDataSupportStatus {
+    Supported,
+    NotSupported,
+    Inconclusive,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Tls13SupportStatus {
     Supported,
     NotSupported,
     Inconclusive,
@@ -198,20 +207,44 @@ impl<'a> EarlyDataTester<'a> {
     /// - Apache/mod_ssl: typically 16384 bytes
     /// - Nginx: configurable, often 16384 bytes
     async fn get_max_early_data_size(&self) -> Result<EarlyDataSizeInfo> {
-        let supports_tls13 = self.connect_tls13().await?;
-
-        if !supports_tls13 {
-            return Ok(EarlyDataSizeInfo {
-                tls13_supported: false,
-                early_data_supported: false,
-                max_early_data_size: None,
-                is_estimated: false,
-            });
+        match self.connect_tls13().await? {
+            Tls13SupportStatus::Supported => {}
+            Tls13SupportStatus::NotSupported => {
+                return Ok(EarlyDataSizeInfo {
+                    tls13_supported: false,
+                    early_data_supported: false,
+                    max_early_data_size: None,
+                    is_estimated: false,
+                    inconclusive: false,
+                });
+            }
+            Tls13SupportStatus::Inconclusive => {
+                return Ok(EarlyDataSizeInfo {
+                    tls13_supported: false,
+                    early_data_supported: false,
+                    max_early_data_size: None,
+                    is_estimated: false,
+                    inconclusive: true,
+                });
+            }
         }
 
         // Check if server advertises early_data support in ServerHello
         // by checking for the presence of the early_data extension (type 0x002a)
         let early_data_in_server_hello = self.check_early_data_extension_in_handshake().await?;
+
+        if matches!(
+            early_data_in_server_hello,
+            EarlyDataSupportStatus::Inconclusive
+        ) {
+            return Ok(EarlyDataSizeInfo {
+                tls13_supported: true,
+                early_data_supported: false,
+                max_early_data_size: None,
+                is_estimated: false,
+                inconclusive: true,
+            });
+        }
 
         if !matches!(
             early_data_in_server_hello,
@@ -222,6 +255,7 @@ impl<'a> EarlyDataTester<'a> {
                 early_data_supported: false,
                 max_early_data_size: None,
                 is_estimated: false,
+                inconclusive: false,
             });
         }
 
@@ -233,6 +267,7 @@ impl<'a> EarlyDataTester<'a> {
             early_data_supported: true,
             max_early_data_size: Some(16384), // Most common default
             is_estimated: true, // Mark as estimated since we didn't parse actual ticket
+            inconclusive: false,
         })
     }
 
@@ -311,19 +346,40 @@ impl<'a> EarlyDataTester<'a> {
     /// be misleading.
     async fn test_replay_attack(&self) -> Result<ReplayTestResult> {
         // First, check if TLS 1.3 is supported
-        let tls13_supported = self.connect_tls13().await?;
-
-        if !tls13_supported {
-            return Ok(ReplayTestResult {
-                tested: false,
-                vulnerable: false,
-                inconclusive: false,
-                details: "Server does not support TLS 1.3 - 0-RTT not applicable".to_string(),
-            });
+        match self.connect_tls13().await? {
+            Tls13SupportStatus::Supported => {}
+            Tls13SupportStatus::NotSupported => {
+                return Ok(ReplayTestResult {
+                    tested: false,
+                    vulnerable: false,
+                    inconclusive: false,
+                    details: "Server does not support TLS 1.3 - 0-RTT not applicable".to_string(),
+                });
+            }
+            Tls13SupportStatus::Inconclusive => {
+                return Ok(ReplayTestResult {
+                    tested: false,
+                    vulnerable: false,
+                    inconclusive: true,
+                    details:
+                        "TLS 1.3 support inconclusive - 0-RTT replay test could not be performed"
+                            .to_string(),
+                });
+            }
         }
 
         // Check if early_data extension is supported
         let early_data_info = self.get_max_early_data_size().await?;
+
+        if early_data_info.inconclusive {
+            return Ok(ReplayTestResult {
+                tested: false,
+                vulnerable: false,
+                inconclusive: true,
+                details: "Early Data support inconclusive - replay test could not be performed"
+                    .to_string(),
+            });
+        }
 
         if !early_data_info.early_data_supported {
             return Ok(ReplayTestResult {
@@ -361,7 +417,7 @@ impl<'a> EarlyDataTester<'a> {
     }
 
     /// Attempt to connect with TLS 1.3
-    async fn connect_tls13(&self) -> Result<bool> {
+    async fn connect_tls13(&self) -> Result<Tls13SupportStatus> {
         let addr = self
             .target
             .socket_addrs()
@@ -375,7 +431,7 @@ impl<'a> EarlyDataTester<'a> {
                 .await
             {
                 Ok(s) => s,
-                Err(_) => return Ok(false),
+                Err(_) => return Ok(Tls13SupportStatus::Inconclusive),
             };
 
         // Build TLS 1.3 only config
@@ -398,9 +454,14 @@ impl<'a> EarlyDataTester<'a> {
                 let protocol_version = connection.protocol_version();
 
                 // rustls::ProtocolVersion::TLSv1_3 indicates TLS 1.3
-                Ok(protocol_version == Some(rustls::ProtocolVersion::TLSv1_3))
+                if protocol_version == Some(rustls::ProtocolVersion::TLSv1_3) {
+                    Ok(Tls13SupportStatus::Supported)
+                } else {
+                    Ok(Tls13SupportStatus::NotSupported)
+                }
             }
-            _ => Ok(false),
+            Ok(Err(_)) => Ok(Tls13SupportStatus::NotSupported),
+            Err(_) => Ok(Tls13SupportStatus::Inconclusive),
         }
     }
 }

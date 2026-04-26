@@ -423,6 +423,7 @@ impl MxTester {
         let aggregated = ConservativeAggregator::new(per_backend_results, Vec::new()).aggregate();
         let certificate_chain = select_common_certificate_chain(&successful_results);
         let vulnerabilities = aggregate_vulnerabilities(results);
+        let incomplete_coverage = results.iter().any(|(_, result)| result.is_err());
 
         let mut aggregate = ScanResults {
             target: canonical_target(domain, 25),
@@ -436,6 +437,12 @@ impl MxTester {
             vulnerabilities,
             ..Default::default()
         };
+
+        if incomplete_coverage {
+            aggregate.add_human_warning(
+                "Incomplete MX coverage - at least one MX host failed during scanning",
+            );
+        }
 
         let certificate_validation = aggregate
             .certificate_chain
@@ -910,6 +917,38 @@ mod tests {
             aggregate.vulnerabilities[0]
                 .details
                 .contains("incomplete MX coverage")
+        );
+    }
+
+    #[test]
+    fn test_aggregate_scan_results_warns_when_clean_mx_coverage_is_partial() {
+        let results: Vec<(MxRecord, Result<ScanResults>)> = vec![
+            (
+                MxRecord {
+                    priority: 10,
+                    hostname: "mx1.example.com".to_string(),
+                },
+                Ok(ScanResults::default()),
+            ),
+            (
+                MxRecord {
+                    priority: 20,
+                    hostname: "mx2.example.com".to_string(),
+                },
+                Err(TlsError::Other("connection failed".to_string())),
+            ),
+        ];
+
+        let aggregate =
+            MxTester::aggregate_scan_results_for_domain("example.com", &results).unwrap();
+
+        assert!(aggregate.vulnerabilities.is_empty());
+        assert!(
+            aggregate
+                .scan_metadata
+                .human_warnings
+                .iter()
+                .any(|warning| warning.contains("Incomplete MX coverage"))
         );
     }
 }

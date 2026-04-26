@@ -1,10 +1,10 @@
 use super::analysis::analyze_cipher_details;
 use super::{
-    CipherDetails, CipherPerProtocolAnalysis, ProtocolAdvancedTester, ProtocolCipherSupport,
-    TlsTruncationAnalysis,
+    AdvancedCipherProbeOutcome, CipherDetails, CipherPerProtocolAnalysis, ProtocolAdvancedTester,
+    ProtocolCipherSupport, TlsTruncationAnalysis, is_operational_tls_error,
 };
 use crate::Result;
-use openssl::ssl::{SslConnector, SslMethod, SslVersion};
+use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode, SslVersion};
 use tokio::time::Duration;
 
 const TEST_CIPHERS: &[&str] = &[
@@ -33,13 +33,6 @@ const TEST_CIPHERS: &[&str] = &[
     "RC4-SHA",
     "RC4-MD5",
 ];
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CipherProbeOutcome {
-    Supported,
-    NotSupported,
-    Inconclusive,
-}
 
 impl ProtocolAdvancedTester {
     pub async fn test_tls_truncation(&self) -> Result<TlsTruncationAnalysis> {
@@ -118,7 +111,10 @@ impl ProtocolAdvancedTester {
         })
     }
 
-    pub(super) async fn test_cipher_support(&self, cipher: &str) -> Result<bool> {
+    pub(super) async fn test_cipher_support_outcome(
+        &self,
+        cipher: &str,
+    ) -> Result<AdvancedCipherProbeOutcome> {
         let addr = self
             .target
             .socket_addrs()
@@ -129,18 +125,34 @@ impl ProtocolAdvancedTester {
         let handshake_timeout = Duration::from_secs(2);
 
         let stream =
-            crate::utils::network::connect_with_timeout(addr, connect_timeout, None).await?;
+            match crate::utils::network::connect_with_timeout(addr, connect_timeout, None).await {
+                Ok(stream) => stream,
+                Err(_) => return Ok(AdvancedCipherProbeOutcome::Inconclusive),
+            };
 
         let std_stream =
-            crate::utils::network::into_blocking_std_stream(stream, handshake_timeout)?;
+            match crate::utils::network::into_blocking_std_stream(stream, handshake_timeout) {
+                Ok(stream) => stream,
+                Err(_) => return Ok(AdvancedCipherProbeOutcome::Inconclusive),
+            };
 
         let mut builder = SslConnector::builder(SslMethod::tls())?;
-        builder.set_cipher_list(cipher)?;
+        builder.set_verify(SslVerifyMode::NONE);
+        if builder.set_cipher_list(cipher).is_err() {
+            return Ok(AdvancedCipherProbeOutcome::NotSupported);
+        }
         let connector = builder.build();
 
         match connector.connect(&self.target.hostname, std_stream) {
-            Ok(_) => Ok(true),
-            Err(_) => Ok(false),
+            Ok(_) => Ok(AdvancedCipherProbeOutcome::Supported),
+            Err(error) => {
+                let error = error.to_string();
+                Ok(if is_operational_tls_error(&error) {
+                    AdvancedCipherProbeOutcome::Inconclusive
+                } else {
+                    AdvancedCipherProbeOutcome::NotSupported
+                })
+            }
         }
     }
 
@@ -157,12 +169,14 @@ impl ProtocolAdvancedTester {
                 .test_cipher_with_protocol_outcome(cipher, protocol)
                 .await
             {
-                Ok(CipherProbeOutcome::Supported) => {
+                Ok(AdvancedCipherProbeOutcome::Supported) => {
                     saw_conclusive_probe = true;
                     supported_ciphers.push(analyze_cipher_details(cipher));
                 }
-                Ok(CipherProbeOutcome::NotSupported) => saw_conclusive_probe = true,
-                Ok(CipherProbeOutcome::Inconclusive) | Err(_) => saw_inconclusive_probe = true,
+                Ok(AdvancedCipherProbeOutcome::NotSupported) => saw_conclusive_probe = true,
+                Ok(AdvancedCipherProbeOutcome::Inconclusive) | Err(_) => {
+                    saw_inconclusive_probe = true;
+                }
             }
         }
 
@@ -176,7 +190,7 @@ impl ProtocolAdvancedTester {
         &self,
         cipher: &str,
         protocol: SslVersion,
-    ) -> Result<CipherProbeOutcome> {
+    ) -> Result<AdvancedCipherProbeOutcome> {
         let addr = self
             .target
             .socket_addrs()
@@ -189,27 +203,38 @@ impl ProtocolAdvancedTester {
         let stream =
             match crate::utils::network::connect_with_timeout(addr, connect_timeout, None).await {
                 Ok(stream) => stream,
-                Err(_) => return Ok(CipherProbeOutcome::Inconclusive),
+                Err(_) => return Ok(AdvancedCipherProbeOutcome::Inconclusive),
             };
 
         let std_stream =
-            crate::utils::network::into_blocking_std_stream(stream, handshake_timeout)?;
+            match crate::utils::network::into_blocking_std_stream(stream, handshake_timeout) {
+                Ok(stream) => stream,
+                Err(_) => return Ok(AdvancedCipherProbeOutcome::Inconclusive),
+            };
 
         let mut builder = SslConnector::builder(SslMethod::tls())?;
+        builder.set_verify(SslVerifyMode::NONE);
         if builder.set_min_proto_version(Some(protocol)).is_err()
             || builder.set_max_proto_version(Some(protocol)).is_err()
         {
-            return Ok(CipherProbeOutcome::Inconclusive);
+            return Ok(AdvancedCipherProbeOutcome::Inconclusive);
         }
         if builder.set_cipher_list(cipher).is_err() {
-            return Ok(CipherProbeOutcome::NotSupported);
+            return Ok(AdvancedCipherProbeOutcome::NotSupported);
         }
 
         let connector = builder.build();
 
         match connector.connect(&self.target.hostname, std_stream) {
-            Ok(_) => Ok(CipherProbeOutcome::Supported),
-            Err(_) => Ok(CipherProbeOutcome::NotSupported),
+            Ok(_) => Ok(AdvancedCipherProbeOutcome::Supported),
+            Err(error) => {
+                let error = error.to_string();
+                Ok(if is_operational_tls_error(&error) {
+                    AdvancedCipherProbeOutcome::Inconclusive
+                } else {
+                    AdvancedCipherProbeOutcome::NotSupported
+                })
+            }
         }
     }
 }

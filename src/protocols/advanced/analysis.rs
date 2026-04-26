@@ -113,6 +113,7 @@ pub(super) fn classify_fs_grade(percentage: f64, supported: bool) -> FsGrade {
 
 pub(super) fn grade_to_string(grade: FsGrade) -> &'static str {
     match grade {
+        FsGrade::Unknown => "Unknown",
         FsGrade::A => "A",
         FsGrade::B => "B",
         FsGrade::C => "C",
@@ -121,12 +122,17 @@ pub(super) fn grade_to_string(grade: FsGrade) -> &'static str {
     }
 }
 
-pub(super) fn build_rc4_report(supported_rc4_ciphers: Vec<String>) -> Rc4BiasesAnalysis {
+pub(super) fn build_rc4_report(
+    supported_rc4_ciphers: Vec<String>,
+    inconclusive: bool,
+) -> Rc4BiasesAnalysis {
     let rc4_supported = !supported_rc4_ciphers.is_empty();
     let vulnerable_to_appelbaum = rc4_supported;
     let vulnerable_to_bar_mitzvah = rc4_supported;
 
-    let bias_details = if rc4_supported {
+    let bias_details = if inconclusive {
+        "RC4 bias analysis inconclusive - no complete RC4 cipher probe succeeded".to_string()
+    } else if rc4_supported {
         format!(
             "RC4 is vulnerable to multiple bias attacks:\n\
                 - Appelbaum attack (2013): Statistical biases in RC4 keystream\n\
@@ -144,6 +150,7 @@ pub(super) fn build_rc4_report(supported_rc4_ciphers: Vec<String>) -> Rc4BiasesA
         rc4_ciphers: supported_rc4_ciphers,
         vulnerable_to_appelbaum,
         vulnerable_to_bar_mitzvah,
+        inconclusive,
         bias_details,
     }
 }

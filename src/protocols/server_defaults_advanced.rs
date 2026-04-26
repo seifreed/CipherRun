@@ -9,15 +9,35 @@ pub use model::{
     KeyExchangeAnalysis, KeyExchangeParams,
 };
 
+use crate::Result;
 use crate::utils::network::Target;
-use crate::{Result, tls_bail};
 use analysis::{analyze_cipher_kex, classify_dh_strength, estimate_dh_size, estimate_key_size};
-use openssl::ssl::{SslConnector, SslMethod};
+use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
 use tokio::time::Duration;
 
 /// Server defaults advanced tester
 pub struct ServerDefaultsAdvancedTester {
     target: Target,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CurveProbeOutcome {
+    Supported,
+    NotSupported,
+    Inconclusive,
+}
+
+fn is_operational_tls_error(error: &str) -> bool {
+    let error = error.to_ascii_lowercase();
+    error.contains("unexpected eof")
+        || error.contains("connection reset")
+        || error.contains("reset by peer")
+        || error.contains("connection refused")
+        || error.contains("timed out")
+        || error.contains("timeout")
+        || error.contains("closed")
+        || error.contains("shutdown while in init")
+        || error.contains("errno=54")
 }
 
 impl ServerDefaultsAdvancedTester {
@@ -131,6 +151,7 @@ impl ServerDefaultsAdvancedTester {
             crate::utils::network::into_blocking_std_stream(stream, handshake_timeout)?;
 
         let mut builder = SslConnector::builder(SslMethod::tls())?;
+        builder.set_verify(SslVerifyMode::NONE);
         builder.set_cipher_list(&cipher_list.join(":"))?;
 
         let connector = builder.build();
@@ -157,13 +178,61 @@ impl ServerDefaultsAdvancedTester {
         let handshake_timeout = Duration::from_secs(2);
 
         let stream =
-            crate::utils::network::connect_with_timeout(addr, connect_timeout, None).await?;
+            match crate::utils::network::connect_with_timeout(addr, connect_timeout, None).await {
+                Ok(stream) => stream,
+                Err(error) => {
+                    return Ok(DhParameterAnalysis {
+                        dh_supported: false,
+                        dh_size_bits: None,
+                        dh_prime: None,
+                        generator: None,
+                        strength: DhStrength::Weak,
+                        inconclusive: true,
+                        details: format!(
+                            "DH parameter analysis inconclusive - connection failed: {}",
+                            error
+                        ),
+                    });
+                }
+            };
 
         let std_stream =
-            crate::utils::network::into_blocking_std_stream(stream, handshake_timeout)?;
+            match crate::utils::network::into_blocking_std_stream(stream, handshake_timeout) {
+                Ok(stream) => stream,
+                Err(error) => {
+                    return Ok(DhParameterAnalysis {
+                        dh_supported: false,
+                        dh_size_bits: None,
+                        dh_prime: None,
+                        generator: None,
+                        strength: DhStrength::Weak,
+                        inconclusive: true,
+                        details: format!(
+                            "DH parameter analysis inconclusive - socket setup failed: {}",
+                            error
+                        ),
+                    });
+                }
+            };
 
         let mut builder = SslConnector::builder(SslMethod::tls())?;
-        builder.set_cipher_list("DHE-RSA-AES256-SHA:DHE-RSA-AES128-SHA:EDH-RSA-DES-CBC3-SHA")?;
+        builder.set_verify(SslVerifyMode::NONE);
+        if let Err(error) =
+            builder.set_cipher_list("DHE-RSA-AES256-SHA:DHE-RSA-AES128-SHA:EDH-RSA-DES-CBC3-SHA")
+        {
+            return Ok(DhParameterAnalysis {
+                dh_supported: false,
+                dh_size_bits: None,
+                dh_prime: None,
+                generator: None,
+                strength: DhStrength::Weak,
+                inconclusive: true,
+                details: format!(
+                    "DH parameter analysis inconclusive - OpenSSL could not configure DHE cipher probes: {}",
+                    error
+                ),
+            });
+        }
 
         let connector = builder.build();
 
@@ -187,6 +256,7 @@ impl ServerDefaultsAdvancedTester {
                             dh_prime: None,
                             generator: None,
                             strength,
+                            inconclusive: false,
                             details,
                         });
                     }
@@ -198,17 +268,27 @@ impl ServerDefaultsAdvancedTester {
                     dh_prime: None,
                     generator: None,
                     strength: DhStrength::Weak,
+                    inconclusive: false,
                     details: "DH ciphers not supported or not negotiated".to_string(),
                 })
             }
-            Err(error) => Ok(DhParameterAnalysis {
-                dh_supported: false,
-                dh_size_bits: None,
-                dh_prime: None,
-                generator: None,
-                strength: DhStrength::Weak,
-                details: format!("DH connection failed: {}", error),
-            }),
+            Err(error) => {
+                let error = error.to_string();
+                let inconclusive = is_operational_tls_error(&error);
+                Ok(DhParameterAnalysis {
+                    dh_supported: false,
+                    dh_size_bits: None,
+                    dh_prime: None,
+                    generator: None,
+                    strength: DhStrength::Weak,
+                    inconclusive,
+                    details: if inconclusive {
+                        format!("DH parameter analysis inconclusive - handshake failed: {error}")
+                    } else {
+                        format!("DH ciphers not supported or not negotiated: {error}")
+                    },
+                })
+            }
         }
     }
 
@@ -222,10 +302,17 @@ impl ServerDefaultsAdvancedTester {
         ];
 
         let mut supported_curves = Vec::new();
+        let mut saw_conclusive_probe = false;
+        let mut saw_inconclusive_probe = false;
 
         for (display_name, group_name) in curves_to_test {
-            if self.test_ecdh_curve(group_name).await.is_ok() {
-                supported_curves.push(display_name.to_string());
+            match self.test_ecdh_curve(group_name).await? {
+                CurveProbeOutcome::Supported => {
+                    saw_conclusive_probe = true;
+                    supported_curves.push(display_name.to_string());
+                }
+                CurveProbeOutcome::NotSupported => saw_conclusive_probe = true,
+                CurveProbeOutcome::Inconclusive => saw_inconclusive_probe = true,
             }
         }
 
@@ -235,10 +322,13 @@ impl ServerDefaultsAdvancedTester {
             None
         };
         let ecdh_supported = !supported_curves.is_empty();
+        let inconclusive = !ecdh_supported && saw_inconclusive_probe && !saw_conclusive_probe;
         let server_enforces_preference = false;
         let preference_measured = false;
 
-        let details = if ecdh_supported {
+        let details = if inconclusive {
+            "ECDH curve analysis inconclusive - no complete curve probe succeeded".to_string()
+        } else if ecdh_supported {
             if let Some(curve) = preferred_curve.as_deref() {
                 format!(
                     "ECDH supported for curve {}. Additional curve preference was not measured directly. Supported curves: {}",
@@ -261,11 +351,12 @@ impl ServerDefaultsAdvancedTester {
             supported_curves,
             server_enforces_preference,
             preference_measured,
+            inconclusive,
             details,
         })
     }
 
-    async fn test_ecdh_curve(&self, group_name: &str) -> Result<()> {
+    async fn test_ecdh_curve(&self, group_name: &str) -> Result<CurveProbeOutcome> {
         let addr = self
             .target
             .socket_addrs()
@@ -276,17 +367,39 @@ impl ServerDefaultsAdvancedTester {
         let handshake_timeout = Duration::from_secs(2);
 
         let stream =
-            crate::utils::network::connect_with_timeout(addr, connect_timeout, None).await?;
+            match crate::utils::network::connect_with_timeout(addr, connect_timeout, None).await {
+                Ok(stream) => stream,
+                Err(_) => return Ok(CurveProbeOutcome::Inconclusive),
+            };
 
         let std_stream =
-            crate::utils::network::into_blocking_std_stream(stream, handshake_timeout)?;
+            match crate::utils::network::into_blocking_std_stream(stream, handshake_timeout) {
+                Ok(stream) => stream,
+                Err(_) => return Ok(CurveProbeOutcome::Inconclusive),
+            };
 
         let mut builder = SslConnector::builder(SslMethod::tls())?;
-        builder.set_cipher_list("ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256")?;
-        builder.set_groups_list(group_name)?;
+        builder.set_verify(SslVerifyMode::NONE);
+        if builder
+            .set_cipher_list("ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256")
+            .is_err()
+            || builder.set_groups_list(group_name).is_err()
+        {
+            return Ok(CurveProbeOutcome::NotSupported);
+        }
 
         let connector = builder.build();
-        let ssl_stream = connector.connect(&self.target.hostname, std_stream)?;
+        let ssl_stream = match connector.connect(&self.target.hostname, std_stream) {
+            Ok(stream) => stream,
+            Err(error) => {
+                let error = error.to_string();
+                return Ok(if is_operational_tls_error(&error) {
+                    CurveProbeOutcome::Inconclusive
+                } else {
+                    CurveProbeOutcome::NotSupported
+                });
+            }
+        };
 
         let cipher = ssl_stream
             .ssl()
@@ -294,9 +407,9 @@ impl ServerDefaultsAdvancedTester {
             .ok_or_else(|| crate::error::TlsError::Other("No cipher negotiated".to_string()))?;
 
         if cipher.name().contains("ECDHE") {
-            Ok(())
+            Ok(CurveProbeOutcome::Supported)
         } else {
-            tls_bail!("ECDHE not negotiated")
+            Ok(CurveProbeOutcome::NotSupported)
         }
     }
 
@@ -312,14 +425,66 @@ impl ServerDefaultsAdvancedTester {
         let handshake_timeout = Duration::from_secs(2);
 
         let stream =
-            crate::utils::network::connect_with_timeout(addr, connect_timeout, None).await?;
+            match crate::utils::network::connect_with_timeout(addr, connect_timeout, None).await {
+                Ok(stream) => stream,
+                Err(error) => {
+                    return Ok(KeyExchangeAnalysis {
+                        algorithm: "Unknown".to_string(),
+                        ephemeral: false,
+                        key_size: None,
+                        parameters: KeyExchangeParams::Unknown,
+                        reuse_detected: false,
+                        reuse_detection_measured: false,
+                        inconclusive: true,
+                        details: format!(
+                            "Key exchange analysis inconclusive - connection failed: {}",
+                            error
+                        ),
+                    });
+                }
+            };
 
         let std_stream =
-            crate::utils::network::into_blocking_std_stream(stream, handshake_timeout)?;
+            match crate::utils::network::into_blocking_std_stream(stream, handshake_timeout) {
+                Ok(stream) => stream,
+                Err(error) => {
+                    return Ok(KeyExchangeAnalysis {
+                        algorithm: "Unknown".to_string(),
+                        ephemeral: false,
+                        key_size: None,
+                        parameters: KeyExchangeParams::Unknown,
+                        reuse_detected: false,
+                        reuse_detection_measured: false,
+                        inconclusive: true,
+                        details: format!(
+                            "Key exchange analysis inconclusive - socket setup failed: {}",
+                            error
+                        ),
+                    });
+                }
+            };
 
-        let builder = SslConnector::builder(SslMethod::tls())?;
+        let mut builder = SslConnector::builder(SslMethod::tls())?;
+        builder.set_verify(SslVerifyMode::NONE);
         let connector = builder.build();
-        let ssl_stream = connector.connect(&self.target.hostname, std_stream)?;
+        let ssl_stream = match connector.connect(&self.target.hostname, std_stream) {
+            Ok(stream) => stream,
+            Err(error) => {
+                let error = error.to_string();
+                return Ok(KeyExchangeAnalysis {
+                    algorithm: "Unknown".to_string(),
+                    ephemeral: false,
+                    key_size: None,
+                    parameters: KeyExchangeParams::Unknown,
+                    reuse_detected: false,
+                    reuse_detection_measured: false,
+                    inconclusive: true,
+                    details: format!(
+                        "Key exchange analysis inconclusive - handshake failed: {error}"
+                    ),
+                });
+            }
+        };
 
         let cipher = ssl_stream.ssl().current_cipher().ok_or_else(|| {
             crate::error::TlsError::InvalidHandshake {
@@ -333,12 +498,13 @@ impl ServerDefaultsAdvancedTester {
         let reuse_detection_measured = false;
         let reuse_detected = false;
 
+        let key_size_label = key_size
+            .map(|size| format!("{size} bits"))
+            .unwrap_or_else(|| "unknown".to_string());
+
         let details = format!(
-            "Algorithm: {}, Ephemeral: {}, Key size: {} bits, Reuse detected: {}. Ephemeral key reuse was not measured directly.",
-            algorithm,
-            ephemeral,
-            key_size.unwrap_or(0),
-            reuse_detected
+            "Algorithm: {}, Ephemeral: {}, Key size: {}, Reuse detected: {}. Ephemeral key reuse was not measured directly.",
+            algorithm, ephemeral, key_size_label, reuse_detected
         );
 
         Ok(KeyExchangeAnalysis {
@@ -348,6 +514,7 @@ impl ServerDefaultsAdvancedTester {
             parameters,
             reuse_detected,
             reuse_detection_measured,
+            inconclusive: false,
             details,
         })
     }
@@ -474,7 +641,7 @@ mod tests {
                 if let Ok((stream, _)) = listener.accept().await {
                     let acceptor = acceptor.clone();
                     let _ = tokio::time::timeout(
-                        std::time::Duration::from_millis(250),
+                        std::time::Duration::from_secs(2),
                         acceptor.accept(stream),
                     )
                     .await;
@@ -523,11 +690,12 @@ mod tests {
 
         let dh = tester.analyze_dh_parameters().await.unwrap();
         assert!(!dh.dh_supported);
+        assert!(!dh.inconclusive);
         assert_eq!(dh.strength, DhStrength::Weak);
         assert!(dh.details.contains("DH"));
 
         let ecdh = tester.analyze_ecdh_curves().await.unwrap();
-        assert!(!ecdh.ecdh_supported);
+        assert!(!ecdh.inconclusive);
         assert!(!ecdh.preference_measured);
         assert!(ecdh.details.contains("ECDH"));
 
@@ -547,9 +715,46 @@ mod tests {
         .unwrap();
         let tester = ServerDefaultsAdvancedTester::new(target);
 
-        let result = tester.analyze_key_exchange().await;
-        assert!(result.is_err());
+        let result = tester.analyze_key_exchange().await.unwrap();
+        if result.inconclusive {
+            assert_eq!(result.algorithm, "Unknown");
+            assert!(result.details.contains("inconclusive"));
+        } else {
+            assert_ne!(result.algorithm, "Unknown");
+            assert!(result.details.contains("Algorithm"));
+        }
 
         let _ = std::fs::remove_file(cert_path);
+    }
+
+    #[tokio::test]
+    async fn test_dh_ecdh_and_key_exchange_inactive_target_are_inconclusive() {
+        let listener =
+            std::net::TcpListener::bind("127.0.0.1:0").expect("test assertion should succeed");
+        let port = listener
+            .local_addr()
+            .expect("test assertion should succeed")
+            .port();
+        drop(listener);
+
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .expect("test assertion should succeed");
+        let tester = ServerDefaultsAdvancedTester::new(target);
+
+        let dh = tester.analyze_dh_parameters().await.unwrap();
+        assert!(dh.inconclusive);
+        assert!(!dh.dh_supported);
+
+        let ecdh = tester.analyze_ecdh_curves().await.unwrap();
+        assert!(ecdh.inconclusive);
+        assert!(!ecdh.ecdh_supported);
+
+        let key_exchange = tester.analyze_key_exchange().await.unwrap();
+        assert!(key_exchange.inconclusive);
+        assert_eq!(key_exchange.algorithm, "Unknown");
     }
 }
