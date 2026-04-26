@@ -46,9 +46,9 @@ impl ExceptionMatcher {
 
     /// Check if target matches domain pattern (supports wildcards)
     fn matches_domain(&self, target: &str, pattern: &str) -> bool {
-        let hostname = split_target_host_port(target)
-            .map(|(hostname, _)| hostname)
-            .unwrap_or_else(|_| target.to_string());
+        let Ok((hostname, _)) = split_target_host_port(target) else {
+            return false;
+        };
         let hostname_lower = hostname.trim().to_ascii_lowercase();
         let pattern_lower = pattern.trim().to_ascii_lowercase();
         let hostname = hostname_lower.as_str();
@@ -235,6 +235,27 @@ mod tests {
             matcher
                 .is_exception("example.com:443", "protocols.prohibited")
                 .is_some()
+        );
+    }
+
+    #[test]
+    fn test_malformed_target_does_not_match_domain_exception() {
+        let exception = PolicyException {
+            domain: Some("example.com:bad".to_string()),
+            rules: vec!["protocols.prohibited".to_string()],
+            reason: "Malformed target should not match raw fallback".to_string(),
+            expires: None,
+            approved_by: "Admin".to_string(),
+            ticket: None,
+        };
+
+        let matcher = ExceptionMatcher::new(vec![exception]);
+
+        assert!(!matcher.matches_domain("example.com:bad", "example.com:bad"));
+        assert!(
+            matcher
+                .is_exception("example.com:bad", "protocols.prohibited")
+                .is_none()
         );
     }
 

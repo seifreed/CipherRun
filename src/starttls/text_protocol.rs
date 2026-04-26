@@ -11,6 +11,8 @@ use crate::error::TlsError;
 use tokio::io::{AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 
+const MAX_CAPABILITY_LINES: usize = 100;
+
 /// Configuration for a text-based STARTTLS negotiation.
 pub struct TextProtocolConfig {
     pub protocol_name: &'static str,
@@ -209,7 +211,7 @@ async fn check_capability(
             read_multiline_capabilities(reader, config, cap_config, *code).await?
         }
         CapabilityResponseStyle::UntilPrefix(prefix) => {
-            read_until_prefix_capabilities(reader, cap_config, prefix).await?
+            read_until_prefix_capabilities(reader, config, cap_config, prefix).await?
         }
     };
 
@@ -231,13 +233,13 @@ async fn read_tagged_capabilities(
     error_prefixes: &[&str],
 ) -> Result<bool> {
     let mut supported = false;
-    loop {
+    for _ in 0..MAX_CAPABILITY_LINES {
         let line = response::read_line(reader).await?;
         if has_capability_token(&line, cap.starttls_marker) {
             supported = true;
         }
         if line.starts_with(ok_prefix) {
-            break;
+            return Ok(supported);
         }
         if error_prefixes.iter().any(|p| line.starts_with(p)) {
             return Err(TlsError::StarttlsError {
@@ -246,7 +248,7 @@ async fn read_tagged_capabilities(
             });
         }
     }
-    Ok(supported)
+    Err(capability_line_limit_error(config))
 }
 
 async fn read_dot_terminated_capabilities(
@@ -275,17 +277,17 @@ async fn read_dot_terminated_capabilities(
     }
 
     let mut supported = false;
-    loop {
+    for _ in 0..MAX_CAPABILITY_LINES {
         let line = response::read_line(reader).await?;
         let trimmed = line.trim();
         if trimmed == "." {
-            break;
+            return Ok(supported);
         }
         if has_capability_token(trimmed, cap.starttls_marker) {
             supported = true;
         }
     }
-    Ok(supported)
+    Err(capability_line_limit_error(config))
 }
 
 async fn read_multiline_capabilities(
@@ -295,7 +297,7 @@ async fn read_multiline_capabilities(
     expected_code: u16,
 ) -> Result<bool> {
     let mut supported = false;
-    loop {
+    for _ in 0..MAX_CAPABILITY_LINES {
         let (code, line) = response::read_status_line(reader, config.protocol_name).await?;
         if code != expected_code {
             return Err(TlsError::UnexpectedResponse {
@@ -310,28 +312,39 @@ async fn read_multiline_capabilities(
         }
         // Last line: "NNN " (space after code, not dash "NNN-")
         if line.len() >= 4 && &line[3..4] == " " {
-            break;
+            return Ok(supported);
         }
     }
-    Ok(supported)
+    Err(capability_line_limit_error(config))
 }
 
 async fn read_until_prefix_capabilities(
     reader: &mut BufReader<&mut TcpStream>,
+    config: &TextProtocolConfig,
     cap: &CapabilityConfig,
     prefix: &str,
 ) -> Result<bool> {
     let mut supported = false;
-    loop {
+    for _ in 0..MAX_CAPABILITY_LINES {
         let line = response::read_line(reader).await?;
         if line.starts_with(prefix) {
-            break;
+            return Ok(supported);
         }
         if has_capability_token(&line, cap.starttls_marker) {
             supported = true;
         }
     }
-    Ok(supported)
+    Err(capability_line_limit_error(config))
+}
+
+fn capability_line_limit_error(config: &TextProtocolConfig) -> TlsError {
+    TlsError::StarttlsError {
+        protocol: config.protocol_name.to_string(),
+        details: format!(
+            "Capability response exceeded {} lines without terminator",
+            MAX_CAPABILITY_LINES
+        ),
+    }
 }
 
 fn has_capability_token(line: &str, marker: &str) -> bool {
@@ -387,6 +400,8 @@ async fn validate_success(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::net::TcpListener;
 
     #[test]
     fn capability_token_matching_avoids_substring_false_positives() {
@@ -398,5 +413,62 @@ mod tests {
         assert!(has_capability_token("\"STARTTLS\"", "STARTTLS"));
         assert!(!has_capability_token("250-NOSTARTTLS", "STARTTLS"));
         assert!(!has_capability_token("XSTARTTLS", "STARTTLS"));
+    }
+
+    #[tokio::test]
+    async fn tagged_capability_response_is_bounded() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("listener should have addr");
+
+        tokio::spawn(async move {
+            if let Ok((mut stream, _)) = listener.accept().await {
+                stream
+                    .write_all(b"* OK ready\r\n")
+                    .await
+                    .expect("test server should write greeting");
+
+                let mut reader = BufReader::new(&mut stream);
+                let mut command = String::new();
+                reader
+                    .read_line(&mut command)
+                    .await
+                    .expect("test server should read capability command");
+
+                for _ in 0..=MAX_CAPABILITY_LINES {
+                    reader
+                        .get_mut()
+                        .write_all(b"* CAPABILITY IMAP4rev1 STARTTLS\r\n")
+                        .await
+                        .expect("test server should write capability line");
+                }
+            }
+        });
+
+        let config = TextProtocolConfig {
+            protocol_name: "IMAP",
+            protocol: StarttlsProtocol::IMAP,
+            greeting: GreetingStyle::Prefix("* OK"),
+            capability: Some(CapabilityConfig {
+                command: CapabilityCommand::Static(b"a001 CAPABILITY\r\n"),
+                starttls_marker: "STARTTLS",
+                response_style: CapabilityResponseStyle::UntilTagged {
+                    ok_prefix: "a001 OK",
+                    error_prefixes: &["a001 BAD", "a001 NO"],
+                },
+            }),
+            starttls_command: b"a002 STARTTLS\r\n",
+            success: SuccessCheck::Prefix("a002 OK"),
+        };
+
+        let mut stream = TcpStream::connect(addr)
+            .await
+            .expect("test client should connect");
+        let err = negotiate(&config, "localhost", &mut stream)
+            .await
+            .expect_err("unterminated capabilities should fail");
+
+        assert!(format!("{err}").contains("exceeded"));
     }
 }

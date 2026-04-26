@@ -92,6 +92,7 @@ impl RevocationChecker {
 
         // Check OCSP Must-Staple extension
         let must_staple = self.check_must_staple(cert)?;
+        let mut failed_methods = Vec::new();
 
         // Try OCSP first (faster and preferred)
         if let Some(ocsp_url) = self.extract_ocsp_url(cert)? {
@@ -108,6 +109,7 @@ impl RevocationChecker {
                 }
                 Err(e) => {
                     tracing::debug!("OCSP check failed: {}, falling back to CRL", e);
+                    failed_methods.push((RevocationMethod::OCSP, e.to_string()));
                 }
             }
         }
@@ -127,19 +129,47 @@ impl RevocationChecker {
                 }
                 Err(e) => {
                     tracing::debug!("CRL check failed: {}", e);
+                    failed_methods.push((RevocationMethod::CRL, e.to_string()));
                 }
             }
         }
 
         // If both methods unavailable or failed
-        Ok(RevocationResult {
-            status: RevocationStatus::Unknown,
+        Ok(Self::unresolved_revocation_result(
+            must_staple,
+            &failed_methods,
+        ))
+    }
+
+    fn unresolved_revocation_result(
+        must_staple: bool,
+        failed_methods: &[(RevocationMethod, String)],
+    ) -> RevocationResult {
+        if failed_methods.is_empty() {
+            return RevocationResult {
+                status: RevocationStatus::Unknown,
+                method: RevocationMethod::None,
+                details: "No revocation checking method available".to_string(),
+                ocsp_stapling: false,
+                ocsp_stapling_details: None,
+                must_staple,
+            };
+        }
+
+        let attempted = failed_methods
+            .iter()
+            .map(|(method, err)| format!("{method:?}: {err}"))
+            .collect::<Vec<_>>()
+            .join("; ");
+
+        RevocationResult {
+            status: RevocationStatus::Error,
             method: RevocationMethod::None,
-            details: "No revocation checking method available or all methods failed".to_string(),
+            details: format!("All revocation checking methods failed ({attempted})"),
             ocsp_stapling: false,
             ocsp_stapling_details: None,
             must_staple,
-        })
+        }
     }
 }
 
@@ -258,5 +288,31 @@ mod tests {
         };
         assert!(result.summary().contains("not checked"));
         assert!(!result.is_problematic());
+    }
+
+    #[test]
+    fn test_unresolved_revocation_without_methods_stays_unknown() {
+        let result = RevocationChecker::unresolved_revocation_result(false, &[]);
+
+        assert_eq!(result.status, RevocationStatus::Unknown);
+        assert_eq!(result.method, RevocationMethod::None);
+        assert!(result.details.contains("No revocation checking method"));
+    }
+
+    #[test]
+    fn test_unresolved_revocation_with_failed_methods_is_error() {
+        let failures = vec![
+            (RevocationMethod::OCSP, "timeout".to_string()),
+            (RevocationMethod::CRL, "bad status".to_string()),
+        ];
+
+        let result = RevocationChecker::unresolved_revocation_result(true, &failures);
+
+        assert_eq!(result.status, RevocationStatus::Error);
+        assert_eq!(result.method, RevocationMethod::None);
+        assert!(result.must_staple);
+        assert!(result.is_problematic());
+        assert!(result.details.contains("OCSP"));
+        assert!(result.details.contains("CRL"));
     }
 }

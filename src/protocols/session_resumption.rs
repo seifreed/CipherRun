@@ -47,12 +47,18 @@ impl SessionResumptionTester {
         let session_id = self.test_session_id_reuse().await?;
         let session_ticket = self.test_session_ticket().await?;
 
+        let inconclusive = (session_id.inconclusive || session_ticket.inconclusive)
+            && !session_id.reuse_successful
+            && !session_ticket.reuse_successful;
+
         let resumption_support = if session_id.reuse_successful && session_ticket.reuse_successful {
             ResumptionSupport::Full
         } else if session_id.reuse_successful {
             ResumptionSupport::SessionIdOnly
         } else if session_ticket.reuse_successful {
             ResumptionSupport::TicketOnly
+        } else if inconclusive {
+            ResumptionSupport::Unknown
         } else {
             ResumptionSupport::None
         };
@@ -75,6 +81,7 @@ impl SessionResumptionTester {
             session_id_reuse: session_id,
             session_ticket,
             resumption_support,
+            inconclusive,
             performance_gain,
             details,
         })
@@ -164,14 +171,28 @@ impl SessionResumptionTester {
 
     /// Test session ID reuse
     async fn test_session_id_reuse(&self) -> Result<SessionIdTest> {
-        let Some(session) = self.establish_session().await? else {
-            return Ok(SessionIdTest {
-                supported: false,
-                session_id_length: None,
-                reuse_successful: false,
-                connections_tested: 1,
-                reuse_count: 0,
-            });
+        let session = match self.establish_session().await {
+            Ok(Some(session)) => session,
+            Ok(None) => {
+                return Ok(SessionIdTest {
+                    supported: false,
+                    session_id_length: None,
+                    reuse_successful: false,
+                    connections_tested: 1,
+                    reuse_count: 0,
+                    inconclusive: false,
+                });
+            }
+            Err(_) => {
+                return Ok(SessionIdTest {
+                    supported: false,
+                    session_id_length: None,
+                    reuse_successful: false,
+                    connections_tested: 1,
+                    reuse_count: 0,
+                    inconclusive: true,
+                });
+            }
         };
 
         let session_id_length = session.id().len();
@@ -183,22 +204,25 @@ impl SessionResumptionTester {
                 reuse_successful: false,
                 connections_tested: 1,
                 reuse_count: 0,
+                inconclusive: false,
             });
         }
 
         let mut reuse_count = 0;
+        let mut resume_errors = 0;
         let connections_tested = 5;
 
         for _ in 0..connections_tested {
-            if let Ok(resumed) = self.try_resume_with_session(session.clone()).await
-                && resumed
-            {
-                reuse_count += 1;
+            match self.try_resume_with_session(session.clone()).await {
+                Ok(true) => reuse_count += 1,
+                Ok(false) => {}
+                Err(_) => resume_errors += 1,
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
 
         let reuse_successful = reuse_count > 0;
+        let inconclusive = !reuse_successful && resume_errors == connections_tested;
 
         Ok(SessionIdTest {
             supported: reuse_successful,
@@ -206,6 +230,7 @@ impl SessionResumptionTester {
             reuse_successful,
             connections_tested,
             reuse_count,
+            inconclusive,
         })
     }
 
@@ -216,22 +241,37 @@ impl SessionResumptionTester {
     /// both mechanisms may be in play — we report ticket support based on
     /// whether the session object contains ticket data.
     async fn test_session_ticket(&self) -> Result<SessionTicketTest> {
-        let Some(session) = self.establish_session().await? else {
-            return Ok(SessionTicketTest {
-                supported: false,
-                ticket_lifetime: None,
-                ticket_size: None,
-                reuse_successful: false,
-                new_ticket_on_resume: false,
-            });
+        let session = match self.establish_session().await {
+            Ok(Some(session)) => session,
+            Ok(None) => {
+                return Ok(SessionTicketTest {
+                    supported: false,
+                    ticket_lifetime: None,
+                    ticket_size: None,
+                    reuse_successful: false,
+                    new_ticket_on_resume: false,
+                    inconclusive: false,
+                });
+            }
+            Err(_) => {
+                return Ok(SessionTicketTest {
+                    supported: false,
+                    ticket_lifetime: None,
+                    ticket_size: None,
+                    reuse_successful: false,
+                    new_ticket_on_resume: false,
+                    inconclusive: true,
+                });
+            }
         };
 
         let session_id_empty = session.id().is_empty();
 
-        let reuse_successful = self
-            .try_resume_with_session(session.clone())
-            .await
-            .unwrap_or(false);
+        let (reuse_successful, inconclusive) =
+            match self.try_resume_with_session(session.clone()).await {
+                Ok(resumed) => (resumed, false),
+                Err(_) => (false, true),
+            };
 
         // If session ID was empty but resumption succeeded, tickets are in use.
         // If session ID was present and resumption succeeded, we can't distinguish
@@ -244,6 +284,7 @@ impl SessionResumptionTester {
             ticket_size: None,
             reuse_successful,
             new_ticket_on_resume: ticket_likely,
+            inconclusive,
         })
     }
 }
@@ -269,6 +310,10 @@ mod tests {
             "Session Tickets Only"
         );
         assert_eq!(ResumptionSupport::None.as_str(), "None");
+        assert_eq!(
+            ResumptionSupport::Unknown.as_str(),
+            "Unknown (test inconclusive)"
+        );
     }
 
     #[test]
@@ -280,6 +325,7 @@ mod tests {
                 reuse_successful: true,
                 connections_tested: 3,
                 reuse_count: 2,
+                inconclusive: false,
             },
             session_ticket: SessionTicketTest {
                 supported: false,
@@ -287,8 +333,10 @@ mod tests {
                 ticket_size: None,
                 reuse_successful: false,
                 new_ticket_on_resume: false,
+                inconclusive: false,
             },
             resumption_support: ResumptionSupport::SessionIdOnly,
+            inconclusive: false,
             performance_gain: None,
             details:
                 "Session resumption: Session ID Only. Session ID reuse: 2/3. Ticket reuse: false"
@@ -396,6 +444,7 @@ mod tests {
                 reuse_successful: false,
                 connections_tested: 0,
                 reuse_count: 0,
+                inconclusive: false,
             },
             session_ticket: SessionTicketTest {
                 supported: false,
@@ -403,8 +452,10 @@ mod tests {
                 ticket_size: None,
                 reuse_successful: false,
                 new_ticket_on_resume: false,
+                inconclusive: false,
             },
             resumption_support: ResumptionSupport::None,
+            inconclusive: false,
             performance_gain: None,
             details: "No resumption".to_string(),
         };
@@ -412,5 +463,27 @@ mod tests {
         assert!(!result.session_id_reuse.supported);
         assert!(!result.session_ticket.supported);
         assert!(result.details.contains("No resumption"));
+    }
+
+    #[tokio::test]
+    async fn test_session_resumption_inactive_target_is_inconclusive() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            addr.port(),
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .unwrap();
+
+        let tester = SessionResumptionTester::new(target);
+        let result = tester.test().await.unwrap();
+
+        assert_eq!(result.resumption_support, ResumptionSupport::Unknown);
+        assert!(result.inconclusive);
+        assert!(result.session_id_reuse.inconclusive);
+        assert!(result.session_ticket.inconclusive);
     }
 }
