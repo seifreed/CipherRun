@@ -143,6 +143,7 @@ mod tests {
         let results = vec![ProtocolTestResult {
             protocol: Protocol::TLS12,
             supported: true,
+            inconclusive: false,
             heartbeat_enabled: None,
             handshake_time_ms: None,
             ciphers_count: 0,
@@ -172,6 +173,7 @@ mod tests {
         let results = vec![ProtocolTestResult {
             protocol: Protocol::TLS10,
             supported: true,
+            inconclusive: false,
             heartbeat_enabled: None,
             handshake_time_ms: None,
             ciphers_count: 0,
@@ -201,6 +203,7 @@ mod tests {
         let results = vec![ProtocolTestResult {
             protocol: Protocol::TLS10,
             supported: true,
+            inconclusive: false,
             heartbeat_enabled: None,
             handshake_time_ms: None,
             ciphers_count: 0,
@@ -230,6 +233,7 @@ mod tests {
         let results = vec![ProtocolTestResult {
             protocol: Protocol::TLS12,
             supported: true,
+            inconclusive: false,
             heartbeat_enabled: None,
             handshake_time_ms: None,
             ciphers_count: 0,
@@ -258,6 +262,7 @@ mod tests {
         let results = vec![ProtocolTestResult {
             protocol: Protocol::TLS12,
             supported: true,
+            inconclusive: false,
             heartbeat_enabled: None,
             handshake_time_ms: None,
             ciphers_count: 0,
@@ -287,6 +292,7 @@ mod tests {
         let results = vec![ProtocolTestResult {
             protocol: Protocol::TLS12,
             supported: true,
+            inconclusive: false,
             heartbeat_enabled: None,
             handshake_time_ms: None,
             ciphers_count: 0,
@@ -315,6 +321,7 @@ mod tests {
         let results = vec![ProtocolTestResult {
             protocol: Protocol::TLS12,
             supported: true,
+            inconclusive: false,
             heartbeat_enabled: None,
             handshake_time_ms: None,
             ciphers_count: 0,
@@ -344,6 +351,7 @@ mod tests {
         let results = vec![ProtocolTestResult {
             protocol: Protocol::TLS13,
             supported: false,
+            inconclusive: false,
             heartbeat_enabled: None,
             handshake_time_ms: None,
             ciphers_count: 0,
@@ -372,6 +380,7 @@ mod tests {
         let results = vec![ProtocolTestResult {
             protocol: Protocol::TLS10,
             supported: false,
+            inconclusive: false,
             heartbeat_enabled: None,
             handshake_time_ms: None,
             ciphers_count: 0,

@@ -443,6 +443,7 @@ mod tests {
         let protocol_tls12 = ProtocolTestResult {
             protocol: Protocol::TLS12,
             supported: true,
+            inconclusive: false,
             preferred: true,
             ciphers_count: 2,
             handshake_time_ms: None,
@@ -454,6 +455,7 @@ mod tests {
         let protocol_tls13 = ProtocolTestResult {
             protocol: Protocol::TLS13,
             supported: true,
+            inconclusive: false,
             preferred: false,
             ciphers_count: 1,
             handshake_time_ms: None,
@@ -590,6 +592,7 @@ mod tests {
         let protocol = ProtocolTestResult {
             protocol: Protocol::TLS12,
             supported: true,
+            inconclusive: false,
             preferred: true,
             ciphers_count: 1,
             handshake_time_ms: Some(10),
@@ -733,6 +736,7 @@ mod tests {
         let protocol_ip1 = ProtocolTestResult {
             protocol: Protocol::TLS13,
             supported: true,
+            inconclusive: false,
             preferred: true,
             ciphers_count: 1,
             handshake_time_ms: Some(10),
@@ -914,6 +918,7 @@ mod tests {
         let protocols_ip1 = vec![ProtocolTestResult {
             protocol: Protocol::TLS13,
             supported: true,
+            inconclusive: false,
             preferred: true,
             ciphers_count: 1,
             handshake_time_ms: None,
@@ -926,6 +931,7 @@ mod tests {
         let protocols_ip2 = vec![ProtocolTestResult {
             protocol: Protocol::TLS13,
             supported: false,
+            inconclusive: false,
             preferred: false,
             ciphers_count: 0,
             handshake_time_ms: None,

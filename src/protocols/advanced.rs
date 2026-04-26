@@ -34,6 +34,10 @@ pub struct CipherPerProtocolAnalysis {
     pub protocols: Vec<ProtocolCipherSupport>,
     pub total_ciphers: usize,
     pub total_protocols: usize,
+    #[serde(default)]
+    pub inconclusive: bool,
+    #[serde(default)]
+    pub inconclusive_protocols: Vec<String>,
     pub details: String,
 }
 
@@ -270,6 +274,32 @@ mod tests {
         assert!(!result.accepts_truncated_hmac);
         assert!(!result.accepts_no_close_notify);
         assert!(result.details.contains("TLS truncation"));
+    }
+
+    #[tokio::test]
+    async fn test_cipher_per_protocol_closed_target_is_inconclusive() {
+        let listener =
+            std::net::TcpListener::bind("127.0.0.1:0").expect("test assertion should succeed");
+        let port = listener
+            .local_addr()
+            .expect("test assertion should succeed")
+            .port();
+        drop(listener);
+
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .expect("test assertion should succeed");
+
+        let result = ProtocolAdvancedTester::new(target)
+            .test_ciphers_per_protocol()
+            .await
+            .expect("test assertion should succeed");
+
+        assert!(result.inconclusive);
+        assert!(!result.inconclusive_protocols.is_empty());
     }
 
     #[tokio::test]

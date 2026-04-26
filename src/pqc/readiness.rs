@@ -201,6 +201,7 @@ mod tests {
         ProtocolTestResult {
             protocol,
             supported,
+            inconclusive: false,
             preferred: false,
             ciphers_count: 0,
             handshake_time_ms: None,

@@ -34,6 +34,13 @@ const TEST_CIPHERS: &[&str] = &[
     "RC4-MD5",
 ];
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CipherProbeOutcome {
+    Supported,
+    NotSupported,
+    Inconclusive,
+}
+
 impl ProtocolAdvancedTester {
     pub async fn test_tls_truncation(&self) -> Result<TlsTruncationAnalysis> {
         let accepts_truncated_hmac = false;
@@ -65,29 +72,48 @@ impl ProtocolAdvancedTester {
 
         let mut protocol_results = Vec::new();
         let mut total_ciphers = 0;
+        let mut inconclusive_protocols = Vec::new();
 
         for (protocol_name, ssl_version) in protocols {
-            if let Ok(ciphers) = self.enumerate_protocol_ciphers(ssl_version).await {
-                let cipher_count = ciphers.len();
-                total_ciphers += cipher_count;
-                protocol_results.push(ProtocolCipherSupport {
-                    protocol: protocol_name.to_string(),
-                    supported_ciphers: ciphers,
-                    cipher_count,
-                });
+            match self.enumerate_protocol_ciphers(ssl_version).await {
+                Ok((ciphers, inconclusive)) => {
+                    let cipher_count = ciphers.len();
+                    total_ciphers += cipher_count;
+                    if inconclusive {
+                        inconclusive_protocols.push(protocol_name.to_string());
+                    }
+                    protocol_results.push(ProtocolCipherSupport {
+                        protocol: protocol_name.to_string(),
+                        supported_ciphers: ciphers,
+                        cipher_count,
+                    });
+                }
+                Err(_) => inconclusive_protocols.push(protocol_name.to_string()),
             }
         }
 
         let total_protocols = protocol_results.len();
-        let details = format!(
-            "Found {} cipher suites across {} protocols",
-            total_ciphers, total_protocols
-        );
+        let inconclusive = !inconclusive_protocols.is_empty();
+        let details = if inconclusive {
+            format!(
+                "Found {} cipher suites across {} protocols; inconclusive for {}",
+                total_ciphers,
+                total_protocols,
+                inconclusive_protocols.join(", ")
+            )
+        } else {
+            format!(
+                "Found {} cipher suites across {} protocols",
+                total_ciphers, total_protocols
+            )
+        };
 
         Ok(CipherPerProtocolAnalysis {
             protocols: protocol_results,
             total_ciphers,
             total_protocols,
+            inconclusive,
+            inconclusive_protocols,
             details,
         })
     }
@@ -118,19 +144,39 @@ impl ProtocolAdvancedTester {
         }
     }
 
-    async fn enumerate_protocol_ciphers(&self, protocol: SslVersion) -> Result<Vec<CipherDetails>> {
+    async fn enumerate_protocol_ciphers(
+        &self,
+        protocol: SslVersion,
+    ) -> Result<(Vec<CipherDetails>, bool)> {
         let mut supported_ciphers = Vec::new();
+        let mut saw_conclusive_probe = false;
+        let mut saw_inconclusive_probe = false;
 
         for cipher in TEST_CIPHERS {
-            if let Ok(true) = self.test_cipher_with_protocol(cipher, protocol).await {
-                supported_ciphers.push(analyze_cipher_details(cipher));
+            match self
+                .test_cipher_with_protocol_outcome(cipher, protocol)
+                .await
+            {
+                Ok(CipherProbeOutcome::Supported) => {
+                    saw_conclusive_probe = true;
+                    supported_ciphers.push(analyze_cipher_details(cipher));
+                }
+                Ok(CipherProbeOutcome::NotSupported) => saw_conclusive_probe = true,
+                Ok(CipherProbeOutcome::Inconclusive) | Err(_) => saw_inconclusive_probe = true,
             }
         }
 
-        Ok(supported_ciphers)
+        Ok((
+            supported_ciphers,
+            !saw_conclusive_probe && saw_inconclusive_probe,
+        ))
     }
 
-    async fn test_cipher_with_protocol(&self, cipher: &str, protocol: SslVersion) -> Result<bool> {
+    async fn test_cipher_with_protocol_outcome(
+        &self,
+        cipher: &str,
+        protocol: SslVersion,
+    ) -> Result<CipherProbeOutcome> {
         let addr = self
             .target
             .socket_addrs()
@@ -141,21 +187,29 @@ impl ProtocolAdvancedTester {
         let handshake_timeout = Duration::from_secs(2);
 
         let stream =
-            crate::utils::network::connect_with_timeout(addr, connect_timeout, None).await?;
+            match crate::utils::network::connect_with_timeout(addr, connect_timeout, None).await {
+                Ok(stream) => stream,
+                Err(_) => return Ok(CipherProbeOutcome::Inconclusive),
+            };
 
         let std_stream =
             crate::utils::network::into_blocking_std_stream(stream, handshake_timeout)?;
 
         let mut builder = SslConnector::builder(SslMethod::tls())?;
-        builder.set_min_proto_version(Some(protocol))?;
-        builder.set_max_proto_version(Some(protocol))?;
-        builder.set_cipher_list(cipher)?;
+        if builder.set_min_proto_version(Some(protocol)).is_err()
+            || builder.set_max_proto_version(Some(protocol)).is_err()
+        {
+            return Ok(CipherProbeOutcome::Inconclusive);
+        }
+        if builder.set_cipher_list(cipher).is_err() {
+            return Ok(CipherProbeOutcome::NotSupported);
+        }
 
         let connector = builder.build();
 
         match connector.connect(&self.target.hostname, std_stream) {
-            Ok(_) => Ok(true),
-            Err(_) => Ok(false),
+            Ok(_) => Ok(CipherProbeOutcome::Supported),
+            Err(_) => Ok(CipherProbeOutcome::NotSupported),
         }
     }
 }

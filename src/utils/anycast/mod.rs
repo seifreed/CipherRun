@@ -285,6 +285,7 @@ mod tests {
                 .map(|protocol| ProtocolTestResult {
                     protocol,
                     supported: true,
+                    inconclusive: false,
                     preferred: false,
                     ciphers_count: 0,
                     handshake_time_ms: None,

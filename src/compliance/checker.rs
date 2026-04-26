@@ -527,6 +527,7 @@ mod tests {
                 ProtocolTestResult {
                     protocol: Protocol::SSLv2,
                     supported: true,
+                    inconclusive: false,
                     preferred: false,
                     ciphers_count: 0,
                     heartbeat_enabled: None,
@@ -538,6 +539,7 @@ mod tests {
                 ProtocolTestResult {
                     protocol: Protocol::TLS12,
                     supported: true,
+                    inconclusive: false,
                     preferred: false,
                     ciphers_count: 0,
                     heartbeat_enabled: None,
@@ -580,6 +582,7 @@ mod tests {
                 ProtocolTestResult {
                     protocol: Protocol::TLS10,
                     supported: true,
+                    inconclusive: false,
                     preferred: false,
                     ciphers_count: 0,
                     heartbeat_enabled: None,
@@ -591,6 +594,7 @@ mod tests {
                 ProtocolTestResult {
                     protocol: Protocol::TLS12,
                     supported: true,
+                    inconclusive: false,
                     preferred: false,
                     ciphers_count: 0,
                     heartbeat_enabled: None,
@@ -632,6 +636,7 @@ mod tests {
             protocols: vec![ProtocolTestResult {
                 protocol: Protocol::TLS12,
                 supported: true,
+                inconclusive: false,
                 preferred: false,
                 ciphers_count: 0,
                 heartbeat_enabled: None,
@@ -671,6 +676,7 @@ mod tests {
             protocols: vec![ProtocolTestResult {
                 protocol: Protocol::SSLv3,
                 supported: true,
+                inconclusive: false,
                 preferred: false,
                 ciphers_count: 0,
                 heartbeat_enabled: None,

@@ -120,6 +120,8 @@ impl From<u16> for Protocol {
 pub struct ProtocolTestResult {
     pub protocol: Protocol,
     pub supported: bool,
+    #[serde(default)]
+    pub inconclusive: bool,
     pub preferred: bool,
     pub ciphers_count: usize,
     pub handshake_time_ms: Option<u64>,

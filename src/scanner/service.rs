@@ -485,6 +485,7 @@ mod tests {
         results.protocols.push(ProtocolTestResult {
             protocol: Protocol::TLS12,
             supported: true,
+            inconclusive: false,
             preferred: true,
             ciphers_count: 1,
             handshake_time_ms: Some(5),

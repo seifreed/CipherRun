@@ -213,12 +213,39 @@ mod tests {
     #[tokio::test]
     async fn test_quic_unimplemented_returns_false() {
         let tester = ProtocolTester::new(dummy_target());
-        let addr = tester.target.socket_addrs()[0];
-        let supported = tester
-            .test_quic_on_ip(addr)
+        let result = tester
+            .test_protocol(Protocol::QUIC)
             .await
             .expect("test assertion should succeed");
-        assert!(!supported);
+        assert!(!result.supported);
+        assert!(!result.inconclusive);
+    }
+
+    #[tokio::test]
+    async fn test_protocol_closed_target_is_inconclusive() {
+        let listener =
+            std::net::TcpListener::bind("127.0.0.1:0").expect("test assertion should succeed");
+        let port = listener
+            .local_addr()
+            .expect("test assertion should succeed")
+            .port();
+        drop(listener);
+
+        let target = Target::with_ips(
+            "example.test".to_string(),
+            port,
+            vec!["127.0.0.1".parse().expect("valid IP")],
+        )
+        .expect("test assertion should succeed");
+
+        let result = ProtocolTester::new(target)
+            .with_connect_timeout(Duration::from_millis(100))
+            .test_protocol(Protocol::TLS12)
+            .await
+            .expect("test assertion should succeed");
+
+        assert!(!result.supported);
+        assert!(result.inconclusive);
     }
 
     #[test]

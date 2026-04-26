@@ -44,10 +44,26 @@ impl<'a> RenegotiationTester<'a> {
     /// Test renegotiation support
     pub async fn test(&self) -> Result<RenegotiationTestResult> {
         // Test for secure renegotiation extension (RFC 5746)
-        let secure_extension = self.test_secure_renegotiation_extension().await?;
+        let secure_extension_probe = self.test_secure_renegotiation_extension().await?;
 
         // Test for insecure renegotiation (CVE-2009-3555)
         let insecure_result = self.test_insecure_renegotiation().await?;
+
+        if secure_extension_probe.is_none()
+            && matches!(insecure_result, InsecureRenegotiationResult::Inconclusive)
+        {
+            return Ok(RenegotiationTestResult {
+                support: RenegotiationSupport::NotSupported,
+                secure_extension: false,
+                vulnerable: false,
+                needs_verification: true,
+                inconclusive: true,
+                details: "Renegotiation support unclear - baseline TLS probes inconclusive"
+                    .to_string(),
+            });
+        }
+
+        let secure_extension = secure_extension_probe.unwrap_or(false);
 
         // Determine if manual verification is needed
         let needs_verification =
@@ -97,6 +113,7 @@ impl<'a> RenegotiationTester<'a> {
             secure_extension,
             vulnerable,
             needs_verification,
+            inconclusive: needs_verification,
             details,
         })
     }
@@ -224,7 +241,7 @@ impl<'a> RenegotiationTester<'a> {
     }
 
     /// Test for secure renegotiation extension (RFC 5746)
-    async fn test_secure_renegotiation_extension(&self) -> Result<bool> {
+    async fn test_secure_renegotiation_extension(&self) -> Result<Option<bool>> {
         let addr = self
             .target
             .socket_addrs()
@@ -244,12 +261,12 @@ impl<'a> RenegotiationTester<'a> {
                     Ok(Ok(n)) if n > 0 => {
                         // Look for renegotiation_info extension (0xff01)
                         let has_extension = self.has_renegotiation_info_extension(&buffer[..n]);
-                        Ok(has_extension)
+                        Ok(Some(has_extension))
                     }
-                    _ => Ok(false),
+                    _ => Ok(None),
                 }
             }
-            _ => Ok(false),
+            _ => Ok(None),
         }
     }
 
@@ -449,6 +466,7 @@ pub struct RenegotiationTestResult {
     pub support: RenegotiationSupport,
     pub secure_extension: bool,
     pub vulnerable: bool,
+    pub inconclusive: bool,
     /// Indicates the test result is inconclusive and requires manual verification.
     /// This is set when the server does not include renegotiation_info extension,
     /// which could mean either:
@@ -468,6 +486,7 @@ mod tests {
             support: RenegotiationSupport::SecureRenegotiation,
             secure_extension: true,
             vulnerable: false,
+            inconclusive: false,
             needs_verification: false,
             details: "Test".to_string(),
         };
@@ -482,6 +501,7 @@ mod tests {
             support: RenegotiationSupport::InsecureRenegotiation,
             secure_extension: false,
             vulnerable: true,
+            inconclusive: false,
             needs_verification: false,
             details: "VULNERABLE: Insecure renegotiation enabled".to_string(),
         };
@@ -496,10 +516,40 @@ mod tests {
             support: RenegotiationSupport::NotSupported,
             secure_extension: false,
             vulnerable: false,
+            inconclusive: true,
             needs_verification: true,
             details: "Server does not include renegotiation_info extension".to_string(),
         };
         assert!(!result.vulnerable);
+        assert!(result.needs_verification);
+    }
+
+    #[tokio::test]
+    async fn test_renegotiation_closed_target_is_inconclusive() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test assertion should succeed");
+        let addr = listener
+            .local_addr()
+            .expect("test assertion should succeed");
+        tokio::spawn(async move {
+            while let Ok((socket, _)) = listener.accept().await {
+                drop(socket);
+            }
+        });
+
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            addr.port(),
+            vec!["127.0.0.1".parse().expect("valid IP")],
+        )
+        .expect("test assertion should succeed");
+
+        let tester = RenegotiationTester::new(&target);
+        let result = tester.test().await.expect("test assertion should succeed");
+
+        assert!(!result.vulnerable);
+        assert!(result.inconclusive);
         assert!(result.needs_verification);
     }
 

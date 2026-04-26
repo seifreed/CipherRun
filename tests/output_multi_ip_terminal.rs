@@ -62,6 +62,7 @@ fn build_scan_results() -> ScanResults {
     results.protocols = vec![ProtocolTestResult {
         protocol: Protocol::TLS13,
         supported: true,
+        inconclusive: false,
         preferred: true,
         ciphers_count: 1,
         handshake_time_ms: Some(10),
@@ -232,6 +233,7 @@ fn test_multi_ip_report_display() {
         protocols: vec![ProtocolTestResult {
             protocol: Protocol::TLS13,
             supported: true,
+            inconclusive: false,
             preferred: true,
             ciphers_count: 1,
             handshake_time_ms: None,
@@ -401,6 +403,7 @@ fn test_multi_ip_report_display_is_deterministic() {
             protocols: vec![ProtocolTestResult {
                 protocol: Protocol::TLS13,
                 supported: true,
+                inconclusive: false,
                 preferred: true,
                 ciphers_count: 1,
                 handshake_time_ms: None,

@@ -700,6 +700,7 @@ mod tests {
         scan.protocols.push(ProtocolTestResult {
             protocol,
             supported,
+            inconclusive: false,
             preferred: false,
             ciphers_count: 1,
             handshake_time_ms: None,

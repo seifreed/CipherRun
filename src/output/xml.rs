@@ -181,6 +181,7 @@ mod tests {
             protocols: vec![ProtocolTestResult {
                 protocol: Protocol::TLS12,
                 supported: true,
+                inconclusive: false,
                 preferred: false,
                 ciphers_count: 1,
                 handshake_time_ms: Some(10),

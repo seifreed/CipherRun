@@ -9,6 +9,42 @@ use crate::Result;
 use crate::constants::TLS_HANDSHAKE_TIMEOUT;
 use crate::utils::network::Target;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BeastProbeStatus {
+    Supported,
+    NotSupported,
+    Inconclusive,
+}
+
+impl BeastProbeStatus {
+    fn is_supported(self) -> bool {
+        matches!(self, Self::Supported)
+    }
+
+    fn is_inconclusive(self) -> bool {
+        matches!(self, Self::Inconclusive)
+    }
+}
+
+fn classify_handshake_error(error: &str) -> BeastProbeStatus {
+    let error = error.to_ascii_lowercase();
+    if error.contains("unexpected eof")
+        || error.contains("connection reset")
+        || error.contains("reset by peer")
+        || error.contains("connection refused")
+        || error.contains("timed out")
+        || error.contains("timeout")
+        || error.contains("closed")
+        || error.contains("no protocols available")
+        || error.contains("shutdown while in init")
+        || error.contains("errno=54")
+    {
+        BeastProbeStatus::Inconclusive
+    } else {
+        BeastProbeStatus::NotSupported
+    }
+}
+
 /// BEAST vulnerability tester
 pub struct BeastTester {
     target: Target,
@@ -25,31 +61,36 @@ impl BeastTester {
         let tls10_cbc = self.test_tls10_cbc().await?;
         let ssl3_cbc = self.test_ssl3_cbc().await?;
 
-        let vulnerable = tls10_cbc || ssl3_cbc;
+        let vulnerable = tls10_cbc.is_supported() || ssl3_cbc.is_supported();
+        let inconclusive =
+            !vulnerable && (tls10_cbc.is_inconclusive() || ssl3_cbc.is_inconclusive());
 
         let details = if vulnerable {
             let mut parts = Vec::new();
-            if tls10_cbc {
+            if tls10_cbc.is_supported() {
                 parts.push("TLS 1.0 with CBC ciphers enabled");
             }
-            if ssl3_cbc {
+            if ssl3_cbc.is_supported() {
                 parts.push("SSL 3.0 with CBC ciphers enabled");
             }
             format!("Vulnerable: {}", parts.join(", "))
+        } else if inconclusive {
+            "BEAST test inconclusive - unable to complete TLS 1.0/SSL 3.0 CBC probes".to_string()
         } else {
             "Not vulnerable - TLS 1.0/SSL 3.0 CBC ciphers not supported".to_string()
         };
 
         Ok(BeastTestResult {
             vulnerable,
-            tls10_cbc_supported: tls10_cbc,
-            ssl3_cbc_supported: ssl3_cbc,
+            inconclusive,
+            tls10_cbc_supported: tls10_cbc.is_supported(),
+            ssl3_cbc_supported: ssl3_cbc.is_supported(),
             details,
         })
     }
 
     /// Test for TLS 1.0 with CBC ciphers
-    async fn test_tls10_cbc(&self) -> Result<bool> {
+    async fn test_tls10_cbc(&self) -> Result<BeastProbeStatus> {
         use openssl::ssl::{SslConnector, SslMethod, SslVersion};
 
         let addr = self
@@ -65,11 +106,11 @@ impl BeastTester {
                 .await
             {
                 Ok(s) => s,
-                Err(_) => return Ok(false),
+                Err(_) => return Ok(BeastProbeStatus::Inconclusive),
             };
 
-        let std_stream = stream.into_std()?;
-        std_stream.set_nonblocking(false)?;
+        let std_stream =
+            crate::utils::network::into_blocking_std_stream(stream, TLS_HANDSHAKE_TIMEOUT)?;
 
         let mut builder = SslConnector::builder(SslMethod::tls())?;
         builder.set_min_proto_version(Some(SslVersion::TLS1))?;
@@ -80,14 +121,14 @@ impl BeastTester {
 
         let connector = builder.build();
         match connector.connect(&self.target.hostname, std_stream) {
-            Ok(_) => Ok(true),
-            Err(_) => Ok(false),
+            Ok(_) => Ok(BeastProbeStatus::Supported),
+            Err(e) => Ok(classify_handshake_error(&e.to_string())),
         }
     }
 
     /// Test for SSL 3.0 with CBC ciphers
     /// Modern OpenSSL versions may not support SSL3, so we handle this gracefully
-    async fn test_ssl3_cbc(&self) -> Result<bool> {
+    async fn test_ssl3_cbc(&self) -> Result<BeastProbeStatus> {
         use openssl::ssl::{SslConnector, SslMethod, SslVersion};
 
         let addr = self
@@ -102,11 +143,11 @@ impl BeastTester {
                 .await
             {
                 Ok(s) => s,
-                Err(_) => return Ok(false),
+                Err(_) => return Ok(BeastProbeStatus::Inconclusive),
             };
 
-        let std_stream = stream.into_std()?;
-        std_stream.set_nonblocking(false)?;
+        let std_stream =
+            crate::utils::network::into_blocking_std_stream(stream, TLS_HANDSHAKE_TIMEOUT)?;
 
         let mut builder = SslConnector::builder(SslMethod::tls())?;
 
@@ -120,7 +161,7 @@ impl BeastTester {
             // This means we cannot test SSL 3.0, but also modern servers
             // shouldn't support it anyway
             tracing::debug!("SSL 3.0 not supported by OpenSSL - cannot test for BEAST on SSL 3.0");
-            return Ok(false);
+            return Ok(BeastProbeStatus::NotSupported);
         }
 
         if builder
@@ -128,27 +169,26 @@ impl BeastTester {
             .is_err()
         {
             tracing::debug!("SSL 3.0 not supported by OpenSSL - cannot test for BEAST on SSL 3.0");
-            return Ok(false);
+            return Ok(BeastProbeStatus::NotSupported);
         }
 
         builder.set_cipher_list("AES128-SHA:AES256-SHA:DES-CBC3-SHA")?;
 
         let connector = builder.build();
         match connector.connect(&self.target.hostname, std_stream) {
-            Ok(_) => Ok(true),
+            Ok(_) => Ok(BeastProbeStatus::Supported),
             Err(e) => {
                 // Check if error is due to SSL 3.0 being disabled
                 let err_str = e.to_string().to_lowercase();
-                if err_str.contains("no protocols available")
-                    || err_str.contains("ssl3")
-                    || err_str.contains("version")
-                {
+                if err_str.contains("no protocols available") {
+                    Ok(BeastProbeStatus::Inconclusive)
+                } else if err_str.contains("ssl3") || err_str.contains("version") {
                     // SSL 3.0 not supported - treat as not vulnerable
                     tracing::debug!("SSL 3.0 connection failed (likely not supported): {}", e);
-                    Ok(false)
+                    Ok(BeastProbeStatus::NotSupported)
                 } else {
                     // Other error - server might not support SSL 3.0
-                    Ok(false)
+                    Ok(classify_handshake_error(&err_str))
                 }
             }
         }
@@ -159,6 +199,7 @@ impl BeastTester {
 #[derive(Debug, Clone)]
 pub struct BeastTestResult {
     pub vulnerable: bool,
+    pub inconclusive: bool,
     pub tls10_cbc_supported: bool,
     pub ssl3_cbc_supported: bool,
     pub details: String,
@@ -174,6 +215,7 @@ mod tests {
     fn test_beast_result_creation() {
         let result = BeastTestResult {
             vulnerable: true,
+            inconclusive: false,
             tls10_cbc_supported: true,
             ssl3_cbc_supported: false,
             details: "Test".to_string(),
@@ -198,7 +240,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_beast_not_vulnerable_on_dummy_server() {
+    async fn test_beast_inconclusive_on_dummy_server() {
         let addr = spawn_dummy_server(5).await;
         let target = Target::with_ips(
             "example.com".to_string(),
@@ -210,12 +252,15 @@ mod tests {
         let tester = BeastTester::new(target);
         let result = tester.test().await.unwrap();
         assert!(!result.vulnerable);
+        assert!(result.inconclusive);
+        assert!(result.details.to_ascii_lowercase().contains("inconclusive"));
     }
 
     #[test]
     fn test_beast_result_details_contains_tls() {
         let result = BeastTestResult {
             vulnerable: true,
+            inconclusive: false,
             tls10_cbc_supported: true,
             ssl3_cbc_supported: false,
             details: "Vulnerable: TLS 1.0 with CBC ciphers enabled".to_string(),
@@ -228,6 +273,7 @@ mod tests {
     fn test_beast_result_details_not_vulnerable_text() {
         let result = BeastTestResult {
             vulnerable: false,
+            inconclusive: false,
             tls10_cbc_supported: false,
             ssl3_cbc_supported: false,
             details: "Not vulnerable - TLS 1.0/SSL 3.0 CBC ciphers not supported".to_string(),

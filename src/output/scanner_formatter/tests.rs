@@ -321,6 +321,8 @@ fn test_intolerance_checks_display() {
         long_handshake_intolerance: true,
         incorrect_sni_alerts: true,
         uses_common_dh_primes: true,
+        inconclusive: false,
+        inconclusive_checks: Vec::new(),
         details,
     };
 
@@ -450,6 +452,7 @@ fn test_display_sections_smoke() {
         ProtocolTestResult {
             protocol: Protocol::TLS12,
             supported: true,
+            inconclusive: false,
             preferred: true,
             ciphers_count: 3,
             handshake_time_ms: Some(12),
@@ -461,6 +464,7 @@ fn test_display_sections_smoke() {
         ProtocolTestResult {
             protocol: Protocol::SSLv3,
             supported: false,
+            inconclusive: false,
             preferred: false,
             ciphers_count: 0,
             handshake_time_ms: None,
@@ -693,6 +697,7 @@ fn test_display_results_summary_and_headers() {
     let protocol_results = vec![ProtocolTestResult {
         protocol: Protocol::TLS13,
         supported: true,
+        inconclusive: false,
         preferred: true,
         ciphers_count: 2,
         handshake_time_ms: Some(5),

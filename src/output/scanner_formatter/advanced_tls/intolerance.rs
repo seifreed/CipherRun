@@ -7,14 +7,21 @@ impl<'a> ScannerFormatter<'a> {
 
         let checks = build_intolerance_checks(results);
         let issues_found = checks.iter().filter(|c| c.is_intolerant).count();
+        let inconclusive_count = checks.iter().filter(|c| c.inconclusive).count();
 
         for check in &checks {
             check.display(&results.details);
         }
 
         println!("\n{}", self.divider(50));
-        if issues_found == 0 {
+        if issues_found == 0 && inconclusive_count == 0 {
             println!("{}", "Y No TLS intolerance issues detected!".green().bold());
+        } else if issues_found == 0 {
+            println!(
+                "{} {} TLS intolerance check(s) inconclusive",
+                "?".yellow().bold(),
+                inconclusive_count.to_string().yellow().bold()
+            );
         } else {
             println!(
                 "{} {} intolerance issue(s) detected",

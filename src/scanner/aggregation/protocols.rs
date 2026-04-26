@@ -88,6 +88,7 @@ impl ConservativeAggregator {
                 aggregated.push(ProtocolTestResult {
                     protocol,
                     supported: true,
+                    inconclusive: false,
                     preferred,
                     ciphers_count,
                     handshake_time_ms,
@@ -97,10 +98,14 @@ impl ConservativeAggregator {
                     secure_renegotiation,
                 });
             } else {
+                let any_inconclusive = protocol_results.len() < successful_results.len()
+                    || protocol_results.iter().any(|result| result.inconclusive);
+
                 // Add as unsupported
                 aggregated.push(ProtocolTestResult {
                     protocol,
                     supported: false,
+                    inconclusive: any_inconclusive,
                     preferred: false,
                     ciphers_count: 0,
                     handshake_time_ms: None,

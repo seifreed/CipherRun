@@ -584,6 +584,20 @@ pub async fn test_vuln_ssl_connection(target: &Target, config: VulnSslConfig) ->
     Ok(result.is_connected())
 }
 
+/// Outcome for single-cipher support probes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CipherSupportOutcome {
+    Supported,
+    NotSupported,
+    Inconclusive,
+}
+
+impl CipherSupportOutcome {
+    pub fn is_supported(self) -> bool {
+        matches!(self, Self::Supported)
+    }
+}
+
 /// Test if a specific cipher is supported by the target.
 ///
 /// This is a convenience function for vulnerability testers that need to check
@@ -597,6 +611,20 @@ pub async fn test_cipher_support(
     allow_ssl3: bool,
     timeout_secs: u64,
 ) -> Result<bool> {
+    Ok(
+        test_cipher_support_outcome(target, cipher, allow_ssl3, timeout_secs)
+            .await?
+            .is_supported(),
+    )
+}
+
+/// Test if a specific cipher is supported, preserving inconclusive probe failures.
+pub async fn test_cipher_support_outcome(
+    target: &Target,
+    cipher: &str,
+    allow_ssl3: bool,
+    timeout_secs: u64,
+) -> Result<CipherSupportOutcome> {
     let addr = target
         .socket_addrs()
         .first()
@@ -607,13 +635,13 @@ pub async fn test_cipher_support(
 
     let stream = match timeout(Duration::from_secs(timeout_secs), TcpStream::connect(addr)).await {
         Ok(Ok(s)) => s,
-        Ok(Err(_)) | Err(_) => return Ok(false),
+        Ok(Err(_)) | Err(_) => return Ok(CipherSupportOutcome::Inconclusive),
     };
 
     let std_stream = into_blocking_std_stream(stream, Duration::from_secs(timeout_secs))?;
 
     // Wrap blocking SSL operations in spawn_blocking to avoid blocking async runtime
-    let result = tokio::task::spawn_blocking(move || -> Result<bool> {
+    let result = tokio::task::spawn_blocking(move || -> Result<CipherSupportOutcome> {
         let mut builder = SslConnector::builder(SslMethod::tls())?;
 
         if allow_ssl3 {
@@ -621,14 +649,14 @@ pub async fn test_cipher_support(
         }
 
         if builder.set_cipher_list(&cipher).is_err() {
-            return Ok(false);
+            return Ok(CipherSupportOutcome::NotSupported);
         }
 
         let connector = builder.build();
 
         match connector.connect(&hostname, std_stream) {
-            Ok(_) => Ok(true),
-            Err(_) => Ok(false),
+            Ok(_) => Ok(CipherSupportOutcome::Supported),
+            Err(_) => Ok(CipherSupportOutcome::NotSupported),
         }
     })
     .await
@@ -799,6 +827,22 @@ mod tests {
         assert_eq!(addrs.len(), 2);
         assert_eq!(addrs[0].ip(), ips[0]);
         assert_eq!(addrs[1].ip(), ips[1]);
+    }
+
+    #[tokio::test]
+    async fn test_cipher_support_outcome_closed_port_is_inconclusive() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            9,
+            vec!["127.0.0.1".parse().expect("valid IP")],
+        )
+        .expect("test assertion should succeed");
+
+        let outcome = test_cipher_support_outcome(&target, "AES128-SHA", false, 1)
+            .await
+            .expect("test assertion should succeed");
+
+        assert_eq!(outcome, CipherSupportOutcome::Inconclusive);
     }
 
     #[tokio::test]

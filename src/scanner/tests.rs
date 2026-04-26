@@ -923,6 +923,7 @@ fn test_build_conservative_multi_ip_result() {
         protocols: vec![ProtocolTestResult {
             protocol: Protocol::TLS12,
             supported: true,
+            inconclusive: false,
             preferred: true,
             ciphers_count: 1,
             handshake_time_ms: Some(5),
@@ -1007,6 +1008,7 @@ fn test_build_conservative_multi_ip_result_respects_disable_rating() {
         protocols: vec![ProtocolTestResult {
             protocol: Protocol::TLS12,
             supported: true,
+            inconclusive: false,
             preferred: true,
             ciphers_count: 1,
             handshake_time_ms: Some(5),
@@ -1082,6 +1084,7 @@ fn test_build_conservative_multi_ip_result_aggregates_probe_metadata() {
         protocols: vec![ProtocolTestResult {
             protocol: Protocol::TLS12,
             supported: true,
+            inconclusive: false,
             preferred: true,
             ciphers_count: 1,
             handshake_time_ms: Some(5),
@@ -1102,6 +1105,7 @@ fn test_build_conservative_multi_ip_result_aggregates_probe_metadata() {
         protocols: vec![ProtocolTestResult {
             protocol: Protocol::TLS13,
             supported: true,
+            inconclusive: false,
             preferred: true,
             ciphers_count: 1,
             handshake_time_ms: Some(4),
@@ -1193,6 +1197,7 @@ fn test_build_conservative_multi_ip_result_keeps_success_with_failed_ips() {
         protocols: vec![ProtocolTestResult {
             protocol: Protocol::TLS12,
             supported: true,
+            inconclusive: false,
             preferred: true,
             ciphers_count: 1,
             handshake_time_ms: Some(5),
@@ -1374,6 +1379,7 @@ fn test_build_conservative_multi_ip_result_partial_success_without_probe_attempt
         protocols: vec![ProtocolTestResult {
             protocol: Protocol::TLS12,
             supported: true,
+            inconclusive: false,
             preferred: true,
             ciphers_count: 1,
             handshake_time_ms: Some(5),
@@ -1453,6 +1459,7 @@ fn test_build_conservative_multi_ip_result_clears_unaggregated_residual_sections
         protocols: vec![ProtocolTestResult {
             protocol: Protocol::TLS12,
             supported: true,
+            inconclusive: false,
             preferred: true,
             ciphers_count: 1,
             handshake_time_ms: Some(5),
@@ -1544,6 +1551,8 @@ fn test_build_conservative_multi_ip_result_clears_unaggregated_residual_sections
             long_handshake_intolerance: false,
             incorrect_sni_alerts: false,
             uses_common_dh_primes: false,
+            inconclusive: false,
+            inconclusive_checks: Vec::new(),
             details: HashMap::new(),
         });
 

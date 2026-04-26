@@ -333,6 +333,7 @@ mod tests {
         results.protocols = vec![ProtocolTestResult {
             protocol: Protocol::TLS12,
             supported: true,
+            inconclusive: false,
             preferred: false,
             ciphers_count: 0,
             heartbeat_enabled: None,
@@ -380,6 +381,7 @@ mod tests {
         results.protocols = vec![ProtocolTestResult {
             protocol: Protocol::TLS12,
             supported: true,
+            inconclusive: false,
             preferred: false,
             ciphers_count: 0,
             heartbeat_enabled: None,
@@ -437,6 +439,7 @@ mod tests {
         results.protocols = vec![ProtocolTestResult {
             protocol: Protocol::TLS12,
             supported: true,
+            inconclusive: false,
             preferred: false,
             ciphers_count: 0,
             heartbeat_enabled: None,

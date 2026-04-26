@@ -20,6 +20,10 @@ pub struct IntoleranceTestResult {
     pub long_handshake_intolerance: bool,
     pub incorrect_sni_alerts: bool,
     pub uses_common_dh_primes: bool,
+    #[serde(default)]
+    pub inconclusive: bool,
+    #[serde(default)]
+    pub inconclusive_checks: Vec<String>,
     pub details: HashMap<String, String>,
 }
 
@@ -327,5 +331,36 @@ mod tests {
         let hostname =
             std::str::from_utf8(&data[5..5 + name_len]).expect("hostname should be utf8");
         assert_eq!(hostname, "invalid.nonexistent.example.com");
+    }
+
+    #[tokio::test]
+    async fn test_intolerance_closed_target_is_inconclusive() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test assertion should succeed");
+        let addr = listener
+            .local_addr()
+            .expect("test assertion should succeed");
+        tokio::spawn(async move {
+            while let Ok((socket, _)) = listener.accept().await {
+                drop(socket);
+            }
+        });
+
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            addr.port(),
+            vec!["127.0.0.1".parse().expect("valid IP")],
+        )
+        .expect("test assertion should succeed");
+
+        let result = IntoleranceTester::new(target)
+            .test_all()
+            .await
+            .expect("test assertion should succeed");
+
+        assert!(result.inconclusive);
+        assert!(!result.inconclusive_checks.is_empty());
+        assert!(!result.extension_intolerance);
     }
 }
