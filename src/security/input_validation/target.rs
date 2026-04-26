@@ -21,9 +21,10 @@ pub fn validate_target(
         ));
     }
 
+    let colon_count = target.matches(':').count();
     let (hostname, port) = if target.starts_with('[') {
         parse_bracketed_ipv6(target)?
-    } else if target.contains("::") || target.matches(':').count() >= 2 {
+    } else if target.contains("::") || (colon_count >= 2 && target.parse::<Ipv6Addr>().is_ok()) {
         parse_unbracketed_ipv6(target)?
     } else {
         parse_host_port(target)?
@@ -132,6 +133,12 @@ fn parse_unbracketed_ipv6(
 /// Parse regular hostname or IPv4 with optional port: `host:port` or `host`
 fn parse_host_port(target: &str) -> std::result::Result<(String, Option<u16>), ValidationError> {
     let parts: Vec<&str> = target.split(':').collect();
+    if parts.len() > 2 {
+        return Err(ValidationError::InvalidPort(
+            "Invalid host:port format".to_string(),
+        ));
+    }
+
     let hostname = parts[0].to_string();
     let port = if parts.len() > 1 {
         Some(
@@ -204,6 +211,13 @@ mod tests {
         assert!(result.is_ok());
         let (_host, port) = result.expect("test assertion should succeed");
         assert_eq!(port, Some(65535));
+    }
+
+    #[test]
+    fn test_validate_target_rejects_hostname_with_extra_colon_segments() {
+        let result = validate_target("example.com:443:extra", true);
+
+        assert!(result.is_err());
     }
 
     #[test]
