@@ -9,18 +9,22 @@ pub struct CompareScanIds {
 
 impl CompareScanIds {
     pub fn parse(raw: &str) -> Result<Self> {
-        let parts: Vec<&str> = raw.split(':').collect();
-        if parts.len() != 2 {
+        let Some((left_raw, right_raw)) = raw.split_once(':') else {
+            return Err(TlsError::InvalidInput {
+                message: "Expected format SCAN_ID_1:SCAN_ID_2".to_string(),
+            });
+        };
+        if right_raw.contains(':') {
             return Err(TlsError::InvalidInput {
                 message: "Expected format SCAN_ID_1:SCAN_ID_2".to_string(),
             });
         }
 
-        let left = parts[0].parse().map_err(|_| TlsError::InvalidInput {
-            message: format!("Invalid scan ID: {}", parts[0]),
+        let left = left_raw.parse().map_err(|_| TlsError::InvalidInput {
+            message: format!("Invalid scan ID: {}", left_raw),
         })?;
-        let right = parts[1].parse().map_err(|_| TlsError::InvalidInput {
-            message: format!("Invalid scan ID: {}", parts[1]),
+        let right = right_raw.parse().map_err(|_| TlsError::InvalidInput {
+            message: format!("Invalid scan ID: {}", right_raw),
         })?;
 
         if left <= 0 {
@@ -118,6 +122,7 @@ mod tests {
     #[test]
     fn rejects_invalid_compare_scan_ids() {
         assert!(CompareScanIds::parse("1").is_err());
+        assert!(CompareScanIds::parse("1:2:3").is_err());
     }
 
     #[test]
