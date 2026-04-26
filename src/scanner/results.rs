@@ -280,7 +280,6 @@ impl ScanResults {
                     || result.long_handshake_intolerance
                     || result.incorrect_sni_alerts
                     || result.uses_common_dh_primes
-                    || result.inconclusive
             })
             || self
                 .alpn_result()

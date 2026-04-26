@@ -417,8 +417,13 @@ impl<'a> RenegotiationTester<'a> {
     /// Parses the TLS record structure to search only within the extensions section,
     /// avoiding false positives from matching bytes in random/certificate data.
     fn has_renegotiation_info_extension(&self, response: &[u8]) -> bool {
+        const HANDSHAKE_TYPE_SERVER_HELLO: u8 = 0x02;
+
         // Minimum ServerHello: 5 (record) + 4 (handshake) + 2 (version) + 32 (random) + 1 (sid len) = 44
-        if response.len() < 44 || response[0] != CONTENT_TYPE_HANDSHAKE {
+        if response.len() < 44
+            || response[0] != CONTENT_TYPE_HANDSHAKE
+            || response[5] != HANDSHAKE_TYPE_SERVER_HELLO
+        {
             return false;
         }
 
@@ -453,6 +458,9 @@ impl<'a> RenegotiationTester<'a> {
             let ext_len = u16::from_be_bytes([response[pos + 2], response[pos + 3]]) as usize;
             if ext_type == EXTENSION_RENEGOTIATION_INFO {
                 return true;
+            }
+            if pos + 4 + ext_len > ext_end {
+                break;
             }
             pos += 4 + ext_len;
         }

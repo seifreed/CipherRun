@@ -188,7 +188,13 @@ impl TicketbleedTester {
 
                     let ticket_start = ticket_len_offset + 2;
                     let ticket_end = ticket_start + ticket_len;
-                    if ticket_end <= response.len() && ticket_len > 0 && ticket_len <= hs_len {
+                    let ticket_msg_end = hs_start + 4 + hs_len;
+                    if ticket_end <= response.len()
+                        && ticket_end <= ticket_msg_end
+                        && ticket_end <= record_end
+                        && ticket_len > 0
+                        && ticket_len <= hs_len
+                    {
                         return Some(response[ticket_start..ticket_end].to_vec());
                     }
                 }

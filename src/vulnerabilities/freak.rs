@@ -105,7 +105,18 @@ impl FreakTester {
 
         let result = tokio::task::spawn_blocking(move || -> Result<FreakProbeStatus> {
             let mut builder = SslConnector::builder(SslMethod::tls())?;
-            builder.set_min_proto_version(Some(SslVersion::SSL3))?;
+
+            // Try to set SSL 3.0 - this may fail on modern OpenSSL versions
+            // that have SSL 3.0 disabled at compile time
+            if builder
+                .set_min_proto_version(Some(SslVersion::SSL3))
+                .is_err()
+            {
+                tracing::debug!(
+                    "SSL 3.0 not supported by OpenSSL - cannot test for FREAK on SSL 3.0"
+                );
+                return Ok(FreakProbeStatus::NotSupported);
+            }
 
             if builder.set_cipher_list(&cipher).is_err() {
                 return Ok(FreakProbeStatus::NotSupported);

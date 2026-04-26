@@ -52,7 +52,10 @@ pub async fn authenticate(
                 query.split('&').find_map(|param| {
                     let parts: Vec<&str> = param.splitn(2, '=').collect();
                     if parts.len() == 2 && parts[0] == "api_key" {
-                        Some((parts[1].to_string(), true))
+                        let decoded = urlencoding::decode(parts[1])
+                            .map(|s| s.to_string())
+                            .unwrap_or_else(|_| parts[1].to_string());
+                        Some((decoded, true))
                     } else {
                         None
                     }

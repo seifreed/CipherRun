@@ -115,6 +115,20 @@ impl PerKeyRateLimiter {
 
         // Update access index for LRU eviction (write lock, brief)
         if let Ok(mut index) = self.access_index.write() {
+            // Remove previous index entry for this key to prevent unbounded growth
+            if let Some(entry) = self.limiters.get(key)
+                && entry.last_access != now
+            {
+                let should_remove_bucket = if let Some(keys) = index.get_mut(&entry.last_access) {
+                    keys.retain(|k| k != key);
+                    keys.is_empty()
+                } else {
+                    false
+                };
+                if should_remove_bucket {
+                    index.remove(&entry.last_access);
+                }
+            }
             index.entry(now).or_default().push(key.to_string());
         }
 

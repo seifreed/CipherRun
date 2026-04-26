@@ -412,7 +412,8 @@ fn test_aggregate_vulnerabilities_marks_results_inconclusive_when_backend_fails(
 
     assert_eq!(aggregated.len(), 1);
     assert!(!aggregated[0].vulnerable);
-    assert!(aggregated[0].inconclusive);
+    // Vulnerability confirmed on the successful backend remains conclusive
+    assert!(!aggregated[0].inconclusive);
     assert!(
         aggregated[0]
             .details

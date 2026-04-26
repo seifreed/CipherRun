@@ -101,6 +101,11 @@ impl PreHandshakeScanner {
                                 data[offset + 2],
                             ]) as usize;
 
+                            // Prevent integer overflow/wraparound on malicious input
+                            if certs_length > data.len() - offset - 3 {
+                                break;
+                            }
+
                             let mut cert_offset = offset + 3;
                             let certs_end = offset + 3 + certs_length;
 
@@ -113,7 +118,7 @@ impl PreHandshakeScanner {
                                 ]) as usize;
                                 cert_offset += 3;
 
-                                if cert_offset + cert_length <= data.len() {
+                                if cert_offset + cert_length <= certs_end && cert_offset + cert_length <= data.len() {
                                     let cert_der = &data[cert_offset..cert_offset + cert_length];
                                     certificate_data = self.parse_certificate(cert_der).ok();
                                 }
