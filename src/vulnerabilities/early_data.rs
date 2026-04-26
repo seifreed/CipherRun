@@ -53,6 +53,13 @@ pub struct EarlyDataTester<'a> {
     target: &'a Target,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EarlyDataSupportStatus {
+    Supported,
+    NotSupported,
+    Inconclusive,
+}
+
 impl<'a> EarlyDataTester<'a> {
     pub fn new(target: &'a Target) -> Self {
         Self { target }
@@ -64,7 +71,25 @@ impl<'a> EarlyDataTester<'a> {
         let mut vulnerable = false;
 
         // Test 1: Check if server supports early_data extension
-        let supports_early_data = self.test_early_data_support().await?;
+        let early_data_support = self.test_early_data_support().await?;
+        let supports_early_data = matches!(early_data_support, EarlyDataSupportStatus::Supported);
+
+        if matches!(early_data_support, EarlyDataSupportStatus::Inconclusive) {
+            return Ok(EarlyDataTestResult {
+                vulnerable: false,
+                supports_early_data: false,
+                accepts_replayed_data: false,
+                max_early_data_size: None,
+                issues: vec![
+                    "Early Data test inconclusive - unable to determine TLS 1.3 early_data support"
+                        .to_string(),
+                ],
+                details:
+                    "Early Data test inconclusive - target did not provide a usable TLS response"
+                        .to_string(),
+                inconclusive: true,
+            });
+        }
 
         if !supports_early_data {
             return Ok(EarlyDataTestResult {
@@ -149,7 +174,7 @@ impl<'a> EarlyDataTester<'a> {
     }
 
     /// Test if server supports early_data extension (0x002a)
-    async fn test_early_data_support(&self) -> Result<bool> {
+    async fn test_early_data_support(&self) -> Result<EarlyDataSupportStatus> {
         // TLS 1.3 connectivity is NOT equivalent to early_data support.
         // Actual detection requires parsing the early_data extension (0x002a) from
         // the NewSessionTicket message (RFC 8446 §4.6.1) — not yet implemented.
@@ -188,7 +213,10 @@ impl<'a> EarlyDataTester<'a> {
         // by checking for the presence of the early_data extension (type 0x002a)
         let early_data_in_server_hello = self.check_early_data_extension_in_handshake().await?;
 
-        if !early_data_in_server_hello {
+        if !matches!(
+            early_data_in_server_hello,
+            EarlyDataSupportStatus::Supported
+        ) {
             return Ok(EarlyDataSizeInfo {
                 tls13_supported: true,
                 early_data_supported: false,
@@ -215,7 +243,7 @@ impl<'a> EarlyDataTester<'a> {
     /// appears in EncryptedExtensions (which requires session keys to decrypt);
     /// this check catches non-standard servers that include it in the cleartext
     /// ServerHello. Standard TLS 1.3 servers will return false here.
-    async fn check_early_data_extension_in_handshake(&self) -> Result<bool> {
+    async fn check_early_data_extension_in_handshake(&self) -> Result<EarlyDataSupportStatus> {
         use crate::protocols::handshake::{ClientHelloBuilder, ServerHelloParser};
         use crate::protocols::{Extension, Protocol};
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -232,7 +260,7 @@ impl<'a> EarlyDataTester<'a> {
                 .await
             {
                 Ok(s) => s,
-                Err(_) => return Ok(false),
+                Err(_) => return Ok(EarlyDataSupportStatus::Inconclusive),
             };
 
         let mut builder = ClientHelloBuilder::new(Protocol::TLS13);
@@ -242,7 +270,7 @@ impl<'a> EarlyDataTester<'a> {
         let hostname = &self.target.hostname;
         let client_hello = match builder.build_with_defaults(Some(hostname)) {
             Ok(ch) => ch,
-            Err(_) => return Ok(false),
+            Err(_) => return Ok(EarlyDataSupportStatus::Inconclusive),
         };
 
         let response = match timeout(TLS_HANDSHAKE_TIMEOUT, async {
@@ -255,12 +283,18 @@ impl<'a> EarlyDataTester<'a> {
         .await
         {
             Ok(Ok(resp)) if !resp.is_empty() => resp,
-            _ => return Ok(false),
+            _ => return Ok(EarlyDataSupportStatus::Inconclusive),
         };
 
         match ServerHelloParser::parse(&response) {
-            Ok(server_hello) => Ok(server_hello.has_extension(0x002a)),
-            Err(_) => Ok(false),
+            Ok(server_hello) => {
+                if server_hello.has_extension(0x002a) {
+                    Ok(EarlyDataSupportStatus::Supported)
+                } else {
+                    Ok(EarlyDataSupportStatus::NotSupported)
+                }
+            }
+            Err(_) => Ok(EarlyDataSupportStatus::Inconclusive),
         }
     }
 
@@ -388,7 +422,7 @@ mod tests {
     use super::*;
     use std::net::IpAddr;
     use std::sync::Once;
-    use tokio::io::AsyncWriteExt;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
     fn install_crypto_provider() {
@@ -396,6 +430,26 @@ mod tests {
         ONCE.call_once(|| {
             let _ = rustls::crypto::ring::default_provider().install_default();
         });
+    }
+
+    fn fake_server_hello_without_early_data() -> Vec<u8> {
+        let mut body = vec![0x02, 0x00, 0x00, 0x00, 0x03, 0x03];
+        body.extend_from_slice(&[0u8; 32]);
+        body.push(0x00);
+        body.extend_from_slice(&[0x13, 0x01]);
+        body.push(0x00);
+
+        let hs_len = body.len() - 4;
+        body[1] = ((hs_len >> 16) & 0xff) as u8;
+        body[2] = ((hs_len >> 8) & 0xff) as u8;
+        body[3] = (hs_len & 0xff) as u8;
+
+        let mut record = vec![0x16, 0x03, 0x03, 0x00, 0x00];
+        let record_len = body.len();
+        record[3] = ((record_len >> 8) & 0xff) as u8;
+        record[4] = (record_len & 0xff) as u8;
+        record.extend_from_slice(&body);
+        record
     }
 
     #[test]
@@ -421,7 +475,12 @@ mod tests {
 
         tokio::spawn(async move {
             if let Ok((mut socket, _)) = listener.accept().await {
-                let _ = socket.shutdown().await;
+                let mut buf = [0u8; 1024];
+                let _ = socket.read(&mut buf).await;
+                let _ = socket
+                    .write_all(&fake_server_hello_without_early_data())
+                    .await;
+                let _ = socket.flush().await;
             }
         });
 
@@ -438,6 +497,32 @@ mod tests {
         assert!(!result.supports_early_data);
         assert!(!result.vulnerable);
         assert!(result.issues.iter().any(|i| i.contains("does not support")));
+    }
+
+    #[tokio::test]
+    async fn test_early_data_inactive_target_is_inconclusive() {
+        install_crypto_provider();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .unwrap();
+
+        let tester = EarlyDataTester::new(&target);
+        let result = tester.test().await.unwrap();
+
+        assert!(!result.vulnerable);
+        assert!(
+            result.inconclusive,
+            "inactive target must not be reported as a clean Early Data pass: {}",
+            result.details
+        );
+        assert!(result.details.to_ascii_lowercase().contains("inconclusive"));
     }
 
     #[tokio::test]

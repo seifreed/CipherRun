@@ -69,6 +69,34 @@ impl LegacyCompatTester {
         Ok(result)
     }
 
+    async fn test_baseline_tls_connectivity(&self) -> Result<bool> {
+        use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
+
+        let addr = match self.target.socket_addrs().first().copied() {
+            Some(a) => a,
+            None => return Ok(false),
+        };
+        let hostname = self.target.hostname.clone();
+
+        let stream =
+            match crate::utils::network::connect_with_timeout(addr, CIPHER_TIMEOUT, None).await {
+                Ok(s) => s,
+                Err(_) => return Ok(false),
+            };
+
+        let std_stream = stream.into_std()?;
+        std_stream.set_nonblocking(false)?;
+
+        tokio::task::spawn_blocking(move || -> Result<bool> {
+            let mut builder = SslConnector::builder(SslMethod::tls())?;
+            builder.set_verify(SslVerifyMode::NONE);
+            let connector = builder.build();
+            Ok(connector.connect(&hostname, std_stream).is_ok())
+        })
+        .await
+        .map_err(|e| crate::error::TlsError::Other(format!("spawn_blocking failed: {e}")))?
+    }
+
     /// Run complete legacy compatibility tests
     pub async fn test(&self) -> Result<LegacyCompatResult> {
         let sslv2_support = self.test_sslv2_support().await?;
@@ -78,18 +106,35 @@ impl LegacyCompatTester {
         let anonymous_dh = self.test_anonymous_dh().await?;
         let legacy_handshakes = self.test_legacy_handshakes().await?;
 
-        let compatibility_level =
-            self.determine_compatibility_level(&sslv2_support, &weak_ciphers, &export_ciphers);
-
-        let details = format!(
-            "Compatibility: {}. SSLv2: {}, Weak: {}, Export: {}, Null: {}, ADH: {}",
-            compatibility_level.as_str(),
-            sslv2_support.supported,
-            !weak_ciphers.weak_ciphers_found.is_empty(),
-            !export_ciphers.export_ciphers_found.is_empty(),
-            null_ciphers.null_encryption,
-            anonymous_dh.adh_support || anonymous_dh.aecdh_support
+        let baseline_tls_ok = self.test_baseline_tls_connectivity().await?;
+        let has_legacy_evidence = Self::has_legacy_evidence(
+            &sslv2_support,
+            &weak_ciphers,
+            &export_ciphers,
+            &null_ciphers,
+            &anonymous_dh,
+            &legacy_handshakes,
         );
+        let inconclusive = !has_legacy_evidence && !baseline_tls_ok;
+        let compatibility_level = if inconclusive {
+            CompatibilityLevel::Unknown
+        } else {
+            self.determine_compatibility_level(&sslv2_support, &weak_ciphers, &export_ciphers)
+        };
+
+        let details = if inconclusive {
+            "Compatibility: Unknown (test inconclusive). No baseline TLS handshake succeeded; legacy cipher support could not be determined".to_string()
+        } else {
+            format!(
+                "Compatibility: {}. SSLv2: {}, Weak: {}, Export: {}, Null: {}, ADH: {}",
+                compatibility_level.as_str(),
+                sslv2_support.supported,
+                !weak_ciphers.weak_ciphers_found.is_empty(),
+                !export_ciphers.export_ciphers_found.is_empty(),
+                null_ciphers.null_encryption,
+                anonymous_dh.adh_support || anonymous_dh.aecdh_support
+            )
+        };
 
         Ok(LegacyCompatResult {
             sslv2_support,
@@ -99,8 +144,29 @@ impl LegacyCompatTester {
             anonymous_dh,
             legacy_handshakes,
             compatibility_level,
+            inconclusive,
             details,
         })
+    }
+
+    fn has_legacy_evidence(
+        sslv2: &Sslv2Test,
+        weak: &WeakCipherTest,
+        export: &ExportCipherTest,
+        null_ciphers: &NullCipherTest,
+        anonymous_dh: &AnonymousDhTest,
+        legacy_handshakes: &LegacyHandshakeTest,
+    ) -> bool {
+        sslv2.supported
+            || !weak.weak_ciphers_found.is_empty()
+            || !export.export_ciphers_found.is_empty()
+            || null_ciphers.null_encryption
+            || anonymous_dh.adh_support
+            || anonymous_dh.aecdh_support
+            || legacy_handshakes.sslv2_compatible_hello
+            || legacy_handshakes.fragmented_handshake
+            || legacy_handshakes.old_signature_algorithms
+            || !legacy_handshakes.quirks.is_empty()
     }
 
     async fn test_sslv2_support(&self) -> Result<Sslv2Test> {
@@ -417,13 +483,37 @@ mod tests {
         let tester = LegacyCompatTester::new(target);
         let result = tester.test().await.unwrap();
 
-        assert_eq!(result.compatibility_level, CompatibilityLevel::Modern);
+        assert_eq!(result.compatibility_level, CompatibilityLevel::Unknown);
+        assert!(result.inconclusive);
         assert!(!result.sslv2_support.supported);
         assert!(result.weak_ciphers.weak_ciphers_found.is_empty());
         assert!(result.export_ciphers.export_ciphers_found.is_empty());
         assert!(!result.null_ciphers.null_encryption);
         assert!(!result.anonymous_dh.adh_support);
         assert!(result.details.contains("Compatibility"));
+    }
+
+    #[tokio::test]
+    async fn test_legacy_compat_inactive_target_is_inconclusive() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            addr.port(),
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .unwrap();
+
+        let tester = LegacyCompatTester::new(target);
+        let result = tester.test().await.unwrap();
+
+        assert_eq!(result.compatibility_level, CompatibilityLevel::Unknown);
+        assert!(
+            result.inconclusive,
+            "inactive target must not be classified as Modern: {result:?}"
+        );
+        assert!(result.details.contains("inconclusive"));
     }
 
     #[test]

@@ -124,7 +124,9 @@ impl CipherTester {
                 .await
                 .is_err()
         {
-            return Ok(false);
+            return Err(crate::TlsError::UnexpectedResponse {
+                details: "RDP preamble failed before cipher probe".to_string(),
+            });
         }
 
         if let Some(starttls_proto) = self.starttls_protocol {
@@ -133,7 +135,10 @@ impl CipherTester {
                 self.starttls_negotiation_hostname(),
             );
             if negotiator.negotiate_starttls(stream).await.is_err() {
-                return Ok(false);
+                return Err(crate::TlsError::StarttlsError {
+                    protocol: starttls_proto.to_string(),
+                    details: "STARTTLS negotiation failed before cipher probe".to_string(),
+                });
             }
         }
 
@@ -151,7 +156,9 @@ impl CipherTester {
             let n = stream.read(&mut response).await?;
 
             if n == 0 {
-                return Ok(false);
+                return Err(crate::TlsError::ConnectionClosed {
+                    details: "server closed connection before cipher probe response".to_string(),
+                });
             }
 
             if n >= 6
@@ -161,12 +168,20 @@ impl CipherTester {
                 return Ok(true);
             }
 
-            Ok(false)
+            if response[0] == 0x15 {
+                return Ok(false);
+            }
+
+            Err(crate::TlsError::UnexpectedResponse {
+                details: "cipher probe did not receive a ServerHello or TLS alert".to_string(),
+            })
         })
         .await
         {
             Ok(result) => result,
-            Err(_) => Ok(false),
+            Err(_) => Err(crate::TlsError::Timeout {
+                duration: self.read_timeout,
+            }),
         }
     }
 
@@ -177,10 +192,7 @@ impl CipherTester {
         _addr: std::net::SocketAddr,
         pool: &Arc<TlsConnectionPool>,
     ) -> Result<bool> {
-        let mut stream = match pool.acquire().await {
-            Ok(s) => s,
-            Err(_) => return Ok(false),
-        };
+        let mut stream = pool.acquire().await?;
 
         self.perform_cipher_handshake(&mut stream, protocol, cipher_hexcode)
             .await
@@ -200,7 +212,7 @@ impl CipherTester {
         .await
         {
             Ok(s) => s,
-            Err(_) => return Ok(false),
+            Err(e) => return Err(e.into()),
         };
 
         self.perform_cipher_handshake(&mut stream, protocol, cipher_hexcode)

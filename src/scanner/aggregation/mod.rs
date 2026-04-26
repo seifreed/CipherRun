@@ -423,9 +423,11 @@ mod tests {
                         http3_supported: false,
                         negotiated_protocol: None,
                         details: Vec::new(),
+                        inconclusive: false,
                     },
                     spdy_supported: false,
                     recommendations: Vec::new(),
+                    inconclusive: false,
                 }),
                 ..Default::default()
             }),

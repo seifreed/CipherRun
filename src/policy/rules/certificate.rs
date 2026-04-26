@@ -81,39 +81,55 @@ impl<'a> CertificateRule<'a> {
             // Parse not_after date using the shared certificate date parser,
             // which supports OpenSSL format ("Jan 01 00:00:00 2024 GMT")
             // and ISO format ("2024-01-01 00:00:00 +00:00").
-            if let Some(not_after) = parse_cert_date(&leaf_cert.not_after) {
-                let now = Utc::now();
+            match parse_cert_date(&leaf_cert.not_after) {
+                Some(not_after) => {
+                    let now = Utc::now();
 
-                if now > not_after {
-                    let days_expired = (now - not_after).num_days();
-                    violations.push(
-                        PolicyViolation::new(
-                            "certificates.max_days_until_expiry",
-                            "Certificate Expiry Check",
-                            self.policy.action,
-                            format!("Certificate expired {} days ago", days_expired),
-                        )
-                        .with_evidence(format!("Valid until: {}", leaf_cert.not_after))
-                        .with_remediation("Renew certificate immediately - it has already expired"),
-                    );
-                } else {
-                    let days_remaining = (not_after - now).num_days();
-                    if days_remaining < max_days {
+                    if now > not_after {
+                        let days_expired = (now - not_after).num_days();
                         violations.push(
                             PolicyViolation::new(
                                 "certificates.max_days_until_expiry",
                                 "Certificate Expiry Check",
                                 self.policy.action,
-                                format!(
-                                    "Certificate expires in {} days (threshold: {} days)",
-                                    days_remaining, max_days
-                                ),
+                                format!("Certificate expired {} days ago", days_expired),
                             )
                             .with_evidence(format!("Valid until: {}", leaf_cert.not_after))
-                            .with_remediation("Renew certificate before expiration"),
+                            .with_remediation(
+                                "Renew certificate immediately - it has already expired",
+                            ),
                         );
+                    } else {
+                        let days_remaining = (not_after - now).num_days();
+                        if days_remaining < max_days {
+                            violations.push(
+                                PolicyViolation::new(
+                                    "certificates.max_days_until_expiry",
+                                    "Certificate Expiry Check",
+                                    self.policy.action,
+                                    format!(
+                                        "Certificate expires in {} days (threshold: {} days)",
+                                        days_remaining, max_days
+                                    ),
+                                )
+                                .with_evidence(format!("Valid until: {}", leaf_cert.not_after))
+                                .with_remediation("Renew certificate before expiration"),
+                            );
+                        }
                     }
                 }
+                None => violations.push(
+                    PolicyViolation::new(
+                        "certificates.max_days_until_expiry",
+                        "Certificate Expiry Check",
+                        self.policy.action,
+                        "Certificate expiry date could not be parsed",
+                    )
+                    .with_evidence(format!("Valid until: {}", leaf_cert.not_after))
+                    .with_remediation(
+                        "Replace or re-scan the certificate so expiry can be verified",
+                    ),
+                ),
             }
         }
 
@@ -393,6 +409,33 @@ mod tests {
             violations[0].description.contains("expired"),
             "{:?}",
             violations[0]
+        );
+    }
+
+    #[test]
+    fn test_unparseable_expiry_date_fails_expiry_policy() {
+        let policy = CertificatePolicy {
+            min_key_size: None,
+            max_days_until_expiry: Some(30),
+            prohibited_signature_algorithms: None,
+            require_valid_trust_chain: None,
+            require_san: None,
+            require_hostname_match: None,
+            action: PolicyAction::Fail,
+        };
+
+        let mut cert_result = create_test_cert_result();
+        cert_result.chain.certificates[0].not_after = "not a date".to_string();
+
+        let rule = CertificateRule::new(&policy, Some(&cert_result));
+        let violations = rule
+            .evaluate("example.com:443")
+            .expect("test assertion should succeed");
+
+        assert_eq!(violations.len(), 1);
+        assert_eq!(
+            violations[0].rule_path,
+            "certificates.max_days_until_expiry"
         );
     }
 

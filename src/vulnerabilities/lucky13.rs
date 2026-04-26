@@ -18,6 +18,13 @@ pub struct Lucky13Tester {
     target: Target,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CbcCipherSupportStatus {
+    Supported,
+    NotSupported,
+    Inconclusive,
+}
+
 impl Lucky13Tester {
     pub fn new(target: Target) -> Self {
         Self { target }
@@ -33,15 +40,20 @@ impl Lucky13Tester {
 
     /// Test for Lucky13 vulnerability
     pub async fn test(&self) -> Result<Lucky13TestResult> {
-        let cbc_supported = self.test_cbc_ciphers().await?;
+        let cbc_status = self.test_cbc_ciphers().await?;
+        let cbc_supported = cbc_status == CbcCipherSupportStatus::Supported;
+        let cbc_inconclusive = cbc_status == CbcCipherSupportStatus::Inconclusive;
 
-        let (timing_result, inconclusive) = if cbc_supported {
+        let (timing_result, timing_inconclusive) = if cbc_supported {
             self.test_timing_oracle().await?
         } else {
             (false, false)
         };
+        let inconclusive = cbc_inconclusive || timing_inconclusive;
 
-        let details = if !cbc_supported {
+        let details = if cbc_inconclusive {
+            "Lucky13 test inconclusive - unable to determine CBC cipher support".to_string()
+        } else if !cbc_supported {
             "Not vulnerable - CBC ciphers not supported".to_string()
         } else if inconclusive {
             "INCONCLUSIVE: CBC ciphers supported but Lucky13 timing analysis is not yet implemented \
@@ -69,7 +81,7 @@ impl Lucky13Tester {
     }
 
     /// Test if CBC ciphers are supported
-    async fn test_cbc_ciphers(&self) -> Result<bool> {
+    async fn test_cbc_ciphers(&self) -> Result<CbcCipherSupportStatus> {
         use openssl::ssl::{SslConnector, SslMethod};
 
         let addr = self
@@ -92,11 +104,11 @@ impl Lucky13Tester {
 
                 let connector = builder.build();
                 match connector.connect(&self.target.hostname, std_stream) {
-                    Ok(_) => Ok(true),
-                    Err(_) => Ok(false),
+                    Ok(_) => Ok(CbcCipherSupportStatus::Supported),
+                    Err(_) => Ok(CbcCipherSupportStatus::NotSupported),
                 }
             }
-            _ => Ok(false),
+            _ => Ok(CbcCipherSupportStatus::Inconclusive),
         }
     }
 
@@ -470,5 +482,30 @@ mod tests {
         assert!(!result.vulnerable);
         assert!(result.inconclusive);
         assert!(result.cbc_supported);
+    }
+
+    #[tokio::test]
+    async fn test_lucky13_inactive_target_is_inconclusive() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .unwrap();
+
+        let tester = Lucky13Tester::new(target);
+        let result = tester.test().await.unwrap();
+
+        assert!(!result.vulnerable);
+        assert!(!result.cbc_supported);
+        assert!(result.inconclusive, "{result:?}");
+        assert!(
+            result.details.to_ascii_lowercase().contains("inconclusive"),
+            "{result:?}"
+        );
     }
 }

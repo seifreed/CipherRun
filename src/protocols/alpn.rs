@@ -16,6 +16,15 @@ pub struct AlpnResult {
     pub http3_supported: bool,
     pub negotiated_protocol: Option<String>,
     pub details: Vec<String>,
+    #[serde(default)]
+    pub inconclusive: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum AlpnProbeOutcome {
+    Negotiated(String),
+    NotNegotiated,
+    Inconclusive,
 }
 
 /// ALPN protocol tester
@@ -40,7 +49,9 @@ impl AlpnTester {
             http3_supported: false,
             negotiated_protocol: None,
             details: Vec::new(),
+            inconclusive: false,
         };
+        let mut saw_inconclusive_probe = false;
 
         // List of common ALPN protocols to test over TLS/TCP.
         // HTTP/3 is intentionally excluded because it requires QUIC/UDP.
@@ -51,22 +62,26 @@ impl AlpnTester {
         ];
 
         // Test HTTP/2 first
-        if let Ok(Some(proto)) = self.test_protocol(vec![b"h2".to_vec()]).await
-            && proto == "h2"
-        {
-            result.http2_supported = true;
-            result.supported_protocols.push("h2".to_string());
-            result
-                .details
-                .push("✓ HTTP/2 (h2) is supported".to_string());
+        match self.test_protocol(vec![b"h2".to_vec()]).await? {
+            AlpnProbeOutcome::Negotiated(proto) if proto == "h2" => {
+                result.http2_supported = true;
+                result.supported_protocols.push("h2".to_string());
+                result
+                    .details
+                    .push("✓ HTTP/2 (h2) is supported".to_string());
+            }
+            AlpnProbeOutcome::Inconclusive => saw_inconclusive_probe = true,
+            AlpnProbeOutcome::Negotiated(_) | AlpnProbeOutcome::NotNegotiated => {}
         }
 
         // Test HTTP/1.1
-        if let Ok(Some(proto)) = self.test_protocol(vec![b"http/1.1".to_vec()]).await
-            && proto == "http/1.1"
-        {
-            result.supported_protocols.push("http/1.1".to_string());
-            result.details.push("✓ HTTP/1.1 is supported".to_string());
+        match self.test_protocol(vec![b"http/1.1".to_vec()]).await? {
+            AlpnProbeOutcome::Negotiated(proto) if proto == "http/1.1" => {
+                result.supported_protocols.push("http/1.1".to_string());
+                result.details.push("✓ HTTP/1.1 is supported".to_string());
+            }
+            AlpnProbeOutcome::Inconclusive => saw_inconclusive_probe = true,
+            AlpnProbeOutcome::Negotiated(_) | AlpnProbeOutcome::NotNegotiated => {}
         }
 
         result
@@ -74,15 +89,25 @@ impl AlpnTester {
             .push(Self::http3_validation_note().to_string());
 
         // Test with both protocols to see preference
-        if let Ok(Some(proto)) = self
+        match self
             .test_protocol(vec![b"h2".to_vec(), b"http/1.1".to_vec()])
-            .await
+            .await?
         {
-            result.negotiated_protocol = Some(proto.clone());
-            result.details.push(format!("Server prefers: {}", proto));
+            AlpnProbeOutcome::Negotiated(proto) => {
+                result.negotiated_protocol = Some(proto.clone());
+                result.details.push(format!("Server prefers: {}", proto));
+            }
+            AlpnProbeOutcome::Inconclusive => saw_inconclusive_probe = true,
+            AlpnProbeOutcome::NotNegotiated => {}
         }
 
-        if result.supported_protocols.is_empty() {
+        result.inconclusive = result.supported_protocols.is_empty() && saw_inconclusive_probe;
+
+        if result.inconclusive {
+            result.details.push(
+                "ALPN support inconclusive - no complete TLS ALPN probe succeeded".to_string(),
+            );
+        } else if result.supported_protocols.is_empty() {
             result
                 .details
                 .push("No ALPN protocols supported or ALPN not enabled".to_string());
@@ -92,7 +117,7 @@ impl AlpnTester {
     }
 
     /// Test a specific ALPN protocol
-    async fn test_protocol(&self, protocols: Vec<Vec<u8>>) -> Result<Option<String>> {
+    async fn test_protocol(&self, protocols: Vec<Vec<u8>>) -> Result<AlpnProbeOutcome> {
         let addr = self
             .target
             .socket_addrs()
@@ -106,7 +131,7 @@ impl AlpnTester {
                 .await
             {
                 Ok(s) => s,
-                Err(_) => return Ok(None),
+                Err(_) => return Ok(AlpnProbeOutcome::Inconclusive),
             };
 
         // Create rustls config with ALPN
@@ -136,24 +161,36 @@ impl AlpnTester {
                 let (_, connection) = tls_stream.get_ref();
                 if let Some(protocol) = connection.alpn_protocol() {
                     let proto_str = String::from_utf8_lossy(protocol).to_string();
-                    return Ok(Some(proto_str));
+                    return Ok(AlpnProbeOutcome::Negotiated(proto_str));
                 }
-                Ok(None)
+                Ok(AlpnProbeOutcome::NotNegotiated)
             }
-            _ => Ok(None),
+            _ => Ok(AlpnProbeOutcome::Inconclusive),
         }
     }
 
     /// Test for SPDY support (legacy HTTP/2 predecessor)
     pub async fn test_spdy(&self) -> Result<bool> {
         let spdy_protocols = vec![b"spdy/3.1".to_vec(), b"spdy/3".to_vec(), b"spdy/2".to_vec()];
+        let mut saw_conclusive_probe = false;
+        let mut saw_inconclusive_probe = false;
 
         for proto in spdy_protocols {
-            if let Ok(Some(negotiated)) = self.test_protocol(vec![proto.clone()]).await
-                && negotiated.starts_with("spdy/")
-            {
-                return Ok(true);
+            match self.test_protocol(vec![proto.clone()]).await? {
+                AlpnProbeOutcome::Negotiated(negotiated) if negotiated.starts_with("spdy/") => {
+                    return Ok(true);
+                }
+                AlpnProbeOutcome::Negotiated(_) | AlpnProbeOutcome::NotNegotiated => {
+                    saw_conclusive_probe = true;
+                }
+                AlpnProbeOutcome::Inconclusive => saw_inconclusive_probe = true,
             }
+        }
+
+        if saw_inconclusive_probe && !saw_conclusive_probe {
+            return Err(crate::TlsError::Other(
+                "SPDY support inconclusive - no complete TLS ALPN probe succeeded".to_string(),
+            ));
         }
 
         Ok(false)
@@ -162,14 +199,22 @@ impl AlpnTester {
     /// Get comprehensive ALPN report
     pub async fn get_comprehensive_report(&self) -> Result<AlpnReport> {
         let alpn_result = self.test_alpn().await?;
-        let spdy_supported = self.test_spdy().await.unwrap_or(false);
-        let recommendations = self.generate_recommendations(&alpn_result, spdy_supported);
+        let (spdy_supported, spdy_inconclusive) = match self.test_spdy().await {
+            Ok(supported) => (supported, false),
+            Err(_) => (false, true),
+        };
+        let mut recommendations = self.generate_recommendations(&alpn_result, spdy_supported);
+        if spdy_inconclusive {
+            recommendations.push("SPDY support inconclusive - retry the probe".to_string());
+        }
+        let inconclusive = alpn_result.inconclusive || spdy_inconclusive;
 
         Ok(AlpnReport {
             alpn_enabled: !alpn_result.supported_protocols.is_empty(),
             alpn_result,
             spdy_supported,
             recommendations,
+            inconclusive,
         })
     }
 
@@ -177,7 +222,9 @@ impl AlpnTester {
     fn generate_recommendations(&self, result: &AlpnResult, spdy: bool) -> Vec<String> {
         let mut recommendations = Vec::new();
 
-        if !result.http2_supported {
+        if result.inconclusive {
+            recommendations.push("ALPN support inconclusive - retry the probe".to_string());
+        } else if !result.http2_supported {
             recommendations
                 .push("Consider enabling HTTP/2 (h2) for better performance".to_string());
         } else {
@@ -188,7 +235,7 @@ impl AlpnTester {
             recommendations.push("SPDY is deprecated - migrate to HTTP/2".to_string());
         }
 
-        if result.supported_protocols.is_empty() {
+        if result.supported_protocols.is_empty() && !result.inconclusive {
             recommendations.push(
                 "ALPN is not enabled - consider enabling for protocol negotiation".to_string(),
             );
@@ -205,6 +252,8 @@ pub struct AlpnReport {
     pub alpn_result: AlpnResult,
     pub spdy_supported: bool,
     pub recommendations: Vec<String>,
+    #[serde(default)]
+    pub inconclusive: bool,
 }
 
 #[cfg(test)]
@@ -233,6 +282,7 @@ mod tests {
             http3_supported: false,
             negotiated_protocol: Some("h2".to_string()),
             details: vec![],
+            inconclusive: false,
         };
 
         assert!(result.http2_supported);
@@ -255,6 +305,7 @@ mod tests {
             http3_supported: false,
             negotiated_protocol: None,
             details: Vec::new(),
+            inconclusive: false,
         };
 
         let recs = tester.generate_recommendations(&result, true);
@@ -277,6 +328,7 @@ mod tests {
             http3_supported: false,
             negotiated_protocol: Some("h2".to_string()),
             details: vec!["detail".to_string()],
+            inconclusive: false,
         };
 
         let json = serde_json::to_string(&result).expect("serialize");
@@ -304,6 +356,7 @@ mod tests {
             http3_supported: false,
             negotiated_protocol: None,
             details: Vec::new(),
+            inconclusive: false,
         };
 
         let recs = tester.generate_recommendations(&result, false);
@@ -321,9 +374,11 @@ mod tests {
                 http3_supported: false,
                 negotiated_protocol: Some("h2".to_string()),
                 details: vec!["detail".to_string()],
+                inconclusive: false,
             },
             spdy_supported: false,
             recommendations: vec!["ok".to_string()],
+            inconclusive: false,
         };
 
         let json = serde_json::to_string(&report).expect("serialize");
@@ -343,9 +398,11 @@ mod tests {
                 http3_supported: false,
                 negotiated_protocol: None,
                 details: vec!["none".to_string()],
+                inconclusive: false,
             },
             spdy_supported: false,
             recommendations: vec![],
+            inconclusive: false,
         };
         assert!(!report.alpn_enabled);
         assert!(report.alpn_result.supported_protocols.is_empty());
@@ -356,5 +413,47 @@ mod tests {
         let note = AlpnTester::http3_validation_note();
         assert!(note.contains("QUIC/UDP"));
         assert!(note.contains("not determined"));
+    }
+
+    #[tokio::test]
+    async fn test_alpn_closed_target_is_inconclusive() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("local addr should exist");
+        drop(listener);
+
+        let target = Target::with_ips("localhost".to_string(), addr.port(), vec![addr.ip()])
+            .expect("target should build");
+        let tester = AlpnTester::new(target);
+
+        let result = tester
+            .test_alpn()
+            .await
+            .expect("ALPN probe should return a result");
+
+        assert!(result.inconclusive);
+        assert!(result.supported_protocols.is_empty());
+        assert!(!result.details.iter().any(|d| d.contains("not enabled")));
+    }
+
+    #[tokio::test]
+    async fn test_spdy_closed_target_returns_inconclusive_error() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("local addr should exist");
+        drop(listener);
+
+        let target = Target::with_ips("localhost".to_string(), addr.port(), vec![addr.ip()])
+            .expect("target should build");
+        let tester = AlpnTester::new(target);
+
+        let err = tester
+            .test_spdy()
+            .await
+            .expect_err("closed target should be inconclusive, not false");
+
+        assert!(err.to_string().contains("inconclusive"));
     }
 }

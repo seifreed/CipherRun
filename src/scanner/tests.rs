@@ -108,9 +108,11 @@ fn test_scan_results_connection_evidence_requires_successful_subtests() {
             http3_supported: false,
             negotiated_protocol: None,
             details: vec![],
+            inconclusive: false,
         },
         spdy_supported: false,
         recommendations: vec![],
+        inconclusive: false,
     });
     results.advanced_mut().client_simulations = Some(vec![ClientSimulationResult {
         client_name: "TestClient".to_string(),
@@ -135,6 +137,7 @@ fn test_scan_results_connection_evidence_requires_successful_subtests() {
                 iana_value: 0x0401,
                 supported: false,
             }],
+            inconclusive: false,
         });
     results.advanced_mut().key_exchange_groups =
         Some(crate::protocols::groups::GroupEnumerationResult {
@@ -152,6 +155,7 @@ fn test_scan_results_connection_evidence_requires_successful_subtests() {
     results.advanced_mut().client_cas = Some(crate::protocols::client_cas::ClientCAsResult {
         cas: vec![],
         requires_client_auth: false,
+        inconclusive: false,
     });
     results.advanced_mut().intolerance =
         Some(crate::protocols::intolerance::IntoleranceTestResult::default());
@@ -163,9 +167,11 @@ fn test_scan_results_connection_evidence_requires_successful_subtests() {
             http3_supported: false,
             negotiated_protocol: None,
             details: vec![],
+            inconclusive: false,
         },
         spdy_supported: false,
         recommendations: vec![],
+        inconclusive: false,
     });
 
     assert!(!results.has_connection_evidence());
@@ -844,12 +850,17 @@ fn test_scan_results_advanced_accessors() {
             http3_supported: false,
             negotiated_protocol: None,
             details: vec![],
+            inconclusive: false,
         },
         spdy_supported: false,
         recommendations: vec![],
+        inconclusive: false,
     });
     results.advanced_mut().signature_algorithms =
-        Some(crate::protocols::signatures::SignatureEnumerationResult { algorithms: vec![] });
+        Some(crate::protocols::signatures::SignatureEnumerationResult {
+            algorithms: vec![],
+            inconclusive: false,
+        });
     results.advanced_mut().key_exchange_groups =
         Some(crate::protocols::groups::GroupEnumerationResult {
             groups: vec![],
@@ -859,6 +870,7 @@ fn test_scan_results_advanced_accessors() {
     results.advanced_mut().client_cas = Some(crate::protocols::client_cas::ClientCAsResult {
         cas: vec![],
         requires_client_auth: false,
+        inconclusive: false,
     });
 
     assert!(results.ja3s_fingerprint().is_some());
@@ -1503,12 +1515,17 @@ fn test_build_conservative_multi_ip_result_clears_unaggregated_residual_sections
             http3_supported: false,
             negotiated_protocol: Some("h2".to_string()),
             details: vec!["Server prefers: h2".to_string()],
+            inconclusive: false,
         },
         spdy_supported: false,
         recommendations: vec![],
+        inconclusive: false,
     });
     scan_result.advanced_mut().signature_algorithms =
-        Some(crate::protocols::signatures::SignatureEnumerationResult { algorithms: vec![] });
+        Some(crate::protocols::signatures::SignatureEnumerationResult {
+            algorithms: vec![],
+            inconclusive: false,
+        });
     scan_result.advanced_mut().key_exchange_groups =
         Some(crate::protocols::groups::GroupEnumerationResult {
             groups: vec![],
@@ -1518,6 +1535,7 @@ fn test_build_conservative_multi_ip_result_clears_unaggregated_residual_sections
     scan_result.advanced_mut().client_cas = Some(crate::protocols::client_cas::ClientCAsResult {
         cas: vec![],
         requires_client_auth: false,
+        inconclusive: false,
     });
     scan_result.advanced_mut().intolerance =
         Some(crate::protocols::intolerance::IntoleranceTestResult {

@@ -15,6 +15,23 @@ pub struct LogjamTester {
     target: Target,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LogjamProbeStatus {
+    Supported,
+    NotSupported,
+    Inconclusive,
+}
+
+impl LogjamProbeStatus {
+    fn is_supported(self) -> bool {
+        matches!(self, Self::Supported)
+    }
+
+    fn is_inconclusive(self) -> bool {
+        matches!(self, Self::Inconclusive)
+    }
+}
+
 impl LogjamTester {
     pub fn new(target: Target) -> Self {
         Self { target }
@@ -22,21 +39,26 @@ impl LogjamTester {
 
     /// Test for LOGJAM vulnerability
     pub async fn test(&self) -> Result<LogjamTestResult> {
-        let export_dh = self.test_export_dh().await?;
+        let (export_dh, export_inconclusive) = self.test_export_dh().await?;
         let weak_dh = self.test_weak_dh_params().await?;
-        let dhe_ciphers = self.test_dhe_ciphers().await?;
+        let (dhe_ciphers, dhe_inconclusive) = self.test_dhe_ciphers().await?;
 
-        let vulnerable = export_dh || weak_dh;
+        let weak_dh_params = weak_dh.is_supported();
+        let vulnerable = export_dh || weak_dh_params;
+        let inconclusive =
+            !vulnerable && (export_inconclusive || weak_dh.is_inconclusive() || dhe_inconclusive);
 
         let details = if vulnerable {
             let mut parts = Vec::new();
             if export_dh {
                 parts.push("Export-grade DH supported");
             }
-            if weak_dh {
+            if weak_dh_params {
                 parts.push("Weak DH parameters (≤1024 bits)");
             }
             format!("Vulnerable to LOGJAM (CVE-2015-4000): {}", parts.join(", "))
+        } else if inconclusive {
+            "LOGJAM test inconclusive - unable to determine DH cipher/parameter support".to_string()
         } else if !dhe_ciphers.is_empty() {
             "Not vulnerable - DHE supported with strong parameters".to_string()
         } else {
@@ -45,15 +67,16 @@ impl LogjamTester {
 
         Ok(LogjamTestResult {
             vulnerable,
+            inconclusive,
             export_dh_supported: export_dh,
-            weak_dh_params: weak_dh,
+            weak_dh_params,
             dhe_ciphers,
             details,
         })
     }
 
     /// Test for export-grade DH cipher support
-    async fn test_export_dh(&self) -> Result<bool> {
+    async fn test_export_dh(&self) -> Result<(bool, bool)> {
         let export_dh_ciphers = vec![
             "EXP-EDH-RSA-DES-CBC-SHA",
             "EXP-EDH-DSS-DES-CBC-SHA",
@@ -61,20 +84,23 @@ impl LogjamTester {
             "EXP1024-DHE-DSS-RC4-SHA",
         ];
 
+        let mut inconclusive = false;
         for cipher in export_dh_ciphers {
-            if self.test_cipher(cipher).await? {
-                return Ok(true);
+            match self.test_cipher(cipher).await? {
+                LogjamProbeStatus::Supported => return Ok((true, false)),
+                LogjamProbeStatus::NotSupported => {}
+                LogjamProbeStatus::Inconclusive => inconclusive = true,
             }
         }
 
-        Ok(false)
+        Ok((false, inconclusive))
     }
 
     /// Test for weak DH parameters
     ///
     /// Performance optimization: Wraps blocking OpenSSL operations in spawn_blocking
     /// to prevent blocking the async runtime.
-    async fn test_weak_dh_params(&self) -> Result<bool> {
+    async fn test_weak_dh_params(&self) -> Result<LogjamProbeStatus> {
         use openssl::pkey::Id;
         use openssl::ssl::{SslConnector, SslMethod};
 
@@ -91,7 +117,7 @@ impl LogjamTester {
                 .await
             {
                 Ok(s) => s,
-                Err(_) => return Ok(false),
+                Err(_) => return Ok(LogjamProbeStatus::Inconclusive),
             };
 
         // Convert to std stream for OpenSSL
@@ -99,7 +125,7 @@ impl LogjamTester {
         std_stream.set_nonblocking(false)?;
 
         // Wrap blocking SSL operations in spawn_blocking
-        let result = tokio::task::spawn_blocking(move || -> crate::Result<bool> {
+        let result = tokio::task::spawn_blocking(move || -> crate::Result<LogjamProbeStatus> {
             let mut builder = SslConnector::builder(SslMethod::tls())?;
 
             // Set DHE ciphers only
@@ -110,14 +136,18 @@ impl LogjamTester {
                 Ok(ssl_stream) => match ssl_stream.ssl().peer_tmp_key() {
                     Ok(tmp_key) => {
                         if tmp_key.id() == Id::DH {
-                            Ok(tmp_key.bits() < 2048)
+                            Ok(if tmp_key.bits() < 2048 {
+                                LogjamProbeStatus::Supported
+                            } else {
+                                LogjamProbeStatus::NotSupported
+                            })
                         } else {
-                            Ok(false)
+                            Ok(LogjamProbeStatus::NotSupported)
                         }
                     }
-                    Err(_) => Ok(false),
+                    Err(_) => Ok(LogjamProbeStatus::NotSupported),
                 },
-                Err(_) => Ok(false),
+                Err(_) => Ok(LogjamProbeStatus::NotSupported),
             }
         })
         .await
@@ -127,8 +157,9 @@ impl LogjamTester {
     }
 
     /// Test for DHE cipher support
-    async fn test_dhe_ciphers(&self) -> Result<Vec<String>> {
+    async fn test_dhe_ciphers(&self) -> Result<(Vec<String>, bool)> {
         let mut supported = Vec::new();
+        let mut inconclusive = false;
 
         let dhe_ciphers = vec![
             "DHE-RSA-AES256-GCM-SHA384",
@@ -148,18 +179,20 @@ impl LogjamTester {
         ];
 
         for cipher in dhe_ciphers {
-            if self.test_cipher(cipher).await? {
-                supported.push(cipher.to_string());
+            match self.test_cipher(cipher).await? {
+                LogjamProbeStatus::Supported => supported.push(cipher.to_string()),
+                LogjamProbeStatus::NotSupported => {}
+                LogjamProbeStatus::Inconclusive => inconclusive = true,
             }
         }
 
-        Ok(supported)
+        Ok((supported, inconclusive))
     }
 
     /// Test if a specific cipher is supported
     ///
     /// Performance optimization: Wraps blocking OpenSSL operations in spawn_blocking
-    async fn test_cipher(&self, cipher: &str) -> Result<bool> {
+    async fn test_cipher(&self, cipher: &str) -> Result<LogjamProbeStatus> {
         use openssl::ssl::{SslConnector, SslMethod, SslVersion};
 
         let addr = self
@@ -176,7 +209,7 @@ impl LogjamTester {
                 .await
             {
                 Ok(s) => s,
-                Err(_) => return Ok(false),
+                Err(_) => return Ok(LogjamProbeStatus::Inconclusive),
             };
 
         // Convert to std stream for OpenSSL
@@ -184,7 +217,7 @@ impl LogjamTester {
         std_stream.set_nonblocking(false)?;
 
         // Wrap blocking SSL operations in spawn_blocking
-        let result = tokio::task::spawn_blocking(move || -> Result<bool> {
+        let result = tokio::task::spawn_blocking(move || -> Result<LogjamProbeStatus> {
             let mut builder = SslConnector::builder(SslMethod::tls())?;
 
             // Allow SSL 3.0 for export ciphers
@@ -197,11 +230,11 @@ impl LogjamTester {
                 Ok(_) => {
                     let connector = builder.build();
                     match connector.connect(&hostname, std_stream) {
-                        Ok(_) => Ok(true),
-                        Err(_) => Ok(false),
+                        Ok(_) => Ok(LogjamProbeStatus::Supported),
+                        Err(_) => Ok(LogjamProbeStatus::NotSupported),
                     }
                 }
-                Err(_) => Ok(false),
+                Err(_) => Ok(LogjamProbeStatus::NotSupported),
             }
         })
         .await
@@ -215,6 +248,7 @@ impl LogjamTester {
 #[derive(Debug, Clone)]
 pub struct LogjamTestResult {
     pub vulnerable: bool,
+    pub inconclusive: bool,
     pub export_dh_supported: bool,
     pub weak_dh_params: bool,
     pub dhe_ciphers: Vec<String>,
@@ -224,13 +258,14 @@ pub struct LogjamTestResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::{IpAddr, SocketAddr};
+    use std::net::{IpAddr, SocketAddr, TcpListener as StdTcpListener};
     use tokio::net::TcpListener;
 
     #[test]
     fn test_logjam_result_not_vulnerable() {
         let result = LogjamTestResult {
             vulnerable: false,
+            inconclusive: false,
             export_dh_supported: false,
             weak_dh_params: false,
             dhe_ciphers: vec![],
@@ -245,6 +280,7 @@ mod tests {
     fn test_logjam_result_vulnerable() {
         let result = LogjamTestResult {
             vulnerable: true,
+            inconclusive: false,
             export_dh_supported: true,
             weak_dh_params: false,
             dhe_ciphers: vec!["DHE-RSA-AES256-SHA".to_string()],
@@ -258,6 +294,7 @@ mod tests {
     fn test_logjam_result_debug_contains_details() {
         let result = LogjamTestResult {
             vulnerable: false,
+            inconclusive: false,
             export_dh_supported: false,
             weak_dh_params: false,
             dhe_ciphers: vec![],
@@ -272,6 +309,7 @@ mod tests {
     fn test_logjam_result_details_export_grade() {
         let result = LogjamTestResult {
             vulnerable: true,
+            inconclusive: false,
             export_dh_supported: true,
             weak_dh_params: false,
             dhe_ciphers: vec![],
@@ -309,5 +347,29 @@ mod tests {
         let tester = LogjamTester::new(target);
         let result = tester.test().await.unwrap();
         assert!(!result.vulnerable);
+    }
+
+    #[tokio::test]
+    async fn test_logjam_inactive_target_is_inconclusive() {
+        let listener = StdTcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .unwrap();
+
+        let tester = LogjamTester::new(target);
+        let result = tester.test().await.unwrap();
+        assert!(!result.vulnerable);
+        assert!(result.inconclusive);
+        assert!(
+            result.details.to_ascii_lowercase().contains("inconclusive"),
+            "inactive target must not be reported as a clean LOGJAM pass: {}",
+            result.details
+        );
     }
 }

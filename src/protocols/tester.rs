@@ -128,6 +128,26 @@ impl ProtocolTester {
             .unwrap_or_else(|| self.target.hostname.clone())
     }
 
+    pub async fn target_accepts_tcp(&self) -> Result<bool> {
+        let Some(addr) = self.target.socket_addrs().first().copied() else {
+            return Ok(false);
+        };
+
+        match crate::utils::network::connect_with_timeout(
+            addr,
+            self.connect_timeout,
+            self.retry_config.as_ref(),
+        )
+        .await
+        {
+            Ok(stream) => {
+                drop(stream);
+                Ok(true)
+            }
+            Err(_) => Ok(false),
+        }
+    }
+
     pub async fn get_preferred_protocol(&self) -> Result<Option<Protocol>> {
         let results = self.test_all_protocols().await?;
 
@@ -396,7 +416,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_detect_heartbeat_extension_returns_false_on_close() {
+    async fn test_detect_heartbeat_extension_returns_none_on_close() {
         let addr = spawn_close_server().await;
         let target = Target::with_ips("example.test".to_string(), addr.port(), vec![addr.ip()])
             .expect("target should build");
@@ -409,6 +429,48 @@ mod tests {
             .await
             .expect("test assertion should succeed");
 
-        assert!(!supported);
+        assert_eq!(supported, None);
+    }
+
+    #[tokio::test]
+    async fn test_target_accepts_tcp_open_port_true() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("local addr should exist");
+        tokio::spawn(async move {
+            let _ = listener.accept().await;
+        });
+
+        let target = Target::with_ips("example.test".to_string(), addr.port(), vec![addr.ip()])
+            .expect("target should build");
+        let tester = ProtocolTester::new(target).with_connect_timeout(Duration::from_millis(100));
+
+        let accepts_tcp = tester
+            .target_accepts_tcp()
+            .await
+            .expect("target TCP probe should succeed");
+
+        assert!(accepts_tcp);
+    }
+
+    #[tokio::test]
+    async fn test_target_accepts_tcp_closed_port_false() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("local addr should exist");
+        drop(listener);
+
+        let target = Target::with_ips("example.test".to_string(), addr.port(), vec![addr.ip()])
+            .expect("target should build");
+        let tester = ProtocolTester::new(target).with_connect_timeout(Duration::from_millis(100));
+
+        let accepts_tcp = tester
+            .target_accepts_tcp()
+            .await
+            .expect("target TCP probe should succeed");
+
+        assert!(!accepts_tcp);
     }
 }

@@ -2,9 +2,11 @@
 
 use crate::Result;
 use crate::policy::Policy;
+use crate::protocols::Protocol;
 use regex::Regex;
 use serde_yaml;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
 pub trait PolicyDocumentSource: Send + Sync {
     fn read_to_string(&self, path: &Path) -> Result<String>;
@@ -156,6 +158,17 @@ impl<'a> PolicyLoader<'a> {
             });
         }
 
+        // Validate protocol policy
+        if let Some(ref protocol_policy) = policy.protocols {
+            if let Some(ref required) = protocol_policy.required {
+                Self::validate_protocol_names("required", required)?;
+            }
+
+            if let Some(ref prohibited) = protocol_policy.prohibited {
+                Self::validate_protocol_names("prohibited", prohibited)?;
+            }
+        }
+
         // Validate cipher policy
         if let Some(ref cipher_policy) = policy.ciphers {
             if let Some(ref min_strength) = cipher_policy.min_strength
@@ -171,30 +184,34 @@ impl<'a> PolicyLoader<'a> {
 
             // Validate regex patterns
             if let Some(ref patterns) = cipher_policy.prohibited_patterns {
-                for pattern in patterns {
-                    Regex::new(pattern).map_err(|e| crate::TlsError::ConfigError {
-                        message: format!("Invalid prohibited cipher pattern '{}': {}", pattern, e),
-                    })?;
-                }
+                Self::validate_cipher_patterns("prohibited", patterns)?;
             }
 
             if let Some(ref patterns) = cipher_policy.required_patterns {
-                for pattern in patterns {
-                    Regex::new(pattern).map_err(|e| crate::TlsError::ConfigError {
-                        message: format!("Invalid required cipher pattern '{}': {}", pattern, e),
-                    })?;
-                }
+                Self::validate_cipher_patterns("required", patterns)?;
             }
         }
 
         // Validate certificate policy
-        if let Some(ref cert_policy) = policy.certificates
-            && let Some(min_key_size) = cert_policy.min_key_size
-            && min_key_size < 1024
+        if let Some(ref cert_policy) = policy.certificates {
+            if let Some(min_key_size) = cert_policy.min_key_size
+                && min_key_size < 1024
+            {
+                return Err(crate::TlsError::ConfigError {
+                    message: "min_key_size must be at least 1024".to_string(),
+                });
+            }
+
+            if let Some(ref algorithms) = cert_policy.prohibited_signature_algorithms {
+                Self::validate_non_empty_entries("prohibited signature algorithm", algorithms)?;
+            }
+        }
+
+        // Validate vulnerability policy
+        if let Some(ref vulnerability_policy) = policy.vulnerabilities
+            && let Some(ref prohibited) = vulnerability_policy.prohibited
         {
-            return Err(crate::TlsError::ConfigError {
-                message: "min_key_size must be at least 1024".to_string(),
-            });
+            Self::validate_non_empty_entries("prohibited vulnerability", prohibited)?;
         }
 
         // Validate rating policy
@@ -223,6 +240,18 @@ impl<'a> PolicyLoader<'a> {
 
         // Validate exceptions
         for exception in &policy.exceptions {
+            if exception.rules.is_empty() {
+                return Err(crate::TlsError::ConfigError {
+                    message: "Exception rules cannot be empty".to_string(),
+                });
+            }
+
+            if exception.rules.iter().any(|rule| rule.trim().is_empty()) {
+                return Err(crate::TlsError::ConfigError {
+                    message: "Exception rules cannot contain empty rule paths".to_string(),
+                });
+            }
+
             if exception.reason.trim().is_empty() {
                 return Err(crate::TlsError::ConfigError {
                     message: "Exception reason cannot be empty".to_string(),
@@ -246,6 +275,50 @@ impl<'a> PolicyLoader<'a> {
                         ),
                     }
                 })?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn validate_protocol_names(field: &str, protocols: &[String]) -> Result<()> {
+        for protocol in protocols {
+            if protocol.trim().is_empty() {
+                return Err(crate::TlsError::ConfigError {
+                    message: format!("Protocol {} entries cannot be empty", field),
+                });
+            }
+
+            Protocol::from_str(protocol).map_err(|e| crate::TlsError::ConfigError {
+                message: format!("Invalid protocol in {} list: {}", field, e),
+            })?;
+        }
+
+        Ok(())
+    }
+
+    fn validate_cipher_patterns(field: &str, patterns: &[String]) -> Result<()> {
+        for pattern in patterns {
+            if pattern.trim().is_empty() {
+                return Err(crate::TlsError::ConfigError {
+                    message: format!("Cipher {} patterns cannot be empty", field),
+                });
+            }
+
+            Regex::new(pattern).map_err(|e| crate::TlsError::ConfigError {
+                message: format!("Invalid {} cipher pattern '{}': {}", field, pattern, e),
+            })?;
+        }
+
+        Ok(())
+    }
+
+    fn validate_non_empty_entries(field: &str, entries: &[String]) -> Result<()> {
+        for entry in entries {
+            if entry.trim().is_empty() {
+                return Err(crate::TlsError::ConfigError {
+                    message: format!("Policy {} entries cannot be empty", field),
+                });
             }
         }
 
@@ -295,6 +368,51 @@ policy:
     }
 
     #[test]
+    fn test_invalid_required_protocol_name_is_rejected() {
+        let yaml = r#"
+policy:
+  name: "Test Policy"
+  version: "1.0"
+  protocols:
+    required: ["TLSv1.4"]
+    action: FAIL
+"#;
+
+        let result = PolicyLoader::load_from_string(yaml);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_invalid_prohibited_protocol_name_is_rejected() {
+        let yaml = r#"
+policy:
+  name: "Test Policy"
+  version: "1.0"
+  protocols:
+    prohibited: ["not-a-protocol"]
+    action: FAIL
+"#;
+
+        let result = PolicyLoader::load_from_string(yaml);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_empty_protocol_name_is_rejected() {
+        let yaml = r#"
+policy:
+  name: "Test Policy"
+  version: "1.0"
+  protocols:
+    prohibited: ["   "]
+    action: FAIL
+"#;
+
+        let result = PolicyLoader::load_from_string(yaml);
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn test_min_strength_is_normalized_before_evaluation() {
         let yaml = r#"
 policy:
@@ -326,6 +444,66 @@ policy:
     prohibited_patterns:
       - ".*_RC4_.*"
       - "[invalid regex"
+    action: FAIL
+"#;
+
+        let result = PolicyLoader::load_from_string(yaml);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_empty_required_cipher_pattern_is_rejected() {
+        let yaml = r#"
+policy:
+  name: "Test Policy"
+  version: "1.0"
+  ciphers:
+    required_patterns: [""]
+    action: FAIL
+"#;
+
+        let result = PolicyLoader::load_from_string(yaml);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_whitespace_only_prohibited_cipher_pattern_is_rejected() {
+        let yaml = r#"
+policy:
+  name: "Test Policy"
+  version: "1.0"
+  ciphers:
+    prohibited_patterns: ["   "]
+    action: FAIL
+"#;
+
+        let result = PolicyLoader::load_from_string(yaml);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_empty_prohibited_signature_algorithm_is_rejected() {
+        let yaml = r#"
+policy:
+  name: "Test Policy"
+  version: "1.0"
+  certificates:
+    prohibited_signature_algorithms: [""]
+    action: FAIL
+"#;
+
+        let result = PolicyLoader::load_from_string(yaml);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_whitespace_only_prohibited_vulnerability_is_rejected() {
+        let yaml = r#"
+policy:
+  name: "Test Policy"
+  version: "1.0"
+  vulnerabilities:
+    prohibited: ["   "]
     action: FAIL
 "#;
 
@@ -398,6 +576,40 @@ policy:
       rules: ["protocols.prohibited"]
       reason: "   "
       approved_by: "   "
+"#;
+
+        let result = PolicyLoader::load_from_string(yaml);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_empty_exception_rules_are_invalid() {
+        let yaml = r#"
+policy:
+  name: "Test Policy"
+  version: "1.0"
+  exceptions:
+    - domain: "example.com"
+      rules: []
+      reason: "Test"
+      approved_by: "Admin"
+"#;
+
+        let result = PolicyLoader::load_from_string(yaml);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_whitespace_only_exception_rules_are_invalid() {
+        let yaml = r#"
+policy:
+  name: "Test Policy"
+  version: "1.0"
+  exceptions:
+    - domain: "example.com"
+      rules: ["   "]
+      reason: "Test"
+      approved_by: "Admin"
 "#;
 
         let result = PolicyLoader::load_from_string(yaml);

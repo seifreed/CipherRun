@@ -14,6 +14,8 @@ pub struct SignatureAlgorithm {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SignatureEnumerationResult {
     pub algorithms: Vec<SignatureAlgorithm>,
+    #[serde(default)]
+    pub inconclusive: bool,
 }
 
 pub struct SignatureTester {
@@ -74,11 +76,14 @@ impl SignatureTester {
         ];
 
         let mut detected_sigs: Vec<u16> = Vec::new();
+        let mut saw_inconclusive_probe = false;
+        let mut saw_conclusive_probe = false;
 
         for &(iana_value, hash_byte, sig_byte) in algo_pairs {
             let Ok(mut stream) =
                 crate::utils::network::connect_with_timeout(addr, connect_timeout, None).await
             else {
+                saw_inconclusive_probe = true;
                 continue;
             };
 
@@ -95,6 +100,7 @@ impl SignatureTester {
             builder.add_renegotiation_info();
 
             let Ok(client_hello) = builder.build() else {
+                saw_inconclusive_probe = true;
                 continue;
             };
 
@@ -107,10 +113,17 @@ impl SignatureTester {
             })
             .await;
 
-            if let Ok(Ok(response)) = probe
-                && ServerHelloParser::parse(&response).is_ok()
-            {
-                detected_sigs.push(iana_value);
+            match probe {
+                Ok(Ok(response)) if ServerHelloParser::parse(&response).is_ok() => {
+                    saw_conclusive_probe = true;
+                    detected_sigs.push(iana_value);
+                }
+                Ok(Ok(response)) if response.first() == Some(&0x15) => {
+                    saw_conclusive_probe = true;
+                }
+                Ok(Ok(_)) | Ok(Err(_)) | Err(_) => {
+                    saw_inconclusive_probe = true;
+                }
             }
         }
 
@@ -173,7 +186,10 @@ impl SignatureTester {
             },
         ];
 
-        Ok(SignatureEnumerationResult { algorithms })
+        Ok(SignatureEnumerationResult {
+            algorithms,
+            inconclusive: saw_inconclusive_probe && !saw_conclusive_probe,
+        })
     }
 }
 
@@ -209,6 +225,7 @@ mod tests {
         // Mock server sends a malformed/minimal response; probes should fail and
         // no algorithms should be detected as supported against this fake server.
         assert!(result.algorithms.iter().all(|a| !a.supported));
+        assert!(result.inconclusive);
     }
 
     #[tokio::test]
@@ -227,6 +244,7 @@ mod tests {
             .expect("test assertion should succeed");
 
         assert!(result.algorithms.iter().all(|a| !a.supported));
+        assert!(result.inconclusive);
     }
 
     #[test]
@@ -258,6 +276,7 @@ mod tests {
                     supported: false,
                 },
             ],
+            inconclusive: false,
         };
         let names = result
             .algorithms

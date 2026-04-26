@@ -93,12 +93,14 @@ impl GreaseTester {
                 true
             }
             Ok(false) => {
+                result.inconclusive = true;
                 result
                     .issues
                     .push("Baseline connection failed - cannot test GREASE".to_string());
                 return Ok(result);
             }
             Err(e) => {
+                result.inconclusive = true;
                 result
                     .issues
                     .push(format!("Baseline connection error: {}", e));
@@ -132,34 +134,59 @@ impl GreaseTester {
             self.test_combined_grease().await,
         );
 
-        // Determine overall result
-        if result.direct_grease_test_performed {
-            let rejected_count = result
-                .issues
-                .iter()
-                .filter(|i| i.contains("rejected") || i.contains("violates"))
-                .count();
+        Self::finalize_grease_result(&mut result);
 
-            let tolerated_count = result.details.iter().filter(|d| d.starts_with("✓")).count();
+        Ok(result)
+    }
 
-            if rejected_count > 0 {
-                result.tolerates_grease = false;
-                result.inconclusive = false;
-            } else if tolerated_count > 0 {
-                result.tolerates_grease = true;
-                result.inconclusive = false;
-            } else {
-                result.tolerates_grease = false;
-                result.inconclusive = true;
-            }
-        } else {
+    fn finalize_grease_result(result: &mut GreaseResult) {
+        if !result.direct_grease_test_performed {
+            result.tolerates_grease = false;
             result.inconclusive = true;
             result
                 .issues
                 .push("No GREASE tests were performed".to_string());
+            return;
         }
 
-        Ok(result)
+        let rejected_count = result
+            .issues
+            .iter()
+            .filter(|i| i.contains("rejected") || i.contains("violates"))
+            .count();
+
+        let tolerated_count = result
+            .details
+            .iter()
+            .filter(|d| d.starts_with("✓ Server tolerates "))
+            .count();
+
+        let inconclusive_count = result
+            .details
+            .iter()
+            .filter(|d| {
+                d.contains("test inconclusive") || d.contains("encountered a connection error")
+            })
+            .count()
+            + result
+                .tests_performed
+                .iter()
+                .filter(|t| t.contains("(error:"))
+                .count();
+
+        if rejected_count > 0 {
+            result.tolerates_grease = false;
+            result.inconclusive = false;
+        } else if inconclusive_count > 0 {
+            result.tolerates_grease = false;
+            result.inconclusive = true;
+        } else if tolerated_count > 0 {
+            result.tolerates_grease = true;
+            result.inconclusive = false;
+        } else {
+            result.tolerates_grease = false;
+            result.inconclusive = true;
+        }
     }
 
     /// Record the outcome of a single GREASE category test into the result.
@@ -512,6 +539,11 @@ mod tests {
         let result = tester.test().await.unwrap();
         assert!(!result.tolerates_grease);
         assert!(
+            result.inconclusive,
+            "baseline failure cannot be treated as a definitive GREASE result: {result:?}"
+        );
+        assert!(!result.direct_grease_test_performed);
+        assert!(
             result
                 .issues
                 .iter()
@@ -569,27 +601,21 @@ mod tests {
 
     #[test]
     fn test_tolerates_grease_logic() {
-        // When no tests fail and tests were performed, tolerates_grease should be true
-        let result = GreaseResult {
+        let mut result = GreaseResult {
             tolerates_grease: false, // Will be computed
             inconclusive: false,
             direct_grease_test_performed: true,
             issues: vec![],
-            details: vec!["✓ GREASE cipher suites".to_string()],
+            details: vec!["✓ Server tolerates grease cipher suites".to_string()],
             tests_performed: vec!["test1".to_string()],
         };
 
-        // Computation logic: tolerated = no rejections AND tests performed
-        let rejected_count = result
-            .issues
-            .iter()
-            .filter(|i| i.contains("rejected") || i.contains("violates"))
-            .count();
-        let would_tolerate = rejected_count == 0 && !result.tests_performed.is_empty();
-        assert!(would_tolerate);
+        GreaseTester::finalize_grease_result(&mut result);
+        assert!(result.tolerates_grease);
+        assert!(!result.inconclusive);
 
         // When there are rejections, tolerates_grease should be false
-        let result_with_rejection = GreaseResult {
+        let mut result_with_rejection = GreaseResult {
             tolerates_grease: false,
             inconclusive: false,
             direct_grease_test_performed: true,
@@ -598,11 +624,81 @@ mod tests {
             tests_performed: vec!["test1".to_string()],
         };
 
-        let rejected_count2 = result_with_rejection
-            .issues
-            .iter()
-            .filter(|i| i.contains("rejected") || i.contains("violates"))
-            .count();
-        assert!(rejected_count2 > 0);
+        GreaseTester::finalize_grease_result(&mut result_with_rejection);
+        assert!(!result_with_rejection.tolerates_grease);
+        assert!(!result_with_rejection.inconclusive);
+    }
+
+    #[test]
+    fn test_grease_partial_inconclusive_does_not_report_tolerant() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .unwrap();
+        let tester = GreaseTester::new(target);
+        let mut result = GreaseResult {
+            tolerates_grease: false,
+            inconclusive: false,
+            direct_grease_test_performed: false,
+            issues: vec![],
+            details: vec!["✓ Baseline connection successful".to_string()],
+            tests_performed: vec![],
+        };
+
+        tester.record_grease_test(
+            &mut result,
+            "GREASE cipher suites",
+            Ok(GreaseTestOutcome::Tolerated),
+        );
+        tester.record_grease_test(
+            &mut result,
+            "GREASE extensions",
+            Ok(GreaseTestOutcome::Inconclusive(
+                "target closed connection".to_string(),
+            )),
+        );
+        GreaseTester::finalize_grease_result(&mut result);
+
+        assert!(!result.tolerates_grease);
+        assert!(
+            result.inconclusive,
+            "partial GREASE evidence must stay inconclusive: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_grease_all_category_inconclusive_ignores_baseline_success_detail() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .unwrap();
+        let tester = GreaseTester::new(target);
+        let mut result = GreaseResult {
+            tolerates_grease: false,
+            inconclusive: false,
+            direct_grease_test_performed: false,
+            issues: vec![],
+            details: vec!["✓ Baseline connection successful".to_string()],
+            tests_performed: vec![],
+        };
+
+        tester.record_grease_test(
+            &mut result,
+            "GREASE supported groups",
+            Ok(GreaseTestOutcome::Inconclusive(
+                "no TLS response after ClientHello".to_string(),
+            )),
+        );
+        GreaseTester::finalize_grease_result(&mut result);
+
+        assert!(!result.tolerates_grease);
+        assert!(
+            result.inconclusive,
+            "baseline success detail cannot make GREASE support definitive: {result:?}"
+        );
     }
 }

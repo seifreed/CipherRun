@@ -514,9 +514,11 @@ fn test_display_sections_smoke() {
             http3_supported: false,
             negotiated_protocol: Some("h2".to_string()),
             details: vec!["ALPN ok".to_string()],
+            inconclusive: false,
         },
         spdy_supported: false,
         recommendations: vec!["Enable HTTP/3".to_string()],
+        inconclusive: false,
     };
     formatter.display_alpn_results(&alpn_report);
 
@@ -672,6 +674,7 @@ fn test_display_sections_smoke() {
             common_name: Some("Client CA".to_string()),
         }],
         requires_client_auth: true,
+        inconclusive: false,
     };
     formatter.display_client_cas_results(&client_cas);
 }
@@ -793,6 +796,7 @@ fn test_misc_display_helpers_and_fingerprints() {
                 supported: false,
             },
         ],
+        inconclusive: false,
     };
     formatter.display_signature_results(&signature_result);
 

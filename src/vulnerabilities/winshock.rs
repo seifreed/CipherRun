@@ -19,6 +19,13 @@ pub struct WinshockTester {
     target: Target,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SchannelDetectionStatus {
+    Detected,
+    NotDetected,
+    Inconclusive,
+}
+
 impl WinshockTester {
     pub fn new(target: Target) -> Self {
         Self { target }
@@ -26,12 +33,20 @@ impl WinshockTester {
 
     /// Test for Winshock vulnerability
     pub async fn test(&self) -> Result<WinshockTestResult> {
-        let schannel_detected = self.detect_schannel().await?;
-        let vulnerable = if schannel_detected {
-            self.test_malformed_handshake().await?
-        } else {
-            false
-        };
+        let schannel_status = self.detect_schannel().await?;
+        if schannel_status == SchannelDetectionStatus::Inconclusive {
+            return Ok(WinshockTestResult {
+                vulnerable: false,
+                schannel_detected: false,
+                inconclusive: true,
+                details:
+                    "Winshock test inconclusive - unable to connect to target to detect Schannel"
+                        .to_string(),
+            });
+        }
+
+        let schannel_detected = schannel_status == SchannelDetectionStatus::Detected;
+        let vulnerable = schannel_detected && self.test_malformed_handshake().await?;
 
         let details = if vulnerable {
             "Vulnerable to Winshock (MS14-066, CVE-2014-6321) - Server crashes or behaves abnormally with malformed handshake".to_string()
@@ -44,12 +59,13 @@ impl WinshockTester {
         Ok(WinshockTestResult {
             vulnerable,
             schannel_detected,
+            inconclusive: false,
             details,
         })
     }
 
     /// Detect if server is using Microsoft Schannel
-    async fn detect_schannel(&self) -> Result<bool> {
+    async fn detect_schannel(&self) -> Result<SchannelDetectionStatus> {
         use openssl::ssl::{SslConnector, SslMethod};
 
         let addr = self
@@ -64,7 +80,7 @@ impl WinshockTester {
                 .await
             {
                 Ok(s) => s,
-                Err(_) => return Ok(false),
+                Err(_) => return Ok(SchannelDetectionStatus::Inconclusive),
             };
 
         let std_stream = stream.into_std()?;
@@ -95,11 +111,13 @@ impl WinshockTester {
                     "ECDHE-ECDSA-AES128-GCM-SHA256",
                 ];
 
-                let likely_schannel = schannel_ciphers.contains(&cipher.as_str());
-
-                Ok(likely_schannel)
+                if schannel_ciphers.contains(&cipher.as_str()) {
+                    Ok(SchannelDetectionStatus::Detected)
+                } else {
+                    Ok(SchannelDetectionStatus::NotDetected)
+                }
             }
-            Err(_) => Ok(false),
+            Err(_) => Ok(SchannelDetectionStatus::NotDetected),
         }
     }
 
@@ -201,6 +219,7 @@ impl WinshockTester {
 pub struct WinshockTestResult {
     pub vulnerable: bool,
     pub schannel_detected: bool,
+    pub inconclusive: bool,
     pub details: String,
 }
 
@@ -213,6 +232,7 @@ mod tests {
         let result = WinshockTestResult {
             vulnerable: false,
             schannel_detected: true,
+            inconclusive: false,
             details: "Test".to_string(),
         };
         assert!(!result.vulnerable);
@@ -293,6 +313,7 @@ mod tests {
         let result = WinshockTestResult {
             vulnerable: false,
             schannel_detected: false,
+            inconclusive: false,
             details: "Not vulnerable".to_string(),
         };
         assert!(!result.vulnerable);
@@ -304,9 +325,32 @@ mod tests {
         let result = WinshockTestResult {
             vulnerable: true,
             schannel_detected: true,
+            inconclusive: false,
             details: "Vulnerable".to_string(),
         };
         let debug = format!("{:?}", result);
         assert!(debug.contains("schannel_detected"));
+    }
+
+    #[tokio::test]
+    async fn test_winshock_inactive_target_is_inconclusive() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+
+        let tester = WinshockTester::new(target);
+        let result = tester.test().await.unwrap();
+
+        assert!(!result.vulnerable);
+        assert!(!result.schannel_detected);
+        assert!(result.inconclusive, "{result:?}");
+        assert!(result.details.contains("inconclusive"), "{result:?}");
     }
 }

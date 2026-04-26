@@ -18,6 +18,23 @@ pub struct CrimeTester<'a> {
     target: &'a Target,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CompressionProbeStatus {
+    Enabled,
+    Disabled,
+    Inconclusive,
+}
+
+impl CompressionProbeStatus {
+    fn is_enabled(self) -> bool {
+        matches!(self, Self::Enabled)
+    }
+
+    fn is_inconclusive(self) -> bool {
+        matches!(self, Self::Inconclusive)
+    }
+}
+
 impl<'a> CrimeTester<'a> {
     pub fn new(target: &'a Target) -> Self {
         Self { target }
@@ -28,25 +45,32 @@ impl<'a> CrimeTester<'a> {
         let tls_compression = self.test_tls_compression().await?;
         let spdy_compression = self.test_spdy_compression().await?;
 
-        let vulnerable = tls_compression || spdy_compression;
+        let tls_compression_enabled = tls_compression.is_enabled();
+        let spdy_compression_enabled = spdy_compression.is_enabled();
+        let vulnerable = tls_compression_enabled || spdy_compression_enabled;
+        let inconclusive = !vulnerable
+            && (tls_compression.is_inconclusive() || spdy_compression.is_inconclusive());
 
         let details = if vulnerable {
             let mut parts = Vec::new();
-            if tls_compression {
+            if tls_compression_enabled {
                 parts.push("TLS compression enabled");
             }
-            if spdy_compression {
+            if spdy_compression_enabled {
                 parts.push("SPDY compression enabled");
             }
             format!("Vulnerable to CRIME (CVE-2012-4929): {}", parts.join(", "))
+        } else if inconclusive {
+            "CRIME test inconclusive - unable to determine TLS/SPDY compression status".to_string()
         } else {
             "Not vulnerable - TLS/SPDY compression disabled".to_string()
         };
 
         Ok(CrimeTestResult {
             vulnerable,
-            tls_compression_enabled: tls_compression,
-            spdy_compression_enabled: spdy_compression,
+            inconclusive,
+            tls_compression_enabled,
+            spdy_compression_enabled,
             details,
         })
     }
@@ -56,7 +80,7 @@ impl<'a> CrimeTester<'a> {
     /// Checks whether TLS-level compression (DEFLATE) was negotiated.
     /// Modern OpenSSL disables compression by default due to CRIME vulnerability.
     /// This test attempts to negotiate compression and checks if it was enabled.
-    async fn test_tls_compression(&self) -> Result<bool> {
+    async fn test_tls_compression(&self) -> Result<CompressionProbeStatus> {
         // Modern OpenSSL (1.1.0+) disables compression by default.
         // OpenSSL 3.x removes it entirely. Most servers will have compression disabled.
         //
@@ -76,7 +100,7 @@ impl<'a> CrimeTester<'a> {
                 .await
             {
                 Ok(s) => s,
-                Err(_) => return Ok(false),
+                Err(_) => return Ok(CompressionProbeStatus::Inconclusive),
             };
 
         // Send ClientHello with compression method DEFLATE (0x01)
@@ -90,25 +114,29 @@ impl<'a> CrimeTester<'a> {
                 // Validate the TLS record length so we only parse within the first record
                 let record_len = u16::from_be_bytes([buffer[3], buffer[4]]) as usize;
                 if record_len + 5 > n {
-                    // Truncated record — ServerHello split across reads, treat as inconclusive
-                    return Ok(false);
+                    // Truncated ServerHello split across reads; the probe cannot decide.
+                    return Ok(CompressionProbeStatus::Inconclusive);
                 }
                 if buffer[0] == 0x16 && buffer[5] == 0x02 && n > 43 {
                     let session_id_len = buffer[43] as usize;
                     if session_id_len > 32 {
-                        return Ok(false);
+                        return Ok(CompressionProbeStatus::Disabled);
                     }
                     let cipher_offset = 44 + session_id_len;
                     // Ensure cipher_offset is within the first TLS record body (5+record_len)
                     if cipher_offset + 2 < 5 + record_len && n > cipher_offset + 2 {
                         let compression_method = buffer[cipher_offset + 2];
                         tracing::debug!("Server compression method: {}", compression_method);
-                        return Ok(compression_method == 0x01);
+                        return Ok(if compression_method == 0x01 {
+                            CompressionProbeStatus::Enabled
+                        } else {
+                            CompressionProbeStatus::Disabled
+                        });
                     }
                 }
-                Ok(false)
+                Ok(CompressionProbeStatus::Disabled)
             }
-            _ => Ok(false),
+            _ => Ok(CompressionProbeStatus::Inconclusive),
         }
     }
 
@@ -127,7 +155,7 @@ impl<'a> CrimeTester<'a> {
     ///
     /// Detection approach: Parse the ServerHello extensions to find NPN (0x3374),
     /// then check if any negotiated protocol is SPDY (not h2/HTTP2).
-    async fn test_spdy_compression(&self) -> Result<bool> {
+    async fn test_spdy_compression(&self) -> Result<CompressionProbeStatus> {
         let addr = self
             .target
             .socket_addrs()
@@ -140,7 +168,7 @@ impl<'a> CrimeTester<'a> {
                 .await
             {
                 Ok(s) => s,
-                Err(_) => return Ok(false),
+                Err(_) => return Ok(CompressionProbeStatus::Inconclusive),
             };
 
         // Send ClientHello with NPN extension advertising SPDY support
@@ -156,26 +184,26 @@ impl<'a> CrimeTester<'a> {
 
                 // Verify it's a handshake ServerHello
                 if data[0] != 0x16 || data.len() < 6 || data[5] != 0x02 {
-                    return Ok(false);
+                    return Ok(CompressionProbeStatus::Disabled);
                 }
 
                 // Parse to extensions: skip record header (5) + handshake header (4)
                 // + version (2) + random (32) + session_id
                 let sid_offset = 43;
                 if sid_offset >= n {
-                    return Ok(false);
+                    return Ok(CompressionProbeStatus::Inconclusive);
                 }
                 let sid_len = data[sid_offset] as usize;
                 // cipher suite (2) + compression (1) + extensions_length (2)
                 let ext_len_offset = sid_offset + 1 + sid_len + 2 + 1;
                 if ext_len_offset + 2 > n {
-                    return Ok(false);
+                    return Ok(CompressionProbeStatus::Inconclusive);
                 }
 
                 // Validate TLS record length before parsing extensions
                 let record_len = u16::from_be_bytes([data[3], data[4]]) as usize;
                 if record_len + 5 > n {
-                    return Ok(false); // truncated record — inconclusive
+                    return Ok(CompressionProbeStatus::Inconclusive);
                 }
                 let record_end = 5 + record_len;
 
@@ -210,7 +238,7 @@ impl<'a> CrimeTester<'a> {
                                 // Only flag SPDY protocols as CRIME-vulnerable
                                 // HTTP/2 (h2, h2c) uses HPACK which is CRIME-resistant
                                 if proto.starts_with("spdy/") {
-                                    return Ok(true);
+                                    return Ok(CompressionProbeStatus::Enabled);
                                 }
                             }
                             proto_pos += proto_len;
@@ -221,9 +249,9 @@ impl<'a> CrimeTester<'a> {
                     pos += ext_len;
                 }
 
-                Ok(false)
+                Ok(CompressionProbeStatus::Disabled)
             }
-            _ => Ok(false),
+            _ => Ok(CompressionProbeStatus::Inconclusive),
         }
     }
 
@@ -242,6 +270,7 @@ impl<'a> CrimeTester<'a> {
 #[derive(Debug, Clone)]
 pub struct CrimeTestResult {
     pub vulnerable: bool,
+    pub inconclusive: bool,
     pub tls_compression_enabled: bool,
     pub spdy_compression_enabled: bool,
     pub details: String,
@@ -256,6 +285,7 @@ mod tests {
     fn test_crime_result_creation() {
         let result = CrimeTestResult {
             vulnerable: true,
+            inconclusive: false,
             tls_compression_enabled: true,
             spdy_compression_enabled: false,
             details: "Test".to_string(),
@@ -290,6 +320,7 @@ mod tests {
     fn test_crime_result_debug_contains_details() {
         let result = CrimeTestResult {
             vulnerable: false,
+            inconclusive: false,
             tls_compression_enabled: false,
             spdy_compression_enabled: false,
             details: "No compression".to_string(),
@@ -302,6 +333,7 @@ mod tests {
     fn test_crime_result_not_vulnerable_text() {
         let result = CrimeTestResult {
             vulnerable: false,
+            inconclusive: false,
             tls_compression_enabled: false,
             spdy_compression_enabled: false,
             details: "Not vulnerable - TLS/SPDY compression disabled".to_string(),
@@ -348,7 +380,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_crime_inactive_target_not_vulnerable() {
+    async fn test_crime_inactive_target_is_inconclusive() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         drop(listener);
@@ -363,7 +395,13 @@ mod tests {
         let tester = CrimeTester::new(&target);
         let result = tester.test().await.unwrap();
         assert!(!result.vulnerable);
+        assert!(result.inconclusive);
         assert!(!result.tls_compression_enabled);
         assert!(!result.spdy_compression_enabled);
+        assert!(
+            result.details.to_ascii_lowercase().contains("inconclusive"),
+            "inactive target must not be reported as a clean CRIME pass: {}",
+            result.details
+        );
     }
 }

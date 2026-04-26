@@ -41,6 +41,7 @@ impl FallbackScsvTester<'_> {
                 supported: false,
                 accepts_downgrade: false,
                 vulnerable: false,
+                inconclusive: true,
                 not_applicable: false,
                 details: format!(
                     "Downgrade attack prevention: Unknown (Server only supports {} - requires at least two protocols excluding SSL 2)",
@@ -83,6 +84,7 @@ impl FallbackScsvTester<'_> {
             supported: supported.supported,
             accepts_downgrade: supported.accepts_downgrade,
             vulnerable: supported.vulnerable,
+            inconclusive: supported.inconclusive,
             not_applicable: supported.not_applicable,
             details,
             has_tls13_or_higher: has_tls13,

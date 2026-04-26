@@ -43,7 +43,9 @@ impl ProtocolTester {
 
         let heartbeat_enabled =
             if supported && !matches!(protocol, Protocol::SSLv2 | Protocol::QUIC) {
-                self.detect_heartbeat_extension(protocol).await.ok()
+                self.detect_heartbeat_extension(protocol)
+                    .await
+                    .unwrap_or(None)
             } else {
                 None
             };
@@ -60,7 +62,9 @@ impl ProtocolTester {
 
         let secure_renegotiation =
             if supported && !matches!(protocol, Protocol::SSLv2 | Protocol::QUIC) {
-                self.detect_secure_renegotiation(protocol).await.ok()
+                self.detect_secure_renegotiation(protocol)
+                    .await
+                    .unwrap_or(None)
             } else {
                 None
             };
