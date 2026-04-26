@@ -148,6 +148,11 @@ mod tests {
     }
 
     #[test]
+    fn rejects_zero_port_host_port_days() {
+        assert!(HostPortDaysInput::parse("example.com:0:7").is_err());
+    }
+
+    #[test]
     fn parses_host_port_days_with_bracketed_ipv6() {
         let parsed = HostPortDaysInput::parse("[::1]:443:7").expect("should parse");
         assert_eq!(parsed.hostname, "::1");
@@ -179,5 +184,15 @@ mod tests {
     #[test]
     fn rejects_malformed_host_port_input() {
         assert!(HostPortInput::parse_with_default_port("example.com:443:extra", 443).is_err());
+    }
+
+    #[test]
+    fn rejects_empty_host_port_input() {
+        assert!(HostPortInput::parse_with_default_port("", 443).is_err());
+    }
+
+    #[test]
+    fn rejects_zero_port_host_port_input() {
+        assert!(HostPortInput::parse_with_default_port("example.com:0", 443).is_err());
     }
 }

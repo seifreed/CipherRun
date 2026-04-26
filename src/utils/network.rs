@@ -105,10 +105,14 @@ pub fn display_target_host(hostname: &str) -> String {
 /// This parser accepts URLs, bracketed IPv6, raw IPv6 literals, and host[:port]
 /// inputs. Raw IPv6 literals without brackets are treated as host-only values.
 pub fn split_target_host_port(input: &str) -> Result<(String, Option<u16>)> {
+    if input.trim().is_empty() {
+        anyhow::bail!("Target cannot be empty");
+    }
+
     if input.contains("://") {
         let url = url::Url::parse(input)?;
         let host = url.host_str().context("No hostname in URL")?.to_string();
-        return Ok((host, url.port()));
+        return Ok((host, url.port_or_known_default()));
     }
 
     if let Some(rest) = input.strip_prefix('[') {
@@ -135,6 +139,9 @@ pub fn split_target_host_port(input: &str) -> Result<(String, Option<u16>)> {
     if let Some((host, port_str)) = input.rsplit_once(':')
         && !host.contains(':')
     {
+        if host.is_empty() {
+            anyhow::bail!("Target host cannot be empty");
+        }
         return Ok((host.to_string(), Some(parse_port(port_str)?)));
     }
 
@@ -400,7 +407,11 @@ pub fn into_blocking_std_stream(
 
 /// Parse port from string
 pub fn parse_port(port_str: &str) -> Result<u16> {
-    port_str.parse::<u16>().context("Invalid port number")
+    let port = port_str.parse::<u16>().context("Invalid port number")?;
+    if port == 0 {
+        anyhow::bail!("Port must be between 1 and 65535");
+    }
+    Ok(port)
 }
 
 /// Check if port is STARTTLS by default
@@ -693,6 +704,19 @@ mod tests {
         assert_eq!(port, Some(8443));
     }
 
+    #[test]
+    fn test_split_target_host_port_uses_known_url_default_ports() {
+        let (hostname, port) = split_target_host_port("http://example.com")
+            .expect("HTTP URL should parse with known default port");
+        assert_eq!(hostname, "example.com");
+        assert_eq!(port, Some(80));
+
+        let (hostname, port) = split_target_host_port("https://example.com")
+            .expect("HTTPS URL should parse with known default port");
+        assert_eq!(hostname, "example.com");
+        assert_eq!(port, Some(443));
+    }
+
     #[tokio::test]
     async fn test_parse_target_ip() {
         let target = Target::parse("93.184.216.34:443")
@@ -873,6 +897,12 @@ mod tests {
     #[test]
     fn test_parse_port_invalid() {
         let result = parse_port("not-a-port");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_port_rejects_zero() {
+        let result = parse_port("0");
         assert!(result.is_err());
     }
 

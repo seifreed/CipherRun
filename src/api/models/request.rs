@@ -121,7 +121,10 @@ impl ScanOptions {
             || self.analyze_certificates
             || self.test_http_headers
             || self.client_simulation
-            || self.starttls_protocol.is_some()
+            || self
+                .starttls_protocol
+                .as_deref()
+                .is_some_and(|protocol| !protocol.trim().is_empty())
             || self.full_scan
     }
 }
@@ -277,6 +280,16 @@ mod tests {
             }
             .has_requested_scan_work()
         );
+    }
+
+    #[test]
+    fn test_scan_options_blank_starttls_protocol_is_not_work() {
+        let options = ScanOptions {
+            starttls_protocol: Some(" \t ".to_string()),
+            ..Default::default()
+        };
+
+        assert!(!options.has_requested_scan_work());
     }
 
     #[test]
