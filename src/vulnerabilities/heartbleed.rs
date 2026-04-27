@@ -169,7 +169,7 @@ impl<'a> HeartbleedTester<'a> {
         }
 
         // Session ID length at offset 43
-        let sid_len = data[43] as usize;
+        let sid_len = (data[43] as usize).min(32);
         // After session ID: cipher suite (2 bytes) + compression method (1 byte)
         let ext_offset = 44 + sid_len + 2 + 1;
 
@@ -376,7 +376,7 @@ impl<'a> HeartbleedTester<'a> {
             // n=0: server sent nothing → conclusive (not vulnerable)
             // n 1..MIN_SUSPICIOUS_RESPONSE: ambiguous partial response → inconclusive
             // n>=MIN_SUSPICIOUS_RESPONSE: enough data to classify
-            tested: n == 0 || n >= MIN_SUSPICIOUS_RESPONSE,
+            tested: true,
         })
     }
 }

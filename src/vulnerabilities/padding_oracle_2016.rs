@@ -200,8 +200,12 @@ impl<'a> PaddingOracle2016Tester<'a> {
         builder.set_cipher_list(aes_cbc_ciphers)?;
 
         // Try TLS 1.0, 1.1, 1.2 (CVE affects these versions)
-        builder.set_min_proto_version(Some(SslVersion::TLS1))?;
-        builder.set_max_proto_version(Some(SslVersion::TLS1_2))?;
+        if builder.set_min_proto_version(Some(SslVersion::TLS1)).is_err() {
+            return Ok(CbcSupportStatus::Inconclusive);
+        }
+        if builder.set_max_proto_version(Some(SslVersion::TLS1_2)).is_err() {
+            return Ok(CbcSupportStatus::Inconclusive);
+        }
 
         let connector = builder.build();
 

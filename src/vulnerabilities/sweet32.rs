@@ -48,7 +48,7 @@ impl Sweet32Tester {
                 (false, false) => "CVE-2016-2183, CVE-2016-6329",
                 (false, true) => "CVE-2016-2183",
                 (true, false) => "CVE-2016-6329",
-                (true, true) => unreachable!(),
+                (true, true) => "CVE-2016-2183, CVE-2016-6329",
             };
             format!("Vulnerable to Sweet32 ({}): {}", cve, parts.join(", "))
         } else if inconclusive {

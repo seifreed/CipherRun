@@ -183,7 +183,7 @@ impl<'a> CrimeTester<'a> {
                 let data = &buffer[..n];
 
                 // Verify it's a handshake ServerHello
-                if data[0] != 0x16 || data.len() < 6 || data[5] != 0x02 {
+                if data.len() < 6 || data[0] != 0x16 || data[5] != 0x02 {
                     return Ok(CompressionProbeStatus::Disabled);
                 }
 

@@ -39,6 +39,9 @@ impl SessionResumptionTester {
 
         // Session is valid if current time is less than session time + timeout
         // Also check that session_time is not in the future (clock skew protection)
+        if timeout == 0 {
+            return current_time >= session_time;
+        }
         current_time >= session_time && current_time < session_time.saturating_add(timeout)
     }
 

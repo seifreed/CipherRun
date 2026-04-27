@@ -91,7 +91,7 @@ impl Rule {
         if !self.allowed.is_empty() {
             list_contains_normalized(&self.allowed, value)
         } else {
-            true // If no allow list, everything is allowed by default
+            false // If no allow list, deny everything (fail-closed)
         }
     }
 

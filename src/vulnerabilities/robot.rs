@@ -183,13 +183,12 @@ impl RobotTester {
             // Extract alert error code if present (TLS alert format: 0x15 0x03 0x03 0x00 0x02 <level> <description>)
             // Validate the record length field (bytes 3-4) equals 0x0002 to avoid reading
             // stray bytes from concatenated records or malformed responses.
-            if response.len() >= 7
-                && response[0] == 0x15
-                && response[3] == 0x00
-                && response[4] == 0x02
-            {
-                let error_code = response[6];
-                error_codes.insert(error_code);
+            if response.len() >= 7 && response[0] == 0x15 {
+                let record_len = u16::from_be_bytes([response[3], response[4]]) as usize;
+                if record_len == 2 {
+                    let error_code = response[6];
+                    error_codes.insert(error_code);
+                }
             }
             response_lengths.insert(response.len());
 
