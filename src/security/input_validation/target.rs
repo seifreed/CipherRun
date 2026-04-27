@@ -89,6 +89,27 @@ fn parse_unbracketed_ipv6(
 ) -> std::result::Result<(String, Option<u16>), ValidationError> {
     // First, try parsing as pure IPv6 address (no port)
     if target.parse::<Ipv6Addr>().is_ok() {
+        // Ambiguity check: if the last segment is a multi-digit decimal ≤ 65535,
+        // the user likely meant [host]:port rather than an IPv6 hextet.
+        // Single-digit segments are treated as part of the address (port < 10 is extremely rare).
+        if let Some(last_colon) = target.rfind(':') {
+            let last_segment = &target[last_colon + 1..];
+            if !last_segment.is_empty()
+                && last_segment.len() >= 2
+                && last_segment.bytes().all(|b| b.is_ascii_digit())
+                && last_segment.parse::<u16>().is_ok()
+            {
+                let potential_host = &target[..last_colon];
+                if potential_host.parse::<Ipv6Addr>().is_ok() {
+                    return Err(ValidationError::InvalidHostname(format!(
+                        "Ambiguous IPv6 address with port: '{}'. \
+                         IPv6 addresses with ports must use bracketed notation. \
+                         Use '[{}]:{}' instead.",
+                        target, potential_host, last_segment
+                    )));
+                }
+            }
+        }
         return Ok((target.to_string(), None));
     }
 
@@ -242,17 +263,18 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_target_allows_ipv6_like_tail_without_brackets() {
+    fn test_validate_target_rejects_ambiguous_ipv6_with_port() {
         let result = validate_target("::1:443", true);
 
         assert!(
-            result.is_ok(),
-            "IPv6 literal should remain valid without brackets"
+            result.is_err(),
+            "Ambiguous IPv6 address with port should be rejected"
         );
-        let (host, port) = result.expect("test assertion should succeed");
-
-        assert_eq!(host, "::1:443");
-        assert!(port.is_none());
+        let err = result.expect_err("test assertion should succeed");
+        assert!(
+            format!("{}", err).contains("bracketed notation"),
+            "Error should suggest bracketed notation"
+        );
     }
 
     #[test]

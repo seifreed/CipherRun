@@ -14,7 +14,7 @@ use std::time::Duration;
 
 /// Helper to lock mutex with poisoning recovery
 /// Returns the guard, recovering from poisoning if necessary
-fn lock_mutex<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+pub fn lock_mutex<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     match mutex.lock() {
         Ok(guard) => guard,
         Err(poisoned) => {
@@ -208,7 +208,9 @@ impl AdaptiveController {
 }
 
 fn add_duration(a: Duration, b: Duration) -> Duration {
-    Duration::from_millis(a.as_millis().saturating_add(b.as_millis()) as u64)
+    let sum = a.as_millis().saturating_add(b.as_millis());
+    let capped = sum.min(u64::MAX as u128);
+    Duration::from_millis(capped as u64)
 }
 
 fn sub_duration(a: Duration, b: Duration) -> Duration {

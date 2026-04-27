@@ -411,19 +411,23 @@ impl DatabasePool {
         }
     }
 
-    /// Get PostgreSQL pool (panics if not PostgreSQL)
-    pub fn as_postgres(&self) -> &Pool<Postgres> {
+    /// Get PostgreSQL pool (returns error if not PostgreSQL)
+    pub fn as_postgres(&self) -> crate::Result<&Pool<Postgres>> {
         match self {
-            DatabasePool::Postgres(pool) => pool,
-            DatabasePool::Sqlite(_) => panic!("Expected PostgreSQL pool, got SQLite"),
+            DatabasePool::Postgres(pool) => Ok(pool),
+            DatabasePool::Sqlite(_) => Err(crate::TlsError::DatabaseError(
+                "Expected PostgreSQL pool, got SQLite".to_string(),
+            )),
         }
     }
 
-    /// Get SQLite pool (panics if not SQLite)
-    pub fn as_sqlite(&self) -> &Pool<Sqlite> {
+    /// Get SQLite pool (returns error if not SQLite)
+    pub fn as_sqlite(&self) -> crate::Result<&Pool<Sqlite>> {
         match self {
-            DatabasePool::Sqlite(pool) => pool,
-            DatabasePool::Postgres(_) => panic!("Expected SQLite pool, got PostgreSQL"),
+            DatabasePool::Sqlite(pool) => Ok(pool),
+            DatabasePool::Postgres(_) => Err(crate::TlsError::DatabaseError(
+                "Expected SQLite pool, got PostgreSQL".to_string(),
+            )),
         }
     }
 
