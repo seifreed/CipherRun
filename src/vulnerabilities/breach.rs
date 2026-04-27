@@ -160,49 +160,54 @@ impl BreachTester {
         let std_stream = stream.into_std()?;
         std_stream.set_nonblocking(false)?;
 
-        use openssl::ssl::{SslConnector, SslMethod};
-        let connector = SslConnector::builder(SslMethod::tls())?.build();
+        let hostname = self.target.hostname.clone();
+        tokio::task::spawn_blocking(move || {
+            use openssl::ssl::{SslConnector, SslMethod};
+            let connector = SslConnector::builder(SslMethod::tls())?.build();
 
-        match connector.connect(&self.target.hostname, std_stream) {
-            Ok(mut ssl_stream) => {
-                use std::io::{Read, Write};
+            match connector.connect(&hostname, std_stream) {
+                Ok(mut ssl_stream) => {
+                    use std::io::{Read, Write};
 
-                // Send request with unique marker in query string
-                let marker = "BREACH_TEST_MARKER_12345";
-                let request = format!(
-                    "GET /?test={} HTTP/1.1\r\n\
-                     Host: {}\r\n\
-                     Accept-Encoding: gzip, deflate\r\n\
-                     Connection: close\r\n\
-                     \r\n",
-                    marker, self.target.hostname
-                );
+                    // Send request with unique marker in query string
+                    let marker = "BREACH_TEST_MARKER_12345";
+                    let request = format!(
+                        "GET /?test={} HTTP/1.1\r\n\
+                         Host: {}\r\n\
+                         Accept-Encoding: gzip, deflate\r\n\
+                         Connection: close\r\n\
+                         \r\n",
+                        marker, hostname
+                    );
 
-                ssl_stream.write_all(request.as_bytes())?;
+                    ssl_stream.write_all(request.as_bytes())?;
 
-                // Read response
-                let mut buffer = vec![0u8; 16384];
-                let n = ssl_stream.read(&mut buffer)?;
+                    // Read response
+                    let mut buffer = vec![0u8; 16384];
+                    let n = ssl_stream.read(&mut buffer)?;
 
-                if n > 0 {
-                    let response = String::from_utf8_lossy(&buffer[..n]);
-                    // Require a 2xx response: 404/error pages that echo the URL in their
-                    // body would otherwise trigger a false positive for dynamic content.
-                    let is_success = response.starts_with("HTTP/")
-                        && response[5..]
-                            .split_once(' ')
-                            .map(|x| x.1)
-                            .and_then(|rest| rest.split_whitespace().next())
-                            .and_then(|code| code.parse::<u16>().ok())
-                            .map(|code| (200..300).contains(&code))
-                            .unwrap_or(false);
-                    Ok(Some(is_success && response.contains(marker)))
-                } else {
-                    Ok(None)
+                    if n > 0 {
+                        let response = String::from_utf8_lossy(&buffer[..n]);
+                        // Require a 2xx response: 404/error pages that echo the URL in their
+                        // body would otherwise trigger a false positive for dynamic content.
+                        let is_success = response.starts_with("HTTP/")
+                            && response[5..]
+                                .split_once(' ')
+                                .map(|x| x.1)
+                                .and_then(|rest| rest.split_whitespace().next())
+                                .and_then(|code| code.parse::<u16>().ok())
+                                .map(|code| (200..300).contains(&code))
+                                .unwrap_or(false);
+                        Ok(Some(is_success && response.contains(marker)))
+                    } else {
+                        Ok(None)
+                    }
                 }
+                Err(_) => Ok(None),
             }
-            Err(_) => Ok(None),
-        }
+        })
+        .await
+        .map_err(|e| crate::TlsError::Other(format!("BREACH test blocking task failed: {}", e)))?
     }
 
     /// Test if sensitive data might be reflected in responses

@@ -25,10 +25,14 @@ use std::time::Instant;
 
 /// Mask an API key for safe logging (shows first 4 and last 4 characters)
 fn mask_key(key: &str) -> String {
-    if key.len() > 8 {
-        format!("{}...{}", &key[..4], &key[key.len() - 4..])
-    } else if key.len() > 4 {
-        format!("{}****", &key[..4])
+    let chars: Vec<char> = key.chars().collect();
+    if chars.len() > 8 {
+        let first: String = chars.iter().take(4).collect();
+        let last: String = chars.iter().rev().take(4).rev().collect();
+        format!("{}...{}", first, last)
+    } else if chars.len() > 4 {
+        let first: String = chars.iter().take(4).collect();
+        format!("{}****", first)
     } else {
         "****".to_string()
     }

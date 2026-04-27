@@ -32,7 +32,7 @@ pub fn canonical_target(hostname: &str, port: u16) -> String {
         .and_then(|value| value.strip_suffix(']'))
         .unwrap_or(hostname);
 
-    if hostname.contains(':') {
+    if hostname.parse::<std::net::IpAddr>().is_ok() && hostname.contains(':') {
         format!("[{}]:{}", hostname, port)
     } else {
         format!("{}:{}", hostname, port)
@@ -186,6 +186,9 @@ impl Target {
     pub fn with_ips(hostname: String, port: u16, ip_addresses: Vec<IpAddr>) -> Result<Self> {
         if ip_addresses.is_empty() {
             return Err(anyhow::anyhow!("Target must have at least one IP address"));
+        }
+        if port == 0 {
+            return Err(anyhow::anyhow!("Port must be between 1 and 65535"));
         }
         Ok(Self {
             hostname,

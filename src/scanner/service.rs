@@ -286,7 +286,8 @@ impl Scanner {
                 .connection
                 .connect_timeout
                 .or(self.request.connection.socket_timeout)
-                .unwrap_or(10),
+                .unwrap_or(10)
+                .max(1),
         )
     }
 

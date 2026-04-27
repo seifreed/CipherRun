@@ -63,6 +63,13 @@ impl CustomResolver {
             } else if let Ok(ip) = IpAddr::from_str(resolver_str) {
                 // Bare IP (IPv4 or IPv6) -> default DNS port 53.
                 SocketAddr::new(ip, 53)
+            } else if resolver_str.contains(':') {
+                return Err(crate::TlsError::InvalidHandshake {
+                    details: format!(
+                        "Invalid resolver address '{}': expected [IPv6]:port or IPv4:port",
+                        resolver_str
+                    ),
+                });
             } else {
                 return Err(crate::TlsError::InvalidHandshake {
                     details: format!("Invalid resolver address '{}'", resolver_str),

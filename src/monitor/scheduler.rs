@@ -97,7 +97,7 @@ impl SchedulingEngine {
         // Calculate jitter range with overflow protection
         let seconds = duration.num_seconds();
         // Use at least 1 second of jitter to prevent thundering herd even for short intervals
-        let jitter_range = ((seconds.saturating_mul(self.jitter_percent as i64) + 50) / 100).max(1);
+        let jitter_range = (seconds.saturating_mul(self.jitter_percent as i64) + 50) / 100;
 
         // Random jitter between -jitter_range and +jitter_range
         let jitter = rng.random_range(-jitter_range..=jitter_range);
