@@ -432,12 +432,12 @@ fn extract_certificates(stdout: &str) -> Vec<String> {
     let mut in_cert = false;
 
     for line in stdout.lines() {
-        if line.contains("-----BEGIN CERTIFICATE-----") {
+        if line.starts_with("-----BEGIN CERTIFICATE-----") {
             in_cert = true;
             current_cert.clear();
             current_cert.push_str(line);
             current_cert.push('\n');
-        } else if line.contains("-----END CERTIFICATE-----") {
+        } else if line.starts_with("-----END CERTIFICATE-----") {
             current_cert.push_str(line);
             current_cert.push('\n');
             certificates.push(current_cert.clone());

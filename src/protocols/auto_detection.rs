@@ -62,8 +62,8 @@ impl ProtocolDetector {
                 duration: Some(read_timeout),
             })??;
 
-        let banner_str = String::from_utf8_lossy(&banner[..n]).to_string();
-        let (protocol, confidence) = analyze_banner(&banner_str);
+        let banner_bytes = &banner[..n];
+        let (protocol, confidence) = analyze_banner(banner_bytes);
 
         if protocol == ApplicationProtocol::Unknown && (port == 80 || port == 443 || port == 8080) {
             return Self::detect_http(&mut stream).await;
@@ -71,9 +71,9 @@ impl ProtocolDetector {
 
         Ok(DetectedProtocol {
             protocol,
-            version: extract_version(&banner_str, protocol),
-            banner: if !banner_str.is_empty() {
-                Some(banner_str)
+            version: extract_version(banner_bytes, protocol),
+            banner: if !banner_bytes.is_empty() {
+                Some(String::from_utf8_lossy(banner_bytes).to_string())
             } else {
                 None
             },
@@ -158,7 +158,7 @@ mod tests {
     #[test]
     fn test_analyze_smtp_banner() {
         let banner = "220 mail.example.com ESMTP Postfix";
-        let (protocol, confidence) = analyze_banner(banner);
+        let (protocol, confidence) = analyze_banner(banner.as_bytes());
         assert_eq!(protocol, ApplicationProtocol::SmtpStartTls);
         assert!(confidence > 0.9);
     }
@@ -166,7 +166,7 @@ mod tests {
     #[test]
     fn test_analyze_pop3_banner() {
         let banner = "+OK POP3 server ready";
-        let (protocol, confidence) = analyze_banner(banner);
+        let (protocol, confidence) = analyze_banner(banner.as_bytes());
         assert_eq!(protocol, ApplicationProtocol::Pop3StartTls);
         assert!(confidence > 0.9);
     }
@@ -174,7 +174,7 @@ mod tests {
     #[test]
     fn test_analyze_imap_banner() {
         let banner = "* OK IMAP4rev1 Server ready";
-        let (protocol, confidence) = analyze_banner(banner);
+        let (protocol, confidence) = analyze_banner(banner.as_bytes());
         assert_eq!(protocol, ApplicationProtocol::ImapStartTls);
         assert!(confidence > 0.9);
     }
@@ -182,7 +182,7 @@ mod tests {
     #[test]
     fn test_analyze_banner_unknown() {
         let banner = "Welcome to custom service";
-        let (protocol, confidence) = analyze_banner(banner);
+        let (protocol, confidence) = analyze_banner(banner.as_bytes());
         assert_eq!(protocol, ApplicationProtocol::Unknown);
         assert!(confidence < 0.5);
     }

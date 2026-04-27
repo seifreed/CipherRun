@@ -82,7 +82,7 @@ impl ComplianceChecker {
 
     fn protocol_list_matches(list: &[String], protocol_name: &str, protocol: Protocol) -> bool {
         list.iter().any(|configured| {
-            configured == protocol_name
+            configured.eq_ignore_ascii_case(protocol_name)
                 || configured
                     .parse::<Protocol>()
                     .is_ok_and(|configured_protocol| configured_protocol == protocol)

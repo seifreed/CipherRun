@@ -23,8 +23,9 @@ pub(super) fn protocol_from_port(port: u16) -> ApplicationProtocol {
     }
 }
 
-pub(super) fn analyze_banner(banner: &str) -> (ApplicationProtocol, f64) {
-    let lower = banner.to_lowercase();
+pub(super) fn analyze_banner(banner: &[u8]) -> (ApplicationProtocol, f64) {
+    let banner_str = String::from_utf8_lossy(banner);
+    let lower = banner_str.to_lowercase();
 
     if lower.starts_with("220")
         && (lower.contains("smtp") || lower.contains("mail") || lower.contains("esmtp"))
@@ -60,8 +61,8 @@ pub(super) fn analyze_banner(banner: &str) -> (ApplicationProtocol, f64) {
     // and that the version string at offset 5 consists of printable ASCII
     // (digits, dots, letters, hyphens) — matching real MySQL greetings like
     // "5.7.38-log" or "8.0.31".
-    if banner.len() > 10 && banner.as_bytes()[3] == 0x00 && banner.as_bytes()[4] == 0x0a {
-        let b = banner.as_bytes();
+    if banner.len() > 10 && banner[3] == 0x00 && banner[4] == 0x0a {
+        let b = banner;
         let pkt_len = u32::from_le_bytes([b[0], b[1], b[2], 0]) as usize;
         let version_ok = b[5..]
             .iter()
@@ -83,27 +84,24 @@ pub(super) fn analyze_banner(banner: &str) -> (ApplicationProtocol, f64) {
         return (ApplicationProtocol::Redis, 0.85);
     }
 
-    if banner.len() > 16 && banner.as_bytes()[0..4] == [0x3a, 0x00, 0x00, 0x00] {
+    if banner.len() > 16 && banner[0..4] == [0x3a, 0x00, 0x00, 0x00] {
         return (ApplicationProtocol::MongoDB, 0.80);
     }
 
     (ApplicationProtocol::Unknown, 0.0)
 }
 
-pub(super) fn extract_version(banner: &str, protocol: ApplicationProtocol) -> Option<String> {
+pub(super) fn extract_version(banner: &[u8], protocol: ApplicationProtocol) -> Option<String> {
+    let s = std::str::from_utf8(banner).ok()?;
     match protocol {
-        ApplicationProtocol::Smtp | ApplicationProtocol::SmtpStartTls => {
-            banner.lines().next().map(|s| s.to_string())
-        }
-        ApplicationProtocol::Imap | ApplicationProtocol::ImapStartTls => {
-            banner.lines().next().map(|s| s.to_string())
-        }
-        ApplicationProtocol::Pop3 | ApplicationProtocol::Pop3StartTls => {
-            banner.lines().next().map(|s| s.to_string())
-        }
-        ApplicationProtocol::Ftp | ApplicationProtocol::FtpStartTls => {
-            banner.lines().next().map(|s| s.to_string())
-        }
+        ApplicationProtocol::Smtp
+        | ApplicationProtocol::SmtpStartTls
+        | ApplicationProtocol::Imap
+        | ApplicationProtocol::ImapStartTls
+        | ApplicationProtocol::Pop3
+        | ApplicationProtocol::Pop3StartTls
+        | ApplicationProtocol::Ftp
+        | ApplicationProtocol::FtpStartTls => s.lines().next().map(|l| l.to_string()),
         _ => None,
     }
 }
@@ -142,7 +140,7 @@ mod tests {
     #[test]
     fn test_mysql_detection_accepts_realistic_banner() {
         let banner = mysql_banner_str("8.0.31");
-        let (proto, conf) = analyze_banner(&banner);
+        let (proto, conf) = analyze_banner(banner.as_bytes());
         assert_eq!(proto, ApplicationProtocol::Mysql);
         assert!(conf >= 0.90);
     }
@@ -163,7 +161,7 @@ mod tests {
         for _ in 0..8 {
             bogus.push(0x07u8 as char); // BEL bytes — not version chars
         }
-        let (proto, _conf) = analyze_banner(&bogus);
+        let (proto, _conf) = analyze_banner(bogus.as_bytes());
         assert_ne!(
             proto,
             ApplicationProtocol::Mysql,

@@ -380,7 +380,7 @@ impl<'a> HeartbleedTester<'a> {
             // n=0: server sent nothing → conclusive (not vulnerable)
             // n 1..MIN_SUSPICIOUS_RESPONSE: ambiguous partial response → inconclusive
             // n>=MIN_SUSPICIOUS_RESPONSE: enough data to classify
-            tested: true,
+            tested: n == 0 || n >= MIN_SUSPICIOUS_RESPONSE,
         })
     }
 }

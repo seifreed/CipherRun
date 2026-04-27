@@ -242,9 +242,7 @@ impl Args {
         if self.target.is_some()
             && self.input_file.is_none()
             && self.mx_domain.is_none()
-            && (self.network.parallel
-                || (self.network.max_parallel != DEFAULT_MAX_PARALLEL
-                    && self.network.max_parallel != 0))
+            && (self.network.parallel || self.network.max_parallel != DEFAULT_MAX_PARALLEL)
         {
             anyhow::bail!("--parallel and --max-parallel are only supported with --file or --mx");
         }

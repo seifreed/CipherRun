@@ -134,7 +134,10 @@ impl PerKeyRateLimiter {
                     index.remove(&ts);
                 }
             }
-            index.entry(now).or_default().push(key.to_string());
+            let keys = index.entry(now).or_default();
+            if !keys.iter().any(|k| k == key) {
+                keys.push(key.to_string());
+            }
         }
 
         // Try to consume a token from the rate limiter

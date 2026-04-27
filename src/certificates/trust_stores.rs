@@ -326,7 +326,10 @@ impl TrustStoreValidator {
         }
 
         // Signature validation (simplified - full validation would verify each signature)
-        let signatures_valid = chain_verified; // If we found trust anchor, assume signatures valid
+        // TODO: implement real cryptographic signature verification using issuer public keys.
+        // chain_verified only means we found a CA with a matching subject/issuer name,
+        // which is NOT the same as verifying that every signature in the chain is valid.
+        let signatures_valid = false;
 
         let trusted = chain_verified && root_in_store;
 
