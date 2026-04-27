@@ -165,7 +165,11 @@ impl CtClient {
                         if attempt == MAX_RETRIES - 1 {
                             return Err(TlsError::HttpError {
                                 status: response.status().as_u16(),
-                                details: format!("Rate limited after {} retries: {}", MAX_RETRIES, response.status()),
+                                details: format!(
+                                    "Rate limited after {} retries: {}",
+                                    MAX_RETRIES,
+                                    response.status()
+                                ),
                             });
                         }
                         // Rate limited - wait and retry
@@ -183,7 +187,11 @@ impl CtClient {
                         if attempt == MAX_RETRIES - 1 {
                             return Err(TlsError::HttpError {
                                 status: response.status().as_u16(),
-                                details: format!("Server error after {} retries: {}", MAX_RETRIES, response.status()),
+                                details: format!(
+                                    "Server error after {} retries: {}",
+                                    MAX_RETRIES,
+                                    response.status()
+                                ),
                             });
                         }
                         // Server error - retry

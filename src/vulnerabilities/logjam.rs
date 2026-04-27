@@ -222,7 +222,9 @@ impl LogjamTester {
 
             // Allow SSL 3.0 for export ciphers
             if cipher.starts_with("EXP")
-                && builder.set_min_proto_version(Some(SslVersion::SSL3)).is_err()
+                && builder
+                    .set_min_proto_version(Some(SslVersion::SSL3))
+                    .is_err()
             {
                 return Ok(LogjamProbeStatus::NotSupported);
             }

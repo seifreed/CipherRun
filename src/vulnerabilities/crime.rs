@@ -120,7 +120,8 @@ impl<'a> CrimeTester<'a> {
                 if buffer[0] == 0x16 && buffer[5] == 0x02 && n > 43 {
                     let session_id_len = buffer[43] as usize;
                     if session_id_len > 32 {
-                        return Ok(CompressionProbeStatus::Disabled);
+                        // Malformed ServerHello — cannot determine compression status
+                        return Ok(CompressionProbeStatus::Inconclusive);
                     }
                     let cipher_offset = 44 + session_id_len;
                     // Ensure cipher_offset is within the first TLS record body (5+record_len)

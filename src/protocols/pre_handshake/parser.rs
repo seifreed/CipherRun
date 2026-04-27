@@ -118,7 +118,9 @@ impl PreHandshakeScanner {
                                 ]) as usize;
                                 cert_offset += 3;
 
-                                if cert_offset + cert_length <= certs_end && cert_offset + cert_length <= data.len() {
+                                if cert_offset + cert_length <= certs_end
+                                    && cert_offset + cert_length <= data.len()
+                                {
                                     let cert_der = &data[cert_offset..cert_offset + cert_length];
                                     certificate_data = self.parse_certificate(cert_der).ok();
                                 }

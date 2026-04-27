@@ -480,10 +480,7 @@ impl InconsistencyDetector {
         let ips_evaluated = self
             .results
             .values()
-            .filter(|r| {
-                r.error.is_none()
-                    && r.scan_result.protocols.iter().any(|p| p.supported)
-            })
+            .filter(|r| r.error.is_none() && r.scan_result.protocols.iter().any(|p| p.supported))
             .count();
 
         let has_ips_without = !ips_without.is_empty()

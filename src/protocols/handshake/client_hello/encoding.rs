@@ -14,7 +14,7 @@ impl ClientHelloBuilder {
         let (length_pos, handshake_start, handshake_length_pos, hello_start) =
             Self::handshake_offsets(&mut buf);
 
-        self.write_client_hello_body(&mut buf);
+        self.write_client_hello_body(&mut buf)?;
         self.fill_lengths(
             &mut buf,
             length_pos,
@@ -32,7 +32,7 @@ impl ClientHelloBuilder {
         let (length_pos, handshake_start, handshake_length_pos, hello_start) =
             Self::handshake_offsets(&mut buf);
 
-        self.write_client_hello_body(&mut buf);
+        self.write_client_hello_body(&mut buf)?;
         self.write_extensions(&mut buf);
         self.fill_lengths(
             &mut buf,
@@ -73,7 +73,7 @@ impl ClientHelloBuilder {
         )
     }
 
-    fn write_client_hello_body(&self, buf: &mut BytesMut) {
+    fn write_client_hello_body(&self, buf: &mut BytesMut) -> crate::Result<()> {
         let client_version = if matches!(self.protocol, Protocol::TLS13) {
             VERSION_TLS_1_2
         } else {
@@ -86,13 +86,22 @@ impl ClientHelloBuilder {
             buf.put_slice(&self.session_id);
         }
 
-        buf.put_u16((self.cipher_suites.len() * 2) as u16);
+        let cipher_list_len = self
+            .cipher_suites
+            .len()
+            .checked_mul(2)
+            .and_then(|l| l.try_into().ok())
+            .ok_or(crate::TlsError::Other(
+                "cipher suite list exceeds maximum length".to_string(),
+            ))?;
+        buf.put_u16(cipher_list_len);
         for cipher in &self.cipher_suites {
             buf.put_u16(*cipher);
         }
 
         buf.put_u8(self.compression_methods.len() as u8);
         buf.put_slice(&self.compression_methods);
+        Ok(())
     }
 
     fn write_extensions(&self, buf: &mut BytesMut) {

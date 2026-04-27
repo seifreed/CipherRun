@@ -146,7 +146,7 @@ fn normalize_fingerprint_lookup(fingerprint: &str) -> String {
     fingerprint
         .chars()
         .filter(|c| *c != ':')
-        .flat_map(|c| c.to_uppercase())
+        .map(|c| c.to_ascii_uppercase())
         .collect()
 }
 

@@ -97,6 +97,7 @@ impl PerKeyRateLimiter {
         // Use entry API to update timestamp atomically with limiter access
         // This prevents race conditions where another request could access
         // the limiter between our get-or-create and timestamp update
+        let old_timestamp = self.limiters.get(key).map(|e| e.last_access);
         let limiter = self
             .limiters
             .entry(key.to_string())
@@ -120,17 +121,17 @@ impl PerKeyRateLimiter {
         // Update access index for LRU eviction (write lock, brief)
         if let Ok(mut index) = self.access_index.write() {
             // Remove previous index entry for this key to prevent unbounded growth
-            if let Some(entry) = self.limiters.get(key)
-                && entry.last_access != now
+            if let Some(ts) = old_timestamp
+                && ts != now
             {
-                let should_remove_bucket = if let Some(keys) = index.get_mut(&entry.last_access) {
+                let should_remove_bucket = if let Some(keys) = index.get_mut(&ts) {
                     keys.retain(|k| k != key);
                     keys.is_empty()
                 } else {
                     false
                 };
                 if should_remove_bucket {
-                    index.remove(&entry.last_access);
+                    index.remove(&ts);
                 }
             }
             index.entry(now).or_default().push(key.to_string());

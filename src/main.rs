@@ -30,7 +30,11 @@ async fn main() -> ExitCode {
     match run_cli().await {
         Ok(exit) => {
             let code = exit.code();
-            let u8_code = if code < 0 { 1 } else { code.clamp(0, 255) as u8 };
+            let u8_code = if code < 0 {
+                1
+            } else {
+                code.clamp(0, 255) as u8
+            };
             ExitCode::from(u8_code)
         }
         Err(err) => {
@@ -44,7 +48,9 @@ async fn run_cli() -> anyhow::Result<CommandExit> {
     // Install rustls crypto provider (required for rustls 0.23+)
     rustls::crypto::ring::default_provider()
         .install_default()
-        .map_err(|_| anyhow::anyhow!("Failed to install rustls crypto provider (already installed?)"))?;
+        .map_err(|_| {
+            anyhow::anyhow!("Failed to install rustls crypto provider (already installed?)")
+        })?;
 
     let raw_arg_count = std::env::args_os().count();
 

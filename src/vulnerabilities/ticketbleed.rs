@@ -187,16 +187,15 @@ impl TicketbleedTester {
                     ]) as usize;
 
                     let ticket_start = ticket_len_offset + 2;
-                    let ticket_end = ticket_start + ticket_len;
-                    let ticket_msg_end = hs_start + 4 + hs_len;
-                    if ticket_end <= response.len()
-                        && ticket_end <= ticket_msg_end
-                        && ticket_end <= record_end
-                        && ticket_len > 0
-                        && ticket_len <= hs_len
-                    {
-                        return Some(response[ticket_start..ticket_end].to_vec());
-                    }
+                    let ticket_end = ticket_start
+                        .checked_add(ticket_len)
+                        .filter(|&end| end <= response.len())
+                        .filter(|&end| {
+                            let ticket_msg_end = hs_start + 4 + hs_len;
+                            end <= ticket_msg_end && end <= record_end
+                        })
+                        .filter(|_| ticket_len > 0 && ticket_len <= hs_len)?;
+                    return Some(response[ticket_start..ticket_end].to_vec());
                 }
             }
             offset = record_end;

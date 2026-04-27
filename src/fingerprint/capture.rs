@@ -113,9 +113,7 @@ impl ClientHelloNetworkCapture {
         let mut data = Vec::new();
 
         // Server name list length
-        data.extend_from_slice(
-            &((hostname.len() + 3).min(u16::MAX as usize) as u16).to_be_bytes(),
-        );
+        data.extend_from_slice(&((hostname.len() + 3).min(u16::MAX as usize) as u16).to_be_bytes());
 
         // Server name type (0 = hostname)
         data.push(0);
