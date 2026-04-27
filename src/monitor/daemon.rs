@@ -143,7 +143,6 @@ impl MonitorDaemon {
             let alert_manager_clone = Arc::clone(&self.alert_manager);
             let detector_clone = Arc::clone(&self.detector);
             let semaphore_clone = Arc::clone(&self.scan_semaphore);
-            let scheduler_clone = Arc::clone(&self.scheduler);
 
             let task = tokio::spawn(async move {
                 // Acquire semaphore permit - abort scan if semaphore is closed
@@ -158,32 +157,30 @@ impl MonitorDaemon {
                     }
                 };
 
-                let result = Self::scan_domain_static(
+                Self::scan_domain_static(
                     &domain_clone,
                     inventory_clone,
                     alert_manager_clone,
                     detector_clone,
                 )
-                .await;
-
-                // Always clear in-progress and schedule next scan
-                // (on failure, this allows the domain to be retried next cycle)
-                let mut scheduler = scheduler_clone.lock().await;
-                scheduler.mark_scan_completed(&domain_clone);
-
-                result
+                .await
             });
 
-            tasks.push(task);
+            tasks.push((domain, task));
         }
 
         // Wait for all scans to complete
-        for task in tasks {
+        for (domain, task) in tasks {
             match task.await {
                 Ok(Ok(())) => {}
                 Ok(Err(e)) => tracing::error!("Scan error: {}", e),
                 Err(e) => tracing::error!("Scan task panicked: {}", e),
             }
+
+            // Always clear in-progress and schedule next scan
+            // (on failure, this allows the domain to be retried next cycle)
+            let mut scheduler = self.scheduler.lock().await;
+            scheduler.mark_scan_completed(domain);
         }
 
         Ok(())

@@ -465,7 +465,7 @@ fn parse_server_hello_extended(data: &[u8]) -> Result<ServerHelloInfo> {
             // ServerHello found
 
             // Extract version (bytes 9-10 in ServerHello)
-            if i + 11 < data.len() {
+            if i + 10 < data.len() {
                 let version = u16::from_be_bytes([data[i + 9], data[i + 10]]);
                 let mut protocol = match version {
                     0x0304 => Protocol::TLS13,
@@ -497,7 +497,7 @@ fn parse_server_hello_extended(data: &[u8]) -> Result<ServerHelloInfo> {
 
                         // Parse extensions (after cipher suite + compression method)
                         let ext_start = cipher_pos + 2 + 1; // +2 for cipher, +1 for compression
-                        if ext_start + 2 < data.len() {
+                        if ext_start + 1 < data.len() {
                             let ext_len =
                                 u16::from_be_bytes([data[ext_start], data[ext_start + 1]]) as usize;
                             let mut ext_pos = ext_start + 2;

@@ -120,10 +120,8 @@ impl Lucky13Tester {
         // (not a valid RSA-encrypted PMS). Servers abort during RSA decryption before
         // reaching CBC MAC verification, so measured timings reflect RSA error handling
         // rather than MAC padding processing. Until a proper OpenSSL-session-based
-        // injection is implemented, return inconclusive to avoid false results.
-        return Ok((false, true));
+        // injection is implemented, results may be inconclusive to avoid false positives.
 
-        #[allow(unreachable_code)]
         // Warmup phase: discard initial samples to allow cache warmup
         for _ in 0..Self::WARMUP_SAMPLES {
             let _ = self.test_mac_timing(true).await;

@@ -221,26 +221,32 @@ impl FingerprintPhase {
 
         // Load custom database if specified, otherwise use builtin
         let database = if let Some(ref db_path) = context.args.fingerprint.jarm_database {
-            JarmDatabase::from_file(db_path.to_str().ok_or_else(|| {
-                crate::error::TlsError::ConfigError {
-                    message: "Invalid JARM database path".into(),
-                }
-            })?)
-            .unwrap_or_else(|e| {
+            if let Some(path_str) = db_path.to_str() {
+                JarmDatabase::from_file(path_str).unwrap_or_else(|e| {
+                    context
+                        .results
+                        .add_human_warning(format!("Failed to load custom JARM database: {}", e));
+                    context
+                        .results
+                        .add_human_warning("Falling back to builtin database");
+                    JarmDatabase::builtin()
+                })
+            } else {
                 context
                     .results
-                    .add_human_warning(format!("Failed to load custom JARM database: {}", e));
+                    .add_human_warning("JARM database path contains invalid UTF-8 characters");
                 context
                     .results
                     .add_human_warning("Falling back to builtin database");
                 JarmDatabase::builtin()
-            })
+            }
         } else {
             JarmDatabase::builtin()
         };
 
         // Use socket timeout if specified, otherwise default to 5 seconds
-        let timeout = Duration::from_secs(context.args.connection.socket_timeout.unwrap_or(5));
+        let timeout =
+            Duration::from_secs(context.args.connection.socket_timeout.unwrap_or(5).max(1));
 
         let fingerprinter = JarmFingerprinter::with_database(timeout, database);
 
