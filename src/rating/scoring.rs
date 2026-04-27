@@ -436,6 +436,7 @@ mod tests {
             ProtocolTestResult {
                 protocol: Protocol::TLS12,
                 supported: true,
+                inconclusive: false,
                 preferred: false,
                 ciphers_count: 10,
                 handshake_time_ms: None,
@@ -447,6 +448,7 @@ mod tests {
             ProtocolTestResult {
                 protocol: Protocol::TLS13,
                 supported: true,
+                inconclusive: false,
                 preferred: true,
                 ciphers_count: 5,
                 handshake_time_ms: None,
@@ -467,6 +469,7 @@ mod tests {
         let protocols = vec![ProtocolTestResult {
             protocol: Protocol::TLS12,
             supported: true,
+            inconclusive: false,
             preferred: true,
             ciphers_count: 10,
             handshake_time_ms: None,
@@ -490,6 +493,7 @@ mod tests {
             ProtocolTestResult {
                 protocol: Protocol::TLS10,
                 supported: true,
+                inconclusive: false,
                 preferred: false,
                 ciphers_count: 20,
                 handshake_time_ms: None,
@@ -501,6 +505,7 @@ mod tests {
             ProtocolTestResult {
                 protocol: Protocol::TLS11,
                 supported: true,
+                inconclusive: false,
                 preferred: false,
                 ciphers_count: 15,
                 handshake_time_ms: None,
@@ -512,6 +517,7 @@ mod tests {
             ProtocolTestResult {
                 protocol: Protocol::TLS12,
                 supported: true,
+                inconclusive: false,
                 preferred: true,
                 ciphers_count: 10,
                 handshake_time_ms: None,
@@ -537,6 +543,7 @@ mod tests {
             ProtocolTestResult {
                 protocol: Protocol::SSLv3,
                 supported: true,
+                inconclusive: false,
                 preferred: false,
                 ciphers_count: 50,
                 handshake_time_ms: None,
@@ -548,6 +555,7 @@ mod tests {
             ProtocolTestResult {
                 protocol: Protocol::TLS12,
                 supported: true,
+                inconclusive: false,
                 preferred: true,
                 ciphers_count: 10,
                 handshake_time_ms: None,
@@ -571,6 +579,7 @@ mod tests {
             ProtocolTestResult {
                 protocol: Protocol::SSLv2,
                 supported: true,
+                inconclusive: false,
                 preferred: false,
                 ciphers_count: 20,
                 handshake_time_ms: None,
@@ -582,6 +591,7 @@ mod tests {
             ProtocolTestResult {
                 protocol: Protocol::TLS13,
                 supported: true,
+                inconclusive: false,
                 preferred: true,
                 ciphers_count: 5,
                 handshake_time_ms: None,
@@ -606,6 +616,7 @@ mod tests {
             ProtocolTestResult {
                 protocol: Protocol::SSLv2,
                 supported: true,
+                inconclusive: false,
                 preferred: false,
                 ciphers_count: 20,
                 handshake_time_ms: None,
@@ -617,6 +628,7 @@ mod tests {
             ProtocolTestResult {
                 protocol: Protocol::TLS13,
                 supported: true,
+                inconclusive: false,
                 preferred: true,
                 ciphers_count: 5,
                 handshake_time_ms: None,
@@ -661,6 +673,7 @@ mod tests {
             ProtocolTestResult {
                 protocol: Protocol::TLS12,
                 supported: true,
+                inconclusive: false,
                 preferred: false,
                 ciphers_count: 10,
                 handshake_time_ms: None,
@@ -672,6 +685,7 @@ mod tests {
             ProtocolTestResult {
                 protocol: Protocol::TLS13,
                 supported: true,
+                inconclusive: false,
                 preferred: true,
                 ciphers_count: 5,
                 handshake_time_ms: None,
@@ -721,6 +735,7 @@ mod tests {
         let protocols_without_tls13 = vec![ProtocolTestResult {
             protocol: Protocol::TLS12,
             supported: true,
+            inconclusive: false,
             preferred: true,
             ciphers_count: 10,
             handshake_time_ms: None,

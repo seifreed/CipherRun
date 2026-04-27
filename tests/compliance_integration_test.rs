@@ -55,6 +55,7 @@ fn test_pci_dss_pass_scenario() {
         ProtocolTestResult {
             protocol: Protocol::TLS12,
             supported: true,
+            inconclusive: false,
             preferred: false,
             ciphers_count: 0,
             heartbeat_enabled: None,
@@ -66,6 +67,7 @@ fn test_pci_dss_pass_scenario() {
         ProtocolTestResult {
             protocol: Protocol::TLS13,
             supported: true,
+            inconclusive: false,
             preferred: true,
             ciphers_count: 0,
             heartbeat_enabled: None,
@@ -100,6 +102,7 @@ fn test_pci_dss_fail_scenario() {
         ProtocolTestResult {
             protocol: Protocol::TLS10,
             supported: true,
+            inconclusive: false,
             preferred: false,
             ciphers_count: 0,
             heartbeat_enabled: None,
@@ -111,6 +114,7 @@ fn test_pci_dss_fail_scenario() {
         ProtocolTestResult {
             protocol: Protocol::TLS12,
             supported: true,
+            inconclusive: false,
             preferred: true,
             ciphers_count: 0,
             heartbeat_enabled: None,
@@ -150,6 +154,7 @@ fn test_mozilla_modern_tls13_only() {
         ProtocolTestResult {
             protocol: Protocol::TLS12,
             supported: true,
+            inconclusive: false,
             preferred: false,
             ciphers_count: 0,
             heartbeat_enabled: None,
@@ -161,6 +166,7 @@ fn test_mozilla_modern_tls13_only() {
         ProtocolTestResult {
             protocol: Protocol::TLS13,
             supported: true,
+            inconclusive: false,
             preferred: true,
             ciphers_count: 0,
             heartbeat_enabled: None,
@@ -190,6 +196,7 @@ fn test_mozilla_intermediate_tls12_allowed() {
         ProtocolTestResult {
             protocol: Protocol::TLS12,
             supported: true,
+            inconclusive: false,
             preferred: false,
             ciphers_count: 0,
             heartbeat_enabled: None,
@@ -201,6 +208,7 @@ fn test_mozilla_intermediate_tls12_allowed() {
         ProtocolTestResult {
             protocol: Protocol::TLS13,
             supported: true,
+            inconclusive: false,
             preferred: true,
             ciphers_count: 0,
             heartbeat_enabled: None,
@@ -235,6 +243,7 @@ fn test_report_json_serialization() {
     results.protocols = vec![ProtocolTestResult {
         protocol: Protocol::TLS12,
         supported: true,
+        inconclusive: false,
         preferred: true,
         ciphers_count: 0,
         heartbeat_enabled: None,
@@ -267,6 +276,7 @@ fn test_report_csv_generation() {
     results.protocols = vec![ProtocolTestResult {
         protocol: Protocol::TLS13,
         supported: true,
+        inconclusive: false,
         preferred: true,
         ciphers_count: 0,
         heartbeat_enabled: None,
@@ -294,6 +304,7 @@ fn test_report_html_generation() {
     results.protocols = vec![ProtocolTestResult {
         protocol: Protocol::TLS12,
         supported: true,
+        inconclusive: false,
         preferred: true,
         ciphers_count: 0,
         heartbeat_enabled: None,
@@ -322,6 +333,7 @@ fn test_report_terminal_output() {
     results.protocols = vec![ProtocolTestResult {
         protocol: Protocol::TLS12,
         supported: true,
+        inconclusive: false,
         preferred: true,
         ciphers_count: 0,
         heartbeat_enabled: None,
@@ -374,6 +386,7 @@ fn test_compliance_summary_calculation() {
         ProtocolTestResult {
             protocol: Protocol::TLS12,
             supported: true,
+            inconclusive: false,
             preferred: false,
             ciphers_count: 0,
             heartbeat_enabled: None,
@@ -385,6 +398,7 @@ fn test_compliance_summary_calculation() {
         ProtocolTestResult {
             protocol: Protocol::TLS13,
             supported: true,
+            inconclusive: false,
             preferred: true,
             ciphers_count: 0,
             heartbeat_enabled: None,

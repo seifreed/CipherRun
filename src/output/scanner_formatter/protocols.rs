@@ -18,6 +18,8 @@ impl<'a> ScannerFormatter<'a> {
     fn display_single_protocol_result(&self, result: &ProtocolTestResult) {
         let status = if result.supported {
             "Supported".green()
+        } else if result.inconclusive {
+            "Inconclusive".yellow()
         } else {
             "Not supported".red()
         };
@@ -29,7 +31,11 @@ impl<'a> ScannerFormatter<'a> {
         };
 
         let timing = format_timing(self.args.output.show_times, result.handshake_time_ms);
-        let check_colored = format_status_indicator(result.supported);
+        let check_colored = if result.inconclusive {
+            "?".yellow()
+        } else {
+            format_status_indicator(result.supported)
+        };
 
         println!(
             "  {:<15} {} {}{}{}",

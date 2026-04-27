@@ -6,6 +6,8 @@ pub struct SessionResumptionResult {
     pub session_id_reuse: SessionIdTest,
     pub session_ticket: SessionTicketTest,
     pub resumption_support: ResumptionSupport,
+    #[serde(default)]
+    pub inconclusive: bool,
     pub performance_gain: Option<f64>,
     pub details: String,
 }
@@ -18,6 +20,8 @@ pub struct SessionIdTest {
     pub reuse_successful: bool,
     pub connections_tested: usize,
     pub reuse_count: usize,
+    #[serde(default)]
+    pub inconclusive: bool,
 }
 
 /// Session ticket (RFC 5077) test
@@ -28,6 +32,8 @@ pub struct SessionTicketTest {
     pub ticket_size: Option<usize>,
     pub reuse_successful: bool,
     pub new_ticket_on_resume: bool,
+    #[serde(default)]
+    pub inconclusive: bool,
 }
 
 /// Resumption support level
@@ -37,6 +43,7 @@ pub enum ResumptionSupport {
     SessionIdOnly,
     TicketOnly,
     None,
+    Unknown,
 }
 
 impl ResumptionSupport {
@@ -46,6 +53,7 @@ impl ResumptionSupport {
             ResumptionSupport::SessionIdOnly => "Session ID Only",
             ResumptionSupport::TicketOnly => "Session Tickets Only",
             ResumptionSupport::None => "None",
+            ResumptionSupport::Unknown => "Unknown (test inconclusive)",
         }
     }
 }

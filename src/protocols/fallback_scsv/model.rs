@@ -55,6 +55,7 @@ pub struct FallbackScsvTestResult {
     pub supported: bool,
     pub accepts_downgrade: bool,
     pub vulnerable: bool,
+    pub inconclusive: bool,
     pub not_applicable: bool,
     pub details: String,
     pub has_tls13_or_higher: bool,

@@ -248,8 +248,13 @@ mod tests {
         let x25519 = db.get_by_name("x25519").expect("x25519 should exist");
         assert!(x25519.quantum_vulnerable, "X25519 is quantum-vulnerable");
 
-        let hybrid = db.get_by_name("x25519mlkem768").expect("hybrid should exist");
-        assert!(!hybrid.quantum_vulnerable, "X25519MLKEM768 is not quantum-vulnerable");
+        let hybrid = db
+            .get_by_name("x25519mlkem768")
+            .expect("hybrid should exist");
+        assert!(
+            !hybrid.quantum_vulnerable,
+            "X25519MLKEM768 is not quantum-vulnerable"
+        );
     }
 
     #[test]

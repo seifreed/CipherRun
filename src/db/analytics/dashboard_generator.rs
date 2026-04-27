@@ -6,6 +6,7 @@ use crate::db::{CipherRunDatabase, ScanRecord};
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::str::FromStr;
 use std::sync::Arc;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -215,7 +216,7 @@ impl DashboardGenerator {
                 for protocol in protocols {
                     if protocol.enabled {
                         *protocol_counts
-                            .entry(protocol.protocol_name.clone())
+                            .entry(canonical_protocol_label(&protocol.protocol_name))
                             .or_insert(0) += 1;
                     }
                 }
@@ -267,12 +268,7 @@ impl DashboardGenerator {
             if let Some(scan_id) = scan.scan_id {
                 let ciphers = self.get_ciphers(scan_id).await?;
                 for cipher in ciphers {
-                    let strength_category = match cipher.strength.as_str() {
-                        "weak" | "export" | "null" => "weak",
-                        "medium" => "medium",
-                        "strong" | "high" => "strong",
-                        _ => "unknown",
-                    };
+                    let strength_category = normalized_cipher_strength_category(&cipher.strength);
                     *strength_counts
                         .entry(strength_category.to_string())
                         .or_insert(0) += 1;
@@ -501,6 +497,21 @@ fn severity_priority(severity: &str) -> usize {
         "low" => 3,
         "info" => 4,
         _ => 5,
+    }
+}
+
+fn canonical_protocol_label(protocol: &str) -> String {
+    crate::protocols::Protocol::from_str(protocol)
+        .map(|protocol| protocol.name().to_string())
+        .unwrap_or_else(|_| protocol.to_string())
+}
+
+fn normalized_cipher_strength_category(strength: &str) -> &'static str {
+    match strength.to_ascii_lowercase().as_str() {
+        "weak" | "low" | "export" | "null" => "weak",
+        "medium" => "medium",
+        "strong" | "high" => "strong",
+        _ => "unknown",
     }
 }
 

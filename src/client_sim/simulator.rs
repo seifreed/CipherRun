@@ -6,6 +6,7 @@ use crate::protocols::Protocol;
 use crate::utils::network::{Target, connect_with_timeout};
 use rustls::{ClientConfig, RootCertStore};
 use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 use std::time::Duration;
 use tokio::time::timeout;
 
@@ -160,7 +161,17 @@ impl ClientSimulator {
             Some(rustls::ProtocolVersion::TLSv1_2) => Protocol::TLS12,
             Some(rustls::ProtocolVersion::TLSv1_1) => Protocol::TLS11,
             Some(rustls::ProtocolVersion::TLSv1_0) => Protocol::TLS10,
-            _ => Protocol::TLS12, // Default
+            Some(other) => {
+                return Err(crate::TlsError::InvalidHandshake {
+                    details: format!("Unsupported negotiated protocol version: {other:?}"),
+                });
+            }
+            None => {
+                return Err(crate::TlsError::InvalidHandshake {
+                    details: "TLS handshake completed without negotiated protocol version"
+                        .to_string(),
+                });
+            }
         };
 
         // Extract negotiated cipher suite
@@ -303,16 +314,25 @@ impl ClientSimulator {
         root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
 
         // Parse TLS version preference
-        let versions = match client.highest_protocol.as_deref() {
-            Some("tls1_3") => vec![&rustls::version::TLS13, &rustls::version::TLS12],
-            Some("tls1_2") => vec![&rustls::version::TLS12],
-            Some("tls1_1") | Some("tls1") | Some("tls1_0") => {
-                // rustls does not support TLS 1.0/1.1; simulate as TLS 1.2
-                tracing::warn!(
-                    "Client {} only supports TLS 1.0/1.1; simulating as TLS 1.2",
-                    client.name
-                );
-                vec![&rustls::version::TLS12]
+        let versions = match Self::parse_highest_protocol(client.highest_protocol.as_deref())? {
+            Some(Protocol::TLS13) => vec![&rustls::version::TLS13, &rustls::version::TLS12],
+            Some(Protocol::TLS12) => vec![&rustls::version::TLS12],
+            Some(Protocol::TLS11 | Protocol::TLS10 | Protocol::SSLv3 | Protocol::SSLv2) => {
+                return Err(crate::TlsError::InvalidInput {
+                    message: format!(
+                        "Client profile '{}' uses {}, which is not supported by rustls client simulation",
+                        client.short_id,
+                        client.highest_protocol.as_deref().unwrap_or("unknown")
+                    ),
+                });
+            }
+            Some(Protocol::QUIC) => {
+                return Err(crate::TlsError::InvalidInput {
+                    message: format!(
+                        "Client profile '{}' uses QUIC, which is not supported by rustls TLS simulation",
+                        client.short_id
+                    ),
+                });
             }
             _ => vec![&rustls::version::TLS13, &rustls::version::TLS12], // Default
         };
@@ -322,6 +342,39 @@ impl ClientSimulator {
             .with_no_client_auth();
 
         Ok(config)
+    }
+
+    fn parse_highest_protocol(value: Option<&str>) -> Result<Option<Protocol>> {
+        let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else {
+            return Ok(None);
+        };
+
+        if let Some(hex) = value
+            .strip_prefix("0x")
+            .or_else(|| value.strip_prefix("0X"))
+        {
+            let raw = u16::from_str_radix(hex, 16).map_err(|e| crate::TlsError::InvalidInput {
+                message: format!("Invalid TLS protocol version '{value}': {e}"),
+            })?;
+            let protocol = match raw {
+                0x0002 => Protocol::SSLv2,
+                0x0300 => Protocol::SSLv3,
+                0x0301 => Protocol::TLS10,
+                0x0302 => Protocol::TLS11,
+                0x0303 => Protocol::TLS12,
+                0x0304 => Protocol::TLS13,
+                _ => {
+                    return Err(crate::TlsError::InvalidInput {
+                        message: format!("Unknown TLS protocol version '{value}'"),
+                    });
+                }
+            };
+            return Ok(Some(protocol));
+        }
+
+        Protocol::from_str(value)
+            .map(Some)
+            .map_err(|e| crate::TlsError::InvalidInput { message: e })
     }
 
     /// Simulate popular clients (subset)
@@ -380,6 +433,41 @@ impl ClientSimulationResult {
 mod tests {
     use super::*;
     use std::net::{IpAddr, Ipv4Addr};
+
+    fn sample_profile(highest_protocol: Option<&str>) -> ClientProfile {
+        ClientProfile {
+            name: "Test Client".to_string(),
+            short_id: "test".to_string(),
+            cipher_string: None,
+            tls13_ciphers: None,
+            uses_sni: true,
+            warning: None,
+            handshake_bytes: None,
+            protocol_flags: vec![],
+            tls_version: None,
+            lowest_protocol: None,
+            highest_protocol: highest_protocol.map(str::to_string),
+            services: vec![],
+            min_dh_bits: None,
+            max_dh_bits: None,
+            min_rsa_bits: None,
+            max_rsa_bits: None,
+            min_ecdsa_bits: None,
+            curves: vec!["x25519".to_string()],
+            requires_sha2: false,
+            current: true,
+        }
+    }
+
+    fn sample_simulator() -> ClientSimulator {
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            443,
+            vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
+        )
+        .unwrap();
+        ClientSimulator::new(target)
+    }
 
     #[test]
     fn test_client_simulation_result_summary() {
@@ -486,36 +574,32 @@ mod tests {
     #[test]
     fn test_build_client_config_success() {
         let _ = rustls::crypto::ring::default_provider().install_default();
-        let target = Target::with_ips(
-            "localhost".to_string(),
-            443,
-            vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
-        )
-        .unwrap();
-        let simulator = ClientSimulator::new(target);
-        let profile = ClientProfile {
-            name: "Test Client".to_string(),
-            short_id: "test".to_string(),
-            cipher_string: None,
-            tls13_ciphers: None,
-            uses_sni: true,
-            warning: None,
-            handshake_bytes: None,
-            protocol_flags: vec![],
-            tls_version: None,
-            lowest_protocol: None,
-            highest_protocol: Some("tls1_3".to_string()),
-            services: vec![],
-            min_dh_bits: None,
-            max_dh_bits: None,
-            min_rsa_bits: None,
-            max_rsa_bits: None,
-            min_ecdsa_bits: None,
-            curves: vec!["x25519".to_string()],
-            requires_sha2: false,
-            current: true,
-        };
+        let simulator = sample_simulator();
+        let profile = sample_profile(Some("tls1_3"));
         let config = simulator.build_client_config(&profile).unwrap();
         assert!(config.enable_sni);
+    }
+
+    #[test]
+    fn test_build_client_config_accepts_hex_protocol_versions() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let simulator = sample_simulator();
+        let profile = sample_profile(Some("0x0304"));
+
+        let config = simulator.build_client_config(&profile).unwrap();
+
+        assert!(config.enable_sni);
+    }
+
+    #[test]
+    fn test_build_client_config_rejects_rustls_unsupported_tls10() {
+        let simulator = sample_simulator();
+        let profile = sample_profile(Some("0x0301"));
+
+        let err = simulator
+            .build_client_config(&profile)
+            .expect_err("TLS 1.0 profile should not be simulated as TLS 1.2");
+
+        assert!(err.to_string().contains("not supported by rustls"));
     }
 }

@@ -19,6 +19,16 @@ pub struct TicketbleedTester {
     target: Target,
 }
 
+/// Internal verdict from `test_session_ticket_leak` that separates conclusive
+/// results from probe failures. V1 fix: a connection/timeout failure must be
+/// reported as inconclusive rather than "not vulnerable".
+#[derive(Debug)]
+enum TicketbleedProbeOutcome {
+    Vulnerable,
+    NotVulnerable(&'static str),
+    Inconclusive(&'static str),
+}
+
 impl TicketbleedTester {
     pub fn new(target: Target) -> Self {
         Self { target }
@@ -26,22 +36,35 @@ impl TicketbleedTester {
 
     /// Test for Ticketbleed vulnerability
     pub async fn test(&self) -> Result<TicketbleedTestResult> {
-        let vulnerable = self.test_session_ticket_leak().await?;
+        let outcome = self.test_session_ticket_leak().await?;
 
-        let details = if vulnerable {
-            "Vulnerable to Ticketbleed (CVE-2016-9244) - Server leaks memory in session ticket responses".to_string()
-        } else {
-            "Not vulnerable - No memory leak detected in session ticket handling".to_string()
+        let (vulnerable, inconclusive, details) = match outcome {
+            TicketbleedProbeOutcome::Vulnerable => (
+                true,
+                false,
+                "Vulnerable to Ticketbleed (CVE-2016-9244) - Server leaks memory in session ticket responses".to_string(),
+            ),
+            TicketbleedProbeOutcome::NotVulnerable(reason) => (
+                false,
+                false,
+                format!("Not vulnerable - {}", reason),
+            ),
+            TicketbleedProbeOutcome::Inconclusive(reason) => (
+                false,
+                true,
+                format!("Inconclusive - {}", reason),
+            ),
         };
 
         Ok(TicketbleedTestResult {
             vulnerable,
+            inconclusive,
             details,
         })
     }
 
     /// Test for session ticket memory leak
-    async fn test_session_ticket_leak(&self) -> Result<bool> {
+    async fn test_session_ticket_leak(&self) -> Result<TicketbleedProbeOutcome> {
         let addr = self
             .target
             .socket_addrs()
@@ -51,42 +74,50 @@ impl TicketbleedTester {
 
         match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None).await {
             Ok(mut stream) => {
-                // Send ClientHello with SessionTicket extension
                 let client_hello = self.build_client_hello_with_session_ticket();
                 stream.write_all(&client_hello).await?;
 
-                // Read ServerHello and NewSessionTicket
                 let mut buffer = vec![0u8; 16384];
                 match timeout(Duration::from_secs(3), stream.read(&mut buffer)).await {
                     Ok(Ok(n)) if n > 0 => {
-                        // Parse response for NewSessionTicket message
                         let has_new_ticket = self.parse_new_session_ticket(&buffer[..n])?;
 
                         if has_new_ticket {
-                            // Send second ClientHello with the received ticket
                             let client_hello2 =
                                 self.build_client_hello_with_received_ticket(&buffer[..n]);
                             stream.write_all(&client_hello2).await?;
 
-                            // Read response
                             let mut response = vec![0u8; 16384];
                             match timeout(Duration::from_secs(3), stream.read(&mut response)).await
                             {
                                 Ok(Ok(m)) if m > 0 => {
-                                    // Check for anomalous ticket lengths (31 extra bytes)
                                     let leaked = self.detect_memory_leak(&response[..m])?;
-                                    Ok(leaked)
+                                    if leaked {
+                                        Ok(TicketbleedProbeOutcome::Vulnerable)
+                                    } else {
+                                        Ok(TicketbleedProbeOutcome::NotVulnerable(
+                                            "No memory leak detected in session ticket handling",
+                                        ))
+                                    }
                                 }
-                                _ => Ok(false),
+                                _ => Ok(TicketbleedProbeOutcome::Inconclusive(
+                                    "No response to follow-up ClientHello with session ticket",
+                                )),
                             }
                         } else {
-                            Ok(false)
+                            Ok(TicketbleedProbeOutcome::NotVulnerable(
+                                "Server did not issue a session ticket; vulnerability not applicable",
+                            ))
                         }
                     }
-                    _ => Ok(false),
+                    _ => Ok(TicketbleedProbeOutcome::Inconclusive(
+                        "Timeout or empty read while waiting for ServerHello/NewSessionTicket",
+                    )),
                 }
             }
-            _ => Ok(false),
+            _ => Ok(TicketbleedProbeOutcome::Inconclusive(
+                "Failed to establish TCP connection to target",
+            )),
         }
     }
 
@@ -156,10 +187,15 @@ impl TicketbleedTester {
                     ]) as usize;
 
                     let ticket_start = ticket_len_offset + 2;
-                    let ticket_end = ticket_start + ticket_len;
-                    if ticket_end <= response.len() && ticket_len > 0 && ticket_len <= hs_len {
-                        return Some(response[ticket_start..ticket_end].to_vec());
-                    }
+                    let ticket_end = ticket_start
+                        .checked_add(ticket_len)
+                        .filter(|&end| end <= response.len())
+                        .filter(|&end| {
+                            let ticket_msg_end = hs_start + 4 + hs_len;
+                            end <= ticket_msg_end && end <= record_end
+                        })
+                        .filter(|_| ticket_len > 0 && ticket_len <= hs_len)?;
+                    return Some(response[ticket_start..ticket_end].to_vec());
                 }
             }
             offset = record_end;
@@ -203,21 +239,43 @@ impl TicketbleedTester {
     /// 2. Low-entropy regions (repetitive patterns)
     /// 3. Valid ticket structure anomalies
     fn detect_memory_leak(&self, response: &[u8]) -> Result<bool> {
-        // Look for NewSessionTicket with anomalous length
+        // Look for NewSessionTicket with anomalous length.
         // TLS record layout from offset i:
         //   i+0: content type (0x16), i+1-2: version, i+3-4: record len
         //   i+5: hs type (0x04), i+6-8: 3-byte hs len, i+9-12: lifetime hint
         //   i+13-14: ticket_len (u16), i+15+: ticket data
-        // Loop bound ensures i+15 is always accessible.
+        //
+        // V6 fix: validate the TLS record boundary (`record_len` at i+3..i+5)
+        // before trusting bytes at fixed offsets. Previously a coincidental
+        // `0x16 ... 0x04` pair in application-data would be parsed as a
+        // NewSessionTicket with ticket_len read from arbitrary memory.
         for i in 0..response.len().saturating_sub(15) {
-            if response[i] == 0x16 && i + 15 < response.len() && response[i + 5] == 0x04 {
-                // NewSessionTicket found (handshake type 0x04)
+            if response[i] != 0x16 {
+                continue;
+            }
+            if i + 5 > response.len() {
+                break;
+            }
+            let record_len = u16::from_be_bytes([response[i + 3], response[i + 4]]) as usize;
+            let record_end = i + 5 + record_len;
+            if record_end > response.len() || record_len < 10 {
+                // Truncated or too-short record — can't host a NewSessionTicket.
+                continue;
+            }
+            if response[i + 5] != 0x04 {
+                // Handshake type at the expected offset is not NewSessionTicket.
+                continue;
+            }
+            // Now we know we're inside a well-formed TLS record that claims to
+            // contain a NewSessionTicket handshake message. Parse its length.
 
+            {
                 let ticket_len = u16::from_be_bytes([response[i + 13], response[i + 14]]) as usize;
 
                 // F5 BIG-IP vulnerable versions leak 31 bytes
-                // But we should look for any anomalous ticket data
-                if ticket_len > 0 && i + 15 + ticket_len <= response.len() {
+                // But we should look for any anomalous ticket data. The ticket
+                // data must also fit within the declared TLS record boundary.
+                if ticket_len > 0 && i + 15 + ticket_len <= record_end {
                     // Ticketbleed leaks at least 31 bytes of uninitialized memory.
                     // Tickets shorter than 32 bytes are too small for reliable heuristic analysis.
                     if ticket_len < 32 {
@@ -319,6 +377,10 @@ impl TicketbleedTester {
 #[derive(Debug, Clone)]
 pub struct TicketbleedTestResult {
     pub vulnerable: bool,
+    /// True when the probe could not reach a conclusive verdict (e.g., TCP
+    /// connect failed, handshake timed out, follow-up ClientHello produced no
+    /// response). Callers must not treat inconclusive results as "clean".
+    pub inconclusive: bool,
     pub details: String,
 }
 
@@ -330,9 +392,11 @@ mod tests {
     fn test_ticketbleed_result() {
         let result = TicketbleedTestResult {
             vulnerable: false,
+            inconclusive: false,
             details: "Test".to_string(),
         };
         assert!(!result.vulnerable);
+        assert!(!result.inconclusive);
     }
 
     #[test]
@@ -402,22 +466,32 @@ mod tests {
         //
         // Ticketbleed leaks at least 31 bytes, so tickets shorter than 32 bytes
         // are not analysed (too small for meaningful heuristics). Use 40-byte ticket.
+        //
+        // V6 regression: the record_len header (bytes 3..5) must describe a real
+        // TLS record that contains the handshake message. Handshake payload =
+        // hs_type(1) + hs_len(3) + lifetime(4) + ticket_len(2) + ticket(40) = 50.
         const TICKET_LEN: u8 = 40;
-        let mut response = vec![0u8; 15 + TICKET_LEN as usize];
+        const RECORD_PAYLOAD: u16 = 1 + 3 + 4 + 2 + TICKET_LEN as u16;
+        let mut response = vec![0u8; 5 + RECORD_PAYLOAD as usize];
         response[0] = 0x16;
-        response[5] = 0x04;
+        response[3] = (RECORD_PAYLOAD >> 8) as u8;
+        response[4] = (RECORD_PAYLOAD & 0xff) as u8;
+        response[5] = 0x04; // NewSessionTicket
+        // bytes 6..9 are the 3-byte handshake length (we leave zero; not used)
         response[13] = 0x00;
         response[14] = TICKET_LEN; // ticket_len = 40
         // High null-byte ratio (> 25%) in ticket data → suspicious (memory leak pattern)
         for b in &mut response[15..15 + TICKET_LEN as usize] {
-            *b = 0x00; // all nulls → 100% null ratio
+            *b = 0x00;
         }
         response[15] = 0xaa; // one non-null to avoid divide-by-zero edge case
 
         assert!(tester.detect_memory_leak(&response).unwrap());
 
-        let mut clean = vec![0u8; 15 + TICKET_LEN as usize];
+        let mut clean = vec![0u8; 5 + RECORD_PAYLOAD as usize];
         clean[0] = 0x16;
+        clean[3] = (RECORD_PAYLOAD >> 8) as u8;
+        clean[4] = (RECORD_PAYLOAD & 0xff) as u8;
         clean[5] = 0x04;
         clean[13] = 0x00;
         clean[14] = TICKET_LEN;
@@ -427,6 +501,33 @@ mod tests {
         }
 
         assert!(!tester.detect_memory_leak(&clean).unwrap());
+    }
+
+    #[test]
+    fn test_detect_memory_leak_ignores_spurious_match_without_record_len() {
+        // V6 regression: a buffer that contains 0x16 followed by 0x04 at offset
+        // +5 but without a valid TLS record_len must NOT be misidentified as a
+        // NewSessionTicket. Previously the parser trusted the byte positions
+        // unconditionally and would read ticket_len from arbitrary memory.
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["93.184.216.34".parse().unwrap()],
+        )
+        .unwrap();
+        let tester = TicketbleedTester::new(target);
+
+        let mut spurious = vec![0u8; 64];
+        spurious[0] = 0x16;
+        spurious[3] = 0x00; // record_len = 0 → invalid record
+        spurious[4] = 0x00;
+        spurious[5] = 0x04; // coincidental 0x04 at the NewSessionTicket offset
+        // Fill the rest with nulls so the old heuristic would have flagged as
+        // "memory leak" via null_ratio.
+        assert!(
+            !tester.detect_memory_leak(&spurious).unwrap(),
+            "record_len=0 must be rejected as malformed, not parsed"
+        );
     }
 
     #[test]
@@ -446,9 +547,38 @@ mod tests {
     fn test_ticketbleed_result_details_text() {
         let result = TicketbleedTestResult {
             vulnerable: true,
+            inconclusive: false,
             details: "Vulnerable to Ticketbleed".to_string(),
         };
         assert!(result.vulnerable);
         assert!(result.details.contains("Ticketbleed"));
+    }
+
+    #[test]
+    fn test_ticketbleed_connection_refused_is_inconclusive() {
+        // V1 regression: connection failures must yield inconclusive=true, not a
+        // clean "not vulnerable" verdict. We exercise the branch by targeting a
+        // port guaranteed to be closed.
+        use std::net::{IpAddr, Ipv4Addr};
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            1, // reserved; refuses connection
+            vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
+        )
+        .expect("target should build");
+
+        let rt = tokio::runtime::Runtime::new().expect("runtime");
+        let result = rt.block_on(async {
+            TicketbleedTester::new(target)
+                .test()
+                .await
+                .expect("probe should not error")
+        });
+        assert!(!result.vulnerable);
+        assert!(
+            result.inconclusive,
+            "connection-level failure must be reported as inconclusive; got details={}",
+            result.details
+        );
     }
 }

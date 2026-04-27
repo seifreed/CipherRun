@@ -145,7 +145,7 @@ impl ApiStats {
         let now = Instant::now();
         self.requests_last_hour
             .iter()
-            .filter(|(t, _)| now.duration_since(*t).as_secs() <= 3600)
+            .filter(|(t, _)| *t <= now && now.duration_since(*t).as_secs() <= 3600)
             .map(|(_, c)| c)
             .sum()
     }

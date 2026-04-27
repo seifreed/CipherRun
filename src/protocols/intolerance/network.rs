@@ -29,7 +29,7 @@ impl IntoleranceTester {
                 Ok(response)
             }
             _ => Err(TlsError::Timeout {
-                duration: self.read_timeout,
+                duration: Some(self.read_timeout),
             }),
         }
     }
@@ -46,16 +46,7 @@ impl IntoleranceTester {
                     Ok(None)
                 }
             }
-            Err(e) => {
-                // Log network errors for debugging - these may indicate connectivity issues
-                // or server-side problems, but should not fail the test
-                tracing::debug!(
-                    "Failed to send client_hello for intolerance test ({}): {}",
-                    self.target.hostname,
-                    e
-                );
-                Ok(None)
-            }
+            Err(e) => Err(e),
         }
     }
 
@@ -72,8 +63,8 @@ impl IntoleranceTester {
         let stream =
             crate::utils::network::connect_with_timeout(addr, self.connect_timeout, None).await?;
 
-        let std_stream = stream.into_std()?;
-        std_stream.set_nonblocking(false)?;
+        let std_stream =
+            crate::utils::network::into_blocking_std_stream(stream, self.read_timeout)?;
 
         let mut builder = SslConnector::builder(SslMethod::tls())?;
         builder.set_cipher_list("DHE:EDH:!aNULL:!eNULL")?;

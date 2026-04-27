@@ -1,6 +1,7 @@
 use super::{DhStrength, KeyExchangeParams};
 
 pub(super) fn estimate_dh_size(cipher_name: &str) -> u16 {
+    let cipher_name = cipher_name.to_ascii_uppercase();
     if cipher_name.contains("DHE-RSA-AES256") || cipher_name.contains("DHE-RSA-AES128") {
         2048
     } else {
@@ -18,6 +19,7 @@ pub(super) fn classify_dh_strength(size_bits: u16) -> DhStrength {
 }
 
 pub(super) fn analyze_cipher_kex(cipher_name: &str) -> (String, bool, KeyExchangeParams) {
+    let cipher_name = cipher_name.to_ascii_uppercase();
     if cipher_name.contains("ECDHE") {
         let curve = if cipher_name.contains("256") {
             "secp256r1".to_string()

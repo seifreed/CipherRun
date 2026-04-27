@@ -286,7 +286,8 @@ impl Scanner {
                 .connection
                 .connect_timeout
                 .or(self.request.connection.socket_timeout)
-                .unwrap_or(10),
+                .unwrap_or(10)
+                .max(1),
         )
     }
 
@@ -485,6 +486,7 @@ mod tests {
         results.protocols.push(ProtocolTestResult {
             protocol: Protocol::TLS12,
             supported: true,
+            inconclusive: false,
             preferred: true,
             ciphers_count: 1,
             handshake_time_ms: Some(5),

@@ -309,7 +309,9 @@ impl ScanResults {
 
     /// Get PQC readiness assessment (convenience accessor)
     pub fn pqc_readiness(&self) -> Option<&crate::pqc::PqcReadinessAssessment> {
-        self.advanced.as_ref().and_then(|a| a.pqc_readiness.as_ref())
+        self.advanced
+            .as_ref()
+            .and_then(|a| a.pqc_readiness.as_ref())
     }
 
     /// Record a human-facing warning for terminal presentation.

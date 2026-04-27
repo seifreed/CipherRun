@@ -3,7 +3,7 @@
 // Memory-efficient deduplication for certificate streaming
 
 use bloomfilter::Bloom;
-use sha2::{Digest, Sha256};
+use ring::digest::{SHA256, digest};
 
 /// Deduplicator using Bloom filter for memory-efficient duplicate detection
 pub struct Deduplicator {
@@ -52,9 +52,10 @@ impl Deduplicator {
 
     /// Hash a certificate to create a bloom filter key
     fn hash_certificate(&self, cert_der: &[u8]) -> [u8; 32] {
-        let mut hasher = Sha256::new();
-        hasher.update(cert_der);
-        hasher.finalize().into()
+        let digest = digest(&SHA256, cert_der);
+        let mut hash = [0u8; 32];
+        hash.copy_from_slice(digest.as_ref());
+        hash
     }
 
     /// Get total certificates seen

@@ -4,6 +4,7 @@
 use crate::Result;
 use crate::data::client_data::ClientProfile;
 use crate::protocols::Protocol;
+use std::str::FromStr;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -218,11 +219,13 @@ impl ClientHelloBuilder {
 
     /// Build from client profile
     pub fn from_profile(profile: &ClientProfile, hostname: &str) -> Self {
-        let version = match profile.highest_protocol.as_deref() {
-            Some("tls1_3") => 0x0303, // TLS 1.2 in record, 1.3 in extension
-            Some("tls1_2") => 0x0303,
-            Some("tls1_1") => 0x0302,
-            Some("tls1") | Some("tls1_0") => 0x0301,
+        let highest_protocol = parse_profile_protocol(profile.highest_protocol.as_deref());
+        let version = match highest_protocol {
+            Some(Protocol::TLS13) => 0x0303, // TLS 1.2 in record, 1.3 in extension
+            Some(Protocol::TLS12) => 0x0303,
+            Some(Protocol::TLS11) => 0x0302,
+            Some(Protocol::TLS10) => 0x0301,
+            Some(Protocol::SSLv3) => 0x0300,
             _ => 0x0303, // Default to TLS 1.2
         };
 
@@ -247,12 +250,9 @@ impl ClientHelloBuilder {
 
         // Add common extensions
         builder = builder
-            .extension(TlsExtension::server_name(hostname))
-            .extension(TlsExtension::supported_groups(&[
-                0x001d, // x25519
-                0x0017, // secp256r1
-                0x0018, // secp384r1
-            ]))
+            .extension(TlsExtension::supported_groups(&profile_supported_groups(
+                profile,
+            )))
             .extension(TlsExtension::ec_point_formats())
             .extension(TlsExtension::signature_algorithms(&[
                 (0x04, 0x03), // ecdsa_secp256r1_sha256
@@ -269,11 +269,15 @@ impl ClientHelloBuilder {
             .extension(TlsExtension::extended_master_secret())
             .extension(TlsExtension::session_ticket());
 
+        if profile.uses_sni {
+            builder = builder.extension(TlsExtension::server_name(hostname));
+        }
+
         // Add ALPN with common protocols
         builder = builder.extension(TlsExtension::alpn(&["h2", "http/1.1"]));
 
         // Add supported_versions for TLS 1.3
-        if matches!(profile.highest_protocol.as_deref(), Some("tls1_3")) {
+        if matches!(highest_protocol, Some(Protocol::TLS13)) {
             builder = builder.extension(TlsExtension::supported_versions(&[
                 0x0304, // TLS 1.3
                 0x0303, // TLS 1.2
@@ -361,6 +365,61 @@ impl ClientHelloBuilder {
     }
 }
 
+fn parse_profile_protocol(value: Option<&str>) -> Option<Protocol> {
+    let value = value?.trim();
+    if value.is_empty() {
+        return None;
+    }
+
+    if let Some(hex) = value
+        .strip_prefix("0x")
+        .or_else(|| value.strip_prefix("0X"))
+        && let Ok(raw) = u16::from_str_radix(hex, 16)
+    {
+        return match raw {
+            0x0300 => Some(Protocol::SSLv3),
+            0x0301 => Some(Protocol::TLS10),
+            0x0302 => Some(Protocol::TLS11),
+            0x0303 => Some(Protocol::TLS12),
+            0x0304 => Some(Protocol::TLS13),
+            _ => None,
+        };
+    }
+
+    Protocol::from_str(value).ok()
+}
+
+fn profile_supported_groups(profile: &ClientProfile) -> Vec<u16> {
+    let groups: Vec<u16> = profile
+        .curves
+        .iter()
+        .filter_map(|curve| named_group_id(curve))
+        .collect();
+
+    if groups.is_empty() {
+        vec![0x001d, 0x0017, 0x0018]
+    } else {
+        groups
+    }
+}
+
+fn named_group_id(curve: &str) -> Option<u16> {
+    match curve.trim().to_ascii_lowercase().as_str() {
+        "x25519" => Some(0x001d),
+        "x448" => Some(0x001e),
+        "secp256r1" | "prime256v1" | "p-256" => Some(0x0017),
+        "secp384r1" | "p-384" => Some(0x0018),
+        "secp521r1" | "p-521" => Some(0x0019),
+        "secp256k1" => Some(0x0016),
+        "ffdhe2048" => Some(0x0100),
+        "ffdhe3072" => Some(0x0101),
+        "ffdhe4096" => Some(0x0102),
+        "ffdhe6144" => Some(0x0103),
+        "ffdhe8192" => Some(0x0104),
+        _ => None,
+    }
+}
+
 /// Extended handshake information from ServerHello
 #[derive(Debug, Clone)]
 pub struct ServerHelloInfo {
@@ -414,7 +473,13 @@ fn parse_server_hello_extended(data: &[u8]) -> Result<ServerHelloInfo> {
                     0x0302 => Protocol::TLS11,
                     0x0301 => Protocol::TLS10,
                     0x0300 => Protocol::SSLv3,
-                    _ => Protocol::TLS12,
+                    _ => {
+                        return Err(crate::error::TlsError::InvalidHandshake {
+                            details: format!(
+                                "Unknown ServerHello protocol version 0x{version:04x}"
+                            ),
+                        });
+                    }
                 };
 
                 // Extract cipher suite (after 32-byte random + session ID)
@@ -482,7 +547,15 @@ fn parse_server_hello_extended(data: &[u8]) -> Result<ServerHelloInfo> {
                                             protocol = match selected_version {
                                                 0x0304 => Protocol::TLS13,
                                                 0x0303 => Protocol::TLS12,
-                                                _ => protocol,
+                                                _ => {
+                                                    return Err(
+                                                        crate::error::TlsError::InvalidHandshake {
+                                                            details: format!(
+                                                                "Unknown ServerHello supported_version 0x{selected_version:04x}"
+                                                            ),
+                                                        },
+                                                    );
+                                                }
                                             };
                                         }
                                     }
@@ -630,6 +703,80 @@ mod tests {
         record
     }
 
+    fn parse_extension_types(client_hello: &[u8]) -> Vec<u16> {
+        let session_len = client_hello[43] as usize;
+        let cipher_len_pos = 44 + session_len;
+        let cipher_len = u16::from_be_bytes([
+            client_hello[cipher_len_pos],
+            client_hello[cipher_len_pos + 1],
+        ]) as usize;
+        let compression_len_pos = cipher_len_pos + 2 + cipher_len;
+        let compression_len = client_hello[compression_len_pos] as usize;
+        let extensions_len_pos = compression_len_pos + 1 + compression_len;
+        let extensions_len = u16::from_be_bytes([
+            client_hello[extensions_len_pos],
+            client_hello[extensions_len_pos + 1],
+        ]) as usize;
+        let mut pos = extensions_len_pos + 2;
+        let end = pos + extensions_len;
+        let mut extension_types = Vec::new();
+
+        while pos + 4 <= end {
+            let extension_type = u16::from_be_bytes([client_hello[pos], client_hello[pos + 1]]);
+            let extension_len =
+                u16::from_be_bytes([client_hello[pos + 2], client_hello[pos + 3]]) as usize;
+            extension_types.push(extension_type);
+            pos += 4 + extension_len;
+        }
+
+        extension_types
+    }
+
+    fn supported_groups_from_client_hello(client_hello: &[u8]) -> Vec<u16> {
+        let session_len = client_hello[43] as usize;
+        let cipher_len_pos = 44 + session_len;
+        let cipher_len = u16::from_be_bytes([
+            client_hello[cipher_len_pos],
+            client_hello[cipher_len_pos + 1],
+        ]) as usize;
+        let compression_len_pos = cipher_len_pos + 2 + cipher_len;
+        let compression_len = client_hello[compression_len_pos] as usize;
+        let extensions_len_pos = compression_len_pos + 1 + compression_len;
+        let extensions_len = u16::from_be_bytes([
+            client_hello[extensions_len_pos],
+            client_hello[extensions_len_pos + 1],
+        ]) as usize;
+        let mut pos = extensions_len_pos + 2;
+        let end = pos + extensions_len;
+
+        while pos + 4 <= end {
+            let extension_type = u16::from_be_bytes([client_hello[pos], client_hello[pos + 1]]);
+            let extension_len =
+                u16::from_be_bytes([client_hello[pos + 2], client_hello[pos + 3]]) as usize;
+            let data_start = pos + 4;
+            let data_end = data_start + extension_len;
+            if extension_type == 0x000a && data_start + 2 <= data_end {
+                let list_len =
+                    u16::from_be_bytes([client_hello[data_start], client_hello[data_start + 1]])
+                        as usize;
+                let mut group_pos = data_start + 2;
+                let group_end = (group_pos + list_len).min(data_end);
+                let mut groups = Vec::new();
+                while group_pos + 2 <= group_end {
+                    groups.push(u16::from_be_bytes([
+                        client_hello[group_pos],
+                        client_hello[group_pos + 1],
+                    ]));
+                    group_pos += 2;
+                }
+                return groups;
+            }
+            pos = data_end;
+        }
+
+        Vec::new()
+    }
+
     #[test]
     fn test_sni_extension() {
         let ext = TlsExtension::server_name("example.com");
@@ -688,6 +835,27 @@ mod tests {
     }
 
     #[test]
+    fn test_client_hello_from_profile_omits_sni_when_profile_disables_it() {
+        let mut profile = sample_profile(Some("tls1_2"));
+        profile.uses_sni = false;
+
+        let hello = ClientHelloBuilder::from_profile(&profile, "example.com").build();
+        let extension_types = parse_extension_types(&hello);
+
+        assert!(!extension_types.contains(&0x0000));
+    }
+
+    #[test]
+    fn test_client_hello_from_profile_uses_profile_curves() {
+        let mut profile = sample_profile(Some("tls1_2"));
+        profile.curves = vec!["secp256r1".to_string(), "secp384r1".to_string()];
+
+        let hello = ClientHelloBuilder::from_profile(&profile, "example.com").build();
+
+        assert_eq!(supported_groups_from_client_hello(&hello), [0x0017, 0x0018]);
+    }
+
+    #[test]
     fn test_parse_server_hello_extended_with_alpn() {
         let data = build_server_hello(0x1301, Some("h2"), Some(0x0304), Some(0x001d));
         let info = parse_server_hello_extended(&data).expect("test assertion should succeed");
@@ -696,6 +864,20 @@ mod tests {
         assert_eq!(info.cipher, "TLS_AES_128_GCM_SHA256");
         assert_eq!(info.alpn.as_deref(), Some("h2"));
         assert_eq!(info.key_exchange_group, Some(0x001d));
+    }
+
+    #[test]
+    fn test_parse_server_hello_rejects_unknown_legacy_version() {
+        let mut data = build_server_hello(0x1301, None, None, None);
+        data[9] = 0x7f;
+        data[10] = 0x17;
+
+        let err = parse_server_hello_extended(&data).expect_err("unknown version should fail");
+
+        assert!(
+            err.to_string()
+                .contains("Unknown ServerHello protocol version")
+        );
     }
 
     #[test]

@@ -15,6 +15,7 @@ use cipherrun::Args;
 use cipherrun::commands::{CommandExit, CommandRouter};
 use cipherrun::external::openssl_client::OpenSslClient;
 use cipherrun::utils::PathExt;
+use cipherrun::utils::adaptive::lock_mutex;
 use clap::CommandFactory;
 use colored::control;
 use std::process::ExitCode;
@@ -27,7 +28,15 @@ use tracing_subscriber::fmt::writer::{BoxMakeWriter, MakeWriterExt};
 #[tokio::main]
 async fn main() -> ExitCode {
     match run_cli().await {
-        Ok(exit) => ExitCode::from(exit.code().clamp(0, 255) as u8),
+        Ok(exit) => {
+            let code = exit.code();
+            let u8_code = if code < 0 {
+                1
+            } else {
+                code.clamp(0, 255) as u8
+            };
+            ExitCode::from(u8_code)
+        }
         Err(err) => {
             eprintln!("Error: {}", err);
             ExitCode::from(1)
@@ -39,7 +48,9 @@ async fn run_cli() -> anyhow::Result<CommandExit> {
     // Install rustls crypto provider (required for rustls 0.23+)
     rustls::crypto::ring::default_provider()
         .install_default()
-        .expect("Failed to install rustls crypto provider");
+        .map_err(|_| {
+            anyhow::anyhow!("Failed to install rustls crypto provider (already installed?)")
+        })?;
 
     let raw_arg_count = std::env::args_os().count();
 
@@ -179,7 +190,8 @@ fn initialize_logging(args: &Args) -> anyhow::Result<()> {
         .with_max_level(log_level)
         .with_writer(writer)
         .finish();
-    tracing::subscriber::set_global_default(subscriber).expect("Failed to set subscriber");
+    tracing::subscriber::set_global_default(subscriber)
+        .map_err(|e| anyhow::anyhow!("Failed to set tracing subscriber: {}", e))?;
     Ok(())
 }
 
@@ -230,12 +242,12 @@ impl<'a> MakeWriter<'a> for SharedFileWriter {
 
 impl std::io::Write for SharedFileGuard {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        let mut file = self.file.lock().expect("logfile mutex poisoned");
+        let mut file = lock_mutex(&self.file);
         std::io::Write::write(&mut *file, buf)
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
-        let mut file = self.file.lock().expect("logfile mutex poisoned");
+        let mut file = lock_mutex(&self.file);
         std::io::Write::flush(&mut *file)
     }
 }

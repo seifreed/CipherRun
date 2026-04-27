@@ -11,8 +11,8 @@
 // - Anycast deployment analysis
 
 use anyhow::{Context, Result};
+use ring::digest::{SHA256, digest};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -299,8 +299,15 @@ fn extract_extension_info(data: &[u8], offset: usize, server_hello_length: usize
         return "|".to_string();
     }
 
-    // Check extensions fit within the TLS record (record content starts at byte 5)
-    if offset + 49 > 5 + server_hello_length {
+    // S7 fix: `server_hello_length` is read from the *first* TLS record header
+    // (bytes 3..5). On fragmented responses — where ServerHello + Certificate
+    // span multiple records — this value covers only the first record, so the
+    // bound `5 + server_hello_length` truncates the extension region and
+    // produces a misaligned JARM fingerprint. The real bound is `data.len()`,
+    // and the `emax` computation below (ecnt_start + elen) already gates the
+    // extension-iteration loop against the declared extension length.
+    let _ = server_hello_length;
+    if offset + 49 > data.len() {
         return "|".to_string();
     }
 
@@ -431,10 +438,8 @@ fn raw_hash_to_fuzzy_hash(raw: &str) -> String {
     }
 
     // Hash the ALPN and extensions portion
-    let mut hasher = Sha256::new();
-    hasher.update(alpex.as_bytes());
-    let hash_result = hasher.finalize();
-    let hash_hex = hex::encode(hash_result);
+    let hash_result = digest(&SHA256, alpex.as_bytes());
+    let hash_hex = hex::encode(hash_result.as_ref());
 
     // Append first 32 characters of SHA256 hash
     fhash.push_str(&hash_hex[0..32]);

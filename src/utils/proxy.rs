@@ -23,7 +23,7 @@ impl ProxyConfig {
     /// Parse proxy string (host:port or user:pass@host:port)
     pub fn parse(proxy_str: &str) -> Result<Self> {
         // Check for user:pass@host:port format
-        if let Some((auth, hostport)) = proxy_str.split_once('@') {
+        if let Some((auth, hostport)) = proxy_str.rsplit_once('@') {
             let (username, password) = if let Some((u, p)) = auth.split_once(':') {
                 (Some(u.to_string()), Some(p.to_string()))
             } else {
@@ -53,7 +53,13 @@ impl ProxyConfig {
     fn parse_hostport(hostport: &str) -> Result<(String, u16)> {
         use crate::utils::network::split_target_host_port;
 
+        if hostport.trim().is_empty() {
+            crate::tls_bail!("Proxy host cannot be empty");
+        }
         let (host, port) = split_target_host_port(hostport)?;
+        if host.is_empty() {
+            crate::tls_bail!("Proxy host cannot be empty");
+        }
         // Default to port 8080 for HTTP proxies
         Ok((host, port.unwrap_or(8080)))
     }
@@ -237,6 +243,16 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_proxy_password_can_contain_at_sign() {
+        let proxy = ProxyConfig::parse("user:pa@ss@proxy.example.com:3128")
+            .expect("password with @ should parse using the final authority separator");
+        assert_eq!(proxy.host, "proxy.example.com");
+        assert_eq!(proxy.port, 3128);
+        assert_eq!(proxy.username.as_deref(), Some("user"));
+        assert_eq!(proxy.password.as_deref(), Some("pa@ss"));
+    }
+
+    #[test]
     fn test_parse_proxy_default_port() {
         let proxy = ProxyConfig::parse("proxy.local").expect("test assertion should succeed");
         assert_eq!(proxy.host, "proxy.local");
@@ -287,6 +303,18 @@ mod tests {
     fn test_parse_proxy_invalid_port() {
         let err = ProxyConfig::parse("proxy.local:notaport").expect_err("should fail");
         assert!(err.to_string().contains("Invalid port"));
+    }
+
+    #[test]
+    fn test_parse_proxy_rejects_zero_port() {
+        let err = ProxyConfig::parse("proxy.local:0").expect_err("port zero should fail");
+        assert!(err.to_string().contains("Port must be between"));
+    }
+
+    #[test]
+    fn test_parse_proxy_rejects_empty_host_after_auth() {
+        let err = ProxyConfig::parse("user:pass@").expect_err("empty proxy host should fail");
+        assert!(err.to_string().contains("Proxy host cannot be empty"));
     }
 
     #[test]

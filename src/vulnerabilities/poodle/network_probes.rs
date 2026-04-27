@@ -59,9 +59,18 @@ pub(super) async fn send_malformed_record(
             let client_hello = record_builder::build_client_hello_cbc();
             stream.write_all(&client_hello).await?;
 
-            // Read ServerHello and handshake messages
-            let mut buffer = vec![0u8; 8192];
-            let bytes_read = timeout(Duration::from_secs(3), stream.read(&mut buffer)).await??;
+            // V5 fix: read until ServerHelloDone. Previously a single `stream.read`
+            // captured only the first TCP segment; large certificate chains
+            // (RSA-4096 or multi-SAN certs) can span several records so the
+            // malformed-record write happened while bytes were still in flight,
+            // polluting the subsequent response-time measurement.
+            let mut buffer = vec![0u8; 32768];
+            let bytes_read = super::super::handshake_read::read_until_server_hello_done(
+                &mut stream,
+                &mut buffer,
+                Duration::from_secs(3),
+            )
+            .await;
 
             if bytes_read == 0 {
                 return Ok(ServerResponse {

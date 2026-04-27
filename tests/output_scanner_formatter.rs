@@ -99,6 +99,7 @@ fn test_scanner_formatter_display_helpers() {
         ProtocolTestResult {
             protocol: Protocol::TLS13,
             supported: true,
+            inconclusive: false,
             preferred: true,
             ciphers_count: 1,
             handshake_time_ms: Some(10),
@@ -110,6 +111,7 @@ fn test_scanner_formatter_display_helpers() {
         ProtocolTestResult {
             protocol: Protocol::TLS12,
             supported: false,
+            inconclusive: false,
             preferred: false,
             ciphers_count: 0,
             handshake_time_ms: None,

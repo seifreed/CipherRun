@@ -93,12 +93,14 @@ impl GreaseTester {
                 true
             }
             Ok(false) => {
+                result.inconclusive = true;
                 result
                     .issues
                     .push("Baseline connection failed - cannot test GREASE".to_string());
                 return Ok(result);
             }
             Err(e) => {
+                result.inconclusive = true;
                 result
                     .issues
                     .push(format!("Baseline connection error: {}", e));
@@ -132,34 +134,59 @@ impl GreaseTester {
             self.test_combined_grease().await,
         );
 
-        // Determine overall result
-        if result.direct_grease_test_performed {
-            let rejected_count = result
-                .issues
-                .iter()
-                .filter(|i| i.contains("rejected") || i.contains("violates"))
-                .count();
+        Self::finalize_grease_result(&mut result);
 
-            let tolerated_count = result.details.iter().filter(|d| d.starts_with("✓")).count();
+        Ok(result)
+    }
 
-            if rejected_count > 0 {
-                result.tolerates_grease = false;
-                result.inconclusive = false;
-            } else if tolerated_count > 0 {
-                result.tolerates_grease = true;
-                result.inconclusive = false;
-            } else {
-                result.tolerates_grease = false;
-                result.inconclusive = true;
-            }
-        } else {
+    fn finalize_grease_result(result: &mut GreaseResult) {
+        if !result.direct_grease_test_performed {
+            result.tolerates_grease = false;
             result.inconclusive = true;
             result
                 .issues
                 .push("No GREASE tests were performed".to_string());
+            return;
         }
 
-        Ok(result)
+        let rejected_count = result
+            .issues
+            .iter()
+            .filter(|i| i.contains("rejected") || i.contains("violates"))
+            .count();
+
+        let tolerated_count = result
+            .details
+            .iter()
+            .filter(|d| d.starts_with("✓ Server tolerates "))
+            .count();
+
+        let inconclusive_count = result
+            .details
+            .iter()
+            .filter(|d| {
+                d.contains("test inconclusive") || d.contains("encountered a connection error")
+            })
+            .count()
+            + result
+                .tests_performed
+                .iter()
+                .filter(|t| t.contains("(error:"))
+                .count();
+
+        if rejected_count > 0 {
+            result.tolerates_grease = false;
+            result.inconclusive = false;
+        } else if inconclusive_count > 0 {
+            result.tolerates_grease = false;
+            result.inconclusive = true;
+        } else if tolerated_count > 0 {
+            result.tolerates_grease = true;
+            result.inconclusive = false;
+        } else {
+            result.tolerates_grease = false;
+            result.inconclusive = true;
+        }
     }
 
     /// Record the outcome of a single GREASE category test into the result.
@@ -222,11 +249,9 @@ impl GreaseTester {
                 Err(_) => return Ok(false),
             };
 
-        let mut root_store = rustls::RootCertStore::empty();
-        root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-
         let config = rustls::ClientConfig::builder()
-            .with_root_certificates(root_store)
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(GreaseNoVerifier))
             .with_no_client_auth();
 
         let connector = tokio_rustls::TlsConnector::from(Arc::new(config));
@@ -298,12 +323,58 @@ pub struct GreaseReport {
     pub recommendations: Vec<String>,
 }
 
+#[derive(Debug)]
+struct GreaseNoVerifier;
+
+impl rustls::client::danger::ServerCertVerifier for GreaseNoVerifier {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &rustls::pki_types::CertificateDer<'_>,
+        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
+        _server_name: &rustls::pki_types::ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: rustls::pki_types::UnixTime,
+    ) -> std::result::Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> std::result::Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> std::result::Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        vec![
+            rustls::SignatureScheme::RSA_PKCS1_SHA256,
+            rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
+            rustls::SignatureScheme::RSA_PKCS1_SHA384,
+            rustls::SignatureScheme::ECDSA_NISTP384_SHA384,
+            rustls::SignatureScheme::RSA_PKCS1_SHA512,
+            rustls::SignatureScheme::ECDSA_NISTP521_SHA512,
+        ]
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::net::IpAddr;
     use std::sync::Once;
     use tokio::net::TcpListener;
+    use tokio_rustls::TlsAcceptor;
 
     fn install_crypto_provider() {
         static ONCE: Once = Once::new();
@@ -497,6 +568,56 @@ mod tests {
         addr
     }
 
+    async fn spawn_self_signed_tls_server(max_accepts: usize) -> std::net::SocketAddr {
+        let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
+        let cert_der = cert.cert.der().clone();
+        let key_der = rustls::pki_types::PrivateKeyDer::Pkcs8(
+            rustls::pki_types::PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der()),
+        );
+
+        let config = rustls::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(vec![cert_der], key_der)
+            .unwrap();
+
+        let acceptor = TlsAcceptor::from(std::sync::Arc::new(config));
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            let mut remaining = max_accepts;
+            while remaining > 0 {
+                if let Ok((stream, _)) = listener.accept().await {
+                    let acceptor = acceptor.clone();
+                    let _ = tokio::time::timeout(
+                        std::time::Duration::from_millis(500),
+                        acceptor.accept(stream),
+                    )
+                    .await;
+                }
+                remaining -= 1;
+            }
+        });
+
+        addr
+    }
+
+    #[tokio::test]
+    async fn test_grease_baseline_ignores_certificate_validation_errors() {
+        install_crypto_provider();
+        let addr = spawn_self_signed_tls_server(1).await;
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            addr.port(),
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .unwrap();
+
+        let tester = GreaseTester::new(target);
+        let baseline_ok = tester.test_baseline_connection().await.unwrap();
+        assert!(baseline_ok);
+    }
+
     #[tokio::test]
     async fn test_grease_tester_baseline_failure_path() {
         install_crypto_provider();
@@ -511,6 +632,11 @@ mod tests {
         let tester = GreaseTester::new(target);
         let result = tester.test().await.unwrap();
         assert!(!result.tolerates_grease);
+        assert!(
+            result.inconclusive,
+            "baseline failure cannot be treated as a definitive GREASE result: {result:?}"
+        );
+        assert!(!result.direct_grease_test_performed);
         assert!(
             result
                 .issues
@@ -569,27 +695,21 @@ mod tests {
 
     #[test]
     fn test_tolerates_grease_logic() {
-        // When no tests fail and tests were performed, tolerates_grease should be true
-        let result = GreaseResult {
+        let mut result = GreaseResult {
             tolerates_grease: false, // Will be computed
             inconclusive: false,
             direct_grease_test_performed: true,
             issues: vec![],
-            details: vec!["✓ GREASE cipher suites".to_string()],
+            details: vec!["✓ Server tolerates grease cipher suites".to_string()],
             tests_performed: vec!["test1".to_string()],
         };
 
-        // Computation logic: tolerated = no rejections AND tests performed
-        let rejected_count = result
-            .issues
-            .iter()
-            .filter(|i| i.contains("rejected") || i.contains("violates"))
-            .count();
-        let would_tolerate = rejected_count == 0 && !result.tests_performed.is_empty();
-        assert!(would_tolerate);
+        GreaseTester::finalize_grease_result(&mut result);
+        assert!(result.tolerates_grease);
+        assert!(!result.inconclusive);
 
         // When there are rejections, tolerates_grease should be false
-        let result_with_rejection = GreaseResult {
+        let mut result_with_rejection = GreaseResult {
             tolerates_grease: false,
             inconclusive: false,
             direct_grease_test_performed: true,
@@ -598,11 +718,81 @@ mod tests {
             tests_performed: vec!["test1".to_string()],
         };
 
-        let rejected_count2 = result_with_rejection
-            .issues
-            .iter()
-            .filter(|i| i.contains("rejected") || i.contains("violates"))
-            .count();
-        assert!(rejected_count2 > 0);
+        GreaseTester::finalize_grease_result(&mut result_with_rejection);
+        assert!(!result_with_rejection.tolerates_grease);
+        assert!(!result_with_rejection.inconclusive);
+    }
+
+    #[test]
+    fn test_grease_partial_inconclusive_does_not_report_tolerant() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .unwrap();
+        let tester = GreaseTester::new(target);
+        let mut result = GreaseResult {
+            tolerates_grease: false,
+            inconclusive: false,
+            direct_grease_test_performed: false,
+            issues: vec![],
+            details: vec!["✓ Baseline connection successful".to_string()],
+            tests_performed: vec![],
+        };
+
+        tester.record_grease_test(
+            &mut result,
+            "GREASE cipher suites",
+            Ok(GreaseTestOutcome::Tolerated),
+        );
+        tester.record_grease_test(
+            &mut result,
+            "GREASE extensions",
+            Ok(GreaseTestOutcome::Inconclusive(
+                "target closed connection".to_string(),
+            )),
+        );
+        GreaseTester::finalize_grease_result(&mut result);
+
+        assert!(!result.tolerates_grease);
+        assert!(
+            result.inconclusive,
+            "partial GREASE evidence must stay inconclusive: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_grease_all_category_inconclusive_ignores_baseline_success_detail() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .unwrap();
+        let tester = GreaseTester::new(target);
+        let mut result = GreaseResult {
+            tolerates_grease: false,
+            inconclusive: false,
+            direct_grease_test_performed: false,
+            issues: vec![],
+            details: vec!["✓ Baseline connection successful".to_string()],
+            tests_performed: vec![],
+        };
+
+        tester.record_grease_test(
+            &mut result,
+            "GREASE supported groups",
+            Ok(GreaseTestOutcome::Inconclusive(
+                "no TLS response after ClientHello".to_string(),
+            )),
+        );
+        GreaseTester::finalize_grease_result(&mut result);
+
+        assert!(!result.tolerates_grease);
+        assert!(
+            result.inconclusive,
+            "baseline success detail cannot make GREASE support definitive: {result:?}"
+        );
     }
 }

@@ -88,7 +88,7 @@ impl SecurityHeaderChecker {
         let has_preload = if let Some((_, value)) =
             Self::find_header_case_insensitive(headers, "strict-transport-security")
         {
-            value.to_lowercase().contains("preload")
+            Self::has_semicolon_directive(value, "preload")
         } else {
             false
         };
@@ -125,8 +125,8 @@ impl SecurityHeaderChecker {
         if let Some((_, value)) = key {
             // Parse HSTS value
             let max_age = Self::extract_directive(value, "max-age");
-            let includes_subdomains = value.to_lowercase().contains("includesubdomains");
-            let preload = value.to_lowercase().contains("preload");
+            let includes_subdomains = Self::has_semicolon_directive(value, "includeSubDomains");
+            let preload = Self::has_semicolon_directive(value, "preload");
 
             // Check max-age value
             if let Some(age_str) = max_age {
@@ -249,8 +249,9 @@ impl SecurityHeaderChecker {
         let key = Self::find_header_case_insensitive(headers, "content-security-policy");
 
         if let Some((_, value)) = key {
+            let value_lower = value.to_ascii_lowercase();
             // Check for unsafe directives
-            if value.contains("'unsafe-inline'") {
+            if value_lower.contains("'unsafe-inline'") {
                 issues.push(HeaderIssue {
                     header_name: "Content-Security-Policy".to_string(),
                     severity: IssueSeverity::Medium,
@@ -262,7 +263,7 @@ impl SecurityHeaderChecker {
                 });
             }
 
-            if value.contains("'unsafe-eval'") {
+            if value_lower.contains("'unsafe-eval'") {
                 issues.push(HeaderIssue {
                     header_name: "Content-Security-Policy".to_string(),
                     severity: IssueSeverity::Medium,
@@ -274,7 +275,9 @@ impl SecurityHeaderChecker {
                 });
             }
 
-            if !value.contains("default-src") && !value.contains("script-src") {
+            if !Self::has_csp_directive(value, "default-src")
+                && !Self::has_csp_directive(value, "script-src")
+            {
                 issues.push(HeaderIssue {
                     header_name: "Content-Security-Policy".to_string(),
                     severity: IssueSeverity::Medium,
@@ -302,7 +305,7 @@ impl SecurityHeaderChecker {
         let key = Self::find_header_case_insensitive(headers, "x-frame-options");
 
         if let Some((_, value)) = key {
-            let value_lower = value.to_lowercase();
+            let value_lower = value.trim().to_lowercase();
             if value_lower != "deny"
                 && value_lower != "sameorigin"
                 && !value_lower.starts_with("allow-from")
@@ -338,7 +341,7 @@ impl SecurityHeaderChecker {
         let key = Self::find_header_case_insensitive(headers, "x-content-type-options");
 
         if let Some((_, value)) = key {
-            if value.to_lowercase() != "nosniff" {
+            if value.trim().to_lowercase() != "nosniff" {
                 issues.push(HeaderIssue {
                     header_name: "X-Content-Type-Options".to_string(),
                     severity: IssueSeverity::Low,
@@ -366,7 +369,7 @@ impl SecurityHeaderChecker {
         let key = Self::find_header_case_insensitive(headers, "x-xss-protection");
 
         if let Some((_, value)) = key {
-            let value_lower = value.to_lowercase();
+            let value_lower = value.trim().to_lowercase();
             if value_lower.starts_with('0') {
                 issues.push(HeaderIssue {
                     header_name: "X-XSS-Protection".to_string(),
@@ -397,7 +400,7 @@ impl SecurityHeaderChecker {
         let key = Self::find_header_case_insensitive(headers, "referrer-policy");
 
         if let Some((_, value)) = key {
-            let value_lower = value.to_lowercase();
+            let value_lower = value.trim().to_lowercase();
             if value_lower.contains("unsafe-url") || value_lower == "no-referrer-when-downgrade" {
                 issues.push(HeaderIssue {
                     header_name: "Referrer-Policy".to_string(),
@@ -479,12 +482,12 @@ impl SecurityHeaderChecker {
         let key = Self::find_header_case_insensitive(headers, "access-control-allow-origin");
 
         if let Some((_, value)) = key
-            && value == "*"
+            && value.trim() == "*"
         {
             // Check if credentials are allowed
             if let Some((_, creds)) =
                 Self::find_header_case_insensitive(headers, "access-control-allow-credentials")
-                && creds.to_lowercase() == "true"
+                && creds.trim().eq_ignore_ascii_case("true")
             {
                 issues.push(HeaderIssue {
                     header_name: "Access-Control-Allow-Origin".to_string(),
@@ -513,8 +516,9 @@ impl SecurityHeaderChecker {
         headers: &'a HashMap<String, String>,
         name: &str,
     ) -> Option<(&'a String, &'a String)> {
-        let name_lower = name.to_lowercase();
-        headers.iter().find(|(k, _)| k.to_lowercase() == name_lower)
+        headers
+            .iter()
+            .find(|(key, _)| key.eq_ignore_ascii_case(name))
     }
 
     /// Helper: Extract directive value from header
@@ -529,6 +533,26 @@ impl SecurityHeaderChecker {
             }
         }
         None
+    }
+
+    /// Helper: Check an exact semicolon-separated directive by name.
+    fn has_semicolon_directive(value: &str, directive: &str) -> bool {
+        value.split(';').any(|part| {
+            let trimmed = part.trim();
+            let name = trimmed
+                .split_once('=')
+                .map(|(key, _)| key.trim())
+                .unwrap_or(trimmed);
+            name.eq_ignore_ascii_case(directive)
+        })
+    }
+
+    /// Helper: Check whether a CSP directive exists by exact directive name.
+    fn has_csp_directive(value: &str, directive: &str) -> bool {
+        value.split(';').any(|part| {
+            let name = part.split_whitespace().next().unwrap_or("");
+            name.eq_ignore_ascii_case(directive)
+        })
     }
 }
 
@@ -782,6 +806,45 @@ mod tests {
     }
 
     #[test]
+    fn test_hsts_directives_match_exact_tokens() {
+        let mut headers = HashMap::new();
+        headers.insert(
+            "Strict-Transport-Security".to_string(),
+            "max-age=31536000; notincludeSubDomains; x-preload=false".to_string(),
+        );
+
+        let issues = SecurityHeaderChecker::check_all_headers(&headers);
+        let hsts_issues: Vec<_> = issues
+            .iter()
+            .filter(|issue| issue.header_name == "Strict-Transport-Security")
+            .collect();
+
+        assert!(hsts_issues.iter().any(|issue| {
+            matches!(issue.issue_type, IssueType::Weak)
+                && issue.description.contains("include subdomains")
+        }));
+        assert!(hsts_issues.iter().any(|issue| {
+            matches!(issue.issue_type, IssueType::Weak) && issue.description.contains("preload")
+        }));
+    }
+
+    #[test]
+    fn test_hsts_directives_are_case_insensitive() {
+        let mut headers = HashMap::new();
+        headers.insert(
+            "Strict-Transport-Security".to_string(),
+            "Max-Age=31536000; IncludeSubDomains; Preload".to_string(),
+        );
+
+        let issues = SecurityHeaderChecker::check_all_headers(&headers);
+        assert!(
+            !issues
+                .iter()
+                .any(|issue| issue.header_name == "Strict-Transport-Security")
+        );
+    }
+
+    #[test]
     fn test_cors_wildcard_without_credentials_is_weak() {
         let mut headers = HashMap::new();
         headers.insert("Access-Control-Allow-Origin".to_string(), "*".to_string());
@@ -790,6 +853,39 @@ mod tests {
         assert!(issues.iter().any(|i| {
             i.header_name == "Access-Control-Allow-Origin"
                 && matches!(i.issue_type, IssueType::Weak)
+        }));
+    }
+
+    #[test]
+    fn test_cors_wildcard_with_credentials_trims_values() {
+        let mut headers = HashMap::new();
+        headers.insert("Access-Control-Allow-Origin".to_string(), " * ".to_string());
+        headers.insert(
+            "Access-Control-Allow-Credentials".to_string(),
+            " TRUE ".to_string(),
+        );
+
+        let issues = SecurityHeaderChecker::check_all_headers(&headers);
+        assert!(issues.iter().any(|issue| {
+            issue.header_name == "Access-Control-Allow-Origin"
+                && matches!(issue.issue_type, IssueType::Insecure)
+        }));
+    }
+
+    #[test]
+    fn test_csp_directive_names_are_case_insensitive() {
+        let mut headers = HashMap::new();
+        headers.insert(
+            "Content-Security-Policy".to_string(),
+            "Default-Src 'self'".to_string(),
+        );
+
+        let issues = SecurityHeaderChecker::check_all_headers(&headers);
+        assert!(!issues.iter().any(|issue| {
+            issue.header_name == "Content-Security-Policy"
+                && issue
+                    .description
+                    .contains("missing default-src or script-src")
         }));
     }
 }

@@ -3,20 +3,21 @@ use crate::Result;
 
 impl VulnerabilityScanner {
     pub async fn test_drown(&self) -> Result<VulnerabilityResult> {
-        let protocol_result = self.protocol_tester.test_protocol(Protocol::SSLv2).await?;
+        use crate::vulnerabilities::drown::{DrownTester, Sslv2Status};
+
+        let tester = DrownTester::new(self.target.clone());
+        let result = tester.test().await?;
+        let inconclusive = !result.vulnerable
+            && matches!(result.sslv2_status, None | Some(Sslv2Status::Suspicious));
 
         Ok(VulnerabilityResult {
             vuln_type: VulnerabilityType::DROWN,
-            vulnerable: protocol_result.supported,
-            inconclusive: false,
-            details: if protocol_result.supported {
-                "Server supports SSLv2, vulnerable to DROWN attack".to_string()
-            } else {
-                "Server does not support SSLv2".to_string()
-            },
+            vulnerable: result.vulnerable,
+            inconclusive,
+            details: result.details,
             cve: Some("CVE-2016-0800".to_string()),
             cwe: Some("CWE-327".to_string()),
-            severity: if protocol_result.supported {
+            severity: if result.vulnerable {
                 Severity::High
             } else {
                 Severity::Info
@@ -53,6 +54,19 @@ impl VulnerabilityScanner {
 
     pub async fn test_poodle_ssl(&self) -> Result<VulnerabilityResult> {
         let protocol_result = self.protocol_tester.test_protocol(Protocol::SSLv3).await?;
+
+        if !protocol_result.supported && !self.target_accepts_tcp().await? {
+            return Ok(VulnerabilityResult {
+                vuln_type: VulnerabilityType::POODLE,
+                vulnerable: false,
+                inconclusive: true,
+                details: "POODLE SSL test inconclusive - target did not accept TCP connection"
+                    .to_string(),
+                cve: Some("CVE-2014-3566".to_string()),
+                cwe: Some("CWE-310".to_string()),
+                severity: Severity::Info,
+            });
+        }
 
         Ok(VulnerabilityResult {
             vuln_type: VulnerabilityType::POODLE,
@@ -105,11 +119,12 @@ impl VulnerabilityScanner {
                 Some(VulnerabilityResult {
                     vuln_type,
                     vulnerable: variant_result.vulnerable,
-                    inconclusive: !variant_result.vulnerable
-                        && variant_result
-                            .details
-                            .to_ascii_lowercase()
-                            .contains("inconclusive"),
+                    // V3 fix: propagate the explicit `inconclusive` flag instead of
+                    // sniffing the details string for the substring "inconclusive".
+                    // The string check missed variant wording like "Insufficient
+                    // timing samples" which would otherwise classify a failed
+                    // probe as confirmed-not-vulnerable.
+                    inconclusive: variant_result.inconclusive,
                     details: variant_result.details,
                     cve: Some(variant_result.variant.cve().to_string()),
                     cwe: Some("CWE-310".to_string()),
@@ -129,6 +144,19 @@ impl VulnerabilityScanner {
         let ssl3_supported = ssl3_result.supported;
 
         if !tls10_supported && !ssl3_supported {
+            if !self.target_accepts_tcp().await? {
+                return Ok(VulnerabilityResult {
+                    vuln_type: VulnerabilityType::BEAST,
+                    vulnerable: false,
+                    inconclusive: true,
+                    details: "BEAST test inconclusive - target did not accept TCP connection"
+                        .to_string(),
+                    cve: Some("CVE-2011-3389".to_string()),
+                    cwe: Some("CWE-326".to_string()),
+                    severity: Severity::Info,
+                });
+            }
+
             return Ok(VulnerabilityResult {
                 vuln_type: VulnerabilityType::BEAST,
                 vulnerable: false,
@@ -161,10 +189,24 @@ impl VulnerabilityScanner {
             None
         };
 
-        Ok(super::cipher_checks::evaluate_beast(
-            tls10_summary.as_ref(),
-            ssl3_summary.as_ref(),
-        ))
+        let mut result =
+            super::cipher_checks::evaluate_beast(tls10_summary.as_ref(), ssl3_summary.as_ref());
+
+        if !result.vulnerable {
+            let has_legacy_cipher_evidence = [tls10_summary.as_ref(), ssl3_summary.as_ref()]
+                .into_iter()
+                .flatten()
+                .any(super::cipher_checks::summary_has_cipher_evidence);
+
+            if !has_legacy_cipher_evidence {
+                result.inconclusive = true;
+                result.details =
+                    "BEAST test inconclusive - no successful TLS 1.0/SSL 3.0 cipher enumeration results"
+                        .to_string();
+            }
+        }
+
+        Ok(result)
     }
 
     pub async fn test_renegotiation(&self) -> Result<VulnerabilityResult> {
@@ -176,7 +218,7 @@ impl VulnerabilityScanner {
         Ok(VulnerabilityResult {
             vuln_type: VulnerabilityType::Renegotiation,
             vulnerable: result.vulnerable,
-            inconclusive: false,
+            inconclusive: result.needs_verification,
             details: result.details,
             cve: Some("CVE-2009-3555".to_string()),
             cwe: Some("CWE-310".to_string()),
@@ -207,7 +249,7 @@ impl VulnerabilityScanner {
         Ok(VulnerabilityResult {
             vuln_type: VulnerabilityType::TLSFallback,
             vulnerable: result.vulnerable,
-            inconclusive: result.details.to_ascii_lowercase().contains("inconclusive"),
+            inconclusive: result.inconclusive,
             details: result.details,
             cve: Some("CVE-2014-8730".to_string()),
             cwe: Some("CWE-757".to_string()),
@@ -224,7 +266,7 @@ impl VulnerabilityScanner {
         Ok(VulnerabilityResult {
             vuln_type: VulnerabilityType::CRIME,
             vulnerable: result.vulnerable,
-            inconclusive: false,
+            inconclusive: result.inconclusive,
             details: result.details,
             cve: Some("CVE-2012-4929".to_string()),
             cwe: Some("CWE-310".to_string()),
@@ -288,7 +330,7 @@ impl VulnerabilityScanner {
         Ok(VulnerabilityResult {
             vuln_type: VulnerabilityType::Ticketbleed,
             vulnerable: result.vulnerable,
-            inconclusive: false,
+            inconclusive: result.inconclusive,
             details: result.details,
             cve: Some("CVE-2016-9244".to_string()),
             cwe: Some("CWE-200".to_string()),
@@ -330,7 +372,7 @@ impl VulnerabilityScanner {
         Ok(VulnerabilityResult {
             vuln_type: VulnerabilityType::BREACH,
             vulnerable: result.vulnerable,
-            inconclusive: false,
+            inconclusive: result.inconclusive,
             details: result.details,
             cve: Some("CVE-2013-3587".to_string()),
             cwe: Some("CWE-200".to_string()),
@@ -351,7 +393,7 @@ impl VulnerabilityScanner {
         Ok(VulnerabilityResult {
             vuln_type: VulnerabilityType::SWEET32,
             vulnerable: result.vulnerable,
-            inconclusive: false,
+            inconclusive: result.inconclusive,
             details: result.details,
             cve: Some("CVE-2016-2183".to_string()),
             cwe: Some("CWE-327".to_string()),
@@ -372,7 +414,7 @@ impl VulnerabilityScanner {
         Ok(VulnerabilityResult {
             vuln_type: VulnerabilityType::FREAK,
             vulnerable: result.vulnerable,
-            inconclusive: false,
+            inconclusive: result.inconclusive,
             details: result.details,
             cve: Some("CVE-2015-0204".to_string()),
             cwe: Some("CWE-327".to_string()),
@@ -393,7 +435,7 @@ impl VulnerabilityScanner {
         Ok(VulnerabilityResult {
             vuln_type: VulnerabilityType::LOGJAM,
             vulnerable: result.vulnerable,
-            inconclusive: false,
+            inconclusive: result.inconclusive,
             details: result.details,
             cve: Some("CVE-2015-4000".to_string()),
             cwe: Some("CWE-326".to_string()),
@@ -455,6 +497,19 @@ impl VulnerabilityScanner {
         let tester = PaddingOracle2016Tester::new(&self.target);
         let result = tester.test().await?;
 
+        if !result.cbc_supported && !self.target_accepts_tcp().await? {
+            return Ok(VulnerabilityResult {
+                vuln_type: VulnerabilityType::PaddingOracle2016,
+                vulnerable: false,
+                inconclusive: true,
+                details: "CVE-2016-2107 test inconclusive - target did not accept TCP connection"
+                    .to_string(),
+                cve: Some("CVE-2016-2107".to_string()),
+                cwe: Some("CWE-203".to_string()),
+                severity: Severity::Info,
+            });
+        }
+
         Ok(VulnerabilityResult {
             vuln_type: VulnerabilityType::PaddingOracle2016,
             vulnerable: result.vulnerable,
@@ -476,6 +531,15 @@ impl VulnerabilityScanner {
         let tester = OpossumTester::new(self.target.clone());
         let result = tester.test().await?;
 
+        // V2: severity must track `vulnerable`, not `inconclusive`. The Opossum
+        // tester always reports `vulnerable=false` (remote detection is not
+        // reliable), so the effective verdict is Info in both the inconclusive
+        // and not-vulnerable cases — the `details` string conveys the uncertainty.
+        let severity = if result.vulnerable {
+            Severity::Medium
+        } else {
+            Severity::Info
+        };
         Ok(VulnerabilityResult {
             vuln_type: VulnerabilityType::Opossum,
             vulnerable: result.vulnerable,
@@ -483,11 +547,7 @@ impl VulnerabilityScanner {
             details: result.details,
             cve: Some("CVE-2022-0778".to_string()),
             cwe: Some("CWE-835".to_string()),
-            severity: if result.inconclusive {
-                Severity::Medium
-            } else {
-                Severity::Info
-            },
+            severity,
         })
     }
 
@@ -531,6 +591,23 @@ impl VulnerabilityScanner {
 
         Ok(summaries)
     }
+
+    async fn target_accepts_tcp(&self) -> Result<bool> {
+        let addr = self
+            .target
+            .socket_addrs()
+            .first()
+            .copied()
+            .ok_or(crate::TlsError::NoSocketAddresses)?;
+
+        Ok(crate::utils::network::connect_with_timeout(
+            addr,
+            crate::constants::DEFAULT_CONNECT_TIMEOUT,
+            None,
+        )
+        .await
+        .is_ok())
+    }
 }
 
 #[cfg(test)]
@@ -538,7 +615,9 @@ mod tests {
     use crate::ciphers::CipherSuite;
     use crate::ciphers::tester::{CipherCounts, ProtocolCipherSummary};
     use crate::protocols::Protocol;
+    use crate::utils::network::Target;
     use crate::vulnerabilities::{Severity, VulnerabilityType};
+    use std::net::TcpListener;
 
     fn make_cipher(encryption: &str, bits: u16, export: bool) -> CipherSuite {
         CipherSuite {
@@ -583,22 +662,190 @@ mod tests {
         }
     }
 
+    // --- test_drown ---
+
+    #[tokio::test]
+    async fn test_drown_inactive_target_is_inconclusive() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+
+        let scanner = super::VulnerabilityScanner::new(target);
+        let result = scanner.test_drown().await.unwrap();
+        assert!(!result.vulnerable);
+        assert!(
+            result.inconclusive,
+            "inactive target must not be reported as a clean DROWN pass: {}",
+            result.details
+        );
+        assert!(result.details.to_ascii_lowercase().contains("inconclusive"));
+    }
+
+    // --- test_poodle_ssl ---
+
+    #[tokio::test]
+    async fn test_poodle_ssl_inactive_target_is_inconclusive() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+
+        let scanner = super::VulnerabilityScanner::new(target);
+        let result = scanner.test_poodle_ssl().await.unwrap();
+        assert!(!result.vulnerable);
+        assert!(
+            result.inconclusive,
+            "inactive target must not be reported as a clean POODLE pass: {}",
+            result.details
+        );
+        assert!(result.details.to_ascii_lowercase().contains("inconclusive"));
+    }
+
+    // --- test_renegotiation ---
+
+    #[tokio::test]
+    async fn test_renegotiation_inactive_target_is_inconclusive() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+
+        let scanner = super::VulnerabilityScanner::new(target);
+        let result = scanner.test_renegotiation().await.unwrap();
+        assert!(!result.vulnerable);
+        assert!(
+            result.inconclusive,
+            "inactive target must not be reported as a clean renegotiation pass: {}",
+            result.details
+        );
+        assert!(result.details.to_ascii_lowercase().contains("unclear"));
+    }
+
+    // --- test_padding_oracle_2016 ---
+
+    #[tokio::test]
+    async fn test_padding_oracle_2016_inactive_target_is_inconclusive() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+
+        let scanner = super::VulnerabilityScanner::new(target);
+        let result = scanner.test_padding_oracle_2016().await.unwrap();
+        assert!(!result.vulnerable);
+        assert!(
+            result.inconclusive,
+            "inactive target must not be reported as a clean padding-oracle pass: {}",
+            result.details
+        );
+        assert!(result.details.to_ascii_lowercase().contains("inconclusive"));
+    }
+
+    // --- test_early_data ---
+
+    #[tokio::test]
+    async fn test_early_data_inactive_target_is_inconclusive() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+
+        let scanner = super::VulnerabilityScanner::new(target);
+        let result = scanner.test_early_data().await.unwrap();
+        assert!(!result.vulnerable);
+        assert!(
+            result.inconclusive,
+            "inactive target must not be reported as a clean Early Data pass: {}",
+            result.details
+        );
+        assert!(result.details.to_ascii_lowercase().contains("inconclusive"));
+    }
+
+    // --- test_lucky13 ---
+
+    #[tokio::test]
+    async fn test_lucky13_inactive_target_is_inconclusive() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+
+        let scanner = super::VulnerabilityScanner::new(target);
+        let result = scanner.test_lucky13().await.unwrap();
+        assert!(!result.vulnerable);
+        assert!(
+            result.inconclusive,
+            "inactive target must not be reported as a clean Lucky13 pass: {}",
+            result.details
+        );
+        assert!(result.details.to_ascii_lowercase().contains("inconclusive"));
+    }
+
     // --- evaluate_rc4 ---
 
     #[test]
     fn evaluate_rc4_empty_summaries() {
         let result = super::super::cipher_checks::evaluate_rc4(std::iter::empty());
         assert!(!result.vulnerable);
+        assert!(result.inconclusive);
         assert_eq!(result.vuln_type, VulnerabilityType::RC4);
         assert_eq!(result.severity, Severity::Info);
     }
 
     #[test]
     fn evaluate_rc4_no_rc4_ciphers() {
-        let summary = empty_summary(Protocol::TLS12);
+        let ciphers = vec![make_cipher("AES128-GCM", 128, false)];
+        let summary = summary_with_ciphers(
+            Protocol::TLS12,
+            ciphers,
+            CipherCounts {
+                total: 1,
+                high_strength: 1,
+                aead: 1,
+                ..Default::default()
+            },
+        );
         let result =
             super::super::cipher_checks::evaluate_rc4(std::iter::once((Protocol::TLS12, &summary)));
         assert!(!result.vulnerable);
+        assert!(!result.inconclusive);
     }
 
     #[test]
@@ -618,6 +865,7 @@ mod tests {
     fn evaluate_null_empty_summaries() {
         let result = super::super::cipher_checks::evaluate_null(std::iter::empty());
         assert!(!result.vulnerable);
+        assert!(result.inconclusive);
         assert_eq!(result.vuln_type, VulnerabilityType::NullCipher);
     }
 
@@ -639,12 +887,23 @@ mod tests {
 
     #[test]
     fn evaluate_null_without_null_ciphers() {
-        let summary = empty_summary(Protocol::TLS12);
+        let ciphers = vec![make_cipher("AES128-GCM", 128, false)];
+        let summary = summary_with_ciphers(
+            Protocol::TLS12,
+            ciphers,
+            CipherCounts {
+                total: 1,
+                high_strength: 1,
+                aead: 1,
+                ..Default::default()
+            },
+        );
         let result = super::super::cipher_checks::evaluate_null(std::iter::once((
             Protocol::TLS12,
             &summary,
         )));
         assert!(!result.vulnerable);
+        assert!(!result.inconclusive);
     }
 
     // --- evaluate_export ---
@@ -653,6 +912,7 @@ mod tests {
     fn evaluate_export_empty_summaries() {
         let result = super::super::cipher_checks::evaluate_export(std::iter::empty());
         assert!(!result.vulnerable);
+        assert!(result.inconclusive);
         assert_eq!(result.vuln_type, VulnerabilityType::FREAK);
     }
 
@@ -680,6 +940,30 @@ mod tests {
         assert!(!result.vulnerable);
         assert_eq!(result.vuln_type, VulnerabilityType::BEAST);
         assert_eq!(result.severity, Severity::Info);
+    }
+
+    #[tokio::test]
+    async fn test_beast_inactive_target_is_inconclusive() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+
+        let scanner = super::VulnerabilityScanner::new(target);
+        let result = scanner.test_beast().await.unwrap();
+        assert!(!result.vulnerable);
+        assert!(
+            result.inconclusive,
+            "inactive target must not be reported as a clean BEAST pass: {}",
+            result.details
+        );
+        assert!(result.details.to_ascii_lowercase().contains("inconclusive"));
     }
 
     #[test]

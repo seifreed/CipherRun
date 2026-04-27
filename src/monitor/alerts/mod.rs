@@ -252,7 +252,7 @@ impl AlertManager {
         Self {
             channels: Vec::new(),
             recent_alerts: Arc::new(Mutex::new(HashMap::new())),
-            dedup_window: Duration::hours(dedup_window_hours as i64),
+            dedup_window: Duration::hours(i64::try_from(dedup_window_hours).unwrap_or(i64::MAX)),
         }
     }
 

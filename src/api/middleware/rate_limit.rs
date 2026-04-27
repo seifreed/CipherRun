@@ -25,10 +25,14 @@ use std::time::Instant;
 
 /// Mask an API key for safe logging (shows first 4 and last 4 characters)
 fn mask_key(key: &str) -> String {
-    if key.len() > 8 {
-        format!("{}...{}", &key[..4], &key[key.len() - 4..])
-    } else if key.len() > 4 {
-        format!("{}****", &key[..4])
+    let chars: Vec<char> = key.chars().collect();
+    if chars.len() > 8 {
+        let first: String = chars.iter().take(4).collect();
+        let last: String = chars.iter().rev().take(4).rev().collect();
+        format!("{}...{}", first, last)
+    } else if chars.len() > 4 {
+        let first: String = chars.iter().take(4).collect();
+        format!("{}****", first)
     } else {
         "****".to_string()
     }
@@ -93,6 +97,7 @@ impl PerKeyRateLimiter {
         // Use entry API to update timestamp atomically with limiter access
         // This prevents race conditions where another request could access
         // the limiter between our get-or-create and timestamp update
+        let old_timestamp = self.limiters.get(key).map(|e| e.last_access);
         let limiter = self
             .limiters
             .entry(key.to_string())
@@ -115,7 +120,24 @@ impl PerKeyRateLimiter {
 
         // Update access index for LRU eviction (write lock, brief)
         if let Ok(mut index) = self.access_index.write() {
-            index.entry(now).or_default().push(key.to_string());
+            // Remove previous index entry for this key to prevent unbounded growth
+            if let Some(ts) = old_timestamp
+                && ts != now
+            {
+                let should_remove_bucket = if let Some(keys) = index.get_mut(&ts) {
+                    keys.retain(|k| k != key);
+                    keys.is_empty()
+                } else {
+                    false
+                };
+                if should_remove_bucket {
+                    index.remove(&ts);
+                }
+            }
+            let keys = index.entry(now).or_default();
+            if !keys.iter().any(|k| k == key) {
+                keys.push(key.to_string());
+            }
         }
 
         // Try to consume a token from the rate limiter
@@ -177,62 +199,90 @@ impl PerKeyRateLimiter {
         const MAX_ENTRIES: usize = 10000;
         const MAX_AGE_SECS: u64 = 3600; // 1 hour
 
-        if self.limiters.len() <= MAX_ENTRIES {
-            return;
-        }
-
+        // I1 fix: cleanup is now structured as two clearly-separated phases.
+        //
+        // The previous implementation swapped `*index` with a local map, then
+        // iterated the *pre-swap* contents (holding entries already pruned by
+        // the preceding `old_keys` loop) while modifying `*index` with a second
+        // swap — causing the LRU eviction step to operate on stale data and
+        // leaving state inconsistent under concurrent access.
+        //
+        // Phase 1 runs unconditionally (I2 fix) so stale entries are freed on
+        // low-traffic servers regardless of total count. Phase 2 only runs
+        // when the surviving set still exceeds the hard cap.
         let now = Instant::now();
         let cutoff = now - std::time::Duration::from_secs(MAX_AGE_SECS);
 
-        // Use BTreeMap for efficient range query - O(log n) to find old entries
-        if let Ok(mut index) = self.access_index.write() {
-            // Collect keys to remove from old timestamps
-            let old_keys: Vec<String> = index
-                .range(..cutoff)
-                .flat_map(|(_, keys)| keys.clone())
-                .collect();
+        let Ok(mut index) = self.access_index.write() else {
+            return;
+        };
 
-            // Remove old entries from DashMap - O(m log n)
-            for key in old_keys {
-                self.limiters.remove(&key);
-            }
+        // --- Phase 1: age-based pruning ---
+        // The DashMap entry is the source of truth for the latest access time.
+        // The BTreeMap index can contain older timestamps for the same key, so
+        // never remove a live limiter solely because a stale index row aged out.
+        let aged_keys: Vec<String> = self
+            .limiters
+            .iter()
+            .filter(|entry| entry.last_access < cutoff)
+            .map(|entry| entry.key().clone())
+            .collect();
 
-            // Clear old entries from index - O(log n) to split
-            let mut remaining = BTreeMap::new();
-            std::mem::swap(&mut *index, &mut remaining);
-            *index = remaining.split_off(&cutoff);
+        for key in aged_keys {
+            self.limiters.remove(&key);
+        }
 
-            // If still over limit, remove oldest entries using BTreeMap
-            if self.limiters.len() > MAX_ENTRIES {
-                let to_remove = self.limiters.len() - MAX_ENTRIES / 2;
-                let mut removed = 0;
+        // Rebuild the index from live limiter timestamps. This removes duplicate
+        // stale rows and keeps the capacity-based LRU pass aligned with reality.
+        Self::rebuild_access_index(&self.limiters, &mut index);
 
-                // BTreeMap is sorted by timestamp, iterate from oldest
-                for (_timestamp, keys) in remaining.iter() {
-                    for key in keys {
-                        if removed >= to_remove {
-                            break;
-                        }
-                        self.limiters.remove(key);
-                        removed += 1;
-                    }
-                    if removed >= to_remove {
-                        break;
-                    }
+        // --- Phase 2: capacity-based LRU eviction ---
+        if self.limiters.len() <= MAX_ENTRIES {
+            return;
+        }
+        let target = MAX_ENTRIES / 2;
+        let to_remove = self.limiters.len().saturating_sub(target);
+
+        // Iterate the LIVE index from oldest to newest, collecting victims.
+        let mut victims: Vec<String> = Vec::with_capacity(to_remove);
+        'collect: for (_ts, keys) in index.iter() {
+            for key in keys {
+                victims.push(key.clone());
+                if victims.len() >= to_remove {
+                    break 'collect;
                 }
-
-                // Remove evicted entries from index
-                let evicted_cutoff = *remaining.keys().next().unwrap_or(&cutoff);
-                let mut new_index = BTreeMap::new();
-                std::mem::swap(&mut *index, &mut new_index);
-                *index = new_index.split_off(&evicted_cutoff);
-
-                tracing::info!(
-                    "Rate limiter LRU cleanup: removed {} oldest entries, {} remaining",
-                    removed,
-                    self.limiters.len()
-                );
             }
+        }
+
+        for key in &victims {
+            self.limiters.remove(key);
+        }
+
+        // Rebuild the index without evicted keys. We can't mutate values
+        // during the iteration above, so we do a single filter pass now.
+        let victims_set: std::collections::HashSet<String> = victims.iter().cloned().collect();
+        for (_ts, keys) in index.iter_mut() {
+            keys.retain(|k| !victims_set.contains(k));
+        }
+        index.retain(|_, keys| !keys.is_empty());
+
+        tracing::info!(
+            "Rate limiter LRU cleanup: removed {} oldest entries, {} remaining",
+            victims.len(),
+            self.limiters.len()
+        );
+    }
+
+    fn rebuild_access_index(
+        limiters: &DashMap<String, RateLimitEntry>,
+        index: &mut BTreeMap<Instant, Vec<String>>,
+    ) {
+        index.clear();
+        for entry in limiters.iter() {
+            index
+                .entry(entry.last_access)
+                .or_default()
+                .push(entry.key().clone());
         }
     }
 }
@@ -402,5 +452,67 @@ mod tests {
             }
             RateLimitResult::Limited { .. } => panic!("expected allowed"),
         }
+    }
+
+    /// I1/I2 regression: cleanup() is idempotent and leaves the live index
+    /// consistent with the DashMap after a run. Repeated invocations on a
+    /// small set of keys must not corrupt state or remove live entries.
+    #[test]
+    fn test_rate_limiter_cleanup_is_idempotent_under_cap() {
+        let limiter = PerKeyRateLimiter::new(100);
+        for i in 0..50 {
+            let key = format!("key{}", i);
+            let _ = limiter.check(&key);
+        }
+        let before = limiter.limiters.len();
+        limiter.cleanup();
+        limiter.cleanup();
+        // All entries are fresh (just created) so none should be aged out.
+        assert_eq!(limiter.limiters.len(), before);
+        // Index shouldn't have orphaned entries for keys we removed.
+        let index = limiter.access_index.read().expect("lock");
+        let index_key_count: usize = index.values().map(|v| v.len()).sum();
+        assert!(
+            index_key_count >= before,
+            "index must reference every live limiter; got {} entries in index, {} live",
+            index_key_count,
+            before
+        );
+    }
+
+    #[test]
+    fn test_rate_limiter_cleanup_keeps_recent_key_with_stale_index_row() {
+        let limiter = PerKeyRateLimiter::new(100);
+        let key = "recent-key";
+        let _ = limiter.check(key);
+
+        let fresh_access = Instant::now();
+        if let Some(mut entry) = limiter.limiters.get_mut(key) {
+            entry.last_access = fresh_access;
+        }
+
+        {
+            let mut index = limiter.access_index.write().expect("lock");
+            index.clear();
+            index.insert(
+                fresh_access - std::time::Duration::from_secs(7200),
+                vec![key.to_string()],
+            );
+            index.insert(fresh_access, vec![key.to_string()]);
+        }
+
+        limiter.cleanup();
+
+        assert!(
+            limiter.limiters.contains_key(key),
+            "cleanup must not remove a key whose live last_access is fresh"
+        );
+
+        let index = limiter.access_index.read().expect("lock");
+        let indexed_count: usize = index
+            .values()
+            .map(|keys| keys.iter().filter(|k| *k == key).count())
+            .sum();
+        assert_eq!(indexed_count, 1, "cleanup should collapse stale index rows");
     }
 }

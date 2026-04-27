@@ -5,7 +5,7 @@ use crate::ciphers::tester::ProtocolCipherSummary;
 use crate::policy::CipherPolicy;
 use crate::policy::violation::PolicyViolation;
 use crate::protocols::Protocol;
-use regex::Regex;
+use regex::RegexBuilder;
 use std::collections::HashMap;
 
 pub struct CipherRule<'a> {
@@ -131,7 +131,7 @@ impl<'a> CipherRule<'a> {
             for (protocol, summary) in self.results {
                 for cipher in &summary.supported_ciphers {
                     for pattern in patterns {
-                        if let Ok(re) = Regex::new(pattern) {
+                        if let Ok(re) = compile_cipher_pattern(pattern) {
                             // Check both OpenSSL and IANA names
                             if re.is_match(&cipher.openssl_name) || re.is_match(&cipher.iana_name) {
                                 violations.push(
@@ -164,7 +164,7 @@ impl<'a> CipherRule<'a> {
         if let Some(ref patterns) = self.policy.required_patterns {
             for (protocol, summary) in self.results {
                 for pattern in patterns {
-                    if let Ok(re) = Regex::new(pattern) {
+                    if let Ok(re) = compile_cipher_pattern(pattern) {
                         let has_matching_cipher = summary.supported_ciphers.iter().any(|cipher| {
                             re.is_match(&cipher.openssl_name) || re.is_match(&cipher.iana_name)
                         });
@@ -197,6 +197,10 @@ impl<'a> CipherRule<'a> {
 
         Ok(violations)
     }
+}
+
+fn compile_cipher_pattern(pattern: &str) -> std::result::Result<regex::Regex, regex::Error> {
+    RegexBuilder::new(pattern).case_insensitive(true).build()
 }
 
 #[cfg(test)]
@@ -238,6 +242,40 @@ mod tests {
             ProtocolCipherSummary {
                 protocol: Protocol::TLS12,
                 supported_ciphers: vec![create_test_cipher("TLS_RSA_WITH_RC4_128_SHA")],
+                counts: CipherCounts::default(),
+                server_ordered: true,
+                server_preference: vec![],
+                preferred_cipher: None,
+                avg_handshake_time_ms: None,
+            },
+        );
+
+        let rule = CipherRule::new(&policy, &results);
+        let violations = rule
+            .evaluate("example.com:443")
+            .expect("test assertion should succeed");
+
+        assert!(!violations.is_empty());
+        assert_eq!(violations[0].rule_path, "ciphers.prohibited_patterns");
+    }
+
+    #[test]
+    fn test_prohibited_cipher_pattern_is_case_insensitive() {
+        let policy = CipherPolicy {
+            min_strength: None,
+            require_forward_secrecy: None,
+            require_aead: None,
+            prohibited_patterns: Some(vec![".*_RC4_.*".to_string()]),
+            required_patterns: None,
+            action: PolicyAction::Fail,
+        };
+
+        let mut results = HashMap::new();
+        results.insert(
+            Protocol::TLS12,
+            ProtocolCipherSummary {
+                protocol: Protocol::TLS12,
+                supported_ciphers: vec![create_test_cipher("tls_rsa_with_rc4_128_sha")],
                 counts: CipherCounts::default(),
                 server_ordered: true,
                 server_preference: vec![],
@@ -436,5 +474,38 @@ mod tests {
             .expect("test assertion should succeed");
 
         assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn test_required_cipher_pattern_is_case_insensitive() {
+        let policy = CipherPolicy {
+            min_strength: None,
+            require_forward_secrecy: None,
+            require_aead: None,
+            prohibited_patterns: None,
+            required_patterns: Some(vec![".*GCM.*".to_string()]),
+            action: PolicyAction::Fail,
+        };
+
+        let mut results = HashMap::new();
+        results.insert(
+            Protocol::TLS12,
+            ProtocolCipherSummary {
+                protocol: Protocol::TLS12,
+                supported_ciphers: vec![create_test_cipher("tls_aes_128_gcm_sha256")],
+                counts: CipherCounts::default(),
+                server_ordered: true,
+                server_preference: vec![],
+                preferred_cipher: None,
+                avg_handshake_time_ms: None,
+            },
+        );
+
+        let rule = CipherRule::new(&policy, &results);
+        let violations = rule
+            .evaluate("example.com:443")
+            .expect("test assertion should succeed");
+
+        assert!(violations.is_empty(), "{violations:?}");
     }
 }

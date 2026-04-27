@@ -2,13 +2,14 @@
 
 use crate::Result;
 use crate::certificates::parser::{CertificateInfo, CertificateParser};
+use crate::certificates::validator::parse_cert_date;
 use crate::monitor::alerts::{Alert, AlertDetails, AlertManager};
 use crate::monitor::config::MonitorConfig;
 use crate::monitor::detector::ChangeDetector;
 use crate::monitor::inventory::{CertificateInventory, MonitoredDomain};
 use crate::monitor::scheduler::SchedulingEngine;
 use crate::utils::network::Target;
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::{Mutex, Semaphore};
@@ -312,61 +313,37 @@ impl MonitorDaemon {
         thresholds: &crate::monitor::types::AlertThresholds,
         alert_manager: &AlertManager,
     ) -> Result<()> {
-        use chrono::NaiveDateTime;
-
-        // Parse expiry date - support multiple formats used by different certificate sources
-        // Formats observed: RFC3339, "YYYY-MM-DD HH:MM:SS UTC", "YYYY-MM-DD HH:MM:SS GMT"
-        let expiry = match chrono::DateTime::parse_from_rfc3339(&cert.not_after) {
-            Ok(dt) => dt.with_timezone(&Utc),
-            Err(_) => {
-                // Try parsing as "YYYY-MM-DD HH:MM:SS UTC" or similar formats
-                let not_after_str = &cert.not_after;
-                match NaiveDateTime::parse_from_str(not_after_str, "%Y-%m-%d %H:%M:%S UTC")
-                    .map(|dt| DateTime::from_naive_utc_and_offset(dt, Utc))
+        let expiry = match parse_cert_date(&cert.not_after) {
+            Some(dt) => dt,
+            None => {
+                tracing::warn!(
+                    "Failed to parse certificate expiry date for {} (input was: {})",
+                    identifier,
+                    cert.not_after
+                );
+                // Alert on unparseable date if expiry warnings are enabled
+                if thresholds.expiry_1d
+                    || thresholds.expiry_7d
+                    || thresholds.expiry_14d
+                    || thresholds.expiry_30d
                 {
-                    Ok(dt) => dt,
-                    Err(_) => {
-                        // Try with cleaned format (remove UTC/GMT suffix)
-                        let cleaned = not_after_str.replace(" UTC", "").replace(" GMT", "");
-                        match NaiveDateTime::parse_from_str(&cleaned, "%Y-%m-%d %H:%M:%S")
-                            .map(|dt| DateTime::from_naive_utc_and_offset(dt, Utc))
-                        {
-                            Ok(dt) => dt,
-                            Err(e) => {
-                                tracing::warn!(
-                                    "Failed to parse certificate expiry date for {}: {} (input was: {})",
-                                    identifier,
-                                    e,
-                                    cert.not_after
-                                );
-                                // Alert on unparseable date if expiry warnings are enabled
-                                if thresholds.expiry_1d
-                                    || thresholds.expiry_7d
-                                    || thresholds.expiry_14d
-                                    || thresholds.expiry_30d
-                                {
-                                    let alert = Alert::scan_failure(
-                                        identifier.to_string(),
-                                        format!(
-                                            "Certificate has unparseable expiry date: {}",
-                                            cert.not_after
-                                        ),
-                                    );
-                                    let _ = alert_manager.send_alert(&alert).await;
-                                }
-                                return Ok(());
-                            }
-                        }
-                    }
+                    let alert = Alert::scan_failure(
+                        identifier.to_string(),
+                        format!(
+                            "Certificate has unparseable expiry date: {}",
+                            cert.not_after
+                        ),
+                    );
+                    let _ = alert_manager.send_alert(&alert).await;
                 }
+                return Ok(());
             }
         };
 
         let now = Utc::now();
-        let days_remaining = (expiry - now).num_days();
 
         // Already expired certificates — generate critical alert (only if any expiry threshold enabled)
-        if days_remaining < 0 {
+        if now > expiry {
             let any_expiry_threshold = thresholds.expiry_1d
                 || thresholds.expiry_7d
                 || thresholds.expiry_14d
@@ -374,6 +351,8 @@ impl MonitorDaemon {
             if !any_expiry_threshold {
                 return Ok(());
             }
+
+            let days_remaining = -(now - expiry).num_days().max(1);
 
             let details = AlertDetails {
                 certificate_serial: Some(cert.serial_number.clone()),
@@ -387,6 +366,8 @@ impl MonitorDaemon {
             alert_manager.send_alert(&alert).await?;
             return Ok(());
         }
+
+        let days_remaining = (expiry - now).num_days();
 
         // Check thresholds with cumulative matching: each threshold covers its
         // full range so that enabling expiry_30d alerts for ALL certs expiring
@@ -497,8 +478,41 @@ pub struct DaemonStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::monitor::alerts::{AlertChannel, AlertType};
+    use crate::monitor::detector::ChangeSeverity;
+    use async_trait::async_trait;
     use std::io::Write;
+    use std::sync::Arc;
     use tempfile::NamedTempFile;
+    use tokio::sync::Mutex as TokioMutex;
+
+    #[derive(Clone, Default)]
+    struct RecordingChannel {
+        alerts: Arc<TokioMutex<Vec<Alert>>>,
+    }
+
+    #[async_trait]
+    impl AlertChannel for RecordingChannel {
+        async fn send_alert(&self, alert: &Alert) -> Result<()> {
+            self.alerts.lock().await.push(alert.clone());
+            Ok(())
+        }
+
+        fn channel_name(&self) -> &str {
+            "recording"
+        }
+    }
+
+    fn test_certificate(not_after: String) -> CertificateInfo {
+        CertificateInfo {
+            subject: "CN=example.com".to_string(),
+            issuer: "CN=Test CA".to_string(),
+            serial_number: "123".to_string(),
+            not_before: "2024-01-01T00:00:00Z".to_string(),
+            not_after,
+            ..Default::default()
+        }
+    }
 
     #[tokio::test]
     async fn test_daemon_creation() {
@@ -583,6 +597,43 @@ mod tests {
             .expect("test assertion should succeed");
 
         daemon.run_scan_cycle().await.expect("scan cycle ok");
+    }
+
+    #[tokio::test]
+    async fn test_expiry_warning_treats_recently_expired_certificate_as_expired() {
+        let channel = RecordingChannel::default();
+        let recorded_alerts = Arc::clone(&channel.alerts);
+        let mut alert_manager = AlertManager::new(0);
+        alert_manager.add_channel(Box::new(channel));
+        let thresholds = crate::monitor::types::AlertThresholds {
+            expiry_30d: false,
+            expiry_14d: false,
+            expiry_7d: false,
+            expiry_1d: true,
+            on_change: false,
+        };
+        let cert = test_certificate((Utc::now() - chrono::Duration::minutes(5)).to_rfc3339());
+
+        MonitorDaemon::check_expiry_warnings("example.com:443", &cert, &thresholds, &alert_manager)
+            .await
+            .expect("expiry warning check should succeed");
+
+        let alerts = recorded_alerts.lock().await;
+        assert_eq!(alerts.len(), 1);
+        let alert = &alerts[0];
+        assert_eq!(alert.severity, ChangeSeverity::Critical);
+        assert!(
+            alert.message.contains("expired"),
+            "unexpected alert message: {}",
+            alert.message
+        );
+        match alert.alert_type {
+            AlertType::ExpiryWarning { days_remaining } => assert!(
+                days_remaining < 0,
+                "expected negative days_remaining for expired cert, got {days_remaining}"
+            ),
+            _ => panic!("expected expiry warning alert, got {:?}", alert.alert_type),
+        }
     }
 
     #[tokio::test]

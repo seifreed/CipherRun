@@ -108,9 +108,11 @@ fn test_scan_results_connection_evidence_requires_successful_subtests() {
             http3_supported: false,
             negotiated_protocol: None,
             details: vec![],
+            inconclusive: false,
         },
         spdy_supported: false,
         recommendations: vec![],
+        inconclusive: false,
     });
     results.advanced_mut().client_simulations = Some(vec![ClientSimulationResult {
         client_name: "TestClient".to_string(),
@@ -135,6 +137,7 @@ fn test_scan_results_connection_evidence_requires_successful_subtests() {
                 iana_value: 0x0401,
                 supported: false,
             }],
+            inconclusive: false,
         });
     results.advanced_mut().key_exchange_groups =
         Some(crate::protocols::groups::GroupEnumerationResult {
@@ -152,6 +155,7 @@ fn test_scan_results_connection_evidence_requires_successful_subtests() {
     results.advanced_mut().client_cas = Some(crate::protocols::client_cas::ClientCAsResult {
         cas: vec![],
         requires_client_auth: false,
+        inconclusive: false,
     });
     results.advanced_mut().intolerance =
         Some(crate::protocols::intolerance::IntoleranceTestResult::default());
@@ -163,9 +167,11 @@ fn test_scan_results_connection_evidence_requires_successful_subtests() {
             http3_supported: false,
             negotiated_protocol: None,
             details: vec![],
+            inconclusive: false,
         },
         spdy_supported: false,
         recommendations: vec![],
+        inconclusive: false,
     });
 
     assert!(!results.has_connection_evidence());
@@ -406,7 +412,8 @@ fn test_aggregate_vulnerabilities_marks_results_inconclusive_when_backend_fails(
 
     assert_eq!(aggregated.len(), 1);
     assert!(!aggregated[0].vulnerable);
-    assert!(aggregated[0].inconclusive);
+    // Vulnerability confirmed on the successful backend remains conclusive
+    assert!(!aggregated[0].inconclusive);
     assert!(
         aggregated[0]
             .details
@@ -844,12 +851,17 @@ fn test_scan_results_advanced_accessors() {
             http3_supported: false,
             negotiated_protocol: None,
             details: vec![],
+            inconclusive: false,
         },
         spdy_supported: false,
         recommendations: vec![],
+        inconclusive: false,
     });
     results.advanced_mut().signature_algorithms =
-        Some(crate::protocols::signatures::SignatureEnumerationResult { algorithms: vec![] });
+        Some(crate::protocols::signatures::SignatureEnumerationResult {
+            algorithms: vec![],
+            inconclusive: false,
+        });
     results.advanced_mut().key_exchange_groups =
         Some(crate::protocols::groups::GroupEnumerationResult {
             groups: vec![],
@@ -859,6 +871,7 @@ fn test_scan_results_advanced_accessors() {
     results.advanced_mut().client_cas = Some(crate::protocols::client_cas::ClientCAsResult {
         cas: vec![],
         requires_client_auth: false,
+        inconclusive: false,
     });
 
     assert!(results.ja3s_fingerprint().is_some());
@@ -911,6 +924,7 @@ fn test_build_conservative_multi_ip_result() {
         protocols: vec![ProtocolTestResult {
             protocol: Protocol::TLS12,
             supported: true,
+            inconclusive: false,
             preferred: true,
             ciphers_count: 1,
             handshake_time_ms: Some(5),
@@ -995,6 +1009,7 @@ fn test_build_conservative_multi_ip_result_respects_disable_rating() {
         protocols: vec![ProtocolTestResult {
             protocol: Protocol::TLS12,
             supported: true,
+            inconclusive: false,
             preferred: true,
             ciphers_count: 1,
             handshake_time_ms: Some(5),
@@ -1070,6 +1085,7 @@ fn test_build_conservative_multi_ip_result_aggregates_probe_metadata() {
         protocols: vec![ProtocolTestResult {
             protocol: Protocol::TLS12,
             supported: true,
+            inconclusive: false,
             preferred: true,
             ciphers_count: 1,
             handshake_time_ms: Some(5),
@@ -1090,6 +1106,7 @@ fn test_build_conservative_multi_ip_result_aggregates_probe_metadata() {
         protocols: vec![ProtocolTestResult {
             protocol: Protocol::TLS13,
             supported: true,
+            inconclusive: false,
             preferred: true,
             ciphers_count: 1,
             handshake_time_ms: Some(4),
@@ -1181,6 +1198,7 @@ fn test_build_conservative_multi_ip_result_keeps_success_with_failed_ips() {
         protocols: vec![ProtocolTestResult {
             protocol: Protocol::TLS12,
             supported: true,
+            inconclusive: false,
             preferred: true,
             ciphers_count: 1,
             handshake_time_ms: Some(5),
@@ -1362,6 +1380,7 @@ fn test_build_conservative_multi_ip_result_partial_success_without_probe_attempt
         protocols: vec![ProtocolTestResult {
             protocol: Protocol::TLS12,
             supported: true,
+            inconclusive: false,
             preferred: true,
             ciphers_count: 1,
             handshake_time_ms: Some(5),
@@ -1441,6 +1460,7 @@ fn test_build_conservative_multi_ip_result_clears_unaggregated_residual_sections
         protocols: vec![ProtocolTestResult {
             protocol: Protocol::TLS12,
             supported: true,
+            inconclusive: false,
             preferred: true,
             ciphers_count: 1,
             handshake_time_ms: Some(5),
@@ -1503,12 +1523,17 @@ fn test_build_conservative_multi_ip_result_clears_unaggregated_residual_sections
             http3_supported: false,
             negotiated_protocol: Some("h2".to_string()),
             details: vec!["Server prefers: h2".to_string()],
+            inconclusive: false,
         },
         spdy_supported: false,
         recommendations: vec![],
+        inconclusive: false,
     });
     scan_result.advanced_mut().signature_algorithms =
-        Some(crate::protocols::signatures::SignatureEnumerationResult { algorithms: vec![] });
+        Some(crate::protocols::signatures::SignatureEnumerationResult {
+            algorithms: vec![],
+            inconclusive: false,
+        });
     scan_result.advanced_mut().key_exchange_groups =
         Some(crate::protocols::groups::GroupEnumerationResult {
             groups: vec![],
@@ -1518,6 +1543,7 @@ fn test_build_conservative_multi_ip_result_clears_unaggregated_residual_sections
     scan_result.advanced_mut().client_cas = Some(crate::protocols::client_cas::ClientCAsResult {
         cas: vec![],
         requires_client_auth: false,
+        inconclusive: false,
     });
     scan_result.advanced_mut().intolerance =
         Some(crate::protocols::intolerance::IntoleranceTestResult {
@@ -1526,6 +1552,8 @@ fn test_build_conservative_multi_ip_result_clears_unaggregated_residual_sections
             long_handshake_intolerance: false,
             incorrect_sni_alerts: false,
             uses_common_dh_primes: false,
+            inconclusive: false,
+            inconclusive_checks: Vec::new(),
             details: HashMap::new(),
         });
 

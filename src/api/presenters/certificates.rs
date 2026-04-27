@@ -1,6 +1,8 @@
 use crate::api::models::response::{CertificateListResponse, CertificateSummary};
 use chrono::{DateTime, Utc};
 
+const SECONDS_PER_DAY: i64 = 86_400;
+
 pub struct CertificateView {
     pub fingerprint: String,
     pub subject: String,
@@ -13,7 +15,8 @@ pub struct CertificateView {
 
 pub fn present_certificate_summary(view: CertificateView) -> CertificateSummary {
     let now = Utc::now();
-    let days_until_expiry = (view.not_after - now).num_days();
+    let days_until_expiry = signed_days_until_expiry(view.not_after, now);
+    let is_expired = view.not_after < now;
 
     CertificateSummary {
         fingerprint: view.fingerprint,
@@ -23,9 +26,20 @@ pub fn present_certificate_summary(view: CertificateView) -> CertificateSummary 
         valid_from: view.not_before,
         valid_until: view.not_after,
         days_until_expiry,
-        is_expired: view.not_after < now,
-        is_expiring_soon: (0..30).contains(&days_until_expiry),
+        is_expired,
+        is_expiring_soon: !is_expired && (0..30).contains(&days_until_expiry),
         hostnames: view.hostnames,
+    }
+}
+
+fn signed_days_until_expiry(not_after: DateTime<Utc>, now: DateTime<Utc>) -> i64 {
+    let seconds = (not_after - now).num_seconds();
+    if seconds < 0 {
+        let expired_days =
+            seconds.saturating_abs().saturating_add(SECONDS_PER_DAY - 1) / SECONDS_PER_DAY;
+        -expired_days
+    } else {
+        seconds / SECONDS_PER_DAY
     }
 }
 
@@ -52,8 +66,9 @@ fn parse_san(san_json: Option<&str>) -> Vec<String> {
 fn extract_cn_from_subject(subject: &str) -> String {
     subject
         .split(',')
-        .find(|part| part.trim().starts_with("CN="))
-        .and_then(|cn_part| cn_part.split('=').nth(1))
+        .filter_map(|part| part.trim().split_once('='))
+        .find(|(key, _)| key.trim().eq_ignore_ascii_case("CN"))
+        .map(|(_, value)| value)
         .unwrap_or(subject)
         .trim()
         .to_string()
@@ -79,6 +94,22 @@ mod tests {
         assert_eq!(summary.common_name, "example.com");
         assert_eq!(summary.san.len(), 2);
         assert!(summary.is_expiring_soon);
+    }
+
+    #[test]
+    fn summary_extracts_common_name_with_spaces_around_equals() {
+        let now = Utc::now();
+        let summary = present_certificate_summary(CertificateView {
+            fingerprint: "fp".to_string(),
+            subject: "C=US, O=Example, CN = spaced.example.com".to_string(),
+            issuer: "Example CA".to_string(),
+            not_before: now,
+            not_after: now + chrono::Duration::days(10),
+            san_json: None,
+            hostnames: Vec::new(),
+        });
+
+        assert_eq!(summary.common_name, "spaced.example.com");
     }
 
     #[test]
@@ -116,6 +147,24 @@ mod tests {
             not_after: now - chrono::Duration::days(1),
             san_json: Some("[]".to_string()),
             hostnames: vec!["expired.example".to_string()],
+        });
+
+        assert!(summary.is_expired);
+        assert!(!summary.is_expiring_soon);
+        assert!(summary.days_until_expiry < 0);
+    }
+
+    #[test]
+    fn summary_marks_recently_expired_certificates_as_expired_not_expiring_soon() {
+        let now = Utc::now();
+        let summary = present_certificate_summary(CertificateView {
+            fingerprint: "recently-expired".to_string(),
+            subject: "CN=recently-expired.example".to_string(),
+            issuer: "Example CA".to_string(),
+            not_before: now - chrono::Duration::days(90),
+            not_after: now - chrono::Duration::hours(1),
+            san_json: Some("[]".to_string()),
+            hostnames: vec!["recently-expired.example".to_string()],
         });
 
         assert!(summary.is_expired);

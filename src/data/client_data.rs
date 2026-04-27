@@ -107,9 +107,6 @@ impl ClientDatabase {
         let mut clients = Vec::new();
         let mut by_id = HashMap::new();
 
-        // This is a simplified parser - the real format is complex bash arrays
-        // For now, we'll parse the basic structure
-
         let mut current_section = String::new();
         let mut current_values: Vec<String> = Vec::new();
         let mut all_sections: HashMap<String, Vec<String>> = HashMap::new();
@@ -123,42 +120,43 @@ impl ClientDatabase {
             }
 
             // Detect section start (e.g., "names+=(")
-            if line.contains("+=(") {
-                // Save previous section
-                if !current_section.is_empty() {
-                    all_sections.insert(current_section.clone(), current_values.clone());
-                    current_values.clear();
-                }
+            if let Some((section, rest)) = line.split_once("+=(") {
+                Self::append_section_values(
+                    &mut all_sections,
+                    &mut current_section,
+                    &mut current_values,
+                );
 
-                // Start new section
-                if let Some(name) = line.split('+').next() {
-                    current_section = name.trim().to_string();
-                }
+                current_section = section.trim().to_string();
+                current_values.extend(Self::extract_array_values(rest));
 
-                // Extract value from same line if present (e.g., names+=("value"))
-                if line.contains('"')
-                    && let Some(value) = Self::extract_quoted(line)
-                {
-                    current_values.push(value);
+                if rest.contains(')') {
+                    Self::append_section_values(
+                        &mut all_sections,
+                        &mut current_section,
+                        &mut current_values,
+                    );
                 }
                 continue;
             }
 
-            // Collect values
-            if line.starts_with('"') || line.contains('"') {
-                // Extract quoted string
-                if let Some(value) = Self::extract_quoted(line) {
-                    current_values.push(value);
-                }
+            if current_section.is_empty() {
+                continue;
             }
 
+            current_values.extend(Self::extract_array_values(line));
+
             // End of section
-            if line.starts_with(')') && !current_section.is_empty() {
-                all_sections.insert(current_section.clone(), current_values.clone());
-                current_values.clear();
-                current_section.clear();
+            if line.contains(')') {
+                Self::append_section_values(
+                    &mut all_sections,
+                    &mut current_section,
+                    &mut current_values,
+                );
             }
         }
+
+        Self::append_section_values(&mut all_sections, &mut current_section, &mut current_values);
 
         // Build client profiles from sections
         if let Some(names) = all_sections.get("names") {
@@ -205,7 +203,13 @@ impl ClientDatabase {
                     services: all_sections
                         .get("service")
                         .and_then(|v| v.get(i))
-                        .map(|s| s.split(',').map(String::from).collect())
+                        .map(|s| {
+                            s.split(',')
+                                .map(str::trim)
+                                .filter(|s| !s.is_empty())
+                                .map(String::from)
+                                .collect()
+                        })
                         .unwrap_or_default(),
                     min_dh_bits: all_sections
                         .get("minDhBits")
@@ -230,17 +234,22 @@ impl ClientDatabase {
                     curves: all_sections
                         .get("curves")
                         .and_then(|v| v.get(i))
-                        .map(|s| s.split_whitespace().map(String::from).collect())
+                        .map(|s| {
+                            s.split(|c: char| c == ':' || c.is_ascii_whitespace())
+                                .filter(|s| !s.is_empty())
+                                .map(String::from)
+                                .collect()
+                        })
                         .unwrap_or_default(),
                     requires_sha2: all_sections
                         .get("requiresSha2")
                         .and_then(|v| v.get(i))
-                        .map(|s| s == "true")
+                        .and_then(|s| Self::parse_bool(s))
                         .unwrap_or(false),
                     current: all_sections
                         .get("current")
                         .and_then(|v| v.get(i))
-                        .map(|s| s == "true")
+                        .and_then(|s| Self::parse_bool(s))
                         .unwrap_or(true),
                 };
 
@@ -252,36 +261,88 @@ impl ClientDatabase {
         Ok(Self { clients, by_id })
     }
 
-    /// Extract quoted string from line
-    fn extract_quoted(line: &str) -> Option<String> {
+    fn append_section_values(
+        all_sections: &mut HashMap<String, Vec<String>>,
+        current_section: &mut String,
+        current_values: &mut Vec<String>,
+    ) {
+        if current_section.is_empty() {
+            return;
+        }
+
+        all_sections
+            .entry(std::mem::take(current_section))
+            .or_default()
+            .append(current_values);
+    }
+
+    fn extract_array_values(line: &str) -> Vec<String> {
+        let mut values = Vec::new();
+        let mut current = String::new();
         let mut in_quote = false;
-        let mut result = String::new();
+        let mut in_token = false;
         let mut escape_next = false;
 
         for ch in line.chars() {
             if escape_next {
-                result.push(ch);
+                current.push(ch);
                 escape_next = false;
                 continue;
             }
 
-            match ch {
-                '\\' => escape_next = true,
-                '"' => {
-                    if in_quote {
-                        return Some(result);
+            if in_quote {
+                match ch {
+                    '\\' => escape_next = true,
+                    '"' => {
+                        values.push(std::mem::take(&mut current));
+                        in_quote = false;
+                        in_token = false;
                     }
-                    in_quote = true;
+                    _ => current.push(ch),
                 }
-                _ if in_quote => result.push(ch),
-                _ => {}
+                continue;
+            }
+
+            match ch {
+                '"' => {
+                    current.clear();
+                    in_quote = true;
+                    in_token = true;
+                }
+                ')' => {
+                    if in_token {
+                        values.push(std::mem::take(&mut current));
+                        in_token = false;
+                    }
+                    break;
+                }
+                '(' => {}
+                '#' => break,
+                ch if ch.is_ascii_whitespace() => {
+                    if in_token {
+                        values.push(std::mem::take(&mut current));
+                        in_token = false;
+                    }
+                }
+                _ => {
+                    current.push(ch);
+                    in_token = true;
+                }
             }
         }
 
-        if !result.is_empty() {
-            Some(result)
-        } else {
-            None
+        if in_token && !in_quote {
+            values.push(current);
+        }
+
+        values
+    }
+
+    fn parse_bool(value: &str) -> Option<bool> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "true" | "1" | "yes" => Some(true),
+            "false" | "0" | "no" => Some(false),
+            _ => None,
         }
     }
 
@@ -319,24 +380,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_extract_quoted() {
-        assert_eq!(
-            ClientDatabase::extract_quoted(r#""Hello World""#),
-            Some("Hello World".to_string())
-        );
-
-        assert_eq!(
-            ClientDatabase::extract_quoted(r#"  "Test String"  "#),
-            Some("Test String".to_string())
-        );
-    }
-
-    #[test]
-    fn test_extract_quoted_none() {
-        assert_eq!(ClientDatabase::extract_quoted("no quotes"), None);
-    }
-
-    #[test]
     fn test_load_database() {
         let db = ClientDatabase::load();
         assert!(db.is_ok());
@@ -353,15 +396,6 @@ mod tests {
         for client in current {
             assert!(client.current);
         }
-    }
-
-    #[test]
-    fn test_extract_quoted_with_escaped_quotes() {
-        let line = r#""Hello \"World\"""#;
-        assert_eq!(
-            ClientDatabase::extract_quoted(line),
-            Some("Hello \"World\"".to_string())
-        );
     }
 
     #[test]
@@ -388,5 +422,73 @@ service+=(
 
         let profile = db.get_by_id("client_a").expect("client should exist");
         assert_eq!(profile.name, "Client A");
+    }
+
+    #[test]
+    fn test_parse_accumulates_repeated_single_value_sections() {
+        let data = r#"
+names+=("Client A")
+short+=("client_a")
+current+=(true)
+names+=("Client B")
+short+=("client_b")
+current+=(false)
+"#;
+
+        let db = ClientDatabase::parse(data).expect("test assertion should succeed");
+
+        assert_eq!(db.count(), 2);
+        assert_eq!(
+            db.get_by_id("client_a")
+                .expect("client A should exist")
+                .name,
+            "Client A"
+        );
+        let client_b = db.get_by_id("client_b").expect("client B should exist");
+        assert_eq!(client_b.name, "Client B");
+        assert!(!client_b.current);
+    }
+
+    #[test]
+    fn test_parse_preserves_empty_quoted_values_for_column_alignment() {
+        let data = r#"
+names+=("Client A")
+short+=("client_a")
+ch_sni+=("")
+names+=("Client B")
+short+=("client_b")
+ch_sni+=("SNI")
+"#;
+
+        let db = ClientDatabase::parse(data).expect("test assertion should succeed");
+
+        assert!(!db.get_by_id("client_a").expect("client A").uses_sni);
+        assert!(db.get_by_id("client_b").expect("client B").uses_sni);
+    }
+
+    #[test]
+    fn test_parse_splits_curves_on_colons_and_whitespace() {
+        let data = r#"
+names+=("Client A")
+short+=("client_a")
+curves+=("X25519:secp256r1 secp384r1")
+"#;
+
+        let db = ClientDatabase::parse(data).expect("test assertion should succeed");
+        let client = db.get_by_id("client_a").expect("client should exist");
+
+        assert_eq!(client.curves, ["X25519", "secp256r1", "secp384r1"]);
+    }
+
+    #[test]
+    fn test_load_database_keeps_legacy_clients_out_of_current_set() {
+        let db = ClientDatabase::load().expect("embedded client database should load");
+        let legacy = db
+            .get_by_id("android_237")
+            .expect("legacy Android profile should exist");
+
+        assert!(!legacy.current);
+        assert!(db.get_by_id("android_81").expect("current profile").current);
+        assert!(db.current_clients().len() < db.count());
     }
 }

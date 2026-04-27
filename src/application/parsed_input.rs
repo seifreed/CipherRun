@@ -9,19 +9,34 @@ pub struct CompareScanIds {
 
 impl CompareScanIds {
     pub fn parse(raw: &str) -> Result<Self> {
-        let parts: Vec<&str> = raw.split(':').collect();
-        if parts.len() != 2 {
+        let Some((left_raw, right_raw)) = raw.split_once(':') else {
+            return Err(TlsError::InvalidInput {
+                message: "Expected format SCAN_ID_1:SCAN_ID_2".to_string(),
+            });
+        };
+        if right_raw.contains(':') {
             return Err(TlsError::InvalidInput {
                 message: "Expected format SCAN_ID_1:SCAN_ID_2".to_string(),
             });
         }
 
-        let left = parts[0].parse().map_err(|_| TlsError::InvalidInput {
-            message: format!("Invalid scan ID: {}", parts[0]),
+        let left = left_raw.parse().map_err(|_| TlsError::InvalidInput {
+            message: format!("Invalid scan ID: {}", left_raw),
         })?;
-        let right = parts[1].parse().map_err(|_| TlsError::InvalidInput {
-            message: format!("Invalid scan ID: {}", parts[1]),
+        let right = right_raw.parse().map_err(|_| TlsError::InvalidInput {
+            message: format!("Invalid scan ID: {}", right_raw),
         })?;
+
+        if left <= 0 {
+            return Err(TlsError::InvalidInput {
+                message: format!("Scan ID must be positive: {}", left),
+            });
+        }
+        if right <= 0 {
+            return Err(TlsError::InvalidInput {
+                message: format!("Scan ID must be positive: {}", right),
+            });
+        }
 
         Ok(Self { left, right })
     }
@@ -49,6 +64,11 @@ impl HostPortDaysInput {
         let days = days_str.parse().map_err(|_| TlsError::InvalidInput {
             message: format!("Invalid days: {}", days_str),
         })?;
+        if days <= 0 {
+            return Err(TlsError::InvalidInput {
+                message: format!("Days must be positive: {}", days),
+            });
+        }
 
         let (hostname, port) =
             split_target_host_port(host_port).map_err(|e| TlsError::InvalidInput {
@@ -102,6 +122,15 @@ mod tests {
     #[test]
     fn rejects_invalid_compare_scan_ids() {
         assert!(CompareScanIds::parse("1").is_err());
+        assert!(CompareScanIds::parse("1:2:3").is_err());
+    }
+
+    #[test]
+    fn rejects_non_positive_compare_scan_ids() {
+        assert!(CompareScanIds::parse("0:2").is_err());
+        assert!(CompareScanIds::parse("1:0").is_err());
+        assert!(CompareScanIds::parse("-1:2").is_err());
+        assert!(CompareScanIds::parse("1:-2").is_err());
     }
 
     #[test]
@@ -110,6 +139,17 @@ mod tests {
         assert_eq!(parsed.hostname, "example.com");
         assert_eq!(parsed.port, 443);
         assert_eq!(parsed.days, 7);
+    }
+
+    #[test]
+    fn rejects_non_positive_host_port_days() {
+        assert!(HostPortDaysInput::parse("example.com:443:0").is_err());
+        assert!(HostPortDaysInput::parse("example.com:443:-7").is_err());
+    }
+
+    #[test]
+    fn rejects_zero_port_host_port_days() {
+        assert!(HostPortDaysInput::parse("example.com:0:7").is_err());
     }
 
     #[test]
@@ -144,5 +184,15 @@ mod tests {
     #[test]
     fn rejects_malformed_host_port_input() {
         assert!(HostPortInput::parse_with_default_port("example.com:443:extra", 443).is_err());
+    }
+
+    #[test]
+    fn rejects_empty_host_port_input() {
+        assert!(HostPortInput::parse_with_default_port("", 443).is_err());
+    }
+
+    #[test]
+    fn rejects_zero_port_host_port_input() {
+        assert!(HostPortInput::parse_with_default_port("example.com:0", 443).is_err());
     }
 }

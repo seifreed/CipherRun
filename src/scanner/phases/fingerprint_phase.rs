@@ -57,6 +57,24 @@ impl FingerprintPhase {
         Self
     }
 
+    fn load_ja3_database(&self, context: &mut ScanContext) -> crate::fingerprint::Ja3Database {
+        use crate::fingerprint::Ja3Database;
+
+        if let Some(db_path) = context.args.fingerprint.ja3_database.clone() {
+            return Ja3Database::from_file(&db_path).unwrap_or_else(|e| {
+                context
+                    .results
+                    .add_human_warning(format!("Failed to load custom JA3 database: {}", e));
+                context
+                    .results
+                    .add_human_warning("Falling back to builtin JA3 database");
+                Ja3Database::default()
+            });
+        }
+
+        Ja3Database::default()
+    }
+
     /// Capture JA3 client fingerprint
     ///
     /// JA3 is a method for creating SSL/TLS client fingerprints that are
@@ -70,7 +88,7 @@ impl FingerprintPhase {
     /// - Elliptic curves
     /// - Elliptic curve point formats
     async fn capture_ja3(&self, context: &mut ScanContext) -> Result<()> {
-        use crate::fingerprint::{ClientHelloNetworkCapture, Ja3Database};
+        use crate::fingerprint::ClientHelloNetworkCapture;
 
         let target = context.target();
 
@@ -83,19 +101,15 @@ impl FingerprintPhase {
         fingerprints.ja3_fingerprint = Some(ja3.clone());
 
         // Match against signature database
-        let db = if let Some(ref db_path) = context.args.fingerprint.ja3_database {
-            Ja3Database::from_file(db_path).unwrap_or_default()
-        } else {
-            Ja3Database::default()
-        };
+        let db = self.load_ja3_database(context);
 
-        if let Some(signature) = db.match_fingerprint(&ja3.ja3_hash) {
-            fingerprints.ja3_match = Some(signature.clone());
+        if let Some(signature) = db.match_fingerprint(&ja3.ja3_hash).cloned() {
+            context.results.fingerprints_mut().ja3_match = Some(signature);
         }
 
         // Store raw ClientHello if requested
         if context.args.fingerprint.client_hello {
-            fingerprints.client_hello_raw = Some(client_hello.to_bytes());
+            context.results.fingerprints_mut().client_hello_raw = Some(client_hello.to_bytes());
         }
 
         Ok(())
@@ -413,6 +427,50 @@ mod tests {
         assert!(
             context.results.fingerprints.is_none(),
             "fingerprints should remain None when no flags are set"
+        );
+    }
+
+    #[test]
+    fn test_load_ja3_database_warns_and_falls_back_for_invalid_custom_path() {
+        let target = crate::utils::network::Target::with_ips(
+            "localhost".to_string(),
+            443,
+            vec!["127.0.0.1".parse().expect("valid IP")],
+        )
+        .expect("test assertion should succeed");
+
+        let mut args = ScanRequest::default();
+        args.fingerprint.ja3_database = Some(std::env::temp_dir().join(format!(
+            "cipherrun_missing_ja3_{}_{}.json",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        )));
+
+        let mut context = ScanContext::new(target, Arc::new(args), None, None);
+        let db = FingerprintPhase::new().load_ja3_database(&mut context);
+
+        assert!(
+            db.match_fingerprint("773906b0efdefa24a7f2b8eb6985bf37")
+                .is_some()
+        );
+        assert!(
+            context
+                .results
+                .scan_metadata
+                .human_warnings
+                .iter()
+                .any(|warning| warning.contains("Failed to load custom JA3 database"))
+        );
+        assert!(
+            context
+                .results
+                .scan_metadata
+                .human_warnings
+                .iter()
+                .any(|warning| warning.contains("Falling back to builtin JA3 database"))
         );
     }
 }

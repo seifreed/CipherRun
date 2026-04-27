@@ -74,15 +74,22 @@ impl FromStr for Protocol {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
+        let normalized = s
+            .trim()
+            .chars()
+            .filter(|c| !c.is_ascii_whitespace() && *c != '_' && *c != '-')
+            .collect::<String>()
+            .to_ascii_lowercase();
+
+        match normalized.as_str() {
             // Standard display format with spaces
-            "SSLv2" | "SSL 2.0" => Ok(Protocol::SSLv2),
-            "SSLv3" | "SSL 3.0" => Ok(Protocol::SSLv3),
-            "TLS 1.0" | "TLSv1.0" | "TLSv1" => Ok(Protocol::TLS10),
-            "TLS 1.1" | "TLSv1.1" => Ok(Protocol::TLS11),
-            "TLS 1.2" | "TLSv1.2" => Ok(Protocol::TLS12),
-            "TLS 1.3" | "TLSv1.3" => Ok(Protocol::TLS13),
-            "QUIC" => Ok(Protocol::QUIC),
+            "sslv2" | "sslv2.0" | "sslv20" | "ssl2.0" | "ssl20" => Ok(Protocol::SSLv2),
+            "sslv3" | "sslv3.0" | "sslv30" | "ssl3.0" | "ssl30" => Ok(Protocol::SSLv3),
+            "tls1.0" | "tlsv1.0" | "tlsv1" | "tls10" | "tlsv10" => Ok(Protocol::TLS10),
+            "tls1.1" | "tlsv1.1" | "tls11" | "tlsv11" => Ok(Protocol::TLS11),
+            "tls1.2" | "tlsv1.2" | "tls12" | "tlsv12" => Ok(Protocol::TLS12),
+            "tls1.3" | "tlsv1.3" | "tls13" | "tlsv13" => Ok(Protocol::TLS13),
+            "quic" => Ok(Protocol::QUIC),
             _ => Err(format!("Unknown protocol: {}", s)),
         }
     }
@@ -113,6 +120,8 @@ impl From<u16> for Protocol {
 pub struct ProtocolTestResult {
     pub protocol: Protocol,
     pub supported: bool,
+    #[serde(default)]
+    pub inconclusive: bool,
     pub preferred: bool,
     pub ciphers_count: usize,
     pub handshake_time_ms: Option<u64>,

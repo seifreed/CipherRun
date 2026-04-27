@@ -65,19 +65,25 @@ impl ScanRequest {
         } else if self.starttls.lmtp {
             Some(LMTP)
         } else {
-            match self.starttls.protocol.as_deref() {
-                Some("smtp") => Some(SMTP),
-                Some("imap") => Some(IMAP),
-                Some("pop3") => Some(POP3),
-                Some("ftp") => Some(FTP),
-                Some("ldap") => Some(LDAP),
-                Some("xmpp") => Some(XMPP),
-                Some("postgres") | Some("postgresql") | Some("psql") => Some(POSTGRES),
-                Some("mysql") => Some(MYSQL),
-                Some("irc") => Some(IRC),
-                Some("nntp") => Some(NNTP),
-                Some("sieve") => Some(SIEVE),
-                Some("lmtp") => Some(LMTP),
+            let protocol = self
+                .starttls
+                .protocol
+                .as_deref()?
+                .trim()
+                .to_ascii_lowercase();
+            match protocol.as_str() {
+                "smtp" => Some(SMTP),
+                "imap" => Some(IMAP),
+                "pop3" => Some(POP3),
+                "ftp" => Some(FTP),
+                "ldap" => Some(LDAP),
+                "xmpp" | "xmpp-server" => Some(XMPP),
+                "postgres" | "postgresql" | "psql" => Some(POSTGRES),
+                "mysql" => Some(MYSQL),
+                "irc" => Some(IRC),
+                "nntp" => Some(NNTP),
+                "sieve" => Some(SIEVE),
+                "lmtp" => Some(LMTP),
                 _ => None,
             }
         }

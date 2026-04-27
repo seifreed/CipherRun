@@ -16,8 +16,12 @@ use tokio::sync::Mutex;
 pub struct RateLimiter {
     /// Minimum delay between requests
     delay: Duration,
-    /// Last request timestamp
-    last_request: Arc<Mutex<Option<Instant>>>,
+    /// Earliest instant at which the next request is allowed to start.
+    /// Storing the *projected* next slot (instead of the last-request
+    /// timestamp) lets concurrent waiters each reserve their own slot while
+    /// holding the lock, spreading them out by `delay` instead of letting them
+    /// all compute the same `sleep_duration` from the same observed `last`.
+    next_allowed: Arc<Mutex<Option<Instant>>>,
 }
 
 impl RateLimiter {
@@ -36,7 +40,7 @@ impl RateLimiter {
     pub fn new(delay: Duration) -> Self {
         Self {
             delay,
-            last_request: Arc::new(Mutex::new(None)),
+            next_allowed: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -73,33 +77,28 @@ impl RateLimiter {
     /// limiter.wait().await;
     /// ```
     pub async fn wait(&self) {
-        // Calculate sleep duration while holding the lock
-        let sleep_duration = {
-            let mut last = self.last_request.lock().await;
-
-            if let Some(last_time) = *last {
-                let elapsed = last_time.elapsed();
-
-                if elapsed < self.delay {
-                    self.delay - elapsed
-                } else {
-                    // Enough time has passed, no need to wait
-                    *last = Some(Instant::now());
-                    return;
-                }
-            } else {
-                // First request, no need to wait
-                *last = Some(Instant::now());
-                return;
-            }
+        // I4 fix: reserve the slot *before* releasing the lock and sleeping.
+        // Previous implementation released the lock without updating, so N
+        // concurrent waiters all read the same `last_request`, all computed
+        // the same `sleep_duration`, and all woke simultaneously — producing
+        // a burst of N requests at the end of each delay window rather than
+        // one-per-window spacing.
+        let sleep_until = {
+            let mut next = self.next_allowed.lock().await;
+            let now = Instant::now();
+            let target = match *next {
+                Some(t) if t > now => t,
+                _ => now,
+            };
+            // The request that holds this lock will fire at `target`; the next
+            // waiter must wait until `target + self.delay`.
+            *next = Some(target + self.delay);
+            target
         };
 
-        // Sleep without holding the lock to allow concurrent requests
-        tokio::time::sleep(sleep_duration).await;
-
-        // Update timestamp after sleep
-        let mut last = self.last_request.lock().await;
-        *last = Some(Instant::now());
+        if sleep_until > Instant::now() {
+            tokio::time::sleep_until(tokio::time::Instant::from_std(sleep_until)).await;
+        }
     }
 
     /// Get the configured delay duration
@@ -107,10 +106,10 @@ impl RateLimiter {
         self.delay
     }
 
-    /// Reset the last request timestamp (useful for testing)
+    /// Reset the limiter's slot reservation (useful for testing)
     pub async fn reset(&self) {
-        let mut last = self.last_request.lock().await;
-        *last = None;
+        let mut next = self.next_allowed.lock().await;
+        *next = None;
     }
 
     /// Get the time until the next request can be made
@@ -127,18 +126,11 @@ impl RateLimiter {
     /// // wait_time will be approximately 1 second
     /// ```
     pub async fn time_until_next(&self) -> Duration {
-        let last = self.last_request.lock().await;
-
-        match *last {
-            Some(last_time) => {
-                let elapsed = last_time.elapsed();
-                if elapsed >= self.delay {
-                    Duration::ZERO
-                } else {
-                    self.delay - elapsed
-                }
-            }
-            None => Duration::ZERO,
+        let next = self.next_allowed.lock().await;
+        let now = Instant::now();
+        match *next {
+            Some(t) if t > now => t - now,
+            _ => Duration::ZERO,
         }
     }
 }
@@ -182,6 +174,9 @@ pub fn parse_delay(s: &str) -> Result<Duration> {
     if let Some(value_str) = s.strip_suffix('s') {
         // Support floating point seconds
         let seconds: f64 = value_str.trim().parse()?;
+        if !seconds.is_finite() || seconds < 0.0 {
+            anyhow::bail!("Invalid delay value: {}", s);
+        }
         let millis = (seconds * 1000.0) as u64;
         return Ok(Duration::from_millis(millis));
     }
@@ -251,13 +246,57 @@ mod tests {
     #[tokio::test]
     async fn test_time_until_next_zero_after_elapsed() {
         let limiter = RateLimiter::new(Duration::from_millis(50));
+        // With the new semantics, set `next_allowed` to a past instant so
+        // `time_until_next` reports zero regardless of monotonic clock.
         {
-            let mut last = limiter.last_request.lock().await;
-            *last = Some(Instant::now() - Duration::from_millis(200));
+            let mut next = limiter.next_allowed.lock().await;
+            *next = Some(Instant::now() - Duration::from_millis(200));
         }
 
         let wait_time = limiter.time_until_next().await;
         assert_eq!(wait_time, Duration::ZERO);
+    }
+
+    /// I4 regression: concurrent waiters must be spread by ~`delay` each,
+    /// not all fire simultaneously after a single sleep window.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_rate_limiter_spreads_concurrent_waiters() {
+        let limiter = RateLimiter::new(Duration::from_millis(100));
+        let start = Instant::now();
+        let handles: Vec<_> = (0..5)
+            .map(|_| {
+                let l = limiter.clone();
+                tokio::spawn(async move {
+                    l.wait().await;
+                    Instant::now()
+                })
+            })
+            .collect();
+
+        let mut times: Vec<Instant> = Vec::with_capacity(5);
+        for h in handles {
+            times.push(h.await.expect("task completed"));
+        }
+        times.sort();
+
+        // Each successive waiter should fire at least ~90 ms after the prior
+        // (some scheduling slack). The old race allowed all five to fire
+        // within a few ms of each other.
+        for w in times.windows(2) {
+            let gap = w[1] - w[0];
+            assert!(
+                gap >= Duration::from_millis(80),
+                "concurrent waiters must be spread by ~delay; gap was {:?}",
+                gap
+            );
+        }
+        // And total span should be roughly 4 * delay.
+        let total = times.last().unwrap().duration_since(start);
+        assert!(
+            total >= Duration::from_millis(350),
+            "5 waiters over 100ms delay should take ≥400ms total; got {:?}",
+            total
+        );
     }
 
     #[test]
@@ -307,6 +346,12 @@ mod tests {
         assert!(parse_delay("invalid").is_err());
         assert!(parse_delay("abc ms").is_err());
         assert!(parse_delay("").is_err());
+    }
+
+    #[test]
+    fn test_parse_delay_rejects_non_finite_seconds() {
+        assert!(parse_delay("NaNs").is_err());
+        assert!(parse_delay("infs").is_err());
     }
 
     #[test]

@@ -421,15 +421,16 @@ mod tests {
         assert!(config.custom_indices.is_empty());
     }
 
-    #[test]
-    fn test_config_batch_size_validation() {
+    #[tokio::test]
+    async fn test_config_batch_size_validation() {
         let config = CtConfig {
             batch_size: 5000, // Too large
             ..Default::default()
         };
 
-        // Should be clamped to MAX_BATCH_SIZE
-        assert!(config.batch_size > MAX_BATCH_SIZE);
+        // Should be clamped to MAX_BATCH_SIZE during CtStreamer::new
+        let streamer = CtStreamer::new(config).await.unwrap();
+        assert_eq!(streamer.config.batch_size, MAX_BATCH_SIZE);
     }
 
     #[tokio::test]

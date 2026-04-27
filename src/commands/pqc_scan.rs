@@ -1,6 +1,6 @@
 use super::command::{Command, CommandExit};
-use crate::pqc::scanners::{CodeScanner, SshScanner, VpnScanner};
 use crate::Result;
+use crate::pqc::scanners::{CodeScanner, SshScanner, VpnScanner};
 use async_trait::async_trait;
 use colored::*;
 use std::path::PathBuf;
@@ -17,7 +17,11 @@ impl PqcScanCommand {
         vpn_path: Option<PathBuf>,
         code_path: Option<PathBuf>,
     ) -> Self {
-        Self { ssh_path, vpn_path, code_path }
+        Self {
+            ssh_path,
+            vpn_path,
+            code_path,
+        }
     }
 }
 

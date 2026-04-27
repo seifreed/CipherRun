@@ -48,6 +48,7 @@ impl ClientCAsTester {
                     return Ok(ClientCAsResult {
                         cas: Vec::new(),
                         requires_client_auth: false,
+                        inconclusive: true,
                     });
                 }
             };
@@ -73,16 +74,29 @@ impl ClientCAsTester {
             let cert_request = self.find_certificate_request(&data);
             let cas = cert_request.clone().unwrap_or_default();
 
+            let inconclusive = data.is_empty() || !Self::has_complete_tls_record(&data);
+
             return Ok(ClientCAsResult {
                 requires_client_auth: cert_request.is_some(),
                 cas,
+                inconclusive,
             });
         }
 
         Ok(ClientCAsResult {
             cas: Vec::new(),
             requires_client_auth: false,
+            inconclusive: true,
         })
+    }
+
+    fn has_complete_tls_record(data: &[u8]) -> bool {
+        if data.len() < 5 || data[0] != 0x16 {
+            return false;
+        }
+
+        let record_len = u16::from_be_bytes([data[3], data[4]]) as usize;
+        data.len() >= 5 + record_len
     }
 
     async fn read_tls_handshake_bytes(
@@ -308,5 +322,55 @@ mod tests {
 
         let cas = tester.parse_ca_list(&[]);
         assert!(cas.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_enumerate_client_cas_closed_target_is_inconclusive() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("local addr should exist");
+        drop(listener);
+
+        let target = Target::with_ips("localhost".to_string(), addr.port(), vec![addr.ip()])
+            .expect("target should build");
+        let tester = ClientCAsTester::new(target);
+
+        let result = tester
+            .enumerate_client_cas()
+            .await
+            .expect("client CA probe should return result");
+
+        assert!(result.inconclusive);
+        assert!(!result.requires_client_auth);
+        assert!(result.cas.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_enumerate_client_cas_truncated_response_is_inconclusive() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("local addr should exist");
+
+        tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let _ = socket
+                    .write_all(&[0x16, 0x03, 0x03, 0x00, 0x20, 0x02])
+                    .await;
+            }
+        });
+
+        let target = Target::with_ips("localhost".to_string(), addr.port(), vec![addr.ip()])
+            .expect("target should build");
+        let tester = ClientCAsTester::new(target);
+
+        let result = tester
+            .enumerate_client_cas()
+            .await
+            .expect("client CA probe should return result");
+
+        assert!(result.inconclusive);
+        assert!(!result.requires_client_auth);
     }
 }

@@ -107,7 +107,7 @@ impl Grade {
 
 /// Parse HSTS header
 pub fn parse_hsts(headers: &HashMap<String, String>) -> HstsAnalysis {
-    if let Some(hsts) = headers.get("strict-transport-security") {
+    if let Some(hsts) = header_value(headers, "strict-transport-security") {
         let mut max_age = None;
         let mut include_subdomains = false;
         let mut preload = false;
@@ -115,7 +115,7 @@ pub fn parse_hsts(headers: &HashMap<String, String>) -> HstsAnalysis {
         // Parse directives
         for part in hsts.split(';') {
             let part = part.trim();
-            if let Some(value) = part.strip_prefix("max-age=") {
+            if let Some(value) = directive_value(part, "max-age") {
                 if let Ok(age) = value.parse::<u64>() {
                     max_age = Some(age);
                 }
@@ -184,9 +184,8 @@ fn format_hsts_details(max_age: Option<u64>, include_subdomains: bool, preload: 
 
 /// Parse HPKP header (deprecated but still checked)
 pub fn parse_hpkp(headers: &HashMap<String, String>) -> HpkpAnalysis {
-    if let Some(hpkp) = headers
-        .get("public-key-pins")
-        .or_else(|| headers.get("public-key-pins-report-only"))
+    if let Some(hpkp) = header_value(headers, "public-key-pins")
+        .or_else(|| header_value(headers, "public-key-pins-report-only"))
     {
         let mut max_age = None;
         let mut include_subdomains = false;
@@ -196,15 +195,15 @@ pub fn parse_hpkp(headers: &HashMap<String, String>) -> HpkpAnalysis {
 
         for part in hpkp.split(';') {
             let part = part.trim();
-            if let Some(value) = part.strip_prefix("max-age=") {
+            if let Some(value) = directive_value(part, "max-age") {
                 if let Ok(age) = value.parse::<u64>() {
                     max_age = Some(age);
                 }
             } else if part.eq_ignore_ascii_case("includesubdomains") {
                 include_subdomains = true;
-            } else if let Some(value) = part.strip_prefix("report-uri=") {
+            } else if let Some(value) = directive_value(part, "report-uri") {
                 report_uri = Some(value.trim_matches('"').to_string());
-            } else if let Some(value) = part.strip_prefix("pin-sha256=") {
+            } else if let Some(value) = directive_value(part, "pin-sha256") {
                 pins.push(value.trim_matches('"').to_string());
             }
         }
@@ -327,13 +326,13 @@ fn parse_single_cookie(cookie_str: &str) -> CookieInfo {
             secure = true;
         } else if part.eq_ignore_ascii_case("HttpOnly") {
             httponly = true;
-        } else if let Some(value) = part.strip_prefix("SameSite=") {
+        } else if let Some(value) = directive_value(part, "SameSite") {
             samesite = Some(value.to_string());
-        } else if let Some(value) = part.strip_prefix("Domain=") {
+        } else if let Some(value) = directive_value(part, "Domain") {
             domain = Some(value.to_string());
-        } else if let Some(value) = part.strip_prefix("Path=") {
+        } else if let Some(value) = directive_value(part, "Path") {
             path = Some(value.to_string());
-        } else if let Some(value) = part.strip_prefix("Expires=") {
+        } else if let Some(value) = directive_value(part, "Expires") {
             expires = Some(value.to_string());
         }
     }
@@ -351,7 +350,7 @@ fn parse_single_cookie(cookie_str: &str) -> CookieInfo {
 
 /// Check HTTP Date/Time
 pub fn check_datetime(headers: &HashMap<String, String>) -> DateTimeCheck {
-    if let Some(date_str) = headers.get("date") {
+    if let Some(date_str) = header_value(headers, "date") {
         // Parse HTTP date format
         if let Ok(server_time) = chrono::DateTime::parse_from_rfc2822(date_str) {
             let now = chrono::Utc::now();
@@ -370,7 +369,7 @@ pub fn check_datetime(headers: &HashMap<String, String>) -> DateTimeCheck {
             };
 
             return DateTimeCheck {
-                server_date: Some(date_str.clone()),
+                server_date: Some(date_str.to_string()),
                 skew_seconds: Some(skew),
                 synchronized,
                 details,
@@ -388,13 +387,12 @@ pub fn check_datetime(headers: &HashMap<String, String>) -> DateTimeCheck {
 
 /// Detect application banners
 pub fn detect_banners(headers: &HashMap<String, String>) -> BannerDetection {
-    let server = headers.get("server").cloned();
-    let powered_by = headers.get("x-powered-by").cloned();
-    let application = headers
-        .get("x-aspnet-version")
-        .or_else(|| headers.get("x-aspnetmvc-version"))
-        .cloned();
-    let framework = headers.get("x-framework").cloned();
+    let server = header_value(headers, "server").map(ToString::to_string);
+    let powered_by = header_value(headers, "x-powered-by").map(ToString::to_string);
+    let application = header_value(headers, "x-aspnet-version")
+        .or_else(|| header_value(headers, "x-aspnetmvc-version"))
+        .map(ToString::to_string);
+    let framework = header_value(headers, "x-framework").map(ToString::to_string);
 
     let version_exposed = server.as_ref().is_some_and(|s| s.contains('/'))
         || powered_by.as_ref().is_some_and(|p| p.contains('/'))
@@ -428,21 +426,22 @@ pub fn detect_banners(headers: &HashMap<String, String>) -> BannerDetection {
 
 /// Detect reverse proxy
 pub fn detect_reverse_proxy(headers: &HashMap<String, String>) -> ReverseProxyDetection {
-    let via_header = headers.get("via").cloned();
-    let x_forwarded_for = headers.contains_key("x-forwarded-for");
-    let x_real_ip = headers.contains_key("x-real-ip");
-    let x_forwarded_proto = headers.contains_key("x-forwarded-proto");
+    let via_header = header_value(headers, "via").map(ToString::to_string);
+    let x_forwarded_for = has_header(headers, "x-forwarded-for");
+    let x_real_ip = has_header(headers, "x-real-ip");
+    let x_forwarded_proto = has_header(headers, "x-forwarded-proto");
 
     let detected = via_header.is_some() || x_forwarded_for || x_real_ip || x_forwarded_proto;
 
     let proxy_type = if let Some(ref via) = via_header {
-        if via.contains("nginx") {
+        let via_lower = via.to_ascii_lowercase();
+        if via_lower.contains("nginx") {
             Some("nginx".to_string())
-        } else if via.contains("Apache") {
+        } else if via_lower.contains("apache") {
             Some("Apache".to_string())
-        } else if via.contains("HAProxy") {
+        } else if via_lower.contains("haproxy") {
             Some("HAProxy".to_string())
-        } else if via.contains("Varnish") {
+        } else if via_lower.contains("varnish") {
             Some("Varnish".to_string())
         } else {
             Some("Unknown".to_string())
@@ -483,6 +482,26 @@ pub fn detect_reverse_proxy(headers: &HashMap<String, String>) -> ReverseProxyDe
     }
 }
 
+fn header_value<'a>(headers: &'a HashMap<String, String>, name: &str) -> Option<&'a str> {
+    headers
+        .iter()
+        .find(|(key, _)| key.eq_ignore_ascii_case(name))
+        .map(|(_, value)| value.as_str())
+}
+
+fn has_header(headers: &HashMap<String, String>, name: &str) -> bool {
+    header_value(headers, name).is_some()
+}
+
+fn directive_value<'a>(part: &'a str, name: &str) -> Option<&'a str> {
+    let (key, value) = part.split_once('=')?;
+    if key.trim().eq_ignore_ascii_case(name) {
+        Some(value.trim())
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -493,6 +512,22 @@ mod tests {
         headers.insert(
             "strict-transport-security".to_string(),
             "max-age=31536000; includeSubDomains; preload".to_string(),
+        );
+
+        let hsts = parse_hsts(&headers);
+        assert!(hsts.enabled);
+        assert_eq!(hsts.max_age, Some(31536000));
+        assert!(hsts.include_subdomains);
+        assert!(hsts.preload);
+        assert_eq!(hsts.grade, Grade::A);
+    }
+
+    #[test]
+    fn test_parse_hsts_is_case_insensitive() {
+        let mut headers = HashMap::new();
+        headers.insert(
+            "Strict-Transport-Security".to_string(),
+            "Max-Age=31536000; IncludeSubDomains; Preload".to_string(),
         );
 
         let hsts = parse_hsts(&headers);
@@ -515,6 +550,22 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_cookie_attributes_are_case_insensitive() {
+        let cookies = vec![
+            "session=abc123; secure; httponly; samesite=Lax; domain=example.com; path=/"
+                .to_string(),
+        ];
+
+        let analysis = parse_cookies(&cookies);
+        assert_eq!(analysis.secure_count, 1);
+        assert_eq!(analysis.httponly_count, 1);
+        assert_eq!(analysis.samesite_count, 1);
+        assert_eq!(analysis.insecure_count, 0);
+        assert_eq!(analysis.cookies[0].domain.as_deref(), Some("example.com"));
+        assert_eq!(analysis.cookies[0].path.as_deref(), Some("/"));
+    }
+
+    #[test]
     fn test_detect_reverse_proxy() {
         let mut headers = HashMap::new();
         headers.insert("via".to_string(), "1.1 nginx".to_string());
@@ -523,6 +574,18 @@ mod tests {
         let detection = detect_reverse_proxy(&headers);
         assert!(detection.detected);
         assert_eq!(detection.proxy_type, Some("nginx".to_string()));
+    }
+
+    #[test]
+    fn test_detect_reverse_proxy_is_case_insensitive() {
+        let mut headers = HashMap::new();
+        headers.insert("Via".to_string(), "1.1 VARNISH".to_string());
+        headers.insert("X-Forwarded-Proto".to_string(), "https".to_string());
+
+        let detection = detect_reverse_proxy(&headers);
+        assert!(detection.detected);
+        assert!(detection.x_forwarded_proto);
+        assert_eq!(detection.proxy_type, Some("Varnish".to_string()));
     }
 
     #[test]

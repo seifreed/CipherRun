@@ -3,7 +3,6 @@
 
 use crate::Result;
 use crate::certificates::parser::CertificateInfo;
-use reqwest;
 use serde::{Deserialize, Serialize};
 use x509_parser::prelude::*;
 
@@ -15,6 +14,8 @@ pub struct CtVerificationResult {
     pub sct_sources: Vec<SctSource>,
     pub compliant: bool,
     pub details: Vec<String>,
+    #[serde(default)]
+    pub log_lookup_inconclusive: bool,
 }
 
 /// SCT (Signed Certificate Timestamp) source
@@ -26,6 +27,13 @@ pub enum SctSource {
     TlsExtension,
     /// SCT stapled in OCSP response
     OcspStapling,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum CtLogLookup {
+    Found,
+    NotFound,
+    Inconclusive(String),
 }
 
 /// Certificate Transparency verifier
@@ -46,6 +54,7 @@ impl CtVerifier {
             sct_sources: Vec::new(),
             compliant: false,
             details: Vec::new(),
+            log_lookup_inconclusive: false,
         };
 
         // Check for SCT in X.509 certificate extension
@@ -59,17 +68,30 @@ impl CtVerifier {
         }
 
         // Check if certificate is in CT logs (requires network access)
-        if self.phone_out
-            && let Ok(in_logs) = self.check_ct_logs(cert).await
-        {
-            if in_logs {
-                result
-                    .details
-                    .push("Certificate found in public CT logs".to_string());
-            } else {
-                result
-                    .details
-                    .push("Certificate NOT found in public CT logs".to_string());
+        if self.phone_out {
+            match self.check_ct_logs(cert).await {
+                Ok(CtLogLookup::Found) => {
+                    result
+                        .details
+                        .push("Certificate found in public CT logs".to_string());
+                }
+                Ok(CtLogLookup::NotFound) => {
+                    result
+                        .details
+                        .push("Certificate NOT found in public CT logs".to_string());
+                }
+                Ok(CtLogLookup::Inconclusive(reason)) => {
+                    result.log_lookup_inconclusive = true;
+                    result
+                        .details
+                        .push(format!("CT log lookup inconclusive: {}", reason));
+                }
+                Err(err) => {
+                    result.log_lookup_inconclusive = true;
+                    result
+                        .details
+                        .push(format!("CT log lookup inconclusive: {}", err));
+                }
             }
         }
 
@@ -178,16 +200,22 @@ impl CtVerifier {
     }
 
     /// Check if certificate appears in public CT logs
-    async fn check_ct_logs(&self, cert: &CertificateInfo) -> Result<bool> {
+    async fn check_ct_logs(&self, cert: &CertificateInfo) -> Result<CtLogLookup> {
         if !self.phone_out {
-            return Ok(false);
+            return Ok(CtLogLookup::Inconclusive(
+                "phone-out CT lookup disabled".to_string(),
+            ));
         }
 
         // Use crt.sh API to check if certificate is logged
         // This is a public service that indexes CT logs
         let fingerprint = match &cert.fingerprint_sha256 {
             Some(fp) => fp.replace(':', ""),
-            None => return Ok(false),
+            None => {
+                return Ok(CtLogLookup::Inconclusive(
+                    "certificate has no SHA-256 fingerprint".to_string(),
+                ));
+            }
         };
         let url = format!("https://crt.sh/?q={}&output=json", fingerprint);
 
@@ -199,13 +227,26 @@ impl CtVerifier {
             Ok(response) => {
                 if response.status().is_success() {
                     let text = response.text().await?;
-                    // If we get a JSON array back with entries, cert is in CT logs
-                    Ok(text.len() > 2 && text.starts_with('['))
+                    Self::parse_ct_log_response(&text)
                 } else {
-                    Ok(false)
+                    Err(crate::TlsError::HttpError {
+                        status: response.status().as_u16(),
+                        details: "crt.sh CT lookup returned non-success status".to_string(),
+                    })
                 }
             }
-            Err(_) => Ok(false),
+            Err(err) => Err(err.into()),
+        }
+    }
+
+    fn parse_ct_log_response(text: &str) -> Result<CtLogLookup> {
+        let value: serde_json::Value = serde_json::from_str(text)?;
+        match value {
+            serde_json::Value::Array(entries) if entries.is_empty() => Ok(CtLogLookup::NotFound),
+            serde_json::Value::Array(_) => Ok(CtLogLookup::Found),
+            _ => Err(crate::TlsError::ParseError {
+                message: "CT log response was not a JSON array".to_string(),
+            }),
         }
     }
 
@@ -322,6 +363,52 @@ mod tests {
         assert!(!result.has_sct);
         assert_eq!(result.sct_count, 0);
         assert!(!result.compliant);
+        assert!(!result.log_lookup_inconclusive);
+    }
+
+    #[tokio::test]
+    async fn test_verify_phone_out_without_fingerprint_marks_lookup_inconclusive() {
+        let verifier = CtVerifier::new(true);
+        let cert = rcgen::generate_simple_self_signed(["example.com".to_string()])
+            .expect("test assertion should succeed");
+
+        let cert_info = CertificateInfo {
+            subject: "CN=example.com".to_string(),
+            issuer: "CN=example.com".to_string(),
+            serial_number: "01".to_string(),
+            not_before: "2024-01-01 00:00:00 +0000".to_string(),
+            not_after: "2025-01-01 00:00:00 +0000".to_string(),
+            expiry_countdown: None,
+            signature_algorithm: "sha256".to_string(),
+            public_key_algorithm: "rsaEncryption".to_string(),
+            public_key_size: Some(2048),
+            rsa_exponent: None,
+            san: vec!["example.com".to_string()],
+            is_ca: false,
+            key_usage: vec![],
+            extended_key_usage: vec![],
+            extended_validation: false,
+            ev_oids: vec![],
+            pin_sha256: None,
+            fingerprint_sha256: None,
+            debian_weak_key: None,
+            aia_url: None,
+            certificate_transparency: None,
+            der_bytes: cert.cert.der().as_ref().to_vec(),
+        };
+
+        let result = verifier
+            .verify(&cert_info)
+            .await
+            .expect("test assertion should succeed");
+
+        assert!(result.log_lookup_inconclusive);
+        assert!(
+            result
+                .details
+                .iter()
+                .any(|detail| detail.contains("CT log lookup inconclusive"))
+        );
     }
 
     #[test]
@@ -339,6 +426,7 @@ mod tests {
             sct_sources: vec![SctSource::X509Extension],
             compliant: true,
             details: vec![],
+            log_lookup_inconclusive: false,
         };
 
         let compliance = verifier.check_policy_compliance(&result, 24);
@@ -355,11 +443,32 @@ mod tests {
             sct_sources: vec![SctSource::X509Extension],
             compliant: false,
             details: vec![],
+            log_lookup_inconclusive: false,
         };
 
         let compliance = verifier.check_policy_compliance(&result, 60);
         assert!(!compliance.chrome_compliant);
         assert!(compliance.safari_compliant);
         assert_eq!(compliance.required_scts, 3);
+    }
+
+    #[test]
+    fn test_parse_ct_log_response_found_and_not_found() {
+        assert_eq!(
+            CtVerifier::parse_ct_log_response(r#"[{"id":1}]"#).expect("parse should succeed"),
+            CtLogLookup::Found
+        );
+        assert_eq!(
+            CtVerifier::parse_ct_log_response("[]").expect("parse should succeed"),
+            CtLogLookup::NotFound
+        );
+    }
+
+    #[test]
+    fn test_parse_ct_log_response_rejects_non_array() {
+        let err = CtVerifier::parse_ct_log_response(r#"{"error":"rate limited"}"#)
+            .expect_err("non-array CT response should be inconclusive to caller");
+
+        assert!(err.to_string().contains("not a JSON array"));
     }
 }

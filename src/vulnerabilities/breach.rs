@@ -21,17 +21,29 @@ impl BreachTester {
 
     /// Test for BREACH vulnerability
     pub async fn test(&self) -> Result<BreachTestResult> {
-        let compression_enabled = self.test_http_compression().await?;
-        let dynamic_content = self.test_dynamic_content().await?;
-        let sensitive_data = self.test_sensitive_data_reflection().await?;
+        // V11 fix: each sub-test returns an Option so the caller can distinguish
+        // "probe completed and observed X" from "probe could not run". A single
+        // TCP/TLS failure previously collapsed to `false` in every axis, making
+        // an unreachable server report as "not vulnerable" (a false negative for
+        // compliance dashboards).
+        let compression = self.test_http_compression().await?;
+        let dynamic = self.test_dynamic_content().await?;
+        let sensitive = self.test_sensitive_data_reflection().await?;
 
-        // BREACH requires all three conditions:
+        let inconclusive = compression.is_none() || dynamic.is_none() || sensitive.is_none();
+        let compression_enabled = compression.unwrap_or(false);
+        let dynamic_content = dynamic.unwrap_or(false);
+        let sensitive_data = sensitive.unwrap_or(false);
+
+        // BREACH requires all three conditions simultaneously:
         // 1. HTTP compression enabled
         // 2. Dynamic content (user input reflected)
         // 3. Sensitive data in responses
-        let vulnerable = compression_enabled && dynamic_content && sensitive_data;
+        let vulnerable = !inconclusive && compression_enabled && dynamic_content && sensitive_data;
 
-        let details = if vulnerable {
+        let details = if inconclusive {
+            "Inconclusive - one or more BREACH probes could not complete (TCP/TLS error or empty HTTP response)".to_string()
+        } else if vulnerable {
             "Vulnerable to BREACH (CVE-2013-3587): HTTP compression enabled with dynamic content containing secrets".to_string()
         } else if compression_enabled {
             let mut reasons = Vec::new();
@@ -51,6 +63,7 @@ impl BreachTester {
 
         Ok(BreachTestResult {
             vulnerable,
+            inconclusive,
             compression_enabled,
             dynamic_content,
             sensitive_data_reflection: sensitive_data,
@@ -58,8 +71,10 @@ impl BreachTester {
         })
     }
 
-    /// Test if HTTP compression is enabled
-    async fn test_http_compression(&self) -> Result<bool> {
+    /// Test if HTTP compression is enabled. Returns `None` when the probe could
+    /// not complete (TCP/TLS error, empty response) — the caller treats this as
+    /// inconclusive rather than "compression disabled".
+    async fn test_http_compression(&self) -> Result<Option<bool>> {
         let addr = self
             .target
             .socket_addrs()
@@ -73,7 +88,7 @@ impl BreachTester {
                 .await
             {
                 Ok(s) => s,
-                Err(_) => return Ok(false),
+                Err(_) => return Ok(None),
             };
 
         let std_stream = stream.into_std()?;
@@ -116,17 +131,17 @@ impl BreachTester {
                                 || lower.contains("zstd")
                                 || lower.contains("compress"))
                     });
-                    Ok(compressed)
+                    Ok(Some(compressed))
                 } else {
-                    Ok(false)
+                    Ok(None)
                 }
             }
-            Err(_) => Ok(false),
+            Err(_) => Ok(None),
         }
     }
 
     /// Test if server reflects user input (dynamic content)
-    async fn test_dynamic_content(&self) -> Result<bool> {
+    async fn test_dynamic_content(&self) -> Result<Option<bool>> {
         let addr = self
             .target
             .socket_addrs()
@@ -139,59 +154,64 @@ impl BreachTester {
                 .await
             {
                 Ok(s) => s,
-                Err(_) => return Ok(false),
+                Err(_) => return Ok(None),
             };
 
         let std_stream = stream.into_std()?;
         std_stream.set_nonblocking(false)?;
 
-        use openssl::ssl::{SslConnector, SslMethod};
-        let connector = SslConnector::builder(SslMethod::tls())?.build();
+        let hostname = self.target.hostname.clone();
+        tokio::task::spawn_blocking(move || {
+            use openssl::ssl::{SslConnector, SslMethod};
+            let connector = SslConnector::builder(SslMethod::tls())?.build();
 
-        match connector.connect(&self.target.hostname, std_stream) {
-            Ok(mut ssl_stream) => {
-                use std::io::{Read, Write};
+            match connector.connect(&hostname, std_stream) {
+                Ok(mut ssl_stream) => {
+                    use std::io::{Read, Write};
 
-                // Send request with unique marker in query string
-                let marker = "BREACH_TEST_MARKER_12345";
-                let request = format!(
-                    "GET /?test={} HTTP/1.1\r\n\
-                     Host: {}\r\n\
-                     Accept-Encoding: gzip, deflate\r\n\
-                     Connection: close\r\n\
-                     \r\n",
-                    marker, self.target.hostname
-                );
+                    // Send request with unique marker in query string
+                    let marker = "BREACH_TEST_MARKER_12345";
+                    let request = format!(
+                        "GET /?test={} HTTP/1.1\r\n\
+                         Host: {}\r\n\
+                         Accept-Encoding: gzip, deflate\r\n\
+                         Connection: close\r\n\
+                         \r\n",
+                        marker, hostname
+                    );
 
-                ssl_stream.write_all(request.as_bytes())?;
+                    ssl_stream.write_all(request.as_bytes())?;
 
-                // Read response
-                let mut buffer = vec![0u8; 16384];
-                let n = ssl_stream.read(&mut buffer)?;
+                    // Read response
+                    let mut buffer = vec![0u8; 16384];
+                    let n = ssl_stream.read(&mut buffer)?;
 
-                if n > 0 {
-                    let response = String::from_utf8_lossy(&buffer[..n]);
-                    // Require a 2xx response: 404/error pages that echo the URL in their
-                    // body would otherwise trigger a false positive for dynamic content.
-                    let is_success = response.starts_with("HTTP/")
-                        && response[5..]
-                            .split_once(' ')
-                            .map(|x| x.1)
-                            .and_then(|rest| rest.split_whitespace().next())
-                            .and_then(|code| code.parse::<u16>().ok())
-                            .map(|code| (200..300).contains(&code))
-                            .unwrap_or(false);
-                    Ok(is_success && response.contains(marker))
-                } else {
-                    Ok(false)
+                    if n > 0 {
+                        let response = String::from_utf8_lossy(&buffer[..n]);
+                        // Require a 2xx response: 404/error pages that echo the URL in their
+                        // body would otherwise trigger a false positive for dynamic content.
+                        let is_success = response.starts_with("HTTP/")
+                            && response[5..]
+                                .split_once(' ')
+                                .map(|x| x.1)
+                                .and_then(|rest| rest.split_whitespace().next())
+                                .and_then(|code| code.parse::<u16>().ok())
+                                .map(|code| (200..300).contains(&code))
+                                .unwrap_or(false);
+                        Ok(Some(is_success && response.contains(marker)))
+                    } else {
+                        Ok(None)
+                    }
                 }
+                Err(_) => Ok(None),
             }
-            Err(_) => Ok(false),
-        }
+        })
+        .await
+        .map_err(|e| crate::TlsError::Other(format!("BREACH test blocking task failed: {}", e)))?
     }
 
     /// Test if sensitive data might be reflected in responses
-    async fn test_sensitive_data_reflection(&self) -> Result<bool> {
+    async fn test_sensitive_data_reflection(&self) -> Result<Option<bool>> {
         let addr = self
             .target
             .socket_addrs()
@@ -204,7 +224,7 @@ impl BreachTester {
                 .await
             {
                 Ok(s) => s,
-                Err(_) => return Ok(false),
+                Err(_) => return Ok(None),
             };
 
         let std_stream = stream.into_std()?;
@@ -238,12 +258,12 @@ impl BreachTester {
                     let response = String::from_utf8_lossy(&buffer[..n]);
                     // Check for sensitive data with more precise matching
                     let has_sensitive = Self::detect_sensitive_patterns(&response);
-                    Ok(has_sensitive)
+                    Ok(Some(has_sensitive))
                 } else {
-                    Ok(false)
+                    Ok(None)
                 }
             }
-            Err(_) => Ok(false),
+            Err(_) => Ok(None),
         }
     }
 
@@ -259,12 +279,12 @@ impl BreachTester {
 
         // Check for CSRF tokens in HTML attributes (more precise)
         // Look for actual HTML attributes, not just the word "csrf"
-        if response.contains("csrf-token=")
-            || response.contains("csrf_token=")
-            || response.contains("_csrf=")
-            || response.contains("name=\"csrf")
-            || response.contains("name='csrf")
-            || response.contains("csrfmiddlewaretoken")
+        if response_lower.contains("csrf-token=")
+            || response_lower.contains("csrf_token=")
+            || response_lower.contains("_csrf=")
+            || response_lower.contains("name=\"csrf")
+            || response_lower.contains("name='csrf")
+            || response_lower.contains("csrfmiddlewaretoken")
         {
             return true;
         }
@@ -274,10 +294,10 @@ impl BreachTester {
         if response_lower.contains("phpsessid=")
             || response_lower.contains("jsessionid=")
             || response_lower.contains("asp.net_sessionid=")
-            || response.contains("sessionId=")
-            || response.contains("session_id=")
-            || response.contains("name=\"session")
-            || response.contains("name='session")
+            || response_lower.contains("sessionid=")
+            || response_lower.contains("session_id=")
+            || response_lower.contains("name=\"session")
+            || response_lower.contains("name='session")
         {
             return true;
         }
@@ -286,10 +306,10 @@ impl BreachTester {
         if response_lower.contains("authorization:")
             || response_lower.contains("x-auth-token:")
             || response_lower.contains("x-api-key:")
-            || response.contains("api_key=")
-            || response.contains("access_token=")
-            || response.contains("name=\"token")
-            || response.contains("name='token")
+            || response_lower.contains("api_key=")
+            || response_lower.contains("access_token=")
+            || response_lower.contains("name=\"token")
+            || response_lower.contains("name='token")
         {
             return true;
         }
@@ -302,6 +322,10 @@ impl BreachTester {
 #[derive(Debug, Clone)]
 pub struct BreachTestResult {
     pub vulnerable: bool,
+    /// True when one or more sub-probes could not complete (TCP/TLS failure
+    /// or empty HTTP response). Prevents reporting unreachable servers as
+    /// confirmed-not-vulnerable.
+    pub inconclusive: bool,
     pub compression_enabled: bool,
     pub dynamic_content: bool,
     pub sensitive_data_reflection: bool,
@@ -319,6 +343,7 @@ mod tests {
             compression_enabled: true,
             dynamic_content: true,
             sensitive_data_reflection: true,
+            inconclusive: false,
             details: "Test".to_string(),
         };
         assert!(result.vulnerable);
@@ -334,6 +359,7 @@ mod tests {
             compression_enabled: false,
             dynamic_content: true,
             sensitive_data_reflection: true,
+            inconclusive: false,
             details: "Not vulnerable".to_string(),
         };
         assert!(!result.vulnerable);
@@ -347,10 +373,55 @@ mod tests {
             compression_enabled: true,
             dynamic_content: false,
             sensitive_data_reflection: true,
+            inconclusive: false,
             details: "Partial".to_string(),
         };
         // Needs all three conditions for full vulnerability
         assert!(!result.vulnerable);
         assert!(result.compression_enabled);
+    }
+
+    #[test]
+    fn test_detect_sensitive_patterns_is_case_insensitive() {
+        assert!(BreachTester::detect_sensitive_patterns(
+            r#"<input NAME="CSRFToken" value="abc">"#
+        ));
+        assert!(BreachTester::detect_sensitive_patterns(
+            "HTTP/1.1 200 OK\r\nX-API-Key: abc\r\n\r\n"
+        ));
+        assert!(BreachTester::detect_sensitive_patterns(
+            r#"<form><input Name='SessionId' value='abc'></form>"#
+        ));
+        assert!(BreachTester::detect_sensitive_patterns(
+            "https://example.test/callback?Access_Token=abc"
+        ));
+    }
+
+    #[test]
+    fn test_breach_inconclusive_when_probes_fail() {
+        // V11 regression: an unreachable server must not be classified as
+        // confirmed-not-vulnerable. Probe failures on all three axes surface
+        // via `inconclusive=true`.
+        use std::net::{IpAddr, Ipv4Addr};
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            1,
+            vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
+        )
+        .expect("target should build");
+
+        let rt = tokio::runtime::Runtime::new().expect("runtime");
+        let result = rt.block_on(async {
+            BreachTester::new(target)
+                .test()
+                .await
+                .expect("probe should not error")
+        });
+        assert!(!result.vulnerable);
+        assert!(
+            result.inconclusive,
+            "unreachable target must yield inconclusive BREACH verdict; got details={}",
+            result.details
+        );
     }
 }

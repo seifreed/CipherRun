@@ -319,6 +319,7 @@ impl InconsistencyDetector {
     fn detect_cipher_inconsistencies(&self) -> Vec<Inconsistency> {
         let mut inconsistencies = Vec::new();
         let mut cipher_sets: HashMap<IpAddr, Vec<String>> = HashMap::new();
+        let mut ips_without_ciphers = Vec::new();
 
         // Collect cipher suites for each IP
         for (ip, result) in &self.results {
@@ -333,10 +334,36 @@ impl InconsistencyDetector {
                 }
             }
 
-            if !all_ciphers.is_empty() {
+            if all_ciphers.is_empty() {
+                ips_without_ciphers.push(*ip);
+            } else {
                 all_ciphers = sort_strings(all_ciphers);
                 cipher_sets.insert(*ip, all_ciphers);
             }
+        }
+
+        // Report inconsistency if some IPs have cipher suites and others don't
+        if !ips_without_ciphers.is_empty() && !cipher_sets.is_empty() {
+            let mut all_ips: Vec<IpAddr> = cipher_sets
+                .keys()
+                .copied()
+                .chain(ips_without_ciphers.iter().copied())
+                .collect();
+            all_ips.sort();
+            all_ips.dedup();
+            inconsistencies.push(Inconsistency {
+                inconsistency_type: InconsistencyType::CipherSuites,
+                severity: Severity::Medium,
+                description: format!(
+                    "Cipher suites present on {} backends but missing on {} backends",
+                    cipher_sets.len(),
+                    ips_without_ciphers.len()
+                ),
+                ips_affected: all_ips,
+                details: InconsistencyDetails::CipherSuites {
+                    differences: cipher_sets.clone(),
+                },
+            });
         }
 
         // Compare cipher sets
@@ -448,18 +475,24 @@ impl InconsistencyDetector {
         // 1. Some IPs have no resumption while others have some (original check)
         // 2. Some IPs with caching don't have tickets (tickets is a subset of caching)
         // 3. Some IPs have tickets but not caching (caching is a subset of all successful IPs)
-        let total_successful = self.results.values().filter(|r| r.error.is_none()).count();
+        // Only count IPs that were actually evaluated for resumption
+        // (those with at least one supported TLS protocol)
+        let ips_evaluated = self
+            .results
+            .values()
+            .filter(|r| r.error.is_none() && r.scan_result.protocols.iter().any(|p| p.supported))
+            .count();
 
         let has_ips_without = !ips_without.is_empty()
             && (!ips_with_caching.is_empty() || !ips_with_tickets.is_empty());
 
-        // Compare against total_successful (not ips_with_caching.len()) because a server
-        // can support tickets without session-cache resumption — the two sets are independent.
+        // Compare against ips_evaluated (not total_successful) because IPs
+        // without any supported protocol were never checked for resumption.
         let tickets_inconsistent =
-            !ips_with_tickets.is_empty() && ips_with_tickets.len() < total_successful;
+            !ips_with_tickets.is_empty() && ips_with_tickets.len() < ips_evaluated;
 
         let caching_inconsistent =
-            !ips_with_caching.is_empty() && ips_with_caching.len() < total_successful;
+            !ips_with_caching.is_empty() && ips_with_caching.len() < ips_evaluated;
 
         if has_ips_without || tickets_inconsistent || caching_inconsistent {
             let ips_with_caching = sort_ips(ips_with_caching);
@@ -700,6 +733,7 @@ mod tests {
         scan.protocols.push(ProtocolTestResult {
             protocol,
             supported,
+            inconclusive: false,
             preferred: false,
             ciphers_count: 1,
             handshake_time_ms: None,
@@ -773,9 +807,11 @@ mod tests {
                         http3_supported: false,
                         negotiated_protocol: None,
                         details: Vec::new(),
+                        inconclusive: false,
                     },
                     spdy_supported: false,
                     recommendations: Vec::new(),
+                    inconclusive: false,
                 }),
                 ..Default::default()
             });

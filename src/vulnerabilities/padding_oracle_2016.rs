@@ -16,6 +16,54 @@ use crate::Result;
 use crate::utils::network::Target;
 use std::time::Duration;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CbcSupportStatus {
+    Supported,
+    NotSupported,
+    Inconclusive,
+}
+
+fn classify_cbc_handshake_error(
+    error: openssl::ssl::HandshakeError<std::net::TcpStream>,
+) -> CbcSupportStatus {
+    use openssl::ssl::{ErrorCode, HandshakeError};
+
+    match error {
+        HandshakeError::SetupFailure(_) | HandshakeError::WouldBlock(_) => {
+            CbcSupportStatus::Inconclusive
+        }
+        HandshakeError::Failure(stream) => match stream.error().code() {
+            ErrorCode::SYSCALL
+            | ErrorCode::ZERO_RETURN
+            | ErrorCode::WANT_READ
+            | ErrorCode::WANT_WRITE => CbcSupportStatus::Inconclusive,
+            _ => {
+                let error = stream.error().to_string();
+                classify_cbc_handshake_error_string(&error)
+            }
+        },
+    }
+}
+
+fn classify_cbc_handshake_error_string(error: &str) -> CbcSupportStatus {
+    let error = error.to_ascii_lowercase();
+    if error.contains("unexpected eof")
+        || error.contains("connection reset")
+        || error.contains("reset by peer")
+        || error.contains("connection refused")
+        || error.contains("timed out")
+        || error.contains("timeout")
+        || error.contains("closed")
+        || error.contains("no protocols available")
+        || error.contains("shutdown while in init")
+        || error.contains("errno=54")
+    {
+        CbcSupportStatus::Inconclusive
+    } else {
+        CbcSupportStatus::NotSupported
+    }
+}
+
 /// Padding oracle timing analysis result
 #[derive(Debug, Clone)]
 pub struct PaddingOracleTimingResult {
@@ -55,11 +103,27 @@ impl<'a> PaddingOracle2016Tester<'a> {
     /// - With CBC mode ciphers (not GCM)
     pub async fn test(&self) -> Result<PaddingOracle2016Result> {
         // Step 1: Check if server supports AES-CBC ciphers
-        let cbc_supported = self.check_aes_cbc_support().await?;
+        let cbc_status = self.check_aes_cbc_support().await?;
+        let cbc_supported = cbc_status == CbcSupportStatus::Supported;
 
-        if !cbc_supported {
+        if cbc_status == CbcSupportStatus::Inconclusive {
             return Ok(PaddingOracle2016Result {
                 vulnerable: false,
+                inconclusive: true,
+                cbc_supported: false,
+                timing_oracle_detected: false,
+                details:
+                    "INCONCLUSIVE: unable to determine AES-CBC cipher support for CVE-2016-2107"
+                        .to_string(),
+                average_valid_timing_ms: 0.0,
+                average_invalid_timing_ms: 0.0,
+            });
+        }
+
+        if cbc_status == CbcSupportStatus::NotSupported {
+            return Ok(PaddingOracle2016Result {
+                vulnerable: false,
+                inconclusive: false,
                 cbc_supported: false,
                 timing_oracle_detected: false,
                 details: "Server does not support AES-CBC cipher suites (only GCM/other AEAD)"
@@ -96,6 +160,7 @@ impl<'a> PaddingOracle2016Tester<'a> {
 
         Ok(PaddingOracle2016Result {
             vulnerable,
+            inconclusive: timing_result.inconclusive,
             cbc_supported,
             timing_oracle_detected: timing_result.oracle_detected,
             details,
@@ -105,7 +170,7 @@ impl<'a> PaddingOracle2016Tester<'a> {
     }
 
     /// Check if server supports AES-CBC cipher suites
-    async fn check_aes_cbc_support(&self) -> Result<bool> {
+    async fn check_aes_cbc_support(&self) -> Result<CbcSupportStatus> {
         use openssl::ssl::{SslConnector, SslMethod, SslVersion};
 
         let addr = self
@@ -123,11 +188,11 @@ impl<'a> PaddingOracle2016Tester<'a> {
                 .await
             {
                 Ok(s) => s,
-                Err(_) => return Ok(false),
+                Err(_) => return Ok(CbcSupportStatus::Inconclusive),
             };
 
-        let std_stream = stream.into_std()?;
-        std_stream.set_nonblocking(false)?;
+        let std_stream =
+            crate::utils::network::into_blocking_std_stream(stream, self.connect_timeout)?;
 
         let mut builder = SslConnector::builder(SslMethod::tls())?;
 
@@ -135,17 +200,27 @@ impl<'a> PaddingOracle2016Tester<'a> {
         builder.set_cipher_list(aes_cbc_ciphers)?;
 
         // Try TLS 1.0, 1.1, 1.2 (CVE affects these versions)
-        builder.set_min_proto_version(Some(SslVersion::TLS1))?;
-        builder.set_max_proto_version(Some(SslVersion::TLS1_2))?;
+        if builder
+            .set_min_proto_version(Some(SslVersion::TLS1))
+            .is_err()
+        {
+            return Ok(CbcSupportStatus::Inconclusive);
+        }
+        if builder
+            .set_max_proto_version(Some(SslVersion::TLS1_2))
+            .is_err()
+        {
+            return Ok(CbcSupportStatus::Inconclusive);
+        }
 
         let connector = builder.build();
 
         match connector.connect(&self.target.hostname, std_stream) {
             Ok(_ssl_stream) => {
                 // Successfully connected with AES-CBC cipher
-                Ok(true)
+                Ok(CbcSupportStatus::Supported)
             }
-            Err(_) => Ok(false),
+            Err(e) => Ok(classify_cbc_handshake_error(e)),
         }
     }
 
@@ -178,6 +253,7 @@ impl<'a> PaddingOracle2016Tester<'a> {
 #[derive(Debug, Clone)]
 pub struct PaddingOracle2016Result {
     pub vulnerable: bool,
+    pub inconclusive: bool,
     pub cbc_supported: bool,
     pub timing_oracle_detected: bool,
     pub details: String,
@@ -188,11 +264,14 @@ pub struct PaddingOracle2016Result {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::{IpAddr, SocketAddr};
+    use tokio::net::TcpListener;
 
     #[test]
     fn test_result_structure() {
         let result = PaddingOracle2016Result {
             vulnerable: true,
+            inconclusive: false,
             cbc_supported: true,
             timing_oracle_detected: true,
             details: "Test vulnerability detected".to_string(),
@@ -210,6 +289,7 @@ mod tests {
     fn test_result_debug_contains_details() {
         let result = PaddingOracle2016Result {
             vulnerable: false,
+            inconclusive: false,
             cbc_supported: false,
             timing_oracle_detected: false,
             details: "No oracle detected".to_string(),
@@ -225,6 +305,7 @@ mod tests {
     fn test_result_not_vulnerable_fields() {
         let result = PaddingOracle2016Result {
             vulnerable: false,
+            inconclusive: false,
             cbc_supported: false,
             timing_oracle_detected: false,
             details: "Not vulnerable".to_string(),
@@ -241,6 +322,7 @@ mod tests {
     fn test_result_details_contains_not_vulnerable() {
         let result = PaddingOracle2016Result {
             vulnerable: false,
+            inconclusive: false,
             cbc_supported: false,
             timing_oracle_detected: false,
             details: "Not vulnerable - CBC ciphers not supported".to_string(),
@@ -248,6 +330,39 @@ mod tests {
             average_invalid_timing_ms: 0.0,
         };
         assert!(result.details.contains("Not vulnerable"));
+    }
+
+    async fn spawn_dummy_server() -> SocketAddr {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test assertion should succeed");
+        let addr = listener
+            .local_addr()
+            .expect("test assertion should succeed");
+        tokio::spawn(async move {
+            if let Ok((socket, _)) = listener.accept().await {
+                drop(socket);
+            }
+        });
+        addr
+    }
+
+    #[tokio::test]
+    async fn test_padding_oracle_inactive_target_is_inconclusive() {
+        let addr = spawn_dummy_server().await;
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            addr.port(),
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .expect("test assertion should succeed");
+
+        let tester = PaddingOracle2016Tester::new(&target);
+        let result = tester.test().await.expect("test assertion should succeed");
+
+        assert!(!result.vulnerable);
+        assert!(result.inconclusive);
+        assert!(result.details.to_ascii_lowercase().contains("inconclusive"));
     }
 
     #[tokio::test]

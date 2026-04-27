@@ -48,9 +48,11 @@ impl CipherPreferenceAnalyzer {
     pub(crate) fn all_choices_same(&self) -> bool {
         match self.third_choice {
             Some(third) => {
-                self.first_choice == self.second_choice && self.second_choice == Some(third)
+                self.first_choice.is_some()
+                    && self.first_choice == self.second_choice
+                    && self.second_choice == Some(third)
             }
-            None => self.first_choice == self.second_choice,
+            None => self.first_choice.is_some() && self.first_choice == self.second_choice,
         }
     }
 

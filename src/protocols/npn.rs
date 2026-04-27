@@ -13,6 +13,13 @@ pub struct NpnTester {
     target: Target,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum NpnProbeOutcome {
+    Supported(Vec<String>),
+    NotSupported,
+    Inconclusive,
+}
+
 impl NpnTester {
     pub fn new(target: Target) -> Self {
         Self { target }
@@ -20,10 +27,16 @@ impl NpnTester {
 
     /// Test if NPN is supported
     pub async fn test(&self) -> Result<NpnTestResult> {
-        let supported_protocols = self.test_npn_support().await?;
+        let (supported_protocols, inconclusive) = match self.test_npn_support().await? {
+            NpnProbeOutcome::Supported(protocols) => (protocols, false),
+            NpnProbeOutcome::NotSupported => (Vec::new(), false),
+            NpnProbeOutcome::Inconclusive => (Vec::new(), true),
+        };
         let supported = !supported_protocols.is_empty();
 
-        let details = if supported {
+        let details = if inconclusive {
+            "NPN test inconclusive - no valid ServerHello received".to_string()
+        } else if supported {
             format!(
                 "NPN supported (deprecated) with {} protocol(s): {}",
                 supported_protocols.len(),
@@ -37,11 +50,12 @@ impl NpnTester {
             supported,
             protocols: supported_protocols,
             details,
+            inconclusive,
         })
     }
 
     /// Test NPN support by sending ClientHello with NPN extension
-    async fn test_npn_support(&self) -> Result<Vec<String>> {
+    async fn test_npn_support(&self) -> Result<NpnProbeOutcome> {
         // Use raw TLS handshake to properly test NPN
         let addr = self
             .target
@@ -61,15 +75,37 @@ impl NpnTester {
                 let mut buffer = vec![0u8; 8192];
                 match timeout(Duration::from_secs(3), stream.read(&mut buffer)).await {
                     Ok(Ok(n)) if n > 0 => {
+                        if !Self::is_parseable_server_hello(&buffer[..n]) {
+                            return Ok(NpnProbeOutcome::Inconclusive);
+                        }
                         // Parse ServerHello for NPN extension
                         let protocols = self.parse_npn_response(&buffer[..n])?;
-                        Ok(protocols)
+                        if protocols.is_empty() {
+                            Ok(NpnProbeOutcome::NotSupported)
+                        } else {
+                            Ok(NpnProbeOutcome::Supported(protocols))
+                        }
                     }
-                    _ => Ok(Vec::new()),
+                    _ => Ok(NpnProbeOutcome::Inconclusive),
                 }
             }
-            _ => Ok(Vec::new()),
+            _ => Ok(NpnProbeOutcome::Inconclusive),
         }
+    }
+
+    fn is_parseable_server_hello(response: &[u8]) -> bool {
+        if response.len() < 47 || response[0] != 0x16 || response[5] != 0x02 {
+            return false;
+        }
+
+        let record_len = u16::from_be_bytes([response[3], response[4]]) as usize;
+        if 5 + record_len > response.len() {
+            return false;
+        }
+
+        let sid_len = response[43] as usize;
+        let min_after_sid = 44 + sid_len + 2 + 1;
+        min_after_sid <= response.len()
     }
 
     /// Build ClientHello with NPN extension
@@ -222,6 +258,8 @@ pub struct NpnTestResult {
     pub supported: bool,
     pub protocols: Vec<String>,
     pub details: String,
+    #[serde(default)]
+    pub inconclusive: bool,
 }
 
 #[cfg(test)]
@@ -234,6 +272,7 @@ mod tests {
             supported: false,
             protocols: vec![],
             details: "Test".to_string(),
+            inconclusive: false,
         };
         assert!(!result.supported);
         assert!(result.protocols.is_empty());
@@ -245,6 +284,7 @@ mod tests {
             supported: true,
             protocols: vec!["h2".to_string()],
             details: "NPN supported".to_string(),
+            inconclusive: false,
         };
         assert!(result.details.contains("NPN"));
     }
@@ -379,5 +419,48 @@ mod tests {
             .parse_npn_response(&response)
             .expect("test assertion should succeed");
         assert!(protocols.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_npn_closed_target_is_inconclusive() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("local addr should exist");
+        drop(listener);
+
+        let target = Target::with_ips("localhost".to_string(), addr.port(), vec![addr.ip()])
+            .expect("target should build");
+        let tester = NpnTester::new(target);
+
+        let result = tester.test().await.expect("NPN probe should return result");
+
+        assert!(result.inconclusive);
+        assert!(!result.supported);
+        assert!(result.protocols.is_empty());
+        assert!(result.details.contains("inconclusive"));
+    }
+
+    #[tokio::test]
+    async fn test_npn_truncated_response_is_inconclusive() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("local addr should exist");
+
+        tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let _ = socket.write_all(&[0x16, 0x03, 0x03, 0x00, 0x05]).await;
+            }
+        });
+
+        let target = Target::with_ips("localhost".to_string(), addr.port(), vec![addr.ip()])
+            .expect("target should build");
+        let tester = NpnTester::new(target);
+
+        let result = tester.test().await.expect("NPN probe should return result");
+
+        assert!(result.inconclusive);
+        assert!(!result.details.contains("not supported"));
     }
 }

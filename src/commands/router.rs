@@ -131,6 +131,7 @@ impl CommandRouter {
     pub fn validate_routing(args: &Args) -> Result<()> {
         // Check for conflicting operational modes
         let mode_count = [
+            args.subcommand.is_some(),
             args.api_server.enable,
             args.monitoring.enable || args.monitoring.test_alert,
             args.ct_logs.enable,

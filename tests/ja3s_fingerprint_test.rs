@@ -44,7 +44,7 @@ fn test_ja3s_no_extensions() {
 #[test]
 fn test_ja3s_version_names() {
     let test_cases = vec![
-        (0x0200, "SSL 2.0"),
+        (0x0002, "SSL 2.0"),
         (0x0300, "SSL 3.0"),
         (0x0301, "TLS 1.0"),
         (0x0302, "TLS 1.1"),

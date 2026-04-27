@@ -85,9 +85,12 @@ impl OpossumTester {
                     .to_string()
             }
             OpossumStatus::NotVulnerable => "No Opossum-like parsing hang observed".to_string(),
-            // Vulnerable is always downgraded to Inconclusive above; this arm is unreachable.
+            // Defensive: treat Vulnerable as Inconclusive in case upstream logic changes
             OpossumStatus::Vulnerable => {
-                unreachable!("Vulnerable is always downgraded to Inconclusive")
+                "Opossum test inconclusive - CVE-2022-0778 is a client-side parsing vulnerability \
+                 that cannot be reliably detected via remote scanning. Manual verification of \
+                 OpenSSL version (< 1.1.1n / 1.0.2ze / 3.0.2) is recommended."
+                    .to_string()
             }
         };
 

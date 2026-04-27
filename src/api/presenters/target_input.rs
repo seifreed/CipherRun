@@ -35,6 +35,15 @@ fn map_validation_error(error: crate::TlsError) -> ApiError {
     }
 }
 
+fn normalized_starttls_protocol(options: &ScanOptions) -> Option<String> {
+    options
+        .starttls_protocol
+        .as_deref()
+        .map(str::trim)
+        .filter(|protocol| !protocol.is_empty())
+        .map(str::to_string)
+}
+
 pub fn scan_request_from_target(target: &str) -> Result<ScanRequest, ApiError> {
     let (hostname, port) = validate_api_target(target)?;
 
@@ -59,6 +68,7 @@ pub fn scan_request_from_target_and_options(
         validate_ip_override(ip_override)?;
     }
 
+    let starttls_protocol = normalized_starttls_protocol(options);
     let request = ScanRequest {
         target: Some(canonical_target(&hostname, port)),
         port: Some(port),
@@ -68,9 +78,7 @@ pub fn scan_request_from_target_and_options(
                 full: options.full_scan,
             },
             proto: crate::application::scan_request::ScanRequestProto {
-                enabled: options.test_protocols
-                    || options.full_scan
-                    || options.starttls_protocol.is_some(),
+                enabled: options.test_protocols || options.full_scan || starttls_protocol.is_some(),
                 ..Default::default()
             },
             ciphers: crate::application::scan_request::ScanRequestCiphers {
@@ -105,7 +113,7 @@ pub fn scan_request_from_target_and_options(
             ..Default::default()
         },
         starttls: crate::application::scan_request::ScanRequestStarttls {
-            protocol: options.starttls_protocol.clone(),
+            protocol: starttls_protocol,
             xmpphost: None,
             ..Default::default()
         },
@@ -210,6 +218,32 @@ mod tests {
 
         assert!(request.scan.proto.enabled);
         assert_eq!(request.starttls.protocol.as_deref(), Some("smtp"));
+    }
+
+    #[test]
+    fn rejects_blank_starttls_protocol_as_empty_scan_options() {
+        let options = ScanOptions {
+            starttls_protocol: Some(" \t ".to_string()),
+            ..Default::default()
+        };
+
+        let err = scan_request_from_target_and_options("mail.example.com:25", &options)
+            .expect_err("blank STARTTLS protocol should not enable a scan");
+        assert!(matches!(err, ApiError::BadRequest(_)));
+        assert!(err.to_string().contains(EMPTY_SCAN_OPTIONS_ERROR));
+    }
+
+    #[test]
+    fn trims_starttls_protocol_before_building_request() {
+        let options = ScanOptions {
+            starttls_protocol: Some(" SMTP ".to_string()),
+            ..Default::default()
+        };
+
+        let request = scan_request_from_target_and_options("mail.example.com:25", &options)
+            .expect("trimmed STARTTLS protocol should build");
+
+        assert_eq!(request.starttls.protocol.as_deref(), Some("SMTP"));
     }
 
     #[test]

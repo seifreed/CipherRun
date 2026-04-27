@@ -61,8 +61,11 @@ impl DnsOnlyMode {
     fn extract_cn(subject: &str) -> Option<String> {
         for part in subject.split(',') {
             let part = part.trim();
-            if let Some(cn) = part.strip_prefix("CN=") {
-                return Some(cn.to_string());
+            let Some((key, value)) = part.split_once('=') else {
+                continue;
+            };
+            if key.trim().eq_ignore_ascii_case("CN") {
+                return Some(value.trim().to_string());
             }
         }
         None
@@ -202,6 +205,18 @@ mod tests {
         assert_eq!(
             DnsOnlyMode::extract_cn("C=US,CN=example.com"),
             Some("example.com".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_cn_allows_spaces_around_equals_and_lowercase_key() {
+        assert_eq!(
+            DnsOnlyMode::extract_cn("C=US, O=Org, CN = spaced.example.com"),
+            Some("spaced.example.com".to_string())
+        );
+        assert_eq!(
+            DnsOnlyMode::extract_cn("c=us, o=org, cn=lower.example.com"),
+            Some("lower.example.com".to_string())
         );
     }
 

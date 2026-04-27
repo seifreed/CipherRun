@@ -2,13 +2,42 @@ use crate::ciphers::tester::ProtocolCipherSummary;
 use crate::protocols::Protocol;
 use crate::vulnerabilities::{Severity, VulnerabilityResult, VulnerabilityType};
 
+pub(crate) fn summary_has_cipher_evidence(summary: &ProtocolCipherSummary) -> bool {
+    summary.counts.total > 0
+        || !summary.supported_ciphers.is_empty()
+        || summary.preferred_cipher.is_some()
+        || !summary.server_preference.is_empty()
+}
+
+fn no_cipher_evidence_result(
+    vuln_type: VulnerabilityType,
+    test_name: &str,
+    cve: Option<&str>,
+    cwe: Option<&str>,
+) -> VulnerabilityResult {
+    VulnerabilityResult {
+        vuln_type,
+        vulnerable: false,
+        inconclusive: true,
+        details: format!(
+            "{} test inconclusive - no successful cipher enumeration results",
+            test_name
+        ),
+        cve: cve.map(str::to_string),
+        cwe: cwe.map(str::to_string),
+        severity: Severity::Info,
+    }
+}
+
 pub(crate) fn evaluate_rc4<'a>(
     summaries: impl IntoIterator<Item = (Protocol, &'a ProtocolCipherSummary)>,
 ) -> VulnerabilityResult {
     let mut has_rc4 = false;
+    let mut has_cipher_evidence = false;
     let mut details = Vec::new();
 
     for (protocol, summary) in summaries {
+        has_cipher_evidence |= summary_has_cipher_evidence(summary);
         let count = summary
             .supported_ciphers
             .iter()
@@ -19,6 +48,15 @@ pub(crate) fn evaluate_rc4<'a>(
             has_rc4 = true;
             details.push(format!("{}: {} RC4 cipher(s)", protocol, count));
         }
+    }
+
+    if !has_rc4 && !has_cipher_evidence {
+        return no_cipher_evidence_result(
+            VulnerabilityType::RC4,
+            "RC4",
+            Some("CVE-2013-2566, CVE-2015-2808"),
+            Some("CWE-326"),
+        );
     }
 
     VulnerabilityResult {
@@ -44,9 +82,11 @@ pub(crate) fn evaluate_null<'a>(
     summaries: impl IntoIterator<Item = (Protocol, &'a ProtocolCipherSummary)>,
 ) -> VulnerabilityResult {
     let mut vulnerable = false;
+    let mut has_cipher_evidence = false;
     let mut details = Vec::new();
 
     for (protocol, summary) in summaries {
+        has_cipher_evidence |= summary_has_cipher_evidence(summary);
         if summary.counts.null_ciphers > 0 {
             vulnerable = true;
             details.push(format!(
@@ -54,6 +94,15 @@ pub(crate) fn evaluate_null<'a>(
                 protocol, summary.counts.null_ciphers
             ));
         }
+    }
+
+    if !vulnerable && !has_cipher_evidence {
+        return no_cipher_evidence_result(
+            VulnerabilityType::NullCipher,
+            "NULL cipher",
+            None,
+            Some("CWE-327"),
+        );
     }
 
     VulnerabilityResult {
@@ -82,9 +131,11 @@ pub(crate) fn evaluate_export<'a>(
     summaries: impl IntoIterator<Item = (Protocol, &'a ProtocolCipherSummary)>,
 ) -> VulnerabilityResult {
     let mut vulnerable = false;
+    let mut has_cipher_evidence = false;
     let mut details = Vec::new();
 
     for (protocol, summary) in summaries {
+        has_cipher_evidence |= summary_has_cipher_evidence(summary);
         if summary.counts.export_ciphers > 0 {
             vulnerable = true;
             details.push(format!(
@@ -92,6 +143,15 @@ pub(crate) fn evaluate_export<'a>(
                 protocol, summary.counts.export_ciphers
             ));
         }
+    }
+
+    if !vulnerable && !has_cipher_evidence {
+        return no_cipher_evidence_result(
+            VulnerabilityType::FREAK,
+            "EXPORT cipher",
+            Some("CVE-2015-0204"),
+            Some("CWE-327"),
+        );
     }
 
     VulnerabilityResult {

@@ -62,6 +62,7 @@ impl<'a> FallbackScsvTester<'a> {
                     supported: false,
                     accepts_downgrade: false,
                     vulnerable: false,
+                    inconclusive: true,
                     not_applicable: false,
                     details: "Unable to detect supported protocols - server may be unreachable"
                         .to_string(),
@@ -92,6 +93,7 @@ mod tests {
             supported: true,
             accepts_downgrade: false,
             vulnerable: false,
+            inconclusive: false,
             not_applicable: false,
             details: "Test".to_string(),
             has_tls13_or_higher: false,
@@ -201,6 +203,27 @@ mod tests {
             .expect("test assertion should succeed");
         assert!(!support.supported);
         assert!(support.inconclusive);
+    }
+
+    #[tokio::test]
+    async fn test_single_supported_protocol_result_is_inconclusive() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["93.184.216.34".parse().unwrap()],
+        )
+        .unwrap();
+
+        let mut tester = FallbackScsvTester::new(&target);
+        tester.max_supported_protocol = Some(Protocol::TLS12);
+
+        let result = tester
+            .build_scsv_result(&[Protocol::TLS12])
+            .await
+            .expect("test assertion should succeed");
+
+        assert!(result.inconclusive);
+        assert!(!result.vulnerable);
     }
 
     #[test]

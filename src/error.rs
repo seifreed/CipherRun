@@ -83,7 +83,7 @@ pub enum TlsError {
 
     /// Timeout occurred during operation
     #[error("Operation timed out after {duration:?}")]
-    Timeout { duration: Duration },
+    Timeout { duration: Option<Duration> },
 
     /// Database operation errors
     #[error("Database error: {0}")]
@@ -200,11 +200,8 @@ impl From<std::str::Utf8Error> for TlsError {
 
 impl From<tokio::time::error::Elapsed> for TlsError {
     fn from(_err: tokio::time::error::Elapsed) -> Self {
-        // tokio::time::error::Elapsed does not carry the original timeout duration,
-        // so we use a sentinel value to indicate "unknown duration"
-        TlsError::Timeout {
-            duration: std::time::Duration::MAX,
-        }
+        // tokio::time::error::Elapsed does not carry the original timeout duration
+        TlsError::Timeout { duration: None }
     }
 }
 

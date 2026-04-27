@@ -19,6 +19,7 @@ fn build_test_results() -> ScanResults {
     results.protocols = vec![ProtocolTestResult {
         protocol: Protocol::TLS13,
         supported: true,
+        inconclusive: false,
         preferred: true,
         ciphers_count: 5,
         handshake_time_ms: Some(10),

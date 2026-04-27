@@ -371,6 +371,47 @@ async fn test_scan_comparator_compare_scans() {
 }
 
 #[tokio::test]
+async fn test_scan_comparator_does_not_report_protocol_changes_for_name_format_variants() {
+    let db = setup_db().await;
+    let now = Utc::now();
+    let scan1 = insert_scan(
+        &db,
+        "comparator-protocol-format.test",
+        443,
+        now - Duration::days(2),
+        Some("A"),
+        Some(90),
+    )
+    .await;
+    let scan2 = insert_scan(
+        &db,
+        "comparator-protocol-format.test",
+        443,
+        now - Duration::days(1),
+        Some("A"),
+        Some(90),
+    )
+    .await;
+
+    insert_protocol(&db, scan1, "TLS 1.3", true, true).await;
+    insert_protocol(&db, scan1, "TLS 1.2", true, false).await;
+    insert_protocol(&db, scan2, "TLSv1.3", true, true).await;
+    insert_protocol(&db, scan2, "tlsv1.2", true, false).await;
+
+    let comparator = ScanComparator::new(Arc::clone(&db));
+    let comparison = comparator
+        .compare_scans(scan1, scan2)
+        .await
+        .expect("test assertion should succeed");
+
+    assert!(comparison.protocol_diff.added.is_empty());
+    assert!(comparison.protocol_diff.removed.is_empty());
+    assert_eq!(comparison.protocol_diff.unchanged.len(), 2);
+    assert!(comparison.protocol_diff.preferred_change.is_none());
+    assert_eq!(comparison.summary.protocol_changes, 0);
+}
+
+#[tokio::test]
 async fn test_scan_comparator_renders_component_rating_changes_without_overall_change() {
     let db = setup_db().await;
     let now = Utc::now();
@@ -998,6 +1039,48 @@ async fn test_change_tracker_detect_changes_and_report() {
 }
 
 #[tokio::test]
+async fn test_change_tracker_does_not_report_protocol_changes_for_name_format_variants() {
+    let db = setup_db().await;
+    let now = Utc::now();
+    let scan1 = insert_scan(
+        &db,
+        "protocol-format-change.test",
+        443,
+        now - Duration::days(2),
+        Some("A"),
+        Some(90),
+    )
+    .await;
+    let scan2 = insert_scan(
+        &db,
+        "protocol-format-change.test",
+        443,
+        now - Duration::days(1),
+        Some("A"),
+        Some(90),
+    )
+    .await;
+
+    insert_protocol(&db, scan1, "TLS 1.3", true, true).await;
+    insert_protocol(&db, scan1, "TLS 1.2", true, false).await;
+    insert_protocol(&db, scan2, "TLSv1.3", true, true).await;
+    insert_protocol(&db, scan2, "tlsv1.2", true, false).await;
+
+    let tracker = ChangeTracker::new(Arc::clone(&db));
+    let changes = tracker
+        .detect_changes_between(scan1, scan2)
+        .await
+        .expect("test assertion should succeed");
+
+    assert!(
+        changes
+            .iter()
+            .all(|change| !matches!(change.change_type, ChangeType::Protocol)),
+        "format-only protocol name differences should not produce protocol changes: {changes:?}"
+    );
+}
+
+#[tokio::test]
 async fn test_change_tracker_marks_vulnerability_severity_changes_as_changed() {
     let db = setup_db().await;
     let now = Utc::now();
@@ -1053,6 +1136,45 @@ async fn test_change_tracker_marks_vulnerability_severity_changes_as_changed() {
     assert!(report.contains("Vulnerability changed: SeverityFlip"));
     assert!(!report.contains("Vulnerability resolved: SeverityFlip"));
     assert!(!report.contains("New vulnerability detected: SeverityFlip"));
+}
+
+#[tokio::test]
+async fn test_change_tracker_normalizes_vulnerability_severity_labels() {
+    let db = setup_db().await;
+    let now = Utc::now();
+    let scan1 = insert_scan(
+        &db,
+        "change-tracker-severity-label.test",
+        443,
+        now - Duration::days(2),
+        Some("A"),
+        Some(90),
+    )
+    .await;
+    let scan2 = insert_scan(
+        &db,
+        "change-tracker-severity-label.test",
+        443,
+        now - Duration::days(1),
+        Some("A"),
+        Some(90),
+    )
+    .await;
+
+    insert_vulnerability(&db, scan2, "UppercaseSeverity", "Critical").await;
+
+    let tracker = ChangeTracker::new(Arc::clone(&db));
+    let changes = tracker
+        .detect_changes_between(scan1, scan2)
+        .await
+        .expect("test assertion should succeed");
+
+    let vulnerability_change = changes
+        .iter()
+        .find(|change| matches!(change.change_type, ChangeType::Vulnerability))
+        .expect("new vulnerability should be reported");
+
+    assert_eq!(vulnerability_change.severity, ChangeSeverity::Critical);
 }
 
 #[tokio::test]
@@ -1188,6 +1310,87 @@ async fn test_change_tracker_detects_cipher_protocol_and_attribute_changes() {
         Some(
             "protocol=TLS 1.2, cipher=CIPHER_TWEAK, key_exchange=N/A, authentication=N/A, encryption=N/A, mac=N/A, bits=N/A, forward_secrecy=false, strength=weak"
         )
+    );
+}
+
+#[tokio::test]
+async fn test_change_tracker_treats_added_low_cipher_as_weak() {
+    let db = setup_db().await;
+    let now = Utc::now();
+
+    let scan1 = insert_scan(
+        &db,
+        "change-tracker-low-cipher.test",
+        443,
+        now - Duration::days(2),
+        Some("A"),
+        Some(90),
+    )
+    .await;
+    let scan2 = insert_scan(
+        &db,
+        "change-tracker-low-cipher.test",
+        443,
+        now - Duration::days(1),
+        Some("C"),
+        Some(55),
+    )
+    .await;
+
+    insert_cipher(&db, scan2, "TLS 1.2", "CIPHER_LOW", "low", false).await;
+
+    let tracker = ChangeTracker::new(Arc::clone(&db));
+    let changes = tracker
+        .detect_changes_between(scan1, scan2)
+        .await
+        .expect("test assertion should succeed");
+
+    let low_cipher_change = changes
+        .iter()
+        .find(|change| change.description == "Cipher added: CIPHER_LOW [TLS 1.2]")
+        .expect("low cipher addition should be reported");
+
+    assert_eq!(low_cipher_change.severity, ChangeSeverity::High);
+}
+
+#[tokio::test]
+async fn test_change_tracker_does_not_report_cipher_changes_for_protocol_name_format_variants() {
+    let db = setup_db().await;
+    let now = Utc::now();
+
+    let scan1 = insert_scan(
+        &db,
+        "change-tracker-cipher-format.test",
+        443,
+        now - Duration::days(2),
+        Some("A"),
+        Some(90),
+    )
+    .await;
+    let scan2 = insert_scan(
+        &db,
+        "change-tracker-cipher-format.test",
+        443,
+        now - Duration::days(1),
+        Some("A"),
+        Some(90),
+    )
+    .await;
+
+    insert_cipher(&db, scan1, "TLS 1.2", "CIPHER_STABLE", "strong", true).await;
+    insert_cipher(&db, scan2, "TLSv1.2", "CIPHER_STABLE", "strong", true).await;
+
+    let tracker = ChangeTracker::new(Arc::clone(&db));
+    let changes = tracker
+        .detect_changes_between(scan1, scan2)
+        .await
+        .expect("test assertion should succeed");
+
+    assert!(
+        changes
+            .iter()
+            .all(|change| !matches!(change.change_type, ChangeType::Cipher)),
+        "format-only protocol name differences should not produce cipher changes: {changes:?}"
     );
 }
 
@@ -1424,6 +1627,44 @@ async fn test_dashboard_summary_counts_all_issues_before_truncation() {
 }
 
 #[tokio::test]
+async fn test_dashboard_protocol_distribution_normalizes_protocol_name_variants() {
+    let db = setup_db().await;
+    let now = Utc::now();
+    let scan1 = insert_scan(
+        &db,
+        "dashboard-protocol-format.test",
+        443,
+        now - Duration::days(2),
+        Some("A"),
+        Some(92),
+    )
+    .await;
+    let scan2 = insert_scan(
+        &db,
+        "dashboard-protocol-format.test",
+        443,
+        now - Duration::days(1),
+        Some("A"),
+        Some(93),
+    )
+    .await;
+
+    insert_protocol(&db, scan1, "TLS 1.3", true, true).await;
+    insert_protocol(&db, scan2, "TLSv1.3", true, true).await;
+
+    let generator = DashboardGenerator::new(Arc::clone(&db));
+    let dashboard = generator
+        .generate_dashboard("dashboard-protocol-format.test", 443, 30)
+        .await
+        .expect("test assertion should succeed");
+
+    assert_eq!(dashboard.protocol_distribution.len(), 1);
+    assert_eq!(dashboard.protocol_distribution[0].label, "TLS 1.3");
+    assert_eq!(dashboard.protocol_distribution[0].value, 2);
+    assert!((dashboard.protocol_distribution[0].percentage - 100.0).abs() < 1e-9);
+}
+
+#[tokio::test]
 async fn test_dashboard_top_issue_uses_worst_observed_severity() {
     let db = setup_db().await;
     let older_scan = insert_scan(
@@ -1556,6 +1797,41 @@ async fn test_dashboard_cipher_strength_unknown_bucket_is_rendered() {
         .map(|point| point.percentage)
         .sum();
     assert!((total_percentage - 100.0).abs() < 1e-9);
+}
+
+#[tokio::test]
+async fn test_dashboard_counts_low_cipher_strength_as_weak() {
+    let db = setup_db().await;
+    let scan = insert_scan(
+        &db,
+        "dashboard-cipher-low.test",
+        443,
+        Utc::now() - Duration::days(1),
+        None,
+        None,
+    )
+    .await;
+
+    insert_cipher(&db, scan, "TLS 1.2", "CIPHER_LOW", "low", false).await;
+
+    let generator = DashboardGenerator::new(Arc::clone(&db));
+    let dashboard = generator
+        .generate_dashboard("dashboard-cipher-low.test", 443, 30)
+        .await
+        .expect("test assertion should succeed");
+
+    assert!(
+        dashboard
+            .cipher_strength
+            .iter()
+            .any(|point| point.label == "weak" && point.value == 1)
+    );
+    assert!(
+        !dashboard
+            .cipher_strength
+            .iter()
+            .any(|point| point.label == "unknown")
+    );
 }
 
 #[tokio::test]
