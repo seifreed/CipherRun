@@ -638,6 +638,15 @@ impl ChangeTracker {
                             current_value: Some(c2.not_after.format("%Y-%m-%d").to_string()),
                             timestamp,
                         });
+                    } else if c2.not_after < c1.not_after {
+                        changes.push(ChangeEvent {
+                            change_type: ChangeType::Certificate,
+                            severity: ChangeSeverity::High,
+                            description: "Certificate validity shortened".to_string(),
+                            previous_value: Some(c1.not_after.format("%Y-%m-%d").to_string()),
+                            current_value: Some(c2.not_after.format("%Y-%m-%d").to_string()),
+                            timestamp,
+                        });
                     }
                 }
             }

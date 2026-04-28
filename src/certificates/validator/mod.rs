@@ -285,7 +285,8 @@ impl CertificateValidator {
         valid &= hostname_match;
 
         // 3. Check key strength
-        self.check_key_strength(leaf, &mut issues);
+        let key_strength_ok = self.check_key_strength(leaf, &mut issues);
+        valid &= key_strength_ok;
 
         // 4. Check signature algorithm
         self.check_signature_algorithm(leaf, &mut issues);

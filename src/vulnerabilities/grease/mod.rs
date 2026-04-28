@@ -491,7 +491,9 @@ mod tests {
         .unwrap();
         let tester = GreaseTester::new(target);
 
-        let hello = tester.build_client_hello_with_grease_ciphers();
+        let hello = tester
+            .build_client_hello_with_grease_ciphers()
+            .expect("test assertion should succeed");
 
         // Check it's a valid TLS handshake record
         assert_eq!(hello[0], 0x16); // Handshake
@@ -514,7 +516,9 @@ mod tests {
         .unwrap();
         let tester = GreaseTester::new(target);
 
-        let hello = tester.build_client_hello_with_grease_extensions();
+        let hello = tester
+            .build_client_hello_with_grease_extensions()
+            .expect("test assertion should succeed");
 
         assert_eq!(hello[0], 0x16);
         assert_eq!(hello[5], 0x01);
@@ -531,7 +535,9 @@ mod tests {
         .unwrap();
         let tester = GreaseTester::new(target);
 
-        let hello = tester.build_client_hello_with_grease_groups();
+        let hello = tester
+            .build_client_hello_with_grease_groups()
+            .expect("test assertion should succeed");
 
         assert_eq!(hello[0], 0x16);
         assert_eq!(hello[5], 0x01);
@@ -547,7 +553,9 @@ mod tests {
         .unwrap();
         let tester = GreaseTester::new(target);
 
-        let hello = tester.build_client_hello_combined_grease();
+        let hello = tester
+            .build_client_hello_combined_grease()
+            .expect("test assertion should succeed");
 
         assert_eq!(hello[0], 0x16);
         assert_eq!(hello[5], 0x01);

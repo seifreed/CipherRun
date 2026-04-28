@@ -37,7 +37,7 @@ impl CipherRunDatabase {
         scans.sort_by(|a, b| {
             a.scan_timestamp
                 .cmp(&b.scan_timestamp)
-                .then_with(|| a.scan_id.cmp(&b.scan_id))
+                .then_with(|| b.scan_id.cmp(&a.scan_id))
         });
 
         Ok(scans)

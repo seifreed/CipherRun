@@ -152,10 +152,12 @@ fn test_truncate_with_ellipsis_exact_length() {
 
 #[test]
 fn test_truncate_with_ellipsis_tiny_max_len() {
-    // When max_len <= 3, we can't fit any chars + "...", so return original
+    // When max_len <= 3, truncate without ellipsis to respect the contract
     let truncated = truncate_with_ellipsis("longstring", 2);
-    assert_eq!(truncated, "longstring");
-    // When max_len > 3, truncation works
+    assert_eq!(truncated, "lo");
+    let truncated = truncate_with_ellipsis("longstring", 3);
+    assert_eq!(truncated, "lon");
+    // When max_len > 3, truncation works with ellipsis
     let truncated = truncate_with_ellipsis("longstring", 6);
     assert_eq!(truncated, "lon...");
 }

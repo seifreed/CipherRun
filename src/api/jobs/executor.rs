@@ -148,11 +148,13 @@ impl ScanExecutor {
             }
             Err(e) => {
                 error!("Failed to update job status: {}", e);
+                return;
             }
         }
 
         // Send progress update
-        self.send_progress(&job, 0, "Starting scan");
+        self.send_progress(queue.clone(), &mut job, 0, "Starting scan")
+            .await;
 
         let progress_tx = self.progress_tx.clone();
         let job_for_scan = job.clone();
@@ -177,8 +179,22 @@ impl ScanExecutor {
                     {
                         info!("Aborting running scan job {} after cancellation request", job.id);
                         scan_task.abort();
-                        let _ = (&mut scan_task).await;
-                        let _ = self.progress_tx.send(ProgressMessage::new(&job.id, job.progress, "cancelled"));
+                        match (&mut scan_task).await {
+                            Ok(Ok(results)) => {
+                                // Scan finished successfully right before/after abort
+                                job = current;
+                                job.mark_completed(results);
+                                let _ = self.progress_tx.send(ProgressMessage::completed(&job.id));
+                            }
+                            Ok(Err(e)) => {
+                                job = current;
+                                job.mark_failed(e.to_string());
+                                let _ = self.progress_tx.send(ProgressMessage::failed(&job.id, job.error.clone().unwrap_or_default()));
+                            }
+                            _ => {
+                                let _ = self.progress_tx.send(ProgressMessage::new(&job.id, job.progress, "cancelled"));
+                            }
+                        }
                         return;
                     }
                 }
@@ -313,9 +329,17 @@ impl ScanExecutor {
             .map_err(|error| anyhow::anyhow!(error.to_string()))
     }
 
-    fn send_progress(&self, job: &ScanJob, progress: u8, stage: &str) {
+    async fn send_progress(
+        &self,
+        queue: Arc<dyn JobQueue>,
+        job: &mut ScanJob,
+        progress: u8,
+        stage: &str,
+    ) {
+        job.update_progress(progress, stage.to_string());
         let msg = ProgressMessage::new(&job.id, progress, stage);
         let _ = self.progress_tx.send(msg);
+        let _ = queue.update_job(job).await;
     }
 
     /// Send webhook notification.
