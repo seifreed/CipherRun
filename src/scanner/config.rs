@@ -36,7 +36,7 @@ impl ProtocolTestConfig {
             starttls: request.starttls_protocol(),
             sni_name: request.tls.sni_name.clone(),
             bugs_mode: request.tls.bugs,
-            timeout: Duration::from_secs(request.connection.socket_timeout.unwrap_or(10)),
+            timeout: Duration::from_secs(request.connection.connect_timeout.unwrap_or(10)),
         }
     }
 }
@@ -69,7 +69,7 @@ impl CipherTestConfig {
         Self {
             test_all_ciphers: request.scan.ciphers.each_cipher,
             max_concurrent,
-            timeout: Duration::from_secs(request.connection.socket_timeout.unwrap_or(10)),
+            timeout: Duration::from_secs(request.connection.connect_timeout.unwrap_or(10)),
         }
     }
 }
@@ -140,7 +140,7 @@ mod tests {
         request.tls.bugs = true;
         request.tls.sni_name = Some("sni.example".to_string());
         request.starttls.smtp = true;
-        request.connection.socket_timeout = Some(22);
+        request.connection.connect_timeout = Some(22);
 
         let config = ProtocolTestConfig::from_request(&request);
         assert!(config.bugs_mode);
@@ -154,7 +154,7 @@ mod tests {
         let mut request = ScanRequest::default();
         request.network.max_concurrent_ciphers = 3;
         request.scan.ciphers.each_cipher = true;
-        request.connection.socket_timeout = Some(15);
+        request.connection.connect_timeout = Some(15);
 
         let config = CipherTestConfig::from_request(&request);
         assert!(config.test_all_ciphers);

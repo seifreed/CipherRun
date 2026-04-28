@@ -30,7 +30,8 @@ pub enum CipherStrength {
 
 impl CipherSuite {
     pub fn strength(&self) -> CipherStrength {
-        if self.encryption.contains("NULL") {
+        let encryption = self.encryption.to_ascii_uppercase();
+        if encryption.contains("NULL") {
             CipherStrength::NULL
         } else if self.export {
             CipherStrength::Export
@@ -44,27 +45,31 @@ impl CipherSuite {
     }
 
     pub fn has_forward_secrecy(&self) -> bool {
+        let protocol = self.protocol.to_ascii_uppercase();
+        let key_exchange = self.key_exchange.to_ascii_uppercase();
+        let openssl_name = self.openssl_name.to_ascii_uppercase();
+        let iana_name = self.iana_name.to_ascii_uppercase();
+
         // TLS 1.3 always provides Forward Secrecy by design (RFC 8446)
         // All TLS 1.3 cipher suites use ephemeral key exchange (ECDHE or DHE)
-        if self.protocol.contains("TLSv1.3") || self.protocol.contains("TLS13") {
+        if protocol.contains("TLSV1.3") || protocol.contains("TLS13") {
             return true;
         }
 
         // For TLS 1.2 and earlier, check for ephemeral key exchange
-        self.key_exchange.contains("ECDHE")
-            || self.key_exchange.contains("DHE")
-            || self.key_exchange.contains("EDH")
-            || self.openssl_name.contains("ECDHE")
-            || self.openssl_name.contains("DHE")
-            || self.openssl_name.contains("EDH")
-            || self.iana_name.contains("ECDHE")
-            || self.iana_name.contains("DHE")
+        key_exchange.contains("ECDHE")
+            || key_exchange.contains("DHE")
+            || key_exchange.contains("EDH")
+            || openssl_name.contains("ECDHE")
+            || openssl_name.contains("DHE")
+            || openssl_name.contains("EDH")
+            || iana_name.contains("ECDHE")
+            || iana_name.contains("DHE")
     }
 
     pub fn is_aead(&self) -> bool {
-        self.encryption.contains("GCM")
-            || self.encryption.contains("CCM")
-            || self.encryption.contains("CHACHA20")
+        let encryption = self.encryption.to_ascii_uppercase();
+        encryption.contains("GCM") || encryption.contains("CCM") || encryption.contains("CHACHA20")
     }
 
     /// Quantum-safety is determined by the negotiated key exchange *group*, not the cipher suite.
@@ -162,5 +167,21 @@ mod tests {
         let mut cipher = base_cipher();
         cipher.encryption = "CHACHA20-POLY1305".to_string();
         assert!(cipher.is_aead());
+    }
+
+    #[test]
+    fn test_cipher_helpers_are_case_insensitive() {
+        let mut cipher = base_cipher();
+        cipher.protocol = "tlsv1.3".to_string();
+        cipher.key_exchange = "ecdhe".to_string();
+        cipher.openssl_name = "tls_aes_128_gcm_sha256".to_string();
+        cipher.iana_name = "tls_aes_128_gcm_sha256".to_string();
+        cipher.encryption = "aesgcm".to_string();
+
+        assert!(cipher.has_forward_secrecy());
+        assert!(cipher.is_aead());
+
+        cipher.encryption = "null".to_string();
+        assert_eq!(cipher.strength(), CipherStrength::NULL);
     }
 }

@@ -2,67 +2,102 @@ use super::{IntoleranceTestResult, IntoleranceTester};
 use crate::Result;
 use crate::constants::ALERT_UNRECOGNIZED_NAME;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IntoleranceProbe {
+    Detected,
+    NotDetected,
+    Inconclusive,
+}
+
 impl IntoleranceTester {
     pub async fn test_all(&self) -> Result<IntoleranceTestResult> {
         let mut result = IntoleranceTestResult::default();
 
-        result.extension_intolerance = self.test_extension_intolerance().await?;
-        if result.extension_intolerance {
-            result.details.insert(
-                "extension_intolerance".to_string(),
-                "Server rejects ClientHellos with certain extensions (bad)".to_string(),
-            );
+        match self.test_extension_intolerance().await? {
+            IntoleranceProbe::Detected => {
+                result.extension_intolerance = true;
+                result.details.insert(
+                    "extension_intolerance".to_string(),
+                    "Server rejects ClientHellos with certain extensions (bad)".to_string(),
+                );
+            }
+            IntoleranceProbe::Inconclusive => {
+                mark_inconclusive(&mut result, "extension_intolerance");
+            }
+            IntoleranceProbe::NotDetected => {}
         }
 
-        result.version_intolerance = self.test_version_intolerance().await?;
-        if result.version_intolerance {
-            result.details.insert(
-                "version_intolerance".to_string(),
-                "Server rejects ClientHello with high version in record layer (bad)".to_string(),
-            );
+        match self.test_version_intolerance().await? {
+            IntoleranceProbe::Detected => {
+                result.version_intolerance = true;
+                result.details.insert(
+                    "version_intolerance".to_string(),
+                    "Server rejects ClientHello with high version in record layer (bad)"
+                        .to_string(),
+                );
+            }
+            IntoleranceProbe::Inconclusive => {
+                mark_inconclusive(&mut result, "version_intolerance");
+            }
+            IntoleranceProbe::NotDetected => {}
         }
 
-        result.long_handshake_intolerance = self.test_long_handshake_intolerance().await?;
-        if result.long_handshake_intolerance {
-            result.details.insert(
-                "long_handshake_intolerance".to_string(),
-                "Server rejects ClientHello > 256 bytes (bad)".to_string(),
-            );
+        match self.test_long_handshake_intolerance().await? {
+            IntoleranceProbe::Detected => {
+                result.long_handshake_intolerance = true;
+                result.details.insert(
+                    "long_handshake_intolerance".to_string(),
+                    "Server rejects ClientHello > 256 bytes (bad)".to_string(),
+                );
+            }
+            IntoleranceProbe::Inconclusive => {
+                mark_inconclusive(&mut result, "long_handshake_intolerance");
+            }
+            IntoleranceProbe::NotDetected => {}
         }
 
-        result.incorrect_sni_alerts = self.test_sni_alerts().await?;
-        if result.incorrect_sni_alerts {
-            result.details.insert(
-                "incorrect_sni_alerts".to_string(),
-                "Server sends incorrect alert when SNI fails (bad)".to_string(),
-            );
+        match self.test_sni_alerts().await? {
+            IntoleranceProbe::Detected => {
+                result.incorrect_sni_alerts = true;
+                result.details.insert(
+                    "incorrect_sni_alerts".to_string(),
+                    "Server sends incorrect alert when SNI fails (bad)".to_string(),
+                );
+            }
+            IntoleranceProbe::Inconclusive => {
+                mark_inconclusive(&mut result, "incorrect_sni_alerts");
+            }
+            IntoleranceProbe::NotDetected => {}
         }
 
-        result.uses_common_dh_primes = self.test_common_dh_primes().await?;
-        if result.uses_common_dh_primes {
-            result.details.insert(
-                "uses_common_dh_primes".to_string(),
-                "Server uses known weak DH primes (critical security issue)".to_string(),
-            );
+        match self.test_common_dh_primes().await? {
+            IntoleranceProbe::Detected => {
+                result.uses_common_dh_primes = true;
+                result.details.insert(
+                    "uses_common_dh_primes".to_string(),
+                    "Server uses known weak DH primes (critical security issue)".to_string(),
+                );
+            }
+            IntoleranceProbe::Inconclusive => {
+                mark_inconclusive(&mut result, "uses_common_dh_primes");
+            }
+            IntoleranceProbe::NotDetected => {}
         }
 
         Ok(result)
     }
 
-    async fn test_extension_intolerance(&self) -> Result<bool> {
+    async fn test_extension_intolerance(&self) -> Result<IntoleranceProbe> {
         let minimal_hello = self.build_minimal_client_hello()?;
         let minimal_response = self.send_client_hello(&minimal_hello).await;
 
         let extended_hello = self.build_extended_client_hello()?;
         let extended_response = self.send_client_hello(&extended_hello).await;
 
-        Ok(matches!(
-            (minimal_response, extended_response),
-            (Ok(_), Err(_))
-        ))
+        Ok(compare_baseline_probe(minimal_response, extended_response))
     }
 
-    async fn test_version_intolerance(&self) -> Result<bool> {
+    async fn test_version_intolerance(&self) -> Result<IntoleranceProbe> {
         let normal_hello = self.build_versioned_client_hello(0x0303)?;
         let normal_response = self.send_client_hello(&normal_hello).await;
 
@@ -71,37 +106,63 @@ impl IntoleranceTester {
         let high_version_hello = self.build_versioned_client_hello(0x0305)?;
         let high_version_response = self.send_client_hello(&high_version_hello).await;
 
-        Ok(matches!(
-            (normal_response, high_version_response),
-            (Ok(_), Err(_))
+        Ok(compare_baseline_probe(
+            normal_response,
+            high_version_response,
         ))
     }
 
-    async fn test_long_handshake_intolerance(&self) -> Result<bool> {
+    async fn test_long_handshake_intolerance(&self) -> Result<IntoleranceProbe> {
         let normal_hello = self.build_minimal_client_hello()?;
         let normal_response = self.send_client_hello(&normal_hello).await;
 
         let long_hello = self.build_long_client_hello()?;
         let long_response = self.send_client_hello(&long_hello).await;
 
-        Ok(matches!((normal_response, long_response), (Ok(_), Err(_))))
+        Ok(compare_baseline_probe(normal_response, long_response))
     }
 
-    async fn test_sni_alerts(&self) -> Result<bool> {
+    async fn test_sni_alerts(&self) -> Result<IntoleranceProbe> {
         let invalid_sni_hello = self.build_invalid_sni_client_hello()?;
 
         match self.send_and_read_alert(&invalid_sni_hello).await {
-            Ok(Some(alert_code)) => Ok(alert_code != ALERT_UNRECOGNIZED_NAME),
-            _ => Ok(false),
+            Ok(Some(alert_code)) if alert_code != ALERT_UNRECOGNIZED_NAME => {
+                Ok(IntoleranceProbe::Detected)
+            }
+            Ok(_) => Ok(IntoleranceProbe::NotDetected),
+            Err(_) => Ok(IntoleranceProbe::Inconclusive),
         }
     }
 
-    async fn test_common_dh_primes(&self) -> Result<bool> {
+    async fn test_common_dh_primes(&self) -> Result<IntoleranceProbe> {
         let common_primes = Self::load_common_primes()?;
 
         match self.extract_dh_prime().await {
-            Ok(Some(prime_hex)) => Ok(common_primes.contains(&prime_hex.to_uppercase())),
-            _ => Ok(false),
+            Ok(Some(prime_hex)) if common_primes.contains(&prime_hex.to_uppercase()) => {
+                Ok(IntoleranceProbe::Detected)
+            }
+            Ok(_) => Ok(IntoleranceProbe::NotDetected),
+            Err(_) => Ok(IntoleranceProbe::Inconclusive),
         }
     }
+}
+
+fn compare_baseline_probe(baseline: Result<Vec<u8>>, variant: Result<Vec<u8>>) -> IntoleranceProbe {
+    match (baseline, variant) {
+        (Ok(_), Err(_)) => IntoleranceProbe::Detected,
+        (Ok(_), Ok(_)) => IntoleranceProbe::NotDetected,
+        (Err(_), _) => IntoleranceProbe::Inconclusive,
+    }
+}
+
+fn mark_inconclusive(result: &mut IntoleranceTestResult, key: &str) {
+    result.inconclusive = true;
+    result.inconclusive_checks.push(key.to_string());
+    result.details.insert(
+        key.to_string(),
+        format!(
+            "{} test inconclusive - baseline probe did not complete",
+            key
+        ),
+    );
 }

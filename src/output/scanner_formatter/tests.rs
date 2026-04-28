@@ -1,5 +1,4 @@
 use super::*;
-use crate::pqc::{PqcLevel, PqcReadinessAssessment};
 use crate::certificates::parser::{CertificateChain, CertificateInfo};
 use crate::certificates::revocation::{RevocationMethod, RevocationResult, RevocationStatus};
 use crate::certificates::trust_stores::{
@@ -21,6 +20,7 @@ use crate::http::headers_advanced::{
     HstsAnalysis, ReverseProxyDetection,
 };
 use crate::http::tester::{HeaderAnalysisResult, SecurityGrade};
+use crate::pqc::{PqcLevel, PqcReadinessAssessment};
 use crate::protocols::alpn::{AlpnReport, AlpnResult};
 use crate::protocols::client_cas::{ClientCA, ClientCAsResult};
 use crate::protocols::groups::{GroupEnumerationResult, GroupType, KeyExchangeGroup};
@@ -152,10 +152,12 @@ fn test_truncate_with_ellipsis_exact_length() {
 
 #[test]
 fn test_truncate_with_ellipsis_tiny_max_len() {
-    // When max_len <= 3, we can't fit any chars + "...", so return original
+    // When max_len <= 3, truncate without ellipsis to respect the contract
     let truncated = truncate_with_ellipsis("longstring", 2);
-    assert_eq!(truncated, "longstring");
-    // When max_len > 3, truncation works
+    assert_eq!(truncated, "lo");
+    let truncated = truncate_with_ellipsis("longstring", 3);
+    assert_eq!(truncated, "lon");
+    // When max_len > 3, truncation works with ellipsis
     let truncated = truncate_with_ellipsis("longstring", 6);
     assert_eq!(truncated, "lon...");
 }
@@ -321,6 +323,8 @@ fn test_intolerance_checks_display() {
         long_handshake_intolerance: true,
         incorrect_sni_alerts: true,
         uses_common_dh_primes: true,
+        inconclusive: false,
+        inconclusive_checks: Vec::new(),
         details,
     };
 
@@ -450,6 +454,7 @@ fn test_display_sections_smoke() {
         ProtocolTestResult {
             protocol: Protocol::TLS12,
             supported: true,
+            inconclusive: false,
             preferred: true,
             ciphers_count: 3,
             handshake_time_ms: Some(12),
@@ -461,6 +466,7 @@ fn test_display_sections_smoke() {
         ProtocolTestResult {
             protocol: Protocol::SSLv3,
             supported: false,
+            inconclusive: false,
             preferred: false,
             ciphers_count: 0,
             handshake_time_ms: None,
@@ -514,9 +520,11 @@ fn test_display_sections_smoke() {
             http3_supported: false,
             negotiated_protocol: Some("h2".to_string()),
             details: vec!["ALPN ok".to_string()],
+            inconclusive: false,
         },
         spdy_supported: false,
         recommendations: vec!["Enable HTTP/3".to_string()],
+        inconclusive: false,
     };
     formatter.display_alpn_results(&alpn_report);
 
@@ -672,6 +680,7 @@ fn test_display_sections_smoke() {
             common_name: Some("Client CA".to_string()),
         }],
         requires_client_auth: true,
+        inconclusive: false,
     };
     formatter.display_client_cas_results(&client_cas);
 }
@@ -690,6 +699,7 @@ fn test_display_results_summary_and_headers() {
     let protocol_results = vec![ProtocolTestResult {
         protocol: Protocol::TLS13,
         supported: true,
+        inconclusive: false,
         preferred: true,
         ciphers_count: 2,
         handshake_time_ms: Some(5),
@@ -793,6 +803,7 @@ fn test_misc_display_helpers_and_fingerprints() {
                 supported: false,
             },
         ],
+        inconclusive: false,
     };
     formatter.display_signature_results(&signature_result);
 

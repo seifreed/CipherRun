@@ -91,7 +91,7 @@ impl RevocationChecker {
                     self.check_timeout
                 );
                 return Err(crate::error::TlsError::Timeout {
-                    duration: self.check_timeout,
+                    duration: Some(self.check_timeout),
                 });
             }
         };

@@ -6,13 +6,15 @@ impl CertificateValidator {
         &self,
         cert: &CertificateInfo,
         issues: &mut Vec<ValidationIssue>,
-    ) {
+    ) -> bool {
         if let Some(key_size) = cert.public_key_size {
             let alg = cert.public_key_algorithm.to_lowercase();
             let is_ec = alg.starts_with("ec")
                 || alg.contains("ecpublickey")
                 || alg.contains("ecdsa")
-                || alg == "id-ecpublickey";
+                || alg == "id-ecpublickey"
+                || alg.contains("ed25519")
+                || alg.contains("ed448");
 
             if is_ec {
                 // EC keys: below 224 is always a High severity finding regardless of skip_warnings
@@ -25,6 +27,7 @@ impl CertificateValidator {
                             key_size
                         ),
                     });
+                    return false;
                 } else if key_size < 256 && !self.skip_warnings {
                     issues.push(ValidationIssue {
                         severity: IssueSeverity::Low,
@@ -46,6 +49,7 @@ impl CertificateValidator {
                             key_size
                         ),
                     });
+                    return false;
                 } else if key_size < 3072 && !self.skip_warnings {
                     issues.push(ValidationIssue {
                         severity: IssueSeverity::Low,
@@ -58,6 +62,7 @@ impl CertificateValidator {
                 }
             }
         }
+        true
     }
 }
 

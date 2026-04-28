@@ -170,6 +170,10 @@ impl<'a> HeartbleedTester<'a> {
 
         // Session ID length at offset 43
         let sid_len = data[43] as usize;
+        if sid_len > 32 {
+            // Malformed ServerHello: session_id_length exceeds TLS maximum
+            return false;
+        }
         // After session ID: cipher suite (2 bytes) + compression method (1 byte)
         let ext_offset = 44 + sid_len + 2 + 1;
 

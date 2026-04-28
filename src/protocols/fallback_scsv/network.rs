@@ -48,13 +48,7 @@ impl FallbackScsvTester<'_> {
             }
         }
 
-        if !all_support {
-            Ok(ScsvSupport::not_supported())
-        } else if inconclusive {
-            Ok(ScsvSupport::inconclusive())
-        } else {
-            Ok(ScsvSupport::supported())
-        }
+        Ok(aggregate_scsv_support(all_support, inconclusive))
     }
 
     pub(super) async fn test_scsv_on_ip(
@@ -173,7 +167,26 @@ impl FallbackScsvTester<'_> {
             }
         }
     }
+}
 
+/// Aggregate per-IP SCSV results into a single verdict.
+///
+/// Precedence (S5 fix): if any IP was inconclusive the aggregate is inconclusive;
+/// otherwise, if any IP does not support SCSV the aggregate is not_supported;
+/// otherwise all IPs support it. Previously `!all_support` won over `inconclusive`,
+/// yielding false-positive "fallback vulnerability" verdicts when a single probe
+/// was inconclusive alongside a not_supported IP.
+fn aggregate_scsv_support(all_support: bool, inconclusive: bool) -> ScsvSupport {
+    if inconclusive {
+        ScsvSupport::inconclusive()
+    } else if !all_support {
+        ScsvSupport::not_supported()
+    } else {
+        ScsvSupport::supported()
+    }
+}
+
+impl FallbackScsvTester<'_> {
     pub(super) fn baseline_fallback_accepted(
         &self,
         read_result: std::result::Result<
@@ -191,5 +204,41 @@ impl FallbackScsvTester<'_> {
             }
             _ => false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_aggregate_scsv_inconclusive_wins_over_not_supported() {
+        // Regression test for S5: a single inconclusive probe must not be
+        // overridden by another IP that returned not_supported. Reporting
+        // a downgrade vulnerability without conclusive evidence is a false
+        // positive in a security scanner.
+        let result =
+            aggregate_scsv_support(/*all_support=*/ false, /*inconclusive=*/ true);
+        assert!(
+            result.inconclusive,
+            "inconclusive must win when at least one IP was inconclusive"
+        );
+        assert!(!result.vulnerable, "inconclusive must not imply vulnerable");
+    }
+
+    #[test]
+    fn test_aggregate_scsv_all_supported() {
+        let result = aggregate_scsv_support(true, false);
+        assert!(result.supported);
+        assert!(!result.vulnerable);
+        assert!(!result.inconclusive);
+    }
+
+    #[test]
+    fn test_aggregate_scsv_not_supported_when_no_inconclusive() {
+        let result = aggregate_scsv_support(false, false);
+        assert!(!result.supported);
+        assert!(result.vulnerable);
+        assert!(result.accepts_downgrade);
     }
 }

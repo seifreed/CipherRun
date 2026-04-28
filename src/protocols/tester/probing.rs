@@ -3,6 +3,31 @@ use crate::Result;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::timeout;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ProtocolProbeOutcome {
+    Supported,
+    NotSupported,
+    Inconclusive,
+}
+
+impl ProtocolProbeOutcome {
+    fn is_supported(self) -> bool {
+        matches!(self, Self::Supported)
+    }
+
+    fn is_inconclusive(self) -> bool {
+        matches!(self, Self::Inconclusive)
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Supported => "supported",
+            Self::NotSupported => "NOT supported",
+            Self::Inconclusive => "inconclusive",
+        }
+    }
+}
+
 impl ProtocolTester {
     pub async fn test_all_protocols(&self) -> Result<Vec<ProtocolTestResult>> {
         use futures::stream::{self, StreamExt};
@@ -23,7 +48,7 @@ impl ProtocolTester {
     pub async fn test_protocol(&self, protocol: Protocol) -> Result<ProtocolTestResult> {
         let start = std::time::Instant::now();
 
-        let supported = if self.test_all_ips {
+        let outcome = if self.test_all_ips {
             self.test_protocol_all_ips(protocol).await?
         } else {
             let addr = self
@@ -34,6 +59,8 @@ impl ProtocolTester {
                 .ok_or(crate::TlsError::NoSocketAddresses)?;
             self.test_protocol_on_ip(protocol, addr).await?
         };
+        let supported = outcome.is_supported();
+        let inconclusive = outcome.is_inconclusive();
 
         let handshake_time_ms = if supported {
             Some(start.elapsed().as_millis() as u64)
@@ -43,7 +70,9 @@ impl ProtocolTester {
 
         let heartbeat_enabled =
             if supported && !matches!(protocol, Protocol::SSLv2 | Protocol::QUIC) {
-                self.detect_heartbeat_extension(protocol).await.ok()
+                self.detect_heartbeat_extension(protocol)
+                    .await
+                    .unwrap_or(None)
             } else {
                 None
             };
@@ -60,7 +89,9 @@ impl ProtocolTester {
 
         let secure_renegotiation =
             if supported && !matches!(protocol, Protocol::SSLv2 | Protocol::QUIC) {
-                self.detect_secure_renegotiation(protocol).await.ok()
+                self.detect_secure_renegotiation(protocol)
+                    .await
+                    .unwrap_or(None)
             } else {
                 None
             };
@@ -68,6 +99,7 @@ impl ProtocolTester {
         Ok(ProtocolTestResult {
             protocol,
             supported,
+            inconclusive,
             preferred: false,
             ciphers_count: 0,
             handshake_time_ms,
@@ -78,11 +110,25 @@ impl ProtocolTester {
         })
     }
 
-    pub(super) async fn test_protocol_all_ips(&self, protocol: Protocol) -> Result<bool> {
+    /// S8 note: union semantics are intentional for protocol enumeration in
+    /// security scanning. If ANY backend in a load-balanced deployment accepts
+    /// a protocol, the attacker's view of the deployment includes that path —
+    /// so reporting it as "supported" is the security-correct verdict. An
+    /// intersection reading ("is TLS 1.3 available everywhere?") is a distinct
+    /// property; the caller can read the per-IP inconsistency warnings in the
+    /// log, or (future work) consume a per-IP result map.
+    ///
+    /// The conservative-aggregation contract documented in the architecture
+    /// guards refers to the ScanResults layer (ConservativeAggregator), not to
+    /// this per-protocol probe. See `test_test_all_ips_reports_supported_when_any_ip_supports`.
+    pub(super) async fn test_protocol_all_ips(
+        &self,
+        protocol: Protocol,
+    ) -> Result<ProtocolProbeOutcome> {
         let addrs = self.target.socket_addrs();
 
         if addrs.is_empty() {
-            return Ok(false);
+            return Ok(ProtocolProbeOutcome::Inconclusive);
         }
 
         tracing::info!(
@@ -93,10 +139,11 @@ impl ProtocolTester {
         );
 
         let mut any_supported = false;
+        let mut any_inconclusive = false;
         let mut per_ip_results = Vec::new();
 
         for (idx, addr) in addrs.iter().enumerate() {
-            let ip_supports = self.test_protocol_on_ip(protocol, *addr).await?;
+            let ip_outcome = self.test_protocol_on_ip(protocol, *addr).await?;
 
             tracing::debug!(
                 "IP {} ({}/{}): {} {} - {}",
@@ -104,23 +151,29 @@ impl ProtocolTester {
                 idx + 1,
                 addrs.len(),
                 protocol,
-                if ip_supports {
-                    "supported"
-                } else {
-                    "NOT supported"
-                },
-                if ip_supports { "✓" } else { "✗" }
+                ip_outcome.label(),
+                match ip_outcome {
+                    ProtocolProbeOutcome::Supported => "✓",
+                    ProtocolProbeOutcome::NotSupported => "✗",
+                    ProtocolProbeOutcome::Inconclusive => "?",
+                }
             );
 
-            per_ip_results.push((addr.ip(), ip_supports));
+            per_ip_results.push((addr.ip(), ip_outcome));
 
-            if ip_supports {
+            if ip_outcome.is_supported() {
                 any_supported = true;
+            } else if ip_outcome.is_inconclusive() {
+                any_inconclusive = true;
             }
         }
 
-        let inconsistent =
-            per_ip_results.iter().any(|(_, s)| *s) && per_ip_results.iter().any(|(_, s)| !*s);
+        let inconsistent = per_ip_results
+            .iter()
+            .any(|(_, outcome)| outcome.is_supported())
+            && per_ip_results
+                .iter()
+                .any(|(_, outcome)| !outcome.is_supported());
 
         if inconsistent {
             tracing::warn!(
@@ -133,23 +186,25 @@ impl ProtocolTester {
                     "  {} {} - {}",
                     ip,
                     protocol,
-                    if *supported {
-                        "SUPPORTED"
-                    } else {
-                        "NOT SUPPORTED"
-                    }
+                    supported.label().to_uppercase()
                 );
             }
         }
 
-        Ok(any_supported)
+        if any_supported {
+            Ok(ProtocolProbeOutcome::Supported)
+        } else if any_inconclusive {
+            Ok(ProtocolProbeOutcome::Inconclusive)
+        } else {
+            Ok(ProtocolProbeOutcome::NotSupported)
+        }
     }
 
     pub(super) async fn test_protocol_on_ip(
         &self,
         protocol: Protocol,
         addr: std::net::SocketAddr,
-    ) -> Result<bool> {
+    ) -> Result<ProtocolProbeOutcome> {
         match protocol {
             Protocol::SSLv2 => self.test_sslv2_on_ip(addr).await,
             Protocol::SSLv3 | Protocol::TLS10 | Protocol::TLS11 | Protocol::TLS12 => {
@@ -160,7 +215,10 @@ impl ProtocolTester {
         }
     }
 
-    pub(super) async fn test_sslv2_on_ip(&self, addr: std::net::SocketAddr) -> Result<bool> {
+    pub(super) async fn test_sslv2_on_ip(
+        &self,
+        addr: std::net::SocketAddr,
+    ) -> Result<ProtocolProbeOutcome> {
         let stream_result = crate::utils::network::connect_with_timeout(
             addr,
             self.connect_timeout,
@@ -175,7 +233,7 @@ impl ProtocolTester {
                         .await
                         .is_err()
                 {
-                    return Ok(false);
+                    return Ok(ProtocolProbeOutcome::Inconclusive);
                 }
 
                 if let Some(starttls_proto) = self.starttls_protocol {
@@ -184,7 +242,7 @@ impl ProtocolTester {
                         self.starttls_negotiation_hostname(),
                     );
                     if negotiator.negotiate_starttls(&mut stream).await.is_err() {
-                        return Ok(false);
+                        return Ok(ProtocolProbeOutcome::Inconclusive);
                     }
                 }
 
@@ -207,12 +265,16 @@ impl ProtocolTester {
                         // Only treat as SSLv2 when the message type is a known SSLv2 *non-error* type;
                         // 0x00 is SSLv2 Error — server rejected the handshake, not supporting SSLv2.
                         let known_type = matches!(msg_type, 0x02..=0x08);
-                        Ok(is_sslv2_header && reasonable && known_type)
+                        if is_sslv2_header && reasonable && known_type {
+                            Ok(ProtocolProbeOutcome::Supported)
+                        } else {
+                            Ok(ProtocolProbeOutcome::NotSupported)
+                        }
                     }
-                    _ => Ok(false),
+                    Ok(Ok(_)) | Ok(Err(_)) | Err(_) => Ok(ProtocolProbeOutcome::Inconclusive),
                 }
             }
-            _ => Ok(false),
+            _ => Ok(ProtocolProbeOutcome::Inconclusive),
         }
     }
 
@@ -240,7 +302,7 @@ impl ProtocolTester {
         &self,
         protocol: Protocol,
         addr: std::net::SocketAddr,
-    ) -> Result<bool> {
+    ) -> Result<ProtocolProbeOutcome> {
         use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode, SslVersion};
 
         let mut stream = match crate::utils::network::connect_with_timeout(
@@ -251,7 +313,7 @@ impl ProtocolTester {
         .await
         {
             Ok(s) => s,
-            Err(_) => return Ok(false),
+            Err(_) => return Ok(ProtocolProbeOutcome::Inconclusive),
         };
 
         if let Some(starttls_proto) = self.starttls_protocol {
@@ -260,7 +322,7 @@ impl ProtocolTester {
                 self.starttls_negotiation_hostname(),
             );
             if negotiator.negotiate_starttls(&mut stream).await.is_err() {
-                return Ok(false);
+                return Ok(ProtocolProbeOutcome::Inconclusive);
             }
         }
 
@@ -283,7 +345,7 @@ impl ProtocolTester {
             Protocol::TLS10 => (SslVersion::TLS1, SslVersion::TLS1),
             Protocol::TLS11 => (SslVersion::TLS1_1, SslVersion::TLS1_1),
             Protocol::TLS12 => (SslVersion::TLS1_2, SslVersion::TLS1_2),
-            _ => return Ok(false),
+            _ => return Ok(ProtocolProbeOutcome::NotSupported),
         };
 
         builder.set_min_proto_version(Some(min_version))?;
@@ -298,12 +360,15 @@ impl ProtocolTester {
         let sni_host = self.sni_hostname.as_ref().unwrap_or(&self.target.hostname);
 
         match connector.connect(sni_host, std_stream) {
-            Ok(_) => Ok(true),
-            Err(_) => Ok(false),
+            Ok(_) => Ok(ProtocolProbeOutcome::Supported),
+            Err(_) => Ok(ProtocolProbeOutcome::NotSupported),
         }
     }
 
-    pub(super) async fn test_tls13_on_ip(&self, addr: std::net::SocketAddr) -> Result<bool> {
+    pub(super) async fn test_tls13_on_ip(
+        &self,
+        addr: std::net::SocketAddr,
+    ) -> Result<ProtocolProbeOutcome> {
         use rustls::{ClientConfig, RootCertStore};
         use std::sync::Arc;
         use tokio_rustls::TlsConnector;
@@ -316,7 +381,7 @@ impl ProtocolTester {
         .await
         {
             Ok(s) => s,
-            Err(_) => return Ok(false),
+            Err(_) => return Ok(ProtocolProbeOutcome::Inconclusive),
         };
 
         if let Some(starttls_proto) = self.starttls_protocol {
@@ -325,14 +390,14 @@ impl ProtocolTester {
                 self.starttls_negotiation_hostname(),
             );
             if negotiator.negotiate_starttls(&mut stream).await.is_err() {
-                return Ok(false);
+                return Ok(ProtocolProbeOutcome::Inconclusive);
             }
         }
 
         let connector = if let Some(ref mtls_config) = self.mtls_config {
             match mtls_config.build_tls_connector() {
                 Ok(c) => c,
-                Err(_) => return Ok(false),
+                Err(_) => return Ok(ProtocolProbeOutcome::Inconclusive),
             }
         } else {
             let mut root_store = RootCertStore::empty();
@@ -349,12 +414,16 @@ impl ProtocolTester {
         let domain = crate::utils::network::server_name_for_hostname(sni_host)?;
 
         match timeout(self.read_timeout, connector.connect(domain, stream)).await {
-            Ok(Ok(_)) => Ok(true),
-            _ => Ok(false),
+            Ok(Ok(_)) => Ok(ProtocolProbeOutcome::Supported),
+            Ok(Err(_)) => Ok(ProtocolProbeOutcome::NotSupported),
+            Err(_) => Ok(ProtocolProbeOutcome::Inconclusive),
         }
     }
 
-    pub(super) async fn test_quic_on_ip(&self, _addr: std::net::SocketAddr) -> Result<bool> {
-        Ok(false)
+    pub(super) async fn test_quic_on_ip(
+        &self,
+        _addr: std::net::SocketAddr,
+    ) -> Result<ProtocolProbeOutcome> {
+        Ok(ProtocolProbeOutcome::NotSupported)
     }
 }

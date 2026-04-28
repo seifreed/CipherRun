@@ -131,7 +131,7 @@ impl MxTester {
         let mut records = Vec::new();
 
         for line in output_str.lines() {
-            if line.contains("mail exchanger") {
+            if line.to_ascii_lowercase().contains("mail exchanger") {
                 // Format: "example.com    mail exchanger = 10 mx.example.com."
                 let Some((_, right_side)) = line.split_once('=') else {
                     continue;
@@ -423,6 +423,7 @@ impl MxTester {
         let aggregated = ConservativeAggregator::new(per_backend_results, Vec::new()).aggregate();
         let certificate_chain = select_common_certificate_chain(&successful_results);
         let vulnerabilities = aggregate_vulnerabilities(results);
+        let incomplete_coverage = results.iter().any(|(_, result)| result.is_err());
 
         let mut aggregate = ScanResults {
             target: canonical_target(domain, 25),
@@ -436,6 +437,12 @@ impl MxTester {
             vulnerabilities,
             ..Default::default()
         };
+
+        if incomplete_coverage {
+            aggregate.add_human_warning(
+                "Incomplete MX coverage - at least one MX host failed during scanning",
+            );
+        }
 
         let certificate_validation = aggregate
             .certificate_chain
@@ -594,6 +601,19 @@ mod tests {
         assert_eq!(records.len(), 2);
         assert_eq!(records[0].priority, 5);
         assert_eq!(records[0].hostname, "mx1.example.com");
+    }
+
+    #[test]
+    fn test_parse_nslookup_output_is_case_insensitive() {
+        let tester = MxTester::new("example.com".to_string());
+        let output = b"example.com\tMAIL EXCHANGER = 15 MX.EXAMPLE.COM.\n";
+
+        let records = tester
+            .parse_nslookup_output(output)
+            .expect("test assertion should succeed");
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].priority, 15);
+        assert_eq!(records[0].hostname, "MX.EXAMPLE.COM");
     }
 
     #[test]
@@ -808,6 +828,7 @@ mod tests {
         let supported = ProtocolTestResult {
             protocol: Protocol::TLS12,
             supported: true,
+            inconclusive: false,
             preferred: false,
             ciphers_count: 0,
             handshake_time_ms: None,
@@ -818,6 +839,7 @@ mod tests {
         };
         let unsupported = ProtocolTestResult {
             supported: false,
+            inconclusive: false,
             ..supported.clone()
         };
 
@@ -895,6 +917,38 @@ mod tests {
             aggregate.vulnerabilities[0]
                 .details
                 .contains("incomplete MX coverage")
+        );
+    }
+
+    #[test]
+    fn test_aggregate_scan_results_warns_when_clean_mx_coverage_is_partial() {
+        let results: Vec<(MxRecord, Result<ScanResults>)> = vec![
+            (
+                MxRecord {
+                    priority: 10,
+                    hostname: "mx1.example.com".to_string(),
+                },
+                Ok(ScanResults::default()),
+            ),
+            (
+                MxRecord {
+                    priority: 20,
+                    hostname: "mx2.example.com".to_string(),
+                },
+                Err(TlsError::Other("connection failed".to_string())),
+            ),
+        ];
+
+        let aggregate =
+            MxTester::aggregate_scan_results_for_domain("example.com", &results).unwrap();
+
+        assert!(aggregate.vulnerabilities.is_empty());
+        assert!(
+            aggregate
+                .scan_metadata
+                .human_warnings
+                .iter()
+                .any(|warning| warning.contains("Incomplete MX coverage"))
         );
     }
 }

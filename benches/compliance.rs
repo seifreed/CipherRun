@@ -14,6 +14,7 @@ fn sample_assessment() -> ScanAssessment {
             ProtocolTestResult {
                 protocol: Protocol::TLS12,
                 supported: true,
+                inconclusive: false,
                 preferred: false,
                 ciphers_count: 18,
                 heartbeat_enabled: Some(false),
@@ -25,6 +26,7 @@ fn sample_assessment() -> ScanAssessment {
             ProtocolTestResult {
                 protocol: Protocol::TLS13,
                 supported: true,
+                inconclusive: false,
                 preferred: true,
                 ciphers_count: 5,
                 heartbeat_enabled: Some(false),

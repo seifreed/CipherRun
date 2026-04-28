@@ -71,6 +71,12 @@ impl CipherTester {
     /// Test cipher on all resolved IPs — returns true if ANY IP supports it (union semantics).
     /// This ensures per-IP cipher results are preserved for the aggregation layer,
     /// which takes the union of cipher suites across all IPs.
+    ///
+    /// S4 fix: previously `Ok(false)` and `Err(_)` were collapsed into the same
+    /// branch, silencing transient network errors as "cipher not supported".
+    /// Now, if every IP returned an `Err`, we propagate the last error so the
+    /// caller can schedule the cipher for ENETDOWN retry instead of recording a
+    /// false negative.
     pub(super) async fn try_cipher_handshake_all_ips(
         &self,
         protocol: Protocol,
@@ -81,16 +87,29 @@ impl CipherTester {
             return Ok(false);
         }
 
+        let mut any_conclusive_negative = false;
+        let mut last_error: Option<crate::TlsError> = None;
         for addr in &addrs {
             match self
                 .try_cipher_handshake_on_ip(protocol, cipher_hexcode, *addr)
                 .await
             {
                 Ok(true) => return Ok(true),
-                Ok(false) | Err(_) => continue,
+                Ok(false) => {
+                    any_conclusive_negative = true;
+                }
+                Err(e) => {
+                    last_error = Some(e);
+                }
             }
         }
 
+        // If we ever got a conclusive `Ok(false)` from at least one IP we can
+        // report "not supported" — the cipher genuinely failed somewhere. But if
+        // every IP errored, there's no evidence and we must propagate the error.
+        if !any_conclusive_negative && let Some(err) = last_error {
+            return Err(err);
+        }
         Ok(false)
     }
 
@@ -105,7 +124,9 @@ impl CipherTester {
                 .await
                 .is_err()
         {
-            return Ok(false);
+            return Err(crate::TlsError::UnexpectedResponse {
+                details: "RDP preamble failed before cipher probe".to_string(),
+            });
         }
 
         if let Some(starttls_proto) = self.starttls_protocol {
@@ -114,7 +135,10 @@ impl CipherTester {
                 self.starttls_negotiation_hostname(),
             );
             if negotiator.negotiate_starttls(stream).await.is_err() {
-                return Ok(false);
+                return Err(crate::TlsError::StarttlsError {
+                    protocol: starttls_proto.to_string(),
+                    details: "STARTTLS negotiation failed before cipher probe".to_string(),
+                });
             }
         }
 
@@ -132,7 +156,9 @@ impl CipherTester {
             let n = stream.read(&mut response).await?;
 
             if n == 0 {
-                return Ok(false);
+                return Err(crate::TlsError::ConnectionClosed {
+                    details: "server closed connection before cipher probe response".to_string(),
+                });
             }
 
             if n >= 6
@@ -142,12 +168,20 @@ impl CipherTester {
                 return Ok(true);
             }
 
-            Ok(false)
+            if response[0] == 0x15 {
+                return Ok(false);
+            }
+
+            Err(crate::TlsError::UnexpectedResponse {
+                details: "cipher probe did not receive a ServerHello or TLS alert".to_string(),
+            })
         })
         .await
         {
             Ok(result) => result,
-            Err(_) => Ok(false),
+            Err(_) => Err(crate::TlsError::Timeout {
+                duration: Some(self.read_timeout),
+            }),
         }
     }
 
@@ -158,10 +192,7 @@ impl CipherTester {
         _addr: std::net::SocketAddr,
         pool: &Arc<TlsConnectionPool>,
     ) -> Result<bool> {
-        let mut stream = match pool.acquire().await {
-            Ok(s) => s,
-            Err(_) => return Ok(false),
-        };
+        let mut stream = pool.acquire().await?;
 
         self.perform_cipher_handshake(&mut stream, protocol, cipher_hexcode)
             .await
@@ -181,7 +212,7 @@ impl CipherTester {
         .await
         {
             Ok(s) => s,
-            Err(_) => return Ok(false),
+            Err(e) => return Err(e.into()),
         };
 
         self.perform_cipher_handshake(&mut stream, protocol, cipher_hexcode)

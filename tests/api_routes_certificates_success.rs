@@ -171,6 +171,31 @@ async fn test_get_certificate_success_and_not_found() {
 }
 
 #[tokio::test]
+async fn test_get_certificate_accepts_case_and_colon_variants_of_fingerprint() {
+    let state = setup_state().await;
+    let pool = state.db_pool.as_ref().unwrap().clone();
+
+    let fingerprint = "AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99";
+    let lookup = "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899";
+
+    insert_scan_and_cert(
+        &pool,
+        "fingerprint.example",
+        fingerprint,
+        "CN=fingerprint.example",
+        Utc::now() + Duration::days(20),
+    )
+    .await;
+
+    let response = get_certificate(State(state.clone()), Path(lookup.to_string()))
+        .await
+        .expect("fingerprint lookup should be case-insensitive and colon-insensitive");
+
+    assert_eq!(response.0.fingerprint, fingerprint);
+    assert_eq!(response.0.common_name, "fingerprint.example");
+}
+
+#[tokio::test]
 async fn test_list_certificates_rejects_hostname_filter_with_port() {
     let state = setup_state().await;
 

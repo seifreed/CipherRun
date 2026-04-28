@@ -51,14 +51,39 @@ impl CustomResolver {
             // Prefer full socket address parsing first (handles IPv4:port and [IPv6]:port).
             let socket_addr = if let Ok(addr) = SocketAddr::from_str(resolver_str) {
                 addr
+            } else if let Some(ip_str) = resolver_str
+                .strip_prefix('[')
+                .and_then(|value| value.strip_suffix(']'))
+            {
+                let ip =
+                    IpAddr::from_str(ip_str).map_err(|_| crate::TlsError::InvalidHandshake {
+                        details: format!("Invalid resolver address '{}'", resolver_str),
+                    })?;
+                SocketAddr::new(ip, 53)
             } else if let Ok(ip) = IpAddr::from_str(resolver_str) {
                 // Bare IP (IPv4 or IPv6) -> default DNS port 53.
                 SocketAddr::new(ip, 53)
+            } else if resolver_str.contains(':') {
+                return Err(crate::TlsError::InvalidHandshake {
+                    details: format!(
+                        "Invalid resolver address '{}': expected [IPv6]:port or IPv4:port",
+                        resolver_str
+                    ),
+                });
             } else {
                 return Err(crate::TlsError::InvalidHandshake {
                     details: format!("Invalid resolver address '{}'", resolver_str),
                 });
             };
+
+            if socket_addr.port() == 0 {
+                return Err(crate::TlsError::InvalidHandshake {
+                    details: format!(
+                        "Invalid resolver address '{}': port must be between 1 and 65535",
+                        resolver_str
+                    ),
+                });
+            }
 
             parsed_resolvers.push(socket_addr);
         }
@@ -330,6 +355,21 @@ mod tests {
         assert_eq!(resolver.count(), 1);
         let expected = SocketAddr::from_str("[2001:db8::1]:5353").unwrap();
         assert_eq!(resolver.primary_resolver().unwrap(), expected);
+    }
+
+    #[test]
+    fn test_parse_bracketed_ipv6_without_port_defaults_53() {
+        let resolvers = vec!["[2001:db8::1]".to_string()];
+        let resolver = CustomResolver::new(resolvers).expect("bracketed IPv6 should parse");
+
+        let expected = SocketAddr::new("2001:db8::1".parse().unwrap(), 53);
+        assert_eq!(resolver.primary_resolver().unwrap(), expected);
+    }
+
+    #[test]
+    fn test_resolver_port_zero_is_error() {
+        let result = CustomResolver::new(vec!["8.8.8.8:0".to_string()]);
+        assert!(result.is_err());
     }
 
     #[test]

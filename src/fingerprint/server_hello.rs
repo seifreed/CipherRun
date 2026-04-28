@@ -151,7 +151,7 @@ impl ServerHelloCapture {
 
         // Check if there are extensions (need at least 2 bytes for extensions length)
         let position = cursor.position() as usize;
-        if position < data.len() - 1 {
+        if position + 1 < data.len() {
             // Read extensions length
             let mut ext_len_bytes = [0u8; 2];
             if cursor.read_exact(&mut ext_len_bytes).is_ok() {

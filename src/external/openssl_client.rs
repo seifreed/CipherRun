@@ -290,7 +290,9 @@ impl OpenSslClient {
         };
 
         let result = self.run(&options)?;
-        Ok(result.success)
+        // OpenSSL may exit non-zero even after a completed handshake;
+        // connection_info is only present when the handshake succeeded.
+        Ok(result.connection_info.is_some())
     }
 
     /// Get full certificate chain
@@ -325,7 +327,9 @@ impl OpenSslClient {
         };
 
         let result = self.run(&options)?;
-        Ok(result.success)
+        // OpenSSL may exit non-zero even after a completed handshake;
+        // connection_info is only present when the handshake succeeded.
+        Ok(result.connection_info.is_some())
     }
 
     /// Test client certificate authentication
@@ -340,7 +344,9 @@ impl OpenSslClient {
         };
 
         let result = self.run(&options)?;
-        Ok(result.success)
+        // OpenSSL may exit non-zero even after a completed handshake;
+        // connection_info is only present when the handshake succeeded.
+        Ok(result.connection_info.is_some())
     }
 
     /// Get OpenSSL version
@@ -426,12 +432,12 @@ fn extract_certificates(stdout: &str) -> Vec<String> {
     let mut in_cert = false;
 
     for line in stdout.lines() {
-        if line.contains("-----BEGIN CERTIFICATE-----") {
+        if line.starts_with("-----BEGIN CERTIFICATE-----") {
             in_cert = true;
             current_cert.clear();
             current_cert.push_str(line);
             current_cert.push('\n');
-        } else if line.contains("-----END CERTIFICATE-----") {
+        } else if line.starts_with("-----END CERTIFICATE-----") {
             current_cert.push_str(line);
             current_cert.push('\n');
             certificates.push(current_cert.clone());

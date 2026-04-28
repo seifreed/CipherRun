@@ -52,11 +52,7 @@ impl ReversePtrLookup {
             })?;
 
         // Remove trailing dot if present
-        let hostname = if ptr_name.ends_with('.') {
-            ptr_name[..ptr_name.len() - 1].to_string()
-        } else {
-            ptr_name
-        };
+        let hostname = ptr_name.strip_suffix('.').unwrap_or(&ptr_name).to_string();
 
         // Validate hostname format
         if SniGenerator::is_valid_hostname(&hostname) {

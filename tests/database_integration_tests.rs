@@ -37,6 +37,7 @@ async fn test_scan_storage_and_retrieval() {
         .push(cipherrun::protocols::ProtocolTestResult {
             protocol: Protocol::TLS13,
             supported: true,
+            inconclusive: false,
             preferred: true,
             ciphers_count: 5,
             handshake_time_ms: Some(120),
@@ -86,6 +87,45 @@ async fn test_scan_history_limit() {
     // Query all
     let all_history = db.get_scan_history("test.com", 443, 100).await.unwrap();
     assert_eq!(all_history.len(), 5);
+
+    db.close().await;
+}
+
+#[tokio::test]
+async fn test_scan_history_rejects_non_positive_limit() {
+    let config = DatabaseConfig::sqlite(common::sqlite::unique_sqlite_db_path("cipherruntest"));
+    let db = CipherRunDatabase::new(&config).await.unwrap();
+
+    for i in 1..=2 {
+        let results = ScanResults {
+            target: "limit-validation.com:443".to_string(),
+            scan_time_ms: i * 100,
+            ..Default::default()
+        };
+        db.store_scan(&PersistedScan::from_scan_results(&results))
+            .await
+            .unwrap();
+    }
+
+    let zero_error = db
+        .get_scan_history("limit-validation.com", 443, 0)
+        .await
+        .expect_err("zero limit should be rejected");
+    assert!(
+        zero_error
+            .to_string()
+            .contains("History limit must be positive")
+    );
+
+    let negative_error = db
+        .get_scan_history("limit-validation.com", 443, -1)
+        .await
+        .expect_err("negative limit must not act as unlimited history");
+    assert!(
+        negative_error
+            .to_string()
+            .contains("History limit must be positive")
+    );
 
     db.close().await;
 }
@@ -173,6 +213,25 @@ async fn test_cleanup_old_scans_is_noop_on_empty_database() {
 }
 
 #[tokio::test]
+async fn test_cleanup_old_scans_rejects_negative_days() {
+    let config = DatabaseConfig::sqlite(common::sqlite::unique_sqlite_db_path("cipherruntest"));
+    let db = CipherRunDatabase::new(&config).await.unwrap();
+
+    let error = db
+        .cleanup_old_scans(-7)
+        .await
+        .expect_err("negative retention would move the cutoff into the future");
+
+    assert!(
+        error
+            .to_string()
+            .contains("Cleanup days cannot be negative")
+    );
+
+    db.close().await;
+}
+
+#[tokio::test]
 async fn test_cleanup_old_scans_preserves_recent_history_lookup() {
     let config = DatabaseConfig::sqlite(common::sqlite::unique_sqlite_db_path("cipherruntest"));
     let db = CipherRunDatabase::new(&config).await.unwrap();
@@ -254,6 +313,7 @@ async fn test_protocol_storage() {
         .push(cipherrun::protocols::ProtocolTestResult {
             protocol: Protocol::TLS12,
             supported: true,
+            inconclusive: false,
             preferred: false,
             ciphers_count: 30,
             handshake_time_ms: Some(150),
@@ -268,6 +328,7 @@ async fn test_protocol_storage() {
         .push(cipherrun::protocols::ProtocolTestResult {
             protocol: Protocol::TLS13,
             supported: true,
+            inconclusive: false,
             preferred: true,
             ciphers_count: 5,
             handshake_time_ms: Some(100),

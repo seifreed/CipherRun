@@ -1,5 +1,5 @@
-use cipherrun::pqc::scanners::{CodeScanner, SshScanner};
 use cipherrun::pqc::PqcReadinessScorer;
+use cipherrun::pqc::scanners::{CodeScanner, SshScanner};
 use criterion::{Criterion, criterion_group, criterion_main};
 use std::hint::black_box;
 use std::io::Write;
@@ -42,5 +42,10 @@ fn bench_code_scanner(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, bench_pqc_scorer_empty, bench_ssh_scanner, bench_code_scanner);
+criterion_group!(
+    benches,
+    bench_pqc_scorer_empty,
+    bench_ssh_scanner,
+    bench_code_scanner
+);
 criterion_main!(benches);

@@ -1,57 +1,58 @@
 use super::{CipherDetails, CipherStrength, FsGrade, Rc4BiasesAnalysis};
 
 pub(super) fn analyze_cipher_details(cipher_name: &str) -> CipherDetails {
-    let forward_secrecy = cipher_name.contains("ECDHE")
-        || cipher_name.contains("DHE")
-        || cipher_name.starts_with("TLS_AES_")
-        || cipher_name.starts_with("TLS_CHACHA20_");
+    let normalized = cipher_name.to_ascii_uppercase();
+    let forward_secrecy = normalized.contains("ECDHE")
+        || normalized.contains("DHE")
+        || normalized.starts_with("TLS_AES_")
+        || normalized.starts_with("TLS_CHACHA20_");
 
-    let key_exchange = if cipher_name.starts_with("TLS_AES_")
-        || cipher_name.starts_with("TLS_CHACHA20_")
-        || cipher_name.contains("ECDHE")
+    let key_exchange = if normalized.starts_with("TLS_AES_")
+        || normalized.starts_with("TLS_CHACHA20_")
+        || normalized.contains("ECDHE")
     {
         "ECDHE".to_string()
-    } else if cipher_name.contains("DHE") {
+    } else if normalized.contains("DHE") {
         "DHE".to_string()
-    } else if cipher_name.contains("RSA") {
+    } else if normalized.contains("RSA") {
         "RSA".to_string()
     } else {
         "Unknown".to_string()
     };
 
-    let encryption = if cipher_name.contains("AES_256_GCM") || cipher_name.contains("AES256-GCM") {
+    let encryption = if normalized.contains("AES_256_GCM") || normalized.contains("AES256-GCM") {
         "AES-256-GCM".to_string()
-    } else if cipher_name.contains("AES_128_GCM") || cipher_name.contains("AES128-GCM") {
+    } else if normalized.contains("AES_128_GCM") || normalized.contains("AES128-GCM") {
         "AES-128-GCM".to_string()
-    } else if cipher_name.contains("AES256") {
+    } else if normalized.contains("AES256") {
         "AES-256-CBC".to_string()
-    } else if cipher_name.contains("AES128") {
+    } else if normalized.contains("AES128") {
         "AES-128-CBC".to_string()
-    } else if cipher_name.contains("CHACHA20") || cipher_name.contains("POLY1305") {
+    } else if normalized.contains("CHACHA20") || normalized.contains("POLY1305") {
         "ChaCha20-Poly1305".to_string()
-    } else if cipher_name.contains("3DES") {
+    } else if normalized.contains("3DES") {
         "3DES".to_string()
-    } else if cipher_name.contains("RC4") {
+    } else if normalized.contains("RC4") {
         "RC4".to_string()
     } else {
         "Unknown".to_string()
     };
 
-    let mac = if cipher_name.contains("GCM") || cipher_name.contains("POLY1305") {
+    let mac = if normalized.contains("GCM") || normalized.contains("POLY1305") {
         "AEAD".to_string()
-    } else if cipher_name.contains("SHA384") {
+    } else if normalized.contains("SHA384") {
         "SHA384".to_string()
-    } else if cipher_name.contains("SHA256") {
+    } else if normalized.contains("SHA256") {
         "SHA256".to_string()
-    } else if cipher_name.contains("SHA") {
+    } else if normalized.contains("SHA") {
         "SHA1".to_string()
-    } else if cipher_name.contains("MD5") {
+    } else if normalized.contains("MD5") {
         "MD5".to_string()
     } else {
         "Unknown".to_string()
     };
 
-    let strength = classify_cipher_strength(cipher_name, forward_secrecy, &encryption, &mac);
+    let strength = classify_cipher_strength(&normalized, forward_secrecy, &encryption, &mac);
 
     CipherDetails {
         name: cipher_name.to_string(),
@@ -112,6 +113,7 @@ pub(super) fn classify_fs_grade(percentage: f64, supported: bool) -> FsGrade {
 
 pub(super) fn grade_to_string(grade: FsGrade) -> &'static str {
     match grade {
+        FsGrade::Unknown => "Unknown",
         FsGrade::A => "A",
         FsGrade::B => "B",
         FsGrade::C => "C",
@@ -120,12 +122,17 @@ pub(super) fn grade_to_string(grade: FsGrade) -> &'static str {
     }
 }
 
-pub(super) fn build_rc4_report(supported_rc4_ciphers: Vec<String>) -> Rc4BiasesAnalysis {
+pub(super) fn build_rc4_report(
+    supported_rc4_ciphers: Vec<String>,
+    inconclusive: bool,
+) -> Rc4BiasesAnalysis {
     let rc4_supported = !supported_rc4_ciphers.is_empty();
     let vulnerable_to_appelbaum = rc4_supported;
     let vulnerable_to_bar_mitzvah = rc4_supported;
 
-    let bias_details = if rc4_supported {
+    let bias_details = if inconclusive {
+        "RC4 bias analysis inconclusive - no complete RC4 cipher probe succeeded".to_string()
+    } else if rc4_supported {
         format!(
             "RC4 is vulnerable to multiple bias attacks:\n\
                 - Appelbaum attack (2013): Statistical biases in RC4 keystream\n\
@@ -143,6 +150,7 @@ pub(super) fn build_rc4_report(supported_rc4_ciphers: Vec<String>) -> Rc4BiasesA
         rc4_ciphers: supported_rc4_ciphers,
         vulnerable_to_appelbaum,
         vulnerable_to_bar_mitzvah,
+        inconclusive,
         bias_details,
     }
 }

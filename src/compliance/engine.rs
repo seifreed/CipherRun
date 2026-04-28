@@ -74,9 +74,17 @@ impl ComplianceEngine {
                 "CertificateExpiration" => ComplianceChecker::check_cert_expiration(rule, results)?,
                 "Vulnerability" => ComplianceChecker::check_vulnerabilities(rule, results)?,
                 _ => {
-                    return Err(crate::TlsError::ConfigError {
-                        message: format!("Unknown compliance rule type: {}", rule.rule_type),
-                    });
+                    // I7 fix: previously returning Err aborted the ENTIRE compliance
+                    // report for a single unknown rule_type, discarding results from
+                    // every valid rule in the framework. Now we log a warning and
+                    // treat the unknown rule as producing zero violations so the
+                    // rest of the evaluation continues.
+                    tracing::warn!(
+                        "Unknown compliance rule type '{}' in requirement '{}' — skipping rule",
+                        rule.rule_type,
+                        requirement.id
+                    );
+                    Vec::new()
                 }
             };
 
@@ -156,6 +164,7 @@ mod tests {
                 ProtocolTestResult {
                     protocol: Protocol::SSLv2,
                     supported: true,
+                    inconclusive: false,
                     preferred: false,
                     ciphers_count: 0,
                     heartbeat_enabled: None,
@@ -167,6 +176,7 @@ mod tests {
                 ProtocolTestResult {
                     protocol: Protocol::TLS12,
                     supported: true,
+                    inconclusive: false,
                     preferred: false,
                     ciphers_count: 0,
                     heartbeat_enabled: None,
@@ -233,6 +243,7 @@ mod tests {
             protocols: vec![ProtocolTestResult {
                 protocol: Protocol::TLS12,
                 supported: true,
+                inconclusive: false,
                 preferred: false,
                 ciphers_count: 0,
                 heartbeat_enabled: None,
@@ -254,5 +265,87 @@ mod tests {
             report.overall_status,
             crate::compliance::ComplianceStatus::Pass
         );
+    }
+
+    #[test]
+    fn test_unknown_rule_type_does_not_abort_report() {
+        // I7 regression: a framework with one unknown rule_type and one valid
+        // rule must still produce a complete report — the unknown rule is
+        // skipped (with a warning) and the valid rule evaluates normally.
+        let framework = ComplianceFramework {
+            id: "test".to_string(),
+            name: "Test Framework".to_string(),
+            version: "1.0".to_string(),
+            description: "Test".to_string(),
+            organization: "Test Org".to_string(),
+            effective_date: None,
+            requirements: vec![Requirement {
+                id: "MIXED-1".to_string(),
+                name: "Mixed rule types".to_string(),
+                description: "One unknown, one valid".to_string(),
+                category: "Test".to_string(),
+                severity: Severity::Medium,
+                remediation: "n/a".to_string(),
+                rules: vec![
+                    Rule {
+                        rule_type: "TotallyBogusRuleType".to_string(),
+                        allowed: vec![],
+                        denied: vec![],
+                        allowed_patterns: vec![],
+                        denied_patterns: vec![],
+                        preferred_patterns: vec![],
+                        min_rsa_bits: None,
+                        min_ecc_bits: None,
+                        required: None,
+                        require_valid_chain: None,
+                        require_unexpired: None,
+                        require_hostname_match: None,
+                        max_days_until_expiration: None,
+                        custom_params: HashMap::new(),
+                    },
+                    Rule {
+                        rule_type: "ProtocolVersion".to_string(),
+                        allowed: vec![],
+                        denied: vec!["SSLv2".to_string()],
+                        allowed_patterns: vec![],
+                        denied_patterns: vec![],
+                        preferred_patterns: vec![],
+                        min_rsa_bits: None,
+                        min_ecc_bits: None,
+                        required: None,
+                        require_valid_chain: None,
+                        require_unexpired: None,
+                        require_hostname_match: None,
+                        max_days_until_expiration: None,
+                        custom_params: HashMap::new(),
+                    },
+                ],
+            }],
+        };
+
+        let engine = ComplianceEngine::new(framework);
+        let results = ScanAssessment {
+            target: "test.com:443".to_string(),
+            protocols: vec![ProtocolTestResult {
+                protocol: Protocol::TLS12,
+                supported: true,
+                inconclusive: false,
+                preferred: false,
+                ciphers_count: 0,
+                heartbeat_enabled: None,
+                handshake_time_ms: None,
+                session_resumption_caching: None,
+                session_resumption_tickets: None,
+                secure_renegotiation: None,
+            }],
+            ..Default::default()
+        };
+
+        let report = engine
+            .evaluate(&results)
+            .expect("unknown rule type must not abort the report");
+        assert_eq!(report.summary.total, 1);
+        // The valid rule evaluates cleanly; overall passes despite the bogus rule.
+        assert_eq!(report.summary.passed, 1);
     }
 }

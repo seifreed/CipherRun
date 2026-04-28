@@ -15,6 +15,16 @@ use tokio::time::{Duration, timeout};
 /// Protocol detector
 pub struct ProtocolDetector;
 
+#[cfg(test)]
+fn protocol_read_timeout() -> Duration {
+    Duration::from_millis(50)
+}
+
+#[cfg(not(test))]
+fn protocol_read_timeout() -> Duration {
+    Duration::from_secs(3)
+}
+
 impl ProtocolDetector {
     /// Detect protocol automatically
     pub async fn detect(host: &str, port: u16) -> Result<DetectedProtocol> {
@@ -39,7 +49,7 @@ impl ProtocolDetector {
     /// Detect protocol by connecting and reading banner
     async fn detect_by_banner(host: &str, port: u16) -> Result<DetectedProtocol> {
         let connect_timeout = Duration::from_secs(5);
-        let read_timeout = Duration::from_secs(3);
+        let read_timeout = protocol_read_timeout();
 
         let mut stream = timeout(connect_timeout, TcpStream::connect((host, port)))
             .await
@@ -48,10 +58,12 @@ impl ProtocolDetector {
         let mut banner = vec![0u8; 1024];
         let n = timeout(read_timeout, stream.read(&mut banner))
             .await
-            .unwrap_or(Ok(0))?;
+            .map_err(|_| crate::TlsError::Timeout {
+                duration: Some(read_timeout),
+            })??;
 
-        let banner_str = String::from_utf8_lossy(&banner[..n]).to_string();
-        let (protocol, confidence) = analyze_banner(&banner_str);
+        let banner_bytes = &banner[..n];
+        let (protocol, confidence) = analyze_banner(banner_bytes);
 
         if protocol == ApplicationProtocol::Unknown && (port == 80 || port == 443 || port == 8080) {
             return Self::detect_http(&mut stream).await;
@@ -59,9 +71,9 @@ impl ProtocolDetector {
 
         Ok(DetectedProtocol {
             protocol,
-            version: extract_version(&banner_str, protocol),
-            banner: if !banner_str.is_empty() {
-                Some(banner_str)
+            version: extract_version(banner_bytes, protocol),
+            banner: if !banner_bytes.is_empty() {
+                Some(String::from_utf8_lossy(banner_bytes).to_string())
             } else {
                 None
             },
@@ -76,9 +88,12 @@ impl ProtocolDetector {
         stream.write_all(request).await?;
 
         let mut response = vec![0u8; 1024];
-        let n = timeout(Duration::from_secs(3), stream.read(&mut response))
+        let read_timeout = protocol_read_timeout();
+        let n = timeout(read_timeout, stream.read(&mut response))
             .await
-            .unwrap_or(Ok(0))?;
+            .map_err(|_| crate::TlsError::Timeout {
+                duration: Some(read_timeout),
+            })??;
 
         let response_str = String::from_utf8_lossy(&response[..n]).to_string();
 
@@ -143,7 +158,7 @@ mod tests {
     #[test]
     fn test_analyze_smtp_banner() {
         let banner = "220 mail.example.com ESMTP Postfix";
-        let (protocol, confidence) = analyze_banner(banner);
+        let (protocol, confidence) = analyze_banner(banner.as_bytes());
         assert_eq!(protocol, ApplicationProtocol::SmtpStartTls);
         assert!(confidence > 0.9);
     }
@@ -151,7 +166,7 @@ mod tests {
     #[test]
     fn test_analyze_pop3_banner() {
         let banner = "+OK POP3 server ready";
-        let (protocol, confidence) = analyze_banner(banner);
+        let (protocol, confidence) = analyze_banner(banner.as_bytes());
         assert_eq!(protocol, ApplicationProtocol::Pop3StartTls);
         assert!(confidence > 0.9);
     }
@@ -159,7 +174,7 @@ mod tests {
     #[test]
     fn test_analyze_imap_banner() {
         let banner = "* OK IMAP4rev1 Server ready";
-        let (protocol, confidence) = analyze_banner(banner);
+        let (protocol, confidence) = analyze_banner(banner.as_bytes());
         assert_eq!(protocol, ApplicationProtocol::ImapStartTls);
         assert!(confidence > 0.9);
     }
@@ -167,7 +182,7 @@ mod tests {
     #[test]
     fn test_analyze_banner_unknown() {
         let banner = "Welcome to custom service";
-        let (protocol, confidence) = analyze_banner(banner);
+        let (protocol, confidence) = analyze_banner(banner.as_bytes());
         assert_eq!(protocol, ApplicationProtocol::Unknown);
         assert!(confidence < 0.5);
     }
@@ -229,6 +244,25 @@ mod tests {
         port
     }
 
+    async fn spawn_stalling_server(read_request: bool) -> u16 {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let port = listener.local_addr().unwrap().port();
+
+        tokio::spawn(async move {
+            if let Ok((mut stream, _)) = listener.accept().await {
+                if read_request {
+                    let mut buf = [0u8; 256];
+                    let _ = stream.read(&mut buf).await;
+                }
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+        });
+
+        port
+    }
+
     #[tokio::test]
     async fn test_detect_by_banner_smtp() {
         let port = spawn_banner_server(b"220 mail.example.com ESMTP Postfix\r\n").await;
@@ -258,6 +292,31 @@ mod tests {
                 .unwrap_or("")
                 .starts_with("HTTP/")
         );
+    }
+
+    #[tokio::test]
+    async fn test_detect_by_banner_read_timeout_is_error() {
+        let port = spawn_stalling_server(false).await;
+
+        let err = ProtocolDetector::detect_by_banner("127.0.0.1", port)
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, crate::TlsError::Timeout { .. }));
+    }
+
+    #[tokio::test]
+    async fn test_detect_http_read_timeout_is_error() {
+        let port = spawn_stalling_server(true).await;
+        let mut stream = TcpStream::connect(("127.0.0.1", port))
+            .await
+            .expect("test assertion should succeed");
+
+        let err = ProtocolDetector::detect_http(&mut stream)
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, crate::TlsError::Timeout { .. }));
     }
 
     #[test]

@@ -11,4 +11,6 @@ pub struct ClientCA {
 pub struct ClientCAsResult {
     pub cas: Vec<ClientCA>,
     pub requires_client_auth: bool,
+    #[serde(default)]
+    pub inconclusive: bool,
 }

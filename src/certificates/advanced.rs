@@ -37,6 +37,8 @@ pub struct CertificateCompressionAnalysis {
     pub compressed_size: Option<usize>,
     pub compression_ratio: Option<f64>,
     pub details: String,
+    #[serde(default)]
+    pub inconclusive: bool,
 }
 
 /// Cipher order enforcement analysis
@@ -46,6 +48,8 @@ pub struct CipherOrderEnforcementAnalysis {
     pub test_results: Vec<CipherOrderEnforcementTest>,
     pub consistency_score: f64,
     pub details: String,
+    #[serde(default)]
+    pub inconclusive: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -182,6 +186,8 @@ impl CertificateAdvancedTester {
 
         let std_stream = stream.into_std()?;
         std_stream.set_nonblocking(false)?;
+        std_stream.set_read_timeout(Some(connect_timeout))?;
+        std_stream.set_write_timeout(Some(connect_timeout))?;
 
         let mut builder = SslConnector::builder(SslMethod::tls())?;
 
@@ -215,6 +221,7 @@ impl CertificateAdvancedTester {
                         compressed_size: None,
                         compression_ratio: None,
                         details,
+                        inconclusive: false,
                     })
                 } else {
                     Ok(CertificateCompressionAnalysis {
@@ -224,6 +231,7 @@ impl CertificateAdvancedTester {
                         compressed_size: None,
                         compression_ratio: None,
                         details: "No certificate presented".to_string(),
+                        inconclusive: true,
                     })
                 }
             }
@@ -234,6 +242,7 @@ impl CertificateAdvancedTester {
                 compressed_size: None,
                 compression_ratio: None,
                 details: format!("TLS 1.3 connection failed: {}", e),
+                inconclusive: true,
             }),
         }
     }
@@ -329,21 +338,28 @@ impl CertificateAdvancedTester {
             (server_preference_matches as f64) / (test_results.len() as f64) * 100.0
         };
 
-        let server_enforces_order = consistency_score > 75.0;
+        let inconclusive = test_results.is_empty();
+        let server_enforces_order = !inconclusive && consistency_score > 75.0;
 
-        let details = format!(
-            "Cipher order enforcement: {}. Consistency score: {:.1}%. {}/{} tests matched server preference.",
-            if server_enforces_order { "YES" } else { "NO" },
-            consistency_score,
-            server_preference_matches,
-            test_results.len()
-        );
+        let details = if inconclusive {
+            "Cipher order enforcement inconclusive - no successful comparison handshakes"
+                .to_string()
+        } else {
+            format!(
+                "Cipher order enforcement: {}. Consistency score: {:.1}%. {}/{} tests matched server preference.",
+                if server_enforces_order { "YES" } else { "NO" },
+                consistency_score,
+                server_preference_matches,
+                test_results.len()
+            )
+        };
 
         Ok(CipherOrderEnforcementAnalysis {
             server_enforces_order,
             test_results,
             consistency_score,
             details,
+            inconclusive,
         })
     }
 
@@ -597,6 +613,7 @@ mod tests {
             compressed_size: Some(512),
             compression_ratio: Some(0.25),
             details: "test".to_string(),
+            inconclusive: false,
         };
 
         let json = serde_json::to_string(&analysis).expect("serialize");
@@ -628,6 +645,7 @@ mod tests {
             }],
             consistency_score: 100.0,
             details: "ok".to_string(),
+            inconclusive: false,
         };
 
         let json = serde_json::to_string(&analysis).expect("serialize");
@@ -636,5 +654,51 @@ mod tests {
         assert!(decoded.server_enforces_order);
         assert_eq!(decoded.test_results.len(), 1);
         assert_eq!(decoded.consistency_score, 100.0);
+    }
+
+    #[tokio::test]
+    async fn test_certificate_compression_handshake_failure_is_inconclusive() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("local addr should exist");
+
+        tokio::spawn(async move { if let Ok((_socket, _)) = listener.accept().await {} });
+
+        let target = Target::with_ips("localhost".to_string(), addr.port(), vec![addr.ip()])
+            .expect("target should build");
+        let tester = CertificateAdvancedTester::new(target);
+
+        let result = tester
+            .test_certificate_compression()
+            .await
+            .expect("compression probe should return result");
+
+        assert!(result.inconclusive);
+        assert!(!result.compression_supported);
+        assert!(result.details.contains("TLS 1.3 connection failed"));
+    }
+
+    #[tokio::test]
+    async fn test_cipher_order_no_successful_handshakes_is_inconclusive() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("local addr should exist");
+        drop(listener);
+
+        let target = Target::with_ips("localhost".to_string(), addr.port(), vec![addr.ip()])
+            .expect("target should build");
+        let tester = CertificateAdvancedTester::new(target);
+
+        let result = tester
+            .test_cipher_order_enforcement()
+            .await
+            .expect("cipher order probe should return result");
+
+        assert!(result.inconclusive);
+        assert!(!result.server_enforces_order);
+        assert_eq!(result.consistency_score, 0.0);
+        assert!(result.details.contains("inconclusive"));
     }
 }

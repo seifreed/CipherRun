@@ -80,6 +80,35 @@ fn detect_set_differences<T: Eq + Hash + Clone>(
     }
 }
 
+fn normalized_protocol_name(protocol: &str) -> String {
+    protocol
+        .chars()
+        .filter(|c| !c.is_ascii_whitespace() && *c != '_' && *c != '-')
+        .flat_map(|c| c.to_uppercase())
+        .collect()
+}
+
+fn protocol_identity(protocol: &str) -> String {
+    let normalized = normalized_protocol_name(protocol);
+    if let Some(version) = normalized.strip_prefix("TLSV") {
+        format!("TLS{}", version)
+    } else if let Some(version) = normalized.strip_prefix("SSLV") {
+        format!("SSL{}", version)
+    } else {
+        normalized
+    }
+}
+
+fn is_tls_version(protocol: &str, version: &str) -> bool {
+    let normalized = protocol_identity(protocol);
+    normalized.contains(&format!("TLS{}", version))
+}
+
+fn is_ssl_protocol(protocol: &str) -> bool {
+    let normalized = protocol_identity(protocol);
+    normalized.starts_with("SSL")
+}
+
 fn vulnerability_sort_key(vuln: &&VulnerabilityRecord) -> (String, String, String, String) {
     (
         vuln.description.clone().unwrap_or_default(),
@@ -374,21 +403,27 @@ impl ChangeTracker {
 
         let mut changes = Vec::new();
 
-        let set1: HashSet<String> = protocols1
+        let protocol_names1: BTreeMap<String, String> = protocols1
             .iter()
             .filter(|p| p.enabled)
-            .map(|p| p.protocol_name.clone())
+            .map(|p| (protocol_identity(&p.protocol_name), p.protocol_name.clone()))
             .collect();
 
-        let set2: HashSet<String> = protocols2
+        let protocol_names2: BTreeMap<String, String> = protocols2
             .iter()
             .filter(|p| p.enabled)
-            .map(|p| p.protocol_name.clone())
+            .map(|p| (protocol_identity(&p.protocol_name), p.protocol_name.clone()))
             .collect();
 
+        let set1: HashSet<String> = protocol_names1.keys().cloned().collect();
+        let set2: HashSet<String> = protocol_names2.keys().cloned().collect();
         let diffs = detect_set_differences(&set1, &set2);
 
-        for proto in &diffs.removed {
+        for proto_key in &diffs.removed {
+            let proto = protocol_names1
+                .get(proto_key)
+                .map(String::as_str)
+                .unwrap_or(proto_key.as_str());
             changes.push(ChangeEvent {
                 change_type: ChangeType::Protocol,
                 severity: ChangeSeverity::Medium,
@@ -399,10 +434,14 @@ impl ChangeTracker {
             });
         }
 
-        for proto in &diffs.added {
-            let severity = if proto.contains("SSLv") {
+        for proto_key in &diffs.added {
+            let proto = protocol_names2
+                .get(proto_key)
+                .map(String::as_str)
+                .unwrap_or(proto_key.as_str());
+            let severity = if is_ssl_protocol(proto) {
                 ChangeSeverity::High
-            } else if proto.contains("TLS 1.3") {
+            } else if is_tls_version(proto, "1.3") {
                 ChangeSeverity::Info
             } else {
                 ChangeSeverity::Low
@@ -422,19 +461,22 @@ impl ChangeTracker {
         let pref1 = protocols1
             .iter()
             .find(|p| p.preferred)
-            .map(|p| &p.protocol_name);
+            .map(|p| p.protocol_name.as_str());
         let pref2 = protocols2
             .iter()
             .find(|p| p.preferred)
-            .map(|p| &p.protocol_name);
+            .map(|p| p.protocol_name.as_str());
 
-        if pref1 != pref2 {
+        let pref1_normalized = pref1.map(protocol_identity);
+        let pref2_normalized = pref2.map(protocol_identity);
+
+        if pref1_normalized != pref2_normalized {
             changes.push(ChangeEvent {
                 change_type: ChangeType::Protocol,
                 severity: ChangeSeverity::Low,
                 description: "Preferred protocol changed".to_string(),
-                previous_value: pref1.cloned(),
-                current_value: pref2.cloned(),
+                previous_value: pref1.map(str::to_string),
+                current_value: pref2.map(str::to_string),
                 timestamp,
             });
         }
@@ -486,9 +528,10 @@ impl ChangeTracker {
                     });
                 }
                 (Some(old), None) => {
-                    let severity = match old.strength.as_str() {
-                        "weak" | "export" | "null" => ChangeSeverity::Low,
-                        _ => ChangeSeverity::Info,
+                    let severity = if Self::is_weak_cipher_strength(&old.strength) {
+                        ChangeSeverity::Low
+                    } else {
+                        ChangeSeverity::Info
                     };
 
                     changes.push(ChangeEvent {
@@ -505,9 +548,9 @@ impl ChangeTracker {
                     });
                 }
                 (None, Some(new)) => {
-                    let severity = match new.strength.as_str() {
-                        "weak" | "export" | "null" => ChangeSeverity::High,
-                        "medium" => ChangeSeverity::Medium,
+                    let severity = match Self::cipher_strength_rank(&new.strength) {
+                        0 => ChangeSeverity::High,
+                        1 => ChangeSeverity::Medium,
                         _ => ChangeSeverity::Info,
                     };
 
@@ -591,6 +634,15 @@ impl ChangeTracker {
                             change_type: ChangeType::Certificate,
                             severity: ChangeSeverity::Info,
                             description: "Certificate validity extended".to_string(),
+                            previous_value: Some(c1.not_after.format("%Y-%m-%d").to_string()),
+                            current_value: Some(c2.not_after.format("%Y-%m-%d").to_string()),
+                            timestamp,
+                        });
+                    } else if c2.not_after < c1.not_after {
+                        changes.push(ChangeEvent {
+                            change_type: ChangeType::Certificate,
+                            severity: ChangeSeverity::High,
+                            description: "Certificate validity shortened".to_string(),
                             previous_value: Some(c1.not_after.format("%Y-%m-%d").to_string()),
                             current_value: Some(c2.not_after.format("%Y-%m-%d").to_string()),
                             timestamp,
@@ -751,7 +803,7 @@ impl ChangeTracker {
     }
 
     fn vuln_severity_to_change_severity(severity: &str) -> ChangeSeverity {
-        match severity {
+        match severity.to_ascii_lowercase().as_str() {
             "critical" => ChangeSeverity::Critical,
             "high" => ChangeSeverity::High,
             "medium" => ChangeSeverity::Medium,
@@ -787,14 +839,24 @@ impl ChangeTracker {
     }
 
     fn cipher_identity(cipher: &CipherRecord) -> (String, String) {
-        (cipher.protocol_name.clone(), cipher.cipher_name.clone())
+        (
+            protocol_identity(&cipher.protocol_name),
+            cipher.cipher_name.clone(),
+        )
+    }
+
+    fn is_weak_cipher_strength(strength: &str) -> bool {
+        matches!(
+            strength.to_ascii_lowercase().as_str(),
+            "weak" | "low" | "export" | "null"
+        )
     }
 
     fn cipher_strength_rank(strength: &str) -> i32 {
-        match strength {
-            "weak" | "export" | "null" => 0,
+        match strength.to_ascii_lowercase().as_str() {
+            "weak" | "low" | "export" | "null" => 0,
             "medium" => 1,
-            "strong" => 2,
+            "strong" | "high" => 2,
             _ => 1,
         }
     }

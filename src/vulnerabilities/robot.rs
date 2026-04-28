@@ -142,7 +142,21 @@ impl RobotTester {
         let mut responses: Vec<Option<Vec<u8>>> = Vec::with_capacity(TEST_VECTORS);
 
         for i in 0..TEST_VECTORS {
-            let response = self.send_invalid_rsa_ciphertext(i as u8).await?;
+            // V9 fix: previously `await?` aborted the entire probe set on the
+            // first transient error. A single timeout on vector 2/5 prevented
+            // the remaining 3 from running and the function returned Err rather
+            // than the MIN_SAMPLES-gated Inconclusive verdict.
+            let response = match self.send_invalid_rsa_ciphertext(i as u8).await {
+                Ok(r) => r,
+                Err(err) => {
+                    tracing::debug!(
+                        "ROBOT probe {} failed transiently ({}); recording as missing sample",
+                        i,
+                        err
+                    );
+                    None
+                }
+            };
             responses.push(response);
 
             // Small delay to avoid rate limiting
@@ -169,13 +183,12 @@ impl RobotTester {
             // Extract alert error code if present (TLS alert format: 0x15 0x03 0x03 0x00 0x02 <level> <description>)
             // Validate the record length field (bytes 3-4) equals 0x0002 to avoid reading
             // stray bytes from concatenated records or malformed responses.
-            if response.len() >= 7
-                && response[0] == 0x15
-                && response[3] == 0x00
-                && response[4] == 0x02
-            {
-                let error_code = response[6];
-                error_codes.insert(error_code);
+            if response.len() >= 7 && response[0] == 0x15 {
+                let record_len = u16::from_be_bytes([response[3], response[4]]) as usize;
+                if record_len == 2 {
+                    let error_code = response[6];
+                    error_codes.insert(error_code);
+                }
             }
             response_lengths.insert(response.len());
 

@@ -198,7 +198,7 @@ impl DrownTester {
         }
 
         let record_len = ((first_byte & 0x7f) as usize) << 8 | second_byte as usize;
-        let is_reasonable_length = record_len > 0 && record_len <= 16384;
+        let is_reasonable_length = record_len > 0 && record_len <= 32767;
         let has_enough_data = data.len() >= 3 && data.len() >= record_len.saturating_add(2);
 
         if !is_reasonable_length || !has_enough_data {

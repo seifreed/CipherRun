@@ -2,9 +2,9 @@
 
 use super::parser::CertificateInfo;
 use super::revocation::{RevocationResult, RevocationStatus};
-use super::validator::{IssueType, ValidationResult};
+use super::validator::{IssueType, ValidationResult, parse_cert_date};
 use crate::application::CertificateFilters;
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
 /// Certificate validation status for filtering
@@ -105,7 +105,7 @@ impl CertificateStatus {
         }
 
         // Fallback: parse certificate dates directly
-        if let Ok(not_after) = parse_certificate_date(&cert.not_after)
+        if let Some(not_after) = parse_cert_date(&cert.not_after)
             && Utc::now() > not_after
         {
             return true;
@@ -232,43 +232,6 @@ impl CertificateStatus {
     }
 }
 
-/// Parse certificate date string to DateTime<Utc>
-///
-/// Handles multiple date formats used in X.509 certificates
-fn parse_certificate_date(date_str: &str) -> Result<DateTime<Utc>, chrono::ParseError> {
-    use chrono::NaiveDateTime;
-
-    // Try RFC3339 format first
-    if let Ok(dt) = DateTime::parse_from_rfc3339(date_str) {
-        return Ok(dt.with_timezone(&Utc));
-    }
-
-    // Try "YYYY-MM-DD HH:MM:SS UTC" format
-    if let Ok(dt) = NaiveDateTime::parse_from_str(date_str, "%Y-%m-%d %H:%M:%S UTC") {
-        return Ok(DateTime::from_naive_utc_and_offset(dt, Utc));
-    }
-
-    // Try cleaned format without timezone suffix
-    let cleaned = date_str.replace(" UTC", "").replace(" GMT", "");
-    if let Ok(dt) = NaiveDateTime::parse_from_str(&cleaned, "%Y-%m-%d %H:%M:%S") {
-        return Ok(DateTime::from_naive_utc_and_offset(dt, Utc));
-    }
-
-    // Try "MMM DD HH:MM:SS YYYY GMT" format (common in OpenSSL output)
-    // Note: chrono's %Z is unreliable for parsing timezone abbreviations, so we strip it
-    if date_str.ends_with(" GMT") || date_str.ends_with(" UTC") {
-        let without_tz = date_str.replace(" GMT", "").replace(" UTC", "");
-        if let Ok(dt) = NaiveDateTime::parse_from_str(&without_tz, "%b %d %H:%M:%S %Y") {
-            return Ok(DateTime::from_naive_utc_and_offset(dt, Utc));
-        }
-    }
-
-    // If all parsing attempts fail, return error by attempting to parse invalid data
-    // This will return an appropriate ParseError
-    NaiveDateTime::parse_from_str("invalid", "%Y-%m-%d %H:%M:%S")
-        .map(|dt| DateTime::from_naive_utc_and_offset(dt, Utc))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -302,6 +265,33 @@ mod tests {
         assert!(
             CertificateStatus::detect_expired(&validation, &cert),
             "Should detect expired certificate"
+        );
+    }
+
+    #[test]
+    fn test_detect_expired_fallback_parses_numeric_timezone_offsets() {
+        let validation = ValidationResult {
+            valid: true,
+            issues: vec![],
+            trust_chain_valid: true,
+            hostname_match: true,
+            not_expired: true,
+            signature_valid: true,
+            trusted_ca: None,
+            platform_trust: None,
+        };
+        let cert = CertificateInfo {
+            subject: "CN=example.com".to_string(),
+            issuer: "CN=CA".to_string(),
+            not_after: (Utc::now() - chrono::Duration::minutes(5))
+                .format("%Y-%m-%d %H:%M:%S +0000")
+                .to_string(),
+            ..Default::default()
+        };
+
+        assert!(
+            CertificateStatus::detect_expired(&validation, &cert),
+            "fallback should detect expired certificates with numeric timezone offsets"
         );
     }
 
@@ -443,8 +433,9 @@ mod tests {
     #[test]
     fn test_parse_certificate_date() {
         // Test various date formats
-        assert!(parse_certificate_date("2025-01-01 00:00:00 UTC").is_ok());
-        assert!(parse_certificate_date("2025-01-01T00:00:00Z").is_ok());
-        assert!(parse_certificate_date("Jan 01 00:00:00 2025 GMT").is_ok());
+        assert!(parse_cert_date("2025-01-01 00:00:00 UTC").is_some());
+        assert!(parse_cert_date("2025-01-01T00:00:00Z").is_some());
+        assert!(parse_cert_date("Jan 01 00:00:00 2025 GMT").is_some());
+        assert!(parse_cert_date("2025-01-01 00:00:00 +0000").is_some());
     }
 }

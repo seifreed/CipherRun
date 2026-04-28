@@ -118,6 +118,7 @@ impl<'a> PoodleTester<'a> {
         PoodleVariantResult {
             variant: PoodleVariant::SslV3,
             vulnerable: supported,
+            inconclusive: false,
             details: if supported {
                 "SSL 3.0 is supported - vulnerable to classic POODLE attack".to_string()
             } else {
@@ -131,6 +132,7 @@ impl<'a> PoodleTester<'a> {
         PoodleVariantResult {
             variant: PoodleVariant::Tls,
             vulnerable: result == Some(true),
+            inconclusive: result.is_none(),
             details: match result {
                 Some(true) => {
                     "TLS implementation vulnerable to POODLE-style attack".to_string()
@@ -225,15 +227,28 @@ impl<'a> PoodleTester<'a> {
         }
 
         let oracle_detected = oracle_detection::detect_response_oracle(&responses_a, &responses_b);
+        // Sample floor mirrors the MIN_TIMING_SAMPLES guard inside detect_response_oracle.
+        // Below this, we cannot distinguish "no oracle" from "not enough data".
+        const MIN_SAMPLES_FOR_VERDICT: usize = 3;
+        let enough_samples = responses_a.len() >= MIN_SAMPLES_FOR_VERDICT
+            && responses_b.len() >= MIN_SAMPLES_FOR_VERDICT;
 
         Ok(PoodleVariantResult {
             variant,
             vulnerable: oracle_detected,
+            inconclusive: !oracle_detected && !enough_samples,
             details: if oracle_detected {
                 format!(
                     "{} ({} iterations)",
                     vulnerable_msg,
                     responses_a.len().min(responses_b.len())
+                )
+            } else if !enough_samples {
+                format!(
+                    "Inconclusive - insufficient probe samples (valid: {}, invalid: {}, need ≥{} each)",
+                    responses_a.len(),
+                    responses_b.len(),
+                    MIN_SAMPLES_FOR_VERDICT,
                 )
             } else {
                 not_vulnerable_msg.to_string()
@@ -281,7 +296,8 @@ impl<'a> PoodleTester<'a> {
             return Ok(PoodleVariantResult {
                 variant: PoodleVariant::SleepingPoodle,
                 vulnerable: false,
-                details: "Could not collect timing samples".to_string(),
+                inconclusive: true,
+                details: "Inconclusive - could not collect timing samples".to_string(),
                 timing_data: None,
             });
         }
@@ -312,8 +328,12 @@ impl<'a> PoodleTester<'a> {
                 return Ok(PoodleVariantResult {
                     variant: PoodleVariant::SleepingPoodle,
                     vulnerable: false,
+                    // V3 fix: explicit inconclusive flag replaces the previous
+                    // string-match approach in `checks.rs` that missed the
+                    // "Insufficient timing samples" message.
+                    inconclusive: true,
                     details: format!(
-                        "Insufficient timing samples (valid: {}, invalid: {}). Need at least 10 samples for reliable detection.",
+                        "Inconclusive - insufficient timing samples (valid: {}, invalid: {}). Need at least 10 samples for reliable detection.",
                         valid_timings.len(),
                         invalid_timings.len()
                     ),
@@ -363,6 +383,8 @@ impl<'a> PoodleTester<'a> {
         Ok(PoodleVariantResult {
             variant: PoodleVariant::SleepingPoodle,
             vulnerable: analysis.oracle_detected,
+            // Timing unreliable (high CV) is Inconclusive, not a clean "not vulnerable"
+            inconclusive: !analysis.oracle_detected && !analysis.timing_reliable,
             details,
             timing_data,
         })
@@ -396,6 +418,7 @@ impl<'a> PoodleTester<'a> {
         Ok(PoodleVariantResult {
             variant: PoodleVariant::OpenSsl0Length,
             vulnerable,
+            inconclusive: false,
             details: if vulnerable {
                 format!(
                     "Vulnerable to OpenSSL 0-Length Fragment (CVE-2011-4576) - Server accepts zero-length records ({}/{} iterations)",
@@ -412,6 +435,7 @@ impl<'a> PoodleTester<'a> {
         PoodleVariantResult {
             variant,
             vulnerable: false,
+            inconclusive: false,
             details: "CBC ciphers not supported - not vulnerable".to_string(),
             timing_data: None,
         }
@@ -508,6 +532,12 @@ impl PoodleVariant {
 pub struct PoodleVariantResult {
     pub variant: PoodleVariant,
     pub vulnerable: bool,
+    /// True when the probe could not reach a conclusive verdict (e.g., insufficient
+    /// timing samples, CBC unsupported for the variant, or the server reset the
+    /// connection before the oracle could be observed). V3 fix: replaces an
+    /// earlier string-based check (`details.contains("Inconclusive")`) that
+    /// missed the "Insufficient timing samples" message variant.
+    pub inconclusive: bool,
     pub details: String,
     pub timing_data: Option<TimingData>,
 }
@@ -585,6 +615,7 @@ mod tests {
         let result = PoodleVariantResult {
             variant: PoodleVariant::SleepingPoodle,
             vulnerable: true,
+            inconclusive: false,
             details: "Timing oracle detected".to_string(),
             timing_data: Some(timing_data),
         };
@@ -603,6 +634,7 @@ mod tests {
         let result = PoodleVariantResult {
             variant: PoodleVariant::Tls,
             vulnerable: false,
+            inconclusive: false,
             details: "No timing data".to_string(),
             timing_data: None,
         };

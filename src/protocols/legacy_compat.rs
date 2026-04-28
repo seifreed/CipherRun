@@ -17,6 +17,32 @@ use std::time::Duration;
 
 const CIPHER_TIMEOUT: Duration = Duration::from_secs(3);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LegacyProbeOutcome {
+    Supported,
+    NotSupported,
+    Inconclusive,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct ProbeStats {
+    total: usize,
+    inconclusive: usize,
+}
+
+impl ProbeStats {
+    fn record(&mut self, outcome: LegacyProbeOutcome) {
+        self.total += 1;
+        if matches!(outcome, LegacyProbeOutcome::Inconclusive) {
+            self.inconclusive += 1;
+        }
+    }
+
+    fn all_inconclusive(self) -> bool {
+        self.total > 0 && self.inconclusive == self.total
+    }
+}
+
 /// Legacy compatibility tester
 pub struct LegacyCompatTester {
     target: Target,
@@ -28,16 +54,57 @@ impl LegacyCompatTester {
     }
 
     /// Test if a specific cipher suite is supported by the server.
-    /// Returns Ok(false) on any connection or negotiation failure.
-    async fn test_cipher_support(&self, cipher: &str) -> Result<bool> {
+    async fn test_cipher_support(&self, cipher: &str) -> Result<LegacyProbeOutcome> {
         use openssl::ssl::{SslConnector, SslMethod, SslVersion};
+
+        let addr = match self.target.socket_addrs().first().copied() {
+            Some(a) => a,
+            None => return Ok(LegacyProbeOutcome::Inconclusive),
+        };
+        let hostname = self.target.hostname.clone();
+        let cipher = cipher.to_string();
+
+        let stream =
+            match crate::utils::network::connect_with_timeout(addr, CIPHER_TIMEOUT, None).await {
+                Ok(s) => s,
+                Err(_) => return Ok(LegacyProbeOutcome::Inconclusive),
+            };
+
+        let std_stream = stream.into_std()?;
+        std_stream.set_nonblocking(false)?;
+
+        let result = tokio::task::spawn_blocking(move || -> Result<LegacyProbeOutcome> {
+            let mut builder = SslConnector::builder(SslMethod::tls())?;
+
+            if cipher.starts_with("EXP") || cipher.starts_with("SSL_CK") {
+                let _ = builder.set_min_proto_version(Some(SslVersion::SSL3));
+            }
+
+            match builder.set_cipher_list(&cipher) {
+                Ok(_) => {
+                    let connector = builder.build();
+                    match connector.connect(&hostname, std_stream) {
+                        Ok(_) => Ok(LegacyProbeOutcome::Supported),
+                        Err(_) => Ok(LegacyProbeOutcome::NotSupported),
+                    }
+                }
+                Err(_) => Ok(LegacyProbeOutcome::Inconclusive),
+            }
+        })
+        .await
+        .map_err(|e| crate::error::TlsError::Other(format!("spawn_blocking failed: {e}")))??;
+
+        Ok(result)
+    }
+
+    async fn test_baseline_tls_connectivity(&self) -> Result<bool> {
+        use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
 
         let addr = match self.target.socket_addrs().first().copied() {
             Some(a) => a,
             None => return Ok(false),
         };
         let hostname = self.target.hostname.clone();
-        let cipher = cipher.to_string();
 
         let stream =
             match crate::utils::network::connect_with_timeout(addr, CIPHER_TIMEOUT, None).await {
@@ -48,48 +115,72 @@ impl LegacyCompatTester {
         let std_stream = stream.into_std()?;
         std_stream.set_nonblocking(false)?;
 
-        let result = tokio::task::spawn_blocking(move || -> Result<bool> {
+        tokio::task::spawn_blocking(move || -> Result<bool> {
             let mut builder = SslConnector::builder(SslMethod::tls())?;
-
-            if cipher.starts_with("EXP") || cipher.starts_with("SSL_CK") {
-                let _ = builder.set_min_proto_version(Some(SslVersion::SSL3));
-            }
-
-            match builder.set_cipher_list(&cipher) {
-                Ok(_) => {
-                    let connector = builder.build();
-                    Ok(connector.connect(&hostname, std_stream).is_ok())
-                }
-                Err(_) => Ok(false),
-            }
+            builder.set_verify(SslVerifyMode::NONE);
+            let connector = builder.build();
+            Ok(connector.connect(&hostname, std_stream).is_ok())
         })
         .await
-        .map_err(|e| crate::error::TlsError::Other(format!("spawn_blocking failed: {e}")))??;
-
-        Ok(result)
+        .map_err(|e| crate::error::TlsError::Other(format!("spawn_blocking failed: {e}")))?
     }
 
     /// Run complete legacy compatibility tests
     pub async fn test(&self) -> Result<LegacyCompatResult> {
-        let sslv2_support = self.test_sslv2_support().await?;
-        let weak_ciphers = self.test_weak_ciphers().await?;
-        let export_ciphers = self.test_export_ciphers().await?;
-        let null_ciphers = self.test_null_ciphers().await?;
-        let anonymous_dh = self.test_anonymous_dh().await?;
+        let (sslv2_support, sslv2_stats) = self.test_sslv2_support().await?;
+        let (weak_ciphers, weak_stats) = self.test_weak_ciphers().await?;
+        let (export_ciphers, export_stats) = self.test_export_ciphers().await?;
+        let (null_ciphers, null_stats) = self.test_null_ciphers().await?;
+        let (anonymous_dh, anonymous_stats) = self.test_anonymous_dh().await?;
         let legacy_handshakes = self.test_legacy_handshakes().await?;
+        let inconclusive_probe_count = sslv2_stats.inconclusive
+            + weak_stats.inconclusive
+            + export_stats.inconclusive
+            + null_stats.inconclusive
+            + anonymous_stats.inconclusive;
+        let total_probe_count = sslv2_stats.total
+            + weak_stats.total
+            + export_stats.total
+            + null_stats.total
+            + anonymous_stats.total;
+        let all_cipher_probes_inconclusive = sslv2_stats.all_inconclusive()
+            && weak_stats.all_inconclusive()
+            && export_stats.all_inconclusive()
+            && null_stats.all_inconclusive()
+            && anonymous_stats.all_inconclusive();
 
-        let compatibility_level =
-            self.determine_compatibility_level(&sslv2_support, &weak_ciphers, &export_ciphers);
-
-        let details = format!(
-            "Compatibility: {}. SSLv2: {}, Weak: {}, Export: {}, Null: {}, ADH: {}",
-            compatibility_level.as_str(),
-            sslv2_support.supported,
-            !weak_ciphers.weak_ciphers_found.is_empty(),
-            !export_ciphers.export_ciphers_found.is_empty(),
-            null_ciphers.null_encryption,
-            anonymous_dh.adh_support || anonymous_dh.aecdh_support
+        let baseline_tls_ok = self.test_baseline_tls_connectivity().await?;
+        let has_legacy_evidence = Self::has_legacy_evidence(
+            &sslv2_support,
+            &weak_ciphers,
+            &export_ciphers,
+            &null_ciphers,
+            &anonymous_dh,
+            &legacy_handshakes,
         );
+        let inconclusive =
+            !has_legacy_evidence && (!baseline_tls_ok || all_cipher_probes_inconclusive);
+        let compatibility_level = if inconclusive {
+            CompatibilityLevel::Unknown
+        } else {
+            self.determine_compatibility_level(&sslv2_support, &weak_ciphers, &export_ciphers)
+        };
+
+        let details = if inconclusive {
+            format!(
+                "Compatibility: Unknown (test inconclusive). Legacy cipher support could not be determined; baseline TLS: {baseline_tls_ok}, inconclusive probes: {inconclusive_probe_count}/{total_probe_count}"
+            )
+        } else {
+            format!(
+                "Compatibility: {}. SSLv2: {}, Weak: {}, Export: {}, Null: {}, ADH: {}",
+                compatibility_level.as_str(),
+                sslv2_support.supported,
+                !weak_ciphers.weak_ciphers_found.is_empty(),
+                !export_ciphers.export_ciphers_found.is_empty(),
+                null_ciphers.null_encryption,
+                anonymous_dh.adh_support || anonymous_dh.aecdh_support
+            )
+        };
 
         Ok(LegacyCompatResult {
             sslv2_support,
@@ -99,11 +190,32 @@ impl LegacyCompatTester {
             anonymous_dh,
             legacy_handshakes,
             compatibility_level,
+            inconclusive,
             details,
         })
     }
 
-    async fn test_sslv2_support(&self) -> Result<Sslv2Test> {
+    fn has_legacy_evidence(
+        sslv2: &Sslv2Test,
+        weak: &WeakCipherTest,
+        export: &ExportCipherTest,
+        null_ciphers: &NullCipherTest,
+        anonymous_dh: &AnonymousDhTest,
+        legacy_handshakes: &LegacyHandshakeTest,
+    ) -> bool {
+        sslv2.supported
+            || !weak.weak_ciphers_found.is_empty()
+            || !export.export_ciphers_found.is_empty()
+            || null_ciphers.null_encryption
+            || anonymous_dh.adh_support
+            || anonymous_dh.aecdh_support
+            || legacy_handshakes.sslv2_compatible_hello
+            || legacy_handshakes.fragmented_handshake
+            || legacy_handshakes.old_signature_algorithms
+            || !legacy_handshakes.quirks.is_empty()
+    }
+
+    async fn test_sslv2_support(&self) -> Result<(Sslv2Test, ProbeStats)> {
         // SSLv2 cannot be negotiated via modern OpenSSL (removed at compile time).
         // We attempt using the OpenSSL 2-cipher name format; any connection success
         // indicates SSLv2 support.  In practice this always returns false on modern
@@ -120,9 +232,14 @@ impl LegacyCompatTester {
         ];
 
         let mut ciphers = Vec::new();
+        let mut stats = ProbeStats::default();
         for cipher in &sslv2_openssl_ciphers {
-            if self.test_cipher_support(cipher).await? {
-                ciphers.push(cipher.to_string());
+            let outcome = self.test_cipher_support(cipher).await?;
+            stats.record(outcome);
+            match outcome {
+                LegacyProbeOutcome::Supported => ciphers.push(cipher.to_string()),
+                LegacyProbeOutcome::NotSupported => {}
+                LegacyProbeOutcome::Inconclusive => {}
             }
         }
 
@@ -134,15 +251,18 @@ impl LegacyCompatTester {
             SecurityConcern::None
         };
 
-        Ok(Sslv2Test {
-            supported,
-            cipher_count,
-            ciphers,
-            security_concern,
-        })
+        Ok((
+            Sslv2Test {
+                supported,
+                cipher_count,
+                ciphers,
+                security_concern,
+            },
+            stats,
+        ))
     }
 
-    async fn test_weak_ciphers(&self) -> Result<WeakCipherTest> {
+    async fn test_weak_ciphers(&self) -> Result<(WeakCipherTest, ProbeStats)> {
         let weak_cipher_names = [
             "DES-CBC-SHA",
             "DES-CBC3-SHA",
@@ -161,19 +281,26 @@ impl LegacyCompatTester {
         let mut rc2_support = false;
         let mut md5_mac_support = false;
         let mut weak_ciphers_found = Vec::new();
+        let mut stats = ProbeStats::default();
 
         for cipher in &weak_cipher_names {
-            if self.test_cipher_support(cipher).await? {
-                weak_ciphers_found.push(cipher.to_string());
-                if cipher.contains("DES") {
-                    des_support = true;
+            let outcome = self.test_cipher_support(cipher).await?;
+            stats.record(outcome);
+            match outcome {
+                LegacyProbeOutcome::Supported => {
+                    weak_ciphers_found.push(cipher.to_string());
+                    if cipher.contains("DES") {
+                        des_support = true;
+                    }
+                    if cipher.contains("RC2") {
+                        rc2_support = true;
+                    }
+                    if cipher.contains("MD5") {
+                        md5_mac_support = true;
+                    }
                 }
-                if cipher.contains("RC2") {
-                    rc2_support = true;
-                }
-                if cipher.contains("MD5") {
-                    md5_mac_support = true;
-                }
+                LegacyProbeOutcome::NotSupported => {}
+                LegacyProbeOutcome::Inconclusive => {}
             }
         }
 
@@ -183,16 +310,19 @@ impl LegacyCompatTester {
             SecurityConcern::None
         };
 
-        Ok(WeakCipherTest {
-            des_support,
-            rc2_support,
-            md5_mac_support,
-            weak_ciphers_found,
-            security_concern,
-        })
+        Ok((
+            WeakCipherTest {
+                des_support,
+                rc2_support,
+                md5_mac_support,
+                weak_ciphers_found,
+                security_concern,
+            },
+            stats,
+        ))
     }
 
-    async fn test_export_ciphers(&self) -> Result<ExportCipherTest> {
+    async fn test_export_ciphers(&self) -> Result<(ExportCipherTest, ProbeStats)> {
         // 40-bit export ciphers (EXP prefix, no 1024 suffix)
         let export_40bit_names = [
             "EXP-RC4-MD5",
@@ -211,17 +341,30 @@ impl LegacyCompatTester {
         let mut export_40bit = false;
         let mut export_56bit = false;
         let mut export_ciphers_found = Vec::new();
+        let mut stats = ProbeStats::default();
 
         for cipher in &export_40bit_names {
-            if self.test_cipher_support(cipher).await? {
-                export_ciphers_found.push(cipher.to_string());
-                export_40bit = true;
+            let outcome = self.test_cipher_support(cipher).await?;
+            stats.record(outcome);
+            match outcome {
+                LegacyProbeOutcome::Supported => {
+                    export_ciphers_found.push(cipher.to_string());
+                    export_40bit = true;
+                }
+                LegacyProbeOutcome::NotSupported => {}
+                LegacyProbeOutcome::Inconclusive => {}
             }
         }
         for cipher in &export_56bit_names {
-            if self.test_cipher_support(cipher).await? {
-                export_ciphers_found.push(cipher.to_string());
-                export_56bit = true;
+            let outcome = self.test_cipher_support(cipher).await?;
+            stats.record(outcome);
+            match outcome {
+                LegacyProbeOutcome::Supported => {
+                    export_ciphers_found.push(cipher.to_string());
+                    export_56bit = true;
+                }
+                LegacyProbeOutcome::NotSupported => {}
+                LegacyProbeOutcome::Inconclusive => {}
             }
         }
 
@@ -232,16 +375,19 @@ impl LegacyCompatTester {
             SecurityConcern::None
         };
 
-        Ok(ExportCipherTest {
-            export_40bit,
-            export_56bit,
-            export_ciphers_found,
-            freak_vulnerable,
-            security_concern,
-        })
+        Ok((
+            ExportCipherTest {
+                export_40bit,
+                export_56bit,
+                export_ciphers_found,
+                freak_vulnerable,
+                security_concern,
+            },
+            stats,
+        ))
     }
 
-    async fn test_null_ciphers(&self) -> Result<NullCipherTest> {
+    async fn test_null_ciphers(&self) -> Result<(NullCipherTest, ProbeStats)> {
         let null_cipher_names = [
             "NULL-MD5",
             "NULL-SHA",
@@ -252,10 +398,15 @@ impl LegacyCompatTester {
         ];
 
         let mut null_ciphers_found = Vec::new();
+        let mut stats = ProbeStats::default();
 
         for cipher in &null_cipher_names {
-            if self.test_cipher_support(cipher).await? {
-                null_ciphers_found.push(cipher.to_string());
+            let outcome = self.test_cipher_support(cipher).await?;
+            stats.record(outcome);
+            match outcome {
+                LegacyProbeOutcome::Supported => null_ciphers_found.push(cipher.to_string()),
+                LegacyProbeOutcome::NotSupported => {}
+                LegacyProbeOutcome::Inconclusive => {}
             }
         }
 
@@ -266,14 +417,17 @@ impl LegacyCompatTester {
             SecurityConcern::None
         };
 
-        Ok(NullCipherTest {
-            null_encryption,
-            null_ciphers_found,
-            security_concern,
-        })
+        Ok((
+            NullCipherTest {
+                null_encryption,
+                null_ciphers_found,
+                security_concern,
+            },
+            stats,
+        ))
     }
 
-    async fn test_anonymous_dh(&self) -> Result<AnonymousDhTest> {
+    async fn test_anonymous_dh(&self) -> Result<(AnonymousDhTest, ProbeStats)> {
         let anonymous_cipher_names = [
             "ADH-AES256-SHA256",
             "ADH-AES128-SHA256",
@@ -292,15 +446,22 @@ impl LegacyCompatTester {
         let mut adh_support = false;
         let mut aecdh_support = false;
         let mut anonymous_ciphers_found = Vec::new();
+        let mut stats = ProbeStats::default();
 
         for cipher in &anonymous_cipher_names {
-            if self.test_cipher_support(cipher).await? {
-                anonymous_ciphers_found.push(cipher.to_string());
-                if cipher.starts_with("ADH-") {
-                    adh_support = true;
-                } else if cipher.starts_with("AECDH-") {
-                    aecdh_support = true;
+            let outcome = self.test_cipher_support(cipher).await?;
+            stats.record(outcome);
+            match outcome {
+                LegacyProbeOutcome::Supported => {
+                    anonymous_ciphers_found.push(cipher.to_string());
+                    if cipher.starts_with("ADH-") {
+                        adh_support = true;
+                    } else if cipher.starts_with("AECDH-") {
+                        aecdh_support = true;
+                    }
                 }
+                LegacyProbeOutcome::NotSupported => {}
+                LegacyProbeOutcome::Inconclusive => {}
             }
         }
 
@@ -310,12 +471,15 @@ impl LegacyCompatTester {
             SecurityConcern::None
         };
 
-        Ok(AnonymousDhTest {
-            adh_support,
-            aecdh_support,
-            anonymous_ciphers_found,
-            security_concern,
-        })
+        Ok((
+            AnonymousDhTest {
+                adh_support,
+                aecdh_support,
+                anonymous_ciphers_found,
+                security_concern,
+            },
+            stats,
+        ))
     }
 
     async fn test_legacy_handshakes(&self) -> Result<LegacyHandshakeTest> {
@@ -417,13 +581,37 @@ mod tests {
         let tester = LegacyCompatTester::new(target);
         let result = tester.test().await.unwrap();
 
-        assert_eq!(result.compatibility_level, CompatibilityLevel::Modern);
+        assert_eq!(result.compatibility_level, CompatibilityLevel::Unknown);
+        assert!(result.inconclusive);
         assert!(!result.sslv2_support.supported);
         assert!(result.weak_ciphers.weak_ciphers_found.is_empty());
         assert!(result.export_ciphers.export_ciphers_found.is_empty());
         assert!(!result.null_ciphers.null_encryption);
         assert!(!result.anonymous_dh.adh_support);
         assert!(result.details.contains("Compatibility"));
+    }
+
+    #[tokio::test]
+    async fn test_legacy_compat_inactive_target_is_inconclusive() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            addr.port(),
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .unwrap();
+
+        let tester = LegacyCompatTester::new(target);
+        let result = tester.test().await.unwrap();
+
+        assert_eq!(result.compatibility_level, CompatibilityLevel::Unknown);
+        assert!(
+            result.inconclusive,
+            "inactive target must not be classified as Modern: {result:?}"
+        );
+        assert!(result.details.contains("inconclusive"));
     }
 
     #[test]

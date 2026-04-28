@@ -23,32 +23,36 @@ impl<'a> CertificateRule<'a> {
         }
     }
 
+    fn missing_certificate_violation() -> PolicyViolation {
+        PolicyViolation::new(
+            "certificates.missing",
+            "Certificate Missing",
+            PolicyAction::Fail,
+            "No certificate information available",
+        )
+        .with_evidence("Certificate chain could not be retrieved")
+        .with_remediation("Ensure the server presents a valid certificate")
+    }
+
     pub fn evaluate(&self, target: &str) -> Result<Vec<PolicyViolation>> {
         let mut violations = Vec::new();
 
         let cert_result = match self.cert_result {
             Some(result) => result,
             None => {
-                violations.push(
-                    PolicyViolation::new(
-                        "certificates.missing",
-                        "Certificate Missing",
-                        PolicyAction::Fail,
-                        "No certificate information available",
-                    )
-                    .with_evidence("Certificate chain could not be retrieved")
-                    .with_remediation("Ensure the server presents a valid certificate"),
-                );
+                violations.push(Self::missing_certificate_violation());
                 return Ok(violations);
             }
         };
 
-        let leaf_cert = cert_result.chain.leaf();
+        let Some(leaf_cert) = cert_result.chain.leaf() else {
+            violations.push(Self::missing_certificate_violation());
+            return Ok(violations);
+        };
 
         // Check minimum key size
         if let Some(min_key_size) = self.policy.min_key_size
-            && let Some(cert) = leaf_cert
-            && let Some(key_size) = cert.public_key_size
+            && let Some(key_size) = leaf_cert.public_key_size
             && (key_size as u32) < min_key_size
         {
             violations.push(
@@ -63,7 +67,7 @@ impl<'a> CertificateRule<'a> {
                 )
                 .with_evidence(format!(
                     "Certificate has {}-bit {} key",
-                    key_size, cert.public_key_algorithm
+                    key_size, leaf_cert.public_key_algorithm
                 ))
                 .with_remediation(format!(
                     "Replace certificate with at least {}-bit key",
@@ -73,55 +77,71 @@ impl<'a> CertificateRule<'a> {
         }
 
         // Check days until expiry
-        if let Some(max_days) = self.policy.max_days_until_expiry
-            && let Some(cert) = leaf_cert
-        {
+        if let Some(max_days) = self.policy.max_days_until_expiry {
             // Parse not_after date using the shared certificate date parser,
             // which supports OpenSSL format ("Jan 01 00:00:00 2024 GMT")
             // and ISO format ("2024-01-01 00:00:00 +00:00").
-            if let Some(not_after) = parse_cert_date(&cert.not_after) {
-                let now = Utc::now();
-                let days_remaining = (not_after - now).num_days();
+            match parse_cert_date(&leaf_cert.not_after) {
+                Some(not_after) => {
+                    let now = Utc::now();
 
-                if days_remaining < 0 {
-                    violations.push(
-                        PolicyViolation::new(
-                            "certificates.max_days_until_expiry",
-                            "Certificate Expiry Check",
-                            self.policy.action,
-                            format!("Certificate expired {} days ago", -days_remaining),
-                        )
-                        .with_evidence(format!("Valid until: {}", cert.not_after))
-                        .with_remediation("Renew certificate immediately - it has already expired"),
-                    );
-                } else if days_remaining < max_days {
-                    violations.push(
-                        PolicyViolation::new(
-                            "certificates.max_days_until_expiry",
-                            "Certificate Expiry Check",
-                            self.policy.action,
-                            format!(
-                                "Certificate expires in {} days (threshold: {} days)",
-                                days_remaining, max_days
+                    if now > not_after {
+                        let days_expired = (now - not_after).num_days();
+                        violations.push(
+                            PolicyViolation::new(
+                                "certificates.max_days_until_expiry",
+                                "Certificate Expiry Check",
+                                self.policy.action,
+                                format!("Certificate expired {} days ago", days_expired),
+                            )
+                            .with_evidence(format!("Valid until: {}", leaf_cert.not_after))
+                            .with_remediation(
+                                "Renew certificate immediately - it has already expired",
                             ),
-                        )
-                        .with_evidence(format!("Valid until: {}", cert.not_after))
-                        .with_remediation("Renew certificate before expiration"),
-                    );
+                        );
+                    } else {
+                        let days_remaining = (not_after - now).num_days();
+                        if days_remaining < max_days {
+                            violations.push(
+                                PolicyViolation::new(
+                                    "certificates.max_days_until_expiry",
+                                    "Certificate Expiry Check",
+                                    self.policy.action,
+                                    format!(
+                                        "Certificate expires in {} days (threshold: {} days)",
+                                        days_remaining, max_days
+                                    ),
+                                )
+                                .with_evidence(format!("Valid until: {}", leaf_cert.not_after))
+                                .with_remediation("Renew certificate before expiration"),
+                            );
+                        }
+                    }
                 }
+                None => violations.push(
+                    PolicyViolation::new(
+                        "certificates.max_days_until_expiry",
+                        "Certificate Expiry Check",
+                        self.policy.action,
+                        "Certificate expiry date could not be parsed",
+                    )
+                    .with_evidence(format!("Valid until: {}", leaf_cert.not_after))
+                    .with_remediation(
+                        "Replace or re-scan the certificate so expiry can be verified",
+                    ),
+                ),
             }
         }
 
         // Check prohibited signature algorithms
-        if let Some(ref prohibited_sigs) = self.policy.prohibited_signature_algorithms
-            && let Some(cert) = leaf_cert
-        {
+        if let Some(ref prohibited_sigs) = self.policy.prohibited_signature_algorithms {
             for prohibited in prohibited_sigs {
-                if cert
-                    .signature_algorithm
-                    .to_uppercase()
-                    .contains(&prohibited.to_uppercase())
-                {
+                let prohibited = prohibited.trim();
+                if prohibited.is_empty() {
+                    continue;
+                }
+
+                if signature_algorithm_matches(&leaf_cert.signature_algorithm, prohibited) {
                     violations.push(
                         PolicyViolation::new(
                             "certificates.prohibited_signature_algorithms",
@@ -129,10 +149,13 @@ impl<'a> CertificateRule<'a> {
                             self.policy.action,
                             format!(
                                 "Certificate uses prohibited signature algorithm: {}",
-                                cert.signature_algorithm
+                                leaf_cert.signature_algorithm
                             ),
                         )
-                        .with_evidence(format!("Signature algorithm: {}", cert.signature_algorithm))
+                        .with_evidence(format!(
+                            "Signature algorithm: {}",
+                            leaf_cert.signature_algorithm
+                        ))
                         .with_remediation(format!(
                             "Replace certificate with signature algorithm other than {}",
                             prohibited
@@ -160,8 +183,7 @@ impl<'a> CertificateRule<'a> {
 
         // Check SAN requirement
         if let Some(true) = self.policy.require_san
-            && let Some(cert) = leaf_cert
-            && cert.san.is_empty()
+            && leaf_cert.san.is_empty()
         {
             violations.push(
                 PolicyViolation::new(
@@ -193,6 +215,23 @@ impl<'a> CertificateRule<'a> {
 
         Ok(violations)
     }
+}
+
+fn normalize_signature_algorithm_name(value: &str) -> String {
+    value
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .flat_map(|c| c.to_uppercase())
+        .collect()
+}
+
+fn signature_algorithm_matches(signature_algorithm: &str, prohibited: &str) -> bool {
+    let prohibited = normalize_signature_algorithm_name(prohibited);
+    if prohibited.is_empty() {
+        return false;
+    }
+
+    normalize_signature_algorithm_name(signature_algorithm).contains(&prohibited)
 }
 
 #[cfg(test)]
@@ -291,6 +330,31 @@ mod tests {
     }
 
     #[test]
+    fn test_empty_certificate_chain_is_missing_certificate_violation() {
+        let policy = CertificatePolicy {
+            min_key_size: Some(2048),
+            max_days_until_expiry: Some(30),
+            prohibited_signature_algorithms: Some(vec!["SHA1".to_string()]),
+            require_valid_trust_chain: Some(true),
+            require_san: Some(true),
+            require_hostname_match: Some(true),
+            action: PolicyAction::Fail,
+        };
+
+        let mut cert_result = create_test_cert_result();
+        cert_result.chain.certificates.clear();
+        cert_result.chain.chain_length = 0;
+
+        let rule = CertificateRule::new(&policy, Some(&cert_result));
+        let violations = rule
+            .evaluate("example.com:443")
+            .expect("test assertion should succeed");
+
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].rule_path, "certificates.missing");
+    }
+
+    #[test]
     fn test_san_requirement() {
         let policy = CertificatePolicy {
             min_key_size: None,
@@ -312,6 +376,67 @@ mod tests {
 
         assert!(!violations.is_empty());
         assert_eq!(violations[0].rule_path, "certificates.require_san");
+    }
+
+    #[test]
+    fn test_recently_expired_certificate_is_reported_as_expired() {
+        let policy = CertificatePolicy {
+            min_key_size: None,
+            max_days_until_expiry: Some(30),
+            prohibited_signature_algorithms: None,
+            require_valid_trust_chain: None,
+            require_san: None,
+            require_hostname_match: None,
+            action: PolicyAction::Fail,
+        };
+
+        let mut cert_result = create_test_cert_result();
+        cert_result.chain.certificates[0].not_after = (Utc::now() - chrono::Duration::hours(1))
+            .format("%Y-%m-%d %H:%M:%S %z")
+            .to_string();
+
+        let rule = CertificateRule::new(&policy, Some(&cert_result));
+        let violations = rule
+            .evaluate("example.com:443")
+            .expect("test assertion should succeed");
+
+        assert_eq!(violations.len(), 1);
+        assert_eq!(
+            violations[0].rule_path,
+            "certificates.max_days_until_expiry"
+        );
+        assert!(
+            violations[0].description.contains("expired"),
+            "{:?}",
+            violations[0]
+        );
+    }
+
+    #[test]
+    fn test_unparseable_expiry_date_fails_expiry_policy() {
+        let policy = CertificatePolicy {
+            min_key_size: None,
+            max_days_until_expiry: Some(30),
+            prohibited_signature_algorithms: None,
+            require_valid_trust_chain: None,
+            require_san: None,
+            require_hostname_match: None,
+            action: PolicyAction::Fail,
+        };
+
+        let mut cert_result = create_test_cert_result();
+        cert_result.chain.certificates[0].not_after = "not a date".to_string();
+
+        let rule = CertificateRule::new(&policy, Some(&cert_result));
+        let violations = rule
+            .evaluate("example.com:443")
+            .expect("test assertion should succeed");
+
+        assert_eq!(violations.len(), 1);
+        assert_eq!(
+            violations[0].rule_path,
+            "certificates.max_days_until_expiry"
+        );
     }
 
     #[test]
@@ -354,6 +479,59 @@ mod tests {
             .evaluate("example.com:443")
             .expect("test assertion should succeed");
 
+        assert_eq!(
+            violations[0].rule_path,
+            "certificates.prohibited_signature_algorithms"
+        );
+    }
+
+    #[test]
+    fn test_prohibited_signature_algorithm_trims_policy_values() {
+        let policy = CertificatePolicy {
+            min_key_size: None,
+            max_days_until_expiry: None,
+            prohibited_signature_algorithms: Some(vec![" sha1 ".to_string()]),
+            require_valid_trust_chain: None,
+            require_san: None,
+            require_hostname_match: None,
+            action: PolicyAction::Fail,
+        };
+
+        let mut cert_result = create_test_cert_result();
+        cert_result.chain.certificates[0].signature_algorithm = "SHA1-RSA".to_string();
+
+        let rule = CertificateRule::new(&policy, Some(&cert_result));
+        let violations = rule
+            .evaluate("example.com:443")
+            .expect("test assertion should succeed");
+
+        assert_eq!(
+            violations[0].rule_path,
+            "certificates.prohibited_signature_algorithms"
+        );
+    }
+
+    #[test]
+    fn test_prohibited_signature_algorithm_matches_hyphenated_alias() {
+        let policy = CertificatePolicy {
+            min_key_size: None,
+            max_days_until_expiry: None,
+            prohibited_signature_algorithms: Some(vec!["SHA1".to_string()]),
+            require_valid_trust_chain: None,
+            require_san: None,
+            require_hostname_match: None,
+            action: PolicyAction::Fail,
+        };
+
+        let mut cert_result = create_test_cert_result();
+        cert_result.chain.certificates[0].signature_algorithm = "SHA-1-RSA".to_string();
+
+        let rule = CertificateRule::new(&policy, Some(&cert_result));
+        let violations = rule
+            .evaluate("example.com:443")
+            .expect("test assertion should succeed");
+
+        assert_eq!(violations.len(), 1);
         assert_eq!(
             violations[0].rule_path,
             "certificates.prohibited_signature_algorithms"

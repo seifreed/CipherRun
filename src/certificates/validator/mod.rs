@@ -19,24 +19,34 @@ use std::path::Path;
 pub fn parse_cert_date(date_str: &str) -> Option<DateTime<Utc>> {
     use chrono::NaiveDateTime;
 
+    let trimmed = date_str.trim();
+
+    if let Ok(dt) = DateTime::parse_from_rfc3339(trimmed) {
+        return Some(dt.with_timezone(&Utc));
+    }
+
     // Offset-aware formats (e.g., "2024-01-01 00:00:00 +0000")
     const AWARE_FORMATS: &[&str] = &["%Y-%m-%d %H:%M:%S %z"];
     for fmt in AWARE_FORMATS {
-        if let Ok(dt) = DateTime::parse_from_str(date_str, fmt) {
+        if let Ok(dt) = DateTime::parse_from_str(trimmed, fmt) {
             return Some(dt.with_timezone(&Utc));
         }
     }
 
-    // OpenSSL ASN.1 format "Jan 01 00:00:00 2024 GMT" — chrono cannot parse %Z,
-    // so strip the trailing timezone word and parse as NaiveDateTime assuming UTC.
-    let trimmed = date_str.trim();
-    let without_tz = trimmed.rsplit_once(' ').map(|(s, _)| s).unwrap_or(trimmed);
+    // UTC/GMT suffixes are timezone names chrono cannot parse reliably here,
+    // so strip only those known UTC designators and parse as UTC.
+    let without_utc_suffix = trimmed
+        .strip_suffix(" UTC")
+        .or_else(|| trimmed.strip_suffix(" GMT"))
+        .unwrap_or(trimmed);
+
     const NAIVE_FORMATS: &[&str] = &[
+        "%Y-%m-%d %H:%M:%S", // common internal format after UTC/GMT stripping
         "%b %d %H:%M:%S %Y", // zero-padded day:  "Jan 01 00:00:00 2024"
         "%b %e %H:%M:%S %Y", // space-padded day: "Jan  1 00:00:00 2024"
     ];
     for fmt in NAIVE_FORMATS {
-        if let Ok(dt) = NaiveDateTime::parse_from_str(without_tz, fmt) {
+        if let Ok(dt) = NaiveDateTime::parse_from_str(without_utc_suffix, fmt) {
             return Some(dt.and_utc());
         }
     }
@@ -275,7 +285,8 @@ impl CertificateValidator {
         valid &= hostname_match;
 
         // 3. Check key strength
-        self.check_key_strength(leaf, &mut issues);
+        let key_strength_ok = self.check_key_strength(leaf, &mut issues);
+        valid &= key_strength_ok;
 
         // 4. Check signature algorithm
         self.check_signature_algorithm(leaf, &mut issues);
@@ -356,6 +367,11 @@ mod tests {
     #[test]
     fn test_parse_cert_date_formats() {
         assert!(parse_cert_date("2024-01-01 00:00:00 +0000").is_some());
+        assert!(parse_cert_date("2024-01-01 00:00:00 +00:00").is_some());
+        assert!(parse_cert_date("2024-01-01T00:00:00Z").is_some());
+        assert!(parse_cert_date("2024-01-01 00:00:00 UTC").is_some());
+        assert!(parse_cert_date("2024-01-01 00:00:00 GMT").is_some());
+        assert!(parse_cert_date("Jan 01 00:00:00 2024 GMT").is_some());
         assert!(parse_cert_date("not a date").is_none());
     }
 

@@ -52,18 +52,39 @@ impl PreHandshakeScanner {
                         if handshake_length >= 38 {
                             let version_maj = data[offset];
                             let version_min = data[offset + 1];
-                            protocol_version = Some(format!("{}.{}", version_maj - 2, version_min));
+                            // Map two-byte version field to canonical name. Arithmetic
+                            // on `version_maj - 2` panics on SSLv2 (0x02) and produces
+                            // nonsense for non-standard bytes; a match over the u16
+                            // covers all real TLS versions safely.
+                            protocol_version =
+                                Some(match u16::from_be_bytes([version_maj, version_min]) {
+                                    0x0002 => "SSL 2.0".to_string(),
+                                    0x0300 => "SSL 3.0".to_string(),
+                                    0x0301 => "TLS 1.0".to_string(),
+                                    0x0302 => "TLS 1.1".to_string(),
+                                    0x0303 => "TLS 1.2".to_string(),
+                                    0x0304 => "TLS 1.3".to_string(),
+                                    v => format!("Unknown (0x{:04x})", v),
+                                });
 
-                            let cipher_offset = offset + 34;
-                            if cipher_offset + 2 <= offset + handshake_length {
-                                let cipher = u16::from_be_bytes([
-                                    data[cipher_offset],
-                                    data[cipher_offset + 1],
-                                ]);
-                                cipher_suite = Some(format!("0x{:04x}", cipher));
+                            // ServerHello body: version(2) + random(32) + sid_len(1) +
+                            // session_id(sid_len) + cipher(2) + compression(1).
+                            // Cipher lives at `offset + 35 + session_id_len`, not the
+                            // fixed `offset + 34` (which skips the sid_len byte).
+                            let sid_len_at = offset + 34;
+                            if sid_len_at < offset + handshake_length {
+                                let session_id_len = data[sid_len_at] as usize;
+                                let cipher_offset = offset + 35 + session_id_len;
+                                if cipher_offset + 2 <= offset + handshake_length {
+                                    let cipher = u16::from_be_bytes([
+                                        data[cipher_offset],
+                                        data[cipher_offset + 1],
+                                    ]);
+                                    cipher_suite = Some(format!("0x{:04x}", cipher));
 
-                                if cipher_offset + 3 <= offset + handshake_length {
-                                    compression_method = Some(data[cipher_offset + 2]);
+                                    if cipher_offset + 3 <= offset + handshake_length {
+                                        compression_method = Some(data[cipher_offset + 2]);
+                                    }
                                 }
                             }
 
@@ -80,6 +101,11 @@ impl PreHandshakeScanner {
                                 data[offset + 2],
                             ]) as usize;
 
+                            // Prevent integer overflow/wraparound on malicious input
+                            if certs_length > data.len() - offset - 3 {
+                                break;
+                            }
+
                             let mut cert_offset = offset + 3;
                             let certs_end = offset + 3 + certs_length;
 
@@ -92,7 +118,9 @@ impl PreHandshakeScanner {
                                 ]) as usize;
                                 cert_offset += 3;
 
-                                if cert_offset + cert_length <= data.len() {
+                                if cert_offset + cert_length <= certs_end
+                                    && cert_offset + cert_length <= data.len()
+                                {
                                     let cert_der = &data[cert_offset..cert_offset + cert_length];
                                     certificate_data = self.parse_certificate(cert_der).ok();
                                 }

@@ -288,6 +288,23 @@ fn rejects_rdp_with_starttls_negotiation() {
 }
 
 #[test]
+fn starttls_protocol_string_is_normalized() {
+    let request = ScanRequest {
+        starttls: ScanRequestStarttls {
+            protocol: Some(" XMPP-Server ".to_string()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    assert_eq!(
+        request.starttls_protocol(),
+        Some(crate::starttls::StarttlsProtocol::XMPP)
+    );
+    assert!(request.validate_common().is_ok());
+}
+
+#[test]
 fn all_false_disables_baseline_scan_even_with_target() {
     let request = ScanRequest {
         target: Some("example.com:443".to_string()),

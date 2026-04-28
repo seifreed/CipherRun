@@ -27,6 +27,25 @@ fn sort_cipher_changes(changes: &mut [CipherChangeInfo]) {
     });
 }
 
+fn normalized_protocol_name(protocol: &str) -> String {
+    protocol
+        .chars()
+        .filter(|c| !c.is_ascii_whitespace() && *c != '_' && *c != '-')
+        .flat_map(|c| c.to_uppercase())
+        .collect()
+}
+
+fn protocol_identity(protocol: &str) -> String {
+    let normalized = normalized_protocol_name(protocol);
+    if let Some(version) = normalized.strip_prefix("TLSV") {
+        format!("TLS{}", version)
+    } else if let Some(version) = normalized.strip_prefix("SSLV") {
+        format!("SSL{}", version)
+    } else {
+        normalized
+    }
+}
+
 impl ScanComparator {
     pub(crate) async fn compare_ciphers(
         &self,
@@ -66,7 +85,10 @@ impl ScanComparator {
 }
 
 fn cipher_identity(cipher: &CipherRecord) -> (String, String) {
-    (cipher.protocol_name.clone(), cipher.cipher_name.clone())
+    (
+        protocol_identity(&cipher.protocol_name),
+        cipher.cipher_name.clone(),
+    )
 }
 
 fn to_cipher_info(cipher: &CipherRecord) -> CipherInfo {
@@ -185,6 +207,28 @@ mod tests {
         assert!(diff.changed.is_empty());
         assert_eq!(diff.added[0].protocol, "TLS 1.3");
         assert_eq!(diff.removed[0].protocol, "TLS 1.2");
+    }
+
+    #[test]
+    fn test_compare_cipher_records_treats_protocol_format_variants_as_same_identity() {
+        let scan1 = vec![make_cipher_record(
+            "TLS 1.2",
+            "TLS_AES_128_GCM_SHA256",
+            "strong",
+        )];
+        let scan2 = vec![make_cipher_record(
+            "TLSv1.2",
+            "TLS_AES_128_GCM_SHA256",
+            "strong",
+        )];
+
+        let diff = compare_cipher_records(&scan1, &scan2);
+
+        assert!(diff.added.is_empty());
+        assert!(diff.removed.is_empty());
+        assert!(diff.changed.is_empty());
+        assert_eq!(diff.unchanged.len(), 1);
+        assert_eq!(diff.unchanged[0].protocol, "TLSv1.2");
     }
 
     #[test]

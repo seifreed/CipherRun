@@ -22,13 +22,21 @@ pub(super) fn detect_response_oracle(
 
     // Asymmetric: one set consistently (majority) produces alerts and the other doesn't.
     // Using any() would trigger on a single noisy alert; require >50% for signal.
+    //
+    // V4 fix: also require MIN_TIMING_SAMPLES before evaluating the alert ratio.
+    // With 1 response per set, ratio is 0/1=0 or 1/1=1, and a single alert flipping
+    // the 0.5 boundary would trigger the oracle verdict on essentially no evidence.
+    let enough_for_alert_ratio =
+        responses_a.len() >= MIN_TIMING_SAMPLES && responses_b.len() >= MIN_TIMING_SAMPLES;
     let alert_ratio = |responses: &[ServerResponse]| {
         responses.iter().filter(|r| r.alert_type.is_some()).count() as f64 / responses.len() as f64
     };
-    let majority_has_alerts_a = alert_ratio(responses_a) > 0.5;
-    let majority_has_alerts_b = alert_ratio(responses_b) > 0.5;
-    if majority_has_alerts_a != majority_has_alerts_b {
-        return true;
+    if enough_for_alert_ratio {
+        let majority_has_alerts_a = alert_ratio(responses_a) > 0.5;
+        let majority_has_alerts_b = alert_ratio(responses_b) > 0.5;
+        if majority_has_alerts_a != majority_has_alerts_b {
+            return true;
+        }
     }
 
     // Check for different alert types using proper categorical comparison
@@ -94,4 +102,46 @@ pub(super) fn find_dominant_alert_type(responses: &[ServerResponse]) -> Option<u
         .into_iter()
         .max_by_key(|&(_, count)| count)
         .map(|(alert, _)| alert)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn response(alert: Option<u8>, time_ms: f64) -> ServerResponse {
+        ServerResponse {
+            connection_accepted: true,
+            alert_type: alert,
+            response_time_ms: time_ms,
+            shows_differential_behavior: false,
+        }
+    }
+
+    #[test]
+    fn test_oracle_detection_requires_min_samples_for_alert_ratio() {
+        // Regression test for V4: with one response per set the alert_ratio is
+        // either 0.0 or 1.0. Previously the boolean difference alone triggered
+        // a positive oracle verdict — now we require MIN_TIMING_SAMPLES (3).
+        let a = vec![response(Some(21), 10.0)]; // alert
+        let b = vec![response(None, 10.0)]; // no alert
+        assert!(
+            !detect_response_oracle(&a, &b),
+            "1 sample per set must not be enough to claim an oracle"
+        );
+    }
+
+    #[test]
+    fn test_oracle_detection_alert_ratio_fires_with_enough_samples() {
+        // 3 alerts vs 3 non-alerts → majority differs → oracle detected.
+        let a: Vec<_> = (0..3).map(|_| response(Some(21), 10.0)).collect();
+        let b: Vec<_> = (0..3).map(|_| response(None, 10.0)).collect();
+        assert!(detect_response_oracle(&a, &b));
+    }
+
+    #[test]
+    fn test_oracle_detection_ignores_empty_sets() {
+        let a = vec![response(Some(21), 10.0)];
+        let b: Vec<ServerResponse> = Vec::new();
+        assert!(!detect_response_oracle(&a, &b));
+    }
 }

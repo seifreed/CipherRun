@@ -156,7 +156,8 @@ impl Scanner {
 
         if incomplete_backend_coverage {
             for vulnerability in &mut aggregated {
-                vulnerability.inconclusive = true;
+                // Only append the coverage warning; vulnerabilities confirmed
+                // on successful backends remain conclusive.
                 if !vulnerability
                     .details
                     .contains("incomplete backend coverage")

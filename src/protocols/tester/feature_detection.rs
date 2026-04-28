@@ -9,10 +9,13 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::timeout;
 
 impl ProtocolTester {
-    pub(super) async fn detect_heartbeat_extension(&self, protocol: Protocol) -> Result<bool> {
+    pub(super) async fn detect_heartbeat_extension(
+        &self,
+        protocol: Protocol,
+    ) -> Result<Option<bool>> {
         match self.fetch_server_hello(protocol).await? {
-            Some(server_hello) => Ok(server_hello.supports_heartbeat().unwrap_or(false)),
-            None => Ok(false),
+            Some(server_hello) => Ok(server_hello.supports_heartbeat()),
+            None => Ok(None),
         }
     }
 
@@ -24,12 +27,13 @@ impl ProtocolTester {
         Ok((None, None))
     }
 
-    pub(super) async fn detect_secure_renegotiation(&self, protocol: Protocol) -> Result<bool> {
+    pub(super) async fn detect_secure_renegotiation(
+        &self,
+        protocol: Protocol,
+    ) -> Result<Option<bool>> {
         match self.fetch_server_hello(protocol).await? {
-            Some(server_hello) => Ok(server_hello
-                .supports_secure_renegotiation()
-                .unwrap_or(false)),
-            None => Ok(false),
+            Some(server_hello) => Ok(server_hello.supports_secure_renegotiation()),
+            None => Ok(None),
         }
     }
 

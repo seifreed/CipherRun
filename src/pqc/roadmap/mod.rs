@@ -92,7 +92,11 @@ impl RoadmapGenerator {
             .advanced
             .as_ref()
             .and_then(|a| a.key_exchange_groups.as_ref())
-            .map(|g| g.groups.iter().any(|grp| grp.supported && !grp.quantum_vulnerable))
+            .map(|g| {
+                g.groups
+                    .iter()
+                    .any(|grp| grp.supported && !grp.quantum_vulnerable)
+            })
             .unwrap_or(false);
 
         if !has_pqc_group {
@@ -129,7 +133,7 @@ impl RoadmapGenerator {
                 severity: RoadmapSeverity::Medium,
                 phase: 2,
                 title: "Upgrade RSA certificate key to ≥ 3072 bits".to_string(),
-                action: "RSA-2048 provides ~112-bit classical security; upgrade to RSA-3072 for SP 800-131A compliance.".to_string(),
+                action: "RSA-2048 provides ~112-bit classical security (acceptable under NIST SP 800-131A Rev. 3 through 2030); upgrade to RSA-3072 for the NIST post-2030 recommendation and FIPS-PQC-3.1 classical baseline.".to_string(),
                 timeline: "0-6 months".to_string(),
             });
         }
@@ -167,6 +171,11 @@ mod tests {
         let results = ScanResults::default();
         let roadmap = RoadmapGenerator::from_scan(&results);
         assert!(!roadmap.steps.is_empty());
-        assert!(roadmap.steps.iter().any(|s| s.title.contains("X25519MLKEM768")));
+        assert!(
+            roadmap
+                .steps
+                .iter()
+                .any(|s| s.title.contains("X25519MLKEM768"))
+        );
     }
 }

@@ -1,4 +1,5 @@
 use crate::application::ScanResults;
+use crate::certificates::validator::parse_cert_date;
 use crate::utils::network::split_target_host_port;
 use chrono::{DateTime, Utc};
 
@@ -186,14 +187,8 @@ impl PersistedScan {
                         subject: cert.subject.clone(),
                         issuer: cert.issuer.clone(),
                         serial_number: Some(cert.serial_number.clone()),
-                        not_before: DateTime::parse_from_rfc3339(&cert.not_before)
-                            .ok()
-                            .map(|dt| dt.with_timezone(&Utc))
-                            .unwrap_or_else(Utc::now),
-                        not_after: DateTime::parse_from_rfc3339(&cert.not_after)
-                            .ok()
-                            .map(|dt| dt.with_timezone(&Utc))
-                            .unwrap_or_else(Utc::now),
+                        not_before: parse_cert_date(&cert.not_before).unwrap_or_else(Utc::now),
+                        not_after: parse_cert_date(&cert.not_after).unwrap_or_else(Utc::now),
                         signature_algorithm: Some(cert.signature_algorithm.clone()),
                         public_key_algorithm: Some(cert.public_key_algorithm.clone()),
                         public_key_size: cert.public_key_size.map(|s| s as i32),
@@ -226,6 +221,9 @@ impl PersistedScan {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::certificates::parser::{CertificateChain, CertificateInfo};
+    use crate::certificates::validator::{ValidationResult, parse_cert_date};
+    use crate::scanner::CertificateAnalysisResult;
 
     #[test]
     fn maps_minimal_scan_results() {
@@ -239,5 +237,52 @@ mod tests {
         assert_eq!(persisted.target_hostname, "example.com");
         assert_eq!(persisted.target_port, 443);
         assert_eq!(persisted.scan_duration_ms, 123);
+    }
+
+    #[test]
+    fn maps_certificate_dates_without_replacing_non_rfc3339_formats_with_now() {
+        let cert = CertificateInfo {
+            subject: "CN=example.com".to_string(),
+            issuer: "CN=Test CA".to_string(),
+            serial_number: "123456".to_string(),
+            not_before: "2024-01-01 00:00:00 UTC".to_string(),
+            not_after: "Jan 01 00:00:00 2030 GMT".to_string(),
+            signature_algorithm: "SHA256-RSA".to_string(),
+            public_key_algorithm: "RSA".to_string(),
+            public_key_size: Some(2048),
+            san: vec!["example.com".to_string()],
+            ..Default::default()
+        };
+        let expected_not_before = parse_cert_date(&cert.not_before).expect("date should parse");
+        let expected_not_after = parse_cert_date(&cert.not_after).expect("date should parse");
+
+        let results = ScanResults {
+            target: "example.com:443".to_string(),
+            certificate_chain: Some(CertificateAnalysisResult {
+                chain: CertificateChain {
+                    certificates: vec![cert],
+                    chain_length: 1,
+                    chain_size_bytes: 1000,
+                },
+                validation: ValidationResult {
+                    valid: true,
+                    issues: Vec::new(),
+                    trust_chain_valid: true,
+                    hostname_match: true,
+                    not_expired: true,
+                    signature_valid: true,
+                    trusted_ca: None,
+                    platform_trust: None,
+                },
+                revocation: None,
+            }),
+            ..Default::default()
+        };
+
+        let persisted = PersistedScan::from_scan_results(&results);
+
+        assert_eq!(persisted.certificates.len(), 1);
+        assert_eq!(persisted.certificates[0].not_before, expected_not_before);
+        assert_eq!(persisted.certificates[0].not_after, expected_not_after);
     }
 }

@@ -1,7 +1,10 @@
 use super::analysis::{classify_fs_grade, grade_to_string};
-use super::{ForwardSecrecyAnalysis, ForwardSecrecyCipher, ProtocolAdvancedTester};
+use super::{
+    AdvancedCipherProbeOutcome, ForwardSecrecyAnalysis, ForwardSecrecyCipher, FsGrade,
+    ProtocolAdvancedTester,
+};
 use crate::Result;
-use openssl::ssl::{SslConnector, SslMethod};
+use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
 use tokio::time::Duration;
 
 const FS_CIPHERS: &[(&str, &str, &str, &str, u16)] = &[
@@ -77,26 +80,43 @@ impl ProtocolAdvancedTester {
     pub async fn test_forward_secrecy_detailed(&self) -> Result<ForwardSecrecyAnalysis> {
         let mut supported_fs_ciphers = Vec::new();
         let mut supported_non_fs_ciphers = Vec::new();
+        let mut saw_conclusive_probe = false;
+        let mut saw_inconclusive_probe = false;
 
         for (cipher, protocol, kex, enc, bits) in FS_CIPHERS {
-            if self.test_cipher_support(cipher).await.unwrap_or(false) {
-                supported_fs_ciphers.push(ForwardSecrecyCipher {
-                    name: (*cipher).to_string(),
-                    protocol: (*protocol).to_string(),
-                    key_exchange: (*kex).to_string(),
-                    encryption: (*enc).to_string(),
-                    bits: *bits,
-                });
+            match self.test_cipher_support_outcome(cipher).await {
+                Ok(AdvancedCipherProbeOutcome::Supported) => {
+                    saw_conclusive_probe = true;
+                    supported_fs_ciphers.push(ForwardSecrecyCipher {
+                        name: (*cipher).to_string(),
+                        protocol: (*protocol).to_string(),
+                        key_exchange: (*kex).to_string(),
+                        encryption: (*enc).to_string(),
+                        bits: *bits,
+                    });
+                }
+                Ok(AdvancedCipherProbeOutcome::NotSupported) => saw_conclusive_probe = true,
+                Ok(AdvancedCipherProbeOutcome::Inconclusive) | Err(_) => {
+                    saw_inconclusive_probe = true;
+                }
             }
         }
 
         for cipher in NON_FS_CIPHERS {
-            if self.test_cipher_support(cipher).await.unwrap_or(false) {
-                supported_non_fs_ciphers.push((*cipher).to_string());
+            match self.test_cipher_support_outcome(cipher).await {
+                Ok(AdvancedCipherProbeOutcome::Supported) => {
+                    saw_conclusive_probe = true;
+                    supported_non_fs_ciphers.push((*cipher).to_string());
+                }
+                Ok(AdvancedCipherProbeOutcome::NotSupported) => saw_conclusive_probe = true,
+                Ok(AdvancedCipherProbeOutcome::Inconclusive) | Err(_) => {
+                    saw_inconclusive_probe = true;
+                }
             }
         }
 
         let total_ciphers = supported_fs_ciphers.len() + supported_non_fs_ciphers.len();
+        let inconclusive = total_ciphers == 0 && saw_inconclusive_probe && !saw_conclusive_probe;
         let fs_percentage = if total_ciphers > 0 {
             (supported_fs_ciphers.len() as f64 / total_ciphers as f64) * 100.0
         } else {
@@ -113,19 +133,27 @@ impl ProtocolAdvancedTester {
         } else {
             false
         };
-        let grade = classify_fs_grade(fs_percentage, fs_supported);
+        let grade = if inconclusive {
+            FsGrade::Unknown
+        } else {
+            classify_fs_grade(fs_percentage, fs_supported)
+        };
 
-        let details = format!(
-            "Forward Secrecy: {}. ECDHE: {}. DHE: {}. FS preferred: {}. {}/{} ciphers ({:.1}%) support FS. Grade: {}",
-            if fs_supported { "YES" } else { "NO" },
-            ecdhe_supported,
-            dhe_supported,
-            preferred,
-            supported_fs_ciphers.len(),
-            total_ciphers,
-            fs_percentage,
-            grade_to_string(grade)
-        );
+        let details = if inconclusive {
+            "Forward Secrecy analysis inconclusive - no complete cipher probe succeeded".to_string()
+        } else {
+            format!(
+                "Forward Secrecy: {}. ECDHE: {}. DHE: {}. FS preferred: {}. {}/{} ciphers ({:.1}%) support FS. Grade: {}",
+                if fs_supported { "YES" } else { "NO" },
+                ecdhe_supported,
+                dhe_supported,
+                preferred,
+                supported_fs_ciphers.len(),
+                total_ciphers,
+                fs_percentage,
+                grade_to_string(grade)
+            )
+        };
 
         Ok(ForwardSecrecyAnalysis {
             supported: fs_supported,
@@ -136,6 +164,7 @@ impl ProtocolAdvancedTester {
             non_fs_ciphers: supported_non_fs_ciphers,
             fs_percentage,
             grade,
+            inconclusive,
             details,
         })
     }
@@ -155,7 +184,8 @@ impl ProtocolAdvancedTester {
 
         let std_stream =
             crate::utils::network::into_blocking_std_stream(stream, handshake_timeout)?;
-        let builder = SslConnector::builder(SslMethod::tls())?;
+        let mut builder = SslConnector::builder(SslMethod::tls())?;
+        builder.set_verify(SslVerifyMode::NONE);
         let connector = builder.build();
         let ssl_stream = connector.connect(&self.target.hostname, std_stream)?;
 
@@ -166,6 +196,9 @@ impl ProtocolAdvancedTester {
         })?;
 
         let cipher_name = cipher.name();
-        Ok(cipher_name.contains("ECDHE") || cipher_name.contains("DHE"))
+        Ok(cipher_name.contains("ECDHE")
+            || cipher_name.contains("DHE")
+            || cipher_name.starts_with("TLS_AES_")
+            || cipher_name.starts_with("TLS_CHACHA20_"))
     }
 }

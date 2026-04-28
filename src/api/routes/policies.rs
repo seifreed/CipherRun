@@ -39,6 +39,23 @@ fn existing_policy_path(policy_dir: &std::path::Path, id: &str) -> Result<PathBu
     Ok(policy_path)
 }
 
+fn policy_id_from_request_name(name: &str) -> Result<String, ApiError> {
+    if name.trim().is_empty() {
+        return Err(ApiError::BadRequest(
+            "Policy name cannot be empty".to_string(),
+        ));
+    }
+
+    let policy_id = sanitize_filename(name);
+    if !policy_id.chars().any(char::is_alphanumeric) {
+        return Err(ApiError::BadRequest(
+            "Policy name must contain at least one letter or number".to_string(),
+        ));
+    }
+
+    Ok(policy_id)
+}
+
 /// Create or update policy
 ///
 /// Creates a new policy or updates an existing one
@@ -68,7 +85,7 @@ pub async fn create_policy(
     PolicyLoader::load_from_string(&request.rules)
         .map_err(|e| ApiError::BadRequest(format!("Invalid policy YAML: {}", e)))?;
 
-    let policy_id = sanitize_filename(&request.name);
+    let policy_id = policy_id_from_request_name(&request.name)?;
     let policy_path = sanitized_policy_path(policy_dir, &policy_id).map_err(|e| match e {
         ApiError::BadRequest(_) => {
             ApiError::BadRequest(format!("Invalid policy filename: {}", policy_id))
@@ -290,6 +307,48 @@ protocols:
         let err = create_policy(State(state), Json(request))
             .await
             .expect_err("invalid policy should error");
+
+        assert!(matches!(err, ApiError::BadRequest(_)));
+        let _ = std::fs::remove_dir_all(&policy_dir);
+    }
+
+    #[tokio::test]
+    async fn test_create_policy_rejects_empty_request_name() {
+        let policy_dir = std::env::temp_dir().join("cipherrun_policy_tests_empty_name");
+        let _ = std::fs::remove_dir_all(&policy_dir);
+        let state = build_state(policy_dir.clone());
+
+        let request = PolicyRequest {
+            name: " \t ".to_string(),
+            description: None,
+            rules: sample_policy_yaml(),
+            enabled: true,
+        };
+
+        let err = create_policy(State(state), Json(request))
+            .await
+            .expect_err("empty request name should fail");
+
+        assert!(matches!(err, ApiError::BadRequest(_)));
+        let _ = std::fs::remove_dir_all(&policy_dir);
+    }
+
+    #[tokio::test]
+    async fn test_create_policy_rejects_name_without_filename_characters() {
+        let policy_dir = std::env::temp_dir().join("cipherrun_policy_tests_symbol_name");
+        let _ = std::fs::remove_dir_all(&policy_dir);
+        let state = build_state(policy_dir.clone());
+
+        let request = PolicyRequest {
+            name: "...".to_string(),
+            description: None,
+            rules: sample_policy_yaml(),
+            enabled: true,
+        };
+
+        let err = create_policy(State(state), Json(request))
+            .await
+            .expect_err("policy name without usable filename characters should fail");
 
         assert!(matches!(err, ApiError::BadRequest(_)));
         let _ = std::fs::remove_dir_all(&policy_dir);

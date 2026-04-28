@@ -13,7 +13,9 @@ fn extract_cn_value(subject_lower: &str) -> Option<&str> {
         }
         let value_start = pos + "cn=".len();
         let rest = &subject_lower[value_start..];
-        let value_end = rest.find([',', '/']).unwrap_or(rest.len());
+        // Use ", " (comma-space) as the RDN separator to avoid cutting
+        // CNs that legitimately contain commas inside the value.
+        let value_end = rest.find(", ").unwrap_or(rest.len());
         return Some(rest[..value_end].trim());
     }
     None

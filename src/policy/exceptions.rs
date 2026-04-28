@@ -32,7 +32,11 @@ impl ExceptionMatcher {
             }
 
             // Check if rule matches
-            if exception.rules.contains(&rule_path.to_string()) {
+            if exception
+                .rules
+                .iter()
+                .any(|rule| Self::matches_rule_path(rule, rule_path))
+            {
                 return Some(exception);
             }
         }
@@ -42,10 +46,13 @@ impl ExceptionMatcher {
 
     /// Check if target matches domain pattern (supports wildcards)
     fn matches_domain(&self, target: &str, pattern: &str) -> bool {
-        let hostname = split_target_host_port(target)
-            .map(|(hostname, _)| hostname)
-            .unwrap_or_else(|_| target.to_string());
-        let hostname = hostname.as_str();
+        let Ok((hostname, _)) = split_target_host_port(target) else {
+            return false;
+        };
+        let hostname_lower = hostname.trim().to_ascii_lowercase();
+        let pattern_lower = pattern.trim().to_ascii_lowercase();
+        let hostname = hostname_lower.as_str();
+        let pattern = pattern_lower.as_str();
 
         // Exact match
         if pattern == hostname {
@@ -78,6 +85,12 @@ impl ExceptionMatcher {
         }
 
         false
+    }
+
+    fn matches_rule_path(configured_rule: &str, rule_path: &str) -> bool {
+        configured_rule
+            .trim()
+            .eq_ignore_ascii_case(rule_path.trim())
     }
 
     /// Check if an exception has expired
@@ -181,6 +194,69 @@ mod tests {
 
         assert!(matcher.matches_domain("example.com", "example.com"));
         assert!(!matcher.matches_domain("subdomain.example.com", "example.com"));
+    }
+
+    #[test]
+    fn test_domain_matching_is_case_insensitive() {
+        let exception = PolicyException {
+            domain: Some("*.Example.COM".to_string()),
+            rules: vec!["protocols.prohibited".to_string()],
+            reason: "Case insensitive DNS match".to_string(),
+            expires: None,
+            approved_by: "Admin".to_string(),
+            ticket: None,
+        };
+
+        let matcher = ExceptionMatcher::new(vec![exception]);
+
+        assert!(matcher.matches_domain("API.example.com:443", "*.Example.COM"));
+        assert!(matcher.matches_domain("EXAMPLE.com", "*.Example.COM"));
+        assert!(
+            matcher
+                .is_exception("API.example.com:443", "protocols.prohibited")
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn test_exception_match_trims_domain_and_rule_path() {
+        let exception = PolicyException {
+            domain: Some(" example.com ".to_string()),
+            rules: vec![" Protocols.Prohibited ".to_string()],
+            reason: "Formatting tolerant exception".to_string(),
+            expires: None,
+            approved_by: "Admin".to_string(),
+            ticket: None,
+        };
+
+        let matcher = ExceptionMatcher::new(vec![exception]);
+
+        assert!(
+            matcher
+                .is_exception("example.com:443", "protocols.prohibited")
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn test_malformed_target_does_not_match_domain_exception() {
+        let exception = PolicyException {
+            domain: Some("example.com:bad".to_string()),
+            rules: vec!["protocols.prohibited".to_string()],
+            reason: "Malformed target should not match raw fallback".to_string(),
+            expires: None,
+            approved_by: "Admin".to_string(),
+            ticket: None,
+        };
+
+        let matcher = ExceptionMatcher::new(vec![exception]);
+
+        assert!(!matcher.matches_domain("example.com:bad", "example.com:bad"));
+        assert!(
+            matcher
+                .is_exception("example.com:bad", "protocols.prohibited")
+                .is_none()
+        );
     }
 
     #[test]

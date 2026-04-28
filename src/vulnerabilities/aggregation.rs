@@ -61,13 +61,16 @@ pub fn merge_vulnerability_result(existing: &mut VulnerabilityResult, new: &Vuln
         return;
     }
 
-    // Case 3: Neither is vulnerable - preserve inconclusive state and more informative details
+    // Case 3: Neither is vulnerable — preserve inconclusive state and merge
+    // diagnostic details across IPs. V10 fix: previously we only merged
+    // details when `new.inconclusive` flipped the existing state; two
+    // confirmed-not-vulnerable results from different IPs would silently
+    // discard one of the two explanations.
     if !new.vulnerable && !existing.vulnerable {
-        // If new result is inconclusive, propagate that status
         if new.inconclusive && !existing.inconclusive {
             existing.inconclusive = true;
-            merge_unique_details(&mut existing.details, &new.details);
         }
+        merge_unique_details(&mut existing.details, &new.details);
         // Note: We rely on the `inconclusive` boolean flag, not string content.
         // String checks like `details.contains("Inconclusive")` are unreliable
         // and were removed to avoid confusion between status and message content.
@@ -192,9 +195,24 @@ mod tests {
     }
 
     #[test]
-    fn test_merge_neither_vulnerable_keeps_existing_details() {
+    fn test_merge_neither_vulnerable_merges_unique_details() {
+        // V10 fix: two distinct not-vulnerable results from different IPs now
+        // both contribute to the final details. Prior behavior silently dropped
+        // one explanation, losing diagnostic value for multi-IP scans.
         let mut existing = make_result(false, Severity::Info, "Not vulnerable");
         let new = make_result(false, Severity::Info, "No issues detected");
+
+        merge_vulnerability_result(&mut existing, &new);
+        assert!(existing.details.contains("Not vulnerable"));
+        assert!(existing.details.contains("No issues detected"));
+    }
+
+    #[test]
+    fn test_merge_neither_vulnerable_dedupes_identical_details() {
+        // Idempotence: merging the same not-vulnerable detail twice should
+        // not duplicate the segment.
+        let mut existing = make_result(false, Severity::Info, "Not vulnerable");
+        let new = make_result(false, Severity::Info, "Not vulnerable");
 
         merge_vulnerability_result(&mut existing, &new);
         assert_eq!(existing.details, "Not vulnerable");

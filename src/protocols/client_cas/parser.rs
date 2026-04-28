@@ -124,12 +124,7 @@ impl ClientCAsTester {
 
         // Need at least 10 bytes: 3 for OID prefix + 3 for OID type + 1 for length + 3 min data
         // But we access up to i + 6, so we need i + 6 < dn_data.len()
-        for i in 0..dn_data.len().saturating_sub(9) {
-            // Explicit bounds check for array slicing
-            if i + 6 >= dn_data.len() {
-                break;
-            }
-
+        for i in 0..dn_data.len().saturating_sub(6) {
             if dn_data[i..].len() >= 9  // Need at least 9 bytes: 3 (OID) + 3 (type) + 1 (len) + 2+ (value)
                 && dn_data[i..i + 3] == [0x06, 0x03, 0x55]
                 && (dn_data[i + 3..i + 6] == [0x04, 0x03, 0x0c]
@@ -141,10 +136,6 @@ impl ClientCAsTester {
                 {
                     cn = Some(value.to_string());
                 }
-            }
-
-            if i + 6 >= dn_data.len() {
-                break;
             }
 
             if dn_data[i..].len() >= 9

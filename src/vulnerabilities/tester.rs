@@ -288,11 +288,25 @@ impl std::fmt::Display for VulnerabilitySummary {
 mod tests {
     use super::*;
     use std::collections::HashMap;
+    use std::net::TcpListener;
 
     fn dummy_target() -> Target {
         Target::with_ips(
             "example.test".to_string(),
             443,
+            vec!["127.0.0.1".parse().expect("valid IP")],
+        )
+        .expect("test assertion should succeed")
+    }
+
+    fn inactive_target() -> Target {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+
+        Target::with_ips(
+            "localhost".to_string(),
+            port,
             vec!["127.0.0.1".parse().expect("valid IP")],
         )
         .expect("test assertion should succeed")
@@ -433,6 +447,32 @@ mod tests {
                 .await
                 .expect("ok")
                 .vulnerable
+        );
+    }
+
+    #[tokio::test]
+    async fn test_cached_cipher_checks_without_protocol_evidence_are_inconclusive() {
+        let scanner = VulnerabilityScanner::new(inactive_target());
+        let cache = HashMap::new();
+
+        let rc4 = scanner.test_rc4_cached(&cache).await.expect("ok");
+        let null = scanner.test_null_ciphers_cached(&cache).await.expect("ok");
+        let beast = scanner.test_beast_cached(&cache).await.expect("ok");
+
+        assert!(
+            rc4.inconclusive,
+            "empty cache must not be reported as a clean RC4 pass: {}",
+            rc4.details
+        );
+        assert!(
+            null.inconclusive,
+            "empty cache must not be reported as a clean NULL-cipher pass: {}",
+            null.details
+        );
+        assert!(
+            beast.inconclusive,
+            "empty cache must not be reported as a clean BEAST pass: {}",
+            beast.details
         );
     }
 

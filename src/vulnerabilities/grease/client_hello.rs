@@ -105,7 +105,7 @@ impl GreaseTester {
     }
 
     /// Build ClientHello with GREASE cipher suites interleaved with valid ciphers
-    pub(super) fn build_client_hello_with_grease_ciphers(&self) -> Vec<u8> {
+    pub(super) fn build_client_hello_with_grease_ciphers(&self) -> crate::Result<Vec<u8>> {
         let mut builder = ClientHelloBuilder::new(Protocol::TLS12);
 
         // Add valid cipher suites interleaved with GREASE values
@@ -141,11 +141,13 @@ impl GreaseTester {
         builder.add_extended_master_secret();
         builder.add_session_ticket();
 
-        builder.build().expect("test assertion should succeed")
+        builder
+            .build()
+            .map_err(|e| crate::TlsError::Other(format!("GREASE ClientHello build failed: {}", e)))
     }
 
     /// Build ClientHello with GREASE extensions
-    pub(super) fn build_client_hello_with_grease_extensions(&self) -> Vec<u8> {
+    pub(super) fn build_client_hello_with_grease_extensions(&self) -> crate::Result<Vec<u8>> {
         let mut builder = ClientHelloBuilder::new(Protocol::TLS12);
 
         builder.add_ciphers(&[0xc02f, 0xc030, 0xc02b, 0xc02c, 0x009e, 0x009f]);
@@ -182,11 +184,13 @@ impl GreaseTester {
             ));
         }
 
-        builder.build().expect("test assertion should succeed")
+        builder
+            .build()
+            .map_err(|e| crate::TlsError::Other(format!("GREASE ClientHello build failed: {}", e)))
     }
 
     /// Build ClientHello with GREASE supported groups
-    pub(super) fn build_client_hello_with_grease_groups(&self) -> Vec<u8> {
+    pub(super) fn build_client_hello_with_grease_groups(&self) -> crate::Result<Vec<u8>> {
         let mut builder = ClientHelloBuilder::new(Protocol::TLS12);
 
         builder.add_ciphers(&[0xc02f, 0xc030, 0xc02b, 0xc02c, 0x009e, 0x009f]);
@@ -222,11 +226,13 @@ impl GreaseTester {
         builder.add_extended_master_secret();
         builder.add_session_ticket();
 
-        builder.build().expect("test assertion should succeed")
+        builder
+            .build()
+            .map_err(|e| crate::TlsError::Other(format!("GREASE ClientHello build failed: {}", e)))
     }
 
     /// Build ClientHello with all GREASE values combined
-    pub(super) fn build_client_hello_combined_grease(&self) -> Vec<u8> {
+    pub(super) fn build_client_hello_combined_grease(&self) -> crate::Result<Vec<u8>> {
         let mut builder = ClientHelloBuilder::new(Protocol::TLS12);
 
         // Add ciphers with GREASE interleaved
@@ -264,30 +270,32 @@ impl GreaseTester {
             ));
         }
 
-        builder.build().expect("test assertion should succeed")
+        builder
+            .build()
+            .map_err(|e| crate::TlsError::Other(format!("GREASE ClientHello build failed: {}", e)))
     }
 
     /// Test with GREASE cipher suites
     pub(super) async fn test_grease_cipher_suites(&self) -> Result<GreaseTestOutcome> {
-        let client_hello = self.build_client_hello_with_grease_ciphers();
+        let client_hello = self.build_client_hello_with_grease_ciphers()?;
         self.send_client_hello(&client_hello).await
     }
 
     /// Test with GREASE extensions
     pub(super) async fn test_grease_extensions(&self) -> Result<GreaseTestOutcome> {
-        let client_hello = self.build_client_hello_with_grease_extensions();
+        let client_hello = self.build_client_hello_with_grease_extensions()?;
         self.send_client_hello(&client_hello).await
     }
 
     /// Test with GREASE supported groups
     pub(super) async fn test_grease_supported_groups(&self) -> Result<GreaseTestOutcome> {
-        let client_hello = self.build_client_hello_with_grease_groups();
+        let client_hello = self.build_client_hello_with_grease_groups()?;
         self.send_client_hello(&client_hello).await
     }
 
     /// Test with combined GREASE values
     pub(super) async fn test_combined_grease(&self) -> Result<GreaseTestOutcome> {
-        let client_hello = self.build_client_hello_combined_grease();
+        let client_hello = self.build_client_hello_combined_grease()?;
         self.send_client_hello(&client_hello).await
     }
 }

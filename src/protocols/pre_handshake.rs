@@ -54,7 +54,7 @@ impl PreHandshakeScanner {
         let bytes_read = timeout(self.timeout_duration, stream.read(&mut response_buffer))
             .await
             .map_err(|_| TlsError::Timeout {
-                duration: self.timeout_duration,
+                duration: Some(self.timeout_duration),
             })?
             .map_err(|e| TlsError::IoError { source: e })?;
 
@@ -139,25 +139,41 @@ mod tests {
         record
     }
 
-    fn build_server_hello_body(cipher_suite: u16, compression: u8) -> Vec<u8> {
-        let mut body = vec![0u8; 38];
-        body[0] = 0x03;
-        body[1] = 0x03;
+    /// Build an RFC-compliant ServerHello body: version(2) + random(32) +
+    /// session_id_len(1) + session_id(sid_len) + cipher(2) + compression(1).
+    /// Takes `session_id_len` to let tests exercise non-zero IDs as well.
+    fn build_server_hello_body(
+        version_major: u8,
+        version_minor: u8,
+        session_id_len: usize,
+        cipher_suite: u16,
+        compression: u8,
+    ) -> Vec<u8> {
+        let total = 2 + 32 + 1 + session_id_len + 2 + 1;
+        let mut body = vec![0u8; total];
+        body[0] = version_major;
+        body[1] = version_minor;
         for byte in body[2..34].iter_mut() {
             *byte = 0x11;
         }
-        body[34] = (cipher_suite >> 8) as u8;
-        body[35] = (cipher_suite & 0xff) as u8;
-        body[36] = compression;
+        body[34] = session_id_len as u8;
+        for byte in body[35..35 + session_id_len].iter_mut() {
+            *byte = 0x42;
+        }
+        let cipher_off = 35 + session_id_len;
+        body[cipher_off] = (cipher_suite >> 8) as u8;
+        body[cipher_off + 1] = (cipher_suite & 0xff) as u8;
+        body[cipher_off + 2] = compression;
         body
     }
 
     #[test]
     fn test_build_server_hello_body_length() {
-        let body = build_server_hello_body(0x1301, 0x00);
+        let body = build_server_hello_body(0x03, 0x03, 0, 0x1301, 0x00);
         assert_eq!(body.len(), 38);
-        assert_eq!(body[34], 0x13);
-        assert_eq!(body[35], 0x01);
+        assert_eq!(body[34], 0x00); // session_id_len
+        assert_eq!(body[35], 0x13); // cipher high byte
+        assert_eq!(body[36], 0x01); // cipher low byte
     }
 
     #[test]
@@ -229,7 +245,7 @@ mod tests {
         .expect("target should build");
 
         let scanner = PreHandshakeScanner::new(target);
-        let server_hello_body = build_server_hello_body(0x1301, 0x00);
+        let server_hello_body = build_server_hello_body(0x03, 0x03, 0, 0x1301, 0x00);
         let server_hello = build_handshake_message(0x02, &server_hello_body);
         let record = build_handshake_record(&[server_hello]);
 
@@ -237,11 +253,94 @@ mod tests {
             .parse_handshake_response(&record)
             .expect("test assertion should succeed");
 
-        assert_eq!(parsed.protocol_version, Some("1.3".to_string()));
+        assert_eq!(parsed.protocol_version, Some("TLS 1.2".to_string()));
         assert_eq!(parsed.cipher_suite, Some("0x1301".to_string()));
         assert_eq!(parsed.compression_method, Some(0x00));
         assert!(parsed.server_hello_data.is_some());
         assert!(parsed.certificate_data.is_none());
+    }
+
+    #[test]
+    fn test_parse_handshake_response_server_hello_with_session_id() {
+        // Regression test for S2: cipher_offset must account for session_id_len.
+        // Here session_id_len=16, so cipher lives at offset 35+16=51 within the
+        // ServerHello body. The old `offset + 34` formula would read into the
+        // session_id bytes (0x42) and produce cipher_suite = "0x4242".
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["93.184.216.34".parse().expect("valid IP")],
+        )
+        .expect("target should build");
+
+        let scanner = PreHandshakeScanner::new(target);
+        let server_hello_body = build_server_hello_body(0x03, 0x03, 16, 0xc02f, 0x00);
+        let server_hello = build_handshake_message(0x02, &server_hello_body);
+        let record = build_handshake_record(&[server_hello]);
+
+        let parsed = scanner
+            .parse_handshake_response(&record)
+            .expect("test assertion should succeed");
+
+        assert_eq!(parsed.cipher_suite, Some("0xc02f".to_string()));
+        assert_eq!(parsed.compression_method, Some(0x00));
+    }
+
+    #[test]
+    fn test_parse_handshake_response_low_version_byte_does_not_panic() {
+        // Regression test for S1: if a malformed or non-standard ServerHello
+        // arrives with major version byte < 0x02 (legitimately SSLv2-era or
+        // adversarial), the previous `version_maj - 2` arithmetic underflowed
+        // u8 and panicked in debug builds. The replacement match on the u16
+        // version field must map to "Unknown (...)" without panicking.
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["93.184.216.34".parse().expect("valid IP")],
+        )
+        .expect("target should build");
+
+        let scanner = PreHandshakeScanner::new(target);
+        let server_hello_body = build_server_hello_body(0x01, 0x00, 0, 0x0700, 0x00);
+        let server_hello = build_handshake_message(0x02, &server_hello_body);
+        let record = build_handshake_record(&[server_hello]);
+
+        let parsed = scanner
+            .parse_handshake_response(&record)
+            .expect("parser must not panic on version bytes < 0x02");
+        assert_eq!(
+            parsed.protocol_version,
+            Some("Unknown (0x0100)".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_handshake_response_maps_known_versions() {
+        // Regression test: each supported version bytes-pair maps to its canonical
+        // name via the u16 match (not arithmetic subtraction).
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["93.184.216.34".parse().expect("valid IP")],
+        )
+        .expect("target should build");
+        let scanner = PreHandshakeScanner::new(target);
+
+        for (major, minor, expected) in [
+            (0x03u8, 0x00u8, "SSL 3.0"),
+            (0x03, 0x01, "TLS 1.0"),
+            (0x03, 0x02, "TLS 1.1"),
+            (0x03, 0x03, "TLS 1.2"),
+            (0x03, 0x04, "TLS 1.3"),
+        ] {
+            let body = build_server_hello_body(major, minor, 0, 0x1301, 0x00);
+            let msg = build_handshake_message(0x02, &body);
+            let record = build_handshake_record(&[msg]);
+            let parsed = scanner
+                .parse_handshake_response(&record)
+                .expect("parse should succeed");
+            assert_eq!(parsed.protocol_version, Some(expected.to_string()));
+        }
     }
 
     #[test]
@@ -264,7 +363,7 @@ mod tests {
         let cert = params.self_signed(&key_pair).expect("cert should build");
         let cert_der = cert.der().as_ref().to_vec();
 
-        let server_hello_body = build_server_hello_body(0xc02f, 0x00);
+        let server_hello_body = build_server_hello_body(0x03, 0x03, 0, 0xc02f, 0x00);
         let server_hello = build_handshake_message(0x02, &server_hello_body);
 
         let mut cert_body = Vec::new();

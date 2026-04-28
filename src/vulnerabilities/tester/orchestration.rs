@@ -674,9 +674,31 @@ impl VulnerabilityScanner {
         &self,
         cipher_cache: &HashMap<Protocol, crate::ciphers::tester::ProtocolCipherSummary>,
     ) -> Result<VulnerabilityResult> {
-        Ok(super::cipher_checks::evaluate_beast(
+        let mut result = super::cipher_checks::evaluate_beast(
             cipher_cache.get(&Protocol::TLS10),
             cipher_cache.get(&Protocol::SSLv3),
-        ))
+        );
+
+        if !result.vulnerable {
+            let has_any_cipher_evidence = cipher_cache
+                .values()
+                .any(super::cipher_checks::summary_has_cipher_evidence);
+            let legacy_protocol_present = cipher_cache.contains_key(&Protocol::TLS10)
+                || cipher_cache.contains_key(&Protocol::SSLv3);
+            let has_legacy_cipher_evidence = [Protocol::TLS10, Protocol::SSLv3]
+                .into_iter()
+                .filter_map(|protocol| cipher_cache.get(&protocol))
+                .any(super::cipher_checks::summary_has_cipher_evidence);
+
+            if !has_any_cipher_evidence || (legacy_protocol_present && !has_legacy_cipher_evidence)
+            {
+                result.inconclusive = true;
+                result.details =
+                    "BEAST test inconclusive - no successful TLS 1.0/SSL 3.0 cipher enumeration results"
+                        .to_string();
+            }
+        }
+
+        Ok(result)
     }
 }

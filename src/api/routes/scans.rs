@@ -149,11 +149,19 @@ pub async fn get_scan_results(
     let job = scan_adapter::get_scan(state.job_queue.as_ref(), &id).await?;
 
     // Check if scan is completed
-    if !matches!(job.status, ScanStatus::Completed) {
+    if matches!(job.status, ScanStatus::Queued | ScanStatus::Running) {
         return Err(ApiError::BadRequest(format!(
             "Scan is not completed yet (status: {:?})",
             job.status
         )));
+    }
+    if !matches!(job.status, ScanStatus::Completed) {
+        let message = match job.status {
+            ScanStatus::Failed => "Scan failed, no results available".to_string(),
+            ScanStatus::Cancelled => "Scan was cancelled".to_string(),
+            _ => format!("Scan is not completed yet (status: {:?})", job.status),
+        };
+        return Err(ApiError::BadRequest(message));
     }
 
     // Get results

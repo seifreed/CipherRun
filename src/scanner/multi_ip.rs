@@ -100,7 +100,7 @@ impl MultiIpScanner {
         }
 
         // Create semaphore to limit concurrency
-        let semaphore = Arc::new(Semaphore::new(self.max_concurrent_scans));
+        let semaphore = Arc::new(Semaphore::new(self.max_concurrent_scans.max(1)));
         let mut futures = FuturesUnordered::new();
 
         // Performance optimization: Use Arc to avoid cloning Target and request for each scan

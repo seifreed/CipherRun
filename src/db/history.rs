@@ -1,3 +1,4 @@
+use crate::TlsError;
 use crate::db::{CipherRunDatabase, ScanRecord, ScanRepository};
 use chrono::{DateTime, Utc};
 
@@ -9,6 +10,12 @@ impl CipherRunDatabase {
         port: u16,
         limit: i64,
     ) -> crate::Result<Vec<ScanRecord>> {
+        if limit <= 0 {
+            return Err(TlsError::InvalidInput {
+                message: format!("History limit must be positive: {}", limit),
+            });
+        }
+
         self.scan_repo
             .get_scans_by_hostname(hostname, port, limit)
             .await
@@ -30,7 +37,7 @@ impl CipherRunDatabase {
         scans.sort_by(|a, b| {
             a.scan_timestamp
                 .cmp(&b.scan_timestamp)
-                .then_with(|| a.scan_id.cmp(&b.scan_id))
+                .then_with(|| b.scan_id.cmp(&a.scan_id))
         });
 
         Ok(scans)
@@ -47,6 +54,12 @@ impl CipherRunDatabase {
 
     /// Cleanup old scans based on retention policy
     pub async fn cleanup_old_scans(&self, days: i64) -> crate::Result<u64> {
+        if days < 0 {
+            return Err(TlsError::InvalidInput {
+                message: format!("Cleanup days cannot be negative: {}", days),
+            });
+        }
+
         self.scan_repo.delete_old_scans(days).await
     }
 }

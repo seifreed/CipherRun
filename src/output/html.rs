@@ -278,6 +278,7 @@ mod tests {
             protocols: vec![crate::protocols::ProtocolTestResult {
                 protocol: crate::protocols::Protocol::TLS12,
                 supported: true,
+                inconclusive: false,
                 preferred: false,
                 ciphers_count: 0,
                 handshake_time_ms: None,

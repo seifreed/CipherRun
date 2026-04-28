@@ -106,14 +106,15 @@ impl CipherTester {
     }
 
     /// Swap retry queue into cipher queue for a new retry round.
-    /// Returns `false` if max retries have been exceeded.
+    /// Returns `false` if max retries have been exceeded. The check runs
+    /// BEFORE incrementing so that `max_retries=N` permits N genuine retry
+    /// rounds (previous `+= 1; >= N` sequence executed only N-1 retries).
     async fn prepare_retry_round(
         cipher_queue: &mut Vec<CipherSuite>,
         retry_queue: &mut Vec<CipherSuite>,
         retry_round: &mut usize,
         max_retries: usize,
     ) -> bool {
-        *retry_round += 1;
         if *retry_round >= max_retries {
             tracing::warn!(
                 "Max ENETDOWN retries ({}) reached, {} ciphers could not be tested",
@@ -122,6 +123,7 @@ impl CipherTester {
             );
             return false;
         }
+        *retry_round += 1;
         let count = retry_queue.len();
         *cipher_queue = std::mem::take(retry_queue);
         tracing::info!(
@@ -415,6 +417,14 @@ mod tests {
     }
 
     #[test]
+    fn protocol_compatibility_is_case_insensitive() {
+        let tester = CipherTester::new(dummy_target());
+        let cipher = make_cipher("1301", "tlsv1.3", "aesgcm", 256, false, "any");
+        assert!(tester.is_cipher_compatible_with_protocol(&cipher, Protocol::TLS13));
+        assert!(!tester.is_cipher_compatible_with_protocol(&cipher, Protocol::TLS12));
+    }
+
+    #[test]
     fn tls13_cipher_not_compatible_with_tls12() {
         let tester = CipherTester::new(dummy_target());
         let cipher = make_cipher("1301", "TLS13", "AESGCM", 256, false, "any");
@@ -646,5 +656,45 @@ mod tests {
         let current_batch_size: usize = 1;
         let new_size = (current_batch_size / 3).max(1);
         assert_eq!(new_size, 1);
+    }
+
+    #[tokio::test]
+    async fn prepare_retry_round_allows_full_max_retries() {
+        // Regression test for S3: `max_retries=3` must permit 3 retry rounds
+        // (rounds 1, 2, 3) — the previous "increment-then-check ge" pattern
+        // rejected the third round, allowing only 2.
+        //
+        // We use `RETRY_BACKOFF_SECS=0` implicitly by not sleeping (test will
+        // still take a few seconds at real backoff; keep total iterations low).
+        let mut cipher_queue: Vec<CipherSuite> = Vec::new();
+        let mut retry_queue: Vec<CipherSuite> = vec![tls12_cipher("0x0001", "AES128", 128)];
+        let mut round: usize = 0;
+
+        let r1 =
+            CipherTester::prepare_retry_round(&mut cipher_queue, &mut retry_queue, &mut round, 3)
+                .await;
+        assert!(r1, "round 1 should proceed");
+        assert_eq!(round, 1);
+        // Simulate the caller re-populating retry_queue for another round.
+        retry_queue.push(tls12_cipher("0x0002", "AES128", 128));
+
+        let r2 =
+            CipherTester::prepare_retry_round(&mut cipher_queue, &mut retry_queue, &mut round, 3)
+                .await;
+        assert!(r2, "round 2 should proceed");
+        assert_eq!(round, 2);
+        retry_queue.push(tls12_cipher("0x0003", "AES128", 128));
+
+        let r3 =
+            CipherTester::prepare_retry_round(&mut cipher_queue, &mut retry_queue, &mut round, 3)
+                .await;
+        assert!(r3, "round 3 should proceed (was rejected before the fix)");
+        assert_eq!(round, 3);
+        retry_queue.push(tls12_cipher("0x0004", "AES128", 128));
+
+        let r4 =
+            CipherTester::prepare_retry_round(&mut cipher_queue, &mut retry_queue, &mut round, 3)
+                .await;
+        assert!(!r4, "round 4 must be rejected when max_retries=3");
     }
 }

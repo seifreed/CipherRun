@@ -25,6 +25,8 @@ pub struct DhParameterAnalysis {
     pub dh_prime: Option<String>,
     pub generator: Option<u8>,
     pub strength: DhStrength,
+    #[serde(default)]
+    pub inconclusive: bool,
     pub details: String,
 }
 
@@ -44,6 +46,8 @@ pub struct EcdhCurvesAnalysis {
     pub supported_curves: Vec<String>,
     pub server_enforces_preference: bool,
     pub preference_measured: bool,
+    #[serde(default)]
+    pub inconclusive: bool,
     pub details: String,
 }
 
@@ -56,6 +60,8 @@ pub struct KeyExchangeAnalysis {
     pub parameters: KeyExchangeParams,
     pub reuse_detected: bool,
     pub reuse_detection_measured: bool,
+    #[serde(default)]
+    pub inconclusive: bool,
     pub details: String,
 }
 

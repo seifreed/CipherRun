@@ -12,7 +12,6 @@
 // - Maintainability: Phases are smaller, focused units (~50-100 lines each)
 
 pub mod alpn_phase;
-pub mod pqc_readiness_phase;
 pub mod certificate_phase;
 pub mod cipher_phase;
 pub mod client_cas_phase;
@@ -21,12 +20,12 @@ pub mod fingerprint_phase;
 pub mod groups_phase;
 pub mod http_headers_phase;
 pub mod intolerance_phase;
+pub mod pqc_readiness_phase;
 pub mod protocol_phase;
 pub mod signature_phase;
 pub mod vulnerability_phase;
 
 pub use alpn_phase::AlpnPhase;
-pub use pqc_readiness_phase::PqcReadinessPhase;
 pub use certificate_phase::CertificatePhase;
 pub use cipher_phase::CipherPhase;
 pub use client_cas_phase::ClientCasPhase;
@@ -35,6 +34,7 @@ pub use fingerprint_phase::FingerprintPhase;
 pub use groups_phase::GroupsPhase;
 pub use http_headers_phase::HttpHeadersPhase;
 pub use intolerance_phase::IntolerancePhase;
+pub use pqc_readiness_phase::PqcReadinessPhase;
 pub use protocol_phase::ProtocolPhase;
 pub use signature_phase::SignaturePhase;
 pub use vulnerability_phase::VulnerabilityPhase;

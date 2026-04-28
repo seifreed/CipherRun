@@ -10,6 +10,8 @@ pub struct LegacyCompatResult {
     pub anonymous_dh: AnonymousDhTest,
     pub legacy_handshakes: LegacyHandshakeTest,
     pub compatibility_level: CompatibilityLevel,
+    #[serde(default)]
+    pub inconclusive: bool,
     pub details: String,
 }
 
@@ -93,6 +95,7 @@ impl SecurityConcern {
 /// Compatibility level with ancient systems
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CompatibilityLevel {
+    Unknown,
     Modern,
     Compatible,
     Legacy,
@@ -102,6 +105,7 @@ pub enum CompatibilityLevel {
 impl CompatibilityLevel {
     pub fn as_str(&self) -> &'static str {
         match self {
+            CompatibilityLevel::Unknown => "Unknown (test inconclusive)",
             CompatibilityLevel::Modern => "Modern (TLS 1.2+)",
             CompatibilityLevel::Compatible => "Compatible (TLS 1.0+)",
             CompatibilityLevel::Legacy => "Legacy (SSLv3+)",

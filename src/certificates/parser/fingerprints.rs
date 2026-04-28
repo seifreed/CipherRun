@@ -1,6 +1,7 @@
 use crate::Result;
+use crate::certificates::validator::parse_cert_date;
 use base64::Engine;
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use openssl::hash::MessageDigest;
 use openssl::x509::X509 as OpensslX509;
 
@@ -140,20 +141,7 @@ pub(crate) fn format_time_phrase(years: i64, months: i64, days: i64, is_expired:
 }
 
 pub(crate) fn format_expiry_countdown(not_after_str: &str) -> Option<String> {
-    use chrono::NaiveDateTime;
-
-    let not_after = chrono::DateTime::parse_from_rfc3339(not_after_str)
-        .map(|dt| dt.with_timezone(&Utc))
-        .or_else(|_| {
-            NaiveDateTime::parse_from_str(not_after_str, "%Y-%m-%d %H:%M:%S UTC")
-                .map(|dt| DateTime::from_naive_utc_and_offset(dt, Utc))
-        })
-        .or_else(|_| {
-            let cleaned = not_after_str.replace(" UTC", "").replace(" GMT", "");
-            NaiveDateTime::parse_from_str(&cleaned, "%Y-%m-%d %H:%M:%S")
-                .map(|dt| DateTime::from_naive_utc_and_offset(dt, Utc))
-        })
-        .ok()?;
+    let not_after = parse_cert_date(not_after_str)?;
 
     let duration = not_after.signed_duration_since(Utc::now());
     let is_expired = duration.num_seconds() < 0;
@@ -280,5 +268,19 @@ mod tests {
 
         let today = format_expiry_countdown(&Utc::now().to_rfc3339()).unwrap();
         assert!(today.contains("expires today") || today.contains("expired today"));
+    }
+
+    #[test]
+    fn test_format_expiry_countdown_parses_openssl_asn1_time_output() {
+        let not_after = openssl::asn1::Asn1Time::days_from_now(30)
+            .expect("test ASN.1 time should be constructible")
+            .to_string();
+
+        let countdown = format_expiry_countdown(&not_after);
+
+        assert!(
+            countdown.is_some(),
+            "expected countdown for OpenSSL ASN.1 date '{not_after}'"
+        );
     }
 }

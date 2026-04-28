@@ -58,6 +58,27 @@ pub struct Parser {
     log_source_id: String,
 }
 
+fn datetime_from_unix(timestamp_secs: i64, nanos: u32, field: &str) -> Result<DateTime<Utc>> {
+    DateTime::<Utc>::from_timestamp(timestamp_secs, nanos).ok_or_else(|| TlsError::ParseError {
+        message: format!("Invalid {field} timestamp: {timestamp_secs}.{nanos:09}"),
+    })
+}
+
+fn datetime_from_millis(timestamp_ms: u64, field: &str) -> Result<DateTime<Utc>> {
+    let secs = timestamp_ms / 1000;
+    if secs > i64::MAX as u64 {
+        return Err(TlsError::ParseError {
+            message: format!("Invalid {field} timestamp: {timestamp_ms}ms"),
+        });
+    }
+
+    datetime_from_unix(
+        secs as i64,
+        ((timestamp_ms % 1000) * 1_000_000) as u32,
+        field,
+    )
+}
+
 impl Parser {
     /// Create a new parser for a specific log source
     pub fn new(log_source_id: String) -> Self {
@@ -112,11 +133,7 @@ impl Parser {
             leaf_bytes[9],
         ]);
 
-        let timestamp = DateTime::<Utc>::from_timestamp(
-            (timestamp_ms / 1000) as i64,
-            ((timestamp_ms % 1000) * 1_000_000) as u32,
-        )
-        .unwrap_or_else(Utc::now);
+        let timestamp = datetime_from_millis(timestamp_ms, "CT leaf")?;
 
         // Parse log entry type
         let entry_type = u16::from_be_bytes([leaf_bytes[10], leaf_bytes[11]]);
@@ -216,11 +233,17 @@ impl Parser {
             .map(|s| s.to_string());
 
         // Extract validity period
-        let not_before = DateTime::<Utc>::from_timestamp(cert.validity().not_before.timestamp(), 0)
-            .unwrap_or_else(Utc::now);
+        let not_before = datetime_from_unix(
+            cert.validity().not_before.timestamp(),
+            0,
+            "certificate notBefore",
+        )?;
 
-        let not_after = DateTime::<Utc>::from_timestamp(cert.validity().not_after.timestamp(), 0)
-            .unwrap_or_else(Utc::now);
+        let not_after = datetime_from_unix(
+            cert.validity().not_after.timestamp(),
+            0,
+            "certificate notAfter",
+        )?;
 
         // Extract serial number
         let serial = cert.serial.to_str_radix(16).to_uppercase();
@@ -277,6 +300,41 @@ mod tests {
         leaf.extend_from_slice(cert_der);
 
         base64::engine::general_purpose::STANDARD.encode(leaf)
+    }
+
+    fn build_leaf_input_with_timestamp(timestamp_ms: u64, cert_der: &[u8]) -> String {
+        let mut leaf = Vec::new();
+        leaf.push(0u8); // version
+        leaf.push(0u8); // leaf type
+        leaf.extend_from_slice(&timestamp_ms.to_be_bytes());
+        leaf.extend_from_slice(&0u16.to_be_bytes()); // entry type X509
+
+        let len = cert_der.len() as u32;
+        leaf.push(((len >> 16) & 0xff) as u8);
+        leaf.push(((len >> 8) & 0xff) as u8);
+        leaf.push((len & 0xff) as u8);
+        leaf.extend_from_slice(cert_der);
+
+        base64::engine::general_purpose::STANDARD.encode(leaf)
+    }
+
+    #[test]
+    fn test_parse_entry_rejects_invalid_ct_timestamp() {
+        let entry = CtLogEntryResponse {
+            leaf_input: build_leaf_input_with_timestamp(u64::MAX, &[]),
+            extra_data: String::new(),
+        };
+
+        let parser = Parser::new("test-log".to_string());
+        let err = parser.parse_entry(&entry, 0).unwrap_err();
+
+        assert!(format!("{err}").contains("Invalid CT leaf timestamp"));
+    }
+
+    #[test]
+    fn test_certificate_timestamp_helper_rejects_out_of_range_values() {
+        let err = datetime_from_unix(i64::MAX, 0, "certificate notAfter").unwrap_err();
+        assert!(format!("{err}").contains("Invalid certificate notAfter timestamp"));
     }
 
     #[test]

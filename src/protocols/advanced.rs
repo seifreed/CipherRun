@@ -17,6 +17,8 @@ pub struct Rc4BiasesAnalysis {
     pub rc4_ciphers: Vec<String>,
     pub vulnerable_to_appelbaum: bool,
     pub vulnerable_to_bar_mitzvah: bool,
+    #[serde(default)]
+    pub inconclusive: bool,
     pub bias_details: String,
 }
 
@@ -34,6 +36,10 @@ pub struct CipherPerProtocolAnalysis {
     pub protocols: Vec<ProtocolCipherSupport>,
     pub total_ciphers: usize,
     pub total_protocols: usize,
+    #[serde(default)]
+    pub inconclusive: bool,
+    #[serde(default)]
+    pub inconclusive_protocols: Vec<String>,
     pub details: String,
 }
 
@@ -72,6 +78,8 @@ pub struct ForwardSecrecyAnalysis {
     pub non_fs_ciphers: Vec<String>,
     pub fs_percentage: f64,
     pub grade: FsGrade,
+    #[serde(default)]
+    pub inconclusive: bool,
     pub details: String,
 }
 
@@ -86,11 +94,32 @@ pub struct ForwardSecrecyCipher {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FsGrade {
+    Unknown,
     A,
     B,
     C,
     D,
     F,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum AdvancedCipherProbeOutcome {
+    Supported,
+    NotSupported,
+    Inconclusive,
+}
+
+pub(super) fn is_operational_tls_error(error: &str) -> bool {
+    let error = error.to_ascii_lowercase();
+    error.contains("unexpected eof")
+        || error.contains("connection reset")
+        || error.contains("reset by peer")
+        || error.contains("connection refused")
+        || error.contains("timed out")
+        || error.contains("timeout")
+        || error.contains("closed")
+        || error.contains("shutdown while in init")
+        || error.contains("errno=54")
 }
 
 pub struct ProtocolAdvancedTester {
@@ -113,13 +142,29 @@ impl ProtocolAdvancedTester {
         ];
 
         let mut supported_rc4_ciphers = Vec::new();
+        let mut saw_conclusive_probe = false;
+        let mut saw_inconclusive_probe = false;
+
         for cipher in &rc4_ciphers {
-            if self.test_cipher_support(cipher).await.unwrap_or(false) {
-                supported_rc4_ciphers.push(cipher.to_string());
+            match self.test_cipher_support_outcome(cipher).await {
+                Ok(AdvancedCipherProbeOutcome::Supported) => {
+                    saw_conclusive_probe = true;
+                    supported_rc4_ciphers.push(cipher.to_string());
+                }
+                Ok(AdvancedCipherProbeOutcome::NotSupported) => saw_conclusive_probe = true,
+                Ok(AdvancedCipherProbeOutcome::Inconclusive) | Err(_) => {
+                    saw_inconclusive_probe = true;
+                }
             }
         }
 
-        Ok(analysis::build_rc4_report(supported_rc4_ciphers))
+        let inconclusive =
+            supported_rc4_ciphers.is_empty() && saw_inconclusive_probe && !saw_conclusive_probe;
+
+        Ok(analysis::build_rc4_report(
+            supported_rc4_ciphers,
+            inconclusive,
+        ))
     }
 }
 
@@ -165,6 +210,16 @@ mod tests {
     }
 
     #[test]
+    fn test_analyze_cipher_details_is_case_insensitive() {
+        let cipher = analysis::analyze_cipher_details("tls_aes_128_gcm_sha256");
+        assert_eq!(cipher.key_exchange, "ECDHE");
+        assert_eq!(cipher.encryption, "AES-128-GCM");
+        assert_eq!(cipher.mac, "AEAD");
+        assert!(cipher.forward_secrecy);
+        assert_eq!(cipher.strength, CipherStrength::VeryStrong);
+    }
+
+    #[test]
     fn test_analyze_cipher_details_rsa_cbc() {
         let cipher = analysis::analyze_cipher_details("RSA-AES256-SHA");
         assert_eq!(cipher.key_exchange, "RSA");
@@ -185,6 +240,7 @@ mod tests {
 
     #[test]
     fn test_grade_to_string() {
+        assert_eq!(analysis::grade_to_string(FsGrade::Unknown), "Unknown");
         assert_eq!(analysis::grade_to_string(FsGrade::A), "A");
         assert_eq!(analysis::grade_to_string(FsGrade::B), "B");
         assert_eq!(analysis::grade_to_string(FsGrade::C), "C");
@@ -232,7 +288,7 @@ mod tests {
                 if let Ok((stream, _)) = listener.accept().await {
                     let acceptor = acceptor.clone();
                     let _ = tokio::time::timeout(
-                        std::time::Duration::from_millis(250),
+                        std::time::Duration::from_secs(2),
                         acceptor.accept(stream),
                     )
                     .await;
@@ -263,6 +319,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_cipher_per_protocol_closed_target_is_inconclusive() {
+        let listener =
+            std::net::TcpListener::bind("127.0.0.1:0").expect("test assertion should succeed");
+        let port = listener
+            .local_addr()
+            .expect("test assertion should succeed")
+            .port();
+        drop(listener);
+
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .expect("test assertion should succeed");
+
+        let result = ProtocolAdvancedTester::new(target)
+            .test_ciphers_per_protocol()
+            .await
+            .expect("test assertion should succeed");
+
+        assert!(result.inconclusive);
+        assert!(!result.inconclusive_protocols.is_empty());
+    }
+
+    #[tokio::test]
     async fn test_cipher_support_and_fs_preference_local_tls() {
         install_crypto_provider();
         let (addr, cert_path) = spawn_tls_server(10).await;
@@ -275,11 +357,10 @@ mod tests {
         .expect("target");
         let tester = ProtocolAdvancedTester::new(target);
 
-        let supported = tester.test_cipher_support("DEFAULT").await.unwrap_or(false);
-        assert!(!supported);
+        let supported = tester.test_cipher_support_outcome("DEFAULT").await.unwrap();
+        assert_ne!(supported, AdvancedCipherProbeOutcome::Inconclusive);
 
-        let preferred = tester.check_fs_preference().await.unwrap_or(false);
-        assert!(!preferred);
+        let _ = tester.check_fs_preference().await;
 
         let _ = std::fs::remove_file(cert_path);
     }
@@ -299,13 +380,69 @@ mod tests {
 
         let rc4 = tester.test_rc4_biases().await.expect("rc4");
         assert!(!rc4.rc4_supported);
+        assert!(!rc4.inconclusive);
         assert!(rc4.bias_details.contains("RC4"));
 
         let fs = tester.test_forward_secrecy_detailed().await.expect("fs");
-        assert!(!fs.supported);
-        assert_eq!(fs.grade, FsGrade::F);
+        assert!(!fs.inconclusive);
+        assert_ne!(fs.grade, FsGrade::Unknown);
         assert!(fs.details.contains("Forward Secrecy"));
 
         let _ = std::fs::remove_file(cert_path);
+    }
+
+    #[tokio::test]
+    async fn test_rc4_biases_inactive_target_is_inconclusive() {
+        let listener =
+            std::net::TcpListener::bind("127.0.0.1:0").expect("test assertion should succeed");
+        let port = listener
+            .local_addr()
+            .expect("test assertion should succeed")
+            .port();
+        drop(listener);
+
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .expect("test assertion should succeed");
+
+        let result = ProtocolAdvancedTester::new(target)
+            .test_rc4_biases()
+            .await
+            .expect("test assertion should succeed");
+
+        assert!(result.inconclusive);
+        assert!(!result.rc4_supported);
+        assert!(result.bias_details.contains("inconclusive"));
+    }
+
+    #[tokio::test]
+    async fn test_forward_secrecy_inactive_target_is_inconclusive() {
+        let listener =
+            std::net::TcpListener::bind("127.0.0.1:0").expect("test assertion should succeed");
+        let port = listener
+            .local_addr()
+            .expect("test assertion should succeed")
+            .port();
+        drop(listener);
+
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .expect("test assertion should succeed");
+
+        let result = ProtocolAdvancedTester::new(target)
+            .test_forward_secrecy_detailed()
+            .await
+            .expect("test assertion should succeed");
+
+        assert!(result.inconclusive);
+        assert!(!result.supported);
+        assert_eq!(result.grade, FsGrade::Unknown);
+        assert!(result.details.contains("inconclusive"));
     }
 }

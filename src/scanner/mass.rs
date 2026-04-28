@@ -150,7 +150,7 @@ impl MassScanner {
         }
 
         let (multi_progress, main_pb) = Self::create_scan_progress_bars(total);
-        let semaphore = Arc::new(Semaphore::new(max_parallel));
+        let semaphore = Arc::new(Semaphore::new(max_parallel.max(1)));
         let tasks = self.spawn_scan_tasks(&semaphore, &multi_progress);
         let results = self.collect_scan_results(tasks, &main_pb, total).await;
 

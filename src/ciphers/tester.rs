@@ -540,6 +540,66 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_perform_cipher_handshake_close_is_error_not_unsupported() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("local addr should exist");
+
+        tokio::spawn(async move { if let Ok((_socket, _)) = listener.accept().await {} });
+
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            addr.port(),
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .expect("target should build");
+
+        let tester = CipherTester::new(target)
+            .with_connect_timeout(Duration::from_millis(200))
+            .with_read_timeout(Duration::from_millis(200));
+
+        let mut stream = TcpStream::connect(addr)
+            .await
+            .expect("test assertion should succeed");
+
+        let err = tester
+            .perform_cipher_handshake(&mut stream, Protocol::TLS12, 0xc02f)
+            .await
+            .expect_err("connection close is inconclusive, not unsupported");
+
+        assert!(!err.to_string().is_empty());
+        assert!(!err.to_string().contains("unsupported"));
+    }
+
+    #[tokio::test]
+    async fn test_try_cipher_handshake_closed_port_is_error() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("local addr should exist");
+        drop(listener);
+
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            addr.port(),
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .expect("target should build");
+
+        let tester = CipherTester::new(target)
+            .with_connect_timeout(Duration::from_millis(100))
+            .with_read_timeout(Duration::from_millis(100));
+
+        let err = tester
+            .try_cipher_handshake_on_ip(Protocol::TLS12, 0xc02f, addr)
+            .await
+            .expect_err("closed port should not be recorded as unsupported");
+
+        assert!(!err.to_string().is_empty());
+    }
+
+    #[tokio::test]
     async fn test_protocol_ciphers_with_fake_server() {
         let addr = spawn_fake_tls_server(0xc02f, 200).await;
         let target = Target::with_ips(

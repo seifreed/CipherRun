@@ -70,9 +70,10 @@ pub fn validate_hostname(hostname: &str) -> std::result::Result<(), ValidationEr
             )));
         }
 
+        let label_char_count = label.chars().count();
         for (i, ch) in label.chars().enumerate() {
             let is_first = i == 0;
-            let is_last = i == label.len() - 1;
+            let is_last = i == label_char_count - 1;
 
             let is_valid = ch.is_ascii_alphanumeric() || (ch == '-' && !is_first && !is_last);
             if !is_valid {

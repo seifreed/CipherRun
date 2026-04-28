@@ -22,7 +22,9 @@ pub fn validate_starttls_protocol(protocol: &str) -> std::result::Result<(), Val
         "ldap",
     ];
 
-    if !VALID_PROTOCOLS.contains(&protocol) {
+    let normalized = protocol.trim().to_ascii_lowercase();
+
+    if !VALID_PROTOCOLS.contains(&normalized.as_str()) {
         return Err(ValidationError::InvalidProtocol(format!(
             "Unknown STARTTLS protocol: '{}'. Valid protocols: {}",
             protocol,
@@ -41,6 +43,8 @@ mod tests {
     fn test_validate_starttls_protocol() {
         assert!(validate_starttls_protocol("smtp").is_ok());
         assert!(validate_starttls_protocol("imap").is_ok());
+        assert!(validate_starttls_protocol(" SMTP ").is_ok());
+        assert!(validate_starttls_protocol("xmpp-server").is_ok());
         assert!(validate_starttls_protocol("invalid").is_err());
         assert!(validate_starttls_protocol("smtp; whoami").is_err());
     }
