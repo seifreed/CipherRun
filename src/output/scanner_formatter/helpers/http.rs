@@ -1,6 +1,5 @@
-use colored::*;
-
 use crate::http::headers::IssueType;
+use colored::{ColoredString, Colorize};
 
 pub(crate) fn format_http_status(status_code: u16) -> ColoredString {
     let status_str = status_code.to_string();

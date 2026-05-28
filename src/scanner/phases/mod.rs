@@ -88,7 +88,7 @@ impl Default for TerminalProgressReporter {
 
 impl ScanProgressReporter for TerminalProgressReporter {
     fn on_phase_start(&self, phase_name: &str) {
-        use colored::*;
+        use colored::Colorize;
         println!("\n{}", format!("{}...", phase_name).yellow().bold());
     }
 

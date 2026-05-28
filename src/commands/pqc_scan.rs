@@ -2,7 +2,7 @@ use super::command::{Command, CommandExit};
 use crate::Result;
 use crate::pqc::scanners::{CodeScanner, SshScanner, VpnScanner};
 use async_trait::async_trait;
-use colored::*;
+use colored::Colorize;
 use std::path::PathBuf;
 
 pub struct PqcScanCommand {

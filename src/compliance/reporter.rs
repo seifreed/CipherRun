@@ -2,8 +2,7 @@
 
 use crate::Result;
 use crate::compliance::{ComplianceReport, ComplianceStatus, RequirementStatus, Severity};
-use colored::*;
-
+use colored::Colorize;
 /// Reporter for generating compliance reports in various formats
 pub struct Reporter;
 

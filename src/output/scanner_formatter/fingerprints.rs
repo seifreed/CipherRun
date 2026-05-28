@@ -2,8 +2,7 @@ use super::{
     Ja3Fingerprint, Ja3Signature, Ja3sFingerprint, Ja3sSignature, JarmFingerprint,
     ScannerFormatter, format_threat_level,
 };
-use colored::*;
-
+use colored::Colorize;
 impl<'a> ScannerFormatter<'a> {
     /// Display JA3 fingerprint results
     pub fn display_ja3_results(&self, ja3: &Ja3Fingerprint, signature: Option<&Ja3Signature>) {

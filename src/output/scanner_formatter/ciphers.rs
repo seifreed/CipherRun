@@ -2,7 +2,7 @@ use super::{
     Protocol, ProtocolCipherSummary, ScannerFormatter, display_cipher_security_features,
     display_cipher_strength_distribution, format_avg_timing,
 };
-use colored::*;
+use colored::Colorize;
 use std::collections::HashMap;
 
 impl<'a> ScannerFormatter<'a> {

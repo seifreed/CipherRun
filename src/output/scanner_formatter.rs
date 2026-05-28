@@ -43,7 +43,7 @@ use crate::protocols::{Protocol, ProtocolTestResult};
 use crate::rating::RatingResult;
 use crate::scanner::CertificateAnalysisResult;
 use crate::vulnerabilities::VulnerabilityResult;
-use colored::*;
+use colored::{ColoredString, Colorize};
 pub(crate) use helpers::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

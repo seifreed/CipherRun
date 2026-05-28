@@ -1,7 +1,6 @@
 use super::ScannerFormatter;
 use crate::utils::network::{canonical_target, display_target_host};
-use colored::*;
-
+use colored::Colorize;
 impl<'a> ScannerFormatter<'a> {
     pub fn print_scan_header(&self, hostname: &str, port: u16, starttls_protocol: Option<&str>) {
         let target_display = if self.args.output_presentation_mode().is_response_only() {

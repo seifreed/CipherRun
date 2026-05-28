@@ -1,6 +1,5 @@
 use super::super::{ClientCAsResult, ScannerFormatter, truncate_with_ellipsis};
-use colored::*;
-
+use colored::Colorize;
 impl<'a> ScannerFormatter<'a> {
     pub fn display_client_cas_results(&self, results: &ClientCAsResult) {
         self.print_section("Client Certificate CAs:", 50);

@@ -2,7 +2,7 @@
 
 use super::{CipherStrength, CipherSuite, tester::ProtocolCipherSummary};
 use crate::protocols::Protocol;
-use colored::*;
+use colored::Colorize;
 use std::fmt;
 
 /// Format cipher suite for display

@@ -1,8 +1,7 @@
 use super::super::{
     GroupEnumerationResult, ScannerFormatter, SignatureEnumerationResult, format_status_indicator,
 };
-use colored::*;
-
+use colored::Colorize;
 impl<'a> ScannerFormatter<'a> {
     pub fn display_signature_results(&self, results: &SignatureEnumerationResult) {
         self.print_section("Signature Algorithms:", 50);

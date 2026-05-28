@@ -1,6 +1,6 @@
 use crate::Result;
 use crate::scanner::ScanResults;
-use colored::*;
+use colored::Colorize;
 use std::time::Duration;
 
 /// Progress information for a completed target scan.

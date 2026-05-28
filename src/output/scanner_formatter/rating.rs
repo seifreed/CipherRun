@@ -1,6 +1,5 @@
 use super::{RatingResult, ScannerFormatter, format_ssl_grade};
-use colored::*;
-
+use colored::Colorize;
 impl<'a> ScannerFormatter<'a> {
     /// Display SSL Labs rating results
     pub fn display_rating_results(&self, rating: &RatingResult) {

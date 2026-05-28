@@ -1,7 +1,6 @@
 use super::super::{ScannerFormatter, format_advanced_grade};
 use crate::http::tester::HeaderAnalysisResult;
-use colored::*;
-
+use colored::Colorize;
 impl<'a> ScannerFormatter<'a> {
     pub fn display_advanced_header_analysis(&self, result: &HeaderAnalysisResult) {
         self.display_hsts_analysis(result);

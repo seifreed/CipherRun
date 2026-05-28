@@ -1,4 +1,4 @@
-use colored::*;
+use colored::Colorize;
 use std::collections::HashMap;
 
 use crate::protocols::intolerance::IntoleranceTestResult;

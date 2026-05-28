@@ -1,6 +1,5 @@
 use super::{ClientSimulationResult, ScannerFormatter};
-use colored::*;
-
+use colored::Colorize;
 impl<'a> ScannerFormatter<'a> {
     /// Display client simulation results
     pub fn display_client_simulation_results(&self, results: &[ClientSimulationResult]) {

@@ -1,5 +1,4 @@
-use colored::*;
-
+use colored::{ColoredString, Colorize};
 pub(crate) fn format_ssl_grade(grade: &crate::rating::Grade) -> ColoredString {
     use crate::rating::Grade;
     let grade_str = format!("Grade {}", grade);

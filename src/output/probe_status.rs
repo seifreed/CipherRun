@@ -42,8 +42,7 @@ impl ProbeStatusTerminalExt for ProbeStatus {
 
 impl ProbeStatus {
     fn format_terminal_internal(&self, target: Option<&str>) -> String {
-        use colored::*;
-
+        use colored::Colorize;
         let symbol = self.status_symbol();
         let is_warning = self.success && matches!(self.error_type, Some(ErrorType::Warning));
         let symbol_colored = if is_warning {

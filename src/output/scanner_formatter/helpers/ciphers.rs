@@ -1,6 +1,5 @@
-use colored::*;
-
 use crate::ciphers::tester::CipherCounts;
+use colored::Colorize;
 
 pub(crate) fn display_cipher_strength_distribution(counts: &CipherCounts) {
     println!("  Strength Distribution:");

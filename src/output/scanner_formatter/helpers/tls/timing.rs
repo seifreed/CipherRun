@@ -1,5 +1,4 @@
-use colored::*;
-
+use colored::Colorize;
 pub(crate) fn format_timing(show_times: bool, time_ms: Option<u64>) -> String {
     if show_times {
         time_ms

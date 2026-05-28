@@ -1,5 +1,5 @@
 use super::{ScannerFormatter, VulnerabilityResult};
-use colored::*;
+use colored::Colorize;
 use std::collections::HashMap;
 
 fn ordered_vulnerability_severity_counts(

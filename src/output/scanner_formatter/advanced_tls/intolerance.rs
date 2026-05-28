@@ -1,6 +1,5 @@
 use super::super::{IntoleranceTestResult, ScannerFormatter, build_intolerance_checks};
-use colored::*;
-
+use colored::Colorize;
 impl<'a> ScannerFormatter<'a> {
     pub fn display_intolerance_results(&self, results: &IntoleranceTestResult) {
         self.print_section("TLS Intolerance Tests:", 50);

@@ -1,7 +1,6 @@
 // Display utilities for enhanced output formatting
 
-use colored::*;
-
+use colored::{ColoredString, Colorize};
 /// Display configuration
 #[derive(Debug, Clone)]
 pub struct DisplayConfig {

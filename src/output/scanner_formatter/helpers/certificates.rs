@@ -1,6 +1,5 @@
-use colored::*;
-
 use crate::certificates::revocation::RevocationStatus;
+use colored::{ColoredString, Colorize};
 
 pub(crate) fn format_key_size(key_size: usize) -> ColoredString {
     if key_size >= 2048 {

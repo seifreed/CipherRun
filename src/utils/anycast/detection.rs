@@ -133,8 +133,7 @@ impl super::AnycastScanner {
 impl AnycastScanResults {
     /// Display results summary
     pub fn display_summary(&self) {
-        use colored::*;
-
+        use colored::Colorize;
         println!("\n{}", "=".repeat(60).cyan());
         println!("{}", "Anycast Scan Results".cyan().bold());
         println!("{}", "=".repeat(60).cyan());

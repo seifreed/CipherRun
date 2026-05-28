@@ -11,7 +11,7 @@ use crate::scanner::{ScanResults, Scanner};
 use crate::utils::custom_resolvers::CustomResolver;
 use crate::utils::network::canonical_target;
 use crate::vulnerabilities::{VulnerabilityResult, merge_vulnerability_result};
-use colored::*;
+use colored::Colorize;
 use futures::stream::{self, StreamExt};
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv6Addr};

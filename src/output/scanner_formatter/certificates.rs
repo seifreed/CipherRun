@@ -4,8 +4,7 @@ use super::{
     format_key_size, format_revocation_status, format_status_indicator, get_cert_type,
     truncate_with_ellipsis,
 };
-use colored::*;
-
+use colored::{ColoredString, Colorize};
 impl<'a> ScannerFormatter<'a> {
     /// Display certificate analysis results
     pub fn display_certificate_results(&self, result: &CertificateAnalysisResult) {

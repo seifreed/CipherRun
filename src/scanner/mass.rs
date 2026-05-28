@@ -13,7 +13,7 @@ use crate::certificates::status::CertificateStatus;
 use crate::scanner::{ScanResults, Scanner};
 use crate::utils::network::split_target_host_port;
 use crate::utils::network_runtime;
-use colored::*;
+use colored::Colorize;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use std::sync::Arc;
 use tokio::sync::Semaphore;

@@ -304,7 +304,7 @@ impl PolicyResult {
 
     /// Format as terminal output
     fn to_terminal(&self) -> crate::Result<String> {
-        use colored::*;
+        use colored::Colorize;
         let mut output = String::new();
 
         output.push_str(&format!("{}\n", "=".repeat(60).cyan()));

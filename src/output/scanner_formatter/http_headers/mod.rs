@@ -2,7 +2,7 @@ mod advanced;
 
 use super::{ScannerFormatter, format_http_grade, format_http_issue_icon, format_http_status};
 use crate::http::tester::HeaderAnalysisResult;
-use colored::*;
+use colored::Colorize;
 use std::collections::HashMap;
 
 impl<'a> ScannerFormatter<'a> {

@@ -1,6 +1,5 @@
 use super::super::{AlpnReport, ScannerFormatter};
-use colored::*;
-
+use colored::Colorize;
 impl<'a> ScannerFormatter<'a> {
     pub fn display_alpn_results(&self, alpn_report: &AlpnReport) {
         self.print_section("ALPN Protocol Negotiation:", 50);

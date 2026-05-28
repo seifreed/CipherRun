@@ -5,8 +5,7 @@ use super::{
 use crate::http::tester::HeaderAnalysisResult;
 use crate::output::probe_status::ProbeStatusTerminalExt;
 use crate::utils::network::{display_target_host, split_target_host_port};
-use colored::*;
-
+use colored::Colorize;
 impl<'a> ScannerFormatter<'a> {
     /// Display scan results summary
     pub fn display_results_summary(&self, results: &crate::scanner::ScanResults) {

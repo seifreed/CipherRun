@@ -1,7 +1,6 @@
 use super::super::ScannerFormatter;
 use crate::pqc::{PqcLevel, PqcReadinessAssessment};
-use colored::*;
-
+use colored::Colorize;
 impl<'a> ScannerFormatter<'a> {
     pub fn display_pqc_readiness_results(&self, assessment: &PqcReadinessAssessment) {
         self.print_section("Post-Quantum Cryptography Readiness:", 50);

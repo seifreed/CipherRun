@@ -1,6 +1,5 @@
 use crate::scanner::inconsistency::Inconsistency;
-use colored::*;
-
+use colored::Colorize;
 /// Progress information for a completed IP scan.
 #[derive(Debug, Clone)]
 pub struct IpScanProgress<'a> {

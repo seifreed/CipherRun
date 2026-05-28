@@ -13,7 +13,7 @@ use crate::scanner::inconsistency::{
 };
 use crate::scanner::multi_ip::MultiIpScanReport;
 use crate::utils::network::canonical_target;
-use colored::*;
+use colored::Colorize;
 use std::fmt;
 use std::net::IpAddr;
 

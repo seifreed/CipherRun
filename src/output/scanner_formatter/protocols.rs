@@ -1,6 +1,5 @@
 use super::{ProtocolTestResult, ScannerFormatter, format_status_indicator, format_timing};
-use colored::*;
-
+use colored::Colorize;
 impl<'a> ScannerFormatter<'a> {
     /// Display protocol test results
     pub fn display_protocol_results(&self, results: &[ProtocolTestResult]) {

@@ -1,5 +1,4 @@
-use colored::*;
-
+use colored::{ColoredString, Colorize};
 pub(crate) fn format_bool_indicator(value: bool, yes_text: &str, no_text: &str) -> ColoredString {
     if value {
         format!("Y {}", yes_text).green()
