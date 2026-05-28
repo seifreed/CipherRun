@@ -235,7 +235,14 @@ impl Command for MxTestCommand {
 
         let mx_tester =
             MxTester::with_resolvers(mx_domain.clone(), self.args.network.resolvers.clone());
-        let results = mx_tester.scan_all_mx(self.args.clone()).await?;
+        let base_request = self.args.to_scan_request();
+        let results = mx_tester
+            .scan_all_mx(
+                &base_request,
+                self.args.network.parallel,
+                self.args.network.max_parallel,
+            )
+            .await?;
 
         if !self.args.output.quiet {
             println!("{}", MxTester::generate_mx_summary(&results));

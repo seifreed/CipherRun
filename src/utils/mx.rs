@@ -1,7 +1,7 @@
 // MX Record Testing - Scan all mail servers for a domain
 
-use crate::Args;
 use crate::Result;
+use crate::application::ScanRequest;
 use crate::rating::RatingCalculator;
 use crate::scanner::{
     CertificateAnalysisResult, RatingResults, aggregation::ConservativeAggregator,
@@ -156,7 +156,18 @@ impl MxTester {
     }
 
     /// Scan all MX records
-    pub async fn scan_all_mx(&self, args: Args) -> Result<Vec<(MxRecord, Result<ScanResults>)>> {
+    ///
+    /// `base_request` is the domain scan request (built once by the caller from
+    /// its own configuration); each MX host is scanned by cloning it and
+    /// retargeting to `<hostname>:25`. `parallel`/`max_parallel` control the MX
+    /// fan-out concurrency and are orchestration concerns, not part of the
+    /// per-scan request.
+    pub async fn scan_all_mx(
+        &self,
+        base_request: &ScanRequest,
+        parallel: bool,
+        max_parallel: usize,
+    ) -> Result<Vec<(MxRecord, Result<ScanResults>)>> {
         let mx_records = self.query_mx_records().await?;
 
         println!("\n{}", "=".repeat(80).cyan());
@@ -167,15 +178,16 @@ impl MxTester {
         );
         println!("{}\n", "=".repeat(80).cyan());
 
-        let results = if args.network.parallel {
+        let results = if parallel {
             println!(
                 "{} Running MX scans in parallel (max {} concurrent)\n",
                 "[*]".cyan(),
-                args.network.max_parallel.max(1)
+                max_parallel.max(1)
             );
-            self.scan_all_mx_parallel(&mx_records, &args).await?
+            self.scan_all_mx_parallel(&mx_records, base_request, max_parallel.max(1))
+                .await?
         } else {
-            self.scan_all_mx_serial(&mx_records, &args).await?
+            self.scan_all_mx_serial(&mx_records, base_request).await?
         };
 
         Ok(results)
@@ -184,7 +196,7 @@ impl MxTester {
     async fn scan_all_mx_serial(
         &self,
         mx_records: &[MxRecord],
-        args: &Args,
+        base_request: &ScanRequest,
     ) -> Result<Vec<(MxRecord, Result<ScanResults>)>> {
         let mut results = Vec::new();
 
@@ -198,7 +210,7 @@ impl MxTester {
                 record.priority
             );
 
-            let result = self.scan_mx_record(args, record).await;
+            let result = Self::scan_mx_record(base_request, record).await;
             Self::print_scan_result(&result);
             results.push((record.clone(), result));
             println!();
@@ -210,16 +222,16 @@ impl MxTester {
     async fn scan_all_mx_parallel(
         &self,
         mx_records: &[MxRecord],
-        args: &Args,
+        base_request: &ScanRequest,
+        max_parallel: usize,
     ) -> Result<Vec<(MxRecord, Result<ScanResults>)>> {
-        let max_parallel = args.network.max_parallel.max(1);
         let mut completed = 0usize;
 
         let mut results =
             stream::iter(mx_records.iter().cloned().enumerate().map(|(idx, record)| {
-                let args = args.clone();
+                let request = base_request.clone();
                 async move {
-                    let result = Self::scan_mx_record_static(&args, &record).await;
+                    let result = Self::scan_mx_record(&request, &record).await;
                     (idx, record, result)
                 }
             }))
@@ -248,16 +260,11 @@ impl MxTester {
             .collect())
     }
 
-    async fn scan_mx_record(&self, args: &Args, record: &MxRecord) -> Result<ScanResults> {
-        Self::scan_mx_record_static(args, record).await
-    }
+    async fn scan_mx_record(base_request: &ScanRequest, record: &MxRecord) -> Result<ScanResults> {
+        let mut request = base_request.clone();
+        request.target = Some(format!("{}:25", record.hostname));
 
-    async fn scan_mx_record_static(args: &Args, record: &MxRecord) -> Result<ScanResults> {
-        let mut mx_args = args.clone();
-        mx_args.target = Some(format!("{}:25", record.hostname));
-        mx_args.output.quiet = true;
-
-        match Scanner::new(mx_args.to_scan_request()) {
+        match Scanner::new(request) {
             Ok(scanner) => scanner.run().await,
             Err(e) => Err(e),
         }
