@@ -263,8 +263,7 @@ impl RatingCalculator {
             fs_ciphers += summary.counts.forward_secrecy;
         }
 
-        if total_ciphers > 0 {
-            let fs_percentage = (fs_ciphers * 100) / total_ciphers;
+        if let Some(fs_percentage) = (fs_ciphers * 100).checked_div(total_ciphers) {
             let non_fs_percentage = 100 - fs_percentage;
 
             // SSL Labs criteria: Penalize based on percentage of non-FS ciphers
@@ -313,9 +312,7 @@ impl RatingCalculator {
             aead_count += summary.counts.aead;
         }
 
-        if total_ciphers > 0 {
-            // Calculate percentage of weak ciphers
-            let weak_percentage = (weak_ciphers * 100) / total_ciphers;
+        if let Some(weak_percentage) = (weak_ciphers * 100).checked_div(total_ciphers) {
             // SSL Labs criteria: Penalize based on percentage of WEAK ciphers
             if weak_percentage >= 75 {
                 // 75%+ weak ciphers: -20 points (major penalty)
@@ -334,8 +331,9 @@ impl RatingCalculator {
             // Note: low-strength ciphers are already penalized as part of weak_percentage
             // (which includes low + medium strength). No separate penalty needed.
 
-            // Check AEAD support (penalty for CBC mode ciphers)
-            let aead_percentage = (aead_count * 100) / total_ciphers;
+            // Check AEAD support (penalty for CBC mode ciphers).
+            // Guaranteed `Some` here: total_ciphers is non-zero inside this block.
+            let aead_percentage = (aead_count * 100).checked_div(total_ciphers).unwrap_or(0);
             if aead_percentage < 50 {
                 // Less than 50% AEAD: -5 points (CBC mode vulnerability)
                 score = score.saturating_sub(5);

@@ -155,7 +155,7 @@ impl DashboardGenerator {
         }
 
         // Sort by timestamp
-        timeseries.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+        timeseries.sort_by_key(|a| a.timestamp);
 
         Ok(timeseries)
     }

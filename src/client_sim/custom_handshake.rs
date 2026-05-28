@@ -517,56 +517,46 @@ fn parse_server_hello_extended(data: &[u8]) -> Result<ServerHelloInfo> {
                                 }
 
                                 match ext_type {
-                                    0x0010 => {
-                                        // ALPN extension
-                                        if ext_data_len >= 3 {
-                                            let list_len = u16::from_be_bytes([
-                                                data[ext_pos],
-                                                data[ext_pos + 1],
-                                            ])
+                                    // ALPN extension
+                                    0x0010 if ext_data_len >= 3 => {
+                                        let list_len =
+                                            u16::from_be_bytes([data[ext_pos], data[ext_pos + 1]])
                                                 as usize;
-                                            if ext_pos + 2 + list_len <= data.len() {
-                                                let proto_len = data[ext_pos + 2] as usize;
-                                                if ext_pos + 3 + proto_len <= data.len() {
-                                                    alpn = String::from_utf8(
-                                                        data[ext_pos + 3..ext_pos + 3 + proto_len]
-                                                            .to_vec(),
-                                                    )
-                                                    .ok();
-                                                }
+                                        if ext_pos + 2 + list_len <= data.len() {
+                                            let proto_len = data[ext_pos + 2] as usize;
+                                            if ext_pos + 3 + proto_len <= data.len() {
+                                                alpn = String::from_utf8(
+                                                    data[ext_pos + 3..ext_pos + 3 + proto_len]
+                                                        .to_vec(),
+                                                )
+                                                .ok();
                                             }
                                         }
                                     }
-                                    0x002b => {
-                                        // Supported versions (TLS 1.3)
-                                        if ext_data_len >= 2 {
-                                            let selected_version = u16::from_be_bytes([
-                                                data[ext_pos],
-                                                data[ext_pos + 1],
-                                            ]);
-                                            protocol = match selected_version {
-                                                0x0304 => Protocol::TLS13,
-                                                0x0303 => Protocol::TLS12,
-                                                _ => {
-                                                    return Err(
-                                                        crate::error::TlsError::InvalidHandshake {
-                                                            details: format!(
-                                                                "Unknown ServerHello supported_version 0x{selected_version:04x}"
-                                                            ),
-                                                        },
-                                                    );
-                                                }
-                                            };
-                                        }
+                                    // Supported versions (TLS 1.3)
+                                    0x002b if ext_data_len >= 2 => {
+                                        let selected_version =
+                                            u16::from_be_bytes([data[ext_pos], data[ext_pos + 1]]);
+                                        protocol = match selected_version {
+                                            0x0304 => Protocol::TLS13,
+                                            0x0303 => Protocol::TLS12,
+                                            _ => {
+                                                return Err(
+                                                    crate::error::TlsError::InvalidHandshake {
+                                                        details: format!(
+                                                            "Unknown ServerHello supported_version 0x{selected_version:04x}"
+                                                        ),
+                                                    },
+                                                );
+                                            }
+                                        };
                                     }
-                                    0x0033 => {
-                                        // Key share (TLS 1.3)
-                                        if ext_data_len >= 2 {
-                                            key_exchange_group = Some(u16::from_be_bytes([
-                                                data[ext_pos],
-                                                data[ext_pos + 1],
-                                            ]));
-                                        }
+                                    // Key share (TLS 1.3)
+                                    0x0033 if ext_data_len >= 2 => {
+                                        key_exchange_group = Some(u16::from_be_bytes([
+                                            data[ext_pos],
+                                            data[ext_pos + 1],
+                                        ]));
                                     }
                                     _ => {}
                                 }

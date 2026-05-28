@@ -23,7 +23,7 @@ where
     V: Serialize,
 {
     let mut entries: Vec<_> = map.iter().collect();
-    entries.sort_by(|(left_key, _), (right_key, _)| left_key.cmp(right_key));
+    entries.sort_by_key(|(left_key, _)| *left_key);
 
     let mut map_serializer = serializer.serialize_map(Some(entries.len()))?;
     for (key, value) in entries {

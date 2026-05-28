@@ -458,7 +458,7 @@ impl TrendAnalyzer {
 
 fn ordered_data_points<T: Clone>(data_points: &[(DateTime<Utc>, T)]) -> Vec<(DateTime<Utc>, T)> {
     let mut ordered = data_points.to_vec();
-    ordered.sort_by(|a, b| a.0.cmp(&b.0));
+    ordered.sort_by_key(|a| a.0);
     ordered
 }
 
