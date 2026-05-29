@@ -198,7 +198,9 @@ impl CipherDatabase {
         if enc.contains("RC4") {
             return 128;
         }
-        if enc.contains("NULL") {
+        // NULL ciphers carry no encryption. OpenSSL renders this as either
+        // "NULL" or "None" depending on the field; both mean zero bits.
+        if enc.contains("NULL") || enc.eq_ignore_ascii_case("None") {
             return 0;
         }
 
@@ -375,5 +377,8 @@ mod tests {
         assert_eq!(CipherDatabase::extract_bits("DES"), 56);
         assert_eq!(CipherDatabase::extract_bits("RC4"), 128);
         assert_eq!(CipherDatabase::extract_bits("NULL"), 0);
+        // OpenSSL renders NULL ciphers as "None" in the Enc field; this is a
+        // known zero-bit case, not an unknown algorithm.
+        assert_eq!(CipherDatabase::extract_bits("None"), 0);
     }
 }
