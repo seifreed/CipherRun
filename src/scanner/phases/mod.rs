@@ -318,7 +318,8 @@ impl PhaseOrchestrator {
     /// 2. Report phase start via reporter (if configured)
     /// 3. Execute phase logic
     /// 4. Report phase completion via reporter (if configured)
-    /// 5. Propagate errors immediately (fail-fast)
+    /// 5. On phase failure, record a warning and continue (graceful
+    ///    degradation) so a partially-scannable target still produces a report
     ///
     /// Returns the final accumulated scan results
     pub async fn execute(&self, mut context: ScanContext) -> Result<ScanResults> {
@@ -328,7 +329,21 @@ impl PhaseOrchestrator {
                     reporter.on_phase_start(phase.name());
                 }
 
-                phase.execute(&mut context).await?;
+                // A single data-gathering phase failing must not abort the
+                // whole scan. Servers the client cannot fully handshake with
+                // (weak-cipher-only, legacy-TLS-only, partial outages) would
+                // otherwise yield no report at all — the opposite of what a
+                // scanner should do. Record the failure and continue so the
+                // remaining phases still produce findings. Unreachable targets
+                // are already rejected earlier (DNS resolution / preflight).
+                if let Err(error) = phase.execute(&mut context).await {
+                    tracing::warn!("Phase '{}' failed: {}", phase.name(), error);
+                    context.results.add_human_warning(format!(
+                        "{} could not complete: {}",
+                        phase.name(),
+                        error
+                    ));
+                }
 
                 if let Some(ref reporter) = self.reporter {
                     reporter.on_phase_complete(phase.name());
