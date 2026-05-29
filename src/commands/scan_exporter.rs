@@ -162,6 +162,49 @@ impl<'a> ScanExporter<'a> {
         Ok(ScanExportOutcome { exported })
     }
 
+    /// Export captured raw Client/Server Hello bytes when `--export-hello` is set.
+    ///
+    /// Each captured Hello is written to `<sanitized-target>.<which>_hello.<ext>`
+    /// in the requested format. No-op when the flag is absent or no Hello was
+    /// captured (e.g. fingerprinting was disabled or the handshake failed).
+    pub fn export_hellos(&self, results: &crate::scanner::ScanResults) -> Result<()> {
+        let Some(format_str) = &self.args.fingerprint.export_hello else {
+            return Ok(());
+        };
+        let format = crate::output::hello_export::HelloExportFormat::parse(format_str)?;
+
+        let Some(fingerprints) = &results.fingerprints else {
+            return Ok(());
+        };
+
+        let base = sanitize_target_filename(&results.target);
+        let exports = [
+            ("client_hello", fingerprints.client_hello_raw.as_ref()),
+            ("server_hello", fingerprints.server_hello_raw.as_ref()),
+        ];
+
+        for (label, maybe_bytes) in exports {
+            let Some(bytes) = maybe_bytes else {
+                continue;
+            };
+            let path = PathBuf::from(format!("{}.{}.{}", base, label, format.file_extension()));
+            fs::write(
+                &path,
+                crate::output::hello_export::render_hello(bytes, format),
+            )?;
+            if !self.args.output.quiet {
+                println!(
+                    "✓ Exported {} ({} bytes) to {}",
+                    label,
+                    bytes.len(),
+                    path.display()
+                );
+            }
+        }
+
+        Ok(())
+    }
+
     pub(crate) fn write_text_file(
         &self,
         path: &Path,
@@ -280,10 +323,47 @@ impl<'a> ScanExporter<'a> {
     }
 }
 
+/// Build a filesystem-safe base filename from a scan target ("host:port").
+/// Keeps alphanumerics, '.', '-' and '_'; every other character becomes '_'.
+fn sanitize_target_filename(target: &str) -> String {
+    let sanitized: String = target
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if sanitized.is_empty() {
+        "hello".to_string()
+    } else {
+        sanitized
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn test_sanitize_target_filename_replaces_unsafe_chars() {
+        assert_eq!(
+            sanitize_target_filename("example.com:443"),
+            "example.com_443"
+        );
+        assert_eq!(
+            sanitize_target_filename("[2001:db8::1]:443"),
+            "_2001_db8__1__443"
+        );
+    }
+
+    #[test]
+    fn test_sanitize_target_filename_empty_falls_back() {
+        assert_eq!(sanitize_target_filename(""), "hello");
+    }
 
     #[test]
     fn test_collection_json_output_path_uses_output_all_and_prefix() {

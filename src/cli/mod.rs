@@ -252,6 +252,11 @@ impl Args {
                 .map_err(|e| anyhow::anyhow!("Invalid --delay value '{}': {}", delay, e))?;
         }
 
+        if let Some(format) = &self.fingerprint.export_hello {
+            crate::output::hello_export::HelloExportFormat::parse(format)
+                .map_err(anyhow::Error::from)?;
+        }
+
         if let Some(xmpphost) = &self.starttls.xmpphost {
             validate_hostname(xmpphost).map_err(anyhow::Error::from)?;
 
@@ -446,6 +451,7 @@ impl Args {
                 explicit_jarm: self.fingerprint_flag_sources.jarm_explicit,
                 jarm_database: self.fingerprint.jarm_database.clone(),
                 client_simulation: self.fingerprint.client_simulation,
+                export_hello: self.fingerprint.export_hello.clone(),
             },
             http: crate::application::scan_request::ScanRequestHttp {
                 custom_headers: self.http.custom_headers.clone(),

@@ -11,6 +11,7 @@ pub enum OutputFormat {
 }
 
 pub mod csv;
+pub mod hello_export;
 pub mod html;
 pub mod json;
 pub mod multi_ip_terminal;

@@ -29,8 +29,15 @@ impl<'a> ScanPresenter<'a> {
         self.render_scan_results(&cli_view);
         let outcome = self.present_post_scan_sections(&cli_view)?;
         self.render_post_scan_notices(&cli_view, outcome.artifacts.as_ref());
+        self.export_hello_messages(report)?;
 
         Ok(outcome.exit)
+    }
+
+    /// Export captured raw Client/Server Hello bytes when `--export-hello` is set,
+    /// delegating the filesystem write to the dedicated exporter.
+    fn export_hello_messages(&self, report: &'a ScanExecutionReport) -> Result<()> {
+        ScanExporter::new(self.args).export_hellos(report.results())
     }
 
     fn present_post_scan_sections(

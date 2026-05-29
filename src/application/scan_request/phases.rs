@@ -90,11 +90,16 @@ impl ScanRequest {
     }
 
     pub fn should_run_ja3_fingerprint(&self) -> bool {
-        self.should_run_fingerprint_flag(self.fingerprint.ja3, self.fingerprint.explicit_ja3)
+        // --export-hello needs the captured ClientHello, so force the JA3 capture.
+        self.fingerprint.export_hello.is_some()
+            || self.should_run_fingerprint_flag(self.fingerprint.ja3, self.fingerprint.explicit_ja3)
     }
 
     pub fn should_run_ja3s_fingerprint(&self) -> bool {
-        self.should_run_fingerprint_flag(self.fingerprint.ja3s, self.fingerprint.explicit_ja3s)
+        // --export-hello needs the captured ServerHello, so force the JA3S capture.
+        self.fingerprint.export_hello.is_some()
+            || self
+                .should_run_fingerprint_flag(self.fingerprint.ja3s, self.fingerprint.explicit_ja3s)
     }
 
     pub fn should_run_jarm_fingerprint(&self) -> bool {

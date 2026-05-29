@@ -107,8 +107,9 @@ impl FingerprintPhase {
             context.results.fingerprints_mut().ja3_match = Some(signature);
         }
 
-        // Store raw ClientHello if requested
-        if context.args.fingerprint.client_hello {
+        // Store raw ClientHello when requested for JSON inclusion or --export-hello.
+        if context.args.fingerprint.client_hello || context.args.fingerprint.export_hello.is_some()
+        {
             context.results.fingerprints_mut().client_hello_raw = Some(client_hello.to_bytes());
         }
 
@@ -191,8 +192,9 @@ impl FingerprintPhase {
         fingerprints.ja3s_fingerprint = Some(ja3s);
         fingerprints.ja3s_match = ja3s_match;
 
-        // Store raw ServerHello if requested
-        if context.args.fingerprint.server_hello {
+        // Store raw ServerHello when requested for JSON inclusion or --export-hello.
+        if context.args.fingerprint.server_hello || context.args.fingerprint.export_hello.is_some()
+        {
             fingerprints.server_hello_raw = Some(server_hello_raw);
         }
 

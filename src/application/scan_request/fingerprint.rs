@@ -14,6 +14,9 @@ pub struct ScanRequestFingerprint {
     pub explicit_jarm: bool,
     pub jarm_database: Option<PathBuf>,
     pub client_simulation: bool,
+    /// Format for exporting raw Client/Server Hello bytes (`--export-hello`):
+    /// `hex`, `base64`, `hexdump`, or `binary`. `None` disables export.
+    pub export_hello: Option<String>,
 }
 
 impl Default for ScanRequestFingerprint {
@@ -31,6 +34,7 @@ impl Default for ScanRequestFingerprint {
             explicit_jarm: false,
             jarm_database: None,
             client_simulation: false,
+            export_hello: None,
         }
     }
 }
