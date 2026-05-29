@@ -15,31 +15,21 @@ pub struct ApiServerArgs {
     #[arg(long = "serve", id = "api_enable")]
     pub enable: bool,
 
-    /// API server host address
-    #[arg(
-        long = "api-host",
-        value_name = "HOST",
-        default_value = "0.0.0.0",
-        id = "api_host"
-    )]
-    pub host: String,
+    /// API server host address (overrides config file; default: 0.0.0.0)
+    #[arg(long = "api-host", value_name = "HOST", id = "api_host")]
+    pub host: Option<String>,
 
-    /// API server port
-    #[arg(
-        long = "api-port",
-        value_name = "PORT",
-        default_value = "8080",
-        id = "api_port"
-    )]
-    pub port: u16,
+    /// API server port (overrides config file; default: 8080)
+    #[arg(long = "api-port", value_name = "PORT", id = "api_port")]
+    pub port: Option<u16>,
 
     /// API configuration file (TOML format)
     #[arg(long = "api-config", value_name = "FILE", id = "api_config")]
     pub config: Option<PathBuf>,
 
-    /// Maximum concurrent scans
-    #[arg(long = "api-max-concurrent", value_name = "NUM", default_value = "10")]
-    pub max_concurrent: usize,
+    /// Maximum concurrent scans (overrides config file; default: 10)
+    #[arg(long = "api-max-concurrent", value_name = "NUM")]
+    pub max_concurrent: Option<usize>,
 
     /// Enable Swagger UI documentation
     #[arg(long = "api-swagger")]
@@ -71,10 +61,11 @@ mod tests {
         let args = parsed.args;
 
         assert!(!args.enable);
-        assert_eq!(args.host, "0.0.0.0");
-        assert_eq!(args.port, 8080);
+        // No flag => None, so the config file (or ApiConfig::default()) wins.
+        assert_eq!(args.host, None);
+        assert_eq!(args.port, None);
         assert!(args.config.is_none());
-        assert_eq!(args.max_concurrent, 10);
+        assert_eq!(args.max_concurrent, None);
         assert!(!args.swagger);
         assert!(args.config_example.is_none());
     }
@@ -84,7 +75,7 @@ mod tests {
         let parsed = TestCli::parse_from(["test", "--api-host", "127.0.0.1", "--api-port", "9090"]);
         let args = parsed.args;
 
-        assert_eq!(args.host, "127.0.0.1");
-        assert_eq!(args.port, 9090);
+        assert_eq!(args.host.as_deref(), Some("127.0.0.1"));
+        assert_eq!(args.port, Some(9090));
     }
 }

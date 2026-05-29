@@ -714,8 +714,8 @@ fn test_monitor_command_with_domain() {
 fn test_api_server_command_with_custom_host_port() {
     let args = build_args(|args| {
         args.api_server.enable = true;
-        args.api_server.host = "127.0.0.1".to_string();
-        args.api_server.port = 8080;
+        args.api_server.host = Some("127.0.0.1".to_string());
+        args.api_server.port = Some(8080);
     });
     let cmd = ApiServerCommand::new(args);
     assert_eq!(cmd.name(), "ApiServerCommand");
