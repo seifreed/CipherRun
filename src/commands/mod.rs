@@ -7,6 +7,7 @@ mod router;
 
 // Individual command implementations
 mod analytics;
+mod anycast_scan;
 mod api_server;
 mod ct_logs;
 mod database;
@@ -26,6 +27,7 @@ pub use router::CommandRouter;
 
 // Re-export individual commands for testing purposes
 pub use analytics::AnalyticsCommand;
+pub use anycast_scan::AnycastScanCommand;
 pub use api_server::ApiServerCommand;
 pub use ct_logs::CtLogsCommand;
 pub use database::DatabaseCommand;

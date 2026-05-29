@@ -3,8 +3,8 @@
 // Licensed under GPL-3.0
 
 use super::{
-    AnalyticsCommand, ApiServerCommand, Command, CtLogsCommand, DatabaseCommand, MassScanCommand,
-    MonitorCommand, MxTestCommand, PqcScanCommand, ScanCommand,
+    AnalyticsCommand, AnycastScanCommand, ApiServerCommand, Command, CtLogsCommand,
+    DatabaseCommand, MassScanCommand, MonitorCommand, MxTestCommand, PqcScanCommand, ScanCommand,
 };
 use crate::cli::CipherRunSubcommand;
 use crate::{Args, Result, TlsError};
@@ -114,6 +114,12 @@ impl CommandRouter {
         // Priority 7: Mass scanning from file
         if args.input_file.is_some() {
             return Ok(Box::new(MassScanCommand::new(args)));
+        }
+
+        // Priority 7.5: Anycast scanning of all resolved IPs for a single target
+        // (validated in Args::validate to require a single target).
+        if args.network.scan_all_ips {
+            return Ok(Box::new(AnycastScanCommand::new(args)));
         }
 
         // Priority 8: Single target scanning (default)
@@ -298,6 +304,17 @@ mod tests {
         };
         let cmd = CommandRouter::route(args).expect("test assertion should succeed");
         assert_eq!(cmd.name(), "ScanCommand");
+    }
+
+    #[test]
+    fn test_route_scan_all_ips_uses_anycast_command() {
+        let mut args = Args {
+            target: Some("example.com:443".to_string()),
+            ..Default::default()
+        };
+        args.network.scan_all_ips = true;
+        let cmd = CommandRouter::route(args).expect("test assertion should succeed");
+        assert_eq!(cmd.name(), "AnycastScanCommand");
     }
 
     #[test]
