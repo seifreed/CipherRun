@@ -15,6 +15,11 @@ pub struct LogjamTester {
     target: Target,
 }
 
+/// Minimum DH parameter size (bits) considered secure. Groups below this are
+/// reported as weak per current guidance (NIST SP 800-57 deprecates <2048-bit DH).
+const MIN_SECURE_DH_BITS: u32 = 2048;
+
+/// Outcome of probing a single cipher for connectivity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LogjamProbeStatus {
     Supported,
@@ -22,9 +27,20 @@ enum LogjamProbeStatus {
     Inconclusive,
 }
 
-impl LogjamProbeStatus {
-    fn is_supported(self) -> bool {
-        matches!(self, Self::Supported)
+/// Outcome of measuring the server's ephemeral DH parameter size.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WeakDhStatus {
+    /// DH parameters below the secure minimum; carries the measured key size.
+    Weak {
+        bits: u32,
+    },
+    Strong,
+    Inconclusive,
+}
+
+impl WeakDhStatus {
+    fn is_weak(self) -> bool {
+        matches!(self, Self::Weak { .. })
     }
 
     fn is_inconclusive(self) -> bool {
@@ -43,18 +59,25 @@ impl LogjamTester {
         let weak_dh = self.test_weak_dh_params().await?;
         let (dhe_ciphers, dhe_inconclusive) = self.test_dhe_ciphers().await?;
 
-        let weak_dh_params = weak_dh.is_supported();
+        let weak_dh_bits = match weak_dh {
+            WeakDhStatus::Weak { bits } => Some(bits),
+            _ => None,
+        };
+        let weak_dh_params = weak_dh.is_weak();
         let vulnerable = export_dh || weak_dh_params;
         let inconclusive =
             !vulnerable && (export_inconclusive || weak_dh.is_inconclusive() || dhe_inconclusive);
 
         let details = if vulnerable {
-            let mut parts = Vec::new();
+            let mut parts: Vec<String> = Vec::new();
             if export_dh {
-                parts.push("Export-grade DH supported");
+                parts.push("Export-grade DH supported".to_string());
             }
-            if weak_dh_params {
-                parts.push("Weak DH parameters (≤1024 bits)");
+            if let Some(bits) = weak_dh_bits {
+                parts.push(format!(
+                    "Weak DH parameters ({} bits, below {}-bit minimum)",
+                    bits, MIN_SECURE_DH_BITS
+                ));
             }
             format!("Vulnerable to LOGJAM (CVE-2015-4000): {}", parts.join(", "))
         } else if inconclusive {
@@ -100,7 +123,7 @@ impl LogjamTester {
     ///
     /// Performance optimization: Wraps blocking OpenSSL operations in spawn_blocking
     /// to prevent blocking the async runtime.
-    async fn test_weak_dh_params(&self) -> Result<LogjamProbeStatus> {
+    async fn test_weak_dh_params(&self) -> Result<WeakDhStatus> {
         use openssl::pkey::Id;
         use openssl::ssl::{SslConnector, SslMethod};
 
@@ -117,7 +140,7 @@ impl LogjamTester {
                 .await
             {
                 Ok(s) => s,
-                Err(_) => return Ok(LogjamProbeStatus::Inconclusive),
+                Err(_) => return Ok(WeakDhStatus::Inconclusive),
             };
 
         // Convert to std stream for OpenSSL
@@ -125,7 +148,7 @@ impl LogjamTester {
         std_stream.set_nonblocking(false)?;
 
         // Wrap blocking SSL operations in spawn_blocking
-        let result = tokio::task::spawn_blocking(move || -> crate::Result<LogjamProbeStatus> {
+        let result = tokio::task::spawn_blocking(move || -> crate::Result<WeakDhStatus> {
             let mut builder = SslConnector::builder(SslMethod::tls())?;
 
             // Set DHE ciphers only
@@ -136,18 +159,19 @@ impl LogjamTester {
                 Ok(ssl_stream) => match ssl_stream.ssl().peer_tmp_key() {
                     Ok(tmp_key) => {
                         if tmp_key.id() == Id::DH {
-                            Ok(if tmp_key.bits() < 2048 {
-                                LogjamProbeStatus::Supported
+                            let bits = tmp_key.bits();
+                            Ok(if bits < MIN_SECURE_DH_BITS {
+                                WeakDhStatus::Weak { bits }
                             } else {
-                                LogjamProbeStatus::NotSupported
+                                WeakDhStatus::Strong
                             })
                         } else {
-                            Ok(LogjamProbeStatus::NotSupported)
+                            Ok(WeakDhStatus::Strong)
                         }
                     }
-                    Err(_) => Ok(LogjamProbeStatus::NotSupported),
+                    Err(_) => Ok(WeakDhStatus::Strong),
                 },
-                Err(_) => Ok(LogjamProbeStatus::NotSupported),
+                Err(_) => Ok(WeakDhStatus::Strong),
             }
         })
         .await
