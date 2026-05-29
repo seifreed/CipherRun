@@ -272,6 +272,12 @@ impl TrustStoreValidator {
         // Check if the last cert is a self-signed root
         let is_self_signed_root = last_cert.subject == last_cert.issuer && last_cert.is_ca;
 
+        // DER of the matched trust-anchor CA, plus whether the match was by identity
+        // (the last chain cert *is* the trusted CA) or by issuance (the last chain
+        // cert is *signed by* the trusted CA). This drives the crypto check below.
+        let mut anchor_ca_der: Option<Vec<u8>> = None;
+        let mut anchor_is_identity = false;
+
         if is_self_signed_root {
             // Check if this root is in the platform's trust store
             for ca_cert in &ca_store.certificates {
@@ -281,6 +287,8 @@ impl TrustStoreValidator {
                     root_in_store = true;
                     trusted_root = Some(ca_cert.subject.clone());
                     trust_anchor = Some(ca_cert.subject.clone());
+                    anchor_ca_der = Some(ca_cert.der.clone());
+                    anchor_is_identity = true;
                     message = format!("Chain trusted via root CA: {}", ca_cert.subject);
                     break;
                 }
@@ -301,6 +309,8 @@ impl TrustStoreValidator {
                     root_in_store = true;
                     trusted_root = Some(ca_cert.subject.clone());
                     trust_anchor = Some(ca_cert.subject.clone());
+                    anchor_ca_der = Some(ca_cert.der.clone());
+                    anchor_is_identity = false;
                     message = format!("Chain trusted via root CA: {}", ca_cert.subject);
                     break;
                 }
@@ -311,6 +321,8 @@ impl TrustStoreValidator {
                     root_in_store = true;
                     trusted_root = Some(ca_cert.subject.clone());
                     trust_anchor = Some(last_cert.subject.clone());
+                    anchor_ca_der = Some(ca_cert.der.clone());
+                    anchor_is_identity = true;
                     message = format!("Chain trusted via intermediate CA: {}", ca_cert.subject);
                     break;
                 }
@@ -325,13 +337,20 @@ impl TrustStoreValidator {
             }
         }
 
-        // Signature validation (simplified - full validation would verify each signature)
-        // TODO: implement real cryptographic signature verification using issuer public keys.
-        // chain_verified only means we found a CA with a matching subject/issuer name,
-        // which is NOT the same as verifying that every signature in the chain is valid.
-        let signatures_valid = false;
+        // Cryptographic signature verification. A subject/issuer name match only
+        // proves a CA with that name exists; it does NOT prove the chain was signed
+        // by that CA's private key. Verify every signature before trusting.
+        let signatures_valid = root_in_store
+            && Self::verify_chain_signatures(chain, anchor_ca_der.as_deref(), anchor_is_identity);
 
-        let trusted = chain_verified && root_in_store;
+        if chain_verified && root_in_store && !signatures_valid {
+            message = format!(
+                "{} (signature verification failed: chain is not cryptographically signed by the trust anchor)",
+                message
+            );
+        }
+
+        let trusted = chain_verified && root_in_store && signatures_valid;
 
         Ok(PlatformTrustStatus {
             platform,
@@ -345,6 +364,59 @@ impl TrustStoreValidator {
                 trust_anchor,
             },
         })
+    }
+
+    /// Cryptographically verify every signature in the chain plus the trust anchor.
+    ///
+    /// - Each `cert[i]` must be signed by `cert[i + 1]`.
+    /// - The final chain certificate must be vouched for by the matched CA store
+    ///   entry: by issuance (its signature verifies against the CA public key) when
+    ///   `anchor_is_identity` is false, or by identity (it IS the stored CA, byte for
+    ///   byte) when true.
+    ///
+    /// Returns `false` if any required DER blob is missing, since a signature that
+    /// cannot be checked must not be assumed valid.
+    fn verify_chain_signatures(
+        chain: &CertificateChain,
+        anchor_ca_der: Option<&[u8]>,
+        anchor_is_identity: bool,
+    ) -> bool {
+        use crate::certificates::signature_verify::verify_cert_signature;
+
+        let certs = &chain.certificates;
+
+        let Some(last_cert) = certs.last() else {
+            return false;
+        };
+
+        // Internal links: cert[i] must be signed by cert[i + 1].
+        for i in 0..certs.len().saturating_sub(1) {
+            let cert = &certs[i];
+            let issuer_cert = &certs[i + 1];
+            if cert.der_bytes.is_empty() || issuer_cert.der_bytes.is_empty() {
+                return false;
+            }
+            if !verify_cert_signature(&cert.der_bytes, &issuer_cert.der_bytes) {
+                return false;
+            }
+        }
+
+        // Trust anchor: the last chain cert must connect to the stored CA.
+        let Some(ca_der) = anchor_ca_der else {
+            return false;
+        };
+        if ca_der.is_empty() || last_cert.der_bytes.is_empty() {
+            return false;
+        }
+
+        if anchor_is_identity {
+            // The last cert IS the trusted CA: require an exact DER match so a
+            // forged certificate that merely reuses the CA's name is rejected.
+            last_cert.der_bytes == ca_der
+        } else {
+            // The last cert is issued by the trusted CA: verify its signature.
+            verify_cert_signature(&last_cert.der_bytes, ca_der)
+        }
     }
 
     /// Validate certificate chain with detailed per-certificate analysis
@@ -589,6 +661,48 @@ mod tests {
         let untrusted = result.untrusted_platforms();
         assert_eq!(untrusted.len(), 1);
         assert!(untrusted.contains(&TrustStore::Apple));
+    }
+
+    #[test]
+    fn test_forged_self_signed_root_matching_ca_name_is_not_trusted() {
+        let validator = TrustStoreValidator::new().expect("test assertion should succeed");
+
+        let stores = CA_STORES.as_ref();
+        let known_subject = stores
+            .mozilla
+            .certificates
+            .first()
+            .map(|c| c.subject.clone())
+            .expect("Mozilla store should contain at least one CA");
+
+        // A self-signed certificate that merely reuses a trusted CA's name but is
+        // not the stored CA (different/garbage DER) must never be trusted.
+        let forged_root = CertificateInfo {
+            subject: known_subject.clone(),
+            issuer: known_subject,
+            is_ca: true,
+            der_bytes: vec![0x30, 0x82, 0x00, 0x01],
+            ..Default::default()
+        };
+
+        let chain = CertificateChain {
+            certificates: vec![forged_root],
+            chain_length: 1,
+            chain_size_bytes: 0,
+        };
+
+        let status = validator
+            .validate_against_platform(&chain, TrustStore::Mozilla)
+            .expect("validation should not error");
+
+        assert!(
+            !status.trusted,
+            "forged root reusing a CA name must not be trusted"
+        );
+        assert!(
+            !status.details.signatures_valid,
+            "signature verification must fail for a forged root"
+        );
     }
 
     #[tokio::test]

@@ -14,40 +14,8 @@ impl CertificateValidator {
     ) -> (bool, Option<String>) {
         let ca_stores = CA_STORES.as_ref();
 
-        // Helper to verify signature using OpenSSL
-        fn verify_signature(cert_der: &[u8], issuer_der: &[u8]) -> bool {
-            use openssl::x509::X509;
-
-            // Parse the certificate from DER bytes
-            let cert = match X509::from_der(cert_der) {
-                Ok(c) => c,
-                Err(_) => {
-                    tracing::debug!("Failed to parse certificate DER bytes");
-                    return false;
-                }
-            };
-
-            // Parse the issuer certificate from DER bytes
-            let issuer = match X509::from_der(issuer_der) {
-                Ok(c) => c,
-                Err(_) => {
-                    tracing::debug!("Failed to parse issuer certificate DER bytes");
-                    return false;
-                }
-            };
-
-            // Get issuer's public key
-            let issuer_pkey = match issuer.public_key() {
-                Ok(pk) => pk,
-                Err(_) => {
-                    tracing::debug!("Failed to extract issuer public key");
-                    return false;
-                }
-            };
-
-            // Verify the certificate's signature using issuer's public key
-            cert.verify(&issuer_pkey).unwrap_or(false)
-        }
+        // Cryptographic signature verification shared with trust-store validation.
+        use crate::certificates::signature_verify::verify_cert_signature as verify_signature;
 
         let find_store_for_subject = |subject: &str| -> Option<(String, Vec<u8>)> {
             for custom_ca in &self.additional_ca_entries {
