@@ -70,7 +70,8 @@ impl TrendAnalyzer {
                 .collect::<Vec<_>>(),
         );
 
-        let strong_trend = Self::determine_usize_trend_direction(
+        // Strong ciphers: more is better, so an increasing count is improving.
+        let strong_trend = Self::determine_usize_trend_direction_higher_is_better(
             &data_points
                 .iter()
                 .map(|(ts, data)| (*ts, data.strong))

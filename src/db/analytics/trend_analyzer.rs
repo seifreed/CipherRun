@@ -57,6 +57,10 @@ pub struct CipherStrengthData {
     pub strong: usize,
 }
 
+/// Minimum absolute regression slope (counts per scan) before a count series is
+/// classified as trending rather than stable. Below this, noise dominates.
+const COUNT_TREND_SLOPE_THRESHOLD: f64 = 0.1;
+
 pub struct TrendAnalyzer {
     db: Arc<CipherRunDatabase>,
 }
@@ -293,16 +297,15 @@ impl TrendAnalyzer {
         }
     }
 
-    pub(crate) fn determine_usize_trend_direction(
-        data_points: &[(DateTime<Utc>, usize)],
-    ) -> TrendDirection {
+    /// Linear-regression slope of an integer count series over time.
+    /// Returns `None` when there are fewer than two points to fit a line.
+    fn usize_trend_slope(data_points: &[(DateTime<Utc>, usize)]) -> Option<f64> {
         if data_points.len() < 2 {
-            return TrendDirection::Stable;
+            return None;
         }
 
         let ordered = ordered_data_points(data_points);
 
-        // Simple linear regression to determine slope
         let n = ordered.len() as f64;
         let mut sum_x = 0.0;
         let mut sum_y = 0.0;
@@ -318,12 +321,39 @@ impl TrendAnalyzer {
             sum_x2 += x * x;
         }
 
-        let slope = (n * sum_xy - sum_x * sum_y) / (n * sum_x2 - sum_x * sum_x);
+        Some((n * sum_xy - sum_x * sum_y) / (n * sum_x2 - sum_x * sum_x))
+    }
 
-        // For vulnerabilities and weak ciphers, decreasing is improving
-        if slope < -0.1 {
+    /// Trend direction for counts where *fewer is better* (vulnerabilities, weak ciphers):
+    /// a decreasing count is improving.
+    pub(crate) fn determine_usize_trend_direction(
+        data_points: &[(DateTime<Utc>, usize)],
+    ) -> TrendDirection {
+        let Some(slope) = Self::usize_trend_slope(data_points) else {
+            return TrendDirection::Stable;
+        };
+
+        if slope < -COUNT_TREND_SLOPE_THRESHOLD {
             TrendDirection::Improving
-        } else if slope > 0.1 {
+        } else if slope > COUNT_TREND_SLOPE_THRESHOLD {
+            TrendDirection::Degrading
+        } else {
+            TrendDirection::Stable
+        }
+    }
+
+    /// Trend direction for counts where *more is better* (strong ciphers):
+    /// an increasing count is improving.
+    pub(crate) fn determine_usize_trend_direction_higher_is_better(
+        data_points: &[(DateTime<Utc>, usize)],
+    ) -> TrendDirection {
+        let Some(slope) = Self::usize_trend_slope(data_points) else {
+            return TrendDirection::Stable;
+        };
+
+        if slope > COUNT_TREND_SLOPE_THRESHOLD {
+            TrendDirection::Improving
+        } else if slope < -COUNT_TREND_SLOPE_THRESHOLD {
             TrendDirection::Degrading
         } else {
             TrendDirection::Stable

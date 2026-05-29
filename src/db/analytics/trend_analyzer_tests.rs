@@ -124,6 +124,33 @@ fn test_trend_direction_stable_and_usize() {
 }
 
 #[test]
+fn test_strong_cipher_trend_direction_higher_is_better() {
+    let base = Utc::now();
+
+    // A growing strong-cipher count is an improvement.
+    let increasing = vec![
+        (base, 2usize),
+        (base + Duration::minutes(1), 5usize),
+        (base + Duration::minutes(2), 9usize),
+    ];
+    assert_eq!(
+        TrendAnalyzer::determine_usize_trend_direction_higher_is_better(&increasing),
+        TrendDirection::Improving
+    );
+
+    // A shrinking strong-cipher count is a regression.
+    let decreasing = vec![
+        (base, 9usize),
+        (base + Duration::minutes(1), 5usize),
+        (base + Duration::minutes(2), 2usize),
+    ];
+    assert_eq!(
+        TrendAnalyzer::determine_usize_trend_direction_higher_is_better(&decreasing),
+        TrendDirection::Degrading
+    );
+}
+
+#[test]
 fn test_forecast_linear() {
     let points = vec![(Utc::now(), 60), (Utc::now(), 70), (Utc::now(), 80)];
     let forecast = TrendAnalyzer::forecast_linear(&points).unwrap();

@@ -349,8 +349,19 @@ impl CtStreamer {
 
             stats.increment_source_processed(&source_id, processed_count);
 
-            // Move to next batch
-            current_index = batch_end + 1;
+            // Advance by the number of entries the log actually returned, NOT by the
+            // requested range. CT logs (RFC 6962 get-entries) routinely cap responses
+            // well below the requested batch size, so advancing to `batch_end + 1`
+            // would permanently skip every entry the server did not return.
+            if entries.is_empty() {
+                warn!(
+                    "Log {} returned no entries for requested range {}-{}; backing off before retry",
+                    source_id, current_index, batch_end
+                );
+                sleep(Duration::from_secs(1)).await;
+                continue;
+            }
+            current_index += entries.len() as u64;
 
             // Small delay to avoid hammering the API
             sleep(Duration::from_millis(100)).await;
