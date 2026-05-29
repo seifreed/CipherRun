@@ -181,14 +181,20 @@ impl ScanExecutor {
                         scan_task.abort();
                         match (&mut scan_task).await {
                             Ok(Ok(results)) => {
-                                // Scan finished successfully right before/after abort
+                                // Scan finished successfully right before/after abort.
+                                // Persist the result with a forcing update so it is not
+                                // lost: marking the in-memory job completed and only
+                                // broadcasting would leave the queue holding Cancelled
+                                // with no results.
                                 job = current;
                                 job.mark_completed(results);
+                                let _ = queue.update_job(&job).await;
                                 let _ = self.progress_tx.send(ProgressMessage::completed(&job.id));
                             }
                             Ok(Err(e)) => {
                                 job = current;
                                 job.mark_failed(e.to_string());
+                                let _ = queue.update_job(&job).await;
                                 let _ = self.progress_tx.send(ProgressMessage::failed(&job.id, job.error.clone().unwrap_or_default()));
                             }
                             _ => {
