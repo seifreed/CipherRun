@@ -46,6 +46,7 @@ impl RevocationChecker {
     pub(crate) async fn check_crl(
         &self,
         cert: &CertificateInfo,
+        issuer: Option<&CertificateInfo>,
         crl_url: &str,
     ) -> Result<RevocationStatus> {
         // Download CRL
@@ -71,6 +72,29 @@ impl RevocationChecker {
         .map_err(|e| crate::error::TlsError::ParseError {
             message: format!("Failed to parse CRL: {:?}", e),
         })?;
+
+        // SECURITY: verify the CRL signature against the issuing CA before trusting
+        // its revoked-serial list. Over the plain-HTTP CRL distribution point a
+        // forged/MITM'd CRL could omit a revoked serial and yield a false "Good".
+        let issuer = issuer.ok_or_else(|| {
+            crate::error::TlsError::Other(
+                "Issuer certificate required to verify CRL signature".into(),
+            )
+        })?;
+        let (_, issuer_cert) = X509Certificate::from_der(&issuer.der_bytes).map_err(|e| {
+            crate::error::TlsError::ParseError {
+                message: format!("Failed to parse issuer certificate: {:?}", e),
+            }
+        })?;
+        if crl.verify_signature(issuer_cert.public_key()).is_err() {
+            tracing::warn!(
+                "CRL signature verification failed for {}; not trusting it",
+                crl_url
+            );
+            return Err(crate::error::TlsError::Other(
+                "CRL signature verification failed".into(),
+            ));
+        }
 
         // Validate CRL is not expired (check nextUpdate)
         if let Some(next_update) = crl.next_update() {

@@ -116,7 +116,7 @@ impl RevocationChecker {
 
         // Fallback to CRL if OCSP fails
         if let Some(crl_url) = self.extract_crl_url(cert)? {
-            match self.check_crl(cert, &crl_url).await {
+            match self.check_crl(cert, issuer, &crl_url).await {
                 Ok(status) => {
                     return Ok(RevocationResult {
                         status,

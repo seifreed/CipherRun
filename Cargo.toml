@@ -65,7 +65,7 @@ hyper = { version = "1.5", features = ["full"] }
 
 # Cryptography
 ring = "0.17"
-x509-parser = "0.18"
+x509-parser = { version = "0.18", features = ["verify"] }
 pem = "3.0"
 md5 = "0.8"
 
