@@ -244,6 +244,37 @@ fn test_hsts_missing_preload() {
 }
 
 #[test]
+fn test_hsts_preload_missing_only_from_safari_is_reported() {
+    use crate::http::hsts_preload::{PreloadSource, PreloadStatus};
+
+    let mut headers = HashMap::new();
+    headers.insert(
+        "Strict-Transport-Security".to_string(),
+        "max-age=31536000; includeSubDomains; preload".to_string(),
+    );
+
+    // Present in Chrome/Firefox/Edge, absent only from Safari: must still produce
+    // a preload-list issue naming Safari (the trigger used to ignore Safari).
+    let status = PreloadStatus {
+        in_chrome: true,
+        in_firefox: true,
+        in_edge: true,
+        in_safari: false,
+        chromium_status: Some("preloaded".to_string()),
+        source: PreloadSource::Api,
+    };
+
+    let mut issues = Vec::new();
+    SecurityHeaderChecker::check_hsts(&headers, &mut issues, Some(status));
+
+    assert!(issues.iter().any(|i| {
+        i.header_name == "Strict-Transport-Security"
+            && matches!(i.issue_type, IssueType::Weak)
+            && i.description.contains("Safari")
+    }));
+}
+
+#[test]
 fn test_hsts_directives_match_exact_tokens() {
     let mut headers = HashMap::new();
     headers.insert(

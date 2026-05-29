@@ -191,7 +191,11 @@ impl SecurityHeaderChecker {
                 // Preload directive is present, check if actually preloaded
                 use super::hsts_preload::PreloadSource;
 
-                let not_in_browsers = !status.in_chrome || !status.in_firefox || !status.in_edge;
+                // Include Safari in the trigger so it matches the browsers_missing
+                // list and severity count below; otherwise a domain missing only
+                // from Safari would be reported nowhere yet inflate severity elsewhere.
+                let not_in_browsers =
+                    !status.in_chrome || !status.in_firefox || !status.in_edge || !status.in_safari;
 
                 if not_in_browsers && !matches!(status.source, PreloadSource::Error(_)) {
                     let mut browsers_missing = Vec::new();
