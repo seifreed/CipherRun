@@ -3,10 +3,8 @@
 
 use crate::Result;
 use crate::error::TlsError;
+use crate::utils::network::build_system_resolver;
 use crate::utils::sni_generator::SniGenerator;
-use hickory_resolver::TokioResolver;
-use hickory_resolver::config::*;
-use hickory_resolver::net::runtime::TokioRuntimeProvider;
 use hickory_resolver::proto::rr::RData;
 use std::net::IpAddr;
 
@@ -14,20 +12,11 @@ use std::net::IpAddr;
 pub struct ReversePtrLookup;
 
 impl ReversePtrLookup {
-    fn build_resolver() -> Result<TokioResolver> {
-        TokioResolver::builder_with_config(
-            ResolverConfig::default(),
-            TokioRuntimeProvider::default(),
-        )
-        .build()
-        .map_err(|error| TlsError::ConfigError {
-            message: format!("Failed to initialize DNS resolver: {error}"),
-        })
-    }
-
     /// Perform reverse PTR lookup for IP address
     pub async fn lookup_ptr(ip: &IpAddr) -> Result<String> {
-        let resolver = Self::build_resolver()?;
+        let resolver = build_system_resolver().map_err(|error| TlsError::ConfigError {
+            message: format!("Failed to initialize DNS resolver: {error}"),
+        })?;
 
         let lookup =
             resolver
@@ -161,7 +150,9 @@ impl ReversePtrLookup {
         let hostname = Self::lookup_ptr(ip).await?;
 
         // Perform forward lookup
-        let resolver = Self::build_resolver()?;
+        let resolver = build_system_resolver().map_err(|error| TlsError::ConfigError {
+            message: format!("Failed to initialize DNS resolver: {error}"),
+        })?;
 
         match ip {
             IpAddr::V4(_) => {

@@ -8,10 +8,8 @@ use crate::Args;
 use crate::Result;
 use crate::error::TlsError;
 use crate::scanner::ScanResults;
-use crate::utils::network::{Target, canonical_target};
+use crate::utils::network::{Target, build_system_resolver, canonical_target};
 use hickory_resolver::TokioResolver;
-use hickory_resolver::config::*;
-use hickory_resolver::net::runtime::TokioRuntimeProvider;
 use hickory_resolver::proto::rr::RData;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -26,12 +24,7 @@ pub struct AnycastScanner {
 
 impl AnycastScanner {
     fn build_resolver() -> Result<TokioResolver> {
-        TokioResolver::builder_with_config(
-            ResolverConfig::default(),
-            TokioRuntimeProvider::default(),
-        )
-        .build()
-        .map_err(|error| TlsError::ConfigError {
+        build_system_resolver().map_err(|error| TlsError::ConfigError {
             message: format!("Failed to initialize DNS resolver: {error}"),
         })
     }

@@ -5,7 +5,7 @@ use hickory_resolver::TokioResolver;
 use hickory_resolver::config::*;
 use hickory_resolver::net::runtime::TokioRuntimeProvider;
 use openssl::ssl::{SslConnector, SslMethod, SslStream, SslVersion};
-use std::net::{IpAddr, Ipv6Addr, SocketAddr, TcpStream as StdTcpStream};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpStream as StdTcpStream};
 use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio::time::timeout;
@@ -245,6 +245,45 @@ pub async fn resolve_hostname_unsafe(hostname: &str) -> Result<Vec<IpAddr>> {
     resolve_hostname_with_ssrf_check(hostname, true).await
 }
 
+/// Public DNS servers used when the host has no usable system resolver
+/// configuration (`/etc/resolv.conf` missing or empty, e.g. minimal containers).
+const FALLBACK_DNS_SERVERS: [IpAddr; 2] = [
+    IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)),
+    IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)),
+];
+
+/// Build an asynchronous DNS resolver from the host's system configuration.
+///
+/// Reads `/etc/resolv.conf` on Unix and the registry on Windows. When the
+/// system configuration is unavailable, falls back to public DNS servers so
+/// hostname resolution still works on hosts without a resolver configuration.
+///
+/// `ResolverConfig::default()` must not be used here: in hickory 0.26 it
+/// carries no name servers, so every lookup fails with "no connections
+/// available".
+pub fn build_system_resolver() -> Result<TokioResolver> {
+    if let Ok(builder) = TokioResolver::builder_tokio() {
+        return builder
+            .build()
+            .context("failed to build DNS resolver from system configuration");
+    }
+
+    let name_servers = FALLBACK_DNS_SERVERS
+        .iter()
+        .map(|ip| {
+            NameServerConfig::new(
+                *ip,
+                true,
+                vec![ConnectionConfig::udp(), ConnectionConfig::tcp()],
+            )
+        })
+        .collect();
+    let config = ResolverConfig::from_parts(None, Vec::new(), name_servers);
+    TokioResolver::builder_with_config(config, TokioRuntimeProvider::default())
+        .build()
+        .context("failed to build fallback DNS resolver")
+}
+
 /// Internal implementation with SSRF check parameter.
 async fn resolve_hostname_with_ssrf_check(
     hostname: &str,
@@ -271,12 +310,7 @@ async fn resolve_hostname_with_ssrf_check(
 
     // Cache miss - perform DNS lookup
     tracing::debug!("DNS cache miss for {}, performing lookup", hostname);
-    let resolver = TokioResolver::builder_with_config(
-        ResolverConfig::default(),
-        TokioRuntimeProvider::default(),
-    )
-    .build()
-    .context("failed to initialize DNS resolver")?;
+    let resolver = build_system_resolver()?;
 
     let response = resolver
         .lookup_ip(hostname)
