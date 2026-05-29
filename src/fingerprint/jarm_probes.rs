@@ -401,9 +401,19 @@ fn reorder_ciphers(mut ciphers: Vec<[u8; 2]>, order: CipherOrder) -> Vec<[u8; 2]
             ciphers
         }
         CipherOrder::TopHalf => {
+            // Canonical JARM: the middle element first (odd lengths only), then the
+            // first half reversed. Equivalent to bottom_half(reverse(ciphers)) with
+            // the center prepended when the count is odd.
             let len = ciphers.len();
-            let reversed: Vec<_> = ciphers.into_iter().rev().collect();
-            reversed[0..(len / 2)].to_vec()
+            let middle = len / 2;
+            let mut result = Vec::with_capacity(len.div_ceil(2));
+            if len % 2 == 1 {
+                result.push(ciphers[middle]);
+            }
+            for cipher in ciphers[0..middle].iter().rev() {
+                result.push(*cipher);
+            }
+            result
         }
         CipherOrder::BottomHalf => {
             let len = ciphers.len();
@@ -425,12 +435,11 @@ fn reorder_ciphers(mut ciphers: Vec<[u8; 2]>, order: CipherOrder) -> Vec<[u8; 2]
                     result.push(ciphers[middle - i]);
                 }
             } else {
-                // Reverse left half, keep right half in order
-                for cipher in ciphers.iter().take(middle).rev() {
-                    result.push(*cipher);
-                }
-                for cipher in ciphers.iter().skip(middle).take(len - middle) {
-                    result.push(*cipher);
+                // Canonical JARM: interleave outward from the center, taking the
+                // right-of-center element before the left-of-center one each step.
+                for i in 1..=middle {
+                    result.push(ciphers[middle - 1 + i]);
+                    result.push(ciphers[middle - i]);
                 }
             }
 
@@ -678,12 +687,37 @@ mod tests {
             vec![[0x07, 0x08], [0x05, 0x06], [0x03, 0x04], [0x01, 0x02]]
         );
 
-        // Middle Out
+        // Middle Out (even length): interleave outward from center, right-of-center first.
         let middle_out = reorder_ciphers(ciphers.clone(), CipherOrder::MiddleOut);
         assert_eq!(
             middle_out,
-            vec![[0x03, 0x04], [0x01, 0x02], [0x05, 0x06], [0x07, 0x08]]
+            vec![[0x05, 0x06], [0x03, 0x04], [0x07, 0x08], [0x01, 0x02]]
         );
+
+        // Top Half (even length): first half reversed.
+        let top_half = reorder_ciphers(ciphers.clone(), CipherOrder::TopHalf);
+        assert_eq!(top_half, vec![[0x03, 0x04], [0x01, 0x02]]);
+
+        // Bottom Half (even length): second half in order.
+        let bottom_half = reorder_ciphers(ciphers.clone(), CipherOrder::BottomHalf);
+        assert_eq!(bottom_half, vec![[0x05, 0x06], [0x07, 0x08]]);
+    }
+
+    #[test]
+    fn test_cipher_reordering_odd_length_matches_canonical_jarm() {
+        let ciphers = vec![[0x01, 0x02], [0x03, 0x04], [0x05, 0x06]];
+
+        // Top Half (odd length): center element, then first half reversed.
+        let top_half = reorder_ciphers(ciphers.clone(), CipherOrder::TopHalf);
+        assert_eq!(top_half, vec![[0x03, 0x04], [0x01, 0x02]]);
+
+        // Bottom Half (odd length): elements after the center.
+        let bottom_half = reorder_ciphers(ciphers.clone(), CipherOrder::BottomHalf);
+        assert_eq!(bottom_half, vec![[0x05, 0x06]]);
+
+        // Middle Out (odd length): center first, then interleave outward.
+        let middle_out = reorder_ciphers(ciphers.clone(), CipherOrder::MiddleOut);
+        assert_eq!(middle_out, vec![[0x03, 0x04], [0x05, 0x06], [0x01, 0x02]]);
     }
 
     #[test]
