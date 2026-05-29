@@ -45,7 +45,7 @@ impl<'a> ScannerFormatter<'a> {
     /// Display certificate key information
     fn display_certificate_key_info(&self, cert: &CertificateInfo) {
         if let Some(key_size) = cert.public_key_size {
-            let key_color = format_key_size(key_size);
+            let key_color = format_key_size(key_size, &cert.public_key_algorithm);
             print!(
                 "  Key Size:   {} bits ({})",
                 key_color, cert.public_key_algorithm

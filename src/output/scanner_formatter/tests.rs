@@ -247,13 +247,42 @@ fn test_advanced_grade_mid_range() {
 
 #[test]
 fn test_certificate_helpers() {
-    let good_key = format_key_size(2048);
-    let bad_key = format_key_size(1024);
+    let good_key = format_key_size(2048, "rsaEncryption");
+    let bad_key = format_key_size(1024, "rsaEncryption");
     assert!(good_key.to_string().contains("2048"));
     assert!(bad_key.to_string().contains("1024"));
 
     let status = format_revocation_status(&RevocationStatus::Revoked);
     assert!(status.to_string().contains("REVOKED"));
+}
+
+#[test]
+fn test_format_key_size_rsa_thresholds() {
+    use colored::Color;
+    assert_eq!(
+        format_key_size(1024, "rsaEncryption").fgcolor(),
+        Some(Color::Red)
+    );
+    assert_eq!(
+        format_key_size(2048, "rsaEncryption").fgcolor(),
+        Some(Color::Green)
+    );
+}
+
+#[test]
+fn test_format_key_size_ec_keys_not_flagged_weak() {
+    use colored::Color;
+    // Strong EC keys must not render red under the RSA 2048-bit floor.
+    assert_eq!(
+        format_key_size(256, "id-ecPublicKey").fgcolor(),
+        Some(Color::Green)
+    );
+    assert_eq!(format_key_size(384, "ecdsa").fgcolor(), Some(Color::Green));
+    // Genuinely weak EC keys still render red.
+    assert_eq!(
+        format_key_size(160, "ecPublicKey").fgcolor(),
+        Some(Color::Red)
+    );
 }
 
 #[test]
