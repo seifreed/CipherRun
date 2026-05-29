@@ -292,7 +292,7 @@ impl RatingCalculator {
     fn calculate_cipher_strength_score(ciphers: &HashMap<Protocol, ProtocolCipherSummary>) -> u8 {
         let mut score = 100u8;
         let mut total_ciphers = 0;
-        let mut weak_ciphers = 0; // low strength only (< 128-bit)
+        let mut weak_ciphers = 0; // low + medium strength (matches weak_percentage doc)
         let mut aead_count = 0;
 
         for summary in ciphers.values() {
@@ -306,9 +306,11 @@ impl RatingCalculator {
                 return 0;
             }
 
-            // Aggregate counts across all protocols
+            // Aggregate counts across all protocols. Weak = low + medium strength,
+            // matching the documented weak_percentage definition and the policy
+            // module (policy/rules/cipher.rs), which classify both as weak.
             total_ciphers += summary.counts.total;
-            weak_ciphers += summary.counts.low_strength;
+            weak_ciphers += summary.counts.low_strength + summary.counts.medium_strength;
             aead_count += summary.counts.aead;
         }
 

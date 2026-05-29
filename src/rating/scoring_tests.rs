@@ -438,3 +438,35 @@ fn test_cipher_strength_score_export_ciphers_zero() {
     let score = RatingCalculator::calculate_cipher_strength_score(&ciphers);
     assert_eq!(score, 0);
 }
+
+#[test]
+fn test_cipher_strength_score_counts_medium_strength_as_weak() {
+    use crate::ciphers::tester::{CipherCounts, ProtocolCipherSummary};
+    use std::collections::HashMap;
+
+    // All ciphers medium-strength: weak_percentage is 100%, which must incur the
+    // 75%+ weak penalty (-20) plus the <50% AEAD penalty (-5) -> 75.
+    let summary = ProtocolCipherSummary {
+        protocol: Protocol::TLS12,
+        supported_ciphers: Vec::new(),
+        server_ordered: false,
+        server_preference: Vec::new(),
+        preferred_cipher: None,
+        counts: CipherCounts {
+            total: 4,
+            medium_strength: 4,
+            ..Default::default()
+        },
+        avg_handshake_time_ms: None,
+    };
+
+    let mut ciphers = HashMap::new();
+    ciphers.insert(Protocol::TLS12, summary);
+
+    let score = RatingCalculator::calculate_cipher_strength_score(&ciphers);
+    assert!(
+        score < 100,
+        "medium-strength ciphers must reduce the cipher-strength score, got {score}"
+    );
+    assert_eq!(score, 75);
+}
