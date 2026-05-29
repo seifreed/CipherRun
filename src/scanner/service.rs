@@ -42,12 +42,20 @@ struct PreflightCapture {
 }
 
 impl Scanner {
-    /// Create a new Scanner with the default TerminalProgressReporter
+    /// Create a new Scanner with the progress reporter implied by the request.
     ///
-    /// This is the primary constructor for CLI usage where terminal output is desired.
-    /// For headless/API operation, use `with_reporter()` with a `SilentProgressReporter`.
+    /// CLI usage gets the `TerminalProgressReporter`, except in machine-readable
+    /// output modes (`--dns`, `--response-only`) where progress would pollute
+    /// stdout — those use the `SilentProgressReporter`. For headless/API
+    /// operation, use `with_reporter()` with a `SilentProgressReporter`.
     pub fn new(request: ScanRequest) -> Result<Self> {
-        Self::with_reporter(request, Arc::new(phases::TerminalProgressReporter::new()))
+        let reporter: Arc<dyn phases::ScanProgressReporter> =
+            if request.presentation_mode.suppresses_progress() {
+                Arc::new(phases::SilentProgressReporter::new())
+            } else {
+                Arc::new(phases::TerminalProgressReporter::new())
+            };
+        Self::with_reporter(request, reporter)
     }
 
     /// Create a new Scanner with a custom progress reporter
