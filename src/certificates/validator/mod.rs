@@ -25,8 +25,14 @@ pub fn parse_cert_date(date_str: &str) -> Option<DateTime<Utc>> {
         return Some(dt.with_timezone(&Utc));
     }
 
-    // Offset-aware formats (e.g., "2024-01-01 00:00:00 +0000")
-    const AWARE_FORMATS: &[&str] = &["%Y-%m-%d %H:%M:%S %z"];
+    // Offset-aware formats (e.g., "2024-01-01 00:00:00 +0000").
+    // The `%b %e/%d ... %Y %z` variants match the x509-parser `ASN1Time`
+    // Display output, e.g. "Apr  2 21:18:57 2026 +00:00" (space-padded day).
+    const AWARE_FORMATS: &[&str] = &[
+        "%Y-%m-%d %H:%M:%S %z",
+        "%b %e %H:%M:%S %Y %z",
+        "%b %d %H:%M:%S %Y %z",
+    ];
     for fmt in AWARE_FORMATS {
         if let Ok(dt) = DateTime::parse_from_str(trimmed, fmt) {
             return Some(dt.with_timezone(&Utc));
@@ -372,6 +378,11 @@ mod tests {
         assert!(parse_cert_date("2024-01-01 00:00:00 UTC").is_some());
         assert!(parse_cert_date("2024-01-01 00:00:00 GMT").is_some());
         assert!(parse_cert_date("Jan 01 00:00:00 2024 GMT").is_some());
+        // x509-parser ASN1Time Display output, with timezone offset.
+        // Space-padded single-digit day ("Apr  2") is the common case.
+        assert!(parse_cert_date("Apr  2 21:18:57 2026 +00:00").is_some());
+        assert!(parse_cert_date("Apr 02 21:18:57 2026 +00:00").is_some());
+        assert!(parse_cert_date("Apr  2 21:18:57 2026 +0000").is_some());
         assert!(parse_cert_date("not a date").is_none());
     }
 
