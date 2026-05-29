@@ -432,6 +432,8 @@ impl Args {
             http: crate::application::scan_request::ScanRequestHttp {
                 custom_headers: self.http.custom_headers.clone(),
                 sneaky: self.http.sneaky,
+                user_agent: self.http.user_agent.clone(),
+                basicauth: self.http.basicauth.clone(),
             },
             starttls: crate::application::scan_request::ScanRequestStarttls {
                 protocol: self.starttls.protocol.clone(),

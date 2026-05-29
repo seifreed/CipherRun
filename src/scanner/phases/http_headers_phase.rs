@@ -29,6 +29,14 @@ use crate::Result;
 use crate::application::ScanRequest;
 use crate::http::tester::HeaderAnalyzer;
 use async_trait::async_trait;
+use base64::Engine;
+
+/// Base64-encode `user:password` credentials for an HTTP Basic `Authorization`
+/// header. The credential string is used verbatim; callers pass it in the
+/// `user:password` form expected by RFC 7617.
+fn encode_basic_auth(credentials: &str) -> String {
+    base64::engine::general_purpose::STANDARD.encode(credentials.as_bytes())
+}
 
 /// HTTP security headers analysis phase
 ///
@@ -61,37 +69,46 @@ impl HttpHeadersPhase {
     fn configure_analyzer(&self, context: &mut ScanContext) -> HeaderAnalyzer {
         let target = context.target();
 
-        // Create base analyzer
-        let mut analyzer = if !context.args.http.custom_headers.is_empty() {
-            // Parse custom headers from CLI format "Header: Value"
-            let custom_headers: Vec<(String, String)> = context
-                .args
-                .http
-                .custom_headers
-                .iter()
-                .filter_map(|h| {
-                    // Split on first colon only
-                    let parts: Vec<&str> = h.splitn(2, ':').collect();
-                    if parts.len() == 2 {
-                        Some((parts[0].trim().to_string(), parts[1].trim().to_string()))
-                    } else {
-                        context.results.add_human_warning(format!(
-                            "Invalid header format '{}', expected 'Name: Value'",
-                            h
-                        ));
-                        None
-                    }
-                })
-                .collect();
+        // Collect custom headers from --reqheader, then append an Authorization
+        // header derived from --basicauth so credentials reach the target.
+        let mut custom_headers: Vec<(String, String)> = context
+            .args
+            .http
+            .custom_headers
+            .iter()
+            .filter_map(|h| {
+                // Split on first colon only
+                let parts: Vec<&str> = h.splitn(2, ':').collect();
+                if parts.len() == 2 {
+                    Some((parts[0].trim().to_string(), parts[1].trim().to_string()))
+                } else {
+                    context.results.add_human_warning(format!(
+                        "Invalid header format '{}', expected 'Name: Value'",
+                        h
+                    ));
+                    None
+                }
+            })
+            .collect();
 
-            HeaderAnalyzer::with_custom_headers(target, custom_headers)
-        } else {
+        if let Some(credentials) = &context.args.http.basicauth {
+            custom_headers.push((
+                "Authorization".to_string(),
+                format!("Basic {}", encode_basic_auth(credentials)),
+            ));
+        }
+
+        let mut analyzer = if custom_headers.is_empty() {
             HeaderAnalyzer::new(target)
+        } else {
+            HeaderAnalyzer::with_custom_headers(target, custom_headers)
         };
 
-        // Apply sneaky mode user agent if enabled
-        // Sneaky mode uses a common browser user agent to avoid detection
-        if context.args.http.sneaky {
+        // User-Agent precedence: an explicit --user-agent overrides everything,
+        // otherwise --sneaky selects a common-browser user agent to avoid detection.
+        if let Some(user_agent) = &context.args.http.user_agent {
+            analyzer = analyzer.with_user_agent(user_agent.clone());
+        } else if context.args.http.sneaky {
             use crate::utils::sneaky::SneakyConfig;
             let sneaky_config = SneakyConfig::new(true);
             analyzer = analyzer.with_user_agent(sneaky_config.user_agent().to_string());
@@ -217,5 +234,42 @@ mod tests {
         let mut context = build_context(args);
         let phase = HttpHeadersPhase::new();
         let _analyzer = phase.configure_analyzer(&mut context);
+    }
+
+    #[test]
+    fn test_encode_basic_auth_matches_rfc7617_example() {
+        // RFC 7617 example: "Aladdin:open sesame" -> "QWxhZGRpbjpvcGVuIHNlc2FtZQ=="
+        assert_eq!(
+            encode_basic_auth("Aladdin:open sesame"),
+            "QWxhZGRpbjpvcGVuIHNlc2FtZQ=="
+        );
+    }
+
+    #[test]
+    fn test_configure_analyzer_explicit_user_agent_overrides_sneaky() {
+        let mut args = ScanRequest::default();
+        args.http.sneaky = true;
+        args.http.user_agent = Some("CustomAgent/1.0".to_string());
+        let mut context = build_context(args);
+        let phase = HttpHeadersPhase::new();
+        let analyzer = phase.configure_analyzer(&mut context);
+        assert_eq!(analyzer.user_agent_for_test(), "CustomAgent/1.0");
+    }
+
+    #[test]
+    fn test_configure_analyzer_basicauth_adds_authorization_header() {
+        let mut args = ScanRequest::default();
+        args.http.basicauth = Some("Aladdin:open sesame".to_string());
+        let mut context = build_context(args);
+        let phase = HttpHeadersPhase::new();
+        let analyzer = phase.configure_analyzer(&mut context);
+        assert!(
+            analyzer
+                .custom_headers_for_test()
+                .iter()
+                .any(|(name, value)| {
+                    name == "Authorization" && value == "Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ=="
+                })
+        );
     }
 }

@@ -104,6 +104,18 @@ impl HeaderAnalyzer {
         self
     }
 
+    /// Configured user agent (test introspection only).
+    #[cfg(test)]
+    pub(crate) fn user_agent_for_test(&self) -> &str {
+        &self.user_agent
+    }
+
+    /// Configured custom headers (test introspection only).
+    #[cfg(test)]
+    pub(crate) fn custom_headers_for_test(&self) -> &[(String, String)] {
+        &self.custom_headers
+    }
+
     /// Analyze HTTP security headers
     pub async fn analyze(&self) -> Result<HeaderAnalysisResult> {
         // Fetch headers via HTTPS

@@ -260,11 +260,11 @@ fn test_certificate_helpers() {
 fn test_format_key_size_rsa_thresholds() {
     use colored::Color;
     assert_eq!(
-        format_key_size(1024, "rsaEncryption").fgcolor(),
+        format_key_size(1024, "rsaEncryption").fgcolor,
         Some(Color::Red)
     );
     assert_eq!(
-        format_key_size(2048, "rsaEncryption").fgcolor(),
+        format_key_size(2048, "rsaEncryption").fgcolor,
         Some(Color::Green)
     );
 }
@@ -274,13 +274,13 @@ fn test_format_key_size_ec_keys_not_flagged_weak() {
     use colored::Color;
     // Strong EC keys must not render red under the RSA 2048-bit floor.
     assert_eq!(
-        format_key_size(256, "id-ecPublicKey").fgcolor(),
+        format_key_size(256, "id-ecPublicKey").fgcolor,
         Some(Color::Green)
     );
-    assert_eq!(format_key_size(384, "ecdsa").fgcolor(), Some(Color::Green));
+    assert_eq!(format_key_size(384, "ecdsa").fgcolor, Some(Color::Green));
     // Genuinely weak EC keys still render red.
     assert_eq!(
-        format_key_size(160, "ecPublicKey").fgcolor(),
+        format_key_size(160, "ecPublicKey").fgcolor,
         Some(Color::Red)
     );
 }
