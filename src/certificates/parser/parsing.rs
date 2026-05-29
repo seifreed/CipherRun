@@ -37,6 +37,20 @@ fn public_key_algorithm_name(cert: &X509Certificate) -> String {
     }
 }
 
+/// Map a certificate's signature algorithm to a stable, human-readable name.
+///
+/// x509-parser exposes the algorithm as a numeric OID (e.g.
+/// `1.2.840.10045.4.3.2`), but compliance and policy rules match against
+/// algorithm names (`ecdsa-with-SHA256`, `sha256WithRSAEncryption`, ...).
+/// Resolve the OID short name via the registry, falling back to the numeric
+/// OID for algorithms the registry does not know.
+fn signature_algorithm_name(cert: &X509Certificate) -> String {
+    let oid = &cert.signature_algorithm.algorithm;
+    oid2sn(oid, oid_registry())
+        .map(|sn| sn.to_string())
+        .unwrap_or_else(|_| oid.to_string())
+}
+
 /// Certificate parser
 pub struct CertificateParser {
     target: Target,
@@ -306,7 +320,7 @@ impl CertificateParser {
             not_before: cert.validity().not_before.to_string(),
             not_after: not_after_str,
             expiry_countdown,
-            signature_algorithm: cert.signature_algorithm.algorithm.to_string(),
+            signature_algorithm: signature_algorithm_name(&cert),
             public_key_algorithm: public_key_algorithm_name(&cert),
             public_key_size,
             rsa_exponent,
@@ -509,6 +523,10 @@ mod tests {
         // it to a name the key-strength logic recognizes as elliptic-curve.
         assert_eq!(info.public_key_algorithm, "id-ecPublicKey");
         assert_eq!(info.public_key_size, Some(256));
+
+        // Signature algorithm must resolve to a name (not a numeric OID), so
+        // compliance/policy rules that match on "sha256" succeed.
+        assert_eq!(info.signature_algorithm, "ecdsa-with-SHA256");
 
         // Regression: a 256-bit EC key must not be flagged as a weak RSA key.
         let validator =
