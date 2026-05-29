@@ -1,6 +1,24 @@
 use super::*;
 
 #[test]
+fn test_ids_friendly_applies_conservative_throttle() {
+    let mut args = Args::default();
+    args.http.ids_friendly = true;
+    let request = args.to_scan_request();
+    let expected = crate::utils::ids_friendly::IdsFriendlyConfig::default().min_delay_ms;
+    assert_eq!(request.connection.sleep, Some(expected));
+}
+
+#[test]
+fn test_explicit_sleep_overrides_ids_friendly_throttle() {
+    let mut args = Args::default();
+    args.http.ids_friendly = true;
+    args.connection.sleep = Some(250);
+    let request = args.to_scan_request();
+    assert_eq!(request.connection.sleep, Some(250));
+}
+
+#[test]
 fn test_validate_conflicting_ip_flags() {
     let args = Args {
         network: NetworkArgs {

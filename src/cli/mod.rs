@@ -315,6 +315,19 @@ impl Args {
             .map_err(anyhow::Error::from)
     }
 
+    /// Effective inter-connection throttle in milliseconds.
+    ///
+    /// An explicit `--sleep`/`--delay` wins; otherwise `--ids-friendly` applies a
+    /// conservative delay (the IDS-friendly preset minimum) so scanning is slowed
+    /// enough to reduce IDS/IPS triggering, matching the flag's documented intent.
+    fn effective_throttle_ms(&self) -> Option<u64> {
+        self.connection.effective_sleep_ms().or_else(|| {
+            self.http
+                .ids_friendly
+                .then(|| crate::utils::ids_friendly::IdsFriendlyConfig::default().min_delay_ms)
+        })
+    }
+
     pub fn to_scan_request(&self) -> crate::application::ScanRequest {
         crate::application::ScanRequest {
             target: self.target.clone(),
@@ -397,7 +410,7 @@ impl Args {
             connection: crate::application::scan_request::ScanRequestConnection {
                 socket_timeout: self.connection.socket_timeout,
                 connect_timeout: self.connection.connect_timeout,
-                sleep: self.connection.effective_sleep_ms(),
+                sleep: self.effective_throttle_ms(),
                 max_retries: self.connection.max_retries,
                 retry_backoff_ms: self.connection.retry_backoff_ms,
                 max_backoff_ms: self.connection.max_backoff_ms,
