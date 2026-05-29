@@ -21,6 +21,25 @@ fn csv_safe(value: &str) -> String {
     }
 }
 
+/// Escape a value for the hand-written multi-table CSV in `generate_csv`.
+///
+/// `generate_csv` builds rows with `format!` rather than `csv::Writer`, so it
+/// must neutralize the field separator (comma) and record separators (newline,
+/// carriage return, tab) itself — otherwise a value containing any of them
+/// shifts columns or splits the row. The formula-injection guard from
+/// `csv_safe` is applied afterwards.
+fn csv_cell(value: &str) -> String {
+    let neutralized: String = value
+        .chars()
+        .map(|c| match c {
+            ',' => ';',
+            '\n' | '\r' | '\t' => ' ',
+            other => other,
+        })
+        .collect();
+    csv_safe(&neutralized)
+}
+
 /// Generate CSV output from scan results
 /// Produces multiple CSV tables: protocols, vulnerabilities, and summary
 pub fn generate_csv(results: &ScanResults) -> Result<String> {
@@ -31,7 +50,7 @@ pub fn generate_csv(results: &ScanResults) -> Result<String> {
     output.push_str("Target,Scan Time (ms),Protocols Tested,Vulnerabilities Tested\n");
     output.push_str(&format!(
         "{},{},{},{}\n",
-        csv_safe(&results.target),
+        csv_cell(&results.target),
         results.scan_time_ms,
         results.protocols.len(),
         results.vulnerabilities.len()
@@ -44,7 +63,7 @@ pub fn generate_csv(results: &ScanResults) -> Result<String> {
     for protocol in &results.protocols {
         output.push_str(&format!(
             "{},{},{}\n",
-            csv_safe(&format!("{}", protocol.protocol)),
+            csv_cell(&format!("{}", protocol.protocol)),
             protocol.supported,
             protocol.protocol.is_deprecated()
         ));
@@ -57,11 +76,11 @@ pub fn generate_csv(results: &ScanResults) -> Result<String> {
     for vuln in &results.vulnerabilities {
         output.push_str(&format!(
             "{},{},{:?},{},{}\n",
-            csv_safe(&format!("{:?}", vuln.vuln_type)),
-            csv_safe(vuln.status_csv_value()),
+            csv_cell(&format!("{:?}", vuln.vuln_type)),
+            csv_cell(vuln.status_csv_value()),
             vuln.severity,
-            csv_safe(vuln.cve.as_deref().unwrap_or("N/A")),
-            csv_safe(&vuln.details.replace(',', ";").replace('\n', " "))
+            csv_cell(vuln.cve.as_deref().unwrap_or("N/A")),
+            csv_cell(&vuln.details)
         ));
     }
     output.push('\n');
@@ -79,11 +98,11 @@ pub fn generate_csv(results: &ScanResults) -> Result<String> {
             for issue in &headers.issues {
                 output.push_str(&format!(
                     "{},{:?},{:?},{},{}\n",
-                    csv_safe(&issue.header_name),
+                    csv_cell(&issue.header_name),
                     issue.issue_type,
                     issue.severity,
-                    csv_safe(&issue.description.replace(',', ";")),
-                    csv_safe(&issue.recommendation.replace(',', ";"))
+                    csv_cell(&issue.description),
+                    csv_cell(&issue.recommendation)
                 ));
             }
             output.push('\n');
@@ -100,7 +119,7 @@ pub fn generate_csv(results: &ScanResults) -> Result<String> {
                 hsts.max_age.unwrap_or(0),
                 hsts.include_subdomains,
                 hsts.preload,
-                hsts.details.replace(',', ";")
+                csv_cell(&hsts.details)
             ));
             output.push('\n');
         }
@@ -127,12 +146,12 @@ pub fn generate_csv(results: &ScanResults) -> Result<String> {
                 for cookie in &cookies.cookies {
                     output.push_str(&format!(
                         "{},{},{},{},{},{}\n",
-                        csv_safe(&cookie.name),
+                        csv_cell(&cookie.name),
                         cookie.secure,
                         cookie.httponly,
-                        csv_safe(cookie.samesite.as_deref().unwrap_or("N/A")),
-                        csv_safe(cookie.domain.as_deref().unwrap_or("N/A")),
-                        csv_safe(cookie.path.as_deref().unwrap_or("N/A"))
+                        csv_cell(cookie.samesite.as_deref().unwrap_or("N/A")),
+                        csv_cell(cookie.domain.as_deref().unwrap_or("N/A")),
+                        csv_cell(cookie.path.as_deref().unwrap_or("N/A"))
                     ));
                 }
                 output.push('\n');
@@ -144,10 +163,10 @@ pub fn generate_csv(results: &ScanResults) -> Result<String> {
             output.push_str("Server Date,Synchronized,Skew (seconds),Details\n");
             output.push_str(&format!(
                 "{},{},{},{}\n",
-                datetime.server_date.as_deref().unwrap_or("N/A"),
+                csv_cell(datetime.server_date.as_deref().unwrap_or("N/A")),
                 datetime.synchronized,
                 datetime.skew_seconds.unwrap_or(0),
-                datetime.details.replace(',', ";")
+                csv_cell(&datetime.details)
             ));
             output.push('\n');
         }
@@ -157,9 +176,9 @@ pub fn generate_csv(results: &ScanResults) -> Result<String> {
             output.push_str("Server,X-Powered-By,Application,Version Exposed,Grade\n");
             output.push_str(&format!(
                 "{},{},{},{},{:?}\n",
-                csv_safe(banners.server.as_deref().unwrap_or("N/A")).replace(',', ";"),
-                csv_safe(banners.powered_by.as_deref().unwrap_or("N/A")).replace(',', ";"),
-                csv_safe(banners.application.as_deref().unwrap_or("N/A")).replace(',', ";"),
+                csv_cell(banners.server.as_deref().unwrap_or("N/A")),
+                csv_cell(banners.powered_by.as_deref().unwrap_or("N/A")),
+                csv_cell(banners.application.as_deref().unwrap_or("N/A")),
                 banners.version_exposed,
                 banners.grade
             ));
@@ -173,8 +192,8 @@ pub fn generate_csv(results: &ScanResults) -> Result<String> {
             output.push_str(&format!(
                 "{},{},{},{},{},{}\n",
                 proxy.detected,
-                csv_safe(proxy.proxy_type.as_deref().unwrap_or("N/A")),
-                csv_safe(proxy.via_header.as_deref().unwrap_or("N/A")),
+                csv_cell(proxy.proxy_type.as_deref().unwrap_or("N/A")),
+                csv_cell(proxy.via_header.as_deref().unwrap_or("N/A")),
                 proxy.x_forwarded_for,
                 proxy.x_real_ip,
                 proxy.x_forwarded_proto
@@ -206,16 +225,16 @@ pub fn generate_csv(results: &ScanResults) -> Result<String> {
         for client in clients {
             output.push_str(&format!(
                 "{},{},{},{},{}\n",
-                csv_safe(&client.client_name),
+                csv_cell(&client.client_name),
                 client.success,
-                csv_safe(
+                csv_cell(
                     &client
                         .protocol
                         .as_ref()
                         .map(|p| format!("{}", p))
                         .unwrap_or_else(|| "N/A".to_string())
                 ),
-                csv_safe(client.cipher.as_deref().unwrap_or("N/A")),
+                csv_cell(client.cipher.as_deref().unwrap_or("N/A")),
                 client.handshake_time_ms.unwrap_or(0)
             ));
         }
@@ -269,6 +288,23 @@ mod tests {
     use crate::scanner::{AdvancedResults, HttpResults, RatingResults};
     use crate::vulnerabilities::{Severity, VulnerabilityResult, VulnerabilityType};
     use std::collections::HashMap;
+
+    #[test]
+    fn test_csv_cell_neutralizes_separators() {
+        // Commas, newlines, CRs and tabs must not survive into a hand-written
+        // CSV cell, otherwise they shift columns or split the row.
+        let escaped = csv_cell("a,b\nc\rd\te");
+        assert!(!escaped.contains(','));
+        assert!(!escaped.contains('\n'));
+        assert!(!escaped.contains('\r'));
+        assert!(!escaped.contains('\t'));
+    }
+
+    #[test]
+    fn test_csv_cell_preserves_formula_injection_guard() {
+        assert!(csv_cell("=1+1").starts_with('\''));
+        assert!(csv_cell("@SUM(A1)").starts_with('\''));
+    }
 
     #[test]
     fn test_csv_generation() {
