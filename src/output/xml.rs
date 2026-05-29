@@ -149,11 +149,24 @@ fn write_vulnerabilities_block(
 }
 
 fn escape_xml(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&apos;")
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&apos;"),
+            // XML 1.0 permits only tab, LF and CR among the C0 control characters.
+            '\t' | '\n' | '\r' => out.push(c),
+            // Drop other control characters: emitting them verbatim would produce
+            // non-well-formed XML, and these fields carry server-controlled data
+            // (certificate subjects, serials, vulnerability details).
+            c if (c as u32) < 0x20 => {}
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 fn option_status_label(value: Option<bool>) -> &'static str {
@@ -233,6 +246,14 @@ mod tests {
         let escaped = escape_xml("a\"b'c");
         assert!(escaped.contains("&quot;"));
         assert!(escaped.contains("&apos;"));
+    }
+
+    #[test]
+    fn test_xml_escape_drops_forbidden_control_chars_keeps_whitespace() {
+        // C0 control chars (other than tab/LF/CR) are illegal in XML 1.0 and must
+        // be dropped so server-controlled data cannot break well-formedness.
+        let escaped = escape_xml("a\u{0}b\u{8}c\u{1f}d\tline\nbreak\r");
+        assert_eq!(escaped, "abcd\tline\nbreak\r");
     }
 
     #[test]

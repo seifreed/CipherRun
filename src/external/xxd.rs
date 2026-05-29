@@ -228,8 +228,12 @@ pub fn simple_hex_dump(data: &[u8], cols: usize) -> String {
             }
         }
 
-        // Padding
-        let padding = (cols - chunk.len()) * 2 + (cols - chunk.len()) / 2;
+        // Pad the hex section so the ASCII column aligns with full rows. A row of
+        // `n` bytes occupies `n*2 + n/2` columns (2 hex chars per byte plus a space
+        // after every odd index); the integer divisions do not distribute, so the
+        // width must be computed from the full and partial totals, not factored.
+        let n = chunk.len();
+        let padding = (cols * 2 + cols / 2) - (n * 2 + n / 2);
         for _ in 0..padding {
             output.push(' ');
         }
@@ -372,5 +376,27 @@ mod tests {
     fn test_bytes_to_hex_empty() {
         let hex = bytes_to_hex(&[], false);
         assert_eq!(hex, "");
+    }
+
+    #[test]
+    fn test_simple_hex_dump_ascii_column_aligns_for_partial_row() {
+        // A full 16-byte row and an odd-length partial row must place the ASCII
+        // section at the same column. Odd partial rows previously padded one space
+        // short due to non-distributing integer division.
+        let cols = 16;
+        let full = simple_hex_dump(&[0x41u8; 16], cols);
+        let partial = simple_hex_dump(&[0x41u8], cols);
+
+        // Hex bytes render lowercase ("41"), so the first uppercase 'A' marks the
+        // start of the ASCII section.
+        let ascii_col = |line: &str| line.find('A').expect("printable byte present");
+        let full_line = full.lines().next().expect("one row");
+        let partial_line = partial.lines().next().expect("one row");
+
+        assert_eq!(
+            ascii_col(full_line),
+            ascii_col(partial_line),
+            "ASCII column must align between full and partial rows"
+        );
     }
 }

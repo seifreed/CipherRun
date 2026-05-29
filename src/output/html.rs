@@ -38,6 +38,7 @@ const HTML_TEMPLATE: &str = r#"<!DOCTYPE html>
         .severity-high { background: #e74c3c; color: white; padding: 4px 8px; border-radius: 4px; }
         .severity-medium { background: #f39c12; color: white; padding: 4px 8px; border-radius: 4px; }
         .severity-low { background: #95a5a6; color: white; padding: 4px 8px; border-radius: 4px; }
+        .severity-info { background: #3498db; color: white; padding: 4px 8px; border-radius: 4px; }
         .score-bar { height: 30px; background: #ecf0f1; border-radius: 15px; overflow: hidden; margin: 10px 0; }
         .score-fill { height: 100%; background: linear-gradient(90deg, #e74c3c 0%, #f39c12 50%, #27ae60 100%); display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; }
         .footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid #ddd; color: #7f8c8d; text-align: center; }
