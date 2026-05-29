@@ -8,6 +8,35 @@ use x509_parser::prelude::*;
 
 use super::{CertificateChain, CertificateInfo};
 
+/// Algorithm OID for Ed25519 signing/public keys (RFC 8410).
+const ED25519_OID: &str = "1.3.101.112";
+/// Algorithm OID for Ed448 signing/public keys (RFC 8410).
+const ED448_OID: &str = "1.3.101.113";
+
+/// Map a certificate's public-key algorithm to a stable, human-readable name.
+///
+/// x509-parser exposes the algorithm only as a numeric OID (e.g.
+/// `1.2.840.10045.2.1`). Downstream key-strength and formatting logic classify
+/// keys by name (`rsaEncryption`, `id-ecPublicKey`, `ed25519`, ...), so emit
+/// those names here at the parse boundary. Ed25519/Ed448 keys parse as
+/// `Unknown`, hence the OID check before falling back to the parsed key type.
+fn public_key_algorithm_name(cert: &X509Certificate) -> String {
+    let oid = cert.public_key().algorithm.algorithm.to_string();
+    match oid.as_str() {
+        ED25519_OID => return "ed25519".to_string(),
+        ED448_OID => return "ed448".to_string(),
+        _ => {}
+    }
+
+    use x509_parser::public_key::PublicKey;
+    match cert.public_key().parsed() {
+        Ok(PublicKey::RSA(_)) => "rsaEncryption".to_string(),
+        Ok(PublicKey::EC(_)) => "id-ecPublicKey".to_string(),
+        Ok(PublicKey::DSA(_)) => "dsaEncryption".to_string(),
+        _ => oid,
+    }
+}
+
 /// Certificate parser
 pub struct CertificateParser {
     target: Target,
@@ -278,7 +307,7 @@ impl CertificateParser {
             not_after: not_after_str,
             expiry_countdown,
             signature_algorithm: cert.signature_algorithm.algorithm.to_string(),
-            public_key_algorithm: cert.public_key().algorithm.algorithm.to_string(),
+            public_key_algorithm: public_key_algorithm_name(&cert),
             public_key_size,
             rsa_exponent,
             san,
@@ -442,6 +471,55 @@ mod tests {
         assert!(info.issuer.contains("CN=example.com"));
         assert!(info.san.iter().any(|s| s.contains("example.com")));
         assert!(info.fingerprint_sha256.is_some());
+    }
+
+    #[test]
+    fn test_parse_certificate_ec_key_reports_ec_algorithm_and_passes_strength() {
+        use openssl::asn1::Asn1Time;
+        use openssl::ec::{EcGroup, EcKey};
+        use openssl::hash::MessageDigest as OpensslMessageDigest;
+        use openssl::nid::Nid;
+        use openssl::pkey::PKey;
+        use openssl::x509::{X509Builder, X509NameBuilder};
+
+        let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();
+        let ec = EcKey::generate(&group).unwrap();
+        let pkey = PKey::from_ec_key(ec).unwrap();
+
+        let mut name = X509NameBuilder::new().unwrap();
+        name.append_entry_by_text("CN", "ec.example.com").unwrap();
+        let name = name.build();
+
+        let mut builder = X509Builder::new().unwrap();
+        builder.set_subject_name(&name).unwrap();
+        builder.set_issuer_name(&name).unwrap();
+        builder.set_pubkey(&pkey).unwrap();
+        builder
+            .set_not_before(&Asn1Time::days_from_now(0).unwrap())
+            .unwrap();
+        builder
+            .set_not_after(&Asn1Time::days_from_now(30).unwrap())
+            .unwrap();
+        builder.sign(&pkey, OpensslMessageDigest::sha256()).unwrap();
+        let der = builder.build().to_der().unwrap();
+
+        let info = CertificateParser::parse_certificate(&der).unwrap();
+
+        // x509-parser exposes only the numeric OID; the parser must normalize
+        // it to a name the key-strength logic recognizes as elliptic-curve.
+        assert_eq!(info.public_key_algorithm, "id-ecPublicKey");
+        assert_eq!(info.public_key_size, Some(256));
+
+        // Regression: a 256-bit EC key must not be flagged as a weak RSA key.
+        let validator =
+            crate::certificates::validator::CertificateValidator::new("ec.example.com".to_string());
+        let mut issues = Vec::new();
+        assert!(validator.check_key_strength(&info, &mut issues));
+        assert!(
+            issues.is_empty(),
+            "strong EC key should produce no key-strength issues, got: {:?}",
+            issues
+        );
     }
 
     #[test]
