@@ -158,8 +158,11 @@ impl AsnCidrParser {
     pub fn parse_input(input: &str) -> InputType {
         let input = input.trim();
 
-        // Check for ASN format (must have AS prefix to avoid misclassifying hostnames like "8080")
-        if input.to_uppercase().starts_with("AS") {
+        // Check for ASN format (must have AS prefix to avoid misclassifying hostnames like "8080").
+        // Match raw bytes rather than to_uppercase().starts_with("AS"): uppercasing can change byte
+        // layout, so the case-folded check could misclassify input. Mirrors parse_asn_number.
+        let has_as_prefix = matches!(input.as_bytes(), [b'A' | b'a', b'S' | b's', ..]);
+        if has_as_prefix {
             // Verify it's a valid ASN number
             if let Ok(asn_num) = Self::parse_asn_number(input)
                 && asn_num > 0
@@ -355,6 +358,12 @@ mod tests {
         match AsnCidrParser::parse_input("1449") {
             InputType::Hostname(hostname) => assert_eq!(hostname, "1449"),
             _ => panic!("Expected Hostname input type for bare numeric string"),
+        }
+
+        // Lowercase prefix is classified via raw-byte matching, not case folding.
+        match AsnCidrParser::parse_input("as1449") {
+            InputType::Asn(asn) => assert_eq!(asn, "as1449"),
+            _ => panic!("Expected ASN input type for lowercase 'as' prefix"),
         }
     }
 
