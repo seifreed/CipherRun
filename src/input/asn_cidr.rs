@@ -25,11 +25,13 @@ impl AsnCidrParser {
     fn parse_asn_number(asn: &str) -> Result<u32> {
         let asn_str = asn.trim();
 
-        // Remove "AS" prefix if present
-        let num_str = if asn_str.to_uppercase().starts_with("AS") {
-            &asn_str[2..]
-        } else {
-            asn_str
+        // Remove an optional ASCII "AS" prefix (case-insensitive). Match on the
+        // raw bytes rather than `to_uppercase().starts_with("AS")`: uppercasing
+        // can change byte layout (e.g. 'ſ' -> "S"), so the old check could pass
+        // while `asn_str[2..]` sliced inside a multi-byte character and panicked.
+        let num_str = match asn_str.as_bytes() {
+            [b'A' | b'a', b'S' | b's', ..] => &asn_str[2..],
+            _ => asn_str,
         };
 
         num_str.parse::<u32>().map_err(|e| TlsError::InvalidInput {
@@ -332,6 +334,14 @@ mod tests {
 
         assert!(AsnCidrParser::parse_asn_number("invalid").is_err());
         assert!(AsnCidrParser::parse_asn_number("AS").is_err());
+    }
+
+    #[test]
+    fn test_parse_asn_number_multibyte_does_not_panic() {
+        // "ſ" (U+017F) uppercases to "S", so the old to_uppercase()-based check
+        // matched "AS" while byte index 2 fell inside the multi-byte character.
+        // Must return an error rather than panic on a non-char-boundary slice.
+        assert!(AsnCidrParser::parse_asn_number("aſ123").is_err());
     }
 
     #[test]
