@@ -1,11 +1,6 @@
 // STARTTLS Tester - Test STARTTLS support on various protocols
 
-use super::ftp::FtpNegotiator;
-use super::imap::ImapNegotiator;
-use super::pop3::Pop3Negotiator;
-use super::protocols::{StarttlsNegotiator, StarttlsProtocol, StarttlsTestResult};
-use super::smtp::SmtpNegotiator;
-use super::xmpp::XmppNegotiator;
+use super::protocols::{StarttlsNegotiator, StarttlsProtocol, StarttlsTestResult, get_negotiator};
 use crate::Result;
 use crate::utils::network::Target;
 use std::sync::Arc;
@@ -36,28 +31,6 @@ impl StarttlsTester {
             protocol.default_port()
         };
 
-        // Create negotiator for the protocol
-        let negotiator: Arc<dyn StarttlsNegotiator> = match protocol {
-            StarttlsProtocol::SMTP | StarttlsProtocol::SMTPS => {
-                Arc::new(SmtpNegotiator::new(self.target.hostname.clone()))
-            }
-            StarttlsProtocol::IMAP | StarttlsProtocol::IMAPS => Arc::new(ImapNegotiator::new()),
-            StarttlsProtocol::POP3 | StarttlsProtocol::POP3S => Arc::new(Pop3Negotiator::new()),
-            StarttlsProtocol::FTP | StarttlsProtocol::FTPS => Arc::new(FtpNegotiator::new()),
-            StarttlsProtocol::XMPP | StarttlsProtocol::XMPPS => {
-                Arc::new(XmppNegotiator::new(self.target.hostname.clone()))
-            }
-            _ => {
-                // Protocols not yet implemented
-                return StarttlsTestResult {
-                    protocol,
-                    port,
-                    starttls_supported: false,
-                    error: Some("Protocol not yet implemented".to_string()),
-                };
-            }
-        };
-
         // For implicit TLS protocols (SMTPS, IMAPS, etc.), we don't test STARTTLS
         if protocol.is_implicit_tls() {
             return StarttlsTestResult {
@@ -67,6 +40,12 @@ impl StarttlsTester {
                 error: Some("Implicit TLS protocol (no STARTTLS negotiation)".to_string()),
             };
         }
+
+        // Build the negotiator via the canonical dispatcher so every protocol
+        // with an implementation (SMTP, IMAP, POP3, FTP, XMPP, LDAP, IRC,
+        // PostgreSQL, MySQL, NNTP, Sieve, LMTP, Telnet) is exercised.
+        let negotiator: Arc<dyn StarttlsNegotiator> =
+            Arc::from(get_negotiator(protocol, self.target.hostname.clone()));
 
         // Test STARTTLS
         match self.test_starttls_with_negotiator(port, negotiator).await {
@@ -189,18 +168,24 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_protocol_unimplemented_returns_error() {
+    async fn test_protocol_ldap_is_dispatched_not_stubbed() {
+        // LDAP has a real negotiator; test_protocol must dispatch it rather than
+        // return the old "not yet implemented" stub. Against a closed local port
+        // it fails to connect, but the error must NOT be the stub message.
         let target = Target::with_ips(
             "example.com".to_string(),
             389,
             vec![IpAddr::from([127, 0, 0, 1])],
         )
         .unwrap();
-        let tester = StarttlsTester::new(target);
+        let tester = StarttlsTester {
+            target,
+            connect_timeout: Duration::from_millis(50),
+        };
         let result = tester.test_protocol(StarttlsProtocol::LDAP).await;
         assert!(!result.starttls_supported);
         assert!(
-            result
+            !result
                 .error
                 .unwrap_or_default()
                 .contains("not yet implemented")
@@ -208,14 +193,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_protocol_unimplemented_returns_default_port() {
+    async fn test_protocol_irc_resolves_default_port() {
         let target = Target::with_ips(
             "127.0.0.1".to_string(),
             6667,
             vec![IpAddr::from([127, 0, 0, 1])],
         )
         .unwrap();
-        let tester = StarttlsTester::new(target);
+        let tester = StarttlsTester {
+            target,
+            connect_timeout: Duration::from_millis(50),
+        };
         let result = tester.test_protocol(StarttlsProtocol::IRC).await;
         assert!(!result.starttls_supported);
         assert_eq!(result.port, StarttlsProtocol::IRC.default_port());
