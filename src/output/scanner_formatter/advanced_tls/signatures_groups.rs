@@ -50,22 +50,39 @@ impl<'a> ScannerFormatter<'a> {
             .filter(|g| matches!(g.group_type, GroupType::PostQuantum))
             .collect();
 
-        self.display_group_category("Elliptic Curve Groups:", &ec_groups);
-        self.display_group_category("Finite Field (DHE) Groups:", &ff_groups);
-        self.display_group_category("Post-Quantum Groups:", &pq_groups);
+        // --no-cipher-details hides per-curve names and DHE key lengths, leaving
+        // only the supported/total counts for the EC and finite-field categories.
+        let hide_details = self.args.scan.no_cipher_details;
+        self.display_group_category("Elliptic Curve Groups:", &ec_groups, hide_details);
+        self.display_group_category("Finite Field (DHE) Groups:", &ff_groups, hide_details);
+        self.display_group_category("Post-Quantum Groups:", &pq_groups, false);
     }
 
     fn display_group_category(
         &self,
         title: &str,
         groups: &[&crate::protocols::groups::KeyExchangeGroup],
+        hide_details: bool,
     ) {
-        if !groups.is_empty() {
-            println!("\n  {}", title.cyan());
-            for group in groups {
-                let status = format_status_indicator(group.supported);
-                println!("    {} {:<30} ({} bits)", status, group.name, group.bits);
-            }
+        if groups.is_empty() {
+            return;
+        }
+
+        println!("\n  {}", title.cyan());
+
+        if hide_details {
+            let supported = groups.iter().filter(|g| g.supported).count();
+            println!(
+                "    Supported: {}/{} (details hidden)",
+                supported,
+                groups.len()
+            );
+            return;
+        }
+
+        for group in groups {
+            let status = format_status_indicator(group.supported);
+            println!("    {} {:<30} ({} bits)", status, group.name, group.bits);
         }
     }
 }
