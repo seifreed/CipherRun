@@ -310,8 +310,9 @@ async fn read_multiline_capabilities(
         if has_capability_token(&line, cap.starttls_marker) {
             supported = true;
         }
-        // Last line: "NNN " (space after code, not dash "NNN-")
-        if line.len() >= 4 && &line[3..4] == " " {
+        // Last line: "NNN " (space after code, not dash "NNN-"). Compare the 4th
+        // byte directly so a multi-byte char there cannot panic the slice.
+        if line.as_bytes().get(3) == Some(&b' ') {
             return Ok(supported);
         }
     }

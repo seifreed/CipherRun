@@ -55,9 +55,14 @@ where
         });
     }
 
-    let code: u16 = line[0..3]
-        .parse()
-        .map_err(|_| crate::error::TlsError::ParseError {
+    // Parse the 3-byte status code via bytes: slicing `line[0..3]` would panic if
+    // a multi-byte UTF-8 character crosses byte index 3 (e.g. a hostile greeting
+    // beginning with a non-ASCII char). Byte slicing is panic-free; non-digit or
+    // non-UTF-8 prefixes fall through to the ParseError below.
+    let code: u16 = std::str::from_utf8(&line.as_bytes()[..3])
+        .ok()
+        .and_then(|prefix| prefix.parse().ok())
+        .ok_or_else(|| crate::error::TlsError::ParseError {
             message: format!("Invalid {} status code", protocol_name),
         })?;
 
@@ -86,7 +91,7 @@ where
 
         if line_count == 0 {
             first_code = code;
-        } else if code != first_code && line.len() >= 4 && &line[3..4] == " " {
+        } else if code != first_code && line.as_bytes().get(3) == Some(&b' ') {
             // Final line of multi-line response may have a different code.
             // Per RFC 959, use the final line's code as the actual response.
             first_code = code;
@@ -94,8 +99,9 @@ where
 
         full_response.push_str(&line);
 
-        // Final line: "NNN " (space after code, not dash)
-        if line.len() >= 4 && &line[3..4] == " " {
+        // Final line: "NNN " (space after code, not dash). Compare the 4th byte
+        // directly so a multi-byte char at that position cannot panic the slice.
+        if line.as_bytes().get(3) == Some(&b' ') {
             break;
         }
     }
@@ -156,6 +162,44 @@ mod tests {
         let mut reader = BufReader::new(&mut client);
         let err = read_status_line(&mut reader, "TEST").await.unwrap_err();
         assert!(format!("{err}").contains("too short"));
+    }
+
+    #[tokio::test]
+    async fn test_read_status_line_multibyte_prefix_does_not_panic() {
+        // A line whose first bytes form a multi-byte char crossing index 3 must
+        // yield a ParseError, not a panic from slicing on a non-char boundary.
+        let (mut client, mut server) = tokio::io::duplex(64);
+        tokio::spawn(async move {
+            server
+                .write_all("a\u{1D400}xx\r\n".as_bytes())
+                .await
+                .expect("test should write data");
+        });
+
+        let mut reader = BufReader::new(&mut client);
+        let err = read_status_line(&mut reader, "TEST").await.unwrap_err();
+        assert!(format!("{err}").contains("Invalid TEST status code"));
+    }
+
+    #[tokio::test]
+    async fn test_read_multiline_status_multibyte_separator_does_not_panic() {
+        // A multi-byte char at byte index 3 (the code/separator position) must not
+        // panic the final-line detection.
+        let (mut client, mut server) = tokio::io::duplex(64);
+        tokio::spawn(async move {
+            // First line: multi-byte char at the separator position (continuation),
+            // followed by a proper final line.
+            server
+                .write_all("250\u{1D400}cont\r\n250 done\r\n".as_bytes())
+                .await
+                .expect("test should write data");
+        });
+
+        let mut reader = BufReader::new(&mut client);
+        let (code, _) = read_multiline_status(&mut reader, "TEST", 4)
+            .await
+            .expect("read_multiline_status should not panic");
+        assert_eq!(code, 250);
     }
 
     #[tokio::test]
