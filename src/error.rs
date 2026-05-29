@@ -386,7 +386,11 @@ mod tests {
         assert!(tls_err.to_string().contains("UTF-8 string error"));
     }
 
-    #[tokio::test]
+    // Virtual time (start_paused) makes the timeout deterministic: tokio advances
+    // to the 1ms timeout deadline before the 10ms inner sleep completes. Under real
+    // time, CPU starvation could let the first poll happen after both deadlines, so
+    // the inner sleep would already be Ready and the timeout would NOT elapse.
+    #[tokio::test(start_paused = true)]
     async fn test_timeout_conversion_to_timeout() {
         let result = tokio::time::timeout(Duration::from_millis(1), async {
             tokio::time::sleep(Duration::from_millis(10)).await;

@@ -8,8 +8,13 @@
 /// - Preventing connection throttling or blocking
 use anyhow::Result;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tokio::sync::Mutex;
+// Use tokio's clock (not std::time::Instant) so the limiter's timing is driven by
+// the runtime. Under real operation this tracks wall-clock monotonic time exactly
+// as std::time::Instant did; under `tokio::time::pause()` it becomes deterministic,
+// which lets the tests assert exact spacing instead of relying on wall-clock slack.
+use tokio::time::Instant;
 
 /// Rate limiter for controlling connection timing
 #[derive(Clone)]
@@ -97,7 +102,7 @@ impl RateLimiter {
         };
 
         if sleep_until > Instant::now() {
-            tokio::time::sleep_until(tokio::time::Instant::from_std(sleep_until)).await;
+            tokio::time::sleep_until(sleep_until).await;
         }
     }
 
@@ -190,32 +195,33 @@ pub fn parse_delay(s: &str) -> Result<Duration> {
 mod tests {
     use super::*;
 
-    #[tokio::test]
+    // These tests run under `start_paused = true`: tokio's clock is virtual and
+    // auto-advances to the next pending timer when the runtime is otherwise idle.
+    // Sleeps therefore resolve to exact deadlines with no wall-clock jitter, so
+    // the timing assertions are exact and never flake under CPU load.
+
+    #[tokio::test(start_paused = true)]
     async fn test_no_delay_on_first_request() {
         let limiter = RateLimiter::new(Duration::from_millis(100));
         let start = Instant::now();
         limiter.wait().await;
-        let elapsed = start.elapsed();
 
-        // First request should be immediate
-        assert!(elapsed.as_millis() < 50);
+        // First request reserves a slot but does not sleep.
+        assert_eq!(start.elapsed(), Duration::ZERO);
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn test_delay_on_second_request() {
         let limiter = RateLimiter::new(Duration::from_millis(100));
 
         let start = Instant::now();
-        limiter.wait().await; // First request
-        limiter.wait().await; // Second request
+        limiter.wait().await; // First request: immediate
+        limiter.wait().await; // Second request: sleeps exactly one delay
 
-        let elapsed = start.elapsed();
-
-        // Second request should be delayed by ~100ms
-        assert!(elapsed.as_millis() >= 95 && elapsed.as_millis() < 200);
+        assert_eq!(start.elapsed(), Duration::from_millis(100));
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn test_reset() {
         let limiter = RateLimiter::new(Duration::from_millis(100));
 
@@ -224,12 +230,11 @@ mod tests {
 
         let start = Instant::now();
         limiter.wait().await; // Should not wait since we reset
-        let elapsed = start.elapsed();
 
-        assert!(elapsed.as_millis() < 50);
+        assert_eq!(start.elapsed(), Duration::ZERO);
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn test_time_until_next() {
         let limiter = RateLimiter::new(Duration::from_millis(100));
 
@@ -238,16 +243,14 @@ mod tests {
 
         limiter.wait().await;
 
-        // Immediately after request
-        let wait_time = limiter.time_until_next().await;
-        assert!(wait_time.as_millis() > 50 && wait_time.as_millis() <= 100);
+        // Immediately after the request, the reserved slot is exactly one delay away.
+        assert_eq!(limiter.time_until_next().await, Duration::from_millis(100));
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn test_time_until_next_zero_after_elapsed() {
         let limiter = RateLimiter::new(Duration::from_millis(50));
-        // With the new semantics, set `next_allowed` to a past instant so
-        // `time_until_next` reports zero regardless of monotonic clock.
+        // Set `next_allowed` to a past instant so `time_until_next` reports zero.
         {
             let mut next = limiter.next_allowed.lock().await;
             *next = Some(Instant::now() - Duration::from_millis(200));
@@ -257,9 +260,10 @@ mod tests {
         assert_eq!(wait_time, Duration::ZERO);
     }
 
-    /// I4 regression: concurrent waiters must be spread by ~`delay` each,
-    /// not all fire simultaneously after a single sleep window.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    /// I4 regression: concurrent waiters must be spread by `delay` each,
+    /// not all fire simultaneously after a single sleep window. Under virtual
+    /// time the spacing is exact.
+    #[tokio::test(start_paused = true)]
     async fn test_rate_limiter_spreads_concurrent_waiters() {
         let limiter = RateLimiter::new(Duration::from_millis(100));
         let start = Instant::now();
@@ -279,22 +283,20 @@ mod tests {
         }
         times.sort();
 
-        // Each successive waiter should fire at least ~90 ms after the prior
-        // (some scheduling slack). The old race allowed all five to fire
-        // within a few ms of each other.
+        // Five waiters reserve slots at 0, delay, 2·delay, 3·delay, 4·delay.
         for w in times.windows(2) {
-            let gap = w[1] - w[0];
-            assert!(
-                gap >= Duration::from_millis(80),
-                "concurrent waiters must be spread by ~delay; gap was {:?}",
-                gap
+            assert_eq!(
+                w[1] - w[0],
+                Duration::from_millis(100),
+                "concurrent waiters must be spread by exactly one delay"
             );
         }
-        // And total span should be roughly 4 * delay.
+        // Total span is 4 · delay (first fires immediately, last after four delays).
         let total = times.last().unwrap().duration_since(start);
-        assert!(
-            total >= Duration::from_millis(350),
-            "5 waiters over 100ms delay should take ≥400ms total; got {:?}",
+        assert_eq!(
+            total,
+            Duration::from_millis(400),
+            "5 waiters over a 100ms delay should span exactly 400ms; got {:?}",
             total
         );
     }
