@@ -330,9 +330,20 @@ impl CipherTester {
             protocol
         );
 
-        let server_preference = self
-            .determine_server_preference(protocol, &supported)
-            .await?;
+        // Server-preference detection is a best-effort enhancement (cipher
+        // ordering). A server that refuses the follow-up probe handshakes must
+        // not abort the whole scan — fall back to "no detected ordering".
+        let server_preference = match self.determine_server_preference(protocol, &supported).await {
+            Ok(preference) => preference,
+            Err(error) => {
+                tracing::debug!(
+                    "Server cipher preference undetermined for {:?}: {}",
+                    protocol,
+                    error
+                );
+                Vec::new()
+            }
+        };
         let server_ordered = !server_preference.is_empty();
 
         let preferred_cipher = if !server_preference.is_empty() {
