@@ -8,4 +8,7 @@ pub struct ScanRequestHttp {
     /// HTTP Basic Authentication credentials in `user:password` form
     /// (`--basicauth`), sent as an `Authorization: Basic` header.
     pub basicauth: Option<String>,
+    /// Treat the target as HTTP and force HTTP header analysis even when it would
+    /// not otherwise run (`--assume-http`).
+    pub assume_http: bool,
 }

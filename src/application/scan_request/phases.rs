@@ -27,7 +27,7 @@ impl ScanRequest {
     }
 
     pub fn should_run_http_headers_phase(&self) -> bool {
-        self.scan.prefs.headers || self.baseline_scan_requested()
+        self.scan.prefs.headers || self.http.assume_http || self.baseline_scan_requested()
     }
 
     pub fn should_run_client_simulation_phase(&self) -> bool {

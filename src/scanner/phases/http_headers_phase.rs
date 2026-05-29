@@ -199,6 +199,11 @@ mod tests {
         };
         assert!(!phase.should_run(&args));
 
+        // --assume-http forces header analysis even without --headers/baseline.
+        let mut args = ScanRequest::default();
+        args.http.assume_http = true;
+        assert!(phase.should_run(&args));
+
         // Test with no relevant flags
         let args = ScanRequest::default();
         assert!(!phase.should_run(&args));
