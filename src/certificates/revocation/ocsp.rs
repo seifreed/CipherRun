@@ -2,8 +2,10 @@ use super::{RevocationChecker, RevocationStatus};
 use crate::Result;
 use crate::certificates::parser::CertificateInfo;
 use openssl::hash::MessageDigest;
-use openssl::ocsp::{OcspCertId, OcspRequest, OcspResponse, OcspResponseStatus};
+use openssl::ocsp::{OcspCertId, OcspFlag, OcspRequest, OcspResponse, OcspResponseStatus};
+use openssl::stack::Stack;
 use openssl::x509::X509;
+use openssl::x509::store::X509StoreBuilder;
 use tokio::time::timeout;
 use x509_parser::prelude::*;
 
@@ -232,6 +234,33 @@ impl RevocationChecker {
                 message: format!("Failed to parse issuer certificate DER: {}", e),
             }
         })?;
+
+        // SECURITY: verify the OCSP response signature before trusting any status.
+        // Without this, a forged or MITM'd response over the (plain-HTTP) AIA fetch
+        // could report a revoked certificate as Good. The responder must chain to the
+        // issuing CA — either the issuer signs directly, or a delegated responder cert
+        // embedded in the response chains to it. Unverifiable responses are reported
+        // as an error (problematic) rather than trusted.
+        let mut store_builder = X509StoreBuilder::new().map_err(|e| {
+            crate::error::TlsError::Other(format!("Failed to build OCSP trust store: {}", e))
+        })?;
+        store_builder.add_cert(issuer_x509.clone()).map_err(|e| {
+            crate::error::TlsError::Other(format!(
+                "Failed to add issuer to OCSP trust store: {}",
+                e
+            ))
+        })?;
+        let store = store_builder.build();
+        let empty_chain = Stack::new().map_err(|e| {
+            crate::error::TlsError::Other(format!("Failed to allocate OCSP cert stack: {}", e))
+        })?;
+        if let Err(e) = basic_response.verify(&empty_chain, &store, OcspFlag::empty()) {
+            tracing::warn!(
+                "OCSP response signature could not be verified ({}); not trusting status",
+                e
+            );
+            return Ok(RevocationStatus::Error);
+        }
 
         let cert_id = OcspCertId::from_cert(MessageDigest::sha1(), &cert_x509, &issuer_x509)
             .map_err(|e| {
