@@ -8,6 +8,7 @@ pub mod dns_cache;
 pub mod formatting;
 pub mod hints;
 pub mod ids_friendly;
+pub mod insecure_tls;
 pub mod mtls;
 pub mod mx;
 pub mod network;

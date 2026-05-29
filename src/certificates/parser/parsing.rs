@@ -92,7 +92,6 @@ impl CertificateParser {
     /// Get certificate chain from server
     pub async fn get_certificate_chain(&self) -> Result<CertificateChain> {
         // Use rustls to get the certificate chain
-        use rustls::{ClientConfig, RootCertStore};
         use std::sync::Arc;
         use tokio_rustls::TlsConnector;
 
@@ -107,20 +106,20 @@ impl CertificateParser {
         let stream =
             crate::utils::network::connect_with_timeout(addr, self.connect_timeout, None).await?;
 
-        // Build TLS connector with or without client auth
+        // Build TLS connector with or without client auth.
+        //
+        // Server-certificate verification is intentionally disabled here: a
+        // scanner must retrieve chains from servers with expired, self-signed,
+        // untrusted, or hostname-mismatched certificates (a verifying client
+        // would abort the handshake and produce no report). The retrieved
+        // chain is assessed separately by `certificates::validator`.
         let connector = if let Some(ref mtls_config) = self.mtls_config {
             // Use mTLS configuration
             mtls_config.build_tls_connector()?
         } else {
-            // Standard TLS without client auth
-            let mut root_store = RootCertStore::empty();
-            root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-
-            let config = ClientConfig::builder()
-                .with_root_certificates(root_store)
-                .with_no_client_auth();
-
-            TlsConnector::from(Arc::new(config))
+            TlsConnector::from(Arc::new(
+                crate::utils::insecure_tls::insecure_client_config(),
+            ))
         };
 
         // Connect with TLS
