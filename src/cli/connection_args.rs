@@ -63,6 +63,23 @@ impl Default for ConnectionArgs {
     }
 }
 
+impl ConnectionArgs {
+    /// Effective inter-connection throttle in milliseconds.
+    ///
+    /// `--sleep` (raw milliseconds) takes precedence; otherwise the human-readable
+    /// `--delay` (e.g. "200ms", "1s") is parsed. Returns `None` when neither is set
+    /// or `--delay` cannot be parsed (its format is validated earlier in `validate`).
+    pub fn effective_sleep_ms(&self) -> Option<u64> {
+        if let Some(ms) = self.sleep {
+            return Some(ms);
+        }
+        self.delay
+            .as_deref()
+            .and_then(|d| crate::utils::rate_limiter::parse_delay(d).ok())
+            .map(|duration| duration.as_millis() as u64)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -94,6 +111,27 @@ mod tests {
         let parsed = TestCli::parse_from(["test", "--no-retry"]);
         let args = parsed.args;
         assert!(args.no_retry);
+    }
+
+    #[test]
+    fn test_effective_sleep_ms_parses_delay_string() {
+        let parsed = TestCli::parse_from(["test", "--delay", "1s"]);
+        assert_eq!(parsed.args.effective_sleep_ms(), Some(1000));
+
+        let parsed = TestCli::parse_from(["test", "--delay", "250ms"]);
+        assert_eq!(parsed.args.effective_sleep_ms(), Some(250));
+    }
+
+    #[test]
+    fn test_effective_sleep_ms_prefers_explicit_sleep() {
+        let parsed = TestCli::parse_from(["test", "--sleep", "500", "--delay", "1s"]);
+        assert_eq!(parsed.args.effective_sleep_ms(), Some(500));
+    }
+
+    #[test]
+    fn test_effective_sleep_ms_none_when_unset() {
+        let parsed = TestCli::parse_from(["test"]);
+        assert_eq!(parsed.args.effective_sleep_ms(), None);
     }
 
     #[test]

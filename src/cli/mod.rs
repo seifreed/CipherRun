@@ -247,6 +247,11 @@ impl Args {
             anyhow::bail!("--parallel and --max-parallel are only supported with --file or --mx");
         }
 
+        if let Some(delay) = &self.connection.delay {
+            crate::utils::rate_limiter::parse_delay(delay)
+                .map_err(|e| anyhow::anyhow!("Invalid --delay value '{}': {}", delay, e))?;
+        }
+
         if let Some(xmpphost) = &self.starttls.xmpphost {
             validate_hostname(xmpphost).map_err(anyhow::Error::from)?;
 
@@ -392,7 +397,7 @@ impl Args {
             connection: crate::application::scan_request::ScanRequestConnection {
                 socket_timeout: self.connection.socket_timeout,
                 connect_timeout: self.connection.connect_timeout,
-                sleep: self.connection.sleep,
+                sleep: self.connection.effective_sleep_ms(),
                 max_retries: self.connection.max_retries,
                 retry_backoff_ms: self.connection.retry_backoff_ms,
                 max_backoff_ms: self.connection.max_backoff_ms,
