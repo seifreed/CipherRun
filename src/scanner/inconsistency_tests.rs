@@ -336,6 +336,66 @@ fn test_protocol_inconsistency_denominator_excludes_failed_scans() {
 }
 
 #[test]
+fn test_session_resumption_ignores_ips_without_supported_protocols() {
+    let ip1: IpAddr = Ipv4Addr::new(127, 0, 0, 1).into();
+    let ip2: IpAddr = Ipv4Addr::new(127, 0, 0, 2).into();
+
+    // ip1 supports TLS 1.3 with full session resumption.
+    let scan1 = make_scan(
+        Protocol::TLS13,
+        true,
+        None,
+        "CIPHER",
+        Grade::A,
+        Some(true),
+        Some(true),
+        None,
+    );
+    // ip2 completes without error but supports no TLS protocol, so it was never
+    // evaluated for resumption and must not be counted as "without resumption".
+    let scan2 = make_scan(
+        Protocol::TLS13,
+        false,
+        None,
+        "CIPHER",
+        Grade::A,
+        None,
+        None,
+        None,
+    );
+
+    let mut results = HashMap::new();
+    results.insert(
+        ip1,
+        SingleIpScanResult {
+            ip: ip1,
+            scan_result: scan1,
+            scan_duration_ms: 100,
+            error: None,
+        },
+    );
+    results.insert(
+        ip2,
+        SingleIpScanResult {
+            ip: ip2,
+            scan_result: scan2,
+            scan_duration_ms: 120,
+            error: None,
+        },
+    );
+
+    let detector = InconsistencyDetector::new(results);
+    let inconsistencies = detector.detect_all();
+
+    assert!(
+        !inconsistencies
+            .iter()
+            .any(|i| i.inconsistency_type == InconsistencyType::SessionResumption),
+        "an IP with no supported protocols must not trigger a session-resumption inconsistency"
+    );
+}
+
+#[test]
 fn test_single_ip_scan_result_success_flag() {
     let ip: IpAddr = Ipv4Addr::new(127, 0, 0, 1).into();
     let scan = make_scan(

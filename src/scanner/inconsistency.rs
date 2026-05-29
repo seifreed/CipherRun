@@ -448,9 +448,11 @@ impl InconsistencyDetector {
 
             let mut has_caching = false;
             let mut has_tickets = false;
+            let mut has_supported_protocol = false;
 
             for protocol_result in &result.scan_result.protocols {
                 if protocol_result.supported {
+                    has_supported_protocol = true;
                     if protocol_result.session_resumption_caching == Some(true) {
                         has_caching = true;
                     }
@@ -466,7 +468,11 @@ impl InconsistencyDetector {
             if has_tickets {
                 ips_with_tickets.push(*ip);
             }
-            if !has_caching && !has_tickets {
+            // Only treat an IP as "without resumption" if it was actually evaluated
+            // (had at least one supported TLS protocol). An IP that supports no
+            // protocols was never checked for resumption and must not trigger a
+            // spurious inconsistency against IPs that do support it.
+            if has_supported_protocol && !has_caching && !has_tickets {
                 ips_without.push(*ip);
             }
         }
