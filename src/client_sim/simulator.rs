@@ -40,6 +40,10 @@ pub struct ClientSimulationResult {
     pub certificate_type: Option<String>,
 }
 
+/// Major client families simulated by [`ClientSimulator::simulate_popular_clients`].
+/// The latest current client in each family is chosen at runtime.
+const POPULAR_CLIENT_FAMILIES: &[&str] = &["chrome", "firefox", "safari", "edge", "android"];
+
 /// Client simulator
 pub struct ClientSimulator {
     target: Target,
@@ -378,20 +382,16 @@ impl ClientSimulator {
     }
 
     /// Simulate popular clients (subset)
+    ///
+    /// Selects the most recent client per major family from the bundled
+    /// database rather than hard-coding version IDs, which previously drifted
+    /// out of sync with the data file and matched nothing (zero clients
+    /// simulated).
     pub async fn simulate_popular_clients(&self) -> Result<Vec<ClientSimulationResult>> {
-        let popular_ids = vec![
-            "chrome_120",
-            "firefox_120",
-            "safari_17_0",
-            "edge_120",
-            "android_14",
-            "ios_17_0",
-        ];
-
         let mut results = Vec::new();
-        for id in popular_ids {
-            if let Ok(result) = self.simulate_client_by_id(id).await {
-                results.push(result);
+        for family in POPULAR_CLIENT_FAMILIES {
+            if let Some(client) = CLIENT_DB.latest_by_family(family) {
+                results.push(self.simulate_client(client).await);
             }
         }
 

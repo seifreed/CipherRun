@@ -351,6 +351,30 @@ impl ClientDatabase {
         self.by_id.get(id).and_then(|&i| self.clients.get(i))
     }
 
+    /// Find the most recent current client in a family.
+    ///
+    /// Clients are grouped by the `<family>_` prefix of their `short_id`
+    /// (e.g. `chrome_101_win10` -> family `chrome`), and the one with the
+    /// highest leading version number is returned. This lets callers select
+    /// representative recent clients without hard-coding version IDs that go
+    /// stale as the bundled client database is updated.
+    pub fn latest_by_family(&self, family: &str) -> Option<&ClientProfile> {
+        let prefix = format!("{family}_");
+        self.clients
+            .iter()
+            .filter(|client| client.current && client.short_id.starts_with(&prefix))
+            .max_by_key(|client| Self::leading_version(&client.short_id[prefix.len()..]))
+    }
+
+    /// Parse the leading integer of `rest` (digits up to the first non-digit).
+    fn leading_version(rest: &str) -> u32 {
+        rest.chars()
+            .take_while(|c| c.is_ascii_digit())
+            .collect::<String>()
+            .parse()
+            .unwrap_or(0)
+    }
+
     /// Get all clients
     pub fn all_clients(&self) -> &[ClientProfile] {
         &self.clients
@@ -396,6 +420,38 @@ mod tests {
         for client in current {
             assert!(client.current);
         }
+    }
+
+    #[test]
+    fn test_leading_version_parses_digits_before_separator() {
+        assert_eq!(ClientDatabase::leading_version("101_win10"), 101);
+        assert_eq!(ClientDatabase::leading_version("15"), 15);
+        assert_eq!(ClientDatabase::leading_version("win10"), 0);
+    }
+
+    #[test]
+    fn test_latest_by_family_picks_highest_version() {
+        // The bundled database must resolve every popular family, otherwise
+        // simulate_popular_clients would silently run zero simulations.
+        let db = client_db();
+        for family in ["chrome", "firefox", "safari", "edge", "android"] {
+            let client = db
+                .latest_by_family(family)
+                .unwrap_or_else(|| panic!("no client found for family '{family}'"));
+            assert!(
+                client.short_id.starts_with(&format!("{family}_")),
+                "expected {family} short_id, got {}",
+                client.short_id
+            );
+        }
+        // Within chrome, the highest version must win over older ones.
+        let chrome = db.latest_by_family("chrome").expect("chrome present");
+        let version = ClientDatabase::leading_version(&chrome.short_id["chrome_".len()..]);
+        assert!(
+            version >= 101,
+            "expected recent chrome, got {}",
+            chrome.short_id
+        );
     }
 
     #[test]
