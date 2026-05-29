@@ -245,28 +245,60 @@ impl Scanner {
     async fn resolve_target_with_request_network(&self, target_str: &str) -> Result<Target> {
         let (hostname, embedded_port) = split_target_host_port(target_str)?;
         let port = self.request.port.or(embedded_port).unwrap_or(443);
-        if self.request.network.resolvers.is_empty() {
-            return Ok(Target::parse_with_port_override(target_str, self.request.port).await?);
-        }
 
-        if let Ok(ip) = hostname.parse::<IpAddr>() {
+        let target = if self.request.network.resolvers.is_empty() {
+            Target::parse_with_port_override(target_str, self.request.port).await?
+        } else if let Ok(ip) = hostname.parse::<IpAddr>() {
             validate_resolved_ips(&[ip], false).map_err(|error| crate::TlsError::InvalidInput {
                 message: format!("Resolved target failed SSRF validation: {}", error),
             })?;
-            return Ok(Target::with_ips(hostname, port, vec![ip])?);
+            Target::with_ips(hostname, port, vec![ip])?
+        } else {
+            let resolver = CustomResolver::new(self.request.network.resolvers.clone())?;
+            let ips = resolver.resolve(&hostname).await.map_err(|error| {
+                crate::TlsError::Other(format!(
+                    "Custom resolver lookup failed for {}: {}",
+                    hostname, error
+                ))
+            })?;
+            validate_resolved_ips(&ips, false).map_err(|error| crate::TlsError::InvalidInput {
+                message: format!("Resolved target failed SSRF validation: {}", error),
+            })?;
+            Target::with_ips(hostname, port, ips)?
+        };
+
+        self.apply_address_family_filter(target)
+    }
+
+    /// Restrict resolved addresses to the family requested via `-4`/`-6`.
+    ///
+    /// Without this the `--ipv4-only`/`--ipv6-only` flags are silently ignored
+    /// in the single-target scan path: every resolved address (A and AAAA) is
+    /// kept, so the scan may connect over the unwanted family.
+    fn apply_address_family_filter(&self, mut target: Target) -> Result<Target> {
+        let ipv4_only = self.request.network.ipv4_only;
+        let ipv6_only = self.request.network.ipv6_only;
+        if !ipv4_only && !ipv6_only {
+            return Ok(target);
         }
 
-        let resolver = CustomResolver::new(self.request.network.resolvers.clone())?;
-        let ips = resolver.resolve(&hostname).await.map_err(|error| {
-            crate::TlsError::Other(format!(
-                "Custom resolver lookup failed for {}: {}",
-                hostname, error
-            ))
-        })?;
-        validate_resolved_ips(&ips, false).map_err(|error| crate::TlsError::InvalidInput {
-            message: format!("Resolved target failed SSRF validation: {}", error),
-        })?;
-        Ok(Target::with_ips(hostname, port, ips)?)
+        target.ip_addresses.retain(|ip| {
+            if ipv4_only {
+                ip.is_ipv4()
+            } else {
+                ip.is_ipv6()
+            }
+        });
+
+        if target.ip_addresses.is_empty() {
+            let family = if ipv4_only { "IPv4" } else { "IPv6" };
+            return Err(crate::TlsError::Other(format!(
+                "No {family} addresses resolved for {}",
+                target.hostname
+            )));
+        }
+
+        Ok(target)
     }
 
     fn calculate_rating(&self, results: &ScanResults) -> RatingResult {
@@ -473,6 +505,79 @@ mod tests {
             ..Default::default()
         })
         .expect("scanner should build")
+    }
+
+    fn scanner_with_family(ipv4_only: bool, ipv6_only: bool) -> Scanner {
+        Scanner::new(ScanRequest {
+            target: Some("example.com:443".to_string()),
+            network: crate::application::scan_request::ScanRequestNetwork {
+                ipv4_only,
+                ipv6_only,
+                ..Default::default()
+            },
+            scan: crate::application::scan_request::ScanRequestScan {
+                prefs: crate::application::scan_request::ScanRequestPrefs {
+                    probe_status: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .expect("scanner should build")
+    }
+
+    fn mixed_family_target() -> Target {
+        Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec![
+                "1.2.3.4".parse().expect("v4"),
+                "2606:4700::1".parse().expect("v6"),
+            ],
+        )
+        .expect("target")
+    }
+
+    #[test]
+    fn address_family_filter_ipv4_only_keeps_only_ipv4() {
+        let scanner = scanner_with_family(true, false);
+        let filtered = scanner
+            .apply_address_family_filter(mixed_family_target())
+            .expect("ipv4 present");
+        assert_eq!(filtered.ip_addresses.len(), 1);
+        assert!(filtered.ip_addresses[0].is_ipv4());
+    }
+
+    #[test]
+    fn address_family_filter_ipv6_only_keeps_only_ipv6() {
+        let scanner = scanner_with_family(false, true);
+        let filtered = scanner
+            .apply_address_family_filter(mixed_family_target())
+            .expect("ipv6 present");
+        assert_eq!(filtered.ip_addresses.len(), 1);
+        assert!(filtered.ip_addresses[0].is_ipv6());
+    }
+
+    #[test]
+    fn address_family_filter_errors_when_family_absent() {
+        let scanner = scanner_with_family(false, true);
+        let only_v4 = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["1.2.3.4".parse().expect("v4")],
+        )
+        .expect("target");
+        assert!(scanner.apply_address_family_filter(only_v4).is_err());
+    }
+
+    #[test]
+    fn address_family_filter_noop_without_flags() {
+        let scanner = scanner_with_family(false, false);
+        let filtered = scanner
+            .apply_address_family_filter(mixed_family_target())
+            .expect("unfiltered");
+        assert_eq!(filtered.ip_addresses.len(), 2);
     }
 
     #[test]
