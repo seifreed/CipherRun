@@ -329,26 +329,30 @@ fn parse_interval(interval_str: &str) -> Result<u64> {
     }
 
     let interval_str = interval_str.to_lowercase();
-    let len = interval_str.len();
 
-    if len < 2 {
+    // Split the trailing unit character from the numeric value in a UTF-8-safe
+    // way. Byte-slicing `interval_str[len - 1..]` panics when the string ends in
+    // a multi-byte character (e.g. "5€"); char_indices yields a real boundary.
+    let Some((unit_start, unit)) = interval_str.char_indices().next_back() else {
+        return Err(anyhow::anyhow!("Invalid interval format: {}", interval_str).into());
+    };
+    let value_str = &interval_str[..unit_start];
+    if value_str.is_empty() {
         return Err(anyhow::anyhow!("Invalid interval format: {}", interval_str).into());
     }
-
-    let unit = &interval_str[len - 1..];
-    let value = interval_str[..len - 1]
+    let value = value_str
         .parse::<u64>()
         .map_err(|e| anyhow::anyhow!("Invalid interval value: {}", e))?;
 
     let seconds = match unit {
-        "s" => Ok(value),
-        "m" => value
+        's' => Ok(value),
+        'm' => value
             .checked_mul(60)
             .ok_or_else(|| anyhow::anyhow!("Interval overflow: value too large")),
-        "h" => value
+        'h' => value
             .checked_mul(3600)
             .ok_or_else(|| anyhow::anyhow!("Interval overflow: value too large")),
-        "d" => value
+        'd' => value
             .checked_mul(86400)
             .ok_or_else(|| anyhow::anyhow!("Interval overflow: value too large")),
         _ => {
@@ -532,6 +536,14 @@ mod tests {
         assert!(parse_interval("30x").is_err());
         assert!(parse_interval("abc").is_err());
         assert!(parse_interval("").is_err());
+    }
+
+    #[test]
+    fn test_parse_interval_multibyte_unit_does_not_panic() {
+        // A trailing multi-byte character must yield an error, not panic from
+        // slicing on a non-char boundary.
+        assert!(parse_interval("5€").is_err());
+        assert!(parse_interval("10µ").is_err());
     }
 
     #[test]
