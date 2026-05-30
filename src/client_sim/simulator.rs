@@ -74,15 +74,6 @@ impl ClientSimulator {
         Ok(results)
     }
 
-    /// Simulate a specific client by ID
-    pub async fn simulate_client_by_id(&self, client_id: &str) -> Result<ClientSimulationResult> {
-        let client = CLIENT_DB
-            .get_by_id(client_id)
-            .ok_or_else(|| anyhow::anyhow!("Client not found: {}", client_id))?;
-
-        Ok(self.simulate_client(client).await)
-    }
-
     /// Simulate a specific client profile
     async fn simulate_client(&self, client: &ClientProfile) -> ClientSimulationResult {
         let start = std::time::Instant::now();
