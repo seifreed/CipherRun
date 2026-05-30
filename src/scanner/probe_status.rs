@@ -54,7 +54,6 @@ impl ProbeStatus {
             attempts: 1,
         }
     }
-
 }
 
 impl Default for ProbeStatus {

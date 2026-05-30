@@ -313,7 +313,6 @@ impl AppState {
     pub async fn get_stats(&self) -> ApiStats {
         self.stats.read().await.clone()
     }
-
 }
 
 #[cfg(test)]

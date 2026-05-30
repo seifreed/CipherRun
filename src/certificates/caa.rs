@@ -237,7 +237,6 @@ impl CaaChecker {
                 .push(format!("Authorized CAs: {}", recognized_cas.join(", ")));
         }
     }
-
 }
 
 #[cfg(test)]

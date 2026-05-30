@@ -429,7 +429,6 @@ impl ClientHelloCapture {
         let name_bytes = &data[cursor..cursor + name_len];
         String::from_utf8(name_bytes.to_vec()).ok()
     }
-
 }
 
 #[cfg(test)]

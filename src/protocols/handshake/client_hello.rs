@@ -236,7 +236,6 @@ impl ClientHelloBuilder {
         }
         self
     }
-
 }
 
 #[cfg(test)]

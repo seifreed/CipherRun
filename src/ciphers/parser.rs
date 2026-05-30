@@ -232,7 +232,6 @@ impl CipherListFormatter {
 
         output
     }
-
 }
 
 /// Create cipher comparison table

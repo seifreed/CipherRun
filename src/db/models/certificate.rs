@@ -81,7 +81,6 @@ impl CertificateRecord {
             created_at: Utc::now(),
         }
     }
-
 }
 
 impl ScanCertificateRecord {

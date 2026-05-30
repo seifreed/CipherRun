@@ -341,7 +341,6 @@ impl HeaderAnalysisResult {
             .filter(|i| matches!(i.severity, IssueSeverity::Critical | IssueSeverity::High))
             .collect()
     }
-
 }
 
 impl SecurityGrade {

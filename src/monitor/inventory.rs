@@ -151,7 +151,6 @@ impl CertificateInventory {
         self.domains.values().filter(|d| d.enabled).collect()
     }
 
-
     /// Load domains from a file
     ///
     /// File format:

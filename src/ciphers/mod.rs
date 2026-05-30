@@ -71,7 +71,6 @@ impl CipherSuite {
         let encryption = self.encryption.to_ascii_uppercase();
         encryption.contains("GCM") || encryption.contains("CCM") || encryption.contains("CHACHA20")
     }
-
 }
 
 impl fmt::Display for CipherStrength {
