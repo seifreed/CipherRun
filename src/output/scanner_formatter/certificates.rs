@@ -298,6 +298,31 @@ impl<'a> ScannerFormatter<'a> {
         self.display_trusted_platforms(platform_trust);
         self.display_untrusted_platforms(platform_trust);
         self.display_per_platform_details(platform_trust, &TrustStore::all());
+        self.display_per_certificate_trust(platform_trust);
+    }
+
+    /// Display per-certificate trust breakdown (chain role + recognizing platforms)
+    fn display_per_certificate_trust(&self, platform_trust: &TrustValidationResult) {
+        if platform_trust.per_certificate.is_empty() {
+            return;
+        }
+
+        println!("\n  {}", "Per-Certificate Trust:".cyan());
+        for cert in &platform_trust.per_certificate {
+            let role = format!("{:?}", cert.role);
+            let subject = truncate_with_ellipsis(&cert.subject, self.expand_width(50));
+            let recognition = if cert.in_trust_stores {
+                let names: Vec<String> = cert
+                    .platforms
+                    .iter()
+                    .map(|store| store.to_string())
+                    .collect();
+                format!("in trust stores ({})", names.join(", ")).green()
+            } else {
+                "not in trust stores".normal()
+            };
+            println!("    [{:<12}] {} - {}", role, subject, recognition);
+        }
     }
 
     /// Format overall trust status

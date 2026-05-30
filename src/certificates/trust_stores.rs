@@ -101,6 +101,9 @@ pub struct TrustValidationResult {
     pub trusted_count: usize,
     /// Total platforms checked
     pub total_platforms: usize,
+    /// Per-certificate trust breakdown (role in chain + recognizing platforms)
+    #[serde(default)]
+    pub per_certificate: Vec<CertificateValidation>,
 }
 
 impl TrustValidationResult {
@@ -215,13 +218,36 @@ impl TrustStoreValidator {
         let trusted_count = platform_status.values().filter(|s| s.trusted).count();
         let total_platforms = platform_status.len();
         let overall_trusted = trusted_count > 0;
+        let per_certificate = self.validate_each_certificate(chain);
 
         Ok(TrustValidationResult {
             platform_status,
             overall_trusted,
             trusted_count,
             total_platforms,
+            per_certificate,
         })
+    }
+
+    /// Classify each certificate in the chain by role and record which platform
+    /// trust stores recognize it.
+    fn validate_each_certificate(&self, chain: &CertificateChain) -> Vec<CertificateValidation> {
+        let last_index = chain.certificates.len().saturating_sub(1);
+        chain
+            .certificates
+            .iter()
+            .enumerate()
+            .map(|(idx, cert)| {
+                let role = if idx == 0 {
+                    CertificateRole::Leaf
+                } else if idx == last_index {
+                    CertificateRole::Root
+                } else {
+                    CertificateRole::Intermediate
+                };
+                self.validate_certificate(cert, role)
+            })
+            .collect()
     }
 
     /// Validate certificate chain against a specific platform trust store
@@ -419,73 +445,13 @@ impl TrustStoreValidator {
         }
     }
 
-    /// Validate certificate chain with detailed per-certificate analysis
-    pub fn validate_chain_detailed(
-        &self,
-        chain: &CertificateChain,
-    ) -> Result<DetailedValidationResult> {
-        let mut cert_validations = Vec::new();
-
-        for (idx, cert) in chain.certificates.iter().enumerate() {
-            let role = if idx == 0 {
-                CertificateRole::Leaf
-            } else if idx == chain.certificates.len() - 1 {
-                CertificateRole::Root
-            } else {
-                CertificateRole::Intermediate
-            };
-
-            let validation = self.validate_certificate(cert, role)?;
-            cert_validations.push(validation);
-        }
-
-        let overall_validation = self.validate_chain(chain)?;
-
-        Ok(DetailedValidationResult {
-            overall: overall_validation,
-            certificates: cert_validations,
-        })
-    }
-
-    /// Validate individual certificate
+    /// Classify a single certificate: which platform trust stores contain it.
     fn validate_certificate(
         &self,
         cert: &CertificateInfo,
         role: CertificateRole,
-    ) -> Result<CertificateValidation> {
+    ) -> CertificateValidation {
         let mut platforms_recognizing = Vec::new();
-
-        // Check if this certificate exists in any platform's trust store
-        for platform in TrustStore::all() {
-            let stores = CA_STORES.as_ref();
-            let ca_store = match platform {
-                TrustStore::Mozilla => &stores.mozilla,
-                TrustStore::Apple => &stores.apple,
-                TrustStore::Android => &stores.android,
-                TrustStore::Java => &stores.java,
-                TrustStore::Windows => &stores.microsoft,
-            };
-
-            for ca_cert in &ca_store.certificates {
-                if ca_cert.subject == cert.subject {
-                    platforms_recognizing.push(platform);
-                    break;
-                }
-            }
-        }
-
-        Ok(CertificateValidation {
-            subject: cert.subject.clone(),
-            issuer: cert.issuer.clone(),
-            role,
-            in_trust_stores: !platforms_recognizing.is_empty(),
-            platforms: platforms_recognizing,
-        })
-    }
-
-    /// Find root CA for a given certificate across all platforms
-    pub fn find_root_ca(&self, cert: &CertificateInfo) -> Vec<(TrustStore, String)> {
-        let mut roots = Vec::new();
         let stores = CA_STORES.as_ref();
 
         for platform in TrustStore::all() {
@@ -497,15 +463,22 @@ impl TrustStoreValidator {
                 TrustStore::Windows => &stores.microsoft,
             };
 
-            for ca_cert in &ca_store.certificates {
-                if ca_cert.subject == cert.issuer {
-                    roots.push((platform, ca_cert.subject.clone()));
-                    break;
-                }
+            if ca_store
+                .certificates
+                .iter()
+                .any(|ca_cert| ca_cert.subject == cert.subject)
+            {
+                platforms_recognizing.push(platform);
             }
         }
 
-        roots
+        CertificateValidation {
+            subject: cert.subject.clone(),
+            issuer: cert.issuer.clone(),
+            role,
+            in_trust_stores: !platforms_recognizing.is_empty(),
+            platforms: platforms_recognizing,
+        }
     }
 }
 
@@ -539,15 +512,6 @@ pub struct CertificateValidation {
     pub in_trust_stores: bool,
     /// Platforms that recognize this certificate
     pub platforms: Vec<TrustStore>,
-}
-
-/// Detailed validation result with per-certificate information
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DetailedValidationResult {
-    /// Overall trust validation across all platforms
-    pub overall: TrustValidationResult,
-    /// Per-certificate validation details
-    pub certificates: Vec<CertificateValidation>,
 }
 
 #[cfg(test)]
@@ -608,6 +572,61 @@ mod tests {
         assert_eq!(result.trusted_count, 0);
     }
 
+    fn cert_with_subject(subject: &str) -> CertificateInfo {
+        CertificateInfo {
+            subject: subject.to_string(),
+            issuer: "CN=issuer".to_string(),
+            serial_number: "1".to_string(),
+            not_before: "2024-01-01".to_string(),
+            not_after: "2030-01-01".to_string(),
+            expiry_countdown: None,
+            signature_algorithm: "sha256WithRSAEncryption".to_string(),
+            public_key_algorithm: "rsaEncryption".to_string(),
+            public_key_size: Some(2048),
+            rsa_exponent: None,
+            san: vec![],
+            is_ca: false,
+            key_usage: vec![],
+            extended_key_usage: vec![],
+            extended_validation: false,
+            ev_oids: vec![],
+            pin_sha256: None,
+            fingerprint_sha256: None,
+            debian_weak_key: None,
+            aia_url: None,
+            certificate_transparency: None,
+            der_bytes: vec![],
+        }
+    }
+
+    #[test]
+    fn test_validate_chain_classifies_certificate_roles_by_position() {
+        let validator = TrustStoreValidator::new().expect("validator should initialize");
+        let chain = CertificateChain {
+            certificates: vec![
+                cert_with_subject("CN=leaf.example.com"),
+                cert_with_subject("CN=Intermediate CA"),
+                cert_with_subject("CN=Root CA"),
+            ],
+            chain_length: 3,
+            chain_size_bytes: 0,
+        };
+
+        let result = validator
+            .validate_chain(&chain)
+            .expect("validation should succeed");
+
+        let roles: Vec<CertificateRole> = result.per_certificate.iter().map(|c| c.role).collect();
+        assert_eq!(
+            roles,
+            vec![
+                CertificateRole::Leaf,
+                CertificateRole::Intermediate,
+                CertificateRole::Root
+            ]
+        );
+    }
+
     #[test]
     fn test_trust_validation_result_methods() {
         let mut platform_status = HashMap::new();
@@ -649,6 +668,7 @@ mod tests {
             overall_trusted: true,
             trusted_count: 1,
             total_platforms: 2,
+            per_certificate: Vec::new(),
         };
 
         assert!(result.is_trusted_by(TrustStore::Mozilla));

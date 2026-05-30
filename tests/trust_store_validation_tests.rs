@@ -106,12 +106,16 @@ async fn test_detailed_chain_validation() {
     let chain = parser.get_certificate_chain().await.unwrap();
 
     let validator = TrustStoreValidator::new().unwrap();
-    let result = validator.validate_chain_detailed(&chain).unwrap();
+    let result = validator.validate_chain(&chain).unwrap();
 
     println!("Detailed validation for Cloudflare:");
-    println!("Overall: {}", result.overall.summary());
+    println!("Overall: {}", result.summary());
     println!("\nPer-certificate analysis:");
-    for cert_val in &result.certificates {
+    assert!(
+        !result.per_certificate.is_empty(),
+        "Chain validation should populate the per-certificate breakdown"
+    );
+    for cert_val in &result.per_certificate {
         println!("  Subject: {}", cert_val.subject);
         println!("  Role: {:?}", cert_val.role);
         println!("  In trust stores: {}", cert_val.in_trust_stores);
@@ -199,26 +203,6 @@ fn test_empty_chain_validation() {
     }
 }
 
-#[tokio::test]
-#[ignore] // Requires network access
-async fn test_find_root_ca() {
-    let target = Target::parse("www.amazon.com:443").await.unwrap();
-    let parser = CertificateParser::new(target);
-    let chain = parser.get_certificate_chain().await.unwrap();
-
-    let validator = TrustStoreValidator::new().unwrap();
-
-    if let Some(leaf) = chain.leaf() {
-        let roots = validator.find_root_ca(leaf);
-        println!("Root CAs for Amazon leaf certificate:");
-        for (platform, root_subject) in &roots {
-            println!("  {}: {}", platform.name(), root_subject);
-        }
-
-        assert!(!roots.is_empty(), "Should find at least one root CA");
-    }
-}
-
 #[test]
 fn test_trust_validation_result_methods() {
     use cipherrun::certificates::trust_stores::{PlatformTrustStatus, ValidationDetails};
@@ -284,6 +268,7 @@ fn test_trust_validation_result_methods() {
         overall_trusted: true,
         trusted_count: 2,
         total_platforms: 5,
+        per_certificate: Vec::new(),
     };
 
     // Test methods

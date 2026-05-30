@@ -446,6 +446,7 @@ fn test_display_sections_smoke() {
         overall_trusted: true,
         trusted_count: 1,
         total_platforms: 2,
+        per_certificate: Vec::new(),
     };
 
     let validation = ValidationResult {

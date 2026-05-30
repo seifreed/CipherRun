@@ -21,7 +21,7 @@ use crate::application::ScanRequest;
 use crate::certificates::{
     parser::{CertificateChain, CertificateParser},
     revocation::{RevocationChecker, RevocationResult},
-    revocation_strict::StrictRevocationChecker,
+    revocation_strict::StrictRevocationCheckerBuilder,
     validator::{CertificateValidator, ValidationResult},
 };
 use crate::external::openssl_client::{OpenSslClient, OpenSslClientOptions};
@@ -263,7 +263,10 @@ impl CertificatePhase {
         // Perform revocation check
         let stapling_checker = RevocationChecker::new(context.args.tls.phone_out);
         let mut revocation = if context.args.tls.phone_out {
-            StrictRevocationChecker::new(context.args.tls.phone_out, context.args.tls.hardfail)
+            StrictRevocationCheckerBuilder::new()
+                .with_phone_out(context.args.tls.phone_out)
+                .with_hard_fail(context.args.tls.hardfail)
+                .build()
                 .check_revocation_with_hardfail(leaf_cert, issuer_cert)
                 .await?
                 .base_result
