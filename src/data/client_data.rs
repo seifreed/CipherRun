@@ -375,11 +375,6 @@ impl ClientDatabase {
             .unwrap_or(0)
     }
 
-    /// Get all clients
-    pub fn all_clients(&self) -> &[ClientProfile] {
-        &self.clients
-    }
-
     /// Get current/maintained clients only
     pub fn current_clients(&self) -> Vec<&ClientProfile> {
         self.clients.iter().filter(|c| c.current).collect()

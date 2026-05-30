@@ -180,11 +180,6 @@ impl CurvesDatabase {
         self.by_name.get(&name.to_lowercase())
     }
 
-    /// Get all curves
-    pub fn all_curves(&self) -> impl Iterator<Item = &EllipticCurve> {
-        self.by_id.values()
-    }
-
     /// Get recommended curves (strong, modern)
     pub fn recommended_curves(&self) -> Vec<&EllipticCurve> {
         self.by_id
@@ -197,11 +192,6 @@ impl CurvesDatabase {
                         || c.short_name.contains("secp256r1"))
             })
             .collect()
-    }
-
-    /// Get post-quantum curves
-    pub fn post_quantum_curves(&self) -> Vec<&EllipticCurve> {
-        self.by_id.values().filter(|c| c.post_quantum).collect()
     }
 
     /// Get curve count

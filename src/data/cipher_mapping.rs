@@ -29,17 +29,6 @@ pub fn cipher_db() -> Arc<CipherDatabase> {
         .clone()
 }
 
-/// Check if the cipher database is healthy (loaded successfully with entries)
-///
-/// Returns true if the database is loaded and contains cipher entries.
-/// Returns false if loading failed or database is empty.
-pub fn cipher_db_is_healthy() -> bool {
-    CIPHER_DB_INNER
-        .get()
-        .map(|db| db.is_healthy())
-        .unwrap_or(false)
-}
-
 /// Legacy static for backward compatibility
 /// Delegates to `cipher_db()` to avoid loading data twice into memory
 pub static CIPHER_DB: std::sync::LazyLock<Arc<CipherDatabase>> =
@@ -49,10 +38,6 @@ pub static CIPHER_DB: std::sync::LazyLock<Arc<CipherDatabase>> =
 pub struct CipherDatabase {
     /// Map from hexcode to cipher suite
     by_hexcode: HashMap<String, CipherSuite>,
-    /// Map from OpenSSL name to cipher suite
-    by_openssl_name: HashMap<String, CipherSuite>,
-    /// Map from IANA name to cipher suite
-    by_iana_name: HashMap<String, CipherSuite>,
 }
 
 impl CipherDatabase {
@@ -66,8 +51,6 @@ impl CipherDatabase {
     pub fn empty() -> Self {
         Self {
             by_hexcode: HashMap::new(),
-            by_openssl_name: HashMap::new(),
-            by_iana_name: HashMap::new(),
         }
     }
 
@@ -75,8 +58,6 @@ impl CipherDatabase {
     /// Format: 0xHH,0xHH - OpenSSLName  IANAName  Version  Kx=X  Au=Y  Enc=Z  Mac=W
     pub fn parse(data: &str) -> Result<Self> {
         let mut by_hexcode = HashMap::new();
-        let mut by_openssl_name = HashMap::new();
-        let mut by_iana_name = HashMap::new();
 
         for (line_num, line) in data.lines().enumerate() {
             // Skip comments and empty lines
@@ -88,9 +69,7 @@ impl CipherDatabase {
             // Parse line
             match Self::parse_line(line) {
                 Ok(cipher) => {
-                    by_hexcode.insert(cipher.hexcode.clone(), cipher.clone());
-                    by_openssl_name.insert(cipher.openssl_name.clone(), cipher.clone());
-                    by_iana_name.insert(cipher.iana_name.clone(), cipher.clone());
+                    by_hexcode.insert(cipher.hexcode.clone(), cipher);
                 }
                 Err(e) => {
                     // Suppress warnings for GOST ciphers (non-standard format)
@@ -106,11 +85,7 @@ impl CipherDatabase {
             }
         }
 
-        Ok(Self {
-            by_hexcode,
-            by_openssl_name,
-            by_iana_name,
-        })
+        Ok(Self { by_hexcode })
     }
 
     /// Parse a single line from cipher-mapping.txt
@@ -217,27 +192,9 @@ impl CipherDatabase {
         self.by_hexcode.get(hexcode)
     }
 
-    /// Get cipher by OpenSSL name
-    pub fn get_by_openssl_name(&self, name: &str) -> Option<&CipherSuite> {
-        self.by_openssl_name.get(name)
-    }
-
-    /// Get cipher by IANA name
-    pub fn get_by_iana_name(&self, name: &str) -> Option<&CipherSuite> {
-        self.by_iana_name.get(name)
-    }
-
     /// Get all ciphers
     pub fn all_ciphers(&self) -> impl Iterator<Item = &CipherSuite> {
         self.by_hexcode.values()
-    }
-
-    /// Get ciphers by protocol version
-    pub fn by_protocol(&self, protocol: &str) -> Vec<&CipherSuite> {
-        self.by_hexcode
-            .values()
-            .filter(|c| c.protocol == protocol)
-            .collect()
     }
 
     /// Get ciphers with forward secrecy
@@ -251,11 +208,6 @@ impl CipherDatabase {
     /// Get export ciphers
     pub fn export_ciphers(&self) -> Vec<&CipherSuite> {
         self.by_hexcode.values().filter(|c| c.export).collect()
-    }
-
-    /// Check if database is healthy (loaded successfully and has entries)
-    pub fn is_healthy(&self) -> bool {
-        !self.by_hexcode.is_empty()
     }
 
     /// Get cipher count
