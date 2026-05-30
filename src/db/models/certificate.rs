@@ -82,43 +82,6 @@ impl CertificateRecord {
         }
     }
 
-    /// Set serial number
-    pub fn with_serial(mut self, serial: String) -> Self {
-        self.serial_number = Some(serial);
-        self
-    }
-
-    /// Set algorithms
-    pub fn with_algorithms(
-        mut self,
-        signature_algo: String,
-        public_key_algo: String,
-        key_size: usize,
-    ) -> Self {
-        self.signature_algorithm = Some(signature_algo);
-        self.public_key_algorithm = Some(public_key_algo);
-        self.public_key_size = Some(key_size as i32);
-        self
-    }
-
-    /// Set SAN domains
-    pub fn with_san_domains(mut self, domains: Vec<String>) -> Self {
-        self.san_domains = domains;
-        self
-    }
-
-    /// Set key usages
-    pub fn with_key_usage(mut self, key_usage: Vec<String>, extended: Vec<String>) -> Self {
-        self.key_usage = key_usage;
-        self.extended_key_usage = extended;
-        self
-    }
-
-    /// Set DER bytes
-    pub fn with_der_bytes(mut self, der: Vec<u8>) -> Self {
-        self.der_bytes = Some(der);
-        self
-    }
 }
 
 impl ScanCertificateRecord {

@@ -411,42 +411,6 @@ impl DatabasePool {
         }
     }
 
-    /// Get PostgreSQL pool (returns error if not PostgreSQL)
-    pub fn as_postgres(&self) -> crate::Result<&Pool<Postgres>> {
-        match self {
-            DatabasePool::Postgres(pool) => Ok(pool),
-            DatabasePool::Sqlite(_) => Err(crate::TlsError::DatabaseError(
-                "Expected PostgreSQL pool, got SQLite".to_string(),
-            )),
-        }
-    }
-
-    /// Get SQLite pool (returns error if not SQLite)
-    pub fn as_sqlite(&self) -> crate::Result<&Pool<Sqlite>> {
-        match self {
-            DatabasePool::Sqlite(pool) => Ok(pool),
-            DatabasePool::Postgres(_) => Err(crate::TlsError::DatabaseError(
-                "Expected SQLite pool, got PostgreSQL".to_string(),
-            )),
-        }
-    }
-
-    /// Try to get PostgreSQL pool
-    pub fn try_as_postgres(&self) -> Option<&Pool<Postgres>> {
-        match self {
-            DatabasePool::Postgres(pool) => Some(pool),
-            DatabasePool::Sqlite(_) => None,
-        }
-    }
-
-    /// Try to get SQLite pool
-    pub fn try_as_sqlite(&self) -> Option<&Pool<Sqlite>> {
-        match self {
-            DatabasePool::Sqlite(pool) => Some(pool),
-            DatabasePool::Postgres(_) => None,
-        }
-    }
-
     /// Create a QueryBuilder for this pool's database type
     pub fn query_builder(&self) -> QueryBuilder {
         QueryBuilder::new(self.db_type())
