@@ -238,44 +238,6 @@ impl CaaChecker {
         }
     }
 
-    /// Get parent domain for CAA lookup
-    fn get_parent_domains(&self) -> Vec<String> {
-        let parts: Vec<&str> = self.domain.split('.').collect();
-        let mut domains = Vec::new();
-
-        for i in 0..parts.len() {
-            let domain = parts[i..].join(".");
-            domains.push(domain);
-        }
-
-        domains
-    }
-
-    /// Check CAA records up the domain tree (as per RFC 6844)
-    pub fn check_tree(&self) -> Result<CaaCheckResult> {
-        let parent_domains = self.get_parent_domains();
-
-        for domain in parent_domains {
-            let checker = CaaChecker::new(domain.clone());
-            let result = checker.check()?;
-
-            if result.has_caa_records {
-                // Found CAA records at this level
-                return Ok(result);
-            }
-        }
-
-        // No CAA records found anywhere in the tree
-        Ok(CaaCheckResult {
-            has_caa_records: false,
-            records: Vec::new(),
-            compliant: false,
-            issues: vec![
-                "No CAA records found in domain tree - any CA can issue certificates".to_string(),
-            ],
-            recommendations: vec!["Add CAA records to control certificate issuance".to_string()],
-        })
-    }
 }
 
 #[cfg(test)]
@@ -286,17 +248,6 @@ mod tests {
     fn test_caa_checker_creation() {
         let checker = CaaChecker::new("example.com".to_string());
         assert_eq!(checker.domain, "example.com");
-    }
-
-    #[test]
-    fn test_parent_domains() {
-        let checker = CaaChecker::new("sub.example.com".to_string());
-        let parents = checker.get_parent_domains();
-
-        assert_eq!(parents.len(), 3);
-        assert_eq!(parents[0], "sub.example.com");
-        assert_eq!(parents[1], "example.com");
-        assert_eq!(parents[2], "com");
     }
 
     #[test]

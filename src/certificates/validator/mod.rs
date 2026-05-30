@@ -191,17 +191,6 @@ impl CertificateValidator {
         Ok(validator)
     }
 
-    pub fn with_config_and_additional_ca(
-        hostname: String,
-        skip_warnings: bool,
-        enable_platform_trust: bool,
-        path: &Path,
-    ) -> Result<Self> {
-        let mut validator = Self::with_config(hostname, skip_warnings, enable_platform_trust)?;
-        validator.additional_ca_entries = Self::load_additional_ca_entries(path)?;
-        Ok(validator)
-    }
-
     fn load_additional_ca_entries(path: &Path) -> Result<Vec<AdditionalCaEntry>> {
         let mut entries = Vec::new();
 
