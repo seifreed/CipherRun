@@ -1,6 +1,4 @@
-// External tool integrations
-// OpenSSL s_client, dig/host
+// External tool integrations (OpenSSL s_client)
 
-pub mod dns_tools;
 pub mod openssl_client;
 pub mod xxd;
