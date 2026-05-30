@@ -191,27 +191,6 @@ pub struct XxdOptions {
     pub bits: bool,          // -b: binary digit dump
 }
 
-/// Format TLS packet as hex dump for debugging
-pub fn format_tls_packet(packet: &[u8], name: &str) -> Result<String> {
-    let xxd = Xxd::new();
-
-    let mut output = format!("=== {} ({} bytes) ===\n", name, packet.len());
-
-    if xxd.is_available() {
-        let options = XxdOptions {
-            cols: Some(16),
-            ..Default::default()
-        };
-
-        output.push_str(&xxd.dump_with_options(packet, &options)?);
-    } else {
-        // Fallback to simple hex dump
-        output.push_str(&simple_hex_dump(packet, 16));
-    }
-
-    Ok(output)
-}
-
 /// Simple hex dump implementation (fallback if xxd is not available)
 pub fn simple_hex_dump(data: &[u8], cols: usize) -> String {
     let mut output = String::new();
