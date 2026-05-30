@@ -244,13 +244,6 @@ impl HstsPreloadChecker {
         *last_request = Some(Instant::now());
     }
 
-    /// Clear the cache (useful for testing or forced refresh)
-    pub fn clear_cache(&self) {
-        if let Ok(mut cache) = self.cache.lock() {
-            cache.clear();
-        }
-    }
-
     /// Get cache statistics
     pub fn cache_stats(&self) -> (usize, usize) {
         if let Ok(cache) = self.cache.lock() {

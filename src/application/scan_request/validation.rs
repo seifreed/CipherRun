@@ -2,10 +2,6 @@ use super::ScanRequest;
 use crate::{Result, TlsError};
 
 impl ScanRequest {
-    pub fn has_target(&self) -> bool {
-        self.target.is_some()
-    }
-
     pub fn validate_common(&self) -> Result<()> {
         if self.network.test_all_ips && self.network.first_ip_only {
             return Err(TlsError::InvalidInput {

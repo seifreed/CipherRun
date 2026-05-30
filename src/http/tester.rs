@@ -342,10 +342,6 @@ impl HeaderAnalysisResult {
             .collect()
     }
 
-    /// Check if any critical or high issues exist
-    pub fn has_serious_issues(&self) -> bool {
-        !self.critical_issues().is_empty()
-    }
 }
 
 impl SecurityGrade {

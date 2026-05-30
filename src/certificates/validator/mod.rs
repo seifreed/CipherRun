@@ -167,24 +167,6 @@ impl CertificateValidator {
         })
     }
 
-    /// Create validator with full configuration
-    pub fn with_config(
-        hostname: String,
-        skip_warnings: bool,
-        enable_platform_trust: bool,
-    ) -> Result<Self> {
-        Ok(Self {
-            hostname,
-            skip_warnings,
-            trust_validator: if enable_platform_trust {
-                Some(TrustStoreValidator::new()?)
-            } else {
-                None
-            },
-            additional_ca_entries: Vec::new(),
-        })
-    }
-
     pub fn with_platform_trust_and_additional_ca(hostname: String, path: &Path) -> Result<Self> {
         let mut validator = Self::with_platform_trust(hostname)?;
         validator.additional_ca_entries = Self::load_additional_ca_entries(path)?;

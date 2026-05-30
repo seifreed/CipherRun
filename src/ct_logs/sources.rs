@@ -153,11 +153,6 @@ impl SourceManager {
         self.sources.get(id)
     }
 
-    /// Get a mutable reference to a source
-    pub fn get_source_mut(&mut self, id: &str) -> Option<&mut LogSource> {
-        self.sources.get_mut(id)
-    }
-
     /// Update tree size for a source
     pub fn update_tree_size(&mut self, id: &str, tree_size: u64) {
         if let Some(source) = self.sources.get_mut(id) {

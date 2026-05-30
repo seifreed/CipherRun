@@ -2,7 +2,7 @@
 // Captures and parses TLS ClientHello messages for JA3 fingerprinting
 
 use crate::constants::{
-    CONTENT_TYPE_HANDSHAKE, EXTENSION_ALPN, EXTENSION_EC_POINT_FORMATS, EXTENSION_SERVER_NAME,
+    CONTENT_TYPE_HANDSHAKE, EXTENSION_EC_POINT_FORMATS, EXTENSION_SERVER_NAME,
     EXTENSION_SUPPORTED_GROUPS, HANDSHAKE_TYPE_CLIENT_HELLO, RANDOM_BYTES_SIZE,
     TLS_RECORD_HEADER_SIZE,
 };
@@ -430,50 +430,6 @@ impl ClientHelloCapture {
         String::from_utf8(name_bytes.to_vec()).ok()
     }
 
-    /// Get ALPN (Application-Layer Protocol Negotiation) from extensions
-    pub fn get_alpn(&self) -> Vec<String> {
-        for ext in &self.extensions {
-            if ext.extension_type == EXTENSION_ALPN {
-                return Self::parse_alpn(&ext.data);
-            }
-        }
-        vec![]
-    }
-
-    /// Parse ALPN extension data
-    fn parse_alpn(data: &[u8]) -> Vec<String> {
-        if data.len() < 2 {
-            return vec![];
-        }
-
-        let list_len = u16::from_be_bytes([data[0], data[1]]) as usize;
-        if data.len() < 2 + list_len {
-            return vec![];
-        }
-
-        let mut protocols = Vec::new();
-        let mut cursor = 2;
-
-        while cursor < 2 + list_len {
-            if cursor >= data.len() {
-                break;
-            }
-
-            let proto_len = data[cursor] as usize;
-            cursor += 1;
-
-            if cursor + proto_len > data.len() {
-                break;
-            }
-
-            if let Ok(proto) = String::from_utf8(data[cursor..cursor + proto_len].to_vec()) {
-                protocols.push(proto);
-            }
-            cursor += proto_len;
-        }
-
-        protocols
-    }
 }
 
 #[cfg(test)]

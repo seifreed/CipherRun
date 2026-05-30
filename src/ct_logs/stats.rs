@@ -84,13 +84,6 @@ impl StatsTracker {
         }
     }
 
-    /// Increment duplicates filtered count
-    pub fn increment_duplicates(&self) {
-        if let Ok(mut stats) = self.stats.lock() {
-            stats.duplicates_filtered += 1;
-        }
-    }
-
     /// Increment retry attempts
     pub fn increment_retries(&self) {
         if let Ok(mut stats) = self.stats.lock() {

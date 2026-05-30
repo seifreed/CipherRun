@@ -314,17 +314,6 @@ impl AppState {
         self.stats.read().await.clone()
     }
 
-    /// Set database pool
-    pub fn with_db_pool(mut self, pool: Arc<DatabasePool>) -> Self {
-        self.db_pool = Some(pool);
-        self
-    }
-
-    /// Set policy directory
-    pub fn with_policy_dir(mut self, dir: PathBuf) -> Self {
-        self.policy_dir = Some(dir);
-        self
-    }
 }
 
 #[cfg(test)]

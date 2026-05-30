@@ -141,12 +141,6 @@ impl<'a> ScanCliView<'a> {
         &self.post_processing
     }
 
-    pub fn has_post_processing(&self) -> bool {
-        self.post_processing.has_compliance_report()
-            || self.post_processing.has_policy_result()
-            || self.post_processing.has_stored_scan()
-    }
-
     pub fn should_fail_exit(&self) -> bool {
         self.post_processing.should_fail_exit()
     }

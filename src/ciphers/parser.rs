@@ -233,17 +233,6 @@ impl CipherListFormatter {
         output
     }
 
-    /// Format cipher list as JSON
-    pub fn format_json(
-        summary: &ProtocolCipherSummary,
-        pretty: bool,
-    ) -> Result<String, serde_json::Error> {
-        if pretty {
-            serde_json::to_string_pretty(summary)
-        } else {
-            serde_json::to_string(summary)
-        }
-    }
 }
 
 /// Create cipher comparison table
