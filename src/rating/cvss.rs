@@ -335,21 +335,6 @@ impl TlsVulnerabilityCvss {
         CvssCalculator::calculate(metrics)
     }
 
-    /// CVSS for CCS Injection (CVE-2014-0224)
-    pub fn ccs_injection() -> CvssScore {
-        let metrics = BaseMetrics {
-            attack_vector: AttackVector::Network,
-            attack_complexity: AttackComplexity::High,
-            privileges_required: PrivilegesRequired::None,
-            user_interaction: UserInteraction::None,
-            scope: Scope::Unchanged,
-            confidentiality_impact: Impact::High,
-            integrity_impact: Impact::High,
-            availability_impact: Impact::None,
-        };
-        CvssCalculator::calculate(metrics)
-    }
-
     /// CVSS for ROBOT (CVE-2017-17382)
     pub fn robot() -> CvssScore {
         let metrics = BaseMetrics {

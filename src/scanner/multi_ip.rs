@@ -72,12 +72,6 @@ impl MultiIpScanner {
         }
     }
 
-    /// Set maximum concurrent scans
-    pub fn with_max_concurrent(mut self, max_concurrent: usize) -> Self {
-        self.max_concurrent_scans = max_concurrent;
-        self
-    }
-
     /// Set progress callback for receiving scan updates
     pub fn with_callback(mut self, callback: Arc<dyn MultiIpProgressCallback>) -> Self {
         self.callback = Some(callback);

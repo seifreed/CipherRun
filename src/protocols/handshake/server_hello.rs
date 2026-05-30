@@ -148,12 +148,6 @@ impl ServerHello {
         self.extensions.iter().any(|e| e.extension_type == ext_type)
     }
 
-    pub fn get_extension(&self, ext_type: u16) -> Option<&Extension> {
-        self.extensions
-            .iter()
-            .find(|e| e.extension_type == ext_type)
-    }
-
     pub fn supports_ocsp_stapling(&self) -> Option<bool> {
         self.ocsp_stapling_detected
     }

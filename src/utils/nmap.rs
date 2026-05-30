@@ -3,7 +3,6 @@
 
 use crate::Result;
 use crate::utils::network::canonical_target;
-use std::fs;
 
 /// Nmap target from greppable output
 #[derive(Debug, Clone)]
@@ -19,12 +18,6 @@ pub struct NmapTarget {
 pub struct NmapParser;
 
 impl NmapParser {
-    /// Parse nmap greppable output file
-    pub fn parse_file(path: &str) -> Result<Vec<NmapTarget>> {
-        let content = fs::read_to_string(path)?;
-        Self::parse_content(&content)
-    }
-
     /// Parse nmap greppable output content
     pub fn parse_content(content: &str) -> Result<Vec<NmapTarget>> {
         let mut targets = Vec::new();

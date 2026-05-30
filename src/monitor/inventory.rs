@@ -64,12 +64,6 @@ impl MonitoredDomain {
         self
     }
 
-    /// Set alert thresholds
-    pub fn with_thresholds(mut self, thresholds: AlertThresholds) -> Self {
-        self.alert_thresholds = thresholds;
-        self
-    }
-
     /// Disable this domain
     pub fn disable(mut self) -> Self {
         self.enabled = false;
@@ -157,10 +151,6 @@ impl CertificateInventory {
         self.domains.values().filter(|d| d.enabled).collect()
     }
 
-    /// Get all domains
-    pub fn all_domains(&self) -> Vec<&MonitoredDomain> {
-        self.domains.values().collect()
-    }
 
     /// Load domains from a file
     ///

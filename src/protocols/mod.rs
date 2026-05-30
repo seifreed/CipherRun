@@ -191,7 +191,6 @@ pub mod advanced;
 pub mod alpn;
 pub mod auto_detection;
 pub mod client_cas;
-pub mod extensions_complete;
 pub mod fallback_scsv;
 pub mod groups;
 pub mod handshake;

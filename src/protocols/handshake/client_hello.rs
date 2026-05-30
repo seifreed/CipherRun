@@ -237,16 +237,6 @@ impl ClientHelloBuilder {
         self
     }
 
-    pub fn add_signature_algorithms_cert(&mut self, algorithms: &[(u8, u8)]) -> &mut Self {
-        let mut data = BytesMut::new();
-        data.put_u16((algorithms.len() * 2) as u16);
-        for (hash, sig) in algorithms {
-            data.put_u8(*hash);
-            data.put_u8(*sig);
-        }
-        self.extensions.push(Extension::new(0x0050, data.to_vec()));
-        self
-    }
 }
 
 #[cfg(test)]

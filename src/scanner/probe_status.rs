@@ -55,25 +55,6 @@ impl ProbeStatus {
         }
     }
 
-    pub fn with_attempts(mut self, attempts: u32) -> Self {
-        self.attempts = attempts;
-        self
-    }
-
-    pub fn detailed_error(&self) -> Option<String> {
-        self.error.clone()
-    }
-
-    pub fn is_retryable(&self) -> bool {
-        if self.success {
-            return false;
-        }
-
-        matches!(
-            self.error_type,
-            Some(ErrorType::Timeout) | Some(ErrorType::NetworkError)
-        )
-    }
 }
 
 impl Default for ProbeStatus {

@@ -120,11 +120,6 @@ impl SchedulingEngine {
             .map(|next| next - Utc::now())
     }
 
-    /// Get all scheduled scan times
-    pub fn all_scheduled(&self) -> &HashMap<String, DateTime<Utc>> {
-        &self.next_scan_times
-    }
-
     /// Clear schedule for a domain
     pub fn clear_schedule(&mut self, identifier: &str) {
         let identifier = canonical_schedule_key(identifier);
