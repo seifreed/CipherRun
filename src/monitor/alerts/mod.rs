@@ -272,7 +272,7 @@ impl AlertManager {
         if let Some(ref slack_config) = config.monitor.alerts.slack
             && slack_config.enabled
         {
-            let channel = slack::SlackChannel::new(slack_config.clone());
+            let channel = slack::SlackChannel::new(slack_config.clone())?;
             manager.add_channel(Box::new(channel));
         }
 
@@ -280,7 +280,7 @@ impl AlertManager {
         if let Some(ref teams_config) = config.monitor.alerts.teams
             && teams_config.enabled
         {
-            let channel = teams::TeamsChannel::new(teams_config.clone());
+            let channel = teams::TeamsChannel::new(teams_config.clone())?;
             manager.add_channel(Box::new(channel));
         }
 
@@ -288,7 +288,7 @@ impl AlertManager {
         if let Some(ref pd_config) = config.monitor.alerts.pagerduty
             && pd_config.enabled
         {
-            let channel = pagerduty::PagerDutyChannel::new(pd_config.clone());
+            let channel = pagerduty::PagerDutyChannel::new(pd_config.clone())?;
             manager.add_channel(Box::new(channel));
         }
 

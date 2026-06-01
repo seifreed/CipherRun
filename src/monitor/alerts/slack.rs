@@ -16,12 +16,11 @@ pub struct SlackChannel {
 
 impl SlackChannel {
     /// Create new Slack channel
-    pub fn new(config: SlackConfig) -> Self {
+    pub fn new(config: SlackConfig) -> Result<Self> {
         let client = reqwest::Client::builder()
             .timeout(ALERT_SEND_TIMEOUT)
-            .build()
-            .expect("Failed to build HTTP client with timeout");
-        Self { config, client }
+            .build()?;
+        Ok(Self { config, client })
     }
 
     /// Format alert as Slack message
@@ -194,14 +193,14 @@ mod tests {
     #[test]
     fn test_slack_channel_new() {
         let config = create_test_config();
-        let channel = SlackChannel::new(config);
+        let channel = SlackChannel::new(config).expect("test channel construction should succeed");
         assert_eq!(channel.channel_name(), "slack");
     }
 
     #[test]
     fn test_format_message() {
         let config = create_test_config();
-        let channel = SlackChannel::new(config);
+        let channel = SlackChannel::new(config).expect("test channel construction should succeed");
 
         let alert =
             Alert::scan_failure("example.com".to_string(), "Connection refused".to_string());
@@ -230,7 +229,7 @@ mod tests {
         use chrono::Utc;
 
         let config = create_test_config();
-        let channel = SlackChannel::new(config);
+        let channel = SlackChannel::new(config).expect("test channel construction should succeed");
 
         let changes = vec![ChangeEvent {
             change_type: ChangeType::Renewal,

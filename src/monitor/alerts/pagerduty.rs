@@ -18,12 +18,11 @@ pub struct PagerDutyChannel {
 
 impl PagerDutyChannel {
     /// Create new PagerDuty channel
-    pub fn new(config: PagerDutyConfig) -> Self {
+    pub fn new(config: PagerDutyConfig) -> Result<Self> {
         let client = reqwest::Client::builder()
             .timeout(ALERT_SEND_TIMEOUT)
-            .build()
-            .expect("Failed to build HTTP client with timeout");
-        Self { config, client }
+            .build()?;
+        Ok(Self { config, client })
     }
 
     /// Convert severity to PagerDuty severity
@@ -174,14 +173,16 @@ mod tests {
     #[test]
     fn test_pagerduty_channel_new() {
         let config = create_test_config();
-        let channel = PagerDutyChannel::new(config);
+        let channel =
+            PagerDutyChannel::new(config).expect("test channel construction should succeed");
         assert_eq!(channel.channel_name(), "pagerduty");
     }
 
     #[test]
     fn test_severity_conversion() {
         let config = create_test_config();
-        let channel = PagerDutyChannel::new(config);
+        let channel =
+            PagerDutyChannel::new(config).expect("test channel construction should succeed");
 
         assert_eq!(
             channel.severity_to_pd(&ChangeSeverity::Critical),
@@ -196,7 +197,8 @@ mod tests {
     #[test]
     fn test_format_event() {
         let config = create_test_config();
-        let channel = PagerDutyChannel::new(config);
+        let channel =
+            PagerDutyChannel::new(config).expect("test channel construction should succeed");
 
         let alert =
             Alert::scan_failure("example.com".to_string(), "Connection refused".to_string());
