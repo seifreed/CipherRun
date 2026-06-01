@@ -87,7 +87,7 @@ async fn run_cli() -> anyhow::Result<CommandExit> {
     // Handle --api-config-example (generate API config example and exit)
     if let Some(config_path) = &args.api_server.config_example {
         use cipherrun::api::ApiConfig;
-        ApiConfig::create_example(config_path.to_str_anyhow()?)?;
+        ApiConfig::create_example(config_path.to_str_checked()?)?;
         println!(
             "✓ Example API configuration saved to: {}",
             config_path.display()
@@ -114,7 +114,7 @@ async fn run_cli() -> anyhow::Result<CommandExit> {
     // Handle --db-config-example (generate example config and exit)
     if let Some(config_path) = &args.database.config_example {
         use cipherrun::db::DatabaseConfig;
-        DatabaseConfig::create_example_config(config_path.to_str_anyhow()?)?;
+        DatabaseConfig::create_example_config(config_path.to_str_checked()?)?;
         println!(
             "✓ Example database configuration saved to: {}",
             config_path.display()
@@ -146,7 +146,7 @@ async fn run_cli() -> anyhow::Result<CommandExit> {
     // Handle --local (list local OpenSSL ciphers and exit)
     if args.tls.local {
         let openssl = if let Some(path) = &args.tls.openssl_path {
-            OpenSslClient::with_path(path.to_str_anyhow()?.to_string())
+            OpenSslClient::with_path(path.to_str_checked()?.to_string())
         } else {
             OpenSslClient::new()
         };

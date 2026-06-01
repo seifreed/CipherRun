@@ -87,9 +87,10 @@ impl MtlsConfig {
         Ok(Self {
             cert_chain: certs,
             private_key: keys.into_iter().next().ok_or_else(|| {
-                anyhow::anyhow!(
-                    "No private key found in key file (should have been caught earlier)"
-                )
+                crate::error::TlsError::MtlsError {
+                    message: "No private key found in key file (should have been caught earlier)"
+                        .to_string(),
+                }
             })?,
         })
     }
@@ -117,9 +118,10 @@ impl MtlsConfig {
         Ok(Self {
             cert_chain: certs,
             private_key: keys.into_iter().next().ok_or_else(|| {
-                anyhow::anyhow!(
-                    "No private key found in key file (should have been caught earlier)"
-                )
+                crate::error::TlsError::MtlsError {
+                    message: "No private key found in key file (should have been caught earlier)"
+                        .to_string(),
+                }
             })?,
         })
     }
