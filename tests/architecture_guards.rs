@@ -1065,11 +1065,12 @@ fn policy_route_uses_adapter_not_direct_scanner() {
 }
 
 #[test]
-fn compliance_domain_does_not_use_anyhow_result() {
+fn no_anyhow_usage_anywhere_in_src() {
     assert_no_forbidden_pattern(
-        "src/compliance",
-        &["use anyhow::Result", "anyhow::Result"],
-        "Compliance domain must use crate::Result<T>, not anyhow::Result — use tls_bail! and TlsError instead.",
+        "src",
+        &["use anyhow", "anyhow::"],
+        "anyhow has been fully removed from CipherRun. Use crate::Result<T> / TlsError \
+         (tls_bail!, cert_error!) for all error handling — do not reintroduce anyhow.",
     );
 }
 
