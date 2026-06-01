@@ -1,6 +1,7 @@
 // Monitoring configuration
 
 use crate::Result;
+use crate::error::TlsError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -127,12 +128,16 @@ impl Default for MonitorSettings {
 impl MonitorConfig {
     /// Load configuration from TOML file
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let contents = fs::read_to_string(path.as_ref()).map_err(|e| {
-            anyhow::anyhow!("Failed to read config file {:?}: {}", path.as_ref(), e)
-        })?;
+        let contents =
+            fs::read_to_string(path.as_ref()).map_err(|e| TlsError::FileSystemError {
+                path: path.as_ref().display().to_string(),
+                source: e,
+            })?;
 
-        let config: MonitorConfig = toml::from_str(&contents)
-            .map_err(|e| anyhow::anyhow!("Failed to parse TOML config: {}", e))?;
+        let config: MonitorConfig =
+            toml::from_str(&contents).map_err(|e| TlsError::ConfigError {
+                message: format!("Failed to parse TOML config: {e}"),
+            })?;
 
         Ok(config)
     }
@@ -147,11 +152,13 @@ impl MonitorConfig {
 
     /// Save configuration to TOML file
     pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
-        let toml_str = toml::to_string_pretty(self)
-            .map_err(|e| anyhow::anyhow!("Failed to serialize config: {}", e))?;
+        let toml_str = toml::to_string_pretty(self).map_err(|e| TlsError::ConfigError {
+            message: format!("Failed to serialize config: {e}"),
+        })?;
 
-        fs::write(path.as_ref(), toml_str).map_err(|e| {
-            anyhow::anyhow!("Failed to write config file {:?}: {}", path.as_ref(), e)
+        fs::write(path.as_ref(), toml_str).map_err(|e| TlsError::FileSystemError {
+            path: path.as_ref().display().to_string(),
+            source: e,
         })?;
 
         Ok(())
