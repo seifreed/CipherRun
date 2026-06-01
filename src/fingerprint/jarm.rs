@@ -10,7 +10,8 @@
 // - CDN/Load balancer detection
 // - Anycast deployment analysis
 
-use anyhow::{Context, Result};
+use crate::Result;
+use crate::error::TlsError;
 use ring::digest::{SHA256, digest};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -70,11 +71,15 @@ impl JarmDatabase {
 
     /// Load database from JSON file
     pub fn from_file(path: &str) -> Result<Self> {
-        let content = std::fs::read_to_string(path)
-            .with_context(|| format!("Failed to read JARM database from {}", path))?;
+        let content = std::fs::read_to_string(path).map_err(|e| TlsError::FileSystemError {
+            path: path.to_string(),
+            source: e,
+        })?;
 
         let signatures: Vec<JarmSignature> =
-            serde_json::from_str(&content).with_context(|| "Failed to parse JARM database JSON")?;
+            serde_json::from_str(&content).map_err(|e| TlsError::ParseError {
+                message: format!("Failed to parse JARM database JSON: {e}"),
+            })?;
 
         let mut db = Self::new();
         for sig in signatures {
