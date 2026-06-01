@@ -2,8 +2,8 @@
 // Supports CONNECT method for HTTPS proxying
 
 use crate::Result;
+use crate::error::TlsError;
 use crate::utils::network::canonical_target;
-use anyhow::Context;
 use std::net::SocketAddr;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -67,10 +67,10 @@ impl ProxyConfig {
     /// Get socket address for proxy
     pub async fn socket_addr(&self) -> Result<SocketAddr> {
         let addrs = self.socket_addrs().await?;
-        Ok(addrs
+        addrs
             .into_iter()
             .next()
-            .context("No IP addresses found for proxy")?)
+            .ok_or_else(|| TlsError::Other("No IP addresses found for proxy".to_string()))
     }
 
     /// Get all socket addresses for proxy resolution.
@@ -122,7 +122,7 @@ pub async fn connect_via_proxy(
 
     timeout(Duration::from_secs(10), reader.read_line(&mut status_line))
         .await
-        .context("Proxy response timeout")??;
+        .map_err(|_| TlsError::Other("Proxy response timeout".to_string()))??;
 
     // Parse HTTP status code from "HTTP/1.x NNN Reason" — substring matching "200"
     // would accept any response body or reason phrase that happens to contain "200".
@@ -143,7 +143,7 @@ pub async fn connect_via_proxy(
         let mut header = String::new();
         timeout(Duration::from_secs(10), reader.read_line(&mut header))
             .await
-            .context("Proxy header read timeout")??;
+            .map_err(|_| TlsError::Other("Proxy header read timeout".to_string()))??;
         header_count += 1;
         if header_count > MAX_PROXY_HEADERS {
             crate::tls_bail!("Proxy returned too many response headers");
@@ -161,27 +161,26 @@ async fn connect_to_any_socket_addr(
     addrs: &[SocketAddr],
     connect_timeout: Duration,
 ) -> Result<TcpStream> {
-    let mut last_error: Option<anyhow::Error> = None;
+    let mut last_error: Option<TlsError> = None;
 
     for addr in addrs {
         match timeout(connect_timeout, TcpStream::connect(*addr)).await {
             Ok(Ok(stream)) => return Ok(stream),
             Ok(Err(err)) => {
-                last_error = Some(anyhow::anyhow!(
-                    "Failed to connect to proxy {}: {}",
-                    addr,
-                    err
-                ));
+                last_error = Some(TlsError::Other(format!(
+                    "Failed to connect to proxy {addr}: {err}"
+                )));
             }
             Err(_) => {
-                last_error = Some(anyhow::anyhow!("Proxy connection timeout for {}", addr));
+                last_error = Some(TlsError::Other(format!(
+                    "Proxy connection timeout for {addr}"
+                )));
             }
         }
     }
 
     Err(last_error
-        .unwrap_or_else(|| anyhow::anyhow!("No IP addresses found for proxy"))
-        .into())
+        .unwrap_or_else(|| TlsError::Other("No IP addresses found for proxy".to_string())))
 }
 
 /// Build HTTP CONNECT request
