@@ -4,14 +4,12 @@
 // for subdomain discovery and certificate intelligence gathering.
 
 pub mod client;
-pub mod deduplicator;
 pub mod parser;
 pub mod sources;
 pub mod stats;
 pub mod streamer;
 
 pub use client::CtClient;
-pub use deduplicator::Deduplicator;
 pub use parser::{CertType, CtLogEntry, Parser};
 pub use sources::{LogSource, SourceManager};
 pub use stats::Stats;
@@ -47,7 +45,6 @@ mod tests {
     #[test]
     fn test_reexports_constructible() {
         let _client = CtClient::new();
-        let _dedup = Deduplicator::default();
         let _config = CtConfig::default();
         let _stats = Stats::default();
     }

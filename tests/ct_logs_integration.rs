@@ -1,8 +1,7 @@
 // Integration tests for CT logs streaming
 
 use cipherrun::ct_logs::{
-    CtConfig, client::CtClient, deduplicator::Deduplicator, parser::Parser, sources::SourceManager,
-    stats::StatsTracker,
+    CtConfig, client::CtClient, parser::Parser, sources::SourceManager, stats::StatsTracker,
 };
 
 #[tokio::test]
@@ -15,29 +14,6 @@ async fn test_source_manager_initialization() {
         assert!(manager.total_sources() > 0);
         assert!(manager.healthy_sources_count() > 0);
     }
-}
-
-#[test]
-fn test_deduplicator_functionality() {
-    let mut dedup = Deduplicator::new(1000, 0.01);
-
-    let cert1 = b"test certificate 1";
-    let cert2 = b"test certificate 2";
-
-    // First insertion should be unique
-    assert!(dedup.check_and_insert(cert1));
-    assert_eq!(dedup.unique_count(), 1);
-    assert_eq!(dedup.duplicates_filtered(), 0);
-
-    // Duplicate should be filtered
-    assert!(!dedup.check_and_insert(cert1));
-    assert_eq!(dedup.unique_count(), 1);
-    assert_eq!(dedup.duplicates_filtered(), 1);
-
-    // Different cert should be unique
-    assert!(dedup.check_and_insert(cert2));
-    assert_eq!(dedup.unique_count(), 2);
-    assert_eq!(dedup.duplicates_filtered(), 1);
 }
 
 #[test]
@@ -76,42 +52,6 @@ fn test_ct_client_creation() {
     let client = CtClient::new();
     // Client should be created successfully
     assert!(std::ptr::addr_of!(client) as usize != 0);
-}
-
-#[test]
-fn test_deduplicator_memory_efficiency() {
-    // Test with larger dataset
-    let mut dedup = Deduplicator::new(10000, 0.01);
-
-    // Add 5000 unique certificates
-    let mut unique_inserted = 0u64;
-    for i in 0..5000 {
-        let cert = format!("certificate {}", i);
-        if dedup.check_and_insert(cert.as_bytes()) {
-            unique_inserted += 1;
-        }
-    }
-
-    // Bloom filters can yield false positives; allow a small tolerance.
-    assert!(unique_inserted >= 4900);
-    assert!(dedup.unique_count() <= 5000);
-
-    // Add duplicates
-    let mut unique_on_second_pass = 0u64;
-    for i in 0..5000 {
-        let cert = format!("certificate {}", i);
-        if dedup.check_and_insert(cert.as_bytes()) {
-            unique_on_second_pass += 1;
-        }
-    }
-
-    assert!(unique_on_second_pass <= 100);
-    assert!(dedup.unique_count() <= 5000);
-    assert!(dedup.duplicates_filtered() >= 4900);
-
-    // Check memory usage is reasonable (should be < 1MB for 10000 expected items)
-    let memory = dedup.memory_usage_bytes();
-    assert!(memory < 1_000_000);
 }
 
 #[test]

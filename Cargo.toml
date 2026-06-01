@@ -136,7 +136,6 @@ lettre = { version = "0.11", features = ["tokio1-native-tls"] }
 futures = "0.3"
 
 # Certificate Transparency
-bloomfilter = "3.0"
 
 [dev-dependencies]
 criterion = "0.8.2"
