@@ -1,6 +1,6 @@
 // Client Simulation Data Parser - Parses client-simulation.txt
 
-use anyhow::Result;
+use crate::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
 

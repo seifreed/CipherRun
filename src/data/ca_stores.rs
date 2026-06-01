@@ -1,6 +1,6 @@
 // CA Stores Loader - Loads PEM certificate stores
 
-use anyhow::Result;
+use crate::Result;
 use std::sync::Arc;
 use x509_parser::prelude::*;
 

@@ -1,6 +1,7 @@
 // Elliptic Curves Parser - Parses curves-mapping.txt
 
-use anyhow::Result;
+use crate::Result;
+use crate::error::TlsError;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -100,7 +101,9 @@ impl CurvesDatabase {
     fn parse_line(line: &str) -> Result<EllipticCurve> {
         let parts: Vec<&str> = line.split(" - ").collect();
         if parts.len() < 2 {
-            anyhow::bail!("Invalid format");
+            return Err(TlsError::ParseError {
+                message: "Invalid format".to_string(),
+            });
         }
 
         let id = parts[0]

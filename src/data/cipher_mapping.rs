@@ -1,7 +1,8 @@
 // Cipher Mapping Parser - Parses cipher-mapping.txt
 
+use crate::Result;
 use crate::ciphers::CipherSuite;
-use anyhow::Result;
+use crate::error::TlsError;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -93,7 +94,9 @@ impl CipherDatabase {
         // Split by " - " to separate hexcode from rest
         let parts: Vec<&str> = line.split(" - ").collect();
         if parts.len() < 2 {
-            anyhow::bail!("Invalid format: missing ' - ' separator");
+            return Err(TlsError::ParseError {
+                message: "Invalid format: missing ' - ' separator".to_string(),
+            });
         }
 
         let hexcode = parts[0].trim();
@@ -105,7 +108,9 @@ impl CipherDatabase {
         // Split rest into fields
         let fields: Vec<&str> = rest.split_whitespace().collect();
         if fields.len() < 3 {
-            anyhow::bail!("Invalid format: not enough fields");
+            return Err(TlsError::ParseError {
+                message: "Invalid format: not enough fields".to_string(),
+            });
         }
 
         let openssl_name = fields[0].to_string();
