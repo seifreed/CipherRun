@@ -211,31 +211,32 @@ impl Args {
     /// Validate CLI arguments for mutual exclusivity and logical consistency
     ///
     /// Returns an error if conflicting flags are used together
-    pub fn validate(&self) -> anyhow::Result<()> {
-        self.compliance.validate().map_err(anyhow::Error::from)?;
+    pub fn validate(&self) -> crate::Result<()> {
+        self.compliance.validate()?;
 
         if let Some(mx_domain) = &self.mx_domain {
-            validate_hostname(mx_domain).map_err(anyhow::Error::from)?;
+            validate_hostname(mx_domain)
+                .map_err(|e| crate::error::TlsError::Other(e.to_string()))?;
         }
 
         if self.mx_domain.is_some() && self.output.json_multi_ip.is_some() {
-            anyhow::bail!(
+            crate::tls_bail!(
                 "--json-multi-ip is only supported for multi-IP single-target scans, not --mx"
             );
         }
 
         if self.network.scan_all_ips {
             if self.target.is_none() || self.input_file.is_some() || self.mx_domain.is_some() {
-                anyhow::bail!("--scan-all-ips requires a single target scan");
+                crate::tls_bail!("--scan-all-ips requires a single target scan");
             }
             if self.ip.is_some() {
-                anyhow::bail!("Cannot use --scan-all-ips with --ip");
+                crate::tls_bail!("Cannot use --scan-all-ips with --ip");
             }
             if self.network.test_all_ips {
-                anyhow::bail!("Cannot use --scan-all-ips with --test-all-ips");
+                crate::tls_bail!("Cannot use --scan-all-ips with --test-all-ips");
             }
             if self.network.first_ip_only {
-                anyhow::bail!("Cannot use --scan-all-ips with --first-ip-only");
+                crate::tls_bail!("Cannot use --scan-all-ips with --first-ip-only");
             }
         }
 
@@ -244,27 +245,30 @@ impl Args {
             && self.mx_domain.is_none()
             && (self.network.parallel || self.network.max_parallel != DEFAULT_MAX_PARALLEL)
         {
-            anyhow::bail!("--parallel and --max-parallel are only supported with --file or --mx");
+            crate::tls_bail!(
+                "--parallel and --max-parallel are only supported with --file or --mx"
+            );
         }
 
         if let Some(delay) = &self.connection.delay {
-            crate::utils::rate_limiter::parse_delay(delay)
-                .map_err(|e| anyhow::anyhow!("Invalid --delay value '{}': {}", delay, e))?;
+            crate::utils::rate_limiter::parse_delay(delay).map_err(|e| {
+                crate::error::TlsError::Other(format!("Invalid --delay value '{delay}': {e}"))
+            })?;
         }
 
         if let Some(format) = &self.fingerprint.export_hello {
-            crate::output::hello_export::HelloExportFormat::parse(format)
-                .map_err(anyhow::Error::from)?;
+            crate::output::hello_export::HelloExportFormat::parse(format)?;
         }
 
         if let Some(xmpphost) = &self.starttls.xmpphost {
-            validate_hostname(xmpphost).map_err(anyhow::Error::from)?;
+            validate_hostname(xmpphost)
+                .map_err(|e| crate::error::TlsError::Other(e.to_string()))?;
 
             if !matches!(
                 self.starttls_protocol(),
                 Some(crate::starttls::StarttlsProtocol::XMPP)
             ) {
-                anyhow::bail!("--xmpphost requires an XMPP STARTTLS mode");
+                crate::tls_bail!("--xmpphost requires an XMPP STARTTLS mode");
             }
         }
 
@@ -277,14 +281,14 @@ impl Args {
         }
 
         if self.output.append && self.output.overwrite {
-            anyhow::bail!("Cannot combine --append with --overwrite");
+            crate::tls_bail!("Cannot combine --append with --overwrite");
         }
 
         if let Some(mode) = self.output.warnings.as_deref() {
             match mode.trim().to_ascii_lowercase().as_str() {
                 "default" | "off" | "batch" => {}
                 other => {
-                    anyhow::bail!(
+                    crate::tls_bail!(
                         "Invalid warning mode '{}'. Supported values: default, off, batch",
                         other
                     );
@@ -299,7 +303,7 @@ impl Args {
         };
 
         if effective_color > 3 {
-            anyhow::bail!(
+            crate::tls_bail!(
                 "Invalid color mode '{}'. Supported values: 0, 1, 2, 3",
                 self.output.color
             );
@@ -310,14 +314,12 @@ impl Args {
                 || self.output.html.is_some()
                 || self.output.xml.is_some())
         {
-            anyhow::bail!(
+            crate::tls_bail!(
                 "Mass scan only supports JSON collection export (--json or --output-all); CSV/HTML/XML are not available with --file"
             );
         }
 
-        self.to_scan_request()
-            .validate_common()
-            .map_err(anyhow::Error::from)
+        self.to_scan_request().validate_common()
     }
 
     /// Effective inter-connection throttle in milliseconds.
