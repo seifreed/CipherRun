@@ -313,7 +313,7 @@ impl<'a> EarlyDataTester<'a> {
             let mut buf = vec![0u8; 8192];
             let n = stream.read(&mut buf).await?;
             buf.truncate(n);
-            Ok::<Vec<u8>, anyhow::Error>(buf)
+            Ok::<Vec<u8>, std::io::Error>(buf)
         })
         .await
         {

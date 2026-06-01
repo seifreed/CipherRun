@@ -54,7 +54,7 @@ pub trait Command: Send + Sync {
     ///
     /// # Returns
     /// - `Ok(CommandExit)` with the desired process exit code if the command completed
-    /// - `Err(anyhow::Error)` if the command failed
+    /// - `Err(TlsError)` if the command failed
     ///
     /// # Errors
     /// Implementation-specific errors should be wrapped in TlsError

@@ -109,7 +109,7 @@ impl SignatureTester {
                 let mut response = vec![0u8; 4096];
                 let n = stream.read(&mut response).await?;
                 response.truncate(n);
-                Ok::<Vec<u8>, anyhow::Error>(response)
+                Ok::<Vec<u8>, std::io::Error>(response)
             })
             .await;
 

@@ -87,7 +87,7 @@ impl ProtocolTester {
             let mut resp = vec![0u8; BUFFER_SIZE_MAX_TLS_RECORD];
             let n = stream.read(&mut resp).await?;
             resp.truncate(n);
-            Ok::<Vec<u8>, anyhow::Error>(resp)
+            Ok::<Vec<u8>, std::io::Error>(resp)
         })
         .await
         {

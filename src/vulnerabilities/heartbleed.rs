@@ -123,7 +123,7 @@ impl<'a> HeartbleedTester<'a> {
             let mut resp = vec![0u8; 16384];
             let n = stream.read(&mut resp).await?;
             resp.truncate(n);
-            Ok::<Vec<u8>, anyhow::Error>(resp)
+            Ok::<Vec<u8>, std::io::Error>(resp)
         })
         .await
         {
@@ -304,7 +304,7 @@ impl<'a> HeartbleedTester<'a> {
             let mut response = vec![0u8; 65535];
             let n = stream.read(&mut response).await?;
             response.truncate(n);
-            Ok::<Vec<u8>, anyhow::Error>(response)
+            Ok::<Vec<u8>, std::io::Error>(response)
         })
         .await
         {
