@@ -167,33 +167,6 @@ impl MtlsConfig {
     }
 }
 
-/// Build a standard TLS connector without client authentication
-pub fn build_standard_tls_connector() -> TlsConnector {
-    let mut root_store = RootCertStore::empty();
-    root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-
-    let config =
-        ClientConfig::builder_with_provider(rustls::crypto::ring::default_provider().into())
-            .with_safe_default_protocol_versions()
-            .expect("Failed to set protocol versions")
-            .with_root_certificates(root_store)
-            .with_no_client_auth();
-
-    TlsConnector::from(Arc::new(config))
-}
-
-/// Build a TLS connector with custom root certificates
-pub fn build_tls_connector_with_roots(root_store: RootCertStore) -> TlsConnector {
-    let config =
-        ClientConfig::builder_with_provider(rustls::crypto::ring::default_provider().into())
-            .with_safe_default_protocol_versions()
-            .expect("Failed to set protocol versions")
-            .with_root_certificates(root_store)
-            .with_no_client_auth();
-
-    TlsConnector::from(Arc::new(config))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -232,19 +205,6 @@ KHvHJKYnrKyB
         if let Ok(config) = result {
             assert!(!config.cert_chain.is_empty());
         }
-    }
-
-    #[test]
-    fn test_build_standard_connector() {
-        let connector = build_standard_tls_connector();
-        assert!(std::mem::size_of_val(&connector) > 0);
-    }
-
-    #[test]
-    fn test_build_connector_with_roots() {
-        let store = RootCertStore::empty();
-        let connector = build_tls_connector_with_roots(store);
-        assert!(std::mem::size_of_val(&connector) > 0);
     }
 
     #[test]
@@ -310,12 +270,5 @@ KHvHJKYnrKyB
         let cloned = config.clone();
         assert_eq!(cloned.cert_chain.len(), 1);
         assert!(matches!(cloned.private_key, PrivateKeyDer::Pkcs8(_)));
-    }
-
-    #[test]
-    fn test_build_tls_connector_with_empty_roots() {
-        let root_store = RootCertStore::empty();
-        let connector = build_tls_connector_with_roots(root_store);
-        assert!(std::mem::size_of_val(&connector) > 0);
     }
 }
