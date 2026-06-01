@@ -1,5 +1,7 @@
 // API Configuration
 
+use crate::Result;
+use crate::error::TlsError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use subtle::ConstantTimeEq;
@@ -123,17 +125,27 @@ fn generate_secure_api_key() -> String {
 
 impl ApiConfig {
     /// Create config from file
-    pub fn from_file(path: &str) -> anyhow::Result<Self> {
-        let content = std::fs::read_to_string(path)?;
-        let config: ApiConfig = toml::from_str(&content)?;
+    pub fn from_file(path: &str) -> Result<Self> {
+        let content = std::fs::read_to_string(path).map_err(|e| TlsError::FileSystemError {
+            path: path.to_string(),
+            source: e,
+        })?;
+        let config: ApiConfig = toml::from_str(&content).map_err(|e| TlsError::ConfigError {
+            message: format!("Failed to parse API config: {e}"),
+        })?;
         Ok(config)
     }
 
     /// Create example config file
-    pub fn create_example(path: &str) -> anyhow::Result<()> {
+    pub fn create_example(path: &str) -> Result<()> {
         let config = Self::default();
-        let toml = toml::to_string_pretty(&config)?;
-        std::fs::write(path, toml)?;
+        let toml = toml::to_string_pretty(&config).map_err(|e| TlsError::ConfigError {
+            message: format!("Failed to serialize API config: {e}"),
+        })?;
+        std::fs::write(path, toml).map_err(|e| TlsError::FileSystemError {
+            path: path.to_string(),
+            source: e,
+        })?;
         Ok(())
     }
 
