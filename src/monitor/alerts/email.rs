@@ -2,6 +2,7 @@
 
 use super::formatting;
 use crate::Result;
+use crate::error::TlsError;
 use crate::monitor::alerts::{Alert, AlertChannel, AlertDetails, AlertType};
 use crate::monitor::config::EmailConfig;
 use async_trait::async_trait;
@@ -199,7 +200,7 @@ impl AlertChannel for EmailChannel {
         tokio::task::spawn_blocking(move || {
             transport
                 .send(&message)
-                .map_err(|e| anyhow::anyhow!("Failed to send email: {}", e))
+                .map_err(|e| TlsError::Other(format!("Failed to send email: {e}")))
         })
         .await??;
 
@@ -216,7 +217,7 @@ impl AlertChannel for EmailChannel {
         tokio::task::spawn_blocking(move || {
             transport
                 .test_connection()
-                .map_err(|e| anyhow::anyhow!("SMTP connection test failed: {}", e))
+                .map_err(|e| TlsError::Other(format!("SMTP connection test failed: {e}")))
         })
         .await??;
 

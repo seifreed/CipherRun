@@ -341,7 +341,7 @@ impl AlertManager {
         }
 
         if success_count == 0 {
-            return Err(anyhow::anyhow!("All alert channels failed").into());
+            crate::tls_bail!("All alert channels failed");
         }
 
         Ok(())

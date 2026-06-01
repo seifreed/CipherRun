@@ -1,6 +1,7 @@
 // Generic Webhook Alert Channel
 
 use crate::Result;
+use crate::error::TlsError;
 use crate::monitor::alerts::{Alert, AlertChannel};
 use crate::monitor::config::WebhookConfig;
 use async_trait::async_trait;
@@ -61,7 +62,10 @@ impl AlertChannel for WebhookChannel {
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            return Err(anyhow::anyhow!("Webhook returned status {}: {}", status, body).into());
+            return Err(TlsError::HttpError {
+                status: status.as_u16(),
+                details: format!("Webhook error: {body}"),
+            });
         }
 
         Ok(())
@@ -88,7 +92,10 @@ impl AlertChannel for WebhookChannel {
         let response = request.send().await?;
 
         if !response.status().is_success() {
-            return Err(anyhow::anyhow!("Webhook test failed: {}", response.status()).into());
+            return Err(TlsError::HttpError {
+                status: response.status().as_u16(),
+                details: "Webhook test failed".to_string(),
+            });
         }
 
         Ok(())

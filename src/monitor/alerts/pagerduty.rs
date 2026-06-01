@@ -2,6 +2,7 @@
 
 use crate::Result;
 use crate::constants::ALERT_SEND_TIMEOUT;
+use crate::error::TlsError;
 use crate::monitor::alerts::{Alert, AlertChannel, AlertType};
 use crate::monitor::config::PagerDutyConfig;
 use crate::monitor::detector::ChangeSeverity;
@@ -113,9 +114,10 @@ impl AlertChannel for PagerDutyChannel {
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await?;
-            return Err(
-                anyhow::anyhow!("PagerDuty API returned status {}: {}", status, body).into(),
-            );
+            return Err(TlsError::HttpError {
+                status: status.as_u16(),
+                details: format!("PagerDuty API error: {body}"),
+            });
         }
 
         Ok(())
@@ -152,7 +154,10 @@ impl AlertChannel for PagerDutyChannel {
             .await?;
 
         if !response.status().is_success() {
-            return Err(anyhow::anyhow!("PagerDuty test failed: {}", response.status()).into());
+            return Err(TlsError::HttpError {
+                status: response.status().as_u16(),
+                details: "PagerDuty test failed".to_string(),
+            });
         }
 
         Ok(())

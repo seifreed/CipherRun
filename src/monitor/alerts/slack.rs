@@ -3,6 +3,7 @@
 use super::formatting;
 use crate::Result;
 use crate::constants::ALERT_SEND_TIMEOUT;
+use crate::error::TlsError;
 use crate::monitor::alerts::{Alert, AlertChannel, AlertType};
 use crate::monitor::config::SlackConfig;
 use async_trait::async_trait;
@@ -147,9 +148,10 @@ impl AlertChannel for SlackChannel {
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await?;
-            return Err(
-                anyhow::anyhow!("Slack webhook returned status {}: {}", status, body).into(),
-            );
+            return Err(TlsError::HttpError {
+                status: status.as_u16(),
+                details: format!("Slack webhook error: {body}"),
+            });
         }
 
         Ok(())
@@ -172,7 +174,10 @@ impl AlertChannel for SlackChannel {
             .await?;
 
         if !response.status().is_success() {
-            return Err(anyhow::anyhow!("Slack webhook test failed: {}", response.status()).into());
+            return Err(TlsError::HttpError {
+                status: response.status().as_u16(),
+                details: "Slack webhook test failed".to_string(),
+            });
         }
 
         Ok(())
