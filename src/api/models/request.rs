@@ -206,20 +206,6 @@ impl Default for CertificateQuery {
     }
 }
 
-/// Compliance check parameters
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct ComplianceCheckRequest {
-    /// Target to check
-    pub target: String,
-
-    /// Framework (pci-dss-v4, nist-sp800-52r2, etc.)
-    pub framework: String,
-
-    /// Generate detailed report
-    #[serde(default)]
-    pub detailed: bool,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
