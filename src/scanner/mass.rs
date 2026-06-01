@@ -168,7 +168,7 @@ impl MassScanner {
         main_pb.set_style(
             ProgressStyle::default_bar()
                 .template("[{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} {msg}")
-                .expect("hardcoded progress bar template is valid")
+                .unwrap_or_else(|_| ProgressStyle::default_bar())
                 .progress_chars("=>-"),
         );
         (multi_progress, main_pb)
@@ -205,7 +205,7 @@ impl MassScanner {
                 pb.set_style(
                     ProgressStyle::default_spinner()
                         .template("{spinner:.green} {msg}")
-                        .expect("hardcoded spinner template is valid"),
+                        .unwrap_or_else(|_| ProgressStyle::default_spinner()),
                 );
                 pb.set_message(format!("Scanning {}", target_for_task));
 
