@@ -482,12 +482,6 @@ impl TrustStoreValidator {
     }
 }
 
-impl Default for TrustStoreValidator {
-    fn default() -> Self {
-        Self::new().expect("Failed to initialize TrustStoreValidator")
-    }
-}
-
 /// Certificate role in the chain
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CertificateRole {
