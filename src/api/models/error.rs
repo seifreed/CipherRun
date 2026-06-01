@@ -193,13 +193,6 @@ impl IntoResponse for ApiErrorResponse {
     }
 }
 
-// Conversion from anyhow::Error
-impl From<anyhow::Error> for ApiError {
-    fn from(err: anyhow::Error) -> Self {
-        ApiError::Internal(err.to_string())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
