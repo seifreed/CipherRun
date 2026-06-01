@@ -212,7 +212,7 @@ impl CipherTester {
         .await
         {
             Ok(s) => s,
-            Err(e) => return Err(e.into()),
+            Err(e) => return Err(e),
         };
 
         self.perform_cipher_handshake(&mut stream, protocol, cipher_hexcode)

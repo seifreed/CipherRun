@@ -38,9 +38,7 @@ fn find_alert_description(response: &[u8], n: usize) -> Option<u8> {
 /// Check if server supports CBC cipher suites
 pub(super) async fn supports_cbc_ciphers(target: &Target) -> Result<bool> {
     const CBC_CIPHERS: &str = "AES128-SHA:AES256-SHA:AES128-SHA256:AES256-SHA256:DES-CBC3-SHA";
-    test_vuln_ssl_connection(target, VulnSslConfig::with_ciphers(CBC_CIPHERS))
-        .await
-        .map_err(crate::TlsError::from)
+    test_vuln_ssl_connection(target, VulnSslConfig::with_ciphers(CBC_CIPHERS)).await
 }
 
 /// Send a malformed TLS record for oracle detection

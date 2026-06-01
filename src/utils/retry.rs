@@ -4,8 +4,9 @@
 // transient network failures. It distinguishes between retriable errors (e.g., connection
 // timeouts, connection resets) and non-retriable errors (e.g., connection refused, DNS failures).
 
+use crate::Result;
+use crate::error::TlsError;
 use crate::utils::adaptive::AdaptiveController;
-use anyhow::Result;
 use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
@@ -145,7 +146,7 @@ impl RetryConfig {
 /// use tokio::net::TcpStream;
 /// use std::net::SocketAddr;
 ///
-/// # async fn example() -> anyhow::Result<()> {
+/// # async fn example() -> cipherrun::Result<()> {
 /// let config = RetryConfig::default();
 /// let addr: SocketAddr = "192.0.2.1:443".parse()?;
 ///
@@ -257,10 +258,10 @@ where
 /// # Returns
 ///
 /// `true` if the error is retriable, `false` otherwise
-fn is_retriable(error: &anyhow::Error) -> bool {
+fn is_retriable(error: &TlsError) -> bool {
     // Check if it's an IO error first (most common case)
-    if let Some(io_err) = error.downcast_ref::<std::io::Error>() {
-        return is_io_error_retriable(io_err);
+    if let TlsError::IoError { source } = error {
+        return is_io_error_retriable(source);
     }
 
     // For other error types, analyze the error message
@@ -311,9 +312,9 @@ fn is_retriable(error: &anyhow::Error) -> bool {
     false
 }
 
-fn is_timeout_error(error: &anyhow::Error) -> bool {
-    if let Some(io_err) = error.downcast_ref::<std::io::Error>() {
-        return io_err.kind() == std::io::ErrorKind::TimedOut;
+fn is_timeout_error(error: &TlsError) -> bool {
+    if let TlsError::IoError { source } = error {
+        return source.kind() == std::io::ErrorKind::TimedOut;
     }
 
     let msg = error.to_string().to_lowercase();
@@ -464,54 +465,54 @@ mod tests {
     #[test]
     fn test_is_retriable_by_message() {
         // Retriable based on message
-        let timeout_err = anyhow::anyhow!("Connection timed out");
+        let timeout_err = TlsError::Other("Connection timed out".to_string());
         assert!(is_retriable(&timeout_err));
 
-        let reset_err = anyhow::anyhow!("Connection reset by peer");
+        let reset_err = TlsError::Other("Connection reset by peer".to_string());
         assert!(is_retriable(&reset_err));
 
         // Non-retriable based on message
-        let refused_err = anyhow::anyhow!("Connection refused");
+        let refused_err = TlsError::Other("Connection refused".to_string());
         assert!(!is_retriable(&refused_err));
 
-        let dns_err = anyhow::anyhow!("Failed to lookup host");
+        let dns_err = TlsError::Other("Failed to lookup host".to_string());
         assert!(!is_retriable(&dns_err));
 
         // Unknown error - default to non-retriable
-        let unknown_err = anyhow::anyhow!("Unknown error");
+        let unknown_err = TlsError::Other("Unknown error".to_string());
         assert!(!is_retriable(&unknown_err));
     }
 
     #[test]
     fn test_is_timeout_error_variants() {
-        let io_err = anyhow::Error::new(Error::new(ErrorKind::TimedOut, "timeout"));
+        let io_err = TlsError::from(Error::new(ErrorKind::TimedOut, "timeout"));
         assert!(is_timeout_error(&io_err));
 
-        let msg_err = anyhow::anyhow!("Deadline exceeded");
+        let msg_err = TlsError::Other("Deadline exceeded".to_string());
         assert!(is_timeout_error(&msg_err));
 
-        let other_err = anyhow::anyhow!("Connection refused");
+        let other_err = TlsError::Other("Connection refused".to_string());
         assert!(!is_timeout_error(&other_err));
     }
 
     #[test]
     fn test_is_retriable_message_patterns() {
-        let net_unreachable = anyhow::anyhow!("Network unreachable");
+        let net_unreachable = TlsError::Other("Network unreachable".to_string());
         assert!(is_retriable(&net_unreachable));
 
-        let perm_denied = anyhow::anyhow!("Permission denied");
+        let perm_denied = TlsError::Other("Permission denied".to_string());
         assert!(!is_retriable(&perm_denied));
     }
 
     #[test]
     fn test_is_retriable_io_error_refused() {
-        let err = anyhow::Error::new(Error::new(ErrorKind::ConnectionRefused, "refused"));
+        let err = TlsError::from(Error::new(ErrorKind::ConnectionRefused, "refused"));
         assert!(!is_retriable(&err));
     }
 
     #[test]
     fn test_is_retriable_invalid_dns_name() {
-        let err = anyhow::anyhow!("invalid dns name");
+        let err = TlsError::Other("invalid dns name".to_string());
         assert!(!is_retriable(&err));
     }
 
@@ -523,7 +524,7 @@ mod tests {
 
         let result = retry_with_backoff(&config, || async {
             attempts.fetch_add(1, Ordering::SeqCst);
-            Ok::<_, anyhow::Error>(42)
+            Ok::<_, TlsError>(42)
         })
         .await;
 
@@ -541,9 +542,9 @@ mod tests {
         let result = retry_with_backoff(&config, || async {
             let current = attempts.fetch_add(1, Ordering::SeqCst) + 1;
             if current < 3 {
-                Err(anyhow::anyhow!("Connection timed out"))
+                Err(TlsError::Other("Connection timed out".to_string()))
             } else {
-                Ok::<_, anyhow::Error>(42)
+                Ok::<_, TlsError>(42)
             }
         })
         .await;
@@ -566,7 +567,7 @@ mod tests {
 
         let result = retry_with_backoff(&config, || async {
             attempts.fetch_add(1, Ordering::SeqCst);
-            Err::<(), _>(anyhow::anyhow!("Connection timed out"))
+            Err::<(), _>(TlsError::Other("Connection timed out".to_string()))
         })
         .await;
 
@@ -583,7 +584,7 @@ mod tests {
 
         let result = retry_with_backoff(&config, || async {
             attempts.fetch_add(1, Ordering::SeqCst);
-            Err::<(), _>(anyhow::anyhow!("Connection refused"))
+            Err::<(), _>(TlsError::Other("Connection refused".to_string()))
         })
         .await;
 
@@ -607,7 +608,7 @@ mod tests {
 
         let _result = retry_with_backoff(&config, || async {
             attempts.fetch_add(1, Ordering::SeqCst);
-            Err::<(), _>(anyhow::anyhow!("timeout"))
+            Err::<(), _>(TlsError::Other("timeout".to_string()))
         })
         .await;
 

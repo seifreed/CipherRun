@@ -1,6 +1,7 @@
 // Network utilities - DNS resolution, socket helpers, etc.
 
-use anyhow::{Context, Result};
+use crate::Result;
+use crate::error::TlsError;
 use hickory_resolver::TokioResolver;
 use hickory_resolver::config::*;
 use hickory_resolver::net::runtime::TokioRuntimeProvider;
@@ -106,12 +107,15 @@ pub fn display_target_host(hostname: &str) -> String {
 /// inputs. Raw IPv6 literals without brackets are treated as host-only values.
 pub fn split_target_host_port(input: &str) -> Result<(String, Option<u16>)> {
     if input.trim().is_empty() {
-        anyhow::bail!("Target cannot be empty");
+        crate::tls_bail!("Target cannot be empty");
     }
 
     if input.contains("://") {
         let url = url::Url::parse(input)?;
-        let host = url.host_str().context("No hostname in URL")?.to_string();
+        let host = url
+            .host_str()
+            .ok_or_else(|| TlsError::Other("No hostname in URL".to_string()))?
+            .to_string();
         return Ok((host, url.port_or_known_default()));
     }
 
@@ -125,10 +129,12 @@ pub fn split_target_host_port(input: &str) -> Result<(String, Option<u16>)> {
             if let Some(port_str) = suffix.strip_prefix(':') {
                 return Ok((hostname, Some(parse_port(port_str)?)));
             }
-            return Err(anyhow::anyhow!("Invalid format after IPv6 address"));
+            return Err(TlsError::Other(
+                "Invalid format after IPv6 address".to_string(),
+            ));
         }
-        return Err(anyhow::anyhow!(
-            "Invalid IPv6 address format - missing closing bracket"
+        return Err(TlsError::Other(
+            "Invalid IPv6 address format - missing closing bracket".to_string(),
         ));
     }
 
@@ -140,13 +146,13 @@ pub fn split_target_host_port(input: &str) -> Result<(String, Option<u16>)> {
         && !host.contains(':')
     {
         if host.is_empty() {
-            anyhow::bail!("Target host cannot be empty");
+            crate::tls_bail!("Target host cannot be empty");
         }
         return Ok((host.to_string(), Some(parse_port(port_str)?)));
     }
 
     if input.contains(':') {
-        anyhow::bail!("Invalid target format: use [IPv6]:port for IPv6 addresses with ports");
+        crate::tls_bail!("Invalid target format: use [IPv6]:port for IPv6 addresses with ports");
     }
 
     Ok((input.to_string(), None))
@@ -168,10 +174,9 @@ impl Target {
 
         // Validate non-empty IP addresses
         if ip_addresses.is_empty() {
-            return Err(anyhow::anyhow!(
-                "No IP addresses could be resolved for target: {}",
-                hostname
-            ));
+            return Err(TlsError::Other(format!(
+                "No IP addresses could be resolved for target: {hostname}"
+            )));
         }
 
         Ok(Self {
@@ -185,10 +190,14 @@ impl Target {
     /// Returns error if ip_addresses is empty.
     pub fn with_ips(hostname: String, port: u16, ip_addresses: Vec<IpAddr>) -> Result<Self> {
         if ip_addresses.is_empty() {
-            return Err(anyhow::anyhow!("Target must have at least one IP address"));
+            return Err(TlsError::Other(
+                "Target must have at least one IP address".to_string(),
+            ));
         }
         if port == 0 {
-            return Err(anyhow::anyhow!("Port must be between 1 and 65535"));
+            return Err(TlsError::Other(
+                "Port must be between 1 and 65535".to_string(),
+            ));
         }
         Ok(Self {
             hostname,
@@ -263,9 +272,11 @@ const FALLBACK_DNS_SERVERS: [IpAddr; 2] = [
 /// available".
 pub fn build_system_resolver() -> Result<TokioResolver> {
     if let Ok(builder) = TokioResolver::builder_tokio() {
-        return builder
-            .build()
-            .context("failed to build DNS resolver from system configuration");
+        return builder.build().map_err(|e| {
+            TlsError::Other(format!(
+                "failed to build DNS resolver from system configuration: {e}"
+            ))
+        });
     }
 
     let name_servers = FALLBACK_DNS_SERVERS
@@ -281,7 +292,7 @@ pub fn build_system_resolver() -> Result<TokioResolver> {
     let config = ResolverConfig::from_parts(None, Vec::new(), name_servers);
     TokioResolver::builder_with_config(config, TokioRuntimeProvider::default())
         .build()
-        .context("failed to build fallback DNS resolver")
+        .map_err(|e| TlsError::Other(format!("failed to build fallback DNS resolver: {e}")))
 }
 
 /// Internal implementation with SSRF check parameter.
@@ -293,7 +304,7 @@ async fn resolve_hostname_with_ssrf_check(
     if let Ok(ip) = hostname.parse::<IpAddr>() {
         // SECURITY: Validate against SSRF rules (DNS rebinding protection)
         validate_resolved_ips(&[ip], allow_private_ips)
-            .map_err(|e| anyhow::anyhow!("SSRF validation failed: {}", e))?;
+            .map_err(|e| TlsError::Other(format!("SSRF validation failed: {e}")))?;
         return Ok(vec![ip]);
     }
 
@@ -303,7 +314,7 @@ async fn resolve_hostname_with_ssrf_check(
         tracing::debug!("DNS cache hit for {}", hostname);
         // SECURITY: Validate cached IPs against SSRF rules
         validate_resolved_ips(&cached_ips, allow_private_ips).map_err(|e| {
-            anyhow::anyhow!("SSRF validation failed for cached {}: {}", hostname, e)
+            TlsError::Other(format!("SSRF validation failed for cached {hostname}: {e}"))
         })?;
         return Ok(cached_ips);
     }
@@ -315,17 +326,17 @@ async fn resolve_hostname_with_ssrf_check(
     let response = resolver
         .lookup_ip(hostname)
         .await
-        .context("DNS lookup failed")?;
+        .map_err(|e| TlsError::Other(format!("DNS lookup failed: {e}")))?;
 
     let ips: Vec<IpAddr> = response.iter().collect();
 
     if ips.is_empty() {
-        anyhow::bail!("No IP addresses found for {}", hostname);
+        crate::tls_bail!("No IP addresses found for {}", hostname);
     }
 
     // SECURITY: Validate resolved IPs against SSRF rules (DNS rebinding protection)
     validate_resolved_ips(&ips, allow_private_ips)
-        .map_err(|e| anyhow::anyhow!("SSRF validation failed for {}: {}", hostname, e))?;
+        .map_err(|e| TlsError::Other(format!("SSRF validation failed for {hostname}: {e}")))?;
 
     // Store in cache for future use
     cache.insert(hostname.to_string(), ips.clone()).await;
@@ -409,12 +420,12 @@ async fn connect_once(
             effective_timeout,
         )
         .await
-        .context("Proxy connection failed");
+        .map_err(|e| TlsError::Other(format!("Proxy connection failed: {e}")));
     }
 
     timeout(effective_timeout, TcpStream::connect(addr))
         .await
-        .context("Connection timeout")?
+        .map_err(|e| TlsError::Other(format!("Connection timeout: {e}")))?
         .map_err(Into::into)
 }
 
@@ -427,26 +438,30 @@ pub fn into_blocking_std_stream(
     stream: TcpStream,
     socket_timeout: Duration,
 ) -> Result<StdTcpStream> {
-    let std_stream = stream
-        .into_std()
-        .context("failed to convert Tokio TCP stream to std::net::TcpStream")?;
-    std_stream
-        .set_nonblocking(false)
-        .context("failed to switch TCP stream to blocking mode")?;
+    let std_stream = stream.into_std().map_err(|e| {
+        TlsError::Other(format!(
+            "failed to convert Tokio TCP stream to std::net::TcpStream: {e}"
+        ))
+    })?;
+    std_stream.set_nonblocking(false).map_err(|e| {
+        TlsError::Other(format!("failed to switch TCP stream to blocking mode: {e}"))
+    })?;
     std_stream
         .set_read_timeout(Some(socket_timeout))
-        .context("failed to configure TCP read timeout")?;
+        .map_err(|e| TlsError::Other(format!("failed to configure TCP read timeout: {e}")))?;
     std_stream
         .set_write_timeout(Some(socket_timeout))
-        .context("failed to configure TCP write timeout")?;
+        .map_err(|e| TlsError::Other(format!("failed to configure TCP write timeout: {e}")))?;
     Ok(std_stream)
 }
 
 /// Parse port from string
 pub fn parse_port(port_str: &str) -> Result<u16> {
-    let port = port_str.parse::<u16>().context("Invalid port number")?;
+    let port = port_str
+        .parse::<u16>()
+        .map_err(|e| TlsError::Other(format!("Invalid port number: {e}")))?;
     if port == 0 {
-        anyhow::bail!("Port must be between 1 and 65535");
+        crate::tls_bail!("Port must be between 1 and 65535");
     }
     Ok(port)
 }
@@ -577,7 +592,7 @@ pub async fn try_vuln_ssl_connection(
         .socket_addrs()
         .first()
         .copied()
-        .context("No socket addresses available for target")?;
+        .ok_or(TlsError::NoSocketAddresses)?;
     let hostname = target.hostname.clone();
 
     let stream = match timeout(
@@ -618,7 +633,7 @@ pub async fn try_vuln_ssl_connection(
         }
     })
     .await
-    .context("Spawn blocking failed")??;
+    .map_err(|e| TlsError::Other(format!("Spawn blocking failed: {e}")))??;
 
     Ok(result)
 }
@@ -677,7 +692,7 @@ pub async fn test_cipher_support_outcome(
         .socket_addrs()
         .first()
         .copied()
-        .context("No socket addresses available for target")?;
+        .ok_or(TlsError::NoSocketAddresses)?;
     let hostname = target.hostname.clone();
     let cipher = cipher.to_string();
 
@@ -708,7 +723,7 @@ pub async fn test_cipher_support_outcome(
         }
     })
     .await
-    .context("Spawn blocking failed")??;
+    .map_err(|e| TlsError::Other(format!("Spawn blocking failed: {e}")))??;
 
     Ok(result)
 }

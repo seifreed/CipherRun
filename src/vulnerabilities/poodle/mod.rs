@@ -68,9 +68,7 @@ impl<'a> PoodleTester<'a> {
 
         // Check CBC connectivity once (same check test_tls_poodle does internally).
         let config = VulnSslConfig::tls10_with_ciphers("AES128-SHA:AES256-SHA:DES-CBC3-SHA");
-        let cbc_connected = test_vuln_ssl_connection(self.target, config)
-            .await
-            .map_err(crate::TlsError::from)?;
+        let cbc_connected = test_vuln_ssl_connection(self.target, config).await?;
 
         // Run each sub-test once and reuse results for both tls_poodle and variants list.
         let zombie = self.test_zombie_poodle().await?;
@@ -146,17 +144,13 @@ impl<'a> PoodleTester<'a> {
 
     /// Test if SSL 3.0 is supported
     async fn test_ssl3(&self) -> Result<bool> {
-        test_vuln_ssl_connection(self.target, VulnSslConfig::ssl3_only())
-            .await
-            .map_err(crate::TlsError::from)
+        test_vuln_ssl_connection(self.target, VulnSslConfig::ssl3_only()).await
     }
 
     /// Test for TLS POODLE vulnerability
     async fn test_tls_poodle(&self) -> Result<Option<bool>> {
         let config = VulnSslConfig::tls10_with_ciphers("AES128-SHA:AES256-SHA:DES-CBC3-SHA");
-        let connected = test_vuln_ssl_connection(self.target, config)
-            .await
-            .map_err(crate::TlsError::from)?;
+        let connected = test_vuln_ssl_connection(self.target, config).await?;
 
         if !connected {
             return Ok(None);
