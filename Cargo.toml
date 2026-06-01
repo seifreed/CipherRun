@@ -95,7 +95,6 @@ indicatif = "0.18"
 colored = "3.0"
 
 # Error handling
-anyhow = "1.0"
 thiserror = "2.0"
 
 # Utilities

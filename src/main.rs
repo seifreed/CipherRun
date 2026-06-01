@@ -44,18 +44,21 @@ async fn main() -> ExitCode {
     }
 }
 
-async fn run_cli() -> anyhow::Result<CommandExit> {
+async fn run_cli() -> cipherrun::Result<CommandExit> {
     // Install rustls crypto provider (required for rustls 0.23+)
     rustls::crypto::ring::default_provider()
         .install_default()
         .map_err(|_| {
-            anyhow::anyhow!("Failed to install rustls crypto provider (already installed?)")
+            cipherrun::TlsError::Other(
+                "Failed to install rustls crypto provider (already installed?)".to_string(),
+            )
         })?;
 
     let raw_arg_count = std::env::args_os().count();
 
     // Parse command line arguments
-    let mut args = Args::parse_with_sources()?;
+    let mut args =
+        Args::parse_with_sources().map_err(|e| cipherrun::TlsError::Other(e.to_string()))?;
 
     if raw_arg_count == 1 {
         let mut command = Args::command();
@@ -166,10 +169,10 @@ async fn run_cli() -> anyhow::Result<CommandExit> {
     let command = CommandRouter::route(args)?;
 
     info!("Executing command: {}", command.name());
-    command.execute().await.map_err(Into::into)
+    command.execute().await
 }
 
-fn initialize_logging(args: &Args) -> anyhow::Result<()> {
+fn initialize_logging(args: &Args) -> cipherrun::Result<()> {
     let log_level = resolve_log_level(
         std::env::var("RUST_LOG").ok().as_deref(),
         args.output.verbose,
@@ -190,8 +193,9 @@ fn initialize_logging(args: &Args) -> anyhow::Result<()> {
         .with_max_level(log_level)
         .with_writer(writer)
         .finish();
-    tracing::subscriber::set_global_default(subscriber)
-        .map_err(|e| anyhow::anyhow!("Failed to set tracing subscriber: {}", e))?;
+    tracing::subscriber::set_global_default(subscriber).map_err(|e| {
+        cipherrun::TlsError::Other(format!("Failed to set tracing subscriber: {e}"))
+    })?;
     Ok(())
 }
 

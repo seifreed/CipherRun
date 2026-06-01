@@ -1,7 +1,7 @@
 // Error types for CipherRun
 //
-// This module provides structured error types using thiserror, replacing the generic
-// anyhow::Result pattern for better error handling and exhaustive matching.
+// This module provides structured error types using thiserror for better error
+// handling and exhaustive matching.
 
 use std::io;
 use std::net::SocketAddr;
@@ -182,13 +182,6 @@ pub enum CertificateValidationError {
     ParseError { details: String },
 }
 
-/// Conversion from anyhow::Error for gradual migration
-impl From<anyhow::Error> for TlsError {
-    fn from(err: anyhow::Error) -> Self {
-        TlsError::Other(err.to_string())
-    }
-}
-
 // Additional conversions for missing types
 impl From<std::str::Utf8Error> for TlsError {
     fn from(err: std::str::Utf8Error) -> Self {
@@ -358,13 +351,6 @@ mod tests {
 
         // Verify the source chain is preserved
         assert!(err.source().is_some());
-    }
-
-    #[test]
-    fn test_error_conversion_from_anyhow() {
-        let err = anyhow::anyhow!("wrapped");
-        let tls_err: TlsError = err.into();
-        assert!(matches!(tls_err, TlsError::Other(_)));
     }
 
     #[test]

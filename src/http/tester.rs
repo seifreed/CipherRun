@@ -203,7 +203,7 @@ impl HeaderAnalyzer {
         let response = request
             .send()
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to fetch headers: {}", e))?;
+            .map_err(|e| crate::error::TlsError::Other(format!("Failed to fetch headers: {e}")))?;
 
         // Capture HTTP status code
         let status_code = response.status().as_u16();
@@ -317,7 +317,11 @@ fn resolved_connect_addr(target: &Target) -> Result<Option<SocketAddr>> {
             .into_iter()
             .next()
             .map(Some)
-            .ok_or_else(|| anyhow::anyhow!("No resolved IP address available for target").into())
+            .ok_or_else(|| {
+                crate::error::TlsError::Other(
+                    "No resolved IP address available for target".to_string(),
+                )
+            })
     }
 }
 

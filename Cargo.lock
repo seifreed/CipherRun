@@ -470,7 +470,6 @@ dependencies = [
 name = "cipherrun"
 version = "0.3.0"
 dependencies = [
- "anyhow",
  "async-trait",
  "axum",
  "base64",

@@ -64,16 +64,6 @@ pub use crate::scanner::Scanner;
 /// ```
 pub type Result<T> = std::result::Result<T, TlsError>;
 
-/// Legacy compatibility: anyhow Result type
-///
-/// This is provided for gradual migration from anyhow to the structured TlsError.
-/// New code should use the main Result<T> type above.
-#[deprecated(
-    since = "0.2.0",
-    note = "Use cipherrun::Result<T> instead of AnyhowResult<T>"
-)]
-pub type AnyhowResult<T> = anyhow::Result<T>;
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -81,16 +71,6 @@ mod tests {
     #[test]
     fn test_result_alias_ok() {
         fn do_ok() -> Result<()> {
-            Ok(())
-        }
-
-        assert!(do_ok().is_ok());
-    }
-
-    #[test]
-    #[allow(deprecated)]
-    fn test_anyhow_result_alias_ok() {
-        fn do_ok() -> AnyhowResult<()> {
             Ok(())
         }
 

@@ -294,11 +294,6 @@ fn example_error_conversions() {
         let tls_err: TlsError = url_err.into();
         println!("From UrlParseError: {}", tls_err);
     }
-
-    // From anyhow::Error (for migration)
-    let anyhow_err = anyhow::anyhow!("generic error message");
-    let tls_err: TlsError = anyhow_err.into();
-    println!("From anyhow::Error: {}", tls_err);
     println!();
 }
 
