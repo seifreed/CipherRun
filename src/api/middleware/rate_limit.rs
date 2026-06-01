@@ -43,6 +43,9 @@ fn mask_key(key: &str) -> String {
 type Limiter =
     Arc<GovernorRateLimiter<NotKeyed, InMemoryState, DefaultClock, StateInformationMiddleware>>;
 
+/// Fallback requests-per-minute used when a caller supplies an invalid (zero) limit.
+const DEFAULT_RATE_LIMIT_PER_MINUTE: u32 = 100;
+
 /// Entry with rate limiter and last access timestamp for LRU eviction
 struct RateLimitEntry {
     limiter: Limiter,
@@ -67,9 +70,10 @@ pub struct PerKeyRateLimiter {
 impl PerKeyRateLimiter {
     /// Create new per-key rate limiter
     pub fn new(requests_per_minute: u32) -> Self {
-        // Ensure we have a valid non-zero value, defaulting to 100 if invalid
+        // Ensure we have a valid non-zero value, defaulting to a sane rate if invalid
         let rpm = NonZeroU32::new(requests_per_minute)
-            .unwrap_or_else(|| NonZeroU32::new(100).expect("100 is always non-zero"));
+            .or(NonZeroU32::new(DEFAULT_RATE_LIMIT_PER_MINUTE))
+            .unwrap_or(NonZeroU32::MIN);
         let default_quota = Quota::per_minute(rpm);
         // Store the actual RPM value used (may differ from input if input was 0)
         let effective_rpm = rpm.get();
@@ -398,11 +402,12 @@ pub async fn rate_limit(
                     .header("Retry-After", retry_after.to_string())
                     .body(Body::from(json_body))
                     .unwrap_or_else(|_| {
-                        // Fallback if response building fails
-                        Response::builder()
-                            .status(StatusCode::TOO_MANY_REQUESTS)
-                            .body(Body::from(r#"{"error":"Rate limit exceeded"}"#))
-                            .expect("Fallback response should always build")
+                        // Fallback if response building fails. Response::new is
+                        // infallible (no builder), so this cannot panic.
+                        let mut resp =
+                            Response::new(Body::from(r#"{"error":"Rate limit exceeded"}"#));
+                        *resp.status_mut() = StatusCode::TOO_MANY_REQUESTS;
+                        resp
                     });
 
                 Err(response)
