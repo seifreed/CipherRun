@@ -44,7 +44,6 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
 [dependencies]
 # Async runtime
 tokio = { version = "1.52", features = ["full"] }
-tokio-util = { version = "0.7", features = ["codec"] }
 async-trait = "0.1"
 
 # TLS implementations
@@ -53,7 +52,6 @@ rustls-pki-types = "1.10"
 tokio-rustls = "0.26"
 webpki-roots = "1.0.7"
 openssl = { version = "0.10.78", features = ["vendored"] }
-native-tls = "0.2"
 
 # Networking
 hickory-resolver = "0.26"
@@ -61,7 +59,6 @@ ipnetwork = "0.21"
 
 # HTTP client
 reqwest = { version = "0.13", features = ["blocking", "json", "rustls"] }
-hyper = { version = "1.5", features = ["full"] }
 
 # Cryptography
 ring = "0.17"
@@ -98,7 +95,6 @@ colored = "3.0"
 thiserror = "2.0"
 
 # Utilities
-lazy_static = "1.5"
 subtle = "2.6"
 regex = "1.10"
 chrono = { version = "0.4", features = ["serde"] }
@@ -115,14 +111,12 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 log = "0.4"
 
 # Parallel processing
-crossbeam-channel = "0.5"
 parking_lot = "0.12"
 
 # Template engine for HTML output
 handlebars = "6.1"
 
 # File handling
-walkdir = "2.5"
 tempfile = "3.13"
 
 # Database
