@@ -196,8 +196,15 @@ skip = [
     { crate = "rand_core@0.6", reason = "sqlx-postgres still depends on rand_core 0.6" },
     { crate = "rand_core@0.9", reason = "axum websocket/tungstenite currently depend on rand_core 0.9" },
 
-    # Windows support matrix still spans old and new windows-sys lines
+    # Windows support matrix still spans old and new windows-sys lines.
+    # These are platform-only (cfg(windows)) linker-shim crates; duplicate
+    # versions are benign and arise from transitive deps pinning different
+    # windows-sys lines (sqlx-postgres/etcetera on 0.48, others on 0.60/0.61).
     { crate = "windows-sys@0.48", reason = "sqlx-postgres depends on etcetera/windows-sys 0.48 while the rest of the Windows stack is already on 0.61" },
+    { crate = "windows-sys@0.60", reason = "transitive deps still pin windows-sys 0.60 while the newest stack is on 0.61" },
+    { crate = "windows-targets@0.48", reason = "pulled by windows-sys 0.48; newest stack uses windows-targets 0.53" },
+    { crate = "windows_x86_64_gnu@0.48", reason = "pulled by windows-targets 0.48; newest stack uses 0.53" },
+    { crate = "windows_x86_64_msvc@0.48", reason = "pulled by windows-targets 0.48; newest stack uses 0.53" },
 ]
 
 # Skip entire dependency trees for these crates
