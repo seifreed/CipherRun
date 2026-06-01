@@ -111,7 +111,7 @@ impl MtlsConfig {
         }
 
         if keys.len() > 1 {
-            eprintln!("Warning: Multiple private keys found in PEM file, using the first one");
+            tracing::warn!("Multiple private keys found in PEM file, using the first one");
         }
 
         Ok(Self {

@@ -77,10 +77,7 @@ impl CAStore {
                     }
                 }
                 Err(e) => {
-                    eprintln!(
-                        "Warning: Failed to parse PEM certificate in {}: {:?}",
-                        name, e
-                    );
+                    tracing::warn!("Failed to parse PEM certificate in {}: {:?}", name, e);
                 }
             }
         }

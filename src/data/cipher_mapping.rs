@@ -75,12 +75,7 @@ impl CipherDatabase {
                 Err(e) => {
                     // Suppress warnings for GOST ciphers (non-standard format)
                     if !line.contains("GOST") {
-                        eprintln!(
-                            "Warning: Failed to parse line {}: {} - {}",
-                            line_num + 1,
-                            line,
-                            e
-                        );
+                        tracing::warn!("Failed to parse line {}: {} - {}", line_num + 1, line, e);
                     }
                 }
             }
