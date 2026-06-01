@@ -6,7 +6,8 @@
 /// - Reducing load on target systems
 /// - Respecting rate limits of target services
 /// - Preventing connection throttling or blocking
-use anyhow::Result;
+use crate::Result;
+use crate::error::TlsError;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
@@ -166,7 +167,9 @@ pub fn parse_delay(s: &str) -> Result<Duration> {
 
     // Reject negative values
     if s.starts_with('-') {
-        anyhow::bail!("Negative delays are not supported: {}", s);
+        return Err(TlsError::InvalidInput {
+            message: format!("Negative delays are not supported: {s}"),
+        });
     }
 
     // Check for milliseconds suffix
@@ -178,9 +181,16 @@ pub fn parse_delay(s: &str) -> Result<Duration> {
     // Check for seconds suffix
     if let Some(value_str) = s.strip_suffix('s') {
         // Support floating point seconds
-        let seconds: f64 = value_str.trim().parse()?;
+        let seconds: f64 = value_str
+            .trim()
+            .parse()
+            .map_err(|e| TlsError::InvalidInput {
+                message: format!("Invalid delay value '{s}': {e}"),
+            })?;
         if !seconds.is_finite() || seconds < 0.0 {
-            anyhow::bail!("Invalid delay value: {}", s);
+            return Err(TlsError::InvalidInput {
+                message: format!("Invalid delay value: {s}"),
+            });
         }
         let millis = (seconds * 1000.0) as u64;
         return Ok(Duration::from_millis(millis));
