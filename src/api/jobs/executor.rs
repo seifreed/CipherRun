@@ -1,14 +1,15 @@
 // Scan Executor - Background job processor
 
+use crate::Result;
 use crate::api::jobs::{JobQueue, ScanJob};
 use crate::api::models::request::ScanOptions;
 use crate::api::models::response::{ProgressMessage, ScanStatus};
 use crate::api::presenters::target_input::scan_request_from_target_and_options;
 use crate::api::state::ApiStats;
 use crate::application::ScanRequest;
+use crate::error::TlsError;
 use crate::scanner::{ScanResults, Scanner};
 use crate::utils::network::canonical_target;
-use anyhow::Result;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -170,7 +171,9 @@ impl ScanExecutor {
                             info!("Scan job {} task aborted after cancellation", job.id);
                             return;
                         }
-                        Err(err) => Err(anyhow::anyhow!("Scan task join error: {}", err)),
+                        Err(err) => {
+                            Err(TlsError::Other(format!("Scan task join error: {err}")))
+                        }
                     };
                 }
                 _ = tokio::time::sleep(Duration::from_millis(200)) => {
@@ -332,7 +335,7 @@ impl ScanExecutor {
 
     fn options_to_request(target: &str, options: &ScanOptions) -> Result<ScanRequest> {
         scan_request_from_target_and_options(target, options)
-            .map_err(|error| anyhow::anyhow!(error.to_string()))
+            .map_err(|error| TlsError::Other(error.to_string()))
     }
 
     async fn send_progress(
@@ -371,7 +374,10 @@ impl ScanExecutor {
         let response = client.post(webhook_url).json(&payload).send().await?;
 
         if !response.status().is_success() {
-            anyhow::bail!("Webhook returned status: {}", response.status());
+            return Err(TlsError::HttpError {
+                status: response.status().as_u16(),
+                details: "Webhook returned non-success status".to_string(),
+            });
         }
 
         Ok(())
@@ -380,7 +386,9 @@ impl ScanExecutor {
     /// Shutdown the executor gracefully
     pub async fn shutdown(&self) -> Result<()> {
         info!("Initiating executor shutdown");
-        self.shutdown_tx.send(true)?;
+        self.shutdown_tx
+            .send(true)
+            .map_err(|e| TlsError::Other(format!("Failed to send shutdown signal: {e}")))?;
         Ok(())
     }
 }
@@ -401,23 +409,26 @@ impl Clone for ScanExecutor {
 
 pub(crate) async fn validate_webhook_url(webhook_url: &str) -> Result<ValidatedWebhook> {
     // Parse and validate webhook URL to prevent SSRF
-    let url: url::Url = webhook_url
-        .parse()
-        .map_err(|e| anyhow::anyhow!("Invalid webhook URL: {}", e))?;
+    let url: url::Url = webhook_url.parse().map_err(|e| TlsError::InvalidInput {
+        message: format!("Invalid webhook URL: {e}"),
+    })?;
 
     // Only allow http/https schemes
     match url.scheme() {
         "http" | "https" => {}
-        scheme => anyhow::bail!(
-            "Webhook URL scheme '{}' not allowed (only http/https)",
-            scheme
-        ),
+        scheme => {
+            return Err(TlsError::InvalidInput {
+                message: format!("Webhook URL scheme '{scheme}' not allowed (only http/https)"),
+            });
+        }
     }
 
     // Resolve hostname and check all IPs against SSRF blocklist
     let host = url
         .host_str()
-        .ok_or_else(|| anyhow::anyhow!("Webhook URL has no host"))?
+        .ok_or_else(|| TlsError::InvalidInput {
+            message: "Webhook URL has no host".to_string(),
+        })?
         .to_string();
 
     // Block obvious private hostnames and IP literals
@@ -427,17 +438,18 @@ pub(crate) async fn validate_webhook_url(webhook_url: &str) -> Result<ValidatedW
         || host == "127.0.0.1"
         || host == "::1"
     {
-        anyhow::bail!("Webhook URL points to private/local host: {}", host);
+        return Err(TlsError::InvalidInput {
+            message: format!("Webhook URL points to private/local host: {host}"),
+        });
     }
 
     // Also check if host is an IP literal pointing to a private address
     if let Ok(ip) = host.parse::<std::net::IpAddr>()
         && crate::security::input_validation::is_private_ip(&ip)
     {
-        anyhow::bail!(
-            "Webhook URL uses private/internal IP literal {} (SSRF blocked)",
-            ip
-        );
+        return Err(TlsError::InvalidInput {
+            message: format!("Webhook URL uses private/internal IP literal {ip} (SSRF blocked)"),
+        });
     }
 
     // Resolve DNS and check all resulting IPs
@@ -446,22 +458,29 @@ pub(crate) async fn validate_webhook_url(webhook_url: &str) -> Result<ValidatedW
     let lookup_target = webhook_lookup_target(&host, url.port_or_known_default().unwrap_or(80));
     let resolved_addrs: Vec<_> = tokio::net::lookup_host(lookup_target)
         .await
-        .map_err(|e| anyhow::anyhow!("Webhook DNS resolution failed for {}: {} (SSRF protection requires successful DNS resolution)", host, e))?
+        .map_err(|e| TlsError::InvalidInput {
+            message: format!(
+                "Webhook DNS resolution failed for {host}: {e} (SSRF protection requires successful DNS resolution)"
+            ),
+        })?
         .collect();
 
     if resolved_addrs.is_empty() {
-        anyhow::bail!(
-            "Webhook DNS resolution returned no addresses for {} (SSRF blocked)",
-            host
-        );
+        return Err(TlsError::InvalidInput {
+            message: format!(
+                "Webhook DNS resolution returned no addresses for {host} (SSRF blocked)"
+            ),
+        });
     }
 
     for addr in &resolved_addrs {
         if crate::security::input_validation::is_private_ip(&addr.ip()) {
-            anyhow::bail!(
-                "Webhook URL resolves to private/internal IP {} (SSRF blocked)",
-                addr.ip()
-            );
+            return Err(TlsError::InvalidInput {
+                message: format!(
+                    "Webhook URL resolves to private/internal IP {} (SSRF blocked)",
+                    addr.ip()
+                ),
+            });
         }
     }
 
