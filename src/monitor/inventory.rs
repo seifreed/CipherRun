@@ -2,6 +2,7 @@
 
 use crate::Result;
 use crate::certificates::parser::CertificateInfo;
+use crate::error::TlsError;
 use crate::utils::network::{canonical_target, split_target_host_port};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -165,20 +166,25 @@ impl CertificateInventory {
         let path_ref = path.as_ref();
 
         // Check file size before loading to prevent memory exhaustion
-        let metadata = fs::metadata(path_ref)
-            .map_err(|e| anyhow::anyhow!("Failed to read file metadata {:?}: {}", path_ref, e))?;
+        let metadata = fs::metadata(path_ref).map_err(|e| TlsError::FileSystemError {
+            path: path_ref.display().to_string(),
+            source: e,
+        })?;
 
         if metadata.len() > MAX_FILE_SIZE {
-            return Err(anyhow::anyhow!(
-                "Domains file too large: {} bytes (max {} bytes)",
-                metadata.len(),
-                MAX_FILE_SIZE
-            )
-            .into());
+            return Err(TlsError::InvalidInput {
+                message: format!(
+                    "Domains file too large: {} bytes (max {} bytes)",
+                    metadata.len(),
+                    MAX_FILE_SIZE
+                ),
+            });
         }
 
-        let file = fs::File::open(path_ref)
-            .map_err(|e| anyhow::anyhow!("Failed to open domains file {:?}: {}", path_ref, e))?;
+        let file = fs::File::open(path_ref).map_err(|e| TlsError::FileSystemError {
+            path: path_ref.display().to_string(),
+            source: e,
+        })?;
 
         let reader = BufReader::new(file);
         let mut domain_count = 0;
@@ -231,11 +237,11 @@ impl CertificateInventory {
 
     /// Save domains to a file
     pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
-        let json = serde_json::to_string_pretty(&self.domains)
-            .map_err(|e| anyhow::anyhow!("Failed to serialize inventory: {}", e))?;
+        let json = serde_json::to_string_pretty(&self.domains)?;
 
-        fs::write(path.as_ref(), json).map_err(|e| {
-            anyhow::anyhow!("Failed to write inventory file {:?}: {}", path.as_ref(), e)
+        fs::write(path.as_ref(), json).map_err(|e| TlsError::FileSystemError {
+            path: path.as_ref().display().to_string(),
+            source: e,
         })?;
 
         Ok(())
@@ -246,31 +252,36 @@ impl CertificateInventory {
         let path_ref = path.as_ref();
 
         // Check file size before loading to prevent memory exhaustion
-        let metadata = fs::metadata(path_ref)
-            .map_err(|e| anyhow::anyhow!("Failed to read file metadata {:?}: {}", path_ref, e))?;
+        let metadata = fs::metadata(path_ref).map_err(|e| TlsError::FileSystemError {
+            path: path_ref.display().to_string(),
+            source: e,
+        })?;
 
         if metadata.len() > MAX_FILE_SIZE {
-            return Err(anyhow::anyhow!(
-                "Inventory JSON file too large: {} bytes (max {} bytes)",
-                metadata.len(),
-                MAX_FILE_SIZE
-            )
-            .into());
+            return Err(TlsError::InvalidInput {
+                message: format!(
+                    "Inventory JSON file too large: {} bytes (max {} bytes)",
+                    metadata.len(),
+                    MAX_FILE_SIZE
+                ),
+            });
         }
 
-        let contents = fs::read_to_string(path_ref)
-            .map_err(|e| anyhow::anyhow!("Failed to read inventory file {:?}: {}", path_ref, e))?;
+        let contents = fs::read_to_string(path_ref).map_err(|e| TlsError::FileSystemError {
+            path: path_ref.display().to_string(),
+            source: e,
+        })?;
 
-        let domains: HashMap<String, MonitoredDomain> = serde_json::from_str(&contents)
-            .map_err(|e| anyhow::anyhow!("Failed to parse inventory JSON: {}", e))?;
+        let domains: HashMap<String, MonitoredDomain> = serde_json::from_str(&contents)?;
 
         if domains.len() > MAX_DOMAINS {
-            return Err(anyhow::anyhow!(
-                "Inventory JSON contains {} domains (max {})",
-                domains.len(),
-                MAX_DOMAINS
-            )
-            .into());
+            return Err(TlsError::InvalidInput {
+                message: format!(
+                    "Inventory JSON contains {} domains (max {})",
+                    domains.len(),
+                    MAX_DOMAINS
+                ),
+            });
         }
 
         let mut normalized_domains = HashMap::with_capacity(domains.len());
@@ -323,31 +334,34 @@ fn parse_interval(interval_str: &str) -> Result<u64> {
     // way. Byte-slicing `interval_str[len - 1..]` panics when the string ends in
     // a multi-byte character (e.g. "5€"); char_indices yields a real boundary.
     let Some((unit_start, unit)) = interval_str.char_indices().next_back() else {
-        return Err(anyhow::anyhow!("Invalid interval format: {}", interval_str).into());
+        return Err(TlsError::InvalidInput {
+            message: format!("Invalid interval format: {interval_str}"),
+        });
     };
     let value_str = &interval_str[..unit_start];
     if value_str.is_empty() {
-        return Err(anyhow::anyhow!("Invalid interval format: {}", interval_str).into());
+        return Err(TlsError::InvalidInput {
+            message: format!("Invalid interval format: {interval_str}"),
+        });
     }
     let value = value_str
         .parse::<u64>()
-        .map_err(|e| anyhow::anyhow!("Invalid interval value: {}", e))?;
+        .map_err(|e| TlsError::InvalidInput {
+            message: format!("Invalid interval value: {e}"),
+        })?;
 
+    let overflow = || TlsError::InvalidInput {
+        message: "Interval overflow: value too large".to_string(),
+    };
     let seconds = match unit {
         's' => Ok(value),
-        'm' => value
-            .checked_mul(60)
-            .ok_or_else(|| anyhow::anyhow!("Interval overflow: value too large")),
-        'h' => value
-            .checked_mul(3600)
-            .ok_or_else(|| anyhow::anyhow!("Interval overflow: value too large")),
-        'd' => value
-            .checked_mul(86400)
-            .ok_or_else(|| anyhow::anyhow!("Interval overflow: value too large")),
+        'm' => value.checked_mul(60).ok_or_else(overflow),
+        'h' => value.checked_mul(3600).ok_or_else(overflow),
+        'd' => value.checked_mul(86400).ok_or_else(overflow),
         _ => {
-            return Err(
-                anyhow::anyhow!("Invalid interval unit: {} (use s, m, h, or d)", unit).into(),
-            );
+            return Err(TlsError::InvalidInput {
+                message: format!("Invalid interval unit: {unit} (use s, m, h, or d)"),
+            });
         }
     }?;
 
