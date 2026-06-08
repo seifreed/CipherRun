@@ -3,7 +3,6 @@
 
 use crate::Result;
 use crate::utils::network::Target;
-use rustls::{ClientConfig, RootCertStore};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::time::{Duration, timeout};
@@ -134,15 +133,11 @@ impl AlpnTester {
                 Err(_) => return Ok(AlpnProbeOutcome::Inconclusive),
             };
 
-        // Create rustls config with ALPN
-        let mut root_store = RootCertStore::empty();
-        root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-
-        let config = ClientConfig::builder()
-            .with_root_certificates(root_store)
-            .with_no_client_auth();
-
-        let mut config = config;
+        // ALPN negotiation is independent of certificate validity, so use the
+        // non-verifying connector (certificate trust is assessed separately).
+        // A verifying config would make ALPN undetectable (inconclusive) on
+        // self-signed/expired/untrusted hosts.
+        let mut config = crate::utils::insecure_tls::insecure_client_config();
         config.alpn_protocols = protocols;
 
         let connector = tokio_rustls::TlsConnector::from(Arc::new(config));

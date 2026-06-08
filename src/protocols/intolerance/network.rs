@@ -51,7 +51,7 @@ impl IntoleranceTester {
     }
 
     pub(super) async fn extract_dh_prime(&self) -> Result<Option<String>> {
-        use openssl::ssl::{SslConnector, SslMethod};
+        use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
 
         let addr = self
             .target
@@ -67,6 +67,10 @@ impl IntoleranceTester {
             crate::utils::network::into_blocking_std_stream(stream, self.read_timeout)?;
 
         let mut builder = SslConnector::builder(SslMethod::tls())?;
+        // Certificate validity is irrelevant to the negotiated DH prime; a
+        // verifying connector would fail the handshake at cert validation on
+        // bad-cert hosts and leave a weak/known DH prime undetected.
+        builder.set_verify(SslVerifyMode::NONE);
         builder.set_cipher_list("DHE:EDH:!aNULL:!eNULL")?;
 
         let connector = builder.build();
