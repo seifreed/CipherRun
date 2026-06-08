@@ -565,9 +565,16 @@ impl VulnerabilityScanner {
             parts.join("; ")
         };
 
+        // GREASE intolerance (RFC 8701) is a protocol-ossification /
+        // interoperability robustness concern — an intolerant server may break
+        // when future TLS values are deployed — not a security vulnerability.
+        // Reporting it as `vulnerable` mislabels hardened servers (e.g. Google,
+        // which tolerates most GREASE but rejected the combined probe) and
+        // inflates the vulnerability count. Surface it informationally instead
+        // (Info severity + details), never as a vulnerable verdict.
         Ok(VulnerabilityResult {
             vuln_type: VulnerabilityType::GREASE,
-            vulnerable: !result.inconclusive && !result.tolerates_grease,
+            vulnerable: false,
             inconclusive: result.inconclusive || !result.direct_grease_test_performed,
             details,
             cve: None,
