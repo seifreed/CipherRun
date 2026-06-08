@@ -74,7 +74,7 @@ impl<'a> PoodleTester<'a> {
         let zombie = self.test_zombie_poodle().await?;
         let golden = self.test_goldendoodle().await?;
         let sleeping = self.test_sleeping_poodle().await?;
-        let openssl_0len = self.test_openssl_0length().await?;
+        let openssl_0len = self.test_openssl_0length(ssl3_supported).await?;
 
         let tls_poodle = if cbc_connected {
             Some(zombie.vulnerable || golden.vulnerable || sleeping.vulnerable)
@@ -385,42 +385,64 @@ impl<'a> PoodleTester<'a> {
     }
 
     /// Test for OpenSSL 0-Length Fragment vulnerability (CVE-2011-4576)
-    async fn test_openssl_0length(&self) -> Result<PoodleVariantResult> {
+    async fn test_openssl_0length(&self, ssl3_supported: bool) -> Result<PoodleVariantResult> {
+        // CVE-2011-4576 is specific to SSL 3.0 CBC record processing in old
+        // OpenSSL; a server that does not negotiate SSL 3.0 cannot be affected.
+        // Accepting a zero-length application-data record over TLS is normal,
+        // RFC-permitted behaviour and is NOT evidence of this vulnerability — the
+        // previous heuristic keyed on `connection_accepted`, which is set true
+        // whenever the handshake completes, so it flagged every CBC-capable
+        // server (Cloudflare, Google, ...) as vulnerable.
+        if !ssl3_supported {
+            return Ok(PoodleVariantResult {
+                variant: PoodleVariant::OpenSsl0Length,
+                vulnerable: false,
+                inconclusive: false,
+                details: "Not vulnerable to OpenSSL 0-Length Fragment (CVE-2011-4576) - SSL 3.0 is not supported, so the SSL 3.0-only flaw cannot apply".to_string(),
+                timing_data: None,
+            });
+        }
+
         if !network_probes::supports_cbc_ciphers(self.target).await? {
             return Ok(Self::cbc_not_supported_result(
                 PoodleVariant::OpenSsl0Length,
             ));
         }
 
+        // SSL 3.0 with CBC is offered. Send the zero-length fragment and treat
+        // only an abnormal reaction (the handshake/probe failing to complete) as
+        // a signal — normal acceptance is not the flaw. Even so, confirming the
+        // memory-disclosure conclusively requires observing leaked plaintext,
+        // which is not feasible remotely, so a normally-handled probe is reported
+        // inconclusive rather than vulnerable.
         const ITERATIONS: usize = 3;
-        let mut vulnerable_count = 0;
-
+        let mut probe_anomalies = 0;
         for _ in 0..ITERATIONS {
-            if let Ok(response) = network_probes::send_malformed_record(
+            match network_probes::send_malformed_record(
                 self.target,
                 MalformedRecordType::ZeroLengthFragment,
             )
             .await
-                && (response.connection_accepted || response.shows_differential_behavior)
             {
-                vulnerable_count += 1;
+                Ok(response)
+                    if !response.connection_accepted || response.shows_differential_behavior =>
+                {
+                    probe_anomalies += 1
+                }
+                _ => {}
             }
         }
 
-        let vulnerable = vulnerable_count >= 2;
-
         Ok(PoodleVariantResult {
             variant: PoodleVariant::OpenSsl0Length,
-            vulnerable,
-            inconclusive: false,
-            details: if vulnerable {
-                format!(
-                    "Vulnerable to OpenSSL 0-Length Fragment (CVE-2011-4576) - Server accepts zero-length records ({}/{} iterations)",
-                    vulnerable_count, ITERATIONS
-                )
-            } else {
-                "Not vulnerable to OpenSSL 0-Length Fragment - Server properly rejects zero-length records".to_string()
-            },
+            vulnerable: false,
+            inconclusive: true,
+            details: format!(
+                "OpenSSL 0-Length Fragment (CVE-2011-4576) inconclusive - SSL 3.0 with CBC is offered; \
+                 confirming the memory-disclosure flaw requires observing leaked plaintext, which a remote \
+                 probe cannot do reliably ({}/{} probes saw an abnormal reaction). Disable SSL 3.0.",
+                probe_anomalies, ITERATIONS
+            ),
             timing_data: None,
         })
     }
