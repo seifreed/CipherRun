@@ -187,7 +187,6 @@ impl Extension {
     }
 }
 
-pub mod advanced;
 pub mod alpn;
 pub mod auto_detection;
 pub mod client_cas;
