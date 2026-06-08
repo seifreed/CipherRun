@@ -67,3 +67,58 @@ async fn test_auth_health_endpoint_bypasses_auth() {
     assert_healthy_response(&app, "/health", None).await;
     assert_healthy_response(&app, "/api/v1/health", None).await;
 }
+
+fn scan_payload() -> serde_json::Value {
+    common::api::scan_request_payload(
+        "example.com:443",
+        serde_json::json!({
+            "test_protocols": true,
+            "test_ciphers": false,
+            "test_vulnerabilities": false,
+            "analyze_certificates": false,
+            "test_http_headers": false,
+            "client_simulation": false,
+            "full_scan": false
+        }),
+    )
+}
+
+#[tokio::test]
+async fn test_auth_readonly_key_cannot_create_scan_returns_403() {
+    let app = common::api::test_api_router();
+    let (status, body) =
+        common::api::create_scan(&app, Some("test-readonly-key"), scan_payload()).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(body["error"], "FORBIDDEN");
+}
+
+#[tokio::test]
+async fn test_auth_user_key_can_create_scan_returns_201() {
+    let app = common::api::test_api_router();
+    let (status, _body) =
+        common::api::create_scan(&app, Some("test-user-key"), scan_payload()).await;
+    assert_eq!(status, StatusCode::CREATED);
+}
+
+#[tokio::test]
+async fn test_auth_readonly_key_cannot_cancel_scan_returns_403() {
+    let app = common::api::test_api_router();
+    let (status, body) = common::api::send_json(
+        &app,
+        "DELETE",
+        "/api/v1/scan/some-id",
+        Some("test-readonly-key"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(body["error"], "FORBIDDEN");
+}
+
+#[tokio::test]
+async fn test_auth_readonly_key_can_read_stats_returns_200() {
+    let app = common::api::test_api_router();
+    let (status, _body) =
+        common::api::send_get_json(&app, "/api/v1/stats", Some("test-readonly-key")).await;
+    assert_eq!(status, StatusCode::OK);
+}

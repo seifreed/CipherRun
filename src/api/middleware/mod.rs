@@ -6,7 +6,9 @@ pub mod logging;
 pub mod metrics;
 pub mod rate_limit;
 
-pub use auth::{AuthExtension, authenticate, check_permission, get_auth_extension, get_permission};
+pub use auth::{
+    AuthExtension, authenticate, check_permission, get_auth_extension, get_permission, require_user,
+};
 pub use cors::cors_layer;
 pub use logging::logging_layer;
 pub use metrics::metrics;

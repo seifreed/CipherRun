@@ -95,6 +95,27 @@ pub async fn authenticate(
     Ok(next.run(req).await)
 }
 
+/// Route-level middleware enforcing at least `User` permission.
+///
+/// Applied to mutating/action endpoints (scan create/cancel, policy
+/// create/evaluate) so a `ReadOnly` API key cannot perform them. Relies on
+/// [`authenticate`] having already inserted the [`AuthExtension`]; a missing
+/// extension means the request bypassed auth and is rejected.
+pub async fn require_user(req: Request, next: Next) -> Result<Response, ApiError> {
+    require_permission_level(Permission::User, req, next).await
+}
+
+async fn require_permission_level(
+    required: Permission,
+    req: Request,
+    next: Next,
+) -> Result<Response, ApiError> {
+    let permission = get_permission(&req)
+        .ok_or_else(|| ApiError::Unauthorized("Missing authentication".to_string()))?;
+    check_permission(required, permission)?;
+    Ok(next.run(req).await)
+}
+
 /// Check if user has required permission
 pub fn check_permission(required: Permission, user_permission: Permission) -> Result<(), ApiError> {
     let allowed = match required {

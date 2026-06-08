@@ -29,10 +29,19 @@ impl ApiServer {
     fn build_router(&self) -> Router {
         // Create API routes
         let api_routes = Router::new()
-            // Scan routes
-            .route("/scan", post(routes::scans::create_scan))
+            // Scan routes — create/cancel are write actions and require at least
+            // User permission; status/results/stream are reads (ReadOnly allowed).
+            .route(
+                "/scan",
+                post(routes::scans::create_scan)
+                    .layer(axum_middleware::from_fn(middleware::require_user)),
+            )
             .route("/scan/{id}", get(routes::scans::get_scan_status))
-            .route("/scan/{id}", delete(routes::scans::cancel_scan))
+            .route(
+                "/scan/{id}",
+                delete(routes::scans::cancel_scan)
+                    .layer(axum_middleware::from_fn(middleware::require_user)),
+            )
             .route("/scan/{id}/results", get(routes::scans::get_scan_results))
             .route("/scan/{id}/stream", get(routes::scans::websocket_handler))
             // Certificate routes
@@ -49,12 +58,17 @@ impl ApiServer {
                 "/compliance/{framework}",
                 get(routes::compliance::check_compliance),
             )
-            // Policy routes
-            .route("/policies", post(routes::policies::create_policy))
+            // Policy routes — create/evaluate are write actions (User+); get is a read.
+            .route(
+                "/policies",
+                post(routes::policies::create_policy)
+                    .layer(axum_middleware::from_fn(middleware::require_user)),
+            )
             .route("/policies/{id}", get(routes::policies::get_policy))
             .route(
                 "/policies/{id}/evaluate",
-                post(routes::policies::evaluate_policy),
+                post(routes::policies::evaluate_policy)
+                    .layer(axum_middleware::from_fn(middleware::require_user)),
             )
             // History routes
             .route("/history/{domain}", get(routes::history::get_history))
