@@ -146,6 +146,7 @@ impl ScanJob {
     pub fn mark_failed(&mut self, error: impl Into<String>) {
         self.status = ScanStatus::Failed;
         self.completed_at = Some(Utc::now());
+        self.current_stage = Some("failed".to_string());
         self.error = Some(error.into());
         self.eta_seconds = None;
     }

@@ -192,10 +192,23 @@ impl ScanExecutor {
                                 // lost: marking the in-memory job completed and only
                                 // broadcasting would leave the queue holding Cancelled
                                 // with no results.
+                                let duration_ms = job
+                                    .started_at
+                                    .map(|started| {
+                                        (chrono::Utc::now() - started).num_milliseconds().max(0)
+                                            as u64
+                                    })
+                                    .unwrap_or_default();
                                 job = current;
                                 job.mark_completed(results);
                                 let _ = queue.update_job(&job).await;
                                 let _ = self.progress_tx.send(ProgressMessage::completed(&job.id));
+                                // The job is now Completed with results available, so it
+                                // must count toward completed-scan stats just like the
+                                // normal success path.
+                                if let Some(stats) = &self.stats {
+                                    stats.write().await.record_completed_scan(duration_ms);
+                                }
                             }
                             Ok(Err(e)) => {
                                 job = current;
