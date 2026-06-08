@@ -349,9 +349,10 @@ impl<'a> PoodleTester<'a> {
 
         let details = if analysis.oracle_detected {
             format!(
-                "Vulnerable to Sleeping POODLE - Timing oracle detected: valid={:.2}ms (σ={:.2}ms), \
-                 invalid={:.2}ms (σ={:.2}ms), diff={:.2}ms (threshold: {:.1}ms). \
-                 Statistical significance confirmed.",
+                "Suspected Sleeping POODLE timing oracle (INCONCLUSIVE) - valid={:.2}ms (σ={:.2}ms), \
+                 invalid={:.2}ms (σ={:.2}ms), diff={:.2}ms (threshold: {:.1}ms). A remote timing \
+                 difference cannot conclusively confirm the oracle (network jitter dwarfs the MAC \
+                 timing signal); confirm with a local/low-latency test.",
                 vs.mean, vs.stddev, is.mean, is.stddev, analysis.timing_diff_ms, adaptive_threshold
             )
         } else if !analysis.timing_reliable {
@@ -376,9 +377,13 @@ impl<'a> PoodleTester<'a> {
 
         Ok(PoodleVariantResult {
             variant: PoodleVariant::SleepingPoodle,
-            vulnerable: analysis.oracle_detected,
-            // Timing unreliable (high CV) is Inconclusive, not a clean "not vulnerable"
-            inconclusive: !analysis.oracle_detected && !analysis.timing_reliable,
+            // A remote timing difference cannot conclusively confirm the oracle
+            // (network jitter is orders of magnitude larger than the MAC-timing
+            // signal — the same limitation that keeps Lucky13 inconclusive), so a
+            // positive detection is reported as suspected/inconclusive, never as a
+            // hard vulnerable verdict, to avoid false positives on hardened hosts.
+            vulnerable: false,
+            inconclusive: analysis.oracle_detected || !analysis.timing_reliable,
             details,
             timing_data,
         })
