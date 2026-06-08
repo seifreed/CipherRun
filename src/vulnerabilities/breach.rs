@@ -95,8 +95,13 @@ impl BreachTester {
         std_stream.set_nonblocking(false)?;
 
         // Establish TLS
-        use openssl::ssl::{SslConnector, SslMethod};
-        let connector = SslConnector::builder(SslMethod::tls())?.build();
+        use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
+        // Certificate validity is irrelevant to whether the server enables HTTP
+        // response compression; a verifying connector would fail the handshake
+        // on bad-cert hosts and leave BREACH undetectable.
+        let mut builder = SslConnector::builder(SslMethod::tls())?;
+        builder.set_verify(SslVerifyMode::NONE);
+        let connector = builder.build();
 
         match connector.connect(&self.target.hostname, std_stream) {
             Ok(mut ssl_stream) => {
@@ -162,8 +167,12 @@ impl BreachTester {
 
         let hostname = self.target.hostname.clone();
         tokio::task::spawn_blocking(move || {
-            use openssl::ssl::{SslConnector, SslMethod};
-            let connector = SslConnector::builder(SslMethod::tls())?.build();
+            use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
+            // Certificate validity is irrelevant to HTTP response compression; a
+            // verifying connector would leave BREACH undetectable on bad-cert hosts.
+            let mut builder = SslConnector::builder(SslMethod::tls())?;
+            builder.set_verify(SslVerifyMode::NONE);
+            let connector = builder.build();
 
             match connector.connect(&hostname, std_stream) {
                 Ok(mut ssl_stream) => {
@@ -230,8 +239,13 @@ impl BreachTester {
         let std_stream = stream.into_std()?;
         std_stream.set_nonblocking(false)?;
 
-        use openssl::ssl::{SslConnector, SslMethod};
-        let connector = SslConnector::builder(SslMethod::tls())?.build();
+        use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
+        // Certificate validity is irrelevant to whether the server enables HTTP
+        // response compression; a verifying connector would fail the handshake
+        // on bad-cert hosts and leave BREACH undetectable.
+        let mut builder = SslConnector::builder(SslMethod::tls())?;
+        builder.set_verify(SslVerifyMode::NONE);
+        let connector = builder.build();
 
         match connector.connect(&self.target.hostname, std_stream) {
             Ok(mut ssl_stream) => {

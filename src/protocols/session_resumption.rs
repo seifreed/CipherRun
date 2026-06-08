@@ -9,7 +9,9 @@ pub use model::{ResumptionSupport, SessionIdTest, SessionResumptionResult, Sessi
 use crate::Result;
 use crate::error::TlsError;
 use crate::utils::network::Target;
-use openssl::ssl::{SslConnector, SslMethod, SslSession, SslSessionCacheMode, SslStream};
+use openssl::ssl::{
+    SslConnector, SslMethod, SslSession, SslSessionCacheMode, SslStream, SslVerifyMode,
+};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Session resumption tester
@@ -92,6 +94,10 @@ impl SessionResumptionTester {
 
     fn build_connector(&self) -> Result<SslConnector> {
         let mut builder = SslConnector::builder(SslMethod::tls())?;
+        // Certificate validity is irrelevant to whether a server offers session
+        // resumption; a verifying connector would fail the handshake on bad-cert
+        // hosts and report resumption as unsupported/inconclusive.
+        builder.set_verify(SslVerifyMode::NONE);
         builder.set_session_cache_mode(SslSessionCacheMode::CLIENT);
         Ok(builder.build())
     }
