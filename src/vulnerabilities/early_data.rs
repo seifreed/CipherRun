@@ -182,12 +182,12 @@ impl<'a> EarlyDataTester<'a> {
         })
     }
 
-    /// Test if server supports early_data extension (0x002a)
+    /// Test if the server accepts TLS 1.3 0-RTT / early data.
     async fn test_early_data_support(&self) -> Result<EarlyDataSupportStatus> {
-        // TLS 1.3 connectivity is NOT equivalent to early_data support.
-        // Actual detection requires parsing the early_data extension (0x002a) from
-        // the NewSessionTicket message (RFC 8446 §4.6.1) — not yet implemented.
-        self.check_early_data_extension_in_handshake().await
+        // TLS 1.3 connectivity is NOT equivalent to early_data support; the
+        // server must issue an early-data-capable ticket and accept replayed
+        // early data, which is exercised via session resumption.
+        self.probe_zero_rtt_early_data().await
     }
 
     /// Get max_early_data_size from TLS 1.3 session ticket
@@ -229,14 +229,10 @@ impl<'a> EarlyDataTester<'a> {
             }
         }
 
-        // Check if server advertises early_data support in ServerHello
-        // by checking for the presence of the early_data extension (type 0x002a)
-        let early_data_in_server_hello = self.check_early_data_extension_in_handshake().await?;
+        // Determine real 0-RTT early-data acceptance via session resumption.
+        let early_data_accepted = self.probe_zero_rtt_early_data().await?;
 
-        if matches!(
-            early_data_in_server_hello,
-            EarlyDataSupportStatus::Inconclusive
-        ) {
+        if matches!(early_data_accepted, EarlyDataSupportStatus::Inconclusive) {
             return Ok(EarlyDataSizeInfo {
                 tls13_supported: true,
                 early_data_supported: false,
@@ -246,10 +242,7 @@ impl<'a> EarlyDataTester<'a> {
             });
         }
 
-        if !matches!(
-            early_data_in_server_hello,
-            EarlyDataSupportStatus::Supported
-        ) {
+        if !matches!(early_data_accepted, EarlyDataSupportStatus::Supported) {
             return Ok(EarlyDataSizeInfo {
                 tls13_supported: true,
                 early_data_supported: false,
@@ -271,16 +264,48 @@ impl<'a> EarlyDataTester<'a> {
         })
     }
 
-    /// Check if server hello contains early_data extension (0x002a)
+    /// Detect whether the server accepts TLS 1.3 0-RTT (early data).
     ///
-    /// Sends a raw TLS 1.3 ClientHello offering early_data support and parses
-    /// the ServerHello for extension 0x002a. Per RFC 8446, the definitive signal
-    /// appears in EncryptedExtensions (which requires session keys to decrypt);
-    /// this check catches non-standard servers that include it in the cleartext
-    /// ServerHello. Standard TLS 1.3 servers will return false here.
-    async fn check_early_data_extension_in_handshake(&self) -> Result<EarlyDataSupportStatus> {
-        use crate::protocols::handshake::{ClientHelloBuilder, ServerHelloParser};
-        use crate::protocols::{Extension, Protocol};
+    /// 0-RTT acceptance is signalled in the encrypted EncryptedExtensions and is
+    /// only exercised on a *resumed* connection, so it cannot be read from a
+    /// single cleartext ServerHello (the previous approach reported a false
+    /// negative for every standard server). This performs the real test: a
+    /// warm-up handshake plus request/response makes the server issue a
+    /// NewSessionTicket into a shared resumption store, then a resumed handshake
+    /// offers early data and checks whether the server accepted it via rustls'
+    /// `is_early_data_accepted`.
+    async fn probe_zero_rtt_early_data(&self) -> Result<EarlyDataSupportStatus> {
+        let domain = match crate::utils::network::server_name_for_hostname(&self.target.hostname) {
+            Ok(d) => d,
+            Err(_) => return Ok(EarlyDataSupportStatus::Inconclusive),
+        };
+
+        // A scanner must be able to probe 0-RTT behaviour even on hosts with
+        // expired/self-signed certificates (certificate validity is assessed
+        // separately), so use the non-verifying connector — matching the rest of
+        // the scanner's inspection paths.
+        let mut config = crate::utils::insecure_tls::insecure_client_config();
+        // Required for tokio-rustls to transmit early data on a resumed session.
+        config.enable_early_data = true;
+        let config = Arc::new(config);
+
+        // Warm-up: a full handshake plus a request/response exchange so the
+        // server issues a NewSessionTicket, which rustls stores in the shared
+        // resumption store. If this fails we cannot test 0-RTT — inconclusive.
+        if self.warm_up_session(&config, domain.clone()).await.is_err() {
+            return Ok(EarlyDataSupportStatus::Inconclusive);
+        }
+
+        Ok(self.probe_resumed_early_data(&config, domain).await)
+    }
+
+    /// Establish a resumable session by completing a handshake and exchanging a
+    /// request so the server delivers a NewSessionTicket.
+    async fn warm_up_session(
+        &self,
+        config: &Arc<ClientConfig>,
+        domain: rustls::pki_types::ServerName<'static>,
+    ) -> Result<()> {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
         let addr = self
@@ -289,48 +314,74 @@ impl<'a> EarlyDataTester<'a> {
             .first()
             .copied()
             .ok_or(crate::TlsError::NoSocketAddresses)?;
+        let stream =
+            crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None).await?;
+        let connector = tokio_rustls::TlsConnector::from(config.clone());
+        let request = self.minimal_http_request();
 
-        let mut stream =
+        timeout(TLS_HANDSHAKE_TIMEOUT, async {
+            let mut tls = connector.connect(domain, stream).await?;
+            tls.write_all(request.as_bytes()).await?;
+            tls.flush().await?;
+            // Read the response so rustls processes the NewSessionTicket and
+            // stores it in the resumption store for the resumed probe.
+            let mut buf = [0u8; 4096];
+            let _ = tls.read(&mut buf).await?;
+            Ok::<(), std::io::Error>(())
+        })
+        .await
+        .map_err(|_| crate::TlsError::Other("0-RTT warm-up handshake timed out".to_string()))?
+        .map_err(|e| crate::TlsError::Other(format!("0-RTT warm-up handshake failed: {e}")))?;
+        Ok(())
+    }
+
+    /// Resume the session offering 0-RTT early data and report whether the
+    /// server accepted it.
+    async fn probe_resumed_early_data(
+        &self,
+        config: &Arc<ClientConfig>,
+        domain: rustls::pki_types::ServerName<'static>,
+    ) -> EarlyDataSupportStatus {
+        use tokio::io::AsyncWriteExt;
+
+        let Some(addr) = self.target.socket_addrs().first().copied() else {
+            return EarlyDataSupportStatus::Inconclusive;
+        };
+        let stream =
             match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None)
                 .await
             {
                 Ok(s) => s,
-                Err(_) => return Ok(EarlyDataSupportStatus::Inconclusive),
+                Err(_) => return EarlyDataSupportStatus::Inconclusive,
             };
+        let connector = tokio_rustls::TlsConnector::from(config.clone()).early_data(true);
+        let request = self.minimal_http_request();
 
-        let mut builder = ClientHelloBuilder::new(Protocol::TLS13);
-        // Offer early_data (0x002a) in ClientHello so servers know we accept it.
-        builder.add_extension(Extension::new(0x002a, vec![]));
-
-        let hostname = &self.target.hostname;
-        let client_hello = match builder.build_with_defaults(Some(hostname)) {
-            Ok(ch) => ch,
-            Err(_) => return Ok(EarlyDataSupportStatus::Inconclusive),
-        };
-
-        let response = match timeout(TLS_HANDSHAKE_TIMEOUT, async {
-            stream.write_all(&client_hello).await?;
-            let mut buf = vec![0u8; 8192];
-            let n = stream.read(&mut buf).await?;
-            buf.truncate(n);
-            Ok::<Vec<u8>, std::io::Error>(buf)
+        let accepted = timeout(TLS_HANDSHAKE_TIMEOUT, async {
+            let mut tls = connector.connect(domain, stream).await?;
+            // With early data enabled and a resumable ticket, this write is sent
+            // as 0-RTT data before the handshake completes.
+            tls.write_all(request.as_bytes()).await?;
+            // flush() drives the handshake to completion (tokio-rustls finishes
+            // the handshake on the write path while early data is buffered), so
+            // 0-RTT acceptance is decided once it returns — no read required.
+            tls.flush().await?;
+            Ok::<bool, std::io::Error>(tls.get_ref().1.is_early_data_accepted())
         })
-        .await
-        {
-            Ok(Ok(resp)) if !resp.is_empty() => resp,
-            _ => return Ok(EarlyDataSupportStatus::Inconclusive),
-        };
+        .await;
 
-        match ServerHelloParser::parse(&response) {
-            Ok(server_hello) => {
-                if server_hello.has_extension(0x002a) {
-                    Ok(EarlyDataSupportStatus::Supported)
-                } else {
-                    Ok(EarlyDataSupportStatus::NotSupported)
-                }
-            }
-            Err(_) => Ok(EarlyDataSupportStatus::Inconclusive),
+        match accepted {
+            Ok(Ok(true)) => EarlyDataSupportStatus::Supported,
+            Ok(Ok(false)) => EarlyDataSupportStatus::NotSupported,
+            _ => EarlyDataSupportStatus::Inconclusive,
         }
+    }
+
+    fn minimal_http_request(&self) -> String {
+        format!(
+            "GET / HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
+            self.target.hostname
+        )
     }
 
     /// Test replay attack by sending the same 0-RTT data twice
@@ -481,10 +532,11 @@ pub struct EarlyDataTestResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::IpAddr;
+    use std::net::{IpAddr, SocketAddr};
     use std::sync::Once;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
+    use tokio_rustls::TlsAcceptor;
 
     fn install_crypto_provider() {
         static ONCE: Once = Once::new();
@@ -493,24 +545,80 @@ mod tests {
         });
     }
 
-    fn fake_server_hello_without_early_data() -> Vec<u8> {
-        let mut body = vec![0x02, 0x00, 0x00, 0x00, 0x03, 0x03];
-        body.extend_from_slice(&[0u8; 32]);
-        body.push(0x00);
-        body.extend_from_slice(&[0x13, 0x01]);
-        body.push(0x00);
+    /// Spawn a local TLS 1.3 server with the given early-data limit (0 disables
+    /// 0-RTT). Returns the bound address; the server runs as a detached task.
+    async fn spawn_tls13_server(max_early_data_size: u32) -> SocketAddr {
+        let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
+        let cert_der = cert.cert.der().clone();
+        let key_der = rustls::pki_types::PrivateKeyDer::Pkcs8(
+            rustls::pki_types::PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der()),
+        );
 
-        let hs_len = body.len() - 4;
-        body[1] = ((hs_len >> 16) & 0xff) as u8;
-        body[2] = ((hs_len >> 8) & 0xff) as u8;
-        body[3] = (hs_len & 0xff) as u8;
+        let mut server_config = rustls::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(vec![cert_der], key_der)
+            .unwrap();
+        server_config.max_early_data_size = max_early_data_size;
+        let acceptor = TlsAcceptor::from(Arc::new(server_config));
 
-        let mut record = vec![0x16, 0x03, 0x03, 0x00, 0x00];
-        let record_len = body.len();
-        record[3] = ((record_len >> 8) & 0xff) as u8;
-        record[4] = (record_len & 0xff) as u8;
-        record.extend_from_slice(&body);
-        record
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            loop {
+                if let Ok((stream, _)) = listener.accept().await {
+                    let acceptor = acceptor.clone();
+                    tokio::spawn(async move {
+                        if let Ok(mut tls) = acceptor.accept(stream).await {
+                            // Consume the request (and any 0-RTT early data) and
+                            // reply, so the session ticket flushes to the client.
+                            let mut buf = [0u8; 1024];
+                            let _ = tls.read(&mut buf).await;
+                            let _ = tls
+                                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+                                .await;
+                            let _ = tls.flush().await;
+                        }
+                    });
+                }
+            }
+        });
+
+        addr
+    }
+
+    #[tokio::test]
+    async fn test_probe_zero_rtt_without_early_data_reports_not_supported() {
+        install_crypto_provider();
+        let addr = spawn_tls13_server(0).await;
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            addr.port(),
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .unwrap();
+
+        let tester = EarlyDataTester::new(&target);
+        let status = tester.probe_zero_rtt_early_data().await.unwrap();
+
+        assert_eq!(status, EarlyDataSupportStatus::NotSupported);
+    }
+
+    #[tokio::test]
+    async fn test_probe_zero_rtt_with_early_data_reports_supported() {
+        install_crypto_provider();
+        let addr = spawn_tls13_server(16384).await;
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            addr.port(),
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .unwrap();
+
+        let tester = EarlyDataTester::new(&target);
+        let status = tester.probe_zero_rtt_early_data().await.unwrap();
+
+        assert_eq!(status, EarlyDataSupportStatus::Supported);
     }
 
     #[test]
@@ -526,38 +634,6 @@ mod tests {
         };
         assert!(!result.vulnerable);
         assert!(result.supports_early_data);
-    }
-
-    #[tokio::test]
-    async fn test_early_data_test_no_support() {
-        install_crypto_provider();
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-
-        tokio::spawn(async move {
-            if let Ok((mut socket, _)) = listener.accept().await {
-                let mut buf = [0u8; 1024];
-                let _ = socket.read(&mut buf).await;
-                let _ = socket
-                    .write_all(&fake_server_hello_without_early_data())
-                    .await;
-                let _ = socket.flush().await;
-            }
-        });
-
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            addr.port(),
-            vec![IpAddr::from([127, 0, 0, 1])],
-        )
-        .unwrap();
-
-        let tester = EarlyDataTester::new(&target);
-        let result = tester.test().await.unwrap();
-
-        assert!(!result.supports_early_data);
-        assert!(!result.vulnerable);
-        assert!(result.issues.iter().any(|i| i.contains("does not support")));
     }
 
     #[tokio::test]
