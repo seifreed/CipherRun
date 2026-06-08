@@ -116,14 +116,14 @@ impl LegacyCiphers {
             || cipher.contains("AECDH")
         {
             SecurityConcern::Critical
-        } else if (cipher.contains("DES") && !cipher.contains("3DES"))
+        } else if Self::is_triple_des(cipher) {
+            SecurityConcern::Medium
+        } else if cipher.contains("DES")
             || cipher.contains("RC2")
             || cipher.contains("MD5")
             || cipher.contains("RC4")
         {
             SecurityConcern::High
-        } else if cipher.contains("3DES") {
-            SecurityConcern::Medium
         } else {
             SecurityConcern::Low
         };
@@ -132,10 +132,10 @@ impl LegacyCiphers {
             c if c.contains("NULL") => "No encryption - plaintext communication",
             c if c.contains("EXP") => "Export-grade cipher - 40/56-bit encryption",
             c if c.contains("ADH") || c.contains("AECDH") => "Anonymous DH - no authentication",
-            c if c.contains("DES") && !c.contains("3DES") => "DES - 56-bit encryption",
+            c if Self::is_triple_des(c) => "3DES - 112-bit effective security",
+            c if c.contains("DES") => "DES - 56-bit encryption",
             c if c.contains("RC2") => "RC2 - weak cipher",
             c if c.contains("RC4") => "RC4 - deprecated stream cipher",
-            c if c.contains("3DES") => "3DES - 112-bit effective security",
             _ => "Legacy cipher",
         };
 
@@ -144,5 +144,14 @@ impl LegacyCiphers {
             security_level,
             description: description.to_string(),
         }
+    }
+
+    /// True for Triple-DES suites across both naming conventions.
+    ///
+    /// IANA names spell it `3DES` (e.g. `TLS_RSA_WITH_3DES_EDE_CBC_SHA`) while
+    /// OpenSSL uses `DES-CBC3`/`DES-EDE3` (e.g. `DES-CBC3-SHA`). A plain
+    /// `contains("DES")` test misclassifies the OpenSSL form as single-DES.
+    fn is_triple_des(cipher: &str) -> bool {
+        cipher.contains("3DES") || cipher.contains("DES-CBC3") || cipher.contains("DES-EDE")
     }
 }

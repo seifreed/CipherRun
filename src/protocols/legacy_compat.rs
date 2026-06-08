@@ -695,6 +695,14 @@ mod tests {
         let triple = LegacyCiphers::get_cipher_info("TLS_RSA_WITH_3DES_EDE_CBC_SHA");
         assert_eq!(triple.security_level, SecurityConcern::Medium);
 
+        // OpenSSL spells 3DES as DES-CBC3; it must not be misread as single-DES (High).
+        let triple_openssl = LegacyCiphers::get_cipher_info("DES-CBC3-SHA");
+        assert_eq!(triple_openssl.security_level, SecurityConcern::Medium);
+        assert_eq!(
+            triple_openssl.description,
+            "3DES - 112-bit effective security"
+        );
+
         let modern = LegacyCiphers::get_cipher_info("TLS_AES_128_GCM_SHA256");
         assert_eq!(modern.security_level, SecurityConcern::Low);
     }

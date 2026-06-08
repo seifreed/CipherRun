@@ -244,24 +244,33 @@ impl CertificateParser {
             cert.get_extension_unique(&oid_registry::OID_X509_EXT_EXTENDED_KEY_USAGE)
             && let ParsedExtension::ExtendedKeyUsage(eku) = ext.parsed_extension()
         {
-            for oid in eku.other.iter() {
-                let usage = match oid.to_string().as_str() {
-                    "1.3.6.1.5.5.7.3.1" => "Server Authentication",
-                    "1.3.6.1.5.5.7.3.2" => "Client Authentication",
-                    "1.3.6.1.5.5.7.3.3" => "Code Signing",
-                    "1.3.6.1.5.5.7.3.4" => "Email Protection",
-                    _ => "Unknown",
-                };
-                extended_key_usage.push(usage.to_string());
+            // x509-parser decodes the well-known EKU purposes into dedicated
+            // boolean fields; only genuinely unrecognized OIDs land in `other`.
+            // Reading the booleans is therefore the only reliable way to report
+            // Code Signing / Email Protection / Time Stamping / OCSP Signing.
+            if eku.any {
+                extended_key_usage.push("Any".to_string());
             }
-            // Also check the specific boolean flags
-            if eku.server_auth && !extended_key_usage.contains(&"Server Authentication".to_string())
-            {
+            if eku.server_auth {
                 extended_key_usage.push("Server Authentication".to_string());
             }
-            if eku.client_auth && !extended_key_usage.contains(&"Client Authentication".to_string())
-            {
+            if eku.client_auth {
                 extended_key_usage.push("Client Authentication".to_string());
+            }
+            if eku.code_signing {
+                extended_key_usage.push("Code Signing".to_string());
+            }
+            if eku.email_protection {
+                extended_key_usage.push("Email Protection".to_string());
+            }
+            if eku.time_stamping {
+                extended_key_usage.push("Time Stamping".to_string());
+            }
+            if eku.ocsp_signing {
+                extended_key_usage.push("OCSP Signing".to_string());
+            }
+            for oid in eku.other.iter() {
+                extended_key_usage.push(format!("Unknown ({})", oid));
             }
         }
 

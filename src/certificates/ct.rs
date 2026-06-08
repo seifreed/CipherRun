@@ -133,22 +133,31 @@ impl CtVerifier {
         for ext in parsed_cert.extensions() {
             let oid_str = ext.oid.to_id_string();
             if oid_str == SCT_EXTENSION_OID {
-                // Parse SCT list from extension value
-                let sct_list = ext.value;
-
-                // SCT list format (simplified):
-                // - 2 bytes: total length
-                // - N bytes: SCT entries
-                if sct_list.len() >= 2 {
-                    // Count SCTs (each SCT has specific structure)
-                    // This is a simplified count - in production, should parse full structure
-                    let count = self.count_scts_in_list(sct_list)?;
-                    return Ok(Some(count));
-                }
+                return Ok(Some(self.count_scts_in_extension_value(ext.value)?));
             }
         }
 
         Ok(None)
+    }
+
+    /// Count SCTs given the raw certificate-extension value bytes.
+    ///
+    /// RFC 6962 §3.3: after x509-parser strips the mandatory extnValue OCTET
+    /// STRING, the SCT extension still wraps the SignedCertificateTimestampList
+    /// in an inner DER OCTET STRING. It must be unwrapped first; counting against
+    /// the raw value would read the inner OCTET STRING tag/length as the SCT-list
+    /// length and yield a wrong (usually zero) count.
+    fn count_scts_in_extension_value(&self, ext_value: &[u8]) -> Result<usize> {
+        let parsed_inner = der_parser::der::parse_der_octetstring(ext_value);
+        let sct_list: &[u8] = match &parsed_inner {
+            Ok((_, obj)) => obj.as_slice().unwrap_or(ext_value),
+            Err(_) => ext_value,
+        };
+
+        if sct_list.len() < 2 {
+            return Ok(0);
+        }
+        self.count_scts_in_list(sct_list)
     }
 
     /// Count SCTs in SCT list
@@ -310,6 +319,29 @@ mod tests {
             .count_scts_in_list(&sct_list)
             .expect("test assertion should succeed");
         assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn test_count_scts_in_extension_value_unwraps_der_octet_string() {
+        let verifier = CtVerifier::new(false);
+        // Inner SignedCertificateTimestampList: 2-byte total length + 2 entries.
+        let sct_list = [
+            0x00, 0x0c, // total length
+            0x00, 0x03, 0x01, 0x02, 0x03, // entry 1
+            0x00, 0x05, 0x04, 0x05, 0x06, 0x07, 0x08, // entry 2
+        ];
+        // RFC 6962 double-wrap: the extension value is a DER OCTET STRING
+        // (tag 0x04, length 14) wrapping the SCT list.
+        let mut ext_value = vec![0x04, sct_list.len() as u8];
+        ext_value.extend_from_slice(&sct_list);
+
+        let count = verifier
+            .count_scts_in_extension_value(&ext_value)
+            .expect("test assertion should succeed");
+        assert_eq!(
+            count, 2,
+            "must unwrap the inner OCTET STRING before counting"
+        );
     }
 
     #[test]

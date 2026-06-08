@@ -77,12 +77,15 @@ pub(super) fn classify_cipher_strength(
     if cipher.contains("EXP")
         || cipher.contains("NULL")
         || cipher.contains("DES-CBC-")
+        || cipher.contains("RC4")
         || mac == "MD5"
     {
+        // RC4 is prohibited (RFC 7465) and practically broken (NOMORE,
+        // Bar-Mitzvah); classify it as weak, not merely medium.
         return CipherStrength::Weak;
     }
 
-    if cipher.contains("3DES") || cipher.contains("DES-CBC3") || cipher.contains("RC4") || !fs {
+    if cipher.contains("3DES") || cipher.contains("DES-CBC3") || !fs {
         return CipherStrength::Medium;
     }
 

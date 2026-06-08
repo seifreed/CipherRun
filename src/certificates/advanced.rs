@@ -448,8 +448,18 @@ fn extract_certificate_info(cert: &X509) -> CertificateInfo {
                 if let Some(dns) = name.dnsname() {
                     Some(format!("DNS:{}", dns))
                 } else {
-                    name.ipaddress()
-                        .map(|ip| format!("IP:{}", String::from_utf8_lossy(ip)))
+                    // `ipaddress()` returns the raw network-order address bytes
+                    // (4 for IPv4, 16 for IPv6), not text — format them as an
+                    // address rather than lossy-decoding the bytes as UTF-8.
+                    name.ipaddress().map(|ip| match ip.len() {
+                        4 => format!("IP:{}", std::net::Ipv4Addr::new(ip[0], ip[1], ip[2], ip[3])),
+                        16 => {
+                            let mut octets = [0u8; 16];
+                            octets.copy_from_slice(ip);
+                            format!("IP:{}", std::net::Ipv6Addr::from(octets))
+                        }
+                        _ => format!("IP:{}", hex::encode(ip)),
+                    })
                 }
             })
             .collect()

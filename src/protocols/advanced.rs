@@ -188,6 +188,10 @@ mod tests {
 
         let cipher = analysis::analyze_cipher_details("RC4-MD5");
         assert_eq!(cipher.strength, CipherStrength::Weak);
+
+        // RC4 is broken (RFC 7465) regardless of MAC; RC4-SHA must be Weak, not Medium.
+        let cipher = analysis::analyze_cipher_details("ECDHE-RSA-RC4-SHA");
+        assert_eq!(cipher.strength, CipherStrength::Weak);
     }
 
     #[test]
