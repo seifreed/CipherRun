@@ -301,7 +301,7 @@ impl Scanner {
         Ok(target)
     }
 
-    fn calculate_rating(&self, results: &ScanResults) -> RatingResult {
+    pub(in crate::scanner) fn calculate_rating(&self, results: &ScanResults) -> RatingResult {
         let cert_validation = results.certificate_chain.as_ref().map(|c| &c.validation);
 
         let mut rating = RatingCalculator::calculate(

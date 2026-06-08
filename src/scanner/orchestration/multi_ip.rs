@@ -1,7 +1,6 @@
 use super::super::{RatingResults, ScanMetadata, ScanResults, Scanner};
 use super::collect_scanned_ips;
 use crate::Result;
-use crate::rating::RatingCalculator;
 use crate::utils::network::canonical_target;
 
 impl Scanner {
@@ -59,17 +58,13 @@ impl Scanner {
         };
 
         if self.request.should_calculate_rating() {
-            let certificate_validation = aggregated
-                .certificate_chain
-                .as_ref()
-                .map(|cert| &cert.validation);
+            // Reuse the single-IP rating path so the "missing certificate on a
+            // full scan -> Grade T" override is applied identically; computing
+            // the rating inline here previously skipped that override, letting a
+            // multi-IP full scan with no certificate report a normal letter grade.
+            let ssl_rating = self.calculate_rating(&aggregated);
             aggregated.rating = Some(RatingResults {
-                ssl_rating: Some(RatingCalculator::calculate(
-                    &aggregated.protocols,
-                    &aggregated.ciphers,
-                    certificate_validation,
-                    &aggregated.vulnerabilities,
-                )),
+                ssl_rating: Some(ssl_rating),
             });
         }
 

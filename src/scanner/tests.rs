@@ -991,6 +991,86 @@ fn test_build_conservative_multi_ip_result() {
 }
 
 #[test]
+fn test_build_conservative_multi_ip_result_missing_cert_yields_grade_t() {
+    // A full scan that gathered no certificate from any IP must be graded T,
+    // matching the single-IP path. Previously the multi-IP path computed the
+    // rating without that override and reported a normal letter grade.
+    let args = Args {
+        target: Some("example.com".to_string()),
+        scan: crate::cli::ScanArgs {
+            all: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let scanner = Scanner::new(args.to_scan_request()).expect("test assertion should succeed");
+
+    let scan_result = ScanResults {
+        target: "192.0.2.10:443".to_string(),
+        certificate_chain: None,
+        protocols: vec![ProtocolTestResult {
+            protocol: Protocol::TLS12,
+            supported: true,
+            inconclusive: false,
+            preferred: true,
+            ciphers_count: 1,
+            handshake_time_ms: Some(5),
+            heartbeat_enabled: None,
+            session_resumption_caching: None,
+            session_resumption_tickets: None,
+            secure_renegotiation: None,
+        }],
+        ..Default::default()
+    };
+
+    let ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+    let mut per_ip_results = HashMap::new();
+    per_ip_results.insert(
+        ip,
+        crate::scanner::inconsistency::SingleIpScanResult {
+            ip,
+            scan_result,
+            scan_duration_ms: 10,
+            error: None,
+        },
+    );
+
+    let aggregated = crate::scanner::aggregation::AggregatedScanResult {
+        protocols: Vec::new(),
+        ciphers: HashMap::new(),
+        grade: ("F".to_string(), 0),
+        certificate_info: None,
+        certificate_consistent: true,
+        inconsistencies: Vec::new(),
+        alpn_protocols: Vec::new(),
+        session_resumption_caching: Some(false),
+        session_resumption_tickets: Some(false),
+    };
+
+    let report = crate::scanner::multi_ip::MultiIpScanReport {
+        target: Target::with_ips("example.com".to_string(), 443, vec![ip])
+            .expect("test assertion should succeed"),
+        per_ip_results,
+        total_ips: 1,
+        successful_scans: 1,
+        failed_scans: 0,
+        total_duration_ms: 10,
+        inconsistencies: Vec::new(),
+        aggregated,
+    };
+
+    let result = scanner
+        .build_conservative_multi_ip_result(&report)
+        .expect("test assertion should succeed");
+    assert!(result.certificate_chain.is_none());
+    let rating = result
+        .rating
+        .and_then(|r| r.ssl_rating)
+        .expect("full scan should produce a rating");
+    assert_eq!(rating.grade, crate::rating::grader::Grade::T);
+}
+
+#[test]
 fn test_build_conservative_multi_ip_result_respects_disable_rating() {
     let args = Args {
         target: Some("example.com".to_string()),
