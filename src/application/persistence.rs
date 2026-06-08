@@ -3,6 +3,24 @@ use crate::certificates::validator::parse_cert_date;
 use crate::utils::network::split_target_host_port;
 use chrono::{DateTime, Utc};
 
+/// Parse a certificate validity date for persistence.
+///
+/// The `not_before`/`not_after` columns are non-nullable, so an unparseable
+/// date has no faithful representation. Both producers format dates that
+/// [`parse_cert_date`] round-trips, so a failure indicates an unexpected format
+/// drift — log it (the live validator already fails closed on the same input)
+/// instead of silently storing a fabricated timestamp as authoritative.
+fn parse_persisted_cert_date(raw: &str, field: &str) -> DateTime<Utc> {
+    parse_cert_date(raw).unwrap_or_else(|| {
+        tracing::warn!(
+            field,
+            raw,
+            "Unparseable certificate validity date while persisting; storing current time as a placeholder"
+        );
+        Utc::now()
+    })
+}
+
 #[derive(Debug, Clone)]
 pub struct PersistedScan {
     pub target_hostname: String,
@@ -187,8 +205,8 @@ impl PersistedScan {
                         subject: cert.subject.clone(),
                         issuer: cert.issuer.clone(),
                         serial_number: Some(cert.serial_number.clone()),
-                        not_before: parse_cert_date(&cert.not_before).unwrap_or_else(Utc::now),
-                        not_after: parse_cert_date(&cert.not_after).unwrap_or_else(Utc::now),
+                        not_before: parse_persisted_cert_date(&cert.not_before, "not_before"),
+                        not_after: parse_persisted_cert_date(&cert.not_after, "not_after"),
                         signature_algorithm: Some(cert.signature_algorithm.clone()),
                         public_key_algorithm: Some(cert.public_key_algorithm.clone()),
                         public_key_size: cert.public_key_size.map(|s| s as i32),
