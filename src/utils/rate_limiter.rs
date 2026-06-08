@@ -144,9 +144,9 @@ impl RateLimiter {
 /// Parse a delay string into a Duration
 ///
 /// Supports the following formats:
-/// - Milliseconds: "500" or "500ms"
-/// - Seconds: "2s" or "2"
-/// - Combinations: "1.5s"
+/// - Milliseconds: "500" or "500ms" (a bare number with no suffix is milliseconds)
+/// - Seconds: "2s"
+/// - Fractional seconds: "1.5s"
 ///
 /// Negative values are not supported.
 ///
