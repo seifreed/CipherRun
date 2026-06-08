@@ -189,7 +189,7 @@ impl Parser {
         let cert_der = leaf_bytes[cert_start..cert_end].to_vec();
 
         // Parse certificate to extract metadata
-        let certificate = self.parse_certificate(&cert_der)?;
+        let certificate = self.parse_certificate(&cert_der, cert_type)?;
 
         Ok(CtLogEntry {
             log_source: self.log_source_id.clone(),
@@ -200,14 +200,36 @@ impl Parser {
         })
     }
 
-    /// Parse DER-encoded certificate
-    fn parse_certificate(&self, der: &[u8]) -> Result<Certificate> {
-        let (_, cert) = X509Certificate::from_der(der).map_err(|e| TlsError::ParseError {
-            message: format!("Failed to parse X.509 certificate: {}", e),
-        })?;
+    /// Parse a DER-encoded CT log entry certificate to extract metadata.
+    ///
+    /// X.509 entries carry a full `Certificate`, but RFC 6962 precertificate
+    /// leaves carry a bare `TBSCertificate` (the to-be-signed cert with the CT
+    /// poison extension), not wrapped in the outer `Certificate` SEQUENCE. The
+    /// full-certificate parser rejects that, which previously caused every
+    /// precert entry — the dominant entry type in modern CT logs — to be
+    /// silently dropped. Parse each form with the matching decoder.
+    fn parse_certificate(&self, der: &[u8], cert_type: CertType) -> Result<Certificate> {
+        match cert_type {
+            CertType::X509Certificate => {
+                let (_, cert) =
+                    X509Certificate::from_der(der).map_err(|e| TlsError::ParseError {
+                        message: format!("Failed to parse X.509 certificate: {}", e),
+                    })?;
+                Self::metadata_from_tbs(&cert.tbs_certificate, der)
+            }
+            CertType::PreCertificate => {
+                let (_, tbs) = TbsCertificate::from_der(der).map_err(|e| TlsError::ParseError {
+                    message: format!("Failed to parse precertificate TBS: {}", e),
+                })?;
+                Self::metadata_from_tbs(&tbs, der)
+            }
+        }
+    }
 
+    /// Extract certificate metadata from a parsed `TBSCertificate`.
+    fn metadata_from_tbs(tbs: &TbsCertificate, der: &[u8]) -> Result<Certificate> {
         // Extract subject CN
-        let subject_cn = cert
+        let subject_cn = tbs
             .subject()
             .iter_common_name()
             .next()
@@ -216,7 +238,7 @@ impl Parser {
 
         // Extract Subject Alternative Names (DNS names only)
         let mut subject_an = Vec::new();
-        if let Ok(Some(san_ext)) = cert.subject_alternative_name() {
+        if let Ok(Some(san_ext)) = tbs.subject_alternative_name() {
             for name in &san_ext.value.general_names {
                 if let GeneralName::DNSName(dns) = name {
                     subject_an.push(dns.to_string());
@@ -225,7 +247,7 @@ impl Parser {
         }
 
         // Extract issuer CN
-        let issuer_cn = cert
+        let issuer_cn = tbs
             .issuer()
             .iter_common_name()
             .next()
@@ -234,19 +256,19 @@ impl Parser {
 
         // Extract validity period
         let not_before = datetime_from_unix(
-            cert.validity().not_before.timestamp(),
+            tbs.validity().not_before.timestamp(),
             0,
             "certificate notBefore",
         )?;
 
         let not_after = datetime_from_unix(
-            cert.validity().not_after.timestamp(),
+            tbs.validity().not_after.timestamp(),
             0,
             "certificate notAfter",
         )?;
 
         // Extract serial number
-        let serial = cert.serial.to_str_radix(16).to_uppercase();
+        let serial = tbs.serial.to_str_radix(16).to_uppercase();
 
         Ok(Certificate {
             der: der.to_vec(),
@@ -372,6 +394,89 @@ mod tests {
         assert_eq!(parsed.cert_type, CertType::X509Certificate);
         assert!(parsed.certificate.subject_cn.is_some());
         assert_eq!(parsed.certificate.der, cert_der);
+    }
+
+    /// Returns (content_start_index, content_length) for the DER length field
+    /// beginning at `len_pos`.
+    fn der_len(der: &[u8], len_pos: usize) -> (usize, usize) {
+        let first = der[len_pos] as usize;
+        if first < 0x80 {
+            (len_pos + 1, first)
+        } else {
+            let num_bytes = first & 0x7f;
+            let mut len = 0usize;
+            for i in 0..num_bytes {
+                len = (len << 8) | der[len_pos + 1 + i] as usize;
+            }
+            (len_pos + 1 + num_bytes, len)
+        }
+    }
+
+    /// Extract the raw DER of the tbsCertificate (first element of the
+    /// Certificate SEQUENCE), mirroring what a CT precert leaf carries.
+    fn tbs_der_from_cert(cert_der: &[u8]) -> Vec<u8> {
+        assert_eq!(cert_der[0], 0x30, "certificate must be a SEQUENCE");
+        let (outer_content_start, _) = der_len(cert_der, 1);
+        let tbs_start = outer_content_start;
+        assert_eq!(cert_der[tbs_start], 0x30, "tbsCertificate must be a SEQUENCE");
+        let (tbs_content_start, tbs_len) = der_len(cert_der, tbs_start + 1);
+        cert_der[tbs_start..tbs_content_start + tbs_len].to_vec()
+    }
+
+    fn build_precert_leaf_input(tbs_der: &[u8]) -> String {
+        let mut leaf = Vec::new();
+        leaf.push(0u8); // version
+        leaf.push(0u8); // leaf type (timestamped entry)
+        leaf.extend_from_slice(&0u64.to_be_bytes()); // timestamp ms
+        leaf.extend_from_slice(&1u16.to_be_bytes()); // entry type: precert = 1
+        leaf.extend_from_slice(&[0u8; 32]); // issuer_key_hash
+
+        let len = tbs_der.len() as u32;
+        leaf.push(((len >> 16) & 0xff) as u8);
+        leaf.push(((len >> 8) & 0xff) as u8);
+        leaf.push((len & 0xff) as u8);
+        leaf.extend_from_slice(tbs_der);
+
+        base64::engine::general_purpose::STANDARD.encode(leaf)
+    }
+
+    #[test]
+    fn test_parse_entry_precertificate_extracts_metadata() {
+        let rsa = Rsa::generate(2048).unwrap();
+        let pkey = PKey::from_rsa(rsa).unwrap();
+
+        let mut name = X509NameBuilder::new().unwrap();
+        name.append_entry_by_text("CN", "precert.example.com").unwrap();
+        let name = name.build();
+
+        let mut builder = X509Builder::new().unwrap();
+        builder.set_subject_name(&name).unwrap();
+        builder.set_issuer_name(&name).unwrap();
+        builder.set_pubkey(&pkey).unwrap();
+        builder
+            .set_not_before(&Asn1Time::days_from_now(0).unwrap())
+            .unwrap();
+        builder
+            .set_not_after(&Asn1Time::days_from_now(365).unwrap())
+            .unwrap();
+        builder.sign(&pkey, MessageDigest::sha256()).unwrap();
+        let cert = builder.build();
+        let cert_der = cert.to_der().unwrap();
+        let tbs_der = tbs_der_from_cert(&cert_der);
+
+        let entry = CtLogEntryResponse {
+            leaf_input: build_precert_leaf_input(&tbs_der),
+            extra_data: String::new(),
+        };
+
+        let parser = Parser::new("test-log".to_string());
+        let parsed = parser.parse_entry(&entry, 7).unwrap();
+
+        assert_eq!(parsed.cert_type, CertType::PreCertificate);
+        assert_eq!(
+            parsed.certificate.subject_cn.as_deref(),
+            Some("precert.example.com")
+        );
     }
 
     #[test]
