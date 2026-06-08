@@ -18,7 +18,7 @@
 use crate::Result;
 use crate::constants::TLS_HANDSHAKE_TIMEOUT;
 use crate::utils::network::Target;
-use rustls::{ClientConfig, RootCertStore};
+use rustls::ClientConfig;
 use std::sync::Arc;
 use tokio::time::timeout;
 
@@ -485,14 +485,13 @@ impl<'a> EarlyDataTester<'a> {
                 Err(_) => return Ok(Tls13SupportStatus::Inconclusive),
             };
 
-        // Build TLS 1.3 only config
-        let mut root_store = RootCertStore::empty();
-        root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-
-        let config = ClientConfig::builder()
-            .with_root_certificates(root_store)
-            .with_no_client_auth();
-
+        // The scanner must determine TLS 1.3 support even on hosts with
+        // expired/self-signed/untrusted certificates; certificate validity is
+        // assessed separately. Use the non-verifying connector (as the 0-RTT
+        // probe does) and rely on the negotiated protocol version below — a
+        // verifying config would falsely report "no TLS 1.3" for any bad-cert
+        // host and contradict test_early_data_support.
+        let config = crate::utils::insecure_tls::insecure_client_config();
         let connector = tokio_rustls::TlsConnector::from(Arc::new(config));
 
         // Try to connect
@@ -619,6 +618,28 @@ mod tests {
         let status = tester.probe_zero_rtt_early_data().await.unwrap();
 
         assert_eq!(status, EarlyDataSupportStatus::Supported);
+    }
+
+    #[tokio::test]
+    async fn test_early_data_full_flow_consistent_on_self_signed_tls13() {
+        install_crypto_provider();
+        // Self-signed cert (the common scanner case). connect_tls13 must use the
+        // non-verifying connector, otherwise it false-reports "no TLS 1.3" and
+        // contradicts the early-data support result.
+        let addr = spawn_tls13_server(16384).await;
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            addr.port(),
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .unwrap();
+
+        let tester = EarlyDataTester::new(&target);
+        let result = tester.test().await.unwrap();
+
+        assert!(result.supports_early_data);
+        // Internally consistent: early-data support implies a reported size.
+        assert!(result.max_early_data_size.is_some());
     }
 
     #[test]
