@@ -325,6 +325,90 @@ mod tests {
         assert!(result.details.contains("TLS truncation"));
     }
 
+    /// Spawn a TLS server that answers a request and either sends a
+    /// `close_notify` alert on close or drops the connection abruptly.
+    async fn spawn_close_notify_server(send_close_notify: bool, max_accepts: usize) -> SocketAddr {
+        install_crypto_provider();
+        let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).expect("cert");
+        let cert_der = cert.cert.der().clone();
+        let key_der = rustls::pki_types::PrivateKeyDer::Pkcs8(
+            rustls::pki_types::PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der()),
+        );
+        let config = rustls::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(vec![cert_der], key_der)
+            .expect("server config");
+        let acceptor = TlsAcceptor::from(std::sync::Arc::new(config));
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("local addr");
+
+        tokio::spawn(async move {
+            let mut remaining = max_accepts;
+            while remaining > 0 {
+                if let Ok((stream, _)) = listener.accept().await {
+                    let acceptor = acceptor.clone();
+                    tokio::spawn(async move {
+                        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                        if let Ok(mut tls) = acceptor.accept(stream).await {
+                            let mut buf = [0u8; 1024];
+                            let _ = tls.read(&mut buf).await;
+                            let _ = tls
+                                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+                                .await;
+                            let _ = tls.flush().await;
+                            if send_close_notify {
+                                // shutdown() emits a close_notify alert.
+                                let _ = tls.shutdown().await;
+                            }
+                            // Otherwise the stream is dropped, closing the TCP
+                            // connection without a close_notify alert.
+                        }
+                    });
+                }
+                remaining -= 1;
+            }
+        });
+
+        addr
+    }
+
+    #[tokio::test]
+    async fn test_tls_truncation_close_notify_sent_is_not_flagged() {
+        let addr = spawn_close_notify_server(true, 4).await;
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            addr.port(),
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .expect("target");
+
+        let tester = ProtocolAdvancedTester::new(target);
+        let result = tester.test_tls_truncation().await.expect("truncation");
+
+        assert!(result.tested);
+        assert!(!result.accepts_no_close_notify);
+        assert!(!result.vulnerable);
+    }
+
+    #[tokio::test]
+    async fn test_tls_truncation_missing_close_notify_is_observed_not_vulnerable() {
+        let addr = spawn_close_notify_server(false, 4).await;
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            addr.port(),
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .expect("target");
+
+        let tester = ProtocolAdvancedTester::new(target);
+        let result = tester.test_tls_truncation().await.expect("truncation");
+
+        assert!(result.tested);
+        assert!(result.accepts_no_close_notify);
+        // A missing close_notify is reported but is not, on its own, a vulnerability.
+        assert!(!result.vulnerable);
+    }
+
     #[tokio::test]
     async fn test_cipher_per_protocol_closed_target_is_inconclusive() {
         let listener =

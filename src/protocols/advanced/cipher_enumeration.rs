@@ -5,7 +5,25 @@ use super::{
 };
 use crate::Result;
 use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode, SslVersion};
+use std::sync::Arc;
 use tokio::time::Duration;
+
+const TRUNCATION_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const TRUNCATION_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// RFC 6066 `truncated_hmac` extension type.
+const EXT_TRUNCATED_HMAC: u16 = 0x0004;
+
+/// Outcome of a single truncation-related probe.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TruncationProbe {
+    /// The behaviour was observed to be present.
+    Present,
+    /// The behaviour was observed to be absent.
+    Absent,
+    /// Could not be determined (transport error / unreachable).
+    Unknown,
+}
 
 const TEST_CIPHERS: &[&str] = &[
     "TLS_AES_256_GCM_SHA384",
@@ -36,14 +54,22 @@ const TEST_CIPHERS: &[&str] = &[
 
 impl ProtocolAdvancedTester {
     pub async fn test_tls_truncation(&self) -> Result<TlsTruncationAnalysis> {
-        let accepts_truncated_hmac = false;
-        let accepts_no_close_notify = false;
-        let vulnerable = false;
-        let tested = false;
+        let truncated_hmac = self.probe_truncated_hmac().await;
+        let close_notify = self.probe_missing_close_notify().await;
 
-        let details =
-            "TLS truncation test inconclusive - active truncated-HMAC and close_notify probes are not implemented"
-                .to_string();
+        let accepts_truncated_hmac = truncated_hmac == TruncationProbe::Present;
+        let accepts_no_close_notify = close_notify == TruncationProbe::Present;
+        let tested =
+            truncated_hmac != TruncationProbe::Unknown || close_notify != TruncationProbe::Unknown;
+
+        // Negotiating the deprecated truncated_hmac extension genuinely weakens
+        // record integrity. A missing close_notify is reported as an observation
+        // but not treated as a vulnerability on its own: RFC 5246 makes it a
+        // SHOULD, and length-delimited HTTP responses are unaffected, so the
+        // overwhelming majority of well-behaved servers omit it.
+        let vulnerable = accepts_truncated_hmac;
+
+        let details = build_truncation_details(truncated_hmac, close_notify);
 
         Ok(TlsTruncationAnalysis {
             vulnerable,
@@ -52,6 +78,120 @@ impl ProtocolAdvancedTester {
             tested,
             details,
         })
+    }
+
+    /// Offer the deprecated `truncated_hmac` extension with CBC ciphers over
+    /// TLS 1.2 and observe whether the server negotiates it (echoes it in the
+    /// ServerHello).
+    async fn probe_truncated_hmac(&self) -> TruncationProbe {
+        use crate::protocols::handshake::{ClientHelloBuilder, ServerHelloParser};
+        use crate::protocols::{Extension, Protocol};
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let Some(addr) = self.target.socket_addrs().first().copied() else {
+            return TruncationProbe::Unknown;
+        };
+        let mut stream = match crate::utils::network::connect_with_timeout(
+            addr,
+            TRUNCATION_CONNECT_TIMEOUT,
+            None,
+        )
+        .await
+        {
+            Ok(s) => s,
+            Err(_) => return TruncationProbe::Unknown,
+        };
+
+        let mut builder = ClientHelloBuilder::new(Protocol::TLS12);
+        builder.for_cbc_ciphers();
+        builder.add_extension(Extension::new(EXT_TRUNCATED_HMAC, vec![]));
+        let client_hello = match builder.build_with_defaults(Some(&self.target.hostname)) {
+            Ok(ch) => ch,
+            Err(_) => return TruncationProbe::Unknown,
+        };
+
+        let response = match tokio::time::timeout(TRUNCATION_HANDSHAKE_TIMEOUT, async {
+            stream.write_all(&client_hello).await?;
+            let mut buf = vec![0u8; 8192];
+            let n = stream.read(&mut buf).await?;
+            buf.truncate(n);
+            Ok::<Vec<u8>, std::io::Error>(buf)
+        })
+        .await
+        {
+            Ok(Ok(resp)) if !resp.is_empty() => resp,
+            _ => return TruncationProbe::Unknown,
+        };
+
+        match ServerHelloParser::parse(&response) {
+            Ok(server_hello) => {
+                if server_hello.has_extension(EXT_TRUNCATED_HMAC) {
+                    TruncationProbe::Present
+                } else {
+                    TruncationProbe::Absent
+                }
+            }
+            // A handshake alert (no ServerHello) means we cannot observe the
+            // extension — e.g. the server requires AEAD/TLS 1.3.
+            Err(_) => TruncationProbe::Unknown,
+        }
+    }
+
+    /// Complete a TLS handshake, request a resource, and observe whether the
+    /// server signals end-of-data with a `close_notify` alert (clean EOF) or an
+    /// abrupt transport close (truncation-susceptible).
+    async fn probe_missing_close_notify(&self) -> TruncationProbe {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let Some(addr) = self.target.socket_addrs().first().copied() else {
+            return TruncationProbe::Unknown;
+        };
+        let stream = match crate::utils::network::connect_with_timeout(
+            addr,
+            TRUNCATION_CONNECT_TIMEOUT,
+            None,
+        )
+        .await
+        {
+            Ok(s) => s,
+            Err(_) => return TruncationProbe::Unknown,
+        };
+
+        let connector = tokio_rustls::TlsConnector::from(Arc::new(
+            crate::utils::insecure_tls::insecure_client_config(),
+        ));
+        let domain = match crate::utils::network::server_name_for_hostname(&self.target.hostname) {
+            Ok(d) => d,
+            Err(_) => return TruncationProbe::Unknown,
+        };
+        let request = format!(
+            "GET / HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
+            self.target.hostname
+        );
+
+        let result = tokio::time::timeout(TRUNCATION_HANDSHAKE_TIMEOUT, async {
+            let mut tls = connector.connect(domain, stream).await?;
+            tls.write_all(request.as_bytes()).await?;
+            tls.flush().await?;
+            // Drain to end-of-stream. rustls surfaces a clean close_notify as
+            // Ok(0) and an unsignalled transport close as UnexpectedEof.
+            let mut buf = [0u8; 4096];
+            loop {
+                match tls.read(&mut buf).await {
+                    Ok(0) => return Ok(false),
+                    Ok(_) => continue,
+                    Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(true),
+                    Err(e) => return Err(e),
+                }
+            }
+        })
+        .await;
+
+        match result {
+            Ok(Ok(true)) => TruncationProbe::Present,
+            Ok(Ok(false)) => TruncationProbe::Absent,
+            _ => TruncationProbe::Unknown,
+        }
     }
 
     pub async fn test_ciphers_per_protocol(&self) -> Result<CipherPerProtocolAnalysis> {
@@ -237,4 +377,26 @@ impl ProtocolAdvancedTester {
             }
         }
     }
+}
+
+/// Build the human-readable summary for a TLS truncation analysis.
+fn build_truncation_details(
+    truncated_hmac: TruncationProbe,
+    close_notify: TruncationProbe,
+) -> String {
+    let hmac = match truncated_hmac {
+        TruncationProbe::Present => {
+            "server negotiates the deprecated truncated_hmac extension (weakens record integrity)"
+        }
+        TruncationProbe::Absent => "truncated_hmac extension not negotiated",
+        TruncationProbe::Unknown => "truncated_hmac support could not be determined",
+    };
+    let notify = match close_notify {
+        TruncationProbe::Present => {
+            "server closes without a close_notify alert (truncation-susceptible; informational)"
+        }
+        TruncationProbe::Absent => "server sends close_notify on connection close",
+        TruncationProbe::Unknown => "close_notify behaviour could not be determined",
+    };
+    format!("TLS truncation: {hmac}; {notify}")
 }
