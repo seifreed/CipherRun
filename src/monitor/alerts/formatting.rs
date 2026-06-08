@@ -13,6 +13,27 @@ pub fn severity_color(severity: &ChangeSeverity) -> &'static str {
     }
 }
 
+/// HTML-escape a string for safe interpolation into email alert bodies.
+///
+/// Certificate-derived values (issuer/subject DNs, SANs, serials) and scan
+/// error/validation strings are attacker-influenced: a monitored server can
+/// present a certificate whose fields contain markup. Without escaping, those
+/// values would inject arbitrary HTML into the operator's inbox.
+pub fn escape_html(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for ch in input.chars() {
+        match ch {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#x27;"),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
 /// Shared severity-to-emoji mapping for messaging channels.
 pub fn severity_emoji(severity: &ChangeSeverity) -> &'static str {
     match severity {

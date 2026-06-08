@@ -100,8 +100,8 @@ impl EmailChannel {
 </html>"#,
             severity_color,
             alert.severity.to_string().to_uppercase(),
-            alert.message,
-            alert.hostname,
+            formatting::escape_html(&alert.message),
+            formatting::escape_html(&alert.hostname),
             alert.timestamp.format("%Y-%m-%d %H:%M:%S UTC"),
             details_html,
             cert_details
@@ -234,7 +234,8 @@ fn alert_type_html(alert_type: &AlertType) -> String {
                 .map(|change| {
                     format!(
                         "<li><strong>{:?}</strong>: {}</li>",
-                        change.change_type, change.description
+                        change.change_type,
+                        formatting::escape_html(&change.description)
                     )
                 })
                 .collect::<Vec<_>>()
@@ -249,10 +250,16 @@ fn alert_type_html(alert_type: &AlertType) -> String {
             )
         }
         AlertType::ValidationFailure { reason } => {
-            format!("<h3>Certificate Validation Failed</h3><p>{}</p>", reason)
+            format!(
+                "<h3>Certificate Validation Failed</h3><p>{}</p>",
+                formatting::escape_html(reason)
+            )
         }
         AlertType::ScanFailure { error } => {
-            format!("<h3>Scan Failed</h3><p>{}</p>", error)
+            format!(
+                "<h3>Scan Failed</h3><p>{}</p>",
+                formatting::escape_html(error)
+            )
         }
     }
 }
@@ -267,9 +274,9 @@ fn certificate_details_html(details: &AlertDetails) -> String {
                     <li><strong>Issuer:</strong> {}</li>
                     <li><strong>Expiry:</strong> {}</li>
                 </ul>",
-            serial,
-            details.certificate_issuer.as_deref().unwrap_or("Unknown"),
-            details.certificate_expiry.as_deref().unwrap_or("Unknown")
+            formatting::escape_html(serial),
+            formatting::escape_html(details.certificate_issuer.as_deref().unwrap_or("Unknown")),
+            formatting::escape_html(details.certificate_expiry.as_deref().unwrap_or("Unknown"))
         )
     } else {
         String::new()
@@ -340,6 +347,45 @@ mod tests {
         assert!(body.contains("example.com"));
         assert!(body.contains("expires in"));
         assert!(body.contains("123456"));
+    }
+
+    #[test]
+    fn test_format_html_body_escapes_untrusted_scan_error() {
+        let config = create_test_config();
+        let channel = EmailChannel::new(config).expect("test assertion should succeed");
+
+        let alert = Alert::scan_failure(
+            "example.com".to_string(),
+            "<script>alert('x')</script>".to_string(),
+        );
+
+        let body = channel.format_html_body(&alert);
+
+        assert!(!body.contains("<script>alert('x')</script>"));
+        assert!(body.contains("&lt;script&gt;alert(&#x27;x&#x27;)&lt;/script&gt;"));
+    }
+
+    #[test]
+    fn test_format_html_body_escapes_untrusted_certificate_issuer() {
+        let config = create_test_config();
+        let channel = EmailChannel::new(config).expect("test assertion should succeed");
+
+        let alert = Alert::expiry_warning(
+            "example.com".to_string(),
+            7,
+            AlertDetails {
+                certificate_serial: Some("123456".to_string()),
+                certificate_issuer: Some("Evil<img src=x onerror=alert(1)>CA".to_string()),
+                certificate_expiry: Some("2025-01-01".to_string()),
+                previous_serial: None,
+                scan_time: Utc::now(),
+            },
+        );
+
+        let body = channel.format_html_body(&alert);
+
+        assert!(!body.contains("<img src=x onerror=alert(1)>"));
+        assert!(body.contains("Evil&lt;img src=x onerror=alert(1)&gt;CA"));
     }
 
     #[test]
