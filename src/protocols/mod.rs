@@ -198,7 +198,6 @@ pub mod intolerance;
 pub mod legacy_compat;
 pub mod npn;
 pub mod pre_handshake;
-pub mod rc4;
 pub mod rdp;
 pub mod renegotiation;
 pub mod server_defaults_advanced;
