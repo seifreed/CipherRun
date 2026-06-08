@@ -2,9 +2,11 @@
 
 use crate::Result;
 use crate::utils::network::Target;
+use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
 use serde::{Deserialize, Serialize};
+use tokio::time::Duration;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GroupType {
     EllipticCurve,
     FiniteField,
@@ -29,6 +31,160 @@ pub struct GroupEnumerationResult {
     pub details: String,
 }
 
+/// Static description of a key exchange group and the OpenSSL groups-list name
+/// used to offer it during a probe.
+struct GroupSpec {
+    name: &'static str,
+    openssl_name: &'static str,
+    iana_value: u16,
+    group_type: GroupType,
+    bits: u16,
+    quantum_vulnerable: bool,
+}
+
+/// Key exchange groups probed during enumeration, in offer order.
+const GROUP_SPECS: &[GroupSpec] = &[
+    // Elliptic curves — quantum-vulnerable (Shor's algorithm).
+    GroupSpec {
+        name: "secp256r1 (P-256)",
+        openssl_name: "P-256",
+        iana_value: 23,
+        group_type: GroupType::EllipticCurve,
+        bits: 256,
+        quantum_vulnerable: true,
+    },
+    GroupSpec {
+        name: "secp384r1 (P-384)",
+        openssl_name: "P-384",
+        iana_value: 24,
+        group_type: GroupType::EllipticCurve,
+        bits: 384,
+        quantum_vulnerable: true,
+    },
+    GroupSpec {
+        name: "secp521r1 (P-521)",
+        openssl_name: "P-521",
+        iana_value: 25,
+        group_type: GroupType::EllipticCurve,
+        bits: 521,
+        quantum_vulnerable: true,
+    },
+    GroupSpec {
+        name: "x25519",
+        openssl_name: "X25519",
+        iana_value: 29,
+        group_type: GroupType::EllipticCurve,
+        bits: 253,
+        quantum_vulnerable: true,
+    },
+    GroupSpec {
+        name: "x448",
+        openssl_name: "X448",
+        iana_value: 30,
+        group_type: GroupType::EllipticCurve,
+        bits: 448,
+        quantum_vulnerable: true,
+    },
+    // Finite field (DHE, RFC 7919) — quantum-vulnerable (Shor's algorithm).
+    GroupSpec {
+        name: "ffdhe2048",
+        openssl_name: "ffdhe2048",
+        iana_value: 256,
+        group_type: GroupType::FiniteField,
+        bits: 2048,
+        quantum_vulnerable: true,
+    },
+    GroupSpec {
+        name: "ffdhe3072",
+        openssl_name: "ffdhe3072",
+        iana_value: 257,
+        group_type: GroupType::FiniteField,
+        bits: 3072,
+        quantum_vulnerable: true,
+    },
+    GroupSpec {
+        name: "ffdhe4096",
+        openssl_name: "ffdhe4096",
+        iana_value: 258,
+        group_type: GroupType::FiniteField,
+        bits: 4096,
+        quantum_vulnerable: true,
+    },
+    GroupSpec {
+        name: "ffdhe6144",
+        openssl_name: "ffdhe6144",
+        iana_value: 259,
+        group_type: GroupType::FiniteField,
+        bits: 6144,
+        quantum_vulnerable: true,
+    },
+    GroupSpec {
+        name: "ffdhe8192",
+        openssl_name: "ffdhe8192",
+        iana_value: 260,
+        group_type: GroupType::FiniteField,
+        bits: 8192,
+        quantum_vulnerable: true,
+    },
+    // Post-quantum hybrid groups — quantum-safe.
+    GroupSpec {
+        name: "X25519Kyber768Draft00",
+        openssl_name: "X25519Kyber768Draft00",
+        iana_value: 0x6399,
+        group_type: GroupType::PostQuantum,
+        bits: 768,
+        quantum_vulnerable: false,
+    },
+    GroupSpec {
+        name: "X25519MLKEM768",
+        openssl_name: "X25519MLKEM768",
+        iana_value: 0x11EC,
+        group_type: GroupType::PostQuantum,
+        bits: 768,
+        quantum_vulnerable: false,
+    },
+];
+
+const PROBE_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const PROBE_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Cipher list that forces a (EC)DHE key exchange for TLS 1.2 and below, so a
+/// successful handshake can only have used the single offered group rather than
+/// a static-RSA key exchange that ignores groups. TLS 1.3 ciphersuites are not
+/// governed by this list and always use a named group.
+const GROUP_KX_CIPHER_LIST: &str = "ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:\
+ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:\
+ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:\
+DHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-CHACHA20-POLY1305";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GroupProbeOutcome {
+    /// Server completed a handshake using only this group.
+    Supported,
+    /// Server rejected a handshake offering only this group.
+    NotSupported,
+    /// Network/transport error — support could not be determined.
+    Inconclusive,
+    /// The local OpenSSL build cannot offer this group, so the server's support
+    /// cannot be tested (treated as not-supported but excluded from "measured").
+    Unprobeable,
+}
+
+/// Classify an OpenSSL handshake error string as a transient transport problem
+/// (inconclusive) versus a genuine protocol-level rejection (not supported).
+fn is_operational_tls_error(error: &str) -> bool {
+    let error = error.to_ascii_lowercase();
+    error.contains("unexpected eof")
+        || error.contains("connection reset")
+        || error.contains("reset by peer")
+        || error.contains("connection refused")
+        || error.contains("timed out")
+        || error.contains("timeout")
+        || error.contains("closed")
+        || error.contains("shutdown while in init")
+        || error.contains("errno=54")
+}
+
 pub struct GroupTester {
     target: Target,
 }
@@ -39,161 +195,136 @@ impl GroupTester {
     }
 
     pub async fn enumerate_groups(&self) -> Result<GroupEnumerationResult> {
-        let _ = &self.target;
+        let mut groups = Vec::with_capacity(GROUP_SPECS.len());
+        let mut saw_conclusive = false;
+        let mut saw_inconclusive = false;
+        let mut unprobeable = Vec::new();
 
-        // Common key exchange groups
-        let groups = vec![
-            // Elliptic Curves — quantum-vulnerable (Shor's algorithm)
-            KeyExchangeGroup {
-                name: "secp256r1 (P-256)".to_string(),
-                iana_value: 23,
-                group_type: GroupType::EllipticCurve,
-                bits: 256,
-                supported: false,
-                quantum_vulnerable: true,
-            },
-            KeyExchangeGroup {
-                name: "secp384r1 (P-384)".to_string(),
-                iana_value: 24,
-                group_type: GroupType::EllipticCurve,
-                bits: 384,
-                supported: false,
-                quantum_vulnerable: true,
-            },
-            KeyExchangeGroup {
-                name: "secp521r1 (P-521)".to_string(),
-                iana_value: 25,
-                group_type: GroupType::EllipticCurve,
-                bits: 521,
-                supported: false,
-                quantum_vulnerable: true,
-            },
-            KeyExchangeGroup {
-                name: "x25519".to_string(),
-                iana_value: 29,
-                group_type: GroupType::EllipticCurve,
-                bits: 253,
-                supported: false,
-                quantum_vulnerable: true,
-            },
-            KeyExchangeGroup {
-                name: "x448".to_string(),
-                iana_value: 30,
-                group_type: GroupType::EllipticCurve,
-                bits: 448,
-                supported: false,
-                quantum_vulnerable: true,
-            },
-            // Finite Field (DHE) — quantum-vulnerable (Shor's algorithm)
-            KeyExchangeGroup {
-                name: "ffdhe2048".to_string(),
-                iana_value: 256,
-                group_type: GroupType::FiniteField,
-                bits: 2048,
-                supported: false,
-                quantum_vulnerable: true,
-            },
-            KeyExchangeGroup {
-                name: "ffdhe3072".to_string(),
-                iana_value: 257,
-                group_type: GroupType::FiniteField,
-                bits: 3072,
-                supported: false,
-                quantum_vulnerable: true,
-            },
-            KeyExchangeGroup {
-                name: "ffdhe4096".to_string(),
-                iana_value: 258,
-                group_type: GroupType::FiniteField,
-                bits: 4096,
-                supported: false,
-                quantum_vulnerable: true,
-            },
-            KeyExchangeGroup {
-                name: "ffdhe6144".to_string(),
-                iana_value: 259,
-                group_type: GroupType::FiniteField,
-                bits: 6144,
-                supported: false,
-                quantum_vulnerable: true,
-            },
-            KeyExchangeGroup {
-                name: "ffdhe8192".to_string(),
-                iana_value: 260,
-                group_type: GroupType::FiniteField,
-                bits: 8192,
-                supported: false,
-                quantum_vulnerable: true,
-            },
-            // Post-Quantum hybrid groups — quantum-safe
-            KeyExchangeGroup {
-                name: "X25519Kyber768Draft00".to_string(),
-                iana_value: 0x6399,
-                group_type: GroupType::PostQuantum,
-                bits: 768,
-                supported: false,
-                quantum_vulnerable: false,
-            },
-            KeyExchangeGroup {
-                name: "X25519MLKEM768".to_string(),
-                iana_value: 0x11EC,
-                group_type: GroupType::PostQuantum,
-                bits: 768,
-                supported: false,
-                quantum_vulnerable: false,
-            },
-        ];
+        for spec in GROUP_SPECS {
+            let outcome = self.probe_group(spec.openssl_name).await;
+            match outcome {
+                GroupProbeOutcome::Supported | GroupProbeOutcome::NotSupported => {
+                    saw_conclusive = true;
+                }
+                GroupProbeOutcome::Inconclusive => saw_inconclusive = true,
+                GroupProbeOutcome::Unprobeable => unprobeable.push(spec.name),
+            }
+            groups.push(KeyExchangeGroup {
+                name: spec.name.to_string(),
+                iana_value: spec.iana_value,
+                group_type: spec.group_type,
+                bits: spec.bits,
+                supported: outcome == GroupProbeOutcome::Supported,
+                quantum_vulnerable: spec.quantum_vulnerable,
+            });
+        }
+
+        let measured = saw_conclusive;
+        let supported: Vec<&str> = groups
+            .iter()
+            .filter(|g| g.supported)
+            .map(|g| g.name.as_str())
+            .collect();
+        let details = build_details(measured, &supported, &unprobeable, saw_inconclusive);
 
         Ok(GroupEnumerationResult {
             groups,
-            measured: false,
-            details:
-                "Supported groups are not marked because this code path does not parse real group negotiation yet"
-                    .to_string(),
+            measured,
+            details,
         })
     }
+
+    /// Probe whether the server supports a single key exchange group by offering
+    /// only that group (and group-using ciphers) in a handshake.
+    async fn probe_group(&self, openssl_name: &str) -> GroupProbeOutcome {
+        let Some(addr) = self.target.socket_addrs().first().copied() else {
+            return GroupProbeOutcome::Inconclusive;
+        };
+
+        let stream =
+            match crate::utils::network::connect_with_timeout(addr, PROBE_CONNECT_TIMEOUT, None)
+                .await
+            {
+                Ok(stream) => stream,
+                Err(_) => return GroupProbeOutcome::Inconclusive,
+            };
+
+        let std_stream = match crate::utils::network::into_blocking_std_stream(
+            stream,
+            PROBE_HANDSHAKE_TIMEOUT,
+        ) {
+            Ok(stream) => stream,
+            Err(_) => return GroupProbeOutcome::Inconclusive,
+        };
+
+        let mut builder = match SslConnector::builder(SslMethod::tls()) {
+            Ok(builder) => builder,
+            Err(_) => return GroupProbeOutcome::Inconclusive,
+        };
+        builder.set_verify(SslVerifyMode::NONE);
+
+        // If the local OpenSSL cannot offer this group (e.g. a post-quantum group
+        // on an older build), the server's support cannot be determined — report
+        // it as unprobeable rather than falsely claiming it is unsupported.
+        if builder.set_groups_list(openssl_name).is_err() {
+            return GroupProbeOutcome::Unprobeable;
+        }
+        if builder.set_cipher_list(GROUP_KX_CIPHER_LIST).is_err() {
+            return GroupProbeOutcome::Inconclusive;
+        }
+
+        let connector = builder.build();
+        match connector.connect(&self.target.hostname, std_stream) {
+            Ok(_) => GroupProbeOutcome::Supported,
+            Err(error) => {
+                if is_operational_tls_error(&error.to_string()) {
+                    GroupProbeOutcome::Inconclusive
+                } else {
+                    GroupProbeOutcome::NotSupported
+                }
+            }
+        }
+    }
+}
+
+/// Build the human-readable summary for a group enumeration result.
+fn build_details(
+    measured: bool,
+    supported: &[&str],
+    unprobeable: &[&str],
+    saw_inconclusive: bool,
+) -> String {
+    if !measured {
+        return "Key exchange group support could not be measured — no group probe \
+                completed a conclusive handshake (target unreachable or every probe errored)."
+            .to_string();
+    }
+
+    let mut details = if supported.is_empty() {
+        "No configured key exchange group was negotiated.".to_string()
+    } else {
+        format!("Supported key exchange groups: {}.", supported.join(", "))
+    };
+
+    if !unprobeable.is_empty() {
+        details.push_str(&format!(
+            " Not testable with the local TLS library: {}.",
+            unprobeable.join(", ")
+        ));
+    }
+    if saw_inconclusive {
+        details.push_str(" Some group probes were inconclusive due to transport errors.");
+    }
+
+    details
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::net::TcpListener;
 
     #[tokio::test]
-    async fn test_group_enumeration_success_is_inconclusive_without_real_parsing() {
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("test assertion should succeed");
-        let addr = listener
-            .local_addr()
-            .expect("test assertion should succeed");
-
-        tokio::spawn(async move {
-            if let Ok((socket, _)) = listener.accept().await {
-                let _ = socket.try_write(&[0x16, 0x03, 0x03, 0x00, 0x01]);
-            }
-        });
-
-        let target = Target::with_ips("localhost".to_string(), addr.port(), vec![addr.ip()])
-            .expect("test assertion should succeed");
-        let tester = GroupTester::new(target);
-
-        let result = tester
-            .enumerate_groups()
-            .await
-            .expect("test assertion should succeed");
-
-        assert!(!result.measured);
-        assert!(result.groups.iter().all(|g| !g.supported));
-        assert!(
-            result
-                .details
-                .contains("does not parse real group negotiation")
-        );
-    }
-
-    #[tokio::test]
-    async fn test_group_enumeration_failure_has_no_supported() {
+    async fn test_group_enumeration_unreachable_target_is_not_measured() {
         let target = Target::with_ips(
             "localhost".to_string(),
             9, // discard port, likely closed
@@ -207,7 +338,45 @@ mod tests {
             .await
             .expect("test assertion should succeed");
 
+        // Every probe fails to connect, so support is inconclusive: nothing is
+        // reported supported and the result is honestly marked unmeasured.
+        assert!(!result.measured);
         assert!(result.groups.iter().all(|g| !g.supported));
+        assert!(result.details.contains("could not be measured"));
+    }
+
+    #[tokio::test]
+    async fn test_group_enumeration_catalog_is_complete_and_classified() {
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            9,
+            vec!["127.0.0.1".parse().expect("valid IP")],
+        )
+        .expect("test assertion should succeed");
+        let tester = GroupTester::new(target);
+
+        let result = tester
+            .enumerate_groups()
+            .await
+            .expect("test assertion should succeed");
+
+        // All classical EC/FFDHE groups are quantum-vulnerable; the two hybrid
+        // groups are quantum-safe. This classification feeds PQC readiness.
+        assert_eq!(result.groups.len(), 12);
+        let pq_safe: Vec<_> = result
+            .groups
+            .iter()
+            .filter(|g| !g.quantum_vulnerable)
+            .map(|g| g.name.as_str())
+            .collect();
+        assert_eq!(pq_safe, vec!["X25519Kyber768Draft00", "X25519MLKEM768"]);
+        assert!(
+            result
+                .groups
+                .iter()
+                .filter(|g| matches!(g.group_type, GroupType::PostQuantum))
+                .all(|g| !g.quantum_vulnerable)
+        );
     }
 
     #[test]
