@@ -108,10 +108,13 @@ impl IdsFriendlyLimiter {
             self.last_reset = std::time::Instant::now();
         }
 
-        // Apply delay
+        // Apply delay. Normalize the bounds so an inverted (min > max) config
+        // cannot panic `random_range` on an empty range.
         let delay_ms = if self.config.randomize {
+            let lo = self.config.min_delay_ms.min(self.config.max_delay_ms);
+            let hi = self.config.min_delay_ms.max(self.config.max_delay_ms);
             let mut rng = rand::rng();
-            rng.random_range(self.config.min_delay_ms..=self.config.max_delay_ms)
+            rng.random_range(lo..=hi)
         } else {
             self.config.min_delay_ms
         };
@@ -137,8 +140,11 @@ impl IdsFriendlyLimiter {
 
 /// Apply randomized delay (jitter)
 pub async fn random_delay(min_ms: u64, max_ms: u64) {
+    // Normalize bounds so an inverted (min > max) call cannot panic on an
+    // empty range.
+    let (lo, hi) = (min_ms.min(max_ms), min_ms.max(max_ms));
     let mut rng = rand::rng();
-    let delay_ms = rng.random_range(min_ms..=max_ms);
+    let delay_ms = rng.random_range(lo..=hi);
     sleep(Duration::from_millis(delay_ms)).await;
 }
 
@@ -188,6 +194,26 @@ mod tests {
         limiter.request_count = 5;
         assert_eq!(limiter.remaining_requests(), 0);
         assert!(limiter.would_exceed_limit());
+    }
+
+    #[tokio::test]
+    async fn test_wait_with_inverted_delay_bounds_does_not_panic() {
+        // min > max must not panic random_range on an empty range.
+        let mut limiter = IdsFriendlyLimiter::new(IdsFriendlyConfig {
+            min_delay_ms: 0,
+            max_delay_ms: 0,
+            randomize: true,
+            max_requests_per_minute: 20,
+        });
+        limiter.config.min_delay_ms = 10;
+        limiter.config.max_delay_ms = 1;
+        limiter.wait().await;
+        assert_eq!(limiter.request_count, 1);
+    }
+
+    #[tokio::test]
+    async fn test_random_delay_with_inverted_bounds_does_not_panic() {
+        random_delay(10, 1).await;
     }
 
     #[test]

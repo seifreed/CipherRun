@@ -2,6 +2,7 @@
 
 use crate::Result;
 use crate::error::TlsError;
+use crate::monitor::types::AlertThresholds;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -96,6 +97,18 @@ impl Default for ThresholdsConfig {
             expiry_7d: true,
             expiry_1d: true,
             on_certificate_change: true,
+        }
+    }
+}
+
+impl From<&ThresholdsConfig> for AlertThresholds {
+    fn from(config: &ThresholdsConfig) -> Self {
+        Self {
+            expiry_30d: config.expiry_30d,
+            expiry_14d: config.expiry_14d,
+            expiry_7d: config.expiry_7d,
+            expiry_1d: config.expiry_1d,
+            on_change: config.on_certificate_change,
         }
     }
 }

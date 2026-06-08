@@ -152,6 +152,16 @@ impl CertificateInventory {
         self.domains.values().filter(|d| d.enabled).collect()
     }
 
+    /// Apply alert thresholds to every domain in the inventory.
+    ///
+    /// The domains-file format carries no per-domain threshold settings, so the
+    /// monitoring config's `[thresholds]` section is the single source of truth.
+    pub fn apply_default_thresholds(&mut self, thresholds: &AlertThresholds) {
+        for domain in self.domains.values_mut() {
+            domain.alert_thresholds = thresholds.clone();
+        }
+    }
+
     /// Load domains from a file
     ///
     /// File format:
@@ -162,7 +172,11 @@ impl CertificateInventory {
     /// internal.corp.com:8443 5m
     /// badssl.com 1h
     /// ```
-    pub fn load_from_file<P: AsRef<Path>>(&mut self, path: P) -> Result<()> {
+    pub fn load_from_file<P: AsRef<Path>>(
+        &mut self,
+        path: P,
+        default_interval_seconds: u64,
+    ) -> Result<()> {
         let path_ref = path.as_ref();
 
         // Check file size before loading to prevent memory exhaustion
@@ -220,11 +234,11 @@ impl CertificateInventory {
             let (hostname, port) = split_target_host_port(host_port)?;
             let port = port.unwrap_or(443);
 
-            // Parse interval if provided
+            // Parse interval if provided; otherwise use the configured default.
             let interval_seconds = if parts.len() > 1 {
                 parse_interval(parts[1])?
             } else {
-                3600 // Default 1 hour
+                default_interval_seconds
             };
 
             let domain = MonitoredDomain::new(hostname, port).with_interval(interval_seconds);
@@ -558,7 +572,7 @@ mod tests {
         )?;
 
         let mut inventory = CertificateInventory::new();
-        inventory.load_from_file(temp_file.path())?;
+        inventory.load_from_file(temp_file.path(), 3600)?;
 
         assert_eq!(inventory.len(), 3);
         assert!(inventory.get_domain("example.com").is_some());
@@ -573,12 +587,28 @@ mod tests {
     }
 
     #[test]
+    fn test_load_from_file_applies_configured_default_interval() -> Result<()> {
+        let mut temp_file = NamedTempFile::new()?;
+        // No explicit interval, so the configured default must be applied.
+        writeln!(temp_file, "example.com")?;
+
+        let mut inventory = CertificateInventory::new();
+        inventory.load_from_file(temp_file.path(), 600)?;
+
+        let domain = inventory
+            .get_domain("example.com")
+            .expect("domain should load");
+        assert_eq!(domain.interval_seconds, 600);
+        Ok(())
+    }
+
+    #[test]
     fn test_load_from_file_with_bracketed_ipv6() -> Result<()> {
         let mut temp_file = NamedTempFile::new()?;
         writeln!(temp_file, "[::1]:443 30m")?;
 
         let mut inventory = CertificateInventory::new();
-        inventory.load_from_file(temp_file.path())?;
+        inventory.load_from_file(temp_file.path(), 3600)?;
 
         assert_eq!(inventory.len(), 1);
         assert!(inventory.get_domain("::1").is_some());
@@ -592,7 +622,7 @@ mod tests {
         writeln!(temp_file, "example.com:notaport")?;
 
         let mut inventory = CertificateInventory::new();
-        let result = inventory.load_from_file(temp_file.path());
+        let result = inventory.load_from_file(temp_file.path(), 3600);
 
         assert!(result.is_err());
         Ok(())
@@ -604,7 +634,7 @@ mod tests {
         writeln!(temp_file, "example.com:443:extra")?;
 
         let mut inventory = CertificateInventory::new();
-        let result = inventory.load_from_file(temp_file.path());
+        let result = inventory.load_from_file(temp_file.path(), 3600);
 
         assert!(result.is_err());
         Ok(())

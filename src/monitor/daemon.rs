@@ -46,13 +46,17 @@ impl MonitorDaemon {
     /// Load domains from file
     pub async fn load_domains(&self, path: &str) -> Result<()> {
         let mut inventory = self.inventory.lock().await;
-        inventory.load_from_file(path)?;
+        inventory.load_from_file(path, self.config.monitor.default_interval_seconds)?;
+        // The file format has no per-domain thresholds, so apply the configured
+        // ones; otherwise the [thresholds] config section would be ignored.
+        inventory.apply_default_thresholds(&(&self.config.monitor.thresholds).into());
         tracing::info!("Loaded {} domains from {}", inventory.len(), path);
         Ok(())
     }
 
-    /// Add a single domain
-    pub async fn add_domain(&self, domain: MonitoredDomain) -> Result<()> {
+    /// Add a single domain, applying the configured alert thresholds.
+    pub async fn add_domain(&self, mut domain: MonitoredDomain) -> Result<()> {
+        domain.alert_thresholds = (&self.config.monitor.thresholds).into();
         let mut inventory = self.inventory.lock().await;
         inventory.add_domain(domain)?;
         Ok(())

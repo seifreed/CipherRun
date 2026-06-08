@@ -83,12 +83,17 @@ impl MonitorCommand {
         Ok(())
     }
 
-    async fn add_single_domain(&self, daemon: &crate::monitor::MonitorDaemon) -> Result<()> {
+    async fn add_single_domain(
+        &self,
+        daemon: &crate::monitor::MonitorDaemon,
+        default_interval_seconds: u64,
+    ) -> Result<()> {
         use crate::monitor::MonitoredDomain;
 
         if let Some(domain_str) = &self.args.monitoring.domain {
             let parsed = HostPortInput::parse_with_default_port(domain_str, 443)?;
-            let domain = MonitoredDomain::new(parsed.hostname, parsed.port);
+            let domain = MonitoredDomain::new(parsed.hostname, parsed.port)
+                .with_interval(default_interval_seconds);
             daemon.add_domain(domain).await?;
         }
 
@@ -103,9 +108,11 @@ impl MonitorCommand {
 
         info!("Starting certificate monitoring daemon");
 
+        let default_interval_seconds = monitor_config.monitor.default_interval_seconds;
         let daemon = MonitorDaemon::new(monitor_config).await?;
         self.load_domains_from_file(&daemon).await?;
-        self.add_single_domain(&daemon).await?;
+        self.add_single_domain(&daemon, default_interval_seconds)
+            .await?;
         daemon.start().await?;
 
         Ok(CommandExit::success())
