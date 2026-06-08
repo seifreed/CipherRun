@@ -9,7 +9,7 @@ use axum::{
 use futures::{SinkExt, StreamExt};
 use std::sync::Arc;
 use tokio::sync::broadcast;
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info, trace, warn};
 
 /// AppState subset for WebSocket
 pub struct WsState {
@@ -164,9 +164,31 @@ pub async fn scan_websocket_handler(socket: WebSocket, scan_id: String, state: A
                         break;
                     }
                 }
-                Err(broadcast::error::RecvError::Lagged(_)) => {
-                    // Receiver fell behind; newer messages are still available
-                    continue;
+                Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                    // The progress stream is shared across every scan; under load
+                    // this per-scan receiver can fall far enough behind that the
+                    // dropped span includes this scan's terminal "completed"/
+                    // "failed" message. That message is emitted exactly once, so
+                    // continuing here would block forever waiting for a message
+                    // that will never arrive, leaking the connection. Notify the
+                    // client that the stream lagged and close it so the client can
+                    // reconnect or poll the REST scan-status endpoint for the
+                    // final result.
+                    warn!(
+                        "Progress stream lagged by {} messages for scan {}; closing stream",
+                        skipped, scan_id_clone
+                    );
+                    let notice = serde_json::json!({
+                        "type": "lagged",
+                        "scan_id": scan_id_clone,
+                        "message": "Progress stream fell behind and was closed; \
+                                    reconnect or poll the scan status endpoint for the final result",
+                    });
+                    if let Ok(json) = serde_json::to_string(&notice) {
+                        let _ = sender.send(Message::Text(json.into())).await;
+                    }
+                    let _ = sender.send(Message::Close(None)).await;
+                    break;
                 }
                 Err(broadcast::error::RecvError::Closed) => break,
             }
