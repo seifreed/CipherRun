@@ -392,7 +392,11 @@ async fn test_trend_analyzer_with_database_data() {
         .await
         .expect("vulnerability trend should succeed");
     assert_eq!(vuln.data_points.len(), 2);
-    assert!(vuln.severity_distribution.contains_key("high"));
+    // One vuln of each severity was inserted across the two scans; the
+    // distribution must preserve those counts, not truncate them to zero.
+    assert_eq!(vuln.severity_distribution.get("high"), Some(&1));
+    assert_eq!(vuln.severity_distribution.get("medium"), Some(&1));
+    assert_eq!(vuln.severity_distribution.get("low"), Some(&1));
 
     let protocol = analyzer
         .analyze_protocol_trend(hostname, port, 30)
