@@ -3,7 +3,7 @@
 
 use crate::Result;
 use crate::utils::network::Target;
-use openssl::ssl::{SslConnector, SslMethod, SslVersion};
+use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode, SslVersion};
 use openssl::x509::X509;
 use serde::{Deserialize, Serialize};
 use tokio::time::Duration;
@@ -152,7 +152,12 @@ impl CertificateAdvancedTester {
         let std_stream = stream.into_std()?;
         std_stream.set_nonblocking(false)?;
 
-        let builder = SslConnector::builder(SslMethod::tls())?;
+        let mut builder = SslConnector::builder(SslMethod::tls())?;
+        // The scanner must retrieve and inspect certificates from hosts whose
+        // certificates are expired/self-signed/untrusted — exactly the cases a
+        // verifying connector rejects with a fatal handshake error. Trust is
+        // assessed separately by the certificate validator.
+        builder.set_verify(SslVerifyMode::NONE);
 
         let connector = builder.build();
 
@@ -190,6 +195,9 @@ impl CertificateAdvancedTester {
         std_stream.set_write_timeout(Some(connect_timeout))?;
 
         let mut builder = SslConnector::builder(SslMethod::tls())?;
+        // Certificate compression is independent of certificate validity; the
+        // scanner must probe it on bad-cert hosts too (trust assessed separately).
+        builder.set_verify(SslVerifyMode::NONE);
 
         // Try to enable TLS 1.3 for certificate compression
         builder.set_min_proto_version(Some(SslVersion::TLS1_3))?;
@@ -379,6 +387,9 @@ impl CertificateAdvancedTester {
         std_stream.set_nonblocking(false)?;
 
         let mut builder = SslConnector::builder(SslMethod::tls())?;
+        // Cipher negotiation is independent of certificate validity; the scanner
+        // must probe it on bad-cert hosts too (trust assessed separately).
+        builder.set_verify(SslVerifyMode::NONE);
 
         // Set cipher list
         let cipher_string = cipher_list.join(":");

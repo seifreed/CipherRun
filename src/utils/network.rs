@@ -5,7 +5,7 @@ use crate::error::TlsError;
 use hickory_resolver::TokioResolver;
 use hickory_resolver::config::*;
 use hickory_resolver::net::runtime::TokioRuntimeProvider;
-use openssl::ssl::{SslConnector, SslMethod, SslStream, SslVersion};
+use openssl::ssl::{SslConnector, SslMethod, SslStream, SslVerifyMode, SslVersion};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpStream as StdTcpStream};
 use std::time::Duration;
 use tokio::net::TcpStream;
@@ -610,6 +610,11 @@ pub async fn try_vuln_ssl_connection(
     // Wrap blocking SSL operations in spawn_blocking to avoid blocking async runtime
     let result = tokio::task::spawn_blocking(move || -> Result<VulnSslResult> {
         let mut builder = SslConnector::builder(SslMethod::tls())?;
+        // Vulnerability/cipher probes detect a capability by whether a handshake
+        // with a specific cipher/version succeeds; certificate validity is
+        // irrelevant and is assessed separately. A verifying connector would
+        // fail at cert validation on bad-cert hosts and false-negative.
+        builder.set_verify(SslVerifyMode::NONE);
 
         if let Some(min_ver) = config.min_version {
             builder.set_min_proto_version(Some(min_ver))?;
@@ -706,6 +711,10 @@ pub async fn test_cipher_support_outcome(
     // Wrap blocking SSL operations in spawn_blocking to avoid blocking async runtime
     let result = tokio::task::spawn_blocking(move || -> Result<CipherSupportOutcome> {
         let mut builder = SslConnector::builder(SslMethod::tls())?;
+        // Cipher support is independent of certificate validity (assessed
+        // separately); a verifying connector would false-negative on bad-cert
+        // hosts by failing the handshake at cert validation.
+        builder.set_verify(SslVerifyMode::NONE);
 
         if allow_ssl3 {
             builder.set_min_proto_version(Some(SslVersion::SSL3))?;
