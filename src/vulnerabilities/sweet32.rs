@@ -98,15 +98,11 @@ impl Sweet32Tester {
     async fn test_blowfish_ciphers(&self) -> Result<(Vec<String>, bool)> {
         let mut supported = Vec::new();
         let mut inconclusive = false;
-        let blowfish_ciphers = vec![
-            "BF-CBC",
-            "BF-CFB",
-            "BF-ECB",
-            "BF-OFB",
-            "BF-SHA",
-            "EDH-RSA-BF-CBC-SHA",
-            "EDH-DSS-BF-CBC-SHA",
-        ];
+        // These must be TLS cipher-suite names accepted by SSL_CTX_set_cipher_list,
+        // not bare symmetric-algorithm names (e.g. "BF-CBC"), which set_cipher_list
+        // rejects — that would silently make every Blowfish probe a no-op and
+        // false-negative Sweet32 (CVE-2016-6329) on servers that offer Blowfish.
+        let blowfish_ciphers = vec!["EDH-RSA-BF-CBC-SHA", "EDH-DSS-BF-CBC-SHA"];
 
         for cipher in blowfish_ciphers {
             match self.test_cipher(cipher).await? {
