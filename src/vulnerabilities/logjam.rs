@@ -5,15 +5,12 @@
 // Diffie-Hellman parameters, making it possible to break the encryption through
 // precomputation attacks.
 
+use super::cipher_probe::{CipherProbeStatus, probe_cipher_suite};
 use crate::Result;
-use crate::constants::{
-    CONTENT_TYPE_ALERT, CONTENT_TYPE_HANDSHAKE, HANDSHAKE_TYPE_SERVER_HELLO, TLS_HANDSHAKE_TIMEOUT,
-};
+use crate::constants::TLS_HANDSHAKE_TIMEOUT;
 use crate::protocols::Protocol;
-use crate::protocols::handshake::ClientHelloBuilder;
 use crate::utils::network::Target;
 use std::time::Duration;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 /// LOGJAM vulnerability tester
 pub struct LogjamTester {
@@ -24,32 +21,15 @@ pub struct LogjamTester {
 /// reported as weak per current guidance (NIST SP 800-57 deprecates <2048-bit DH).
 const MIN_SECURE_DH_BITS: u32 = 2048;
 
-/// Export-grade DH cipher suites (IANA wire IDs) paired with their display
-/// names. They are probed by cipher-suite ID in a raw ClientHello because the
-/// vendored OpenSSL build is compiled without export ciphers, so
-/// `set_cipher_list` cannot offer them — an OpenSSL probe would always report
-/// them unsupported regardless of the server (a false negative for LOGJAM).
-const EXPORT_DH_CIPHER_SUITES: &[(u16, &str)] = &[
-    (0x0014, "TLS_DHE_RSA_EXPORT_WITH_DES40_CBC_SHA"),
-    (0x0011, "TLS_DHE_DSS_EXPORT_WITH_DES40_CBC_SHA"),
-    (0x0063, "TLS_DHE_DSS_EXPORT1024_WITH_DES_CBC_SHA"),
-    (0x0065, "TLS_DHE_DSS_EXPORT1024_WITH_RC4_56_SHA"),
-];
+/// Export-grade DH cipher suites (IANA wire IDs). They are probed by
+/// cipher-suite ID over a raw ClientHello because the vendored OpenSSL build is
+/// compiled without export ciphers, so `set_cipher_list` cannot offer them — an
+/// OpenSSL probe would always report them unsupported regardless of the server
+/// (a false negative for LOGJAM).
+const EXPORT_DH_CIPHER_SUITES: &[u16] = &[0x0014, 0x0011, 0x0063, 0x0065];
 
 /// Protocol versions under which export DH suites were historically offered.
 const EXPORT_DH_PROBE_PROTOCOLS: &[Protocol] = &[Protocol::TLS10, Protocol::SSLv3];
-
-/// Connect timeout for a single export-DH cipher probe.
-const EXPORT_PROBE_CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
-
-/// Read timeout for a single export-DH cipher probe.
-const EXPORT_PROBE_READ_TIMEOUT: Duration = Duration::from_secs(3);
-
-/// Read buffer size for the ServerHello/alert response of an export-DH probe.
-const EXPORT_PROBE_BUFFER_SIZE: usize = 4096;
-
-/// Minimum bytes needed to classify a TLS record's content/handshake type.
-const TLS_RECORD_TYPE_PREFIX_LEN: usize = 6;
 
 /// Outcome of probing a single cipher for connectivity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -137,75 +117,15 @@ impl LogjamTester {
     /// because the vendored OpenSSL build cannot offer export ciphers.
     async fn test_export_dh(&self) -> Result<(bool, bool)> {
         let mut inconclusive = false;
-        for (hexcode, _name) in EXPORT_DH_CIPHER_SUITES {
-            match self.probe_export_dh_cipher(*hexcode).await {
-                LogjamProbeStatus::Supported => return Ok((true, false)),
-                LogjamProbeStatus::NotSupported => {}
-                LogjamProbeStatus::Inconclusive => inconclusive = true,
+        for &hexcode in EXPORT_DH_CIPHER_SUITES {
+            match probe_cipher_suite(&self.target, hexcode, EXPORT_DH_PROBE_PROTOCOLS).await {
+                CipherProbeStatus::Supported => return Ok((true, false)),
+                CipherProbeStatus::NotSupported => {}
+                CipherProbeStatus::Inconclusive => inconclusive = true,
             }
         }
 
         Ok((false, inconclusive))
-    }
-
-    /// Probe a single export-DH cipher suite across the protocol versions that
-    /// historically carried export ciphers. `Supported` if any version yields a
-    /// ServerHello; `NotSupported` only if every conclusive probe was a reject;
-    /// `Inconclusive` if no conclusive negative was seen.
-    async fn probe_export_dh_cipher(&self, hexcode: u16) -> LogjamProbeStatus {
-        let mut saw_inconclusive = false;
-        for &protocol in EXPORT_DH_PROBE_PROTOCOLS {
-            match self.probe_cipher_at_protocol(hexcode, protocol).await {
-                LogjamProbeStatus::Supported => return LogjamProbeStatus::Supported,
-                LogjamProbeStatus::NotSupported => {}
-                LogjamProbeStatus::Inconclusive => saw_inconclusive = true,
-            }
-        }
-
-        if saw_inconclusive {
-            LogjamProbeStatus::Inconclusive
-        } else {
-            LogjamProbeStatus::NotSupported
-        }
-    }
-
-    /// Send a single-cipher ClientHello at `protocol` and classify the response.
-    async fn probe_cipher_at_protocol(&self, hexcode: u16, protocol: Protocol) -> LogjamProbeStatus {
-        let Some(addr) = self.target.socket_addrs().first().copied() else {
-            return LogjamProbeStatus::Inconclusive;
-        };
-
-        let mut stream = match crate::utils::network::connect_with_timeout(
-            addr,
-            EXPORT_PROBE_CONNECT_TIMEOUT,
-            None,
-        )
-        .await
-        {
-            Ok(s) => s,
-            Err(_) => return LogjamProbeStatus::Inconclusive,
-        };
-
-        let mut builder = ClientHelloBuilder::new(protocol);
-        builder.add_cipher(hexcode);
-        let sni = crate::utils::network::sni_hostname_for_target(&self.target.hostname, None);
-        let client_hello = match builder.build_with_defaults(sni.as_deref()) {
-            Ok(hello) => hello,
-            Err(_) => return LogjamProbeStatus::Inconclusive,
-        };
-
-        let exchange = tokio::time::timeout(EXPORT_PROBE_READ_TIMEOUT, async {
-            stream.write_all(&client_hello).await?;
-            let mut response = vec![0u8; EXPORT_PROBE_BUFFER_SIZE];
-            let n = stream.read(&mut response).await?;
-            Ok::<_, crate::TlsError>((response, n))
-        })
-        .await;
-
-        match exchange {
-            Ok(Ok((response, n))) => classify_export_probe_response(&response, n),
-            _ => LogjamProbeStatus::Inconclusive,
-        }
     }
 
     /// Test for weak DH parameters
@@ -368,23 +288,6 @@ impl LogjamTester {
     }
 }
 
-/// Classify an export-DH probe response: a ServerHello means the server
-/// accepted the export suite (`Supported`); a TLS alert means it rejected it
-/// (`NotSupported`); anything else (truncated, closed, non-TLS) is
-/// `Inconclusive` so a transport anomaly is never read as a clean pass.
-fn classify_export_probe_response(response: &[u8], n: usize) -> LogjamProbeStatus {
-    if n >= TLS_RECORD_TYPE_PREFIX_LEN
-        && response[0] == CONTENT_TYPE_HANDSHAKE
-        && response[5] == HANDSHAKE_TYPE_SERVER_HELLO
-    {
-        LogjamProbeStatus::Supported
-    } else if n > 0 && response[0] == CONTENT_TYPE_ALERT {
-        LogjamProbeStatus::NotSupported
-    } else {
-        LogjamProbeStatus::Inconclusive
-    }
-}
-
 /// LOGJAM test result
 #[derive(Debug, Clone)]
 pub struct LogjamTestResult {
@@ -401,46 +304,6 @@ mod tests {
     use super::*;
     use std::net::{IpAddr, SocketAddr, TcpListener as StdTcpListener};
     use tokio::net::TcpListener;
-
-    #[test]
-    fn test_classify_export_probe_serverhello_is_supported() {
-        let mut response = vec![0u8; 16];
-        response[0] = CONTENT_TYPE_HANDSHAKE;
-        response[5] = HANDSHAKE_TYPE_SERVER_HELLO;
-        assert_eq!(
-            classify_export_probe_response(&response, response.len()),
-            LogjamProbeStatus::Supported
-        );
-    }
-
-    #[test]
-    fn test_classify_export_probe_alert_is_not_supported() {
-        let mut response = vec![0u8; 7];
-        response[0] = CONTENT_TYPE_ALERT;
-        assert_eq!(
-            classify_export_probe_response(&response, response.len()),
-            LogjamProbeStatus::NotSupported
-        );
-    }
-
-    #[test]
-    fn test_classify_export_probe_handshake_without_serverhello_is_inconclusive() {
-        let mut response = vec![0u8; 16];
-        response[0] = CONTENT_TYPE_HANDSHAKE;
-        response[5] = HANDSHAKE_TYPE_SERVER_HELLO + 1;
-        assert_eq!(
-            classify_export_probe_response(&response, response.len()),
-            LogjamProbeStatus::Inconclusive
-        );
-    }
-
-    #[test]
-    fn test_classify_export_probe_closed_connection_is_inconclusive() {
-        assert_eq!(
-            classify_export_probe_response(&[], 0),
-            LogjamProbeStatus::Inconclusive
-        );
-    }
 
     #[test]
     fn test_logjam_result_not_vulnerable() {

@@ -146,6 +146,7 @@ impl Severity {
 pub mod beast;
 pub mod breach;
 pub mod ccs;
+mod cipher_probe;
 pub mod crime;
 pub mod debian_keys;
 pub mod drown;

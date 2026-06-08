@@ -5,21 +5,35 @@
 // by manipulating the TLS handshake, making it possible to factor the key
 // and decrypt the connection.
 
+use super::cipher_probe::{CipherProbeStatus, probe_cipher_suite};
 use crate::Result;
+use crate::protocols::Protocol;
 use crate::utils::network::Target;
-use std::time::Duration;
 
 /// FREAK vulnerability tester
 pub struct FreakTester {
     target: Target,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum FreakProbeStatus {
-    Supported,
-    NotSupported,
-    Inconclusive,
-}
+/// RSA_EXPORT cipher suites (legacy wire IDs) paired with display names. Probed
+/// by cipher-suite ID over a raw ClientHello because the vendored OpenSSL build
+/// is compiled without export ciphers, so `set_cipher_list` cannot offer them —
+/// an OpenSSL probe would always report them unsupported regardless of the
+/// server (a false negative for FREAK).
+const EXPORT_RSA_CIPHER_SUITES: &[(u16, &str)] = &[
+    (0x0003, "EXP-RC4-MD5"),
+    (0x0006, "EXP-RC2-CBC-MD5"),
+    (0x0008, "EXP-DES-CBC-SHA"),
+    (0x0062, "EXP1024-DES-CBC-SHA"),
+    (0x0064, "EXP1024-RC4-SHA"),
+    (0x0060, "EXP1024-RC4-MD5"),
+    (0x0061, "EXP1024-RC2-CBC-MD5"),
+];
+
+/// Protocol versions probed for export-RSA support. A FREAK-vulnerable server
+/// accepts an RSA_EXPORT key exchange even under a modern protocol, so TLS 1.2
+/// is the primary signal with TLS 1.0 as a fallback.
+const FREAK_PROBE_PROTOCOLS: &[Protocol] = &[Protocol::TLS12, Protocol::TLS10];
 
 impl FreakTester {
     pub fn new(target: Target) -> Self {
@@ -52,90 +66,24 @@ impl FreakTester {
         })
     }
 
-    /// Test for RSA export cipher support
+    /// Test for RSA export cipher support.
+    ///
+    /// Returns `(supported_names, inconclusive)`. Each suite is probed by its
+    /// wire cipher-suite ID; a ServerHello means the server accepted an
+    /// export-RSA key exchange (FREAK).
     async fn test_export_ciphers(&self) -> Result<(Vec<String>, bool)> {
         let mut supported = Vec::new();
         let mut inconclusive = false;
 
-        // List of RSA export ciphers
-        let export_ciphers = vec![
-            "EXP-RC4-MD5",
-            "EXP-RC2-CBC-MD5",
-            "EXP-DES-CBC-SHA",
-            "EXP1024-DES-CBC-SHA",
-            "EXP1024-RC4-SHA",
-            "EXP1024-RC4-MD5",
-            "EXP1024-RC2-CBC-MD5",
-        ];
-
-        for cipher in export_ciphers {
-            match self.test_cipher(cipher).await? {
-                FreakProbeStatus::Supported => supported.push(cipher.to_string()),
-                FreakProbeStatus::NotSupported => {}
-                FreakProbeStatus::Inconclusive => inconclusive = true,
+        for (hexcode, name) in EXPORT_RSA_CIPHER_SUITES {
+            match probe_cipher_suite(&self.target, *hexcode, FREAK_PROBE_PROTOCOLS).await {
+                CipherProbeStatus::Supported => supported.push((*name).to_string()),
+                CipherProbeStatus::NotSupported => {}
+                CipherProbeStatus::Inconclusive => inconclusive = true,
             }
         }
 
         Ok((supported, inconclusive))
-    }
-
-    /// Test if a specific export cipher is supported
-    async fn test_cipher(&self, cipher: &str) -> Result<FreakProbeStatus> {
-        use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode, SslVersion};
-
-        let addr = self
-            .target
-            .socket_addrs()
-            .first()
-            .copied()
-            .ok_or(crate::TlsError::NoSocketAddresses)?;
-        let hostname = self.target.hostname.clone();
-        let cipher = cipher.to_string();
-
-        let stream =
-            match crate::utils::network::connect_with_timeout(addr, Duration::from_secs(3), None)
-                .await
-            {
-                Ok(s) => s,
-                Err(_) => return Ok(FreakProbeStatus::Inconclusive),
-            };
-
-        let std_stream = stream.into_std()?;
-        std_stream.set_nonblocking(false)?;
-
-        let result = tokio::task::spawn_blocking(move || -> Result<FreakProbeStatus> {
-            let mut builder = SslConnector::builder(SslMethod::tls())?;
-            // Certificate validity is irrelevant to whether the server accepts an
-            // export cipher; a verifying connector would fail the handshake at
-            // cert validation on bad-cert hosts and falsely report not-vulnerable.
-            builder.set_verify(SslVerifyMode::NONE);
-
-            // Try to set SSL 3.0 - this may fail on modern OpenSSL versions
-            // that have SSL 3.0 disabled at compile time
-            if builder
-                .set_min_proto_version(Some(SslVersion::SSL3))
-                .is_err()
-            {
-                tracing::debug!(
-                    "SSL 3.0 not supported by OpenSSL - cannot test for FREAK on SSL 3.0"
-                );
-                return Ok(FreakProbeStatus::NotSupported);
-            }
-
-            if builder.set_cipher_list(&cipher).is_err() {
-                return Ok(FreakProbeStatus::NotSupported);
-            }
-
-            let connector = builder.build();
-            match connector.connect(&hostname, std_stream) {
-                Ok(_) => Ok(FreakProbeStatus::Supported),
-                Err(_) => Ok(FreakProbeStatus::NotSupported),
-            }
-        })
-        .await
-        .map_err(|e| crate::error::TlsError::Other(format!("Spawn blocking failed: {}", e)))??;
-
-        Ok(result)
     }
 }
 
@@ -189,14 +137,26 @@ mod tests {
         assert!(result.details.contains("2 RSA export cipher"));
     }
 
-    async fn spawn_dummy_server(max_accepts: usize) -> SocketAddr {
+    /// A server that reads each ClientHello and replies with a fatal
+    /// `handshake_failure` TLS alert, i.e. it conclusively rejects every offered
+    /// cipher — the behaviour of a real TLS server that does not support the
+    /// probed export suite.
+    async fn spawn_rejecting_server(max_accepts: usize) -> SocketAddr {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        // record: Alert (0x15), TLS 1.2 (0x0303), len 2, fatal (0x02),
+        // handshake_failure (0x28).
+        const HANDSHAKE_FAILURE_ALERT: [u8; 7] = [0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28];
+
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
             let mut remaining = max_accepts;
             while remaining > 0 {
-                if let Ok((socket, _)) = listener.accept().await {
-                    drop(socket);
+                if let Ok((mut socket, _)) = listener.accept().await {
+                    let mut buf = [0u8; 1024];
+                    let _ = socket.read(&mut buf).await;
+                    let _ = socket.write_all(&HANDSHAKE_FAILURE_ALERT).await;
                     remaining -= 1;
                 }
             }
@@ -206,7 +166,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_freak_tester_no_export_support() {
-        let addr = spawn_dummy_server(10).await;
+        // 7 export suites probed across 2 protocols => up to 14 connections.
+        let addr = spawn_rejecting_server(EXPORT_RSA_CIPHER_SUITES.len() * 2).await;
         let target = Target::with_ips(
             "localhost".to_string(),
             addr.port(),
