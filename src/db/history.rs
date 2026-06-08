@@ -34,10 +34,14 @@ impl CipherRunDatabase {
             .get_scans_by_hostname_since(hostname, port, since)
             .await?;
 
+        // Ascending by timestamp, tie-broken by ascending scan_id so the sequence
+        // is truly chronological: within a same-timestamp group the later-inserted
+        // (higher scan_id) row sorts last. Consumers that take `.last()` as "latest"
+        // (e.g. the dashboard summary) then correctly see the newest scan.
         scans.sort_by(|a, b| {
             a.scan_timestamp
                 .cmp(&b.scan_timestamp)
-                .then_with(|| b.scan_id.cmp(&a.scan_id))
+                .then_with(|| a.scan_id.cmp(&b.scan_id))
         });
 
         Ok(scans)

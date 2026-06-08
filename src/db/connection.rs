@@ -447,6 +447,48 @@ impl DatabasePool {
         }
     }
 
+    /// Execute an `INSERT ... ON CONFLICT DO NOTHING` and return the inserted ID,
+    /// or `None` when the row already existed and no insert occurred.
+    ///
+    /// Unlike [`Self::execute_insert_returning`], this distinguishes the conflict
+    /// case on both backends: Postgres returns no row (the `RETURNING` clause is
+    /// empty on conflict) and SQLite reports zero rows affected. Returning the
+    /// SQLite connection's `last_insert_rowid()` on a conflict would yield a stale
+    /// ID belonging to a previous insert on that connection, so callers must treat
+    /// `None` as "look up the existing row".
+    pub async fn execute_insert_on_conflict_returning(
+        &self,
+        query: &str,
+        bindings: Vec<BindValue>,
+    ) -> crate::Result<Option<i64>> {
+        match self {
+            DatabasePool::Postgres(pool) => {
+                let mut q = sqlx::query(query);
+                for binding in bindings {
+                    q = binding.bind_postgres(q);
+                }
+                let row = q.fetch_optional(pool).await.map_err(|e| {
+                    crate::TlsError::DatabaseError(format!("Insert query failed: {}", e))
+                })?;
+                Ok(row.map(|r| r.get::<i64, _>(0)))
+            }
+            DatabasePool::Sqlite(pool) => {
+                let mut q = sqlx::query(query);
+                for binding in bindings {
+                    q = binding.bind_sqlite(q);
+                }
+                let result = q.execute(pool).await.map_err(|e| {
+                    crate::TlsError::DatabaseError(format!("Insert query failed: {}", e))
+                })?;
+                if result.rows_affected() == 0 {
+                    Ok(None)
+                } else {
+                    Ok(Some(result.last_insert_rowid()))
+                }
+            }
+        }
+    }
+
     /// Execute a simple query without returning a value
     pub async fn execute(&self, query: &str, bindings: Vec<BindValue>) -> crate::Result<()> {
         match self {

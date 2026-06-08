@@ -95,13 +95,13 @@ impl CipherRunDatabase {
 
         match self
             .pool
-            .execute_insert_returning(&upsert_query, bindings)
-            .await
+            .execute_insert_on_conflict_returning(&upsert_query, bindings)
+            .await?
         {
-            Ok(id) => Ok(id),
-            Err(_) => {
-                // ON CONFLICT DO NOTHING returns no row when conflict occurs.
-                // Look up the existing certificate that won the race.
+            Some(id) => Ok(id),
+            None => {
+                // ON CONFLICT DO NOTHING inserted no row (concurrent insert won
+                // the race). Look up the existing certificate by fingerprint.
                 self.find_existing_certificate_id(params.fingerprint)
                     .await?
                     .ok_or_else(|| {

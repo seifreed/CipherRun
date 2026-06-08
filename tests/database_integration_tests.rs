@@ -475,4 +475,94 @@ async fn test_scan_with_rating() {
 
     db.close().await;
 }
+
+// Regression: storing the same certificate fingerprint across two scans must
+// deduplicate to a single certificate row, and both scans must link to that
+// same cert_id. The SQLite `INSERT OR IGNORE` conflict path previously returned
+// a stale `last_insert_rowid()` instead of the existing row's id, so the second
+// scan linked to the wrong certificate.
+#[tokio::test]
+async fn test_store_scan_duplicate_certificate_dedupes_to_same_cert_id() {
+    use cipherrun::application::persistence::PersistedCertificate;
+    use cipherrun::db::BindValue;
+
+    let config = DatabaseConfig::sqlite(common::sqlite::unique_sqlite_db_path("cipherruntest"));
+    let db = CipherRunDatabase::new(&config).await.unwrap();
+
+    let fingerprint = "aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99";
+    let make_scan = || PersistedScan {
+        target_hostname: "dedupe-cert.test".to_string(),
+        target_port: 443,
+        overall_grade: None,
+        overall_score: None,
+        scan_duration_ms: 100,
+        protocols: vec![],
+        ciphers: vec![],
+        vulnerabilities: vec![],
+        ratings: vec![],
+        certificates: vec![PersistedCertificate {
+            fingerprint_sha256: fingerprint.to_string(),
+            subject: "CN=dedupe-cert.test".to_string(),
+            issuer: "CN=Test CA".to_string(),
+            serial_number: Some("01".to_string()),
+            not_before: chrono::Utc::now() - chrono::Duration::days(1),
+            not_after: chrono::Utc::now() + chrono::Duration::days(365),
+            signature_algorithm: Some("sha256WithRSAEncryption".to_string()),
+            public_key_algorithm: Some("RSA".to_string()),
+            public_key_size: Some(2048),
+            san_domains: vec!["dedupe-cert.test".to_string()],
+            is_ca: false,
+            key_usage: vec![],
+            extended_key_usage: vec![],
+            der_bytes: None,
+            chain_position: 0,
+        }],
+    };
+
+    let scan_id_1 = db.store_scan(&make_scan()).await.unwrap();
+    let scan_id_2 = db.store_scan(&make_scan()).await.unwrap();
+
+    let cert_count = db
+        .pool()
+        .fetch_optional_id(
+            "SELECT COUNT(*) FROM certificates WHERE fingerprint_sha256 = ?",
+            vec![BindValue::String(fingerprint.to_string())],
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        cert_count,
+        Some(1),
+        "duplicate fingerprint must not create a second certificate row"
+    );
+
+    let linked_cert_1 = db
+        .pool()
+        .fetch_optional_id(
+            "SELECT cert_id FROM scan_certificates WHERE scan_id = ?",
+            vec![BindValue::Int64(scan_id_1)],
+        )
+        .await
+        .unwrap();
+    let linked_cert_2 = db
+        .pool()
+        .fetch_optional_id(
+            "SELECT cert_id FROM scan_certificates WHERE scan_id = ?",
+            vec![BindValue::Int64(scan_id_2)],
+        )
+        .await
+        .unwrap();
+
+    assert!(
+        linked_cert_1.is_some(),
+        "first scan should link a certificate"
+    );
+    assert_eq!(
+        linked_cert_1, linked_cert_2,
+        "both scans must link to the same deduplicated cert_id"
+    );
+
+    db.close().await;
+}
+
 use cipherrun::application::PersistedScan;
