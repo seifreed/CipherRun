@@ -4,6 +4,16 @@ use crate::protocols::Protocol;
 use crate::utils::network::Target;
 use crate::vulnerabilities::{Severity, VulnerabilityType};
 use std::net::TcpListener;
+use std::sync::Once;
+
+/// Install the rustls process-level crypto provider once for tests that drive
+/// rustls-based checks (e.g. the 0-RTT early-data probe).
+fn install_crypto_provider() {
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
+}
 
 fn make_cipher(encryption: &str, bits: u16, export: bool) -> CipherSuite {
     CipherSuite {
@@ -156,6 +166,7 @@ async fn test_padding_oracle_2016_inactive_target_is_inconclusive() {
 
 #[tokio::test]
 async fn test_early_data_inactive_target_is_inconclusive() {
+    install_crypto_provider();
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     drop(listener);
