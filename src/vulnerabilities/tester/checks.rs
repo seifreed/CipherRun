@@ -7,8 +7,15 @@ impl VulnerabilityScanner {
 
         let tester = DrownTester::new(self.target.clone());
         let result = tester.test().await?;
+        // A server that speaks SSLv2 but rejected our probe (Probable) is not a
+        // confirmed DROWN oracle, but it is not clean either — report it as
+        // inconclusive (manual review with other ciphers/ports) rather than a
+        // hard vulnerable verdict or a clean pass.
         let inconclusive = !result.vulnerable
-            && matches!(result.sslv2_status, None | Some(Sslv2Status::Suspicious));
+            && matches!(
+                result.sslv2_status,
+                None | Some(Sslv2Status::Suspicious | Sslv2Status::Probable)
+            );
 
         Ok(VulnerabilityResult {
             vuln_type: VulnerabilityType::DROWN,
@@ -351,7 +358,10 @@ impl VulnerabilityScanner {
         Ok(VulnerabilityResult {
             vuln_type: VulnerabilityType::ROBOT,
             vulnerable: result.vulnerable,
-            inconclusive: matches!(result.status, RobotStatus::Inconclusive),
+            inconclusive: matches!(
+                result.status,
+                RobotStatus::Inconclusive | RobotStatus::WeakOracle
+            ),
             details: result.details,
             cve: Some("CVE-2017-17382".to_string()),
             cwe: Some("CWE-203".to_string()),

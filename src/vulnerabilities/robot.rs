@@ -121,7 +121,12 @@ impl RobotTester {
         };
 
         Ok(RobotTestResult {
-            vulnerable: matches!(result, RobotStatus::Vulnerable | RobotStatus::WeakOracle),
+            // Only a clear oracle (distinct alert/error codes, RobotStatus::Vulnerable)
+            // is a confirmed verdict. WeakOracle is derived from raw response-byte
+            // divergence across independent connections, which legitimately varies
+            // (alert vs. handshake framing, ticket rotation) on non-vulnerable
+            // servers — it must be inconclusive, not a hard vulnerable verdict.
+            vulnerable: matches!(result, RobotStatus::Vulnerable),
             status: result,
             details,
         })

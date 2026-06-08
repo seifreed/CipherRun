@@ -71,9 +71,13 @@ pub enum Sslv2Status {
 }
 
 impl Sslv2Status {
-    /// Returns true if SSLv2 is likely supported (Confirmed or Probable)
+    /// Returns true only when the server actually accepted an SSLv2 handshake
+    /// (issued an SSLv2 ServerHello), which is the precondition for a DROWN
+    /// decryption oracle (CVE-2016-0800). `Probable` means the server merely
+    /// spoke SSLv2 but rejected our probe (e.g. an SSLv2 Error record) — that is
+    /// not a usable oracle and must not be reported as a hard vulnerable verdict.
     pub fn is_vulnerable(&self) -> bool {
-        matches!(self, Self::Confirmed | Self::Probable)
+        matches!(self, Self::Confirmed)
     }
 }
 
@@ -462,8 +466,11 @@ mod tests {
 
     #[test]
     fn test_sslv2_status_is_vulnerable() {
+        // Only an accepted SSLv2 handshake (Confirmed) is a usable DROWN oracle.
         assert!(Sslv2Status::Confirmed.is_vulnerable());
-        assert!(Sslv2Status::Probable.is_vulnerable());
+        // Probable = the server spoke SSLv2 but rejected our probe (e.g. an SSLv2
+        // Error record) — not a confirmed oracle, must not be a vulnerable verdict.
+        assert!(!Sslv2Status::Probable.is_vulnerable());
         assert!(!Sslv2Status::Suspicious.is_vulnerable());
         assert!(!Sslv2Status::NotSupported.is_vulnerable());
         assert!(!Sslv2Status::Inconclusive.is_vulnerable());

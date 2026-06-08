@@ -28,7 +28,6 @@ enum SchannelDetectionStatus {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MalformedHandshakeStatus {
-    Vulnerable,
     Handled,
     Inconclusive,
 }
@@ -68,14 +67,6 @@ impl WinshockTester {
         let schannel_detected = schannel_status == SchannelDetectionStatus::Detected;
 
         match (schannel_status, malformed_status) {
-            (SchannelDetectionStatus::Detected, Some(MalformedHandshakeStatus::Vulnerable)) => {
-                WinshockTestResult {
-                    vulnerable: true,
-                    schannel_detected: true,
-                    inconclusive: false,
-                    details: "Vulnerable to Winshock (MS14-066, CVE-2014-6321) - Server crashes or behaves abnormally with malformed handshake".to_string(),
-                }
-            }
             (SchannelDetectionStatus::Detected, Some(MalformedHandshakeStatus::Handled)) => {
                 WinshockTestResult {
                     vulnerable: false,
@@ -208,23 +199,16 @@ impl WinshockTester {
                         // Empty response - connection closed without error
                         Ok(MalformedHandshakeStatus::Handled)
                     }
-                    Ok(Err(e)) => {
-                        // Connection error - analyze the error type
-                        let error_str = e.to_string();
-                        // Connection reset could indicate vulnerability, but also
-                        // network issues. We should NOT mark ALL errors as vulnerable.
-                        // Mark as NOT vulnerable to avoid false positives.
-                        // Manual verification needed for suspicious connection resets.
-                        if error_str.contains("reset by peer")
-                            || error_str.contains("connection reset")
-                        {
-                            // Winshock causes memory corruption → process crash → TCP RST.
-                            // A connection reset after sending the malformed CKE is the
-                            // primary positive indicator for CVE-2014-6321.
-                            Ok(MalformedHandshakeStatus::Vulnerable)
-                        } else {
-                            Ok(MalformedHandshakeStatus::Inconclusive)
-                        }
+                    Ok(Err(_)) => {
+                        // A TCP reset after a deliberately malformed ClientKeyExchange
+                        // is the NORMAL response of essentially every TLS stack
+                        // (patched Schannel, OpenSSL, BoringSSL, nginx, IIS) and is
+                        // also routinely produced by load balancers, IDS/IPS and rate
+                        // limiters. It is indistinguishable from the Winshock crash
+                        // signature at this layer, so it must NOT be asserted as a
+                        // confirmed RCE — that false-positives every well-behaved
+                        // server. Remote confirmation of CVE-2014-6321 is not feasible.
+                        Ok(MalformedHandshakeStatus::Inconclusive)
                     }
                     Err(_) => Ok(MalformedHandshakeStatus::Inconclusive),
                 }
