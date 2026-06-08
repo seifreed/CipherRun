@@ -418,7 +418,10 @@ mod tests {
         assert_eq!(cert_der[0], 0x30, "certificate must be a SEQUENCE");
         let (outer_content_start, _) = der_len(cert_der, 1);
         let tbs_start = outer_content_start;
-        assert_eq!(cert_der[tbs_start], 0x30, "tbsCertificate must be a SEQUENCE");
+        assert_eq!(
+            cert_der[tbs_start], 0x30,
+            "tbsCertificate must be a SEQUENCE"
+        );
         let (tbs_content_start, tbs_len) = der_len(cert_der, tbs_start + 1);
         cert_der[tbs_start..tbs_content_start + tbs_len].to_vec()
     }
@@ -446,7 +449,8 @@ mod tests {
         let pkey = PKey::from_rsa(rsa).unwrap();
 
         let mut name = X509NameBuilder::new().unwrap();
-        name.append_entry_by_text("CN", "precert.example.com").unwrap();
+        name.append_entry_by_text("CN", "precert.example.com")
+            .unwrap();
         let name = name.build();
 
         let mut builder = X509Builder::new().unwrap();
