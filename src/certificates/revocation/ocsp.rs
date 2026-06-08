@@ -9,6 +9,12 @@ use openssl::x509::store::X509StoreBuilder;
 use tokio::time::timeout;
 use x509_parser::prelude::*;
 
+/// Clock-skew tolerance (seconds) applied when validating an OCSP single
+/// response's `thisUpdate`/`nextUpdate` window. Mirrors the leniency used for
+/// CRL `nextUpdate` checks so a small amount of clock drift between the
+/// responder and this host does not reject otherwise-fresh responses.
+const OCSP_CLOCK_SKEW_SECS: u32 = 300;
+
 impl RevocationChecker {
     /// Extract OCSP responder URL from certificate
     pub(crate) fn extract_ocsp_url(&self, cert: &CertificateInfo) -> Result<Option<String>> {
@@ -269,6 +275,19 @@ impl RevocationChecker {
 
         // Find the status for our certificate
         if let Some(status) = basic_response.find_status(&cert_id) {
+            // Reject stale or not-yet-valid responses. Without this, a signed
+            // GOOD response captured before the certificate was revoked (or one
+            // long past its nextUpdate) could be replayed over the plaintext AIA
+            // fetch and trusted, producing a false-negative revocation verdict.
+            // This mirrors the CRL path, which rejects an expired nextUpdate.
+            if let Err(e) = status.check_validity(OCSP_CLOCK_SKEW_SECS, None) {
+                tracing::warn!(
+                    "OCSP single response is outside its validity window ({}); not trusting status",
+                    e
+                );
+                return Ok(RevocationStatus::Error);
+            }
+
             // Check the certificate status
             match status.status {
                 openssl::ocsp::OcspCertStatus::GOOD => {
