@@ -23,6 +23,21 @@ pub fn insecure_client_config() -> ClientConfig {
         .with_no_client_auth()
 }
 
+/// Like [`insecure_client_config`] but restricted to the given protocol
+/// versions.
+///
+/// Used by client-handshake simulation, which reports the protocol/cipher a
+/// client profile would negotiate independently of certificate trust (trust is
+/// assessed separately by the certificate validator).
+pub fn insecure_client_config_with_versions(
+    versions: &[&'static rustls::SupportedProtocolVersion],
+) -> ClientConfig {
+    ClientConfig::builder_with_protocol_versions(versions)
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(NoCertVerifier))
+        .with_no_client_auth()
+}
+
 /// Server-certificate verifier that accepts every certificate.
 #[derive(Debug)]
 struct NoCertVerifier;

@@ -4,7 +4,7 @@ use crate::Result;
 use crate::data::client_data::{CLIENT_DB, ClientProfile};
 use crate::protocols::Protocol;
 use crate::utils::network::{Target, connect_with_timeout};
-use rustls::{ClientConfig, RootCertStore};
+use rustls::ClientConfig;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 use std::time::Duration;
@@ -305,9 +305,6 @@ impl ClientSimulator {
 
     /// Build rustls ClientConfig based on client profile
     fn build_client_config(&self, client: &ClientProfile) -> Result<ClientConfig> {
-        let mut root_store = RootCertStore::empty();
-        root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-
         // Parse TLS version preference
         let versions = match Self::parse_highest_protocol(client.highest_protocol.as_deref())? {
             Some(Protocol::TLS13) => vec![&rustls::version::TLS13, &rustls::version::TLS12],
@@ -332,11 +329,13 @@ impl ClientSimulator {
             _ => vec![&rustls::version::TLS13, &rustls::version::TLS12], // Default
         };
 
-        let config = ClientConfig::builder_with_protocol_versions(&versions)
-            .with_root_certificates(root_store)
-            .with_no_client_auth();
-
-        Ok(config)
+        // Handshake simulation reports the protocol/cipher a client would
+        // negotiate; it must work on hosts with expired/self-signed/untrusted
+        // certificates too (certificate trust is assessed and reported
+        // separately). A verifying config would instead surface a cert error
+        // for every such host, masking the negotiated handshake — matching the
+        // behaviour of SSL Labs' handshake simulation.
+        Ok(crate::utils::insecure_tls::insecure_client_config_with_versions(&versions))
     }
 
     fn parse_highest_protocol(value: Option<&str>) -> Result<Option<Protocol>> {
