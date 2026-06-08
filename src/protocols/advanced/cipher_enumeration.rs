@@ -4,7 +4,7 @@ use super::{
     ProtocolCipherSupport, TlsTruncationAnalysis, is_operational_tls_error,
 };
 use crate::Result;
-use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode, SslVersion};
+use openssl::ssl::{SslConnector, SslConnectorBuilder, SslMethod, SslVerifyMode, SslVersion};
 use std::sync::Arc;
 use tokio::time::Duration;
 
@@ -51,6 +51,52 @@ const TEST_CIPHERS: &[&str] = &[
     "RC4-SHA",
     "RC4-MD5",
 ];
+
+/// Returns `true` when `cipher` names a TLS 1.3 suite. TLS 1.3 suites must be
+/// configured through `set_ciphersuites`; the legacy `set_cipher_list` API
+/// rejects them outright, so routing them there would always report them as
+/// unsupported.
+fn is_tls13_suite(cipher: &str) -> bool {
+    cipher.starts_with("TLS_")
+}
+
+/// Restrict `builder` to a single cipher and pin the protocol version so the
+/// probe genuinely tests that cipher instead of letting the server fall back to
+/// an unrelated (typically TLS 1.3) suite. Returns `false` when the local
+/// OpenSSL build cannot configure the cipher, which the caller maps to
+/// `NotSupported`.
+fn configure_single_cipher(builder: &mut SslConnectorBuilder, cipher: &str) -> bool {
+    if is_tls13_suite(cipher) {
+        builder
+            .set_min_proto_version(Some(SslVersion::TLS1_3))
+            .is_ok()
+            && builder
+                .set_max_proto_version(Some(SslVersion::TLS1_3))
+                .is_ok()
+            && builder.set_ciphersuites(cipher).is_ok()
+    } else {
+        builder
+            .set_max_proto_version(Some(SslVersion::TLS1_2))
+            .is_ok()
+            && builder.set_cipher_list(cipher).is_ok()
+    }
+}
+
+/// Configure a single cipher for an already-pinned protocol. A TLS 1.3 suite is
+/// only valid under TLS 1.3, and a legacy cipher only under TLS 1.2 and below,
+/// so mismatched cipher/protocol combinations are reported as unsupported
+/// rather than allowed to negotiate an unrelated suite.
+fn configure_cipher_for_protocol(
+    builder: &mut SslConnectorBuilder,
+    cipher: &str,
+    protocol: SslVersion,
+) -> bool {
+    if protocol == SslVersion::TLS1_3 {
+        is_tls13_suite(cipher) && builder.set_ciphersuites(cipher).is_ok()
+    } else {
+        !is_tls13_suite(cipher) && builder.set_cipher_list(cipher).is_ok()
+    }
+}
 
 impl ProtocolAdvancedTester {
     pub async fn test_tls_truncation(&self) -> Result<TlsTruncationAnalysis> {
@@ -278,7 +324,7 @@ impl ProtocolAdvancedTester {
 
         let mut builder = SslConnector::builder(SslMethod::tls())?;
         builder.set_verify(SslVerifyMode::NONE);
-        if builder.set_cipher_list(cipher).is_err() {
+        if !configure_single_cipher(&mut builder, cipher) {
             return Ok(AdvancedCipherProbeOutcome::NotSupported);
         }
         let connector = builder.build();
@@ -359,7 +405,7 @@ impl ProtocolAdvancedTester {
         {
             return Ok(AdvancedCipherProbeOutcome::Inconclusive);
         }
-        if builder.set_cipher_list(cipher).is_err() {
+        if !configure_cipher_for_protocol(&mut builder, cipher, protocol) {
             return Ok(AdvancedCipherProbeOutcome::NotSupported);
         }
 
