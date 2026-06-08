@@ -85,7 +85,7 @@ impl ScanExecutor {
             // Try to dequeue a job FIRST, before acquiring a permit.
             // This avoids holding a permit while no work is available,
             // which would starve real jobs under high load.
-            let job = match self.job_queue.dequeue().await {
+            let mut job = match self.job_queue.dequeue().await {
                 Ok(Some(job)) => job,
                 Ok(None) => {
                     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -102,8 +102,11 @@ impl ScanExecutor {
             let permit = match Arc::clone(&self.semaphore).acquire_owned().await {
                 Ok(p) => p,
                 Err(_) => {
-                    // Semaphore closed — re-enqueue the job so it's not lost
+                    // Semaphore closed — re-enqueue the job so it's not lost.
+                    // dequeue already claimed it as Running, so reset it to
+                    // Queued or a later dequeue would skip it as non-pending.
                     error!("Semaphore closed, cannot execute job {}", job.id);
+                    job.mark_queued();
                     if let Err(e) = self.job_queue.enqueue(job).await {
                         error!("Failed to re-enqueue job: {}", e);
                     }

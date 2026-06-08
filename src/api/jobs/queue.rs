@@ -125,6 +125,14 @@ impl ScanJob {
         self.progress = 0;
     }
 
+    /// Reset to queued, e.g. when a claimed job is returned to the queue
+    /// because it could not be dispatched (executor shutting down).
+    pub fn mark_queued(&mut self) {
+        self.status = ScanStatus::Queued;
+        self.started_at = None;
+        self.progress = 0;
+    }
+
     /// Mark as completed
     pub fn mark_completed(&mut self, results: ScanResults) {
         self.status = ScanStatus::Completed;
@@ -223,11 +231,20 @@ impl JobQueue for InMemoryJobQueue {
     async fn dequeue(&self) -> Result<Option<ScanJob>> {
         let mut queue = self.queue.write().await;
         // Acquire jobs lock once to avoid repeated lock/unlock per iteration
-        let jobs = self.jobs.write().await;
+        let mut jobs = self.jobs.write().await;
 
         while let Some(job) = queue.pop_front() {
             match jobs.get(&job.id).map(|j| j.status) {
                 Some(ScanStatus::Queued) => {
+                    // Claim the job by transitioning it to Running in the same
+                    // lock scope that removed it from the queue. Otherwise the
+                    // job is gone from the queue yet still recorded as Queued
+                    // until the executor marks it started after awaiting a
+                    // concurrency permit, leaving it counted by neither
+                    // queue_length nor active_jobs_count during that window.
+                    if let Some(entry) = jobs.get_mut(&job.id) {
+                        entry.mark_started();
+                    }
                     let current_job = jobs.get(&job.id).cloned().unwrap_or(job);
                     return Ok(Some(current_job));
                 }
@@ -330,6 +347,32 @@ mod tests {
             .unwrap()
             .expect("test assertion should succeed");
         assert_eq!(dequeued.id, job.id);
+        // dequeue claims the job, so it is reported as Running, not Queued.
+        assert_eq!(dequeued.status, ScanStatus::Running);
+    }
+
+    #[tokio::test]
+    async fn test_dequeue_keeps_job_counted_as_active() {
+        let queue = InMemoryJobQueue::new(10);
+        let job = ScanJob::new("example.com:443".to_string(), ScanOptions::default(), None);
+        queue
+            .enqueue(job)
+            .await
+            .expect("test assertion should succeed");
+
+        assert_eq!(queue.queue_length().await.unwrap(), 1);
+        assert_eq!(queue.active_jobs_count().await.unwrap(), 0);
+
+        queue
+            .dequeue()
+            .await
+            .unwrap()
+            .expect("test assertion should succeed");
+
+        // Once claimed, the job leaves the queue and is counted as active,
+        // never falling through both counters.
+        assert_eq!(queue.queue_length().await.unwrap(), 0);
+        assert_eq!(queue.active_jobs_count().await.unwrap(), 1);
     }
 
     #[tokio::test]
