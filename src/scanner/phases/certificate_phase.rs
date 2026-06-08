@@ -122,7 +122,16 @@ impl CertificatePhase {
             ..Default::default()
         };
 
-        let result = openssl.run(&options)?;
+        // OpenSslClient::run shells out to `openssl s_client` via a blocking
+        // std::process::Command; running it directly on the async scan path would
+        // block a tokio worker (and `s_client` has no effective TCP handshake
+        // timeout, so a slow/black-holed host can stall it for minutes). Offload
+        // to a blocking thread, matching the logjam weak-DH probe.
+        let result = tokio::task::spawn_blocking(move || openssl.run(&options))
+            .await
+            .map_err(|e| {
+                crate::TlsError::Other(format!("openssl certificate fetch task failed: {e}"))
+            })??;
         if !result.success {
             let error_output = if result.stderr.trim().is_empty() {
                 result.stdout.trim()
