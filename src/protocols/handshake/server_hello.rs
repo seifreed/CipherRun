@@ -66,6 +66,10 @@ impl ServerHelloParser {
         let mut ocsp_stapling_detected = None;
         let mut heartbeat_enabled = None;
         let mut secure_renegotiation = None;
+        // For TLS 1.3 the negotiated version lives in the supported_versions
+        // extension (0x002b); the legacy `version` field above is pinned to
+        // 0x0303 (TLS 1.2). Track the real negotiated version here.
+        let mut negotiated_version = None;
 
         if offset + 2 <= data.len() {
             let ext_len = u16::from_be_bytes([data[offset], data[offset + 1]]) as usize;
@@ -94,6 +98,12 @@ impl ServerHelloParser {
                         secure_renegotiation = Some(true);
                     }
 
+                    // supported_versions in a ServerHello carries exactly one
+                    // 2-byte selected version (RFC 8446 §4.2.1).
+                    if ext_type == 0x002b && ext_data.len() >= 2 {
+                        negotiated_version = Some(u16::from_be_bytes([ext_data[0], ext_data[1]]));
+                    }
+
                     extensions.push(Extension::new(ext_type, ext_data));
                     offset += ext_data_len;
                 } else {
@@ -113,7 +123,7 @@ impl ServerHelloParser {
         }
 
         Ok(ServerHello {
-            version: Protocol::from(version),
+            version: Protocol::from(negotiated_version.unwrap_or(version)),
             random,
             session_id,
             cipher_suite,
@@ -254,6 +264,27 @@ mod tests {
             ServerHelloParser::parse(&server_hello).expect("test assertion should succeed");
         assert_eq!(parsed.heartbeat_enabled, Some(false));
         assert!(!parsed.has_extension(0x000f));
+    }
+
+    #[test]
+    fn test_server_hello_tls13_version_from_supported_versions_extension() {
+        // Legacy version field is 0x0303 (TLS 1.2), but supported_versions
+        // (0x002b) selects 0x0304 (TLS 1.3). The parsed version must be TLS 1.3.
+        // record_len 0x0032 (50), handshake_len 0x00002e (46), legacy version 0x0303
+        let mut server_hello = vec![
+            0x16, 0x03, 0x03, 0x00, 0x32, 0x02, 0x00, 0x00, 0x2e, 0x03, 0x03,
+        ];
+        server_hello.extend_from_slice(&[0u8; 32]);
+        server_hello.push(0x00); // session_id length
+        server_hello.extend_from_slice(&[0x13, 0x01]); // cipher suite
+        server_hello.push(0x00); // compression
+        // extensions: length 6, supported_versions (0x002b) body 0x0304
+        server_hello.extend_from_slice(&[0x00, 0x06, 0x00, 0x2b, 0x00, 0x02, 0x03, 0x04]);
+
+        let parsed =
+            ServerHelloParser::parse(&server_hello).expect("test assertion should succeed");
+        assert_eq!(parsed.version, Protocol::TLS13);
+        assert!(parsed.has_extension(0x002b));
     }
 
     #[test]
