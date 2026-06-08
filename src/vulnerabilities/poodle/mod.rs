@@ -49,7 +49,7 @@ impl<'a> PoodleTester<'a> {
             (true, Some(true)) => "Vulnerable: SSL 3.0 supported (CVE-2014-3566) AND TLS POODLE detected (CVE-2014-8730)".to_string(),
             (true, _) => "Vulnerable: SSL 3.0 is supported (CVE-2014-3566)".to_string(),
             (false, Some(true)) => "Vulnerable: TLS implementation vulnerable to POODLE (CVE-2014-8730)".to_string(),
-            (false, None) => "SSL 3.0 disabled. TLS POODLE test is inconclusive because active CBC padding manipulation is not implemented".to_string(),
+            (false, None) => "SSL 3.0 disabled. TLS POODLE test inconclusive - no CBC cipher connection could be established to probe for a padding oracle".to_string(),
             (false, Some(false)) => "Not vulnerable: SSL 3.0 disabled and CBC-based TLS POODLE was not observed".to_string(),
         };
 
@@ -135,7 +135,7 @@ impl<'a> PoodleTester<'a> {
                 Some(true) => {
                     "TLS implementation vulnerable to POODLE-style attack".to_string()
                 }
-                None => "TLS POODLE test inconclusive - CBC negotiation succeeded but active padding manipulation is not implemented".to_string(),
+                None => "TLS POODLE test inconclusive - no CBC cipher connection could be established to probe for a padding oracle".to_string(),
                 Some(false) => "TLS implementation not vulnerable to POODLE because CBC-based TLS negotiation was not observed".to_string(),
             },
             timing_data: None,
