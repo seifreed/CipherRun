@@ -148,7 +148,7 @@ impl RetryConfig {
 ///
 /// # async fn example() -> cipherrun::Result<()> {
 /// let config = RetryConfig::default();
-/// let addr: SocketAddr = "192.0.2.1:443".parse()?;
+/// let addr: SocketAddr = "192.0.2.1:443".parse().expect("valid socket address");
 ///
 /// let stream = retry_with_backoff(&config, || async {
 ///     TcpStream::connect(addr).await.map_err(Into::into)
