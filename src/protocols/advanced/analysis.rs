@@ -30,7 +30,7 @@ pub(super) fn analyze_cipher_details(cipher_name: &str) -> CipherDetails {
         "AES-128-CBC".to_string()
     } else if normalized.contains("CHACHA20") || normalized.contains("POLY1305") {
         "ChaCha20-Poly1305".to_string()
-    } else if normalized.contains("3DES") {
+    } else if normalized.contains("3DES") || normalized.contains("DES-CBC3") {
         "3DES".to_string()
     } else if normalized.contains("RC4") {
         "RC4".to_string()
@@ -82,7 +82,7 @@ pub(super) fn classify_cipher_strength(
         return CipherStrength::Weak;
     }
 
-    if cipher.contains("3DES") || cipher.contains("RC4") || !fs {
+    if cipher.contains("3DES") || cipher.contains("DES-CBC3") || cipher.contains("RC4") || !fs {
         return CipherStrength::Medium;
     }
 

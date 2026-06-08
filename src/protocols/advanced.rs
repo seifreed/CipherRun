@@ -230,6 +230,13 @@ mod tests {
     }
 
     #[test]
+    fn test_analyze_cipher_details_openssl_3des_is_labeled() {
+        let cipher = analysis::analyze_cipher_details("DES-CBC3-SHA");
+        assert_eq!(cipher.encryption, "3DES");
+        assert_eq!(cipher.strength, CipherStrength::Medium);
+    }
+
+    #[test]
     fn test_analyze_cipher_details_unknown() {
         let cipher = analysis::analyze_cipher_details("UNKNOWN-CIPHER");
         assert_eq!(cipher.key_exchange, "Unknown");
