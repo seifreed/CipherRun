@@ -81,7 +81,7 @@ impl Rc4Tester {
 
     /// Test if a specific RC4 cipher is supported
     async fn test_cipher(&self, cipher: &str) -> Result<Rc4ProbeStatus> {
-        use openssl::ssl::{SslConnector, SslMethod, SslVersion};
+        use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode, SslVersion};
 
         let addr = self
             .target
@@ -97,6 +97,10 @@ impl Rc4Tester {
                 std_stream.set_nonblocking(false)?;
 
                 let mut builder = SslConnector::builder(SslMethod::tls())?;
+                // Certificate validity is irrelevant to whether the server
+                // supports an RC4 cipher; without this a bad-cert host would
+                // false-negative by failing the handshake at cert validation.
+                builder.set_verify(SslVerifyMode::NONE);
 
                 // Allow older protocols that might support RC4
                 if cipher.starts_with("EXP") {
@@ -128,7 +132,7 @@ impl Rc4Tester {
 
     /// Test if RC4 is preferred (worst case scenario), preserving inconclusive outcomes.
     pub async fn test_rc4_preferred_status(&self) -> Result<Rc4PreferenceStatus> {
-        use openssl::ssl::{SslConnector, SslMethod};
+        use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
 
         let addr = self
             .target
@@ -144,6 +148,9 @@ impl Rc4Tester {
                 std_stream.set_nonblocking(false)?;
 
                 let mut builder = SslConnector::builder(SslMethod::tls())?;
+                // Certificate validity is irrelevant to RC4 cipher support;
+                // without this a bad-cert host would false-negative.
+                builder.set_verify(SslVerifyMode::NONE);
 
                 // Set cipher list with RC4 first, then strong ciphers
                 match builder.set_cipher_list("RC4-SHA:AES256-GCM-SHA384:AES128-GCM-SHA256") {

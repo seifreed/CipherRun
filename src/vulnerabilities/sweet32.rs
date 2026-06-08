@@ -121,7 +121,7 @@ impl Sweet32Tester {
 
     /// Test if a specific cipher is supported
     async fn test_cipher(&self, cipher: &str) -> Result<CipherProbeStatus> {
-        use openssl::ssl::{SslConnector, SslMethod};
+        use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
 
         let addr = self
             .target
@@ -142,6 +142,10 @@ impl Sweet32Tester {
         std_stream.set_nonblocking(false)?;
 
         let mut builder = SslConnector::builder(SslMethod::tls())?;
+        // Certificate validity is irrelevant to whether the server supports a
+        // 64-bit-block (3DES) cipher; a verifying connector would false-negative
+        // on bad-cert hosts by failing the handshake at cert validation.
+        builder.set_verify(SslVerifyMode::NONE);
 
         // Try to set the specific cipher
         match builder.set_cipher_list(cipher) {

@@ -103,7 +103,7 @@ impl WinshockTester {
 
     /// Detect if server is using Microsoft Schannel
     async fn detect_schannel(&self) -> Result<SchannelDetectionStatus> {
-        use openssl::ssl::{SslConnector, SslMethod};
+        use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
 
         let addr = self
             .target
@@ -123,7 +123,12 @@ impl WinshockTester {
         let std_stream = stream.into_std()?;
         std_stream.set_nonblocking(false)?;
 
-        let connector = SslConnector::builder(SslMethod::tls())?.build();
+        let mut builder = SslConnector::builder(SslMethod::tls())?;
+        // Certificate validity is irrelevant to which cipher a Schannel server
+        // negotiates; a verifying connector would fail the handshake at cert
+        // validation on bad-cert hosts and falsely report NotDetected.
+        builder.set_verify(SslVerifyMode::NONE);
+        let connector = builder.build();
 
         match connector.connect(&self.target.hostname, std_stream) {
             Ok(ssl_stream) => {

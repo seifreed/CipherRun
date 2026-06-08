@@ -369,7 +369,6 @@ impl ProtocolTester {
         &self,
         addr: std::net::SocketAddr,
     ) -> Result<ProtocolProbeOutcome> {
-        use rustls::{ClientConfig, RootCertStore};
         use std::sync::Arc;
         use tokio_rustls::TlsConnector;
 
@@ -400,14 +399,14 @@ impl ProtocolTester {
                 Err(_) => return Ok(ProtocolProbeOutcome::Inconclusive),
             }
         } else {
-            let mut root_store = RootCertStore::empty();
-            root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-
-            let config = ClientConfig::builder()
-                .with_root_certificates(root_store)
-                .with_no_client_auth();
-
-            TlsConnector::from(Arc::new(config))
+            // The scanner must detect TLS 1.3 support regardless of certificate
+            // validity (certificate trust is assessed separately). A verifying
+            // config would fail the handshake at cert validation on
+            // self-signed/expired/untrusted hosts and report TLS 1.3 as
+            // unsupported. The negotiated protocol version is checked below.
+            TlsConnector::from(Arc::new(
+                crate::utils::insecure_tls::insecure_client_config(),
+            ))
         };
 
         let sni_host = self.sni_hostname.as_ref().unwrap_or(&self.target.hostname);

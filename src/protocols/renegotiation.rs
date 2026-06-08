@@ -136,7 +136,7 @@ impl<'a> RenegotiationTester<'a> {
     ///
     /// This is implemented in test_insecure_renegotiation() below.
     async fn test_renegotiation_support(&self) -> Result<RenegotiationSupport> {
-        use openssl::ssl::{SslConnector, SslMethod};
+        use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
 
         let addr = self
             .target
@@ -150,7 +150,12 @@ impl<'a> RenegotiationTester<'a> {
                 let std_stream = stream.into_std()?;
                 std_stream.set_nonblocking(false)?;
 
-                let builder = SslConnector::builder(SslMethod::tls())?;
+                let mut builder = SslConnector::builder(SslMethod::tls())?;
+                // Certificate validity is irrelevant to RFC 5746 secure
+                // renegotiation support; a verifying connector would fail the
+                // handshake at cert validation on bad-cert hosts and falsely
+                // report NotSupported.
+                builder.set_verify(SslVerifyMode::NONE);
 
                 let connector = builder.build();
 

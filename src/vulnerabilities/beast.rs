@@ -91,7 +91,7 @@ impl BeastTester {
 
     /// Test for TLS 1.0 with CBC ciphers
     async fn test_tls10_cbc(&self) -> Result<BeastProbeStatus> {
-        use openssl::ssl::{SslConnector, SslMethod, SslVersion};
+        use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode, SslVersion};
 
         let addr = self
             .target
@@ -113,6 +113,10 @@ impl BeastTester {
             crate::utils::network::into_blocking_std_stream(stream, TLS_HANDSHAKE_TIMEOUT)?;
 
         let mut builder = SslConnector::builder(SslMethod::tls())?;
+        // Certificate validity is irrelevant to whether the server accepts a
+        // TLS 1.0 CBC cipher; a verifying connector would false-negative on
+        // bad-cert hosts by failing the handshake at cert validation.
+        builder.set_verify(SslVerifyMode::NONE);
         builder.set_min_proto_version(Some(SslVersion::TLS1))?;
         builder.set_max_proto_version(Some(SslVersion::TLS1))?;
 
@@ -129,7 +133,7 @@ impl BeastTester {
     /// Test for SSL 3.0 with CBC ciphers
     /// Modern OpenSSL versions may not support SSL3, so we handle this gracefully
     async fn test_ssl3_cbc(&self) -> Result<BeastProbeStatus> {
-        use openssl::ssl::{SslConnector, SslMethod, SslVersion};
+        use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode, SslVersion};
 
         let addr = self
             .target
@@ -150,6 +154,9 @@ impl BeastTester {
             crate::utils::network::into_blocking_std_stream(stream, TLS_HANDSHAKE_TIMEOUT)?;
 
         let mut builder = SslConnector::builder(SslMethod::tls())?;
+        // Certificate validity is irrelevant to CBC cipher support over SSL 3.0;
+        // without this a bad-cert host would false-negative.
+        builder.set_verify(SslVerifyMode::NONE);
 
         // Try to set SSL 3.0 - this may fail on modern OpenSSL versions
         // that have SSL 3.0 disabled at compile time

@@ -81,7 +81,7 @@ impl FreakTester {
 
     /// Test if a specific export cipher is supported
     async fn test_cipher(&self, cipher: &str) -> Result<FreakProbeStatus> {
-        use openssl::ssl::{SslConnector, SslMethod, SslVersion};
+        use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode, SslVersion};
 
         let addr = self
             .target
@@ -105,6 +105,10 @@ impl FreakTester {
 
         let result = tokio::task::spawn_blocking(move || -> Result<FreakProbeStatus> {
             let mut builder = SslConnector::builder(SslMethod::tls())?;
+            // Certificate validity is irrelevant to whether the server accepts an
+            // export cipher; a verifying connector would fail the handshake at
+            // cert validation on bad-cert hosts and falsely report not-vulnerable.
+            builder.set_verify(SslVerifyMode::NONE);
 
             // Try to set SSL 3.0 - this may fail on modern OpenSSL versions
             // that have SSL 3.0 disabled at compile time

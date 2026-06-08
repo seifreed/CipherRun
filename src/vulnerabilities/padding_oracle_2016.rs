@@ -171,7 +171,7 @@ impl<'a> PaddingOracle2016Tester<'a> {
 
     /// Check if server supports AES-CBC cipher suites
     async fn check_aes_cbc_support(&self) -> Result<CbcSupportStatus> {
-        use openssl::ssl::{SslConnector, SslMethod, SslVersion};
+        use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode, SslVersion};
 
         let addr = self
             .target
@@ -195,6 +195,11 @@ impl<'a> PaddingOracle2016Tester<'a> {
             crate::utils::network::into_blocking_std_stream(stream, self.connect_timeout)?;
 
         let mut builder = SslConnector::builder(SslMethod::tls())?;
+        // Certificate validity is irrelevant to CBC cipher support; a verifying
+        // connector would surface a "certificate verify failed" handshake error
+        // that the classifier treats as NotSupported, false-negativing bad-cert
+        // hosts.
+        builder.set_verify(SslVerifyMode::NONE);
 
         // Set cipher list to only CBC mode
         builder.set_cipher_list(aes_cbc_ciphers)?;

@@ -125,7 +125,7 @@ impl LogjamTester {
     /// to prevent blocking the async runtime.
     async fn test_weak_dh_params(&self) -> Result<WeakDhStatus> {
         use openssl::pkey::Id;
-        use openssl::ssl::{SslConnector, SslMethod};
+        use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
 
         let addr = self
             .target
@@ -150,6 +150,10 @@ impl LogjamTester {
         // Wrap blocking SSL operations in spawn_blocking
         let result = tokio::task::spawn_blocking(move || -> crate::Result<WeakDhStatus> {
             let mut builder = SslConnector::builder(SslMethod::tls())?;
+            // Certificate validity is irrelevant to the negotiated DH parameter
+            // size; a verifying connector would false-negative (report Strong) on
+            // bad-cert hosts by failing the handshake at cert validation.
+            builder.set_verify(SslVerifyMode::NONE);
 
             // Set DHE ciphers only
             builder.set_cipher_list("DHE:EDH:!aNULL:!eNULL")?;
@@ -217,7 +221,7 @@ impl LogjamTester {
     ///
     /// Performance optimization: Wraps blocking OpenSSL operations in spawn_blocking
     async fn test_cipher(&self, cipher: &str) -> Result<LogjamProbeStatus> {
-        use openssl::ssl::{SslConnector, SslMethod, SslVersion};
+        use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode, SslVersion};
 
         let addr = self
             .target
@@ -243,6 +247,9 @@ impl LogjamTester {
         // Wrap blocking SSL operations in spawn_blocking
         let result = tokio::task::spawn_blocking(move || -> Result<LogjamProbeStatus> {
             let mut builder = SslConnector::builder(SslMethod::tls())?;
+            // Certificate validity is irrelevant to export-DHE cipher support;
+            // without this a bad-cert host would false-negative.
+            builder.set_verify(SslVerifyMode::NONE);
 
             // Allow SSL 3.0 for export ciphers
             if cipher.starts_with("EXP")
