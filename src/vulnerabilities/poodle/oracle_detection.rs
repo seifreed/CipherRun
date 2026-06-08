@@ -31,27 +31,34 @@ pub(super) fn detect_response_oracle(
     let alert_ratio = |responses: &[ServerResponse]| {
         responses.iter().filter(|r| r.alert_type.is_some()).count() as f64 / responses.len() as f64
     };
+
+    // A genuine response oracle (Zombie POODLE / GOLDENDOODLE) shows a CONSISTENT
+    // difference, not a boundary flip caused by network noise (a dropped
+    // connection registers as a missing alert). Require STRONG asymmetry: one
+    // record type almost always alerts while the other almost never does.
+    const STRONG_PRESENT: f64 = 0.8;
+    const STRONG_ABSENT: f64 = 0.2;
     if enough_for_alert_ratio {
-        let majority_has_alerts_a = alert_ratio(responses_a) > 0.5;
-        let majority_has_alerts_b = alert_ratio(responses_b) > 0.5;
-        if majority_has_alerts_a != majority_has_alerts_b {
+        let ratio_a = alert_ratio(responses_a);
+        let ratio_b = alert_ratio(responses_b);
+        if (ratio_a >= STRONG_PRESENT && ratio_b <= STRONG_ABSENT)
+            || (ratio_b >= STRONG_PRESENT && ratio_a <= STRONG_ABSENT)
+        {
             return true;
         }
-    }
 
-    // Check for different alert types using proper categorical comparison
-    let alert_types_a: std::collections::HashSet<u8> =
-        responses_a.iter().filter_map(|r| r.alert_type).collect();
-    let alert_types_b: std::collections::HashSet<u8> =
-        responses_b.iter().filter_map(|r| r.alert_type).collect();
-
-    // If both sets have alert types and they differ consistently, oracle exists
-    if !alert_types_a.is_empty() && !alert_types_b.is_empty() {
-        let dominant_a = find_dominant_alert_type(responses_a);
-        let dominant_b = find_dominant_alert_type(responses_b);
-
-        if let (Some(alert_a), Some(alert_b)) = (dominant_a, dominant_b)
+        // Or both reliably alert, but with a CONSISTENTLY different alert type
+        // (each clearly dominant within its own set). One stray differing alert
+        // from noise must not flip the dominant type.
+        if ratio_a >= STRONG_PRESENT
+            && ratio_b >= STRONG_PRESENT
+            && let (Some((alert_a, frac_a)), Some((alert_b, frac_b))) = (
+                dominant_alert_with_fraction(responses_a),
+                dominant_alert_with_fraction(responses_b),
+            )
             && alert_a != alert_b
+            && frac_a >= STRONG_PRESENT
+            && frac_b >= STRONG_PRESENT
         {
             return true;
         }
@@ -83,25 +90,26 @@ pub(super) fn detect_response_oracle(
     .sqrt();
     let diff = (avg_time_a - avg_time_b).abs();
 
-    // Require difference > 2*stddev + 10ms minimum to account for jitter
-    diff > 2.0 * combined_stddev + 10.0
+    // Timing is only a weak secondary indicator for a *response*-content oracle,
+    // and remote timing is jitter-prone, so demand a very strong signal
+    // (> 3*stddev + 50ms) before it alone declares an oracle. Genuine
+    // Zombie/GOLDENDOODLE oracles are caught above by the alert-content checks.
+    diff > 3.0 * combined_stddev + 50.0
 }
 
-/// Find the most common alert type in responses
-pub(super) fn find_dominant_alert_type(responses: &[ServerResponse]) -> Option<u8> {
+/// Return the most common alert type and the fraction of responses carrying it.
+fn dominant_alert_with_fraction(responses: &[ServerResponse]) -> Option<(u8, f64)> {
     use std::collections::HashMap;
     let mut counts: HashMap<u8, usize> = HashMap::new();
-
     for response in responses {
         if let Some(alert) = response.alert_type {
             *counts.entry(alert).or_insert(0) += 1;
         }
     }
-
     counts
         .into_iter()
         .max_by_key(|&(_, count)| count)
-        .map(|(alert, _)| alert)
+        .map(|(alert, count)| (alert, count as f64 / responses.len() as f64))
 }
 
 #[cfg(test)]

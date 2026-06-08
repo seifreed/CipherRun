@@ -174,26 +174,16 @@ fn test_build_malformed_record_dispatch() {
 
 #[test]
 fn test_detect_response_oracle_alert_difference() {
-    let responses_a = vec![
-        ServerResponse {
-            connection_accepted: true,
-            alert_type: Some(20),
-            response_time_ms: 5.0,
-            shows_differential_behavior: true,
-        },
-        ServerResponse {
-            connection_accepted: true,
-            alert_type: Some(20),
-            response_time_ms: 6.0,
-            shows_differential_behavior: true,
-        },
-    ];
-    let responses_b = vec![ServerResponse {
+    // A genuine oracle: both record types reliably alert, but with a
+    // consistently different alert type across all samples.
+    let alert = |code: u8| ServerResponse {
         connection_accepted: true,
-        alert_type: Some(40),
-        response_time_ms: 5.5,
+        alert_type: Some(code),
+        response_time_ms: 5.0,
         shows_differential_behavior: true,
-    }];
+    };
+    let responses_a = vec![alert(20), alert(20), alert(20)];
+    let responses_b = vec![alert(40), alert(40), alert(40)];
 
     assert!(oracle_detection::detect_response_oracle(
         &responses_a,
@@ -223,23 +213,25 @@ fn test_detect_response_oracle_timing_difference() {
             shows_differential_behavior: false,
         },
     ];
+    // Stricter threshold (>3*stddev + 50ms): use a clearly large, low-variance
+    // timing gap that survives the jitter guard.
     let responses_b = vec![
         ServerResponse {
             connection_accepted: true,
             alert_type: None,
-            response_time_ms: 50.0,
+            response_time_ms: 150.0,
             shows_differential_behavior: false,
         },
         ServerResponse {
             connection_accepted: true,
             alert_type: None,
-            response_time_ms: 52.0,
+            response_time_ms: 152.0,
             shows_differential_behavior: false,
         },
         ServerResponse {
             connection_accepted: true,
             alert_type: None,
-            response_time_ms: 51.0,
+            response_time_ms: 151.0,
             shows_differential_behavior: false,
         },
     ];
