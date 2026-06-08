@@ -414,7 +414,18 @@ impl ProtocolTester {
         let domain = crate::utils::network::server_name_for_hostname(sni_host)?;
 
         match timeout(self.read_timeout, connector.connect(domain, stream)).await {
-            Ok(Ok(_)) => Ok(ProtocolProbeOutcome::Supported),
+            // The connector advertises both TLS 1.3 and TLS 1.2 (rustls default, and the
+            // mTLS connector uses safe defaults too), so a successful handshake may have
+            // negotiated TLS 1.2 on a server that has TLS 1.3 disabled. Confirm the
+            // negotiated version is actually TLS 1.3 before reporting it as supported.
+            Ok(Ok(tls_stream)) => {
+                let negotiated = tls_stream.get_ref().1.protocol_version();
+                if negotiated == Some(rustls::ProtocolVersion::TLSv1_3) {
+                    Ok(ProtocolProbeOutcome::Supported)
+                } else {
+                    Ok(ProtocolProbeOutcome::NotSupported)
+                }
+            }
             Ok(Err(_)) => Ok(ProtocolProbeOutcome::NotSupported),
             Err(_) => Ok(ProtocolProbeOutcome::Inconclusive),
         }
