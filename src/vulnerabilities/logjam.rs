@@ -85,11 +85,15 @@ impl LogjamTester {
             if export_dh {
                 parts.push("Export-grade DH supported".to_string());
             }
-            if let Some(bits) = weak_dh_bits {
-                parts.push(format!(
+            match weak_dh_bits {
+                Some(bits) if bits > 0 => parts.push(format!(
                     "Weak DH parameters ({} bits, below {}-bit minimum)",
                     bits, MIN_SECURE_DH_BITS
-                ));
+                )),
+                Some(_) => parts.push(
+                    "Weak DH parameters (rejected by the TLS library as too small)".to_string(),
+                ),
+                None => {}
             }
             format!("Vulnerable to LOGJAM (CVE-2015-4000): {}", parts.join(", "))
         } else if inconclusive {
@@ -164,6 +168,14 @@ impl LogjamTester {
             // bad-cert hosts by failing the handshake at cert validation.
             builder.set_verify(SslVerifyMode::NONE);
 
+            // A security scanner must be able to *measure* weak DH parameters.
+            // OpenSSL's default security level rejects sub-2048-bit DH groups
+            // during the handshake, so a weak-DH server would fail to connect and
+            // be mis-reported as Strong (the weaker the group, the more likely the
+            // rejection — a backwards false negative). Drop the security level so
+            // the weak parameters are negotiated and measurable via peer_tmp_key().
+            builder.set_security_level(0);
+
             // Set DHE ciphers only
             builder.set_cipher_list("DHE:EDH:!aNULL:!eNULL")?;
 
@@ -184,7 +196,20 @@ impl LogjamTester {
                     }
                     Err(_) => Ok(WeakDhStatus::Strong),
                 },
-                Err(_) => Ok(WeakDhStatus::Strong),
+                Err(e) => {
+                    // OpenSSL enforces a hard minimum DH modulus (e.g. 512-bit
+                    // groups) that even security level 0 will not lower, so the
+                    // handshake fails with "dh key too small". That refusal is
+                    // itself positive evidence of a dangerously weak group —
+                    // report it as weak (exact size unknown, hence bits 0).
+                    // Any other handshake failure means no usable DHE group was
+                    // negotiated, which is not a weak-DH finding.
+                    if e.to_string().contains("dh key too small") {
+                        Ok(WeakDhStatus::Weak { bits: 0 })
+                    } else {
+                        Ok(WeakDhStatus::Strong)
+                    }
+                }
             }
         })
         .await
@@ -259,6 +284,10 @@ impl LogjamTester {
             // Certificate validity is irrelevant to export-DHE cipher support;
             // without this a bad-cert host would false-negative.
             builder.set_verify(SslVerifyMode::NONE);
+            // Negotiate weak DHE groups too (see test_weak_dh_params): the
+            // default security level would otherwise reject them and hide a
+            // weak-DH server's DHE support.
+            builder.set_security_level(0);
 
             // Allow SSL 3.0 for export ciphers
             if cipher.starts_with("EXP")
