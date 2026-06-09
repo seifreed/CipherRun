@@ -156,9 +156,16 @@ impl ScanExecutor {
             }
         }
 
-        // Send progress update
-        self.send_progress(queue.clone(), &mut job, 0, "Starting scan")
-            .await;
+        // Send the initial progress update. If a cancellation raced in during
+        // start-up, the preserving persist reports it and we abort rather than
+        // resurrecting the job.
+        if !self
+            .send_progress(queue.clone(), &mut job, 0, "Starting scan")
+            .await
+        {
+            info!("Job {} was cancelled during start-up, aborting", job.id);
+            return;
+        }
 
         let progress_tx = self.progress_tx.clone();
         let job_for_scan = job.clone();
@@ -226,7 +233,14 @@ impl ScanExecutor {
             }
         };
 
-        // Execute the scan
+        // Resolve the scan outcome and the in-queue job state, but defer
+        // recording completed/failed stats until the authoritative final update
+        // below. A cancellation racing in between the check here and that update
+        // must not leave the stats counting a completion/failure that the queue
+        // records as Cancelled.
+        let mut completed_duration: Option<u64> = None;
+        let mut failed = false;
+
         match scan_result {
             Ok(results) => {
                 info!("Scan job {} completed successfully", job.id);
@@ -257,8 +271,8 @@ impl ScanExecutor {
                     ProgressMessage::completed(&job.id)
                 };
                 let _ = self.progress_tx.send(msg);
-                if !cancelled && let Some(stats) = &self.stats {
-                    stats.write().await.record_completed_scan(duration_ms);
+                if !cancelled {
+                    completed_duration = Some(duration_ms);
                 }
             }
             Err(e) => {
@@ -275,15 +289,11 @@ impl ScanExecutor {
                         );
                     } else {
                         job.mark_failed(error_msg);
-                        if let Some(stats) = &self.stats {
-                            stats.write().await.record_failed_scan();
-                        }
+                        failed = true;
                     }
                 } else {
                     job.mark_failed(error_msg);
-                    if let Some(stats) = &self.stats {
-                        stats.write().await.record_failed_scan();
-                    }
+                    failed = true;
                 }
                 let msg = if cancelled {
                     ProgressMessage::new(&job.id, job.progress, "cancelled")
@@ -294,16 +304,23 @@ impl ScanExecutor {
             }
         }
 
-        // Update job in queue
-        // Use update_job_preserving_cancelled to prevent race condition where
-        // a cancellation request arrives between scan completion and this update.
-        // This ensures we don't overwrite a cancelled status with completed/failed.
+        // Authoritative final update. Use update_job_preserving_cancelled to
+        // prevent the race where a cancellation request arrives between scan
+        // completion and this update. Only record completed/failed stats when
+        // the update actually took (Ok(true)); if a cancellation raced in
+        // (Ok(false)) the job is Cancelled and must not be counted.
         match queue.update_job_preserving_cancelled(&job).await {
             Ok(true) => {
-                // Job was successfully updated
+                if let Some(duration_ms) = completed_duration {
+                    if let Some(stats) = &self.stats {
+                        stats.write().await.record_completed_scan(duration_ms);
+                    }
+                } else if failed && let Some(stats) = &self.stats {
+                    stats.write().await.record_failed_scan();
+                }
             }
             Ok(false) => {
-                // Job was cancelled while we were processing - this is expected
+                // Job was cancelled while we were processing - this is expected.
                 tracing::info!("Job {} was cancelled, preserving cancelled status", job.id);
             }
             Err(e) => {
@@ -354,17 +371,29 @@ impl ScanExecutor {
             .map_err(|error| TlsError::Other(error.to_string()))
     }
 
+    /// Broadcast a progress update and persist it.
+    ///
+    /// Returns `false` if the job has been cancelled (so the caller should stop).
+    /// Persistence uses the cancellation-preserving variant: a plain `update_job`
+    /// here could clobber a cancellation that raced with the start-up sequence
+    /// and resurrect the job back to Running, the exact TOCTOU the surrounding
+    /// `mark_started` write guards against.
     async fn send_progress(
         &self,
         queue: Arc<dyn JobQueue>,
         job: &mut ScanJob,
         progress: u8,
         stage: &str,
-    ) {
+    ) -> bool {
         job.update_progress(progress, stage.to_string());
         let msg = ProgressMessage::new(&job.id, progress, stage);
         let _ = self.progress_tx.send(msg);
-        let _ = queue.update_job(job).await;
+        // A persistence error is not evidence of cancellation; keep going (true),
+        // matching the previous fire-and-forget behaviour.
+        queue
+            .update_job_preserving_cancelled(job)
+            .await
+            .unwrap_or(true)
     }
 
     /// Send webhook notification.
