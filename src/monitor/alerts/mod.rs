@@ -310,8 +310,8 @@ impl AlertManager {
 
     /// Send alert through all channels
     pub async fn send_alert(&self, alert: &Alert) -> Result<()> {
-        // Check for duplicate and record atomically
-        if self.check_and_record_alert(alert).await {
+        // Skip if an identical alert was already delivered within the dedup window.
+        if self.is_duplicate(alert).await {
             tracing::debug!("Alert deduplicated: {}", alert.dedup_key());
             return Ok(());
         }
@@ -341,40 +341,19 @@ impl AlertManager {
         }
 
         if success_count == 0 {
+            // Do NOT record this alert for deduplication: a failed delivery must
+            // not suppress the next attempt, or a transient channel outage would
+            // silently swallow a genuine alert for the entire dedup window.
             crate::tls_bail!("All alert channels failed");
         }
+
+        // Record dispatch only after at least one channel succeeded.
+        self.record_dispatch(alert).await;
 
         Ok(())
     }
 
-    /// Check if alert is a duplicate and record it atomically
-    /// Returns true if the alert was already sent recently (duplicate)
-    async fn check_and_record_alert(&self, alert: &Alert) -> bool {
-        let mut recent = self.recent_alerts.lock().await;
-        let key = alert.dedup_key();
-        let now = Utc::now();
-
-        // Check if duplicate
-        if let Some(last_sent) = recent.get(&key) {
-            let elapsed = now - *last_sent;
-            if elapsed < self.dedup_window {
-                // Already sent recently - don't send again
-                return true;
-            }
-        }
-
-        // Record actual dispatch time for accurate deduplication
-        recent.insert(key, now);
-
-        // Clean old entries
-        let cutoff = now - self.dedup_window;
-        recent.retain(|_, &mut time| time > cutoff);
-
-        false
-    }
-
-    /// Check if alert is a duplicate (for testing)
-    #[cfg(test)]
+    /// Check whether an identical alert was delivered within the dedup window.
     async fn is_duplicate(&self, alert: &Alert) -> bool {
         let recent = self.recent_alerts.lock().await;
         let key = alert.dedup_key();
@@ -387,14 +366,16 @@ impl AlertManager {
         }
     }
 
-    /// Record alert for deduplication (for testing)
-    #[cfg(test)]
-    async fn record_alert(&self, alert: &Alert) {
+    /// Record a successful dispatch for deduplication and prune stale entries.
+    async fn record_dispatch(&self, alert: &Alert) {
         let mut recent = self.recent_alerts.lock().await;
-        recent.insert(alert.dedup_key(), alert.timestamp);
+        let now = Utc::now();
+
+        // Record actual dispatch time for accurate deduplication.
+        recent.insert(alert.dedup_key(), now);
 
         // Clean old entries
-        let cutoff = Utc::now() - self.dedup_window;
+        let cutoff = now - self.dedup_window;
         recent.retain(|_, &mut time| time > cutoff);
     }
 
@@ -479,7 +460,7 @@ mod tests {
         assert!(!manager.is_duplicate(&alert).await);
 
         // Record it
-        manager.record_alert(&alert).await;
+        manager.record_dispatch(&alert).await;
 
         // Same alert should now be duplicate
         assert!(manager.is_duplicate(&alert).await);
