@@ -16,6 +16,36 @@ impl ScanRepositoryImpl {
     pub fn new(pool: DatabasePool) -> Self {
         Self { pool }
     }
+
+    /// Delete a single scan and all its child rows.
+    ///
+    /// All child tables (protocols, cipher_suites, scan_certificates, ratings,
+    /// vulnerabilities) declare `ON DELETE CASCADE` on `scans(scan_id)`, so this
+    /// removes the whole scan atomically. Used to roll back a partially-written
+    /// scan when a child insert fails.
+    pub async fn delete_scan(&self, scan_id: i64) -> crate::Result<()> {
+        match &self.pool {
+            DatabasePool::Postgres(pool) => {
+                sqlx::query("DELETE FROM scans WHERE scan_id = $1")
+                    .bind(scan_id)
+                    .execute(pool)
+                    .await
+                    .map_err(|e| {
+                        crate::TlsError::DatabaseError(format!("Failed to delete scan: {}", e))
+                    })?;
+            }
+            DatabasePool::Sqlite(pool) => {
+                sqlx::query("DELETE FROM scans WHERE scan_id = ?")
+                    .bind(scan_id)
+                    .execute(pool)
+                    .await
+                    .map_err(|e| {
+                        crate::TlsError::DatabaseError(format!("Failed to delete scan: {}", e))
+                    })?;
+            }
+        }
+        Ok(())
+    }
 }
 
 #[async_trait]
