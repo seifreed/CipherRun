@@ -59,11 +59,12 @@ pub fn generate_csv(results: &ScanResults) -> Result<String> {
 
     // Protocols
     output.push_str("=== PROTOCOLS ===\n");
-    output.push_str("Protocol,Supported,Deprecated\n");
+    output.push_str("Protocol,Status,Supported,Deprecated\n");
     for protocol in &results.protocols {
         output.push_str(&format!(
-            "{},{},{}\n",
+            "{},{},{},{}\n",
             csv_cell(&format!("{}", protocol.protocol)),
+            csv_cell(protocol.status_label()),
             protocol.supported,
             protocol.protocol.is_deprecated()
         ));
@@ -329,6 +330,32 @@ mod tests {
 
         let csv = generate_csv(&results).expect("test assertion should succeed");
         assert!(csv.contains("=== PROTOCOLS ==="));
+    }
+
+    #[test]
+    fn test_csv_protocol_inconclusive_status_distinct_from_not_supported() {
+        let results = ScanResults {
+            target: "example.com:443".to_string(),
+            protocols: vec![ProtocolTestResult {
+                protocol: Protocol::TLS10,
+                supported: false,
+                inconclusive: true,
+                preferred: false,
+                ciphers_count: 0,
+                handshake_time_ms: None,
+                heartbeat_enabled: None,
+                session_resumption_caching: None,
+                session_resumption_tickets: None,
+                secure_renegotiation: None,
+            }],
+            ..Default::default()
+        };
+
+        let csv = generate_csv(&results).expect("test assertion should succeed");
+        assert!(csv.contains("Protocol,Status,Supported,Deprecated"));
+        // The three-state status must distinguish inconclusive from a definitive
+        // not-supported, while the boolean Supported column stays false.
+        assert!(csv.contains("TLS 1.0,Inconclusive,false,true"));
     }
 
     #[test]

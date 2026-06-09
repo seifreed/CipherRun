@@ -77,7 +77,7 @@ const HTML_TEMPLATE: &str = r#"<!DOCTYPE html>
                 {{#each protocols}}
                     <tr>
                         <td>{{protocol}}</td>
-                        <td>{{#if supported}}<span class="status-success">Supported</span>{{else}}<span class="status-fail">Not Supported</span>{{/if}}</td>
+                        <td>{{#if supported}}<span class="status-success">Supported</span>{{else}}{{#if inconclusive}}<span class="status-warn">Inconclusive</span>{{else}}<span class="status-fail">Not Supported</span>{{/if}}{{/if}}</td>
                         <td>{{{secure_renegotiation_html}}}</td>
                         <td>{{{session_resumption_caching_html}}}</td>
                         <td>{{{session_resumption_tickets_html}}}</td>
@@ -154,6 +154,7 @@ pub fn generate_html_report(results: &ScanResults) -> Result<String> {
         "protocols": results.protocols.iter().map(|p| json!({
             "protocol": format!("{}", p.protocol),
             "supported": p.supported,
+            "inconclusive": p.inconclusive,
             "secure_renegotiation_html": render_optional_protocol_status(
                 p.supported,
                 p.secure_renegotiation,
@@ -293,6 +294,33 @@ mod tests {
 
         let html = generate_html_report(&results).expect("test assertion should succeed");
         assert!(html.contains("Inconclusive"));
+    }
+
+    #[test]
+    fn test_html_inconclusive_protocol_not_rendered_as_not_supported() {
+        let results = ScanResults {
+            target: "example.com:443".to_string(),
+            protocols: vec![crate::protocols::ProtocolTestResult {
+                protocol: crate::protocols::Protocol::TLS10,
+                supported: false,
+                inconclusive: true,
+                preferred: false,
+                ciphers_count: 0,
+                handshake_time_ms: None,
+                heartbeat_enabled: None,
+                session_resumption_caching: None,
+                session_resumption_tickets: None,
+                secure_renegotiation: None,
+            }],
+            ..Default::default()
+        };
+
+        let html = generate_html_report(&results).expect("test assertion should succeed");
+        assert!(html.contains("Inconclusive"));
+        assert!(
+            !html.contains("Not Supported"),
+            "an inconclusive protocol must not be rendered as a definitive Not Supported"
+        );
     }
 
     #[test]

@@ -95,8 +95,16 @@ fn write_protocols_block(xml: &mut String, protocols: &[crate::protocols::Protoc
             escape_xml(&protocol.protocol.to_string())
         ));
         xml.push_str(&format!(
+            "      <status>{}</status>\n",
+            escape_xml(protocol.status_label())
+        ));
+        xml.push_str(&format!(
             "      <supported>{}</supported>\n",
             protocol.supported
+        ));
+        xml.push_str(&format!(
+            "      <inconclusive>{}</inconclusive>\n",
+            protocol.inconclusive
         ));
         write_optional_bool_field(xml, "secure_renegotiation", protocol.secure_renegotiation);
         write_optional_bool_field(
@@ -225,6 +233,32 @@ mod tests {
         assert!(xml.contains("<cve>CVE-2014-0160</cve>"));
         assert!(xml.contains("<status>Not Vulnerable</status>"));
         assert!(xml.contains("<inconclusive>false</inconclusive>"));
+    }
+
+    #[test]
+    fn test_xml_protocol_inconclusive_emits_status_and_flag() {
+        let results = ScanResults {
+            target: "example.com:443".to_string(),
+            scan_time_ms: 1,
+            protocols: vec![ProtocolTestResult {
+                protocol: Protocol::TLS10,
+                supported: false,
+                inconclusive: true,
+                preferred: false,
+                ciphers_count: 0,
+                handshake_time_ms: None,
+                heartbeat_enabled: None,
+                session_resumption_caching: None,
+                session_resumption_tickets: None,
+                secure_renegotiation: None,
+            }],
+            ..Default::default()
+        };
+
+        let xml = generate_xml_report(&results).expect("test assertion should succeed");
+        assert!(xml.contains("<status>Inconclusive</status>"));
+        assert!(xml.contains("<inconclusive>true</inconclusive>"));
+        assert!(xml.contains("<supported>false</supported>"));
     }
 
     #[test]

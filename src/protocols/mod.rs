@@ -147,6 +147,23 @@ pub struct ProtocolTestResult {
     pub secure_renegotiation: Option<bool>,
 }
 
+impl ProtocolTestResult {
+    /// Human-readable three-state support label.
+    ///
+    /// Returns `"Supported"`, `"Inconclusive"`, or `"Not supported"`, preserving the
+    /// distinction between a probe that classified the protocol and one that could not
+    /// (so an inconclusive result is never rendered as a definitive "Not supported").
+    pub fn status_label(&self) -> &'static str {
+        if self.supported {
+            "Supported"
+        } else if self.inconclusive {
+            "Inconclusive"
+        } else {
+            "Not supported"
+        }
+    }
+}
+
 /// TLS extension
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Extension {
