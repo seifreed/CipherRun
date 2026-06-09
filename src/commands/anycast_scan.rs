@@ -32,7 +32,7 @@ impl Command for AnycastScanCommand {
             message: "--scan-all-ips requires a target".to_string(),
         })?;
 
-        let target = Target::parse(target_input).await?;
+        let target = Target::parse_with_port_override(target_input, self.args.port).await?;
 
         let scanner = AnycastScanner::new(target.hostname.clone(), target.port, self.args.clone());
         let results = scanner.scan_all_ips().await?;
