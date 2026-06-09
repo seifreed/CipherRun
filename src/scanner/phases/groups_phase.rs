@@ -60,11 +60,15 @@ impl ScanPhase for GroupsPhase {
 
     fn should_run(&self, args: &ScanRequest) -> bool {
         // Run if:
-        // - Explicit group enumeration requested (--show-groups), OR a full scan
-        //   (PqcReadinessPhase runs under --full and consumes the group data to
-        //   score key-exchange PQC readiness; without it the score is deflated)
+        // - Explicit group enumeration requested (--show-groups), OR a full scan,
+        //   OR PQC readiness requested (--pq-readiness): PqcReadinessPhase consumes
+        //   the group data to score key-exchange PQC readiness, and it runs whenever
+        //   either --full or --pq-readiness is set. Without the group data the score
+        //   is deflated (no +30/+20 group bonus) and a server that does offer a
+        //   PQC-safe group is falsely flagged as having HNDL risk.
         // - AND not explicitly disabled (--no-groups)
-        (args.scan.ciphers.show_groups || args.scan.scope.full) && !args.scan.ciphers.no_groups
+        (args.scan.ciphers.show_groups || args.scan.scope.full || args.scan.ciphers.pqc_readiness)
+            && !args.scan.ciphers.no_groups
     }
 
     async fn execute(&self, context: &mut ScanContext) -> Result<()> {
@@ -121,6 +125,18 @@ mod tests {
         // Test with --full but --no-groups (explicit opt-out wins)
         let mut args = ScanRequest::default();
         args.scan.scope.full = true;
+        args.scan.ciphers.no_groups = true;
+        assert!(!phase.should_run(&args));
+
+        // Test with --pq-readiness alone: PqcReadinessPhase consumes the group
+        // data, so the groups phase must run to avoid a deflated PQC score.
+        let mut args = ScanRequest::default();
+        args.scan.ciphers.pqc_readiness = true;
+        assert!(phase.should_run(&args));
+
+        // Test with --pq-readiness but --no-groups (explicit opt-out wins)
+        let mut args = ScanRequest::default();
+        args.scan.ciphers.pqc_readiness = true;
         args.scan.ciphers.no_groups = true;
         assert!(!phase.should_run(&args));
     }
