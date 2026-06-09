@@ -51,7 +51,7 @@ rustls = { version = "0.23.39", features = ["ring"] }
 rustls-pki-types = "1.10"
 tokio-rustls = { version = "0.26", features = ["early-data"] }
 webpki-roots = "1.0.7"
-openssl = { version = "0.10.78", features = ["vendored"] }
+openssl = { version = "0.10.80", features = ["vendored"] }
 
 # Networking
 hickory-resolver = "0.26"
