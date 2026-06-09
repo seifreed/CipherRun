@@ -296,10 +296,17 @@ impl MultiIpScanReport {
                 }
             }
             InconsistencyDetails::CipherSuites { differences } => {
+                // `differences` is keyed by IP, so its len is the backend count,
+                // not the number of distinct configs. Count distinct cipher sets
+                // (each value is sorted at insertion, so set-equality dedups).
+                let unique_configs = differences
+                    .values()
+                    .collect::<std::collections::HashSet<_>>()
+                    .len();
                 writeln!(
                     f,
                     "  {} unique cipher configurations detected",
-                    differences.len()
+                    unique_configs
                 )?;
             }
             InconsistencyDetails::SessionResumption {
