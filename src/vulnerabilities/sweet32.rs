@@ -1,24 +1,45 @@
 // Sweet32 Vulnerability Test
-// CVE-2016-2183 (3DES), CVE-2016-6329 (Blowfish)
+// CVE-2016-2183 (3DES in TLS)
 //
-// Sweet32 is a birthday attack against 64-bit block ciphers like 3DES and Blowfish.
-// After 2^32 blocks, collisions become likely, allowing attackers to recover plaintext.
+// Sweet32 is a birthday attack against 64-bit block ciphers. After ~2^32 blocks
+// under one key, collisions become likely, allowing plaintext recovery. In TLS
+// the affected primitive is 3DES (DES-EDE-CBC). Blowfish is not standardized as
+// a TLS cipher suite — the Blowfish Sweet32 variant (CVE-2016-6329) targets
+// protocols like OpenVPN, not TLS — so it is not probed here.
 
+use super::cipher_probe::{CipherProbeStatus, probe_cipher_suite};
 use crate::Result;
+use crate::protocols::Protocol;
 use crate::utils::network::Target;
-use std::time::Duration;
 
 /// Sweet32 vulnerability tester
 pub struct Sweet32Tester {
     target: Target,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CipherProbeStatus {
-    Supported,
-    NotSupported,
-    Inconclusive,
-}
+/// 3DES (64-bit block) cipher suites (IANA wire IDs) paired with display names.
+/// Probed by cipher-suite ID over a raw ClientHello because the vendored OpenSSL
+/// build is compiled without 3DES, so `set_cipher_list` cannot offer these names
+/// — an OpenSSL probe would always report them unsupported regardless of the
+/// server (a false negative for Sweet32).
+const SWEET32_3DES_CIPHER_SUITES: &[(u16, &str)] = &[
+    (0x000A, "TLS_RSA_WITH_3DES_EDE_CBC_SHA"),
+    (0x0016, "TLS_DHE_RSA_WITH_3DES_EDE_CBC_SHA"),
+    (0x0013, "TLS_DHE_DSS_WITH_3DES_EDE_CBC_SHA"),
+    (0x001B, "TLS_DH_anon_WITH_3DES_EDE_CBC_SHA"),
+    (0xC012, "TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA"),
+    (0xC008, "TLS_ECDHE_ECDSA_WITH_3DES_EDE_CBC_SHA"),
+    (0xC00D, "TLS_ECDH_RSA_WITH_3DES_EDE_CBC_SHA"),
+    (0xC003, "TLS_ECDH_ECDSA_WITH_3DES_EDE_CBC_SHA"),
+    (0xC017, "TLS_ECDH_anon_WITH_3DES_EDE_CBC_SHA"),
+    (0x008B, "TLS_PSK_WITH_3DES_EDE_CBC_SHA"),
+    (0x001F, "TLS_KRB5_WITH_3DES_EDE_CBC_SHA"),
+    (0x0023, "TLS_KRB5_WITH_3DES_EDE_CBC_MD5"),
+];
+
+/// Protocol versions probed for 3DES support. 3DES suites are offered from
+/// SSL 3.0 through TLS 1.2 (TLS 1.3 dropped them entirely).
+const SWEET32_PROBE_PROTOCOLS: &[Protocol] = &[Protocol::TLS12, Protocol::TLS10];
 
 impl Sweet32Tester {
     pub fn new(target: Target) -> Self {
@@ -28,132 +49,47 @@ impl Sweet32Tester {
     /// Test for Sweet32 vulnerability
     pub async fn test(&self) -> Result<Sweet32TestResult> {
         let (des3_ciphers, des3_inconclusive) = self.test_3des_ciphers().await?;
-        let (blowfish_ciphers, blowfish_inconclusive) = self.test_blowfish_ciphers().await?;
 
-        let vulnerable = !des3_ciphers.is_empty() || !blowfish_ciphers.is_empty();
-        let inconclusive = !vulnerable && (des3_inconclusive || blowfish_inconclusive);
+        let vulnerable = !des3_ciphers.is_empty();
+        let inconclusive = !vulnerable && des3_inconclusive;
 
         let details = if vulnerable {
-            let mut parts = Vec::new();
-            if !des3_ciphers.is_empty() {
-                parts.push(format!("3DES ciphers supported: {}", des3_ciphers.len()));
-            }
-            if !blowfish_ciphers.is_empty() {
-                parts.push(format!(
-                    "Blowfish ciphers supported: {}",
-                    blowfish_ciphers.len()
-                ));
-            }
-            let cve = match (des3_ciphers.is_empty(), blowfish_ciphers.is_empty()) {
-                (false, false) => "CVE-2016-2183, CVE-2016-6329",
-                (false, true) => "CVE-2016-2183",
-                (true, false) => "CVE-2016-6329",
-                (true, true) => "CVE-2016-2183, CVE-2016-6329",
-            };
-            format!("Vulnerable to Sweet32 ({}): {}", cve, parts.join(", "))
+            format!(
+                "Vulnerable to Sweet32 (CVE-2016-2183): {} 3DES cipher(s) supported: {}",
+                des3_ciphers.len(),
+                des3_ciphers.join(", ")
+            )
         } else if inconclusive {
-            "SWEET32 test inconclusive - unable to determine 64-bit block cipher support"
-                .to_string()
+            "SWEET32 test inconclusive - unable to determine 3DES cipher support".to_string()
         } else {
-            "Not vulnerable - No 64-bit block ciphers (3DES, Blowfish) supported".to_string()
+            "Not vulnerable - No 3DES (64-bit block) ciphers supported".to_string()
         };
 
         Ok(Sweet32TestResult {
             vulnerable,
             inconclusive,
             des3_ciphers,
-            blowfish_ciphers,
             details,
         })
     }
 
-    /// Test for 3DES cipher support
+    /// Test for 3DES cipher support.
+    ///
+    /// Returns `(supported_names, inconclusive)`. Each suite is probed by its
+    /// wire cipher-suite ID; a ServerHello means the server offers 3DES.
     async fn test_3des_ciphers(&self) -> Result<(Vec<String>, bool)> {
         let mut supported = Vec::new();
         let mut inconclusive = false;
-        let des3_ciphers = vec![
-            "DES-CBC3-SHA",
-            "DES-CBC3-MD5",
-            "EDH-RSA-DES-CBC3-SHA",
-            "EDH-DSS-DES-CBC3-SHA",
-            "ECDHE-RSA-DES-CBC3-SHA",
-            "ECDHE-ECDSA-DES-CBC3-SHA",
-            "PSK-3DES-EDE-CBC-SHA",
-            "KRB5-DES-CBC3-SHA",
-            "KRB5-DES-CBC3-MD5",
-        ];
 
-        for cipher in des3_ciphers {
-            match self.test_cipher(cipher).await? {
-                CipherProbeStatus::Supported => supported.push(cipher.to_string()),
+        for (hexcode, name) in SWEET32_3DES_CIPHER_SUITES {
+            match probe_cipher_suite(&self.target, *hexcode, SWEET32_PROBE_PROTOCOLS).await {
+                CipherProbeStatus::Supported => supported.push((*name).to_string()),
                 CipherProbeStatus::NotSupported => {}
                 CipherProbeStatus::Inconclusive => inconclusive = true,
             }
         }
 
         Ok((supported, inconclusive))
-    }
-
-    /// Test for Blowfish cipher support
-    async fn test_blowfish_ciphers(&self) -> Result<(Vec<String>, bool)> {
-        let mut supported = Vec::new();
-        let mut inconclusive = false;
-        // These must be TLS cipher-suite names accepted by SSL_CTX_set_cipher_list,
-        // not bare symmetric-algorithm names (e.g. "BF-CBC"), which set_cipher_list
-        // rejects — that would silently make every Blowfish probe a no-op and
-        // false-negative Sweet32 (CVE-2016-6329) on servers that offer Blowfish.
-        let blowfish_ciphers = vec!["EDH-RSA-BF-CBC-SHA", "EDH-DSS-BF-CBC-SHA"];
-
-        for cipher in blowfish_ciphers {
-            match self.test_cipher(cipher).await? {
-                CipherProbeStatus::Supported => supported.push(cipher.to_string()),
-                CipherProbeStatus::NotSupported => {}
-                CipherProbeStatus::Inconclusive => inconclusive = true,
-            }
-        }
-
-        Ok((supported, inconclusive))
-    }
-
-    /// Test if a specific cipher is supported
-    async fn test_cipher(&self, cipher: &str) -> Result<CipherProbeStatus> {
-        use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
-
-        let addr = self
-            .target
-            .socket_addrs()
-            .first()
-            .copied()
-            .ok_or(crate::TlsError::NoSocketAddresses)?;
-
-        let stream =
-            match crate::utils::network::connect_with_timeout(addr, Duration::from_secs(3), None)
-                .await
-            {
-                Ok(s) => s,
-                Err(_) => return Ok(CipherProbeStatus::Inconclusive),
-            };
-
-        let std_stream = stream.into_std()?;
-        std_stream.set_nonblocking(false)?;
-
-        let mut builder = SslConnector::builder(SslMethod::tls())?;
-        // Certificate validity is irrelevant to whether the server supports a
-        // 64-bit-block (3DES) cipher; a verifying connector would false-negative
-        // on bad-cert hosts by failing the handshake at cert validation.
-        builder.set_verify(SslVerifyMode::NONE);
-
-        // Try to set the specific cipher
-        match builder.set_cipher_list(cipher) {
-            Ok(_) => {
-                let connector = builder.build();
-                match connector.connect(&self.target.hostname, std_stream) {
-                    Ok(_) => Ok(CipherProbeStatus::Supported),
-                    Err(_) => Ok(CipherProbeStatus::NotSupported),
-                }
-            }
-            Err(_) => Ok(CipherProbeStatus::NotSupported),
-        }
     }
 }
 
@@ -163,7 +99,6 @@ pub struct Sweet32TestResult {
     pub vulnerable: bool,
     pub inconclusive: bool,
     pub des3_ciphers: Vec<String>,
-    pub blowfish_ciphers: Vec<String>,
     pub details: String,
 }
 
@@ -178,12 +113,10 @@ mod tests {
             vulnerable: false,
             inconclusive: false,
             des3_ciphers: vec![],
-            blowfish_ciphers: vec![],
             details: "Not vulnerable".to_string(),
         };
         assert!(!result.vulnerable);
         assert!(result.des3_ciphers.is_empty());
-        assert!(result.blowfish_ciphers.is_empty());
     }
 
     #[test]
@@ -191,8 +124,7 @@ mod tests {
         let result = Sweet32TestResult {
             vulnerable: true,
             inconclusive: false,
-            des3_ciphers: vec!["DES-CBC3-SHA".to_string()],
-            blowfish_ciphers: vec![],
+            des3_ciphers: vec!["TLS_RSA_WITH_3DES_EDE_CBC_SHA".to_string()],
             details: "Vulnerable".to_string(),
         };
         assert!(result.vulnerable);
@@ -217,7 +149,6 @@ mod tests {
         assert!(!result.vulnerable);
         assert!(result.inconclusive);
         assert!(result.des3_ciphers.is_empty());
-        assert!(result.blowfish_ciphers.is_empty());
         assert!(
             result.details.to_ascii_lowercase().contains("inconclusive"),
             "inactive target must not be reported as a clean SWEET32 pass: {}",
@@ -230,22 +161,9 @@ mod tests {
         let result = Sweet32TestResult {
             vulnerable: true,
             inconclusive: false,
-            des3_ciphers: vec!["DES-CBC3-SHA".to_string()],
-            blowfish_ciphers: vec![],
-            details: "DES-CBC3-SHA supported".to_string(),
+            des3_ciphers: vec!["TLS_RSA_WITH_3DES_EDE_CBC_SHA".to_string()],
+            details: "TLS_RSA_WITH_3DES_EDE_CBC_SHA supported".to_string(),
         };
-        assert!(result.details.contains("DES-CBC3-SHA"));
-    }
-
-    #[test]
-    fn test_sweet32_result_details_contains_blowfish() {
-        let result = Sweet32TestResult {
-            vulnerable: true,
-            inconclusive: false,
-            des3_ciphers: vec![],
-            blowfish_ciphers: vec!["BF-CBC-SHA".to_string()],
-            details: "Blowfish cipher supported: BF-CBC-SHA".to_string(),
-        };
-        assert!(result.details.contains("Blowfish"));
+        assert!(result.details.contains("3DES_EDE"));
     }
 }
