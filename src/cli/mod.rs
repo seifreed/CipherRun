@@ -255,7 +255,7 @@ impl Args {
             && (self.network.parallel || self.network.max_parallel != DEFAULT_MAX_PARALLEL)
         {
             crate::tls_bail!(
-                "--parallel and --max-parallel are only supported with --file or --mx"
+                "--parallel and --max-parallel are only supported with --file, --mx, --asn, or --cidr"
             );
         }
 

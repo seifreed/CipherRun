@@ -97,12 +97,17 @@ impl CommandRouter {
         }
 
         // Priority 5: Database-only operations (without scanning)
-        // Check if database operations are requested WITHOUT a target
+        // Check if database operations are requested WITHOUT a scan source. All
+        // scan sources must be excluded here (target, --file, --mx, --asn,
+        // --cidr); otherwise a database flag would shadow the scan source and
+        // silently drop the scan.
         if (args.database.init
             || args.database.cleanup_days.is_some()
             || args.database.history.is_some())
             && args.target.is_none()
             && args.input_file.is_none()
+            && args.asn.is_none()
+            && args.cidr.is_none()
             && args.mx_domain.is_none()
         {
             return Ok(Box::new(DatabaseCommand::new(args)));
@@ -369,6 +374,36 @@ mod tests {
             ..Default::default()
         };
         assert!(CommandRouter::validate_routing(&args).is_err());
+    }
+
+    #[test]
+    fn test_route_database_flag_with_cidr_still_scans() {
+        // A database action flag must not shadow a --cidr/--asn scan source:
+        // the scan still has to run (DatabaseCommand would silently drop it).
+        let args = Args {
+            cidr: Some("192.0.2.0/30".to_string()),
+            database: DatabaseArgs {
+                init: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let cmd = CommandRouter::route(args).expect("test assertion should succeed");
+        assert_eq!(cmd.name(), "MassScanCommand");
+    }
+
+    #[test]
+    fn test_route_database_flag_with_asn_still_scans() {
+        let args = Args {
+            asn: Some("AS13335".to_string()),
+            database: DatabaseArgs {
+                init: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let cmd = CommandRouter::route(args).expect("test assertion should succeed");
+        assert_eq!(cmd.name(), "MassScanCommand");
     }
 
     #[test]
