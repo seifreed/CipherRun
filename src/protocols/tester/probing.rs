@@ -363,7 +363,7 @@ impl ProtocolTester {
             Err(_) => return Ok(ProtocolProbeOutcome::Inconclusive),
         };
 
-        let response = match timeout(self.read_timeout, async {
+        match timeout(self.read_timeout, async {
             stream.write_all(&client_hello).await?;
             let mut resp = vec![0u8; BUFFER_SIZE_MAX_TLS_RECORD];
             let n = stream.read(&mut resp).await?;
@@ -372,11 +372,20 @@ impl ProtocolTester {
         })
         .await
         {
-            Ok(Ok(resp)) if !resp.is_empty() => resp,
-            _ => return Ok(ProtocolProbeOutcome::Inconclusive),
-        };
-
-        Ok(classify_legacy_probe_response(&response, protocol))
+            // Server answered: classify the ServerHello/alert by wire bytes.
+            Ok(Ok(resp)) if !resp.is_empty() => Ok(classify_legacy_probe_response(&resp, protocol)),
+            // TCP connected and the ClientHello was sent, but the server closed
+            // (clean EOF) or reset the connection without any TLS response.
+            // Accepting the connection and then refusing the handshake for a
+            // specific version is how many stacks reject an unsupported version,
+            // so this is NotSupported — and a server that *did* support the
+            // version would answer with a ServerHello, so a close/reset can
+            // never mask real support.
+            Ok(Ok(_)) => Ok(ProtocolProbeOutcome::NotSupported),
+            Ok(Err(ref e)) if is_handshake_refusal(e) => Ok(ProtocolProbeOutcome::NotSupported),
+            // Write failure or read timeout: genuinely ambiguous transport state.
+            _ => Ok(ProtocolProbeOutcome::Inconclusive),
+        }
     }
 
     pub(super) async fn test_tls12_with_openssl_on_ip(
@@ -509,6 +518,19 @@ impl ProtocolTester {
     }
 }
 
+/// Whether an I/O error while exchanging the ClientHello means the server
+/// actively refused the handshake (reset/aborted the connection) rather than a
+/// local or ambiguous transport failure. A refusal on a successfully-connected
+/// socket is a version rejection (`NotSupported`); everything else stays
+/// `Inconclusive`.
+fn is_handshake_refusal(error: &std::io::Error) -> bool {
+    use std::io::ErrorKind;
+    matches!(
+        error.kind(),
+        ErrorKind::ConnectionReset | ErrorKind::ConnectionAborted | ErrorKind::BrokenPipe
+    )
+}
+
 /// Classify a raw legacy-protocol ClientHello response.
 ///
 /// `Supported` only when the server returns a ServerHello whose negotiated
@@ -591,5 +613,21 @@ mod legacy_probe_tests {
             classify_legacy_probe_response(&[], Protocol::TLS10),
             ProtocolProbeOutcome::Inconclusive
         );
+    }
+
+    #[test]
+    fn test_connection_reset_is_handshake_refusal() {
+        use std::io::{Error, ErrorKind};
+        assert!(is_handshake_refusal(&Error::from(ErrorKind::ConnectionReset)));
+        assert!(is_handshake_refusal(&Error::from(ErrorKind::ConnectionAborted)));
+        assert!(is_handshake_refusal(&Error::from(ErrorKind::BrokenPipe)));
+    }
+
+    #[test]
+    fn test_timeout_error_is_not_handshake_refusal() {
+        use std::io::{Error, ErrorKind};
+        // A read timeout / would-block is ambiguous, not a definitive refusal.
+        assert!(!is_handshake_refusal(&Error::from(ErrorKind::TimedOut)));
+        assert!(!is_handshake_refusal(&Error::from(ErrorKind::WouldBlock)));
     }
 }
