@@ -265,8 +265,10 @@ impl CertificateValidator {
         let key_strength_ok = self.check_key_strength(leaf, &mut issues);
         valid &= key_strength_ok;
 
-        // 4. Check signature algorithm
+        // 4. Check signature algorithm (leaf + intermediates; self-signed root
+        //    is skipped since its signature is not verified during path building)
         self.check_signature_algorithm(leaf, &mut issues);
+        self.check_chain_signature_algorithms(chain, &mut issues);
         let signature_valid = !issues
             .iter()
             .any(|i| matches!(i.issue_type, IssueType::WeakSignature));
