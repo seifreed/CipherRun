@@ -214,6 +214,36 @@ fn specific_vulnerability_focus_disables_baseline_scan() {
 }
 
 #[test]
+fn standalone_cipher_focus_pulls_in_protocol_phase() {
+    // --each-cipher alone is a specific scan focus (suppresses the baseline),
+    // but the cipher phase enumerates ciphers per supported protocol, so the
+    // protocol phase must still run or cipher enumeration finds no protocols.
+    let request = ScanRequest {
+        target: Some("example.com:443".to_string()),
+        scan: ScanRequestScan {
+            scope: ScanRequestScope {
+                all: true,
+                ..Default::default()
+            },
+            ciphers: ScanRequestCiphers {
+                each_cipher: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    assert!(request.has_specific_scan_focus());
+    assert!(!request.baseline_scan_requested());
+    assert!(request.should_run_cipher_phase());
+    assert!(
+        request.should_run_protocol_phase(),
+        "cipher-focus scan must also run the protocol phase it depends on"
+    );
+}
+
+#[test]
 fn explicit_positive_fingerprint_focus_disables_baseline_scan() {
     let request = ScanRequest {
         target: Some("example.com:443".to_string()),

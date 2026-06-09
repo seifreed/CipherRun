@@ -6,7 +6,12 @@ impl ScanRequest {
     }
 
     pub fn should_run_protocol_phase(&self) -> bool {
-        self.scan.proto.enabled || self.baseline_scan_requested()
+        // The cipher phase enumerates ciphers per *supported protocol*, so it
+        // depends on the protocol phase having run. A standalone cipher-focus
+        // flag (e.g. --each-cipher) must therefore also pull in the protocol
+        // phase, otherwise cipher enumeration sees no protocols and reports
+        // "0 protocols / 0 ciphers".
+        self.scan.proto.enabled || self.baseline_scan_requested() || self.should_run_cipher_phase()
     }
 
     pub fn should_run_cipher_phase(&self) -> bool {
