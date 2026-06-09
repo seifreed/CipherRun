@@ -30,14 +30,30 @@ pub(super) fn sanitized_policy_path(policy_dir: &Path, id: &str) -> Result<PathB
         .map_err(|e| ApiError::BadRequest(format!("Invalid policy ID: {}", e)))
 }
 
+/// Collapse newlines (and other control characters) in a single-line metadata
+/// value so user input cannot inject extra `# Key: value` lines that
+/// `parse_policy_file_content` would later honor on read-back (e.g. a name of
+/// "Foo\n# Enabled: false" silently disabling the policy).
+fn sanitize_metadata_value(value: &str) -> String {
+    value
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect::<String>()
+        .trim()
+        .to_string()
+}
+
 pub(super) fn build_policy_content(request: &PolicyRequest, now: chrono::DateTime<Utc>) -> String {
+    let description = request
+        .description
+        .as_deref()
+        .map(sanitize_metadata_value)
+        .filter(|d| !d.is_empty())
+        .unwrap_or_else(|| "No description".to_string());
     format!(
         "# Policy: {}\n# Description: {}\n# Created: {}\n# Enabled: {}\n\n{}",
-        request.name,
-        request
-            .description
-            .as_ref()
-            .unwrap_or(&"No description".to_string()),
+        sanitize_metadata_value(&request.name),
+        description,
         now.to_rfc3339(),
         request.enabled,
         request.rules
@@ -162,6 +178,29 @@ mod tests {
 
         assert!(content.contains("# Description: No description"));
         assert!(content.contains("rules: []"));
+    }
+
+    #[test]
+    fn build_policy_content_strips_injected_metadata_lines_from_name() {
+        let content = build_policy_content(
+            &PolicyRequest {
+                name: "Foo\n# Enabled: false".to_string(),
+                description: None,
+                rules: "rules: []".to_string(),
+                enabled: true,
+            },
+            Utc::now(),
+        );
+
+        // The newline-injected "# Enabled: false" must be neutralized so the
+        // round-trip parser still reads the real enabled flag.
+        let (_name, _desc, _created, enabled, _rules) =
+            parse_policy_file_content("id".to_string(), &content);
+        assert!(
+            enabled,
+            "injected metadata must not flip the enabled flag: {content}"
+        );
+        assert!(!content.contains("\n# Enabled: false\n"));
     }
 
     #[test]
