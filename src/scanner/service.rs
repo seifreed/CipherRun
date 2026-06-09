@@ -312,9 +312,12 @@ impl Scanner {
         );
 
         // If certificate data is missing on a full scan, override to Grade T
-        // (cannot verify trust without certificate information)
+        // (cannot verify trust without certificate information). Zero the score
+        // to match the trust-failure handling in RatingCalculator::calculate and
+        // avoid contradictory output such as "Grade T (84/100)".
         if cert_validation.is_none() && self.request.should_run_certificate_phase() {
             rating.grade = Grade::T;
+            rating.score = 0;
         }
 
         rating
@@ -537,6 +540,61 @@ mod tests {
             ],
         )
         .expect("target")
+    }
+
+    #[test]
+    fn rating_with_missing_certificate_on_full_scan_zeroes_score() {
+        use crate::rating::Grade;
+
+        let scanner = Scanner::new(ScanRequest {
+            target: Some("example.com:443".to_string()),
+            scan: ScanRequestScan {
+                scope: crate::application::scan_request::ScanRequestScope {
+                    full: true,
+                    ..Default::default()
+                },
+                prefs: crate::application::scan_request::ScanRequestPrefs {
+                    probe_status: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .expect("scanner should build");
+
+        // Strong protocols give a high base score; no certificate_chain means
+        // cert_validation is None, as when the certificate phase fails to connect.
+        let make_protocol = |protocol, preferred| ProtocolTestResult {
+            protocol,
+            supported: true,
+            inconclusive: false,
+            preferred,
+            ciphers_count: 8,
+            handshake_time_ms: None,
+            heartbeat_enabled: None,
+            session_resumption_caching: None,
+            session_resumption_tickets: None,
+            secure_renegotiation: None,
+        };
+        let results = ScanResults {
+            protocols: vec![
+                make_protocol(Protocol::TLS12, false),
+                make_protocol(Protocol::TLS13, true),
+            ],
+            ..Default::default()
+        };
+
+        let rating = scanner.calculate_rating(&results);
+        assert_eq!(
+            rating.grade,
+            Grade::T,
+            "missing certificate on a full scan must be Grade T"
+        );
+        assert_eq!(
+            rating.score, 0,
+            "Grade T must zero the overall score to avoid contradictory 'Grade T (84/100)' output"
+        );
     }
 
     #[test]
