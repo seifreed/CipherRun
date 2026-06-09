@@ -221,7 +221,7 @@ impl Reporter {
         html.push_str("<meta charset=\"UTF-8\">\n");
         html.push_str(&format!(
             "<title>Compliance Report: {}</title>\n",
-            report.framework.name
+            escape_html(&report.framework.name)
         ));
         html.push_str("<style>\n");
         html.push_str(include_str!("../../data/compliance_report.css"));
@@ -232,22 +232,23 @@ impl Reporter {
         html.push_str("<div class=\"container\">\n");
         html.push_str(&format!(
             "<h1>Compliance Report: {}</h1>\n",
-            report.framework.name
+            escape_html(&report.framework.name)
         ));
 
         // Metadata
         html.push_str("<div class=\"metadata\">\n");
         html.push_str(&format!(
             "<p><strong>Framework:</strong> {} v{}</p>\n",
-            report.framework.name, report.framework.version
+            escape_html(&report.framework.name),
+            escape_html(&report.framework.version)
         ));
         html.push_str(&format!(
             "<p><strong>Organization:</strong> {}</p>\n",
-            report.framework.organization
+            escape_html(&report.framework.organization)
         ));
         html.push_str(&format!(
             "<p><strong>Target:</strong> {}</p>\n",
-            report.target
+            escape_html(&report.target)
         ));
         html.push_str(&format!(
             "<p><strong>Scan Time:</strong> {}</p>\n",
@@ -305,9 +306,9 @@ impl Reporter {
             };
 
             html.push_str("<tr>\n");
-            html.push_str(&format!("<td>{}</td>\n", req.requirement_id));
-            html.push_str(&format!("<td>{}</td>\n", req.name));
-            html.push_str(&format!("<td>{}</td>\n", req.category));
+            html.push_str(&format!("<td>{}</td>\n", escape_html(&req.requirement_id)));
+            html.push_str(&format!("<td>{}</td>\n", escape_html(&req.name)));
+            html.push_str(&format!("<td>{}</td>\n", escape_html(&req.category)));
             html.push_str(&format!("<td>{:?}</td>\n", req.severity));
             html.push_str(&format!(
                 "<td class=\"{}\">{}</td>\n",
@@ -322,7 +323,9 @@ impl Reporter {
                 for violation in &req.violations {
                     html.push_str(&format!(
                         "<li><strong>{}:</strong> {} ({})</li>\n",
-                        violation.violation_type, violation.description, violation.evidence
+                        escape_html(&violation.violation_type),
+                        escape_html(&violation.description),
+                        escape_html(&violation.evidence)
                     ));
                 }
                 html.push_str("</ul>\n");
@@ -339,6 +342,27 @@ impl Reporter {
 
         Ok(html)
     }
+}
+
+/// Escape a string for safe interpolation into HTML text/attribute context.
+///
+/// Compliance reports embed server-controlled data (target name, cipher and
+/// vulnerability detail strings via `violation.description`/`evidence`). Without
+/// escaping, a target or certificate field containing markup would break the
+/// document or inject script into the rendered report (stored XSS).
+fn escape_html(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#39;"),
+            _ => out.push(c),
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -383,5 +407,38 @@ mod tests {
 
         let csv = Reporter::to_csv(&report).expect("test assertion should succeed");
         assert!(csv.contains("Requirement ID,Name,Category"));
+    }
+
+    #[test]
+    fn test_to_html_escapes_injected_markup_in_target() {
+        let framework = ComplianceFramework {
+            id: "test".to_string(),
+            name: "Test Framework".to_string(),
+            version: "1.0".to_string(),
+            description: "Test".to_string(),
+            organization: "Test Org".to_string(),
+            effective_date: None,
+            requirements: vec![],
+        };
+
+        let report = ComplianceReport::new(
+            &framework,
+            "<script>alert(1)</script>.example.com:443".to_string(),
+        );
+
+        let html = Reporter::to_html(&report).expect("test assertion should succeed");
+        assert!(
+            !html.contains("<script>alert(1)</script>"),
+            "server-controlled target must be HTML-escaped, not emitted raw"
+        );
+        assert!(html.contains("&lt;script&gt;alert(1)&lt;/script&gt;"));
+    }
+
+    #[test]
+    fn test_escape_html_encodes_all_dangerous_characters() {
+        assert_eq!(
+            escape_html("<a href=\"x\" data='y'>&"),
+            "&lt;a href=&quot;x&quot; data=&#39;y&#39;&gt;&amp;"
+        );
     }
 }
