@@ -136,9 +136,15 @@ impl PqcReadinessScorer {
         // HNDL risk exists whenever any classical group is still negotiable — even in
         // hybrid deployments, an active attacker can force-select the classical path.
         let hndl_risk = quantum_vulnerable_only || vulnerable_supported > 0;
-        if hndl_risk {
+        if quantum_vulnerable_only {
             recommendations.push(
-                "HNDL risk: intercepted traffic can be decrypted retroactively once a quantum computer exists; deploy X25519MLKEM768 immediately.".to_string(),
+                "HNDL risk: no post-quantum key exchange is offered, so intercepted traffic can be decrypted retroactively once a quantum computer exists. Deploy X25519MLKEM768 immediately.".to_string(),
+            );
+        } else if hndl_risk {
+            // A PQC-safe group is already offered, but classical groups remain
+            // negotiable, so an active attacker can still force the classical path.
+            recommendations.push(
+                "HNDL risk: a post-quantum group is offered but classical groups remain negotiable, so an active attacker can force the classical path. Prefer the post-quantum hybrid group and remove the classical-only downgrade path.".to_string(),
             );
         }
         let level = match score {
@@ -224,11 +230,12 @@ mod tests {
     fn test_hndl_risk_true_when_quantum_vulnerable_only() {
         let assessment = PqcReadinessScorer::assess(None, None, &[]);
         assert!(assessment.hndl_risk);
+        // With no PQC group offered, the advice is to deploy one.
         assert!(
             assessment
                 .recommendations
                 .iter()
-                .any(|r| r.contains("HNDL"))
+                .any(|r| r.contains("HNDL") && r.contains("Deploy X25519MLKEM768 immediately"))
         );
     }
 
@@ -245,6 +252,14 @@ mod tests {
         assert!(
             assessment.hndl_risk,
             "hybrid deployment must still be flagged HNDL-at-risk due to downgrade path"
+        );
+        // The PQC group is already offered, so the advice must NOT tell the
+        // operator to deploy it; it must address the classical downgrade path.
+        assert!(
+            assessment.recommendations.iter().any(|r| r.contains("HNDL")
+                && r.contains("downgrade path")
+                && !r.contains("Deploy X25519MLKEM768 immediately")),
+            "hybrid config must recommend closing the downgrade path, not deploying an already-offered group"
         );
     }
 
