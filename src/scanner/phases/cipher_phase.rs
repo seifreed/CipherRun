@@ -142,10 +142,20 @@ impl CipherPhase {
                 continue;
             }
 
-            // Test ciphers for this protocol
-            let summary = tester
-                .test_protocol_ciphers(protocol_result.protocol)
-                .await?;
+            // Isolate per-protocol failures: a transient probe error for one
+            // protocol must not discard the cipher results already collected for
+            // the others (propagating here would lose the entire phase's data).
+            let summary = match tester.test_protocol_ciphers(protocol_result.protocol).await {
+                Ok(summary) => summary,
+                Err(error) => {
+                    tracing::warn!(
+                        protocol = %protocol_result.protocol,
+                        "cipher probing failed for protocol; skipping it: {}",
+                        error
+                    );
+                    continue;
+                }
+            };
 
             // Only store results if ciphers were found
             // Empty cipher list indicates protocol handshake failed
