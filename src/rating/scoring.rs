@@ -173,8 +173,9 @@ impl RatingCalculator {
             }
         }
         // Note: certificate=None means cert evaluation was skipped (e.g. protocol-only scan).
-        // Callers performing a full TLS scan MUST provide certificate data;
-        // missing certificate on a full scan should be treated as Grade T upstream.
+        // On a full TLS scan a certificate phase that retrieved no certificate is graded
+        // Grade::Unverified upstream (see Scanner::calculate_rating) — distinct from the
+        // Grade::T set above, which means a certificate WAS retrieved and is not trusted.
 
         RatingResult {
             grade,

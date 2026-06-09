@@ -17,6 +17,10 @@ pub enum Grade {
     F,
     T, // Trust issues (certificate)
     M, // Certificate name mismatch
+    /// The certificate phase ran but no certificate could be retrieved
+    /// (transport/handshake failure), so trust could not be assessed. This is
+    /// distinct from `T`: trust is *unknown*, not *failed*.
+    Unverified,
 }
 
 impl Grade {
@@ -34,7 +38,10 @@ impl Grade {
             Grade::E => 3,
             Grade::F => 2,
             Grade::M => 1,
-            Grade::T => 0,
+            // T (definitely untrusted) and Unverified (trust unknown) are both
+            // treated as worst-case for conservative aggregation; aggregation
+            // tie-breaks equal ranks by score.
+            Grade::T | Grade::Unverified => 0,
         }
     }
 
@@ -43,7 +50,8 @@ impl Grade {
         match self {
             Grade::APlus | Grade::A => "green",
             Grade::AMinus | Grade::B => "blue",
-            Grade::C => "yellow",
+            // Unverified is "unknown", not a confirmed failure → warning color.
+            Grade::C | Grade::Unverified => "yellow",
             Grade::D | Grade::E => "orange",
             Grade::F | Grade::T | Grade::M => "red",
         }
@@ -62,6 +70,7 @@ impl Grade {
             Grade::F => "Failing - Critical security issues",
             Grade::T => "Certificate not trusted",
             Grade::M => "Certificate name mismatch",
+            Grade::Unverified => "Certificate could not be retrieved - trust not assessed",
         }
     }
 
@@ -79,7 +88,7 @@ impl Grade {
             Grade::D => 49,
             Grade::E => 34,
             Grade::F => 19,
-            Grade::T | Grade::M => 0,
+            Grade::T | Grade::M | Grade::Unverified => 0,
         }
     }
 
@@ -123,6 +132,7 @@ impl std::fmt::Display for Grade {
             Grade::F => write!(f, "F"),
             Grade::T => write!(f, "T"),
             Grade::M => write!(f, "M"),
+            Grade::Unverified => write!(f, "Unverified"),
         }
     }
 }
@@ -200,5 +210,32 @@ mod tests {
     fn test_grade_color_orange() {
         assert_eq!(Grade::D.color(), "orange");
         assert_eq!(Grade::E.color(), "orange");
+    }
+
+    #[test]
+    fn test_unverified_grade_is_distinct_from_untrusted() {
+        // Unverified (trust unknown) must not claim the cert is "not trusted".
+        assert_eq!(Grade::Unverified.to_string(), "Unverified");
+        assert!(
+            Grade::Unverified
+                .description()
+                .contains("could not be retrieved")
+        );
+        assert!(!Grade::Unverified.description().contains("not trusted"));
+        // Conservative rank (worst, tied with T) and warning color (unknown, not failure).
+        assert_eq!(Grade::Unverified.rank(), 0);
+        assert_eq!(Grade::Unverified.color(), "yellow");
+        // from_score never yields Unverified — it is only set explicitly upstream.
+        for score in 0u8..=100 {
+            assert_ne!(Grade::from_score(score), Grade::Unverified);
+        }
+    }
+
+    #[test]
+    fn test_unverified_grade_serde_roundtrip() {
+        let json = serde_json::to_string(&Grade::Unverified).expect("serialize");
+        assert_eq!(json, "\"Unverified\"");
+        let back: Grade = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back, Grade::Unverified);
     }
 }

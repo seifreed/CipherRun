@@ -24,6 +24,7 @@ const HTML_TEMPLATE: &str = r#"<!DOCTYPE html>
         .grade-A-minus, .grade-B-plus, .grade-B { background: #3498db; color: white; }
         .grade-B-minus, .grade-C { background: #f39c12; color: white; }
         .grade-D, .grade-E, .grade-F { background: #e74c3c; color: white; }
+        .grade-Unverified { background: #95a5a6; color: white; font-size: 1.5em; }
         .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; margin: 20px 0; }
         .summary-card { background: #f8f9fa; padding: 20px; border-radius: 8px; border-left: 4px solid #3498db; }
         .summary-card .value { font-size: 2em; font-weight: bold; color: #3498db; margin-top: 10px; }

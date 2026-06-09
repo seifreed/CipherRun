@@ -9,7 +9,7 @@ use crate::rating::grader::Grade;
 /// Finding the minimum rank IS finding the worst grade.
 fn grade_rank(grade: Grade) -> usize {
     match grade {
-        Grade::T => 0,
+        Grade::T | Grade::Unverified => 0,
         Grade::M => 1,
         Grade::F => 2,
         Grade::E => 3,

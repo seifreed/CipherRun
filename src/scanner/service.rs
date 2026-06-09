@@ -311,12 +311,13 @@ impl Scanner {
             &results.vulnerabilities,
         );
 
-        // If certificate data is missing on a full scan, override to Grade T
-        // (cannot verify trust without certificate information). Zero the score
-        // to match the trust-failure handling in RatingCalculator::calculate and
-        // avoid contradictory output such as "Grade T (84/100)".
+        // If a certificate phase was requested but produced no certificate, the
+        // cert could not be retrieved (e.g. handshake/transport failure), so
+        // trust is *unknown*. Grade it Unverified — distinct from T ("retrieved
+        // and not trusted") — and zero the score to avoid contradictory output
+        // such as "Grade Unverified (84/100)".
         if cert_validation.is_none() && self.request.should_run_certificate_phase() {
-            rating.grade = Grade::T;
+            rating.grade = Grade::Unverified;
             rating.score = 0;
         }
 
@@ -588,12 +589,12 @@ mod tests {
         let rating = scanner.calculate_rating(&results);
         assert_eq!(
             rating.grade,
-            Grade::T,
-            "missing certificate on a full scan must be Grade T"
+            Grade::Unverified,
+            "a certificate phase that retrieved no certificate must be Grade Unverified (trust unknown), not T (trust failed)"
         );
         assert_eq!(
             rating.score, 0,
-            "Grade T must zero the overall score to avoid contradictory 'Grade T (84/100)' output"
+            "Grade Unverified must zero the overall score to avoid contradictory 'Grade Unverified (84/100)' output"
         );
     }
 

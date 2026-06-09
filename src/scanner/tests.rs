@@ -991,7 +991,7 @@ fn test_build_conservative_multi_ip_result() {
 }
 
 #[test]
-fn test_build_conservative_multi_ip_result_missing_cert_yields_grade_t() {
+fn test_build_conservative_multi_ip_result_missing_cert_yields_grade_unverified() {
     // A full scan that gathered no certificate from any IP must be graded T,
     // matching the single-IP path. Previously the multi-IP path computed the
     // rating without that override and reported a normal letter grade.
@@ -1067,7 +1067,8 @@ fn test_build_conservative_multi_ip_result_missing_cert_yields_grade_t() {
         .rating
         .and_then(|r| r.ssl_rating)
         .expect("full scan should produce a rating");
-    assert_eq!(rating.grade, crate::rating::grader::Grade::T);
+    // Cert phase ran but retrieved nothing → trust unknown (Unverified), not failed (T).
+    assert_eq!(rating.grade, crate::rating::grader::Grade::Unverified);
 }
 
 #[test]
