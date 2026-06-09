@@ -60,9 +60,11 @@ impl ScanPhase for GroupsPhase {
 
     fn should_run(&self, args: &ScanRequest) -> bool {
         // Run if:
-        // - Explicit group enumeration requested (--show-groups)
+        // - Explicit group enumeration requested (--show-groups), OR a full scan
+        //   (PqcReadinessPhase runs under --full and consumes the group data to
+        //   score key-exchange PQC readiness; without it the score is deflated)
         // - AND not explicitly disabled (--no-groups)
-        args.scan.ciphers.show_groups && !args.scan.ciphers.no_groups
+        (args.scan.ciphers.show_groups || args.scan.scope.full) && !args.scan.ciphers.no_groups
     }
 
     async fn execute(&self, context: &mut ScanContext) -> Result<()> {
@@ -109,6 +111,17 @@ mod tests {
         // Test with --all flag (should not enable group enumeration)
         let mut args = ScanRequest::default();
         args.scan.scope.all = true;
+        assert!(!phase.should_run(&args));
+
+        // Test with --full flag (PqcReadinessPhase needs group data under --full)
+        let mut args = ScanRequest::default();
+        args.scan.scope.full = true;
+        assert!(phase.should_run(&args));
+
+        // Test with --full but --no-groups (explicit opt-out wins)
+        let mut args = ScanRequest::default();
+        args.scan.scope.full = true;
+        args.scan.ciphers.no_groups = true;
         assert!(!phase.should_run(&args));
     }
 
