@@ -144,28 +144,40 @@ impl RobotTester {
         const TEST_VECTORS: usize = 5;
         const MIN_SAMPLES: usize = 3;
 
-        let mut responses: Vec<Option<Vec<u8>>> = Vec::with_capacity(TEST_VECTORS);
+        // A real Bleichenbacher oracle is deterministic: a given malformed padding
+        // always yields the same alert. Multi-backend CDNs / load balancers return
+        // varying alerts for the SAME input across separate connections, which must
+        // not be mistaken for an oracle. Probe each vector across multiple rounds
+        // and keep the responses per vector so the verdict can require per-vector
+        // determinism before reporting an oracle.
+        const CONFIRMATION_ROUNDS: usize = 2;
+        let mut responses: Vec<Option<Vec<u8>>> =
+            Vec::with_capacity(TEST_VECTORS * CONFIRMATION_ROUNDS);
+        let mut per_vector: Vec<Vec<Vec<u8>>> = vec![Vec::new(); TEST_VECTORS];
 
-        for i in 0..TEST_VECTORS {
-            // V9 fix: previously `await?` aborted the entire probe set on the
-            // first transient error. A single timeout on vector 2/5 prevented
-            // the remaining 3 from running and the function returned Err rather
-            // than the MIN_SAMPLES-gated Inconclusive verdict.
-            let response = match self.send_invalid_rsa_ciphertext(i as u8).await {
-                Ok(r) => r,
-                Err(err) => {
-                    tracing::debug!(
-                        "ROBOT probe {} failed transiently ({}); recording as missing sample",
-                        i,
-                        err
-                    );
-                    None
+        for _round in 0..CONFIRMATION_ROUNDS {
+            for (i, vector_responses) in per_vector.iter_mut().enumerate() {
+                // A transient error is recorded as a missing sample rather than
+                // aborting the whole probe set (MIN_SAMPLES gates the verdict).
+                match self.send_invalid_rsa_ciphertext(i as u8).await {
+                    Ok(Some(response)) => {
+                        vector_responses.push(response.clone());
+                        responses.push(Some(response));
+                    }
+                    Ok(None) => responses.push(None),
+                    Err(err) => {
+                        tracing::debug!(
+                            "ROBOT probe {} failed transiently ({}); recording as missing sample",
+                            i,
+                            err
+                        );
+                        responses.push(None);
+                    }
                 }
-            };
-            responses.push(response);
 
-            // Small delay to avoid rate limiting
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                // Small delay to avoid rate limiting
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
         }
 
         // Count successful responses
@@ -180,42 +192,53 @@ impl RobotTester {
         // Count unique response patterns (by error codes and lengths)
         let mut response_patterns: std::collections::BTreeSet<Vec<u8>> =
             std::collections::BTreeSet::new();
-        let mut error_codes: std::collections::HashSet<u8> = std::collections::HashSet::new();
-        let mut response_lengths: std::collections::HashSet<usize> =
-            std::collections::HashSet::new();
 
         for response in &successful_responses {
-            // Extract alert error code if present (TLS alert format: 0x15 0x03 0x03 0x00 0x02 <level> <description>)
-            // Validate the record length field (bytes 3-4) equals 0x0002 to avoid reading
-            // stray bytes from concatenated records or malformed responses.
-            if response.len() >= 7 && response[0] == 0x15 {
-                let record_len = u16::from_be_bytes([response[3], response[4]]) as usize;
-                if record_len == 2 {
-                    let error_code = response[6];
-                    error_codes.insert(error_code);
-                }
-            }
-            response_lengths.insert(response.len());
-
             // Create a pattern from first N bytes for comparison
             let pattern_len = response.len().min(32);
             response_patterns.insert(response[..pattern_len].to_vec());
         }
 
-        // Detection logic:
-        // 1. Different error codes indicate oracle (server distinguishes padding errors)
-        // 2. Different response patterns may indicate observable differences
-        //
-        // Only differing TLS alert description bytes (error_codes) constitute a strong
-        // oracle signal. Pattern diversity alone (first 32 bytes) is easily caused by
-        // network jitter, TCP fragmentation, or RST/FIN timing differences.
-
-        let unique_error_codes = error_codes.len();
         let unique_patterns = response_patterns.len();
 
-        // Strong oracle: only different alert description bytes qualify.
-        if unique_error_codes > 1 {
+        // Extract a TLS alert description byte if the response is a single alert
+        // record (0x15 .. record_len 0x0002 <level> <description>). The record
+        // length check avoids reading stray bytes from concatenated/malformed records.
+        let alert_description_code = |response: &Vec<u8>| -> Option<u8> {
+            if response.len() >= 7 && response[0] == 0x15 {
+                let record_len = u16::from_be_bytes([response[3], response[4]]) as usize;
+                if record_len == 2 {
+                    return Some(response[6]);
+                }
+            }
+            None
+        };
+
+        // Strong oracle: a malformed-padding vector must DETERMINISTICALLY yield its
+        // own alert code (stable across rounds), and the stable codes must differ
+        // between vectors — i.e. the server distinguishes padding by type, a real
+        // Bleichenbacher oracle. A vector whose alert code VARIES across rounds is
+        // backend variance on a load-balanced deployment (e.g. a multi-backend CDN),
+        // not an oracle, and must never produce a "vulnerable" verdict.
+        let mut stable_codes: std::collections::HashSet<u8> = std::collections::HashSet::new();
+        let mut saw_unstable_code = false;
+        for probes in &per_vector {
+            let codes: std::collections::HashSet<u8> =
+                probes.iter().filter_map(alert_description_code).collect();
+            match codes.len() {
+                0 => {}
+                1 => stable_codes.extend(codes),
+                _ => saw_unstable_code = true,
+            }
+        }
+
+        if stable_codes.len() > 1 {
             return Ok(RobotStatus::Vulnerable);
+        }
+        if saw_unstable_code {
+            // The same malformed input produced different alerts across connections:
+            // multi-backend variance, not a deterministic padding oracle.
+            return Ok(RobotStatus::Inconclusive);
         }
 
         // Weak oracle: Two or more distinct response patterns indicate observable differences.
