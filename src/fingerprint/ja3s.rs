@@ -354,10 +354,14 @@ impl LoadBalancerInfo {
                 indicators.push("nginx upstream headers detected".to_string());
             }
 
-            // Sticky session indicators
-            if value_lower.contains("route")
-                || value_lower.contains("sticky")
-                || value_lower.contains("persist")
+            // Sticky session indicators — only meaningful on Set-Cookie, where a
+            // session-affinity cookie lives. Checking every header value caused
+            // false positives (e.g. a `Location: /route/...` redirect contains
+            // "route" but is not a sticky-session cookie).
+            if header_lower == "set-cookie"
+                && (value_lower.contains("route")
+                    || value_lower.contains("sticky")
+                    || value_lower.contains("persist"))
             {
                 sticky_sessions = true;
                 indicators.push("Sticky session cookie detected".to_string());
