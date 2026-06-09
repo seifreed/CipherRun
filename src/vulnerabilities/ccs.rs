@@ -162,7 +162,14 @@ impl CcsInjectionTester {
                                     && offset + 6 <= accumulated.len()
                                 {
                                     let handshake_type = accumulated[offset + 5];
-                                    if matches!(handshake_type, 0x0B | 0x0C | 0x0D | 0x0E | 0x02) {
+                                    // ServerHello(0x02), Certificate(0x0B),
+                                    // ServerKeyExchange(0x0C), CertificateRequest(0x0D),
+                                    // ServerHelloDone(0x0E), CertificateStatus(0x16, OCSP
+                                    // stapling). Omitting CertificateStatus made
+                                    // stapling servers fall through to Inconclusive
+                                    // instead of a conclusive not-vulnerable verdict.
+                                    if matches!(handshake_type, 0x02 | 0x0B | 0x0C | 0x0D | 0x0E | 0x16)
+                                    {
                                         // Normal handshake continuation — skip this record
                                         reads_remaining = reads_remaining.saturating_sub(1);
                                         if reads_remaining == 0 {
