@@ -18,7 +18,7 @@ use crate::{Args, Result, TlsError};
 /// 4. Analytics operations (--compare, --changes, --trends, --dashboard)
 /// 5. CT logs streaming (--ct-logs)
 /// 6. MX record testing (--mx)
-/// 7. Mass scanning (--file)
+/// 7. Mass scanning (--file, --asn, --cidr)
 /// 8. Single target scanning (default)
 ///
 /// # Design Principles
@@ -44,6 +44,8 @@ impl CommandRouter {
             || args.database.history.is_some()
             || args.mx_domain.is_some()
             || args.input_file.is_some()
+            || args.asn.is_some()
+            || args.cidr.is_some()
             || args.target.is_some()
     }
 
@@ -111,8 +113,8 @@ impl CommandRouter {
             return Ok(Box::new(MxTestCommand::new(args)));
         }
 
-        // Priority 7: Mass scanning from file
-        if args.input_file.is_some() {
+        // Priority 7: Mass scanning from a file or an expanded CIDR/ASN range
+        if args.input_file.is_some() || args.asn.is_some() || args.cidr.is_some() {
             return Ok(Box::new(MassScanCommand::new(args)));
         }
 
@@ -159,6 +161,8 @@ impl CommandRouter {
         let exclusive_mode_active = mode_count == 1;
         let additional_action_requested = args.target.is_some()
             || args.input_file.is_some()
+            || args.asn.is_some()
+            || args.cidr.is_some()
             || args.mx_domain.is_some()
             || args.database.init
             || args.database.cleanup_days.is_some()
@@ -166,22 +170,43 @@ impl CommandRouter {
 
         if exclusive_mode_active && additional_action_requested {
             return Err(TlsError::InvalidInput {
-                message: "Operational modes (--serve, --monitor, --ct-logs, analytics) cannot be combined with scan targets, MX/file input, or database action flags.".to_string(),
+                message: "Operational modes (--serve, --monitor, --ct-logs, analytics) cannot be combined with scan targets, MX/file/ASN/CIDR input, or database action flags.".to_string(),
             });
         }
 
-        // Check for MX + file conflict
-        if args.mx_domain.is_some() && args.input_file.is_some() {
+        // Mass-scan target sources (--file, --asn, --cidr) and a single target/MX
+        // are mutually exclusive: each selects a distinct scanning mode.
+        let mass_sources = [
+            args.input_file.is_some(),
+            args.asn.is_some(),
+            args.cidr.is_some(),
+        ]
+        .iter()
+        .filter(|&&x| x)
+        .count();
+        if mass_sources > 1 {
             return Err(TlsError::InvalidInput {
-                message: "Cannot use --mx with --file. Choose one scanning mode.".to_string(),
-            });
-        }
-
-        // Check for target + file conflict
-        if args.target.is_some() && args.input_file.is_some() {
-            return Err(TlsError::InvalidInput {
-                message: "Cannot specify both target and --file. Choose one scanning mode."
+                message: "Cannot combine --file, --asn, and --cidr. Choose one mass-scan source."
                     .to_string(),
+            });
+        }
+
+        let any_mass_source = mass_sources == 1;
+
+        // Check for MX + mass-source conflict
+        if args.mx_domain.is_some() && any_mass_source {
+            return Err(TlsError::InvalidInput {
+                message: "Cannot use --mx with --file/--asn/--cidr. Choose one scanning mode."
+                    .to_string(),
+            });
+        }
+
+        // Check for target + mass-source conflict
+        if args.target.is_some() && any_mass_source {
+            return Err(TlsError::InvalidInput {
+                message:
+                    "Cannot specify both target and --file/--asn/--cidr. Choose one scanning mode."
+                        .to_string(),
             });
         }
 
@@ -294,6 +319,56 @@ mod tests {
         };
         let cmd = CommandRouter::route(args).expect("test assertion should succeed");
         assert_eq!(cmd.name(), "MassScanCommand");
+    }
+
+    #[test]
+    fn test_route_cidr_uses_mass_scan_command() {
+        let args = Args {
+            cidr: Some("192.0.2.0/24".to_string()),
+            ..Default::default()
+        };
+        let cmd = CommandRouter::route(args).expect("test assertion should succeed");
+        assert_eq!(cmd.name(), "MassScanCommand");
+    }
+
+    #[test]
+    fn test_route_asn_uses_mass_scan_command() {
+        let args = Args {
+            asn: Some("AS13335".to_string()),
+            ..Default::default()
+        };
+        let cmd = CommandRouter::route(args).expect("test assertion should succeed");
+        assert_eq!(cmd.name(), "MassScanCommand");
+    }
+
+    #[test]
+    fn test_validate_target_and_cidr_conflict() {
+        let args = Args {
+            target: Some("example.com:443".to_string()),
+            cidr: Some("192.0.2.0/24".to_string()),
+            ..Default::default()
+        };
+        assert!(CommandRouter::validate_routing(&args).is_err());
+    }
+
+    #[test]
+    fn test_validate_asn_and_cidr_conflict() {
+        let args = Args {
+            asn: Some("AS13335".to_string()),
+            cidr: Some("192.0.2.0/24".to_string()),
+            ..Default::default()
+        };
+        assert!(CommandRouter::validate_routing(&args).is_err());
+    }
+
+    #[test]
+    fn test_validate_file_and_asn_conflict() {
+        let args = Args {
+            input_file: Some(std::path::PathBuf::from("targets.txt")),
+            asn: Some("AS13335".to_string()),
+            ..Default::default()
+        };
+        assert!(CommandRouter::validate_routing(&args).is_err());
     }
 
     #[test]

@@ -92,6 +92,15 @@ pub struct Args {
     #[arg(long = "mx", value_name = "DOMAIN")]
     pub mx_domain: Option<String>,
 
+    /// Scan every host in a CIDR range (e.g. 192.0.2.0/24 or 2001:db8::/120)
+    #[arg(long = "cidr", value_name = "CIDR")]
+    pub cidr: Option<String>,
+
+    /// Scan every host announced by an Autonomous System (e.g. AS13335 or 13335);
+    /// prefixes are resolved via RIPEstat and expanded to host addresses
+    #[arg(long = "asn", value_name = "ASN")]
+    pub asn: Option<String>,
+
     /// Port to test
     #[arg(long = "port", value_name = "PORT", id = "target_port")]
     pub port: Option<u16>,
@@ -309,13 +318,13 @@ impl Args {
             );
         }
 
-        if self.input_file.is_some()
+        if (self.input_file.is_some() || self.asn.is_some() || self.cidr.is_some())
             && (self.output.csv.is_some()
                 || self.output.html.is_some()
                 || self.output.xml.is_some())
         {
             crate::tls_bail!(
-                "Mass scan only supports JSON collection export (--json or --output-all); CSV/HTML/XML are not available with --file"
+                "Mass scan only supports JSON collection export (--json or --output-all); CSV/HTML/XML are not available with --file/--asn/--cidr"
             );
         }
 
