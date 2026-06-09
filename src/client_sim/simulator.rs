@@ -180,10 +180,19 @@ impl ClientSimulator {
             .alpn_protocol()
             .and_then(|bytes| String::from_utf8(bytes.to_vec()).ok());
 
-        // Extract key exchange from negotiated cipher suite
+        // Prefer the actual negotiated key-exchange group; only fall back to the
+        // cipher-suite heuristic (which guesses the client's first curve) when
+        // rustls cannot report it (e.g. static-RSA TLS 1.2). Using the client's
+        // preferred curve misreports the handshake whenever the server picks a
+        // different group (no x25519 support, HelloRetryRequest, etc.).
         let key_exchange = connection
-            .negotiated_cipher_suite()
-            .and_then(|cs| Self::extract_key_exchange(&cs, &client.curves));
+            .negotiated_key_exchange_group()
+            .map(|kx| format!("ECDH {:?}", kx.name()))
+            .or_else(|| {
+                connection
+                    .negotiated_cipher_suite()
+                    .and_then(|cs| Self::extract_key_exchange(&cs, &client.curves))
+            });
 
         // Extract certificate information
         let certificate_type = connection
@@ -268,10 +277,14 @@ impl ClientSimulator {
             } else if key_algo.contains("ecPublicKey") {
                 // ECDSA key — determine curve from parsed key
                 let curve_name = match cert.public_key().parsed() {
+                    // x509-parser's key_size() returns 8 * bytes-per-coordinate,
+                    // rounding odd-bit curves up to a byte boundary: P-521 has
+                    // 66-byte coordinates and so reports 528, not 521. Match the
+                    // byte-rounded values (P-256/P-384 happen to be exact).
                     Ok(x509_parser::public_key::PublicKey::EC(ec)) => match ec.key_size() {
                         256 => "P-256",
                         384 => "P-384",
-                        521 => "P-521",
+                        528 => "P-521",
                         other => {
                             tracing::debug!("Unknown EC key size: {}", other);
                             "unknown curve"
