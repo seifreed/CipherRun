@@ -95,13 +95,20 @@ pub async fn create_policy(
     let now = Utc::now();
     let policy_content = build_policy_content(&request, now);
 
+    // This handler creates or updates a policy. Report 200 OK when overwriting an
+    // existing policy and 201 Created only for a genuinely new one.
+    let existed = policy_path.exists();
+
     fs::write(&policy_path, policy_content)
         .map_err(|e| ApiError::Internal(format!("Failed to write policy file: {}", e)))?;
 
-    Ok((
-        StatusCode::CREATED,
-        Json(present_created_policy(policy_id, request, now)),
-    ))
+    let status = if existed {
+        StatusCode::OK
+    } else {
+        StatusCode::CREATED
+    };
+
+    Ok((status, Json(present_created_policy(policy_id, request, now))))
 }
 
 /// Get policy
