@@ -125,7 +125,18 @@ fn build_certificate_list_query_for_dialect(
     if let Some(days) = query.expiring_within_days {
         let cutoff_date = Utc::now() + chrono::Duration::days(days as i64);
         let placeholder = dialect.placeholder(params.len() + 1);
-        where_clauses.push(format!("c.not_after <= {}", placeholder));
+        // `not_after` is stored as a native datetime whose textual encoding
+        // differs from `to_rfc3339()` (separator/fractional digits). On SQLite,
+        // whose typing is dynamic, a raw string `<=` is a lexical comparison
+        // that mis-orders same-date values (the stored space separator sorts
+        // before the bound 'T'), over-including certs that expire later on the
+        // cutoff day. Normalize both sides as timestamps so the comparison is
+        // chronological on both backends.
+        let predicate = match dialect {
+            SqlDialect::Postgres => format!("c.not_after <= {}::timestamptz", placeholder),
+            SqlDialect::Sqlite => format!("datetime(c.not_after) <= datetime({})", placeholder),
+        };
+        where_clauses.push(predicate);
         params.push(cutoff_date.to_rfc3339());
     }
 
@@ -422,7 +433,11 @@ mod tests {
         let built = build_certificate_list_query(&query);
 
         assert!(built.where_clause.contains("s.target_hostname = ?"));
-        assert!(built.where_clause.contains("c.not_after <= ?"));
+        assert!(
+            built
+                .where_clause
+                .contains("datetime(c.not_after) <= datetime(?)")
+        );
         assert_eq!(built.params.len(), 2);
         assert_eq!(built.params[0], "example.com");
         assert_eq!(built.order_by, "c.not_before DESC");
