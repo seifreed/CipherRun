@@ -1,7 +1,20 @@
 use super::{Protocol, ProtocolTestResult, ProtocolTester};
 use crate::Result;
+use crate::constants::{BUFFER_SIZE_MAX_TLS_RECORD, CONTENT_TYPE_ALERT};
+use crate::protocols::handshake::{ClientHelloBuilder, ServerHelloParser};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::timeout;
+
+/// Legacy-protocol cipher suites offered when probing SSLv3/TLS1.0/TLS1.1 by a
+/// raw ClientHello. The vendored OpenSSL build cannot negotiate these protocol
+/// versions at all (it answers `no protocols available`), so an OpenSSL probe
+/// reports them unsupported regardless of the server — a structural false
+/// negative for the very deprecated protocols the scanner must flag. Probing by
+/// wire bytes is unaffected by local OpenSSL limitations. The set spans ECDHE
+/// and RSA CBC, 3DES, and RC4 suites so a legacy-only server still selects one.
+const LEGACY_PROBE_CIPHERS: &[u16] = &[
+    0xc014, 0xc013, 0xc00a, 0xc009, 0x0035, 0x002f, 0xc012, 0xc008, 0x000a, 0x0005, 0x0004,
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ProtocolProbeOutcome {
@@ -207,9 +220,10 @@ impl ProtocolTester {
     ) -> Result<ProtocolProbeOutcome> {
         match protocol {
             Protocol::SSLv2 => self.test_sslv2_on_ip(addr).await,
-            Protocol::SSLv3 | Protocol::TLS10 | Protocol::TLS11 | Protocol::TLS12 => {
-                self.test_tls_with_openssl_on_ip(protocol, addr).await
+            Protocol::SSLv3 | Protocol::TLS10 | Protocol::TLS11 => {
+                self.test_tls_legacy_raw_on_ip(protocol, addr).await
             }
+            Protocol::TLS12 => self.test_tls12_with_openssl_on_ip(addr).await,
             Protocol::TLS13 => self.test_tls13_on_ip(addr).await,
             Protocol::QUIC => self.test_quic_on_ip(addr).await,
         }
@@ -298,9 +312,75 @@ impl ProtocolTester {
         hello
     }
 
-    pub(super) async fn test_tls_with_openssl_on_ip(
+    /// Probe SSLv3/TLS1.0/TLS1.1 support with a raw ClientHello.
+    ///
+    /// OpenSSL cannot be used for these versions (see `LEGACY_PROBE_CIPHERS`),
+    /// so the ClientHello is assembled and classified at the byte level. Support
+    /// is confirmed only when the server returns a ServerHello whose negotiated
+    /// version equals the probed version.
+    pub(super) async fn test_tls_legacy_raw_on_ip(
         &self,
         protocol: Protocol,
+        addr: std::net::SocketAddr,
+    ) -> Result<ProtocolProbeOutcome> {
+        let mut stream = match crate::utils::network::connect_with_timeout(
+            addr,
+            self.connect_timeout,
+            self.retry_config.as_ref(),
+        )
+        .await
+        {
+            Ok(s) => s,
+            Err(_) => return Ok(ProtocolProbeOutcome::Inconclusive),
+        };
+
+        if self.use_rdp
+            && crate::protocols::rdp::RdpPreamble::send(&mut stream)
+                .await
+                .is_err()
+        {
+            return Ok(ProtocolProbeOutcome::Inconclusive);
+        }
+
+        if let Some(starttls_proto) = self.starttls_protocol {
+            let negotiator = crate::starttls::protocols::get_negotiator(
+                starttls_proto,
+                self.starttls_negotiation_hostname(),
+            );
+            if negotiator.negotiate_starttls(&mut stream).await.is_err() {
+                return Ok(ProtocolProbeOutcome::Inconclusive);
+            }
+        }
+
+        let mut builder = ClientHelloBuilder::new(protocol);
+        builder.add_ciphers(LEGACY_PROBE_CIPHERS);
+        let sni_hostname = crate::utils::network::sni_hostname_for_target(
+            &self.target.hostname,
+            self.sni_hostname.as_deref(),
+        );
+        let client_hello = match builder.build_with_defaults(sni_hostname.as_deref()) {
+            Ok(hello) => hello,
+            Err(_) => return Ok(ProtocolProbeOutcome::Inconclusive),
+        };
+
+        let response = match timeout(self.read_timeout, async {
+            stream.write_all(&client_hello).await?;
+            let mut resp = vec![0u8; BUFFER_SIZE_MAX_TLS_RECORD];
+            let n = stream.read(&mut resp).await?;
+            resp.truncate(n);
+            Ok::<Vec<u8>, std::io::Error>(resp)
+        })
+        .await
+        {
+            Ok(Ok(resp)) if !resp.is_empty() => resp,
+            _ => return Ok(ProtocolProbeOutcome::Inconclusive),
+        };
+
+        Ok(classify_legacy_probe_response(&response, protocol))
+    }
+
+    pub(super) async fn test_tls12_with_openssl_on_ip(
+        &self,
         addr: std::net::SocketAddr,
     ) -> Result<ProtocolProbeOutcome> {
         use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode, SslVersion};
@@ -339,17 +419,8 @@ impl ProtocolTester {
 
         let mut builder = SslConnector::builder(SslMethod::tls())?;
         builder.set_verify(SslVerifyMode::NONE);
-
-        let (min_version, max_version) = match protocol {
-            Protocol::SSLv3 => (SslVersion::SSL3, SslVersion::SSL3),
-            Protocol::TLS10 => (SslVersion::TLS1, SslVersion::TLS1),
-            Protocol::TLS11 => (SslVersion::TLS1_1, SslVersion::TLS1_1),
-            Protocol::TLS12 => (SslVersion::TLS1_2, SslVersion::TLS1_2),
-            _ => return Ok(ProtocolProbeOutcome::NotSupported),
-        };
-
-        builder.set_min_proto_version(Some(min_version))?;
-        builder.set_max_proto_version(Some(max_version))?;
+        builder.set_min_proto_version(Some(SslVersion::TLS1_2))?;
+        builder.set_max_proto_version(Some(SslVersion::TLS1_2))?;
 
         if self.enable_bugs_mode {
             use openssl::ssl::SslOptions;
@@ -435,5 +506,90 @@ impl ProtocolTester {
         _addr: std::net::SocketAddr,
     ) -> Result<ProtocolProbeOutcome> {
         Ok(ProtocolProbeOutcome::NotSupported)
+    }
+}
+
+/// Classify a raw legacy-protocol ClientHello response.
+///
+/// `Supported` only when the server returns a ServerHello whose negotiated
+/// version equals the probed version; a TLS alert means the version was rejected
+/// (`NotSupported`); a downgraded ServerHello (e.g. the server picked SSLv3 for
+/// a TLS1.0 probe) is also `NotSupported`; anything else (truncated, non-TLS) is
+/// `Inconclusive` so a transport anomaly is never reported as a clean pass.
+fn classify_legacy_probe_response(response: &[u8], protocol: Protocol) -> ProtocolProbeOutcome {
+    if response.first() == Some(&CONTENT_TYPE_ALERT) {
+        return ProtocolProbeOutcome::NotSupported;
+    }
+
+    match ServerHelloParser::parse(response) {
+        Ok(server_hello) if server_hello.version == protocol => ProtocolProbeOutcome::Supported,
+        Ok(_) => ProtocolProbeOutcome::NotSupported,
+        Err(_) => ProtocolProbeOutcome::Inconclusive,
+    }
+}
+
+#[cfg(test)]
+mod legacy_probe_tests {
+    use super::*;
+    use crate::constants::{CONTENT_TYPE_HANDSHAKE, HANDSHAKE_TYPE_SERVER_HELLO};
+
+    /// Build a minimal ServerHello record advertising `version` in the legacy
+    /// version field (no supported_versions extension, so the parser reports the
+    /// legacy version as negotiated).
+    fn server_hello_record(version: u16) -> Vec<u8> {
+        let mut hello = Vec::new();
+        hello.push(HANDSHAKE_TYPE_SERVER_HELLO);
+        hello.extend_from_slice(&[0x00, 0x00, 0x00]); // handshake length (filled below)
+        hello.extend_from_slice(&version.to_be_bytes());
+        hello.extend_from_slice(&[0u8; 32]); // random
+        hello.push(0x00); // session_id length
+        hello.extend_from_slice(&[0xc0, 0x13]); // cipher suite
+        hello.push(0x00); // compression
+        let body_len = hello.len() - 4;
+        hello[1..4].copy_from_slice(&[
+            ((body_len >> 16) & 0xff) as u8,
+            ((body_len >> 8) & 0xff) as u8,
+            (body_len & 0xff) as u8,
+        ]);
+
+        let mut record = vec![CONTENT_TYPE_HANDSHAKE, 0x03, 0x01];
+        record.extend_from_slice(&(hello.len() as u16).to_be_bytes());
+        record.extend_from_slice(&hello);
+        record
+    }
+
+    #[test]
+    fn test_legacy_serverhello_matching_version_is_supported() {
+        let record = server_hello_record(0x0301);
+        assert_eq!(
+            classify_legacy_probe_response(&record, Protocol::TLS10),
+            ProtocolProbeOutcome::Supported
+        );
+    }
+
+    #[test]
+    fn test_legacy_alert_is_not_supported() {
+        let alert = vec![CONTENT_TYPE_ALERT, 0x03, 0x01, 0x00, 0x02, 0x02, 0x46];
+        assert_eq!(
+            classify_legacy_probe_response(&alert, Protocol::TLS10),
+            ProtocolProbeOutcome::NotSupported
+        );
+    }
+
+    #[test]
+    fn test_legacy_downgraded_serverhello_is_not_supported() {
+        let record = server_hello_record(0x0300);
+        assert_eq!(
+            classify_legacy_probe_response(&record, Protocol::TLS10),
+            ProtocolProbeOutcome::NotSupported
+        );
+    }
+
+    #[test]
+    fn test_legacy_empty_response_is_inconclusive() {
+        assert_eq!(
+            classify_legacy_probe_response(&[], Protocol::TLS10),
+            ProtocolProbeOutcome::Inconclusive
+        );
     }
 }
