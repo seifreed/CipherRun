@@ -1,6 +1,5 @@
 // Client simulation module
 
-pub mod clients;
 pub mod simulator;
 
 #[cfg(test)]
