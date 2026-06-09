@@ -330,15 +330,30 @@ fn parse_connection_info(stdout: &str) -> ConnectionInfo {
     let mut verify_result = String::new();
     let mut session_details = String::new();
     let mut in_ssl_session = false;
+    let mut cipher_from_session = false;
 
     for line in stdout.lines() {
         if line.starts_with("SSL-Session:") {
             in_ssl_session = true;
             session_details = line.trim().to_string();
         } else if line.contains("Cipher") && line.contains(":") {
-            // Prefer cipher from within SSL-Session block; accept first match otherwise
-            if in_ssl_session || cipher.is_empty() {
-                cipher = line.split(':').nth(1).unwrap_or("").trim().to_string();
+            // Prefer the cipher reported inside the SSL-Session block, and within
+            // it take the FIRST one: a later "Cipher  : (NONE)" line (emitted on a
+            // closed/renegotiated session) must not clobber the negotiated value.
+            // Outside the block, accept the first match as a fallback.
+            let should_set = if in_ssl_session {
+                !cipher_from_session
+            } else {
+                cipher.is_empty()
+            };
+            if should_set {
+                let value = line.split(':').nth(1).unwrap_or("").trim().to_string();
+                // "(NONE)" is emitted for a closed/un-negotiated session and is
+                // not a real cipher, so never let it set or clobber the value.
+                if !value.is_empty() && !value.eq_ignore_ascii_case("(none)") {
+                    cipher = value;
+                    cipher_from_session = in_ssl_session;
+                }
             }
         } else if line.contains("Protocol") && line.contains(":") {
             protocol = line.split(':').nth(1).unwrap_or("").trim().to_string();
@@ -437,6 +452,23 @@ MIIDXTCCAkWgAwIBAgIJAKJ
         assert!(info.verify_result.contains("Verify return code"));
         assert_eq!(info.session_details, "SSL-Session:");
         assert_eq!(info.certificate_chain.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_connection_info_ignores_trailing_none_cipher() {
+        // A "(NONE)" Cipher line after the negotiated one (seen on a closed or
+        // renegotiated session) must not clobber the real cipher.
+        let stdout = r#"
+SSL-Session:
+    Protocol  : TLSv1.2
+    Cipher    : ECDHE-RSA-AES256-GCM-SHA384
+    Session-ID: 1234
+New, (NONE), Cipher is (NONE)
+    Cipher    : (NONE)
+"#;
+
+        let info = parse_connection_info(stdout);
+        assert_eq!(info.cipher, "ECDHE-RSA-AES256-GCM-SHA384");
     }
 
     #[test]
