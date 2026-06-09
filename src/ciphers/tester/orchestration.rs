@@ -318,11 +318,17 @@ impl CipherTester {
             None
         };
 
-        let supported: Vec<CipherSuite> = results
+        let mut supported: Vec<CipherSuite> = results
             .into_iter()
             .filter(|r| r.supported)
             .map(|r| r.cipher)
             .collect();
+
+        // Probes complete concurrently, so the collected order is
+        // nondeterministic. Sort by IANA cipher id for stable output across
+        // every formatter and reproducible server-preference probing (which
+        // offers this list as its baseline "original order").
+        supported.sort_by_key(|c| u16::from_str_radix(&c.hexcode, 16).unwrap_or(u16::MAX));
 
         tracing::debug!(
             "Found {} supported ciphers for {:?}",
