@@ -13,7 +13,10 @@ use tokio::net::TcpStream;
 const CONFIG: TextProtocolConfig = TextProtocolConfig {
     protocol_name: "LMTP",
     protocol: StarttlsProtocol::LMTP,
-    greeting: GreetingStyle::StatusCode(220),
+    // RFC 2033/5321 permit a multiline 220 greeting; a single-line read would
+    // leave continuation lines buffered and misparse them as the LHLO response,
+    // falsely reporting STARTTLS absent.
+    greeting: GreetingStyle::MultilineStatus(220),
     capability: Some(CapabilityConfig {
         command: CapabilityCommand::WithHostname("LHLO {}\r\n"),
         starttls_marker: "STARTTLS",

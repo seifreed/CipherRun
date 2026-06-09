@@ -11,7 +11,10 @@ use async_trait::async_trait;
 const CONFIG: TextProtocolConfig = TextProtocolConfig {
     protocol_name: "SMTP",
     protocol: StarttlsProtocol::SMTP,
-    greeting: GreetingStyle::StatusCode(220),
+    // RFC 5321 §4.2 permits a multiline 220 greeting (e.g. Postfix/Exchange
+    // banners). A single-line read would leave the continuation lines buffered
+    // and misparse them as the EHLO response, falsely reporting STARTTLS absent.
+    greeting: GreetingStyle::MultilineStatus(220),
     capability: Some(CapabilityConfig {
         command: CapabilityCommand::WithHostname("EHLO {}\r\n"),
         starttls_marker: "STARTTLS",
@@ -168,6 +171,61 @@ mod tests {
         let negotiator = SmtpNegotiator::new("example.com".to_string());
         let result = negotiator.negotiate_starttls(&mut client).await;
         assert!(result.is_ok());
+
+        server.await.expect("test server task should complete");
+    }
+
+    #[tokio::test]
+    async fn test_smtp_negotiate_starttls_succeeds_with_multiline_greeting() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test listener should bind to localhost");
+        let addr = listener
+            .local_addr()
+            .expect("test listener should have local addr");
+
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener
+                .accept()
+                .await
+                .expect("test server should accept connection");
+            // Multiline 220 banner (RFC 5321 §4.2): continuation lines use a
+            // dash after the code, the final line a space. A single-line read
+            // would leave the trailing lines buffered and break EHLO parsing.
+            stream
+                .write_all(b"220-mail.example.com ESMTP Postfix\r\n220-banner line\r\n220 ready\r\n")
+                .await
+                .expect("test server should write greeting");
+
+            let mut buffer = vec![0u8; 256];
+            let _ = stream
+                .read(&mut buffer)
+                .await
+                .expect("test should read EHLO");
+            stream
+                .write_all(b"250-localhost\r\n250-STARTTLS\r\n250 OK\r\n")
+                .await
+                .expect("test server should write EHLO response");
+
+            let _ = stream
+                .read(&mut buffer)
+                .await
+                .expect("test should read STARTTLS");
+            stream
+                .write_all(b"220 Ready to start TLS\r\n")
+                .await
+                .expect("test server should write STARTTLS response");
+        });
+
+        let mut client = TcpStream::connect(addr)
+            .await
+            .expect("test client should connect");
+        let negotiator = SmtpNegotiator::new("example.com".to_string());
+        let result = negotiator.negotiate_starttls(&mut client).await;
+        assert!(
+            result.is_ok(),
+            "multiline 220 greeting must not break STARTTLS detection: {result:?}"
+        );
 
         server.await.expect("test server task should complete");
     }
