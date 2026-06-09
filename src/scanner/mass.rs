@@ -11,7 +11,6 @@ use crate::Result;
 use crate::application::{CertificateFilters, ScanRequest};
 use crate::certificates::status::CertificateStatus;
 use crate::scanner::{ScanResults, Scanner};
-use crate::utils::network::split_target_host_port;
 use crate::utils::network_runtime;
 use colored::Colorize;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
@@ -307,15 +306,9 @@ impl MassScanner {
             None => return false, // No leaf certificate, filter out
         };
 
-        // Extract hostname from target (format: "hostname:port")
-        let hostname = split_target_host_port(&scan_result.target)
-            .map(|(hostname, _)| hostname)
-            .unwrap_or_else(|_| scan_result.target.clone());
-
         // Create certificate status
         let cert_status = CertificateStatus::from_validation_result(
             &cert_analysis.validation,
-            &hostname,
             cert,
             cert_analysis.revocation.as_ref(),
         );

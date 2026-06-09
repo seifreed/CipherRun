@@ -114,8 +114,7 @@ fn test_filter_expired_certificates() {
         true,
     );
 
-    let cert_status =
-        CertificateStatus::from_validation_result(&validation, "expired.com", &cert, None);
+    let cert_status = CertificateStatus::from_validation_result(&validation, &cert, None);
 
     assert!(
         cert_status.is_expired,
@@ -156,8 +155,7 @@ fn test_filter_self_signed_certificates() {
         false,
     );
 
-    let cert_status =
-        CertificateStatus::from_validation_result(&validation, "selfsigned.com", &cert, None);
+    let cert_status = CertificateStatus::from_validation_result(&validation, &cert, None);
 
     assert!(
         cert_status.is_self_signed,
@@ -198,8 +196,7 @@ fn test_filter_mismatched_certificates() {
         true,
     );
 
-    let cert_status =
-        CertificateStatus::from_validation_result(&validation, "different.com", &cert, None);
+    let cert_status = CertificateStatus::from_validation_result(&validation, &cert, None);
 
     assert!(
         cert_status.is_mismatched,
@@ -238,12 +235,8 @@ fn test_filter_revoked_certificates() {
         must_staple: false,
     };
 
-    let cert_status = CertificateStatus::from_validation_result(
-        &validation,
-        "revoked.com",
-        &cert,
-        Some(&revocation),
-    );
+    let cert_status =
+        CertificateStatus::from_validation_result(&validation, &cert, Some(&revocation));
 
     assert!(
         cert_status.is_revoked,
@@ -283,8 +276,7 @@ fn test_filter_untrusted_certificates() {
         false, // trust_chain_valid = false
     );
 
-    let cert_status =
-        CertificateStatus::from_validation_result(&validation, "untrusted.com", &cert, None);
+    let cert_status = CertificateStatus::from_validation_result(&validation, &cert, None);
 
     assert!(
         cert_status.is_untrusted,
@@ -332,8 +324,7 @@ fn test_multiple_filters_or_logic() {
         false,
     );
 
-    let cert_status =
-        CertificateStatus::from_validation_result(&validation, "bad.com", &cert, None);
+    let cert_status = CertificateStatus::from_validation_result(&validation, &cert, None);
 
     // Test with only expired filter
     let filters = CertificateFilters {
@@ -378,8 +369,7 @@ fn test_no_filters_active_shows_all() {
 
     let validation = create_mock_validation(true, vec![], true, true, true);
 
-    let cert_status =
-        CertificateStatus::from_validation_result(&validation, "example.com", &cert, None);
+    let cert_status = CertificateStatus::from_validation_result(&validation, &cert, None);
 
     let filters = CertificateFilters::default(); // No filters active
 
@@ -401,8 +391,7 @@ fn test_valid_certificate_filtered_out_when_filters_active() {
 
     let validation = create_mock_validation(true, vec![], true, true, true);
 
-    let cert_status =
-        CertificateStatus::from_validation_result(&validation, "valid.com", &cert, None);
+    let cert_status = CertificateStatus::from_validation_result(&validation, &cert, None);
 
     // When expired filter is active, valid cert should NOT match
     let filters = CertificateFilters {

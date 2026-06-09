@@ -25,7 +25,6 @@ impl CertificateStatus {
     ///
     /// # Arguments
     /// * `validation` - Certificate validation result
-    /// * `hostname` - Expected hostname for mismatch detection
     /// * `cert` - Certificate information
     /// * `revocation` - Optional revocation check result
     ///
@@ -33,7 +32,6 @@ impl CertificateStatus {
     /// CertificateStatus with all status flags set
     pub fn from_validation_result(
         validation: &ValidationResult,
-        hostname: &str,
         cert: &CertificateInfo,
         revocation: Option<&RevocationResult>,
     ) -> Self {
@@ -44,7 +42,7 @@ impl CertificateStatus {
         let is_self_signed = Self::detect_self_signed(validation, cert);
 
         // Check if hostname mismatched
-        let is_mismatched = Self::detect_mismatched(validation, hostname, cert);
+        let is_mismatched = Self::detect_mismatched(validation);
 
         // Check if revoked
         let is_revoked = Self::detect_revoked(revocation);
@@ -129,70 +127,20 @@ impl CertificateStatus {
         cert.subject == cert.issuer
     }
 
-    /// Detect if certificate has hostname mismatch
-    fn detect_mismatched(
-        validation: &ValidationResult,
-        hostname: &str,
-        cert: &CertificateInfo,
-    ) -> bool {
-        // Check validation issues first
-        if validation
+    /// Detect if certificate has hostname mismatch.
+    ///
+    /// `validation.hostname_match` is the authoritative result of hostname
+    /// validation (SAN + single-label wildcard + CN, with DN-boundary and
+    /// trailing-dot handling) computed by the validator. This only translates
+    /// that verdict into the status flag; it must not re-derive matching with
+    /// divergent logic, which previously could report an already-matched
+    /// certificate (e.g. matched via a wildcard CN) as mismatched.
+    fn detect_mismatched(validation: &ValidationResult) -> bool {
+        validation
             .issues
             .iter()
             .any(|issue| matches!(issue.issue_type, IssueType::HostnameMismatch))
-        {
-            return true;
-        }
-
-        // Also check the hostname_match flag
-        if !validation.hostname_match {
-            return true;
-        }
-
-        // Fallback: check hostname against SANs manually
-        let hostname_lower = hostname.to_lowercase();
-
-        // Check Subject Alternative Names
-        for san in &cert.san {
-            if san.to_lowercase() == hostname_lower {
-                return false; // Match found, not mismatched
-            }
-
-            // Check wildcard match (only matches exactly one subdomain level)
-            if let Some(san_domain) = san.strip_prefix("*.")
-                && !san_domain.is_empty()
-                && san_domain.contains('.')
-            {
-                let domain_suffix = format!(".{}", san_domain.to_lowercase());
-                if hostname_lower.ends_with(&domain_suffix) {
-                    let prefix = &hostname_lower[..hostname_lower.len() - domain_suffix.len()];
-                    if !prefix.is_empty() && !prefix.contains('.') {
-                        return false; // Wildcard match found
-                    }
-                }
-            }
-        }
-
-        // Check Common Name in subject (exact match with DN boundary)
-        let subject_lower = cert.subject.to_lowercase();
-        let cn_prefix = format!("cn={}", hostname_lower);
-        if let Some(pos) = subject_lower.find(&cn_prefix) {
-            let before_ok = pos == 0
-                || subject_lower[..pos].ends_with(", ")
-                || subject_lower[..pos].ends_with(',')
-                || subject_lower[..pos].ends_with('/')
-                || subject_lower[..pos].ends_with(' ');
-            let after = pos + cn_prefix.len();
-            let after_ok = after == subject_lower.len()
-                || subject_lower[after..].starts_with(',')
-                || subject_lower[after..].starts_with('/');
-            if before_ok && after_ok {
-                return false; // CN match found
-            }
-        }
-
-        // No matches found - it's mismatched
-        true
+            || !validation.hostname_match
     }
 
     /// Detect if certificate is revoked
@@ -341,14 +289,8 @@ mod tests {
             platform_trust: None,
         };
 
-        let cert = CertificateInfo {
-            subject: "CN=example.com".to_string(),
-            san: vec!["example.com".to_string()],
-            ..Default::default()
-        };
-
         assert!(
-            CertificateStatus::detect_mismatched(&validation, "different.com", &cert),
+            CertificateStatus::detect_mismatched(&validation),
             "Should detect hostname mismatch"
         );
     }
