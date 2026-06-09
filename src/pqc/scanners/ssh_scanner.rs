@@ -53,7 +53,12 @@ impl SshScanner {
                     };
                     if is_ssh_pqc_hostkey(&alg) {
                         safe.push(alg);
-                    } else if is_ssh_classical_ecdsa(&alg) || alg.contains("rsa") {
+                    } else {
+                        // Every classical host-key signature scheme — RSA, ECDSA,
+                        // Ed25519, DSA — is broken by Shor's algorithm. Only the
+                        // PQC schemes above are safe; everything else is
+                        // quantum-vulnerable (previously Ed25519/DSA were silently
+                        // dropped, scoring a PQC-kex + ssh-ed25519 config 100/100).
                         vulnerable.push(alg);
                     }
                 }
@@ -118,11 +123,6 @@ fn is_ssh_pqc_hostkey(alg: &str) -> bool {
     lower.contains("dilithium") || lower.contains("falcon") || lower.contains("mldsa")
 }
 
-fn is_ssh_classical_ecdsa(alg: &str) -> bool {
-    let lower = alg.to_lowercase();
-    lower.contains("ecdsa") && !is_ssh_pqc_hostkey(alg)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -131,6 +131,30 @@ mod tests {
     fn test_extract_algorithms() {
         let algs = extract_algorithms("KexAlgorithms curve25519-sha256,ecdh-sha2-nistp256");
         assert_eq!(algs, vec!["curve25519-sha256", "ecdh-sha2-nistp256"]);
+    }
+
+    #[test]
+    fn test_ssh_ed25519_hostkey_is_quantum_vulnerable() {
+        use std::io::Write;
+        let mut f = tempfile::NamedTempFile::new().expect("create temp file");
+        // PQC kex but a classical Ed25519 host key: the host key must still be
+        // counted vulnerable (Shor breaks Ed25519), so the config is not 100/100.
+        writeln!(
+            f,
+            "KexAlgorithms mlkem768nistp256-sha256@openssh.com\nHostKeyAlgorithms ssh-ed25519"
+        )
+        .expect("write config");
+
+        let result = SshScanner::scan(f.path()).expect("scan should succeed");
+        assert!(
+            result
+                .quantum_vulnerable
+                .iter()
+                .any(|a| a.contains("ed25519")),
+            "ssh-ed25519 host key must be flagged quantum-vulnerable: {:?}",
+            result.quantum_vulnerable
+        );
+        assert_ne!(result.score, 100, "config with a classical host key is not fully PQC-ready");
     }
 
     #[test]

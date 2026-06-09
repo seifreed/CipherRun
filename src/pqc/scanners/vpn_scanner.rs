@@ -20,6 +20,7 @@ impl VpnScanner {
         let mut vulnerable = Vec::new();
         let mut recommendations = Vec::new();
         let vpn_type = detect_vpn_type(&content);
+        let mut saw_cipher_directive = false;
 
         for line in content.lines() {
             let trimmed = line.trim();
@@ -28,6 +29,15 @@ impl VpnScanner {
             }
             let lower = trimmed.to_lowercase();
             if lower.starts_with("cipher ") || lower.starts_with("tls-cipher ") {
+                saw_cipher_directive = true;
+            }
+            // Only the control-channel TLS suite (`tls-cipher`) encodes the
+            // classical key exchange that is quantum-vulnerable. `cipher` selects
+            // the symmetric data-channel cipher (e.g. AES-256-GCM), which is NOT
+            // quantum-vulnerable — AES-256 retains ~128-bit strength under Grover
+            // — so flagging it here was a false positive on essentially every
+            // OpenVPN config.
+            if lower.starts_with("tls-cipher ") {
                 vulnerable.push(trimmed.to_string());
             }
         }
@@ -52,7 +62,7 @@ impl VpnScanner {
         // `pqc_safe` is not populated by this scanner yet, so we cannot credit any
         // positive PQC posture — a config with no detected cipher directives is
         // "unknown", not "partially ready". Score = 0 until we have real evidence.
-        if vulnerable.is_empty() {
+        if !saw_cipher_directive && vpn_type != "WireGuard" {
             recommendations.push(
                 "No cipher directives detected; VPN crypto configuration is unknown — audit deployment defaults and explicit `cipher`/`tls-cipher` settings.".to_string(),
             );
@@ -106,6 +116,32 @@ mod tests {
         assert!(
             result.recommendations.iter().any(|r| r.contains("unknown")),
             "scanner should flag the unknown crypto state explicitly"
+        );
+    }
+
+    #[test]
+    fn test_vpn_symmetric_cipher_not_flagged_but_tls_kex_is() {
+        // `cipher AES-256-GCM` is symmetric (quantum-safe) and must NOT be
+        // flagged; the `tls-cipher` control-channel KEX is quantum-vulnerable.
+        let f = tmp_config(
+            "cipher AES-256-GCM\ntls-cipher TLS-ECDHE-RSA-WITH-AES-256-GCM-SHA384\n",
+        );
+        let result = VpnScanner::scan(f.path()).expect("scan should succeed");
+        assert!(
+            !result
+                .quantum_vulnerable
+                .iter()
+                .any(|v| v.contains("AES-256-GCM") && v.starts_with("cipher")),
+            "symmetric AES-256 cipher must not be flagged quantum-vulnerable: {:?}",
+            result.quantum_vulnerable
+        );
+        assert!(
+            result
+                .quantum_vulnerable
+                .iter()
+                .any(|v| v.starts_with("tls-cipher")),
+            "tls-cipher control-channel KEX must be flagged: {:?}",
+            result.quantum_vulnerable
         );
     }
 
