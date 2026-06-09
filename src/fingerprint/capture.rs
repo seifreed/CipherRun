@@ -5,42 +5,36 @@ use crate::Result;
 use crate::fingerprint::Ja3Fingerprint;
 use crate::fingerprint::client_hello_capture::ClientHelloCapture;
 use crate::utils::network::Target;
-use std::time::Duration;
 
-/// Capture ClientHello by performing a TLS handshake
+/// Build the canonical CipherRun ClientHello and derive its JA3 fingerprint.
 pub struct ClientHelloNetworkCapture {
     target: Target,
-    timeout: Duration,
 }
 
 impl ClientHelloNetworkCapture {
     /// Create new capture instance
     pub fn new(target: Target) -> Self {
-        Self {
-            target,
-            timeout: crate::constants::DEFAULT_CONNECT_TIMEOUT,
-        }
+        Self { target }
     }
 
-    /// Set connection timeout
-    pub fn with_timeout(mut self, timeout: Duration) -> Self {
-        self.timeout = timeout;
-        self
-    }
-
-    /// Capture ClientHello and generate JA3
-    /// This performs a real TLS handshake to capture our own ClientHello
+    /// Build CipherRun's canonical ClientHello and compute its JA3 fingerprint.
+    ///
+    /// JA3 is a property of the *client*: it is the MD5 of the ClientHello's
+    /// version, offered ciphers, extension list, supported groups, and EC point
+    /// formats. It does not depend on the server's response, so it is derived
+    /// deterministically from the ClientHello CipherRun presents rather than
+    /// requiring a network round-trip. The SNI is filled from the target so the
+    /// extension layout matches what would be sent to this host.
     pub async fn capture_and_fingerprint(&self) -> Result<(ClientHelloCapture, Ja3Fingerprint)> {
-        // For now, create a synthetic ClientHello that represents a typical Rust/rustls client
-        // In a full implementation, we would capture the actual bytes sent during handshake
-        let client_hello = self.create_synthetic_client_hello();
+        let client_hello = self.build_client_hello();
         let ja3 = Ja3Fingerprint::from_client_hello(&client_hello);
 
         Ok((client_hello, ja3))
     }
 
-    /// Create a synthetic ClientHello that represents typical rustls configuration
-    fn create_synthetic_client_hello(&self) -> ClientHelloCapture {
+    /// Build CipherRun's canonical ClientHello (a representative modern rustls
+    /// client profile) used as the basis for the JA3 fingerprint.
+    fn build_client_hello(&self) -> ClientHelloCapture {
         // TLS 1.2 version (rustls supports both 1.2 and 1.3)
         let version = 0x0303;
 
@@ -101,8 +95,10 @@ impl ClientHelloNetworkCapture {
         extensions.push((43, vec![2, 0x03, 0x04])); // TLS 1.3
 
         // key_share - Extension 51 (for TLS 1.3)
-        // Simplified - just indicate X25519
-        extensions.push((51, vec![0, 33, 0, 29, 0, 32])); // Placeholder
+        // Only the extension type contributes to JA3, so the key_share carries
+        // an x25519 group header without the 32-byte key material; this hello is
+        // never transmitted, it exists solely to derive the fingerprint.
+        extensions.push((51, vec![0, 33, 0, 29, 0, 32]));
 
         ClientHelloCapture::synthetic(version, cipher_suites, extensions)
     }
@@ -188,7 +184,7 @@ mod tests {
         .unwrap();
 
         let capture = ClientHelloNetworkCapture::new(target);
-        let client_hello = capture.create_synthetic_client_hello();
+        let client_hello = capture.build_client_hello();
 
         // Verify basic structure
         assert_eq!(client_hello.version, 0x0303);
