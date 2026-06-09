@@ -3,7 +3,6 @@
 pub mod adaptive;
 pub mod anycast;
 pub mod crypto;
-pub mod display;
 pub mod dns_cache;
 pub mod formatting;
 pub mod hints;

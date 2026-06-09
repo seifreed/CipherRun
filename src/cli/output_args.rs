@@ -95,17 +95,9 @@ pub struct OutputArgs {
     #[arg(long = "iana-names")]
     pub iana_names: bool,
 
-    /// Show RFC/IANA cipher names instead of OpenSSL names
-    #[arg(long = "mapping", value_name = "no-openssl|no-rfc")]
-    pub cipher_mapping: Option<String>,
-
     /// Show hexadecimal cipher IDs
     #[arg(long = "show-cipher-ids")]
     pub show_cipher_ids: bool,
-
-    /// Show each cipher tested (not just supported ones)
-    #[arg(long = "show-each")]
-    pub show_each: bool,
 
     /// Show handshake times in milliseconds
     #[arg(long = "show-times")]
@@ -152,9 +144,7 @@ mod tests {
         assert!(!args.overwrite);
         assert!(!args.hints);
         assert!(!args.iana_names);
-        assert!(args.cipher_mapping.is_none());
         assert!(!args.show_cipher_ids);
-        assert!(!args.show_each);
         assert!(!args.show_times);
         assert!(args.warnings.is_none());
     }
