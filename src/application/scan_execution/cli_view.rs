@@ -56,6 +56,10 @@ impl<'a> ScanCliView<'a> {
         self.results.intolerance().is_some()
     }
 
+    pub fn has_pqc_readiness_results(&self) -> bool {
+        self.results.pqc_readiness().is_some()
+    }
+
     pub fn has_fingerprint_results(&self) -> bool {
         self.has_ja3_results() || self.has_ja3s_results() || self.has_jarm_results()
     }
@@ -78,6 +82,7 @@ impl<'a> ScanCliView<'a> {
             || self.has_group_results()
             || self.has_client_ca_results()
             || self.has_intolerance_results()
+            || self.has_pqc_readiness_results()
     }
 
     pub fn should_render_feature_view(&self) -> bool {
@@ -124,6 +129,7 @@ impl<'a> ScanCliView<'a> {
             || self.has_group_results()
             || self.has_client_ca_results()
             || self.has_intolerance_results()
+            || self.has_pqc_readiness_results()
             || self.has_fingerprint_results()
             || self.has_alpn_results()
             || self.has_rating_results()
