@@ -65,6 +65,24 @@ impl Grade {
         }
     }
 
+    /// Highest score that still maps to this grade via [`Grade::from_score`].
+    ///
+    /// Used to apply SSL Labs grade caps: capping the overall score to
+    /// `Grade::B.max_score()` forces an otherwise-higher grade down to B.
+    pub fn max_score(self) -> u8 {
+        match self {
+            Grade::APlus => 100,
+            Grade::A => 94,
+            Grade::AMinus => 84,
+            Grade::B => 79,
+            Grade::C => 64,
+            Grade::D => 49,
+            Grade::E => 34,
+            Grade::F => 19,
+            Grade::T | Grade::M => 0,
+        }
+    }
+
     /// Convert score to grade
     pub fn from_score(score: u8) -> Self {
         match score {

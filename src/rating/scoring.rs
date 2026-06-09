@@ -129,8 +129,23 @@ impl RatingCalculator {
             .iter()
             .any(|p| p.supported && p.protocol == Protocol::TLS13);
         if !has_tls13 {
-            // Cap at 84 (A- range is 80-84)
-            score = score.min(84);
+            score = score.min(Grade::AMinus.max_score());
+        }
+
+        // SSL Labs deprecated-protocol grade caps (version 2009q, 2020):
+        // supporting SSL 3.0 caps the grade at C; supporting TLS 1.0 or TLS 1.1
+        // caps it at B. These are hard caps on the overall score, independent of
+        // the weighted component average — a strong cipher/key-exchange
+        // configuration cannot lift a server that still offers deprecated
+        // protocols above the capped grade. The lowest applicable cap wins via
+        // `min`, so a server offering both SSL 3.0 and TLS 1.0 is capped at C.
+        let supports =
+            |proto: Protocol| protocols.iter().any(|p| p.supported && p.protocol == proto);
+        if supports(Protocol::SSLv3) {
+            score = score.min(Grade::C.max_score());
+        }
+        if supports(Protocol::TLS10) || supports(Protocol::TLS11) {
+            score = score.min(Grade::B.max_score());
         }
 
         // Apply vulnerability penalties (excludes TLS_FALLBACK_SCSV as of 2025)

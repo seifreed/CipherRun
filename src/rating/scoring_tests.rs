@@ -470,3 +470,105 @@ fn test_cipher_strength_score_counts_medium_strength_as_weak() {
     );
     assert_eq!(score, 75);
 }
+
+/// Build a supported `ProtocolTestResult` for the given protocol.
+#[cfg(test)]
+fn supported_protocol(protocol: Protocol) -> ProtocolTestResult {
+    ProtocolTestResult {
+        protocol,
+        supported: true,
+        inconclusive: false,
+        preferred: false,
+        ciphers_count: 0,
+        handshake_time_ms: None,
+        heartbeat_enabled: None,
+        session_resumption_caching: None,
+        session_resumption_tickets: None,
+        secure_renegotiation: None,
+    }
+}
+
+#[test]
+fn test_tls10_support_caps_grade_at_b() {
+    use std::collections::HashMap;
+
+    // Strong modern config (TLS 1.2 + 1.3) that would otherwise score A/A+,
+    // but TLS 1.0 is still enabled, so SSL Labs caps the grade at B.
+    let protocols = vec![
+        supported_protocol(Protocol::TLS10),
+        supported_protocol(Protocol::TLS12),
+        supported_protocol(Protocol::TLS13),
+    ];
+    let ciphers = HashMap::new();
+
+    let result = RatingCalculator::calculate(&protocols, &ciphers, None, &[]);
+
+    assert_eq!(
+        result.grade,
+        Grade::B,
+        "TLS 1.0 support must cap the grade at B, got {} (score {})",
+        result.grade,
+        result.score
+    );
+    assert!(result.score <= Grade::B.max_score());
+}
+
+#[test]
+fn test_tls11_support_caps_grade_at_b() {
+    use std::collections::HashMap;
+
+    let protocols = vec![
+        supported_protocol(Protocol::TLS11),
+        supported_protocol(Protocol::TLS12),
+        supported_protocol(Protocol::TLS13),
+    ];
+    let ciphers = HashMap::new();
+
+    let result = RatingCalculator::calculate(&protocols, &ciphers, None, &[]);
+
+    assert_eq!(result.grade, Grade::B, "TLS 1.1 support must cap the grade at B");
+}
+
+#[test]
+fn test_sslv3_support_caps_grade_at_c() {
+    use std::collections::HashMap;
+
+    // SSL 3.0 is worse than TLS 1.0: the lower C cap must win even though TLS
+    // 1.0 is also offered.
+    let protocols = vec![
+        supported_protocol(Protocol::SSLv3),
+        supported_protocol(Protocol::TLS10),
+        supported_protocol(Protocol::TLS12),
+        supported_protocol(Protocol::TLS13),
+    ];
+    let ciphers = HashMap::new();
+
+    let result = RatingCalculator::calculate(&protocols, &ciphers, None, &[]);
+
+    assert_eq!(
+        result.grade,
+        Grade::C,
+        "SSL 3.0 support must cap the grade at C, got {}",
+        result.grade
+    );
+}
+
+#[test]
+fn test_modern_protocols_not_capped_by_legacy_rule() {
+    use std::collections::HashMap;
+
+    // No deprecated protocols: the legacy caps must not apply.
+    let protocols = vec![
+        supported_protocol(Protocol::TLS12),
+        supported_protocol(Protocol::TLS13),
+    ];
+    let ciphers = HashMap::new();
+
+    let result = RatingCalculator::calculate(&protocols, &ciphers, None, &[]);
+
+    assert!(
+        result.grade >= Grade::A,
+        "A TLS 1.2 + 1.3 server must not be capped by the legacy-protocol rule, got {}",
+        result.grade
+    );
+}
