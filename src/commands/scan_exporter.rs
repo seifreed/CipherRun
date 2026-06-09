@@ -137,7 +137,8 @@ impl<'a> ScanExporter<'a> {
         }
 
         if let Some(csv_file) = plan.csv_file {
-            let csv = plan.results.to_csv()?;
+            use crate::output::csv;
+            let csv = csv::generate_csv(plan.results)?;
             self.write_artifact(&csv_file, &csv, ExportKind::Csv)?;
             println!("✓ Results exported to CSV: {}", csv_file.display());
             exported = true;

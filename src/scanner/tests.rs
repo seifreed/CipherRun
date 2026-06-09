@@ -26,13 +26,6 @@ fn test_scan_results_json() {
 }
 
 #[test]
-fn test_scan_results_csv() {
-    let results = ScanResults::default();
-    let csv = results.to_csv().expect("test assertion should succeed");
-    assert!(csv.contains("Type,Severity"));
-}
-
-#[test]
 fn test_scan_results_accessors_and_mutators() {
     let mut results = ScanResults::default();
 
@@ -190,29 +183,6 @@ fn test_scan_results_connection_evidence_requires_successful_subtests() {
         certificate_type: Some("RSA 2048".to_string()),
     }]);
     assert!(results.has_connection_evidence());
-}
-
-#[test]
-fn test_scan_results_csv_with_vulnerability() {
-    let vuln = VulnerabilityResult {
-        vuln_type: VulnerabilityType::ROBOT,
-        vulnerable: true,
-        inconclusive: false,
-        details: "Comma, should be replaced".to_string(),
-        cve: Some("CVE-2017-13099".to_string()),
-        cwe: None,
-        severity: Severity::High,
-    };
-
-    let results = ScanResults {
-        vulnerabilities: vec![vuln],
-        ..Default::default()
-    };
-
-    let csv = results.to_csv().expect("test assertion should succeed");
-    assert!(csv.contains("ROBOT"));
-    assert!(csv.contains("CVE-2017-13099"));
-    assert!(csv.contains("Comma; should be replaced"));
 }
 
 #[test]

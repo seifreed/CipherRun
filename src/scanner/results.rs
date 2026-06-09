@@ -338,26 +338,6 @@ impl ScanResults {
             Ok(serde_json::to_string(self)?)
         }
     }
-
-    /// Export to CSV (simplified)
-    pub fn to_csv(&self) -> Result<String> {
-        let mut csv = String::new();
-
-        // Vulnerabilities CSV
-        csv.push_str("Type,Severity,Status,CVE,Details\n");
-        for vuln in &self.vulnerabilities {
-            csv.push_str(&format!(
-                "{:?},{:?},{},{},{}\n",
-                vuln.vuln_type,
-                vuln.severity,
-                vuln.status_csv_value(),
-                vuln.cve.as_deref().unwrap_or("N/A"),
-                vuln.details.replace(',', ";")
-            ));
-        }
-
-        Ok(csv)
-    }
 }
 
 #[cfg(test)]
