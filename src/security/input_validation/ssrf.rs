@@ -23,6 +23,11 @@ fn is_private_ipv4(ip: &Ipv4Addr) -> bool {
         || ip.is_broadcast()
         || ip.is_unspecified()
         || ip.is_multicast()
+        // "This host on this network" (0.0.0.0/8, RFC 1122). is_unspecified()
+        // only matches 0.0.0.0 exactly, but Linux routes the whole /8 to the
+        // local host, so e.g. http://0.0.0.1/ reaches a local service — an SSRF
+        // blocklist bypass. Block the entire range.
+        || ip.octets()[0] == 0
         // Reserved (240.0.0.0/4)
         || ip.octets()[0] >= 240
         // Carrier-grade NAT (100.64.0.0/10, RFC 6598)
@@ -137,19 +142,13 @@ mod tests {
     }
 
     #[test]
-    fn test_is_private_ipv4_no_false_positives_for_zero_prefix() {
-        assert!(
-            !is_private_ip(&"0.0.0.1".parse().unwrap()),
-            "0.0.0.1 should NOT be private - it's not an IPv4-mapped address"
-        );
-        assert!(
-            !is_private_ip(&"0.0.0.255".parse().unwrap()),
-            "0.0.0.255 should NOT be private"
-        );
-        assert!(
-            !is_private_ip(&"0.1.2.3".parse().unwrap()),
-            "0.1.2.3 should NOT be private"
-        );
+    fn test_is_private_ipv4_blocks_zero_prefix_range() {
+        // 0.0.0.0/8 ("this host", RFC 1122) is routed to the local host on
+        // Linux, so the whole block must be treated as private to prevent an
+        // SSRF blocklist bypass via e.g. http://0.0.0.1/.
+        assert!(is_private_ip(&"0.0.0.1".parse().unwrap()));
+        assert!(is_private_ip(&"0.0.0.255".parse().unwrap()));
+        assert!(is_private_ip(&"0.1.2.3".parse().unwrap()));
         assert!(
             is_private_ip(&"0.0.0.0".parse().unwrap()),
             "0.0.0.0 (unspecified) should be private"
