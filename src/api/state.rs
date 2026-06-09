@@ -15,6 +15,10 @@ use std::time::Instant;
 use tokio::sync::broadcast;
 
 /// Maximum number of timestamps to keep in memory
+/// How often the per-key rate-limiter is swept to evict stale entries. Without
+/// this the limiter's maps grow unbounded for the process lifetime.
+const RATE_LIMITER_CLEANUP_INTERVAL_SECS: u64 = 300;
+
 const MAX_TIMESTAMPS: usize = 100_000;
 
 /// Maximum number of hourly stats entries
@@ -254,6 +258,22 @@ impl AppState {
         tokio::spawn(async move {
             if let Err(e) = executor.start().await {
                 tracing::error!("Executor error: {}", e);
+            }
+        });
+
+        // Periodically evict stale rate-limiter entries. cleanup() is the only
+        // mechanism that bounds the limiter's maps; without this sweeper they
+        // grow for the lifetime of the process (one entry per distinct API key,
+        // never freed) — a slow memory leak.
+        let rate_limiter = self.rate_limiter.clone();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(std::time::Duration::from_secs(
+                RATE_LIMITER_CLEANUP_INTERVAL_SECS,
+            ));
+            ticker.tick().await; // first tick fires immediately; skip it
+            loop {
+                ticker.tick().await;
+                rate_limiter.cleanup();
             }
         });
 
