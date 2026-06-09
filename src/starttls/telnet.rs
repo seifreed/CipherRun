@@ -25,29 +25,71 @@ impl TelnetNegotiator {
 #[async_trait]
 impl StarttlsNegotiator for TelnetNegotiator {
     async fn negotiate_starttls(&self, stream: &mut TcpStream) -> Result<()> {
-        // Telnet uses WILL/WONT/DO/DONT negotiation
-        // For STARTTLS: RFC 2817
+        // Telnet option negotiation (RFC 854); STARTTLS option per RFC 2817.
+        const IAC: u8 = 0xFF;
+        const WILL: u8 = 0xFB;
+        const WONT: u8 = 0xFC;
+        const DO: u8 = 0xFD;
+        const DONT: u8 = 0xFE;
+        const SB: u8 = 0xFA;
+        const SE: u8 = 0xF0;
+        const START_TLS: u8 = 0x2E;
+        // Bound how many commands we scan so a misbehaving server cannot make us
+        // loop forever (read timeouts are enforced by the caller).
+        const MAX_COMMANDS: usize = 256;
 
-        // Send IAC WILL START_TLS
-        // IAC = 0xFF, WILL = 0xFB, START_TLS = 0x2E
-        let starttls_request = [0xFF, 0xFB, 0x2E];
-        stream.write_all(&starttls_request).await?;
+        // Send IAC WILL START_TLS.
+        stream.write_all(&[IAC, WILL, START_TLS]).await?;
         stream.flush().await?;
 
-        // Read response
-        let mut response = [0u8; 3];
-        stream.read_exact(&mut response).await?;
-
-        // Check for IAC DO START_TLS (0xFF 0xFD 0x2E)
-        if response[0] == 0xFF && response[1] == 0xFD && response[2] == 0x2E {
-            // Server agrees to START_TLS
-            Ok(())
-        } else {
-            Err(crate::error::TlsError::StarttlsError {
-                protocol: "Telnet".to_string(),
-                details: "STARTTLS negotiation failed".to_string(),
-            })
+        // Telnet servers routinely interleave other option negotiations (ECHO,
+        // SGA, NAWS, ...) before answering ours. The previous fixed 3-byte read
+        // mistook the first such option for the START_TLS verdict and reported a
+        // false negative. Scan IAC commands until we see the verdict for the
+        // START_TLS option specifically.
+        for _ in 0..MAX_COMMANDS {
+            if stream.read_u8().await? != IAC {
+                // Data byte outside an IAC command — ignore.
+                continue;
+            }
+            match stream.read_u8().await? {
+                command @ (WILL | WONT | DO | DONT) => {
+                    let option = stream.read_u8().await?;
+                    if option == START_TLS {
+                        return if command == DO {
+                            Ok(())
+                        } else {
+                            Err(crate::error::TlsError::StarttlsError {
+                                protocol: "Telnet".to_string(),
+                                details: "STARTTLS negotiation failed: server refused the option"
+                                    .to_string(),
+                            })
+                        };
+                    }
+                    // Negotiation for an unrelated option — skip it.
+                }
+                SB => {
+                    // Subnegotiation: skip until the terminating IAC SE.
+                    let mut prev_iac = false;
+                    loop {
+                        let b = stream.read_u8().await?;
+                        if prev_iac && b == SE {
+                            break;
+                        }
+                        prev_iac = b == IAC;
+                    }
+                }
+                // IAC IAC is an escaped data byte; any other command (GA, NOP,
+                // AYT, ...) is a 2-byte sequence with no option — skip either.
+                _ => {}
+            }
         }
+
+        Err(crate::error::TlsError::StarttlsError {
+            protocol: "Telnet".to_string(),
+            details: "STARTTLS negotiation failed: no verdict within option-negotiation limit"
+                .to_string(),
+        })
     }
 
     fn protocol(&self) -> StarttlsProtocol {
@@ -117,7 +159,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_telnet_negotiate_starttls_unexpected_reply() {
+    async fn test_telnet_negotiate_starttls_succeeds_after_interleaved_options() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
 
@@ -125,16 +167,23 @@ mod tests {
             let (mut stream, _) = listener.accept().await.unwrap();
             let mut buf = [0u8; 3];
             stream.read_exact(&mut buf).await.unwrap();
-            stream.write_all(&[0x00, 0x00, 0x00]).await.unwrap();
+            // Server negotiates unrelated options (DO ECHO, WILL SGA) and a
+            // subnegotiation before answering START_TLS. A correct client must
+            // skip these and still detect the DO START_TLS verdict.
+            stream
+                .write_all(&[
+                    0xFF, 0xFD, 0x01, // IAC DO ECHO
+                    0xFF, 0xFB, 0x03, // IAC WILL SGA
+                    0xFF, 0xFA, 0x18, 0x00, 0xFF, 0xF0, // IAC SB TERMINAL-TYPE ... IAC SE
+                    0xFF, 0xFD, 0x2E, // IAC DO START_TLS
+                ])
+                .await
+                .unwrap();
         });
 
         let mut client = TcpStream::connect(addr).await.unwrap();
         let negotiator = TelnetNegotiator::new();
-        let err = negotiator
-            .negotiate_starttls(&mut client)
-            .await
-            .unwrap_err();
-        assert!(format!("{err}").contains("STARTTLS"));
+        negotiator.negotiate_starttls(&mut client).await.unwrap();
 
         server.await.unwrap();
     }
