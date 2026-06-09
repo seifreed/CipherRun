@@ -71,6 +71,33 @@ pub fn generate_csv(results: &ScanResults) -> Result<String> {
     }
     output.push('\n');
 
+    // Certificate (if available). Mirrors the certificate data the terminal,
+    // JSON, and XML formats expose so --csv is not missing the central TLS
+    // artifact.
+    if let Some(cert_data) = &results.certificate_chain {
+        output.push_str("=== CERTIFICATE ===\n");
+        output.push_str(
+            "Subject,Issuer,Serial,Valid From,Valid To,Extended Validation,Valid,Hostname Match,Trust Chain Valid,Not Expired\n",
+        );
+        let validation = &cert_data.validation;
+        if let Some(leaf) = cert_data.chain.leaf() {
+            output.push_str(&format!(
+                "{},{},{},{},{},{},{},{},{},{}\n",
+                csv_cell(&leaf.subject),
+                csv_cell(&leaf.issuer),
+                csv_cell(&leaf.serial_number),
+                csv_cell(&leaf.not_before),
+                csv_cell(&leaf.not_after),
+                leaf.extended_validation,
+                validation.valid,
+                validation.hostname_match,
+                validation.trust_chain_valid,
+                validation.not_expired
+            ));
+        }
+        output.push('\n');
+    }
+
     // Vulnerabilities
     output.push_str("=== VULNERABILITIES ===\n");
     output.push_str("Type,Status,Severity,CVE,Details\n");
@@ -289,6 +316,58 @@ mod tests {
     use crate::scanner::{AdvancedResults, HttpResults, RatingResults};
     use crate::vulnerabilities::{Severity, VulnerabilityResult, VulnerabilityType};
     use std::collections::HashMap;
+
+    #[test]
+    fn test_csv_includes_certificate_section() {
+        use crate::certificates::parser::{CertificateChain, CertificateInfo};
+        use crate::certificates::validator::ValidationResult;
+
+        let cert = CertificateInfo {
+            subject: "CN=example.com".to_string(),
+            issuer: "CN=Test CA".to_string(),
+            serial_number: "01AB".to_string(),
+            not_before: "2026-01-01".to_string(),
+            not_after: "2027-01-01".to_string(),
+            extended_validation: false,
+            ..Default::default()
+        };
+        let results = ScanResults {
+            certificate_chain: Some(crate::scanner::CertificateAnalysisResult {
+                chain: CertificateChain {
+                    certificates: vec![cert],
+                    chain_length: 1,
+                    chain_size_bytes: 1,
+                },
+                validation: ValidationResult {
+                    valid: false,
+                    issues: Vec::new(),
+                    trust_chain_valid: true,
+                    hostname_match: false,
+                    not_expired: true,
+                    signature_valid: true,
+                    trusted_ca: None,
+                    platform_trust: None,
+                },
+                revocation: None,
+            }),
+            ..Default::default()
+        };
+
+        let csv = generate_csv(&results).expect("test assertion should succeed");
+        assert!(csv.contains("=== CERTIFICATE ==="));
+        assert!(csv.contains("CN=example.com"));
+        assert!(csv.contains("CN=Test CA"));
+    }
+
+    #[test]
+    fn test_csv_omits_certificate_section_when_absent() {
+        let results = ScanResults {
+            target: "example.com:443".to_string(),
+            ..Default::default()
+        };
+        let csv = generate_csv(&results).expect("test assertion should succeed");
+        assert!(!csv.contains("=== CERTIFICATE ==="));
+    }
 
     #[test]
     fn test_csv_cell_neutralizes_separators() {
