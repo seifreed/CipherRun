@@ -128,32 +128,56 @@ impl<'a> CipherRule<'a> {
 
         // Check prohibited cipher patterns
         if let Some(ref patterns) = self.policy.prohibited_patterns {
-            for (protocol, summary) in self.results {
-                for cipher in &summary.supported_ciphers {
-                    for pattern in patterns {
-                        if let Ok(re) = compile_cipher_pattern(pattern) {
-                            // Check both OpenSSL and IANA names
-                            if re.is_match(&cipher.openssl_name) || re.is_match(&cipher.iana_name) {
-                                violations.push(
-                                    PolicyViolation::new(
-                                        "ciphers.prohibited_patterns",
-                                        "Prohibited Cipher Pattern",
-                                        self.policy.action,
-                                        format!(
-                                            "Prohibited cipher detected: {}",
-                                            cipher.openssl_name
-                                        ),
-                                    )
-                                    .with_evidence(format!(
-                                        "Protocol: {}, Cipher: {} (matches pattern: {})",
-                                        protocol, cipher.openssl_name, pattern
-                                    ))
-                                    .with_remediation(format!(
-                                        "Remove {} from server configuration",
-                                        cipher.openssl_name
-                                    )),
-                                );
-                            }
+            for pattern in patterns {
+                let re = match compile_cipher_pattern(pattern) {
+                    Ok(re) => re,
+                    Err(e) => {
+                        // Fail closed: a misconfigured prohibited pattern must not silently
+                        // allow forbidden ciphers to pass the policy. Surface it as a violation.
+                        tracing::warn!(
+                            "Invalid prohibited cipher pattern '{}': {} — treating as a policy violation (fail-closed)",
+                            pattern,
+                            e
+                        );
+                        violations.push(
+                            PolicyViolation::new(
+                                "ciphers.prohibited_patterns",
+                                "Prohibited Cipher Pattern",
+                                self.policy.action,
+                                format!("Invalid prohibited cipher pattern: {}", pattern),
+                            )
+                            .with_evidence(format!(
+                                "Pattern '{}' failed to compile: {}",
+                                pattern, e
+                            ))
+                            .with_remediation(
+                                "Fix the invalid regex in the policy's prohibited_patterns"
+                                    .to_string(),
+                            ),
+                        );
+                        continue;
+                    }
+                };
+                for (protocol, summary) in self.results {
+                    for cipher in &summary.supported_ciphers {
+                        // Check both OpenSSL and IANA names
+                        if re.is_match(&cipher.openssl_name) || re.is_match(&cipher.iana_name) {
+                            violations.push(
+                                PolicyViolation::new(
+                                    "ciphers.prohibited_patterns",
+                                    "Prohibited Cipher Pattern",
+                                    self.policy.action,
+                                    format!("Prohibited cipher detected: {}", cipher.openssl_name),
+                                )
+                                .with_evidence(format!(
+                                    "Protocol: {}, Cipher: {} (matches pattern: {})",
+                                    protocol, cipher.openssl_name, pattern
+                                ))
+                                .with_remediation(format!(
+                                    "Remove {} from server configuration",
+                                    cipher.openssl_name
+                                )),
+                            );
                         }
                     }
                 }
@@ -164,32 +188,59 @@ impl<'a> CipherRule<'a> {
         if let Some(ref patterns) = self.policy.required_patterns {
             for (protocol, summary) in self.results {
                 for pattern in patterns {
-                    if let Ok(re) = compile_cipher_pattern(pattern) {
-                        let has_matching_cipher = summary.supported_ciphers.iter().any(|cipher| {
-                            re.is_match(&cipher.openssl_name) || re.is_match(&cipher.iana_name)
-                        });
-
-                        if !has_matching_cipher {
+                    let re = match compile_cipher_pattern(pattern) {
+                        Ok(re) => re,
+                        Err(e) => {
+                            // Fail closed: an invalid required pattern means we cannot confirm
+                            // the required cipher is present, so the requirement is unmet.
+                            tracing::warn!(
+                                "Invalid required cipher pattern '{}': {} — treating requirement as unmet (fail-closed)",
+                                pattern,
+                                e
+                            );
                             violations.push(
                                 PolicyViolation::new(
                                     "ciphers.required_patterns",
                                     "Required Cipher Pattern",
                                     self.policy.action,
-                                    format!(
-                                        "{} does not have cipher matching pattern: {}",
-                                        protocol, pattern
-                                    ),
+                                    format!("Invalid required cipher pattern: {}", pattern),
                                 )
                                 .with_evidence(format!(
-                                    "Protocol: {}, Missing cipher pattern: {}",
-                                    protocol, pattern
+                                    "Pattern '{}' failed to compile: {}",
+                                    pattern, e
                                 ))
-                                .with_remediation(format!(
-                                    "Add cipher suites matching '{}' to {} configuration",
-                                    pattern, protocol
-                                )),
+                                .with_remediation(
+                                    "Fix the invalid regex in the policy's required_patterns"
+                                        .to_string(),
+                                ),
                             );
+                            continue;
                         }
+                    };
+                    let has_matching_cipher = summary.supported_ciphers.iter().any(|cipher| {
+                        re.is_match(&cipher.openssl_name) || re.is_match(&cipher.iana_name)
+                    });
+
+                    if !has_matching_cipher {
+                        violations.push(
+                            PolicyViolation::new(
+                                "ciphers.required_patterns",
+                                "Required Cipher Pattern",
+                                self.policy.action,
+                                format!(
+                                    "{} does not have cipher matching pattern: {}",
+                                    protocol, pattern
+                                ),
+                            )
+                            .with_evidence(format!(
+                                "Protocol: {}, Missing cipher pattern: {}",
+                                protocol, pattern
+                            ))
+                            .with_remediation(format!(
+                                "Add cipher suites matching '{}' to {} configuration",
+                                pattern, protocol
+                            )),
+                        );
                     }
                 }
             }
@@ -257,6 +308,86 @@ mod tests {
 
         assert!(!violations.is_empty());
         assert_eq!(violations[0].rule_path, "ciphers.prohibited_patterns");
+    }
+
+    #[test]
+    fn test_invalid_prohibited_pattern_fails_closed_with_violation() {
+        let policy = CipherPolicy {
+            min_strength: None,
+            require_forward_secrecy: None,
+            require_aead: None,
+            // Unbalanced bracket — invalid regex.
+            prohibited_patterns: Some(vec!["RC4[".to_string()]),
+            required_patterns: None,
+            action: PolicyAction::Fail,
+        };
+
+        let mut results = HashMap::new();
+        results.insert(
+            Protocol::TLS12,
+            ProtocolCipherSummary {
+                protocol: Protocol::TLS12,
+                supported_ciphers: vec![create_test_cipher("TLS_RSA_WITH_RC4_128_SHA")],
+                counts: CipherCounts::default(),
+                server_ordered: true,
+                server_preference: vec![],
+                preferred_cipher: None,
+                avg_handshake_time_ms: None,
+            },
+        );
+
+        let rule = CipherRule::new(&policy, &results);
+        let violations = rule
+            .evaluate("example.com:443")
+            .expect("test assertion should succeed");
+
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].rule_path, "ciphers.prohibited_patterns");
+        assert!(
+            violations[0]
+                .description
+                .contains("Invalid prohibited cipher pattern")
+        );
+    }
+
+    #[test]
+    fn test_invalid_required_pattern_fails_closed_with_violation() {
+        let policy = CipherPolicy {
+            min_strength: None,
+            require_forward_secrecy: None,
+            require_aead: None,
+            prohibited_patterns: None,
+            // Unbalanced bracket — invalid regex.
+            required_patterns: Some(vec!["AES[".to_string()]),
+            action: PolicyAction::Fail,
+        };
+
+        let mut results = HashMap::new();
+        results.insert(
+            Protocol::TLS12,
+            ProtocolCipherSummary {
+                protocol: Protocol::TLS12,
+                supported_ciphers: vec![create_test_cipher("TLS_AES_128_GCM_SHA256")],
+                counts: CipherCounts::default(),
+                server_ordered: true,
+                server_preference: vec![],
+                preferred_cipher: None,
+                avg_handshake_time_ms: None,
+            },
+        );
+
+        let rule = CipherRule::new(&policy, &results);
+        let violations = rule
+            .evaluate("example.com:443")
+            .expect("test assertion should succeed");
+
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].rule_path, "ciphers.required_patterns");
+        assert!(
+            violations[0]
+                .description
+                .contains("Invalid required cipher pattern")
+        );
     }
 
     #[test]
