@@ -537,15 +537,19 @@ fn extract_cipher_bytes(cipher_hex: &str) -> String {
         _ => return "00".to_string(),
     };
 
-    // Find index in cipher list (1-based), return "00" if not found
+    // Find index in cipher list (1-based).
     for (i, known_cipher) in CIPHER_LIST_ORDER.iter().enumerate() {
         if known_cipher == &cipher_bytes {
             return format!("{:02x}", i + 1);
         }
     }
 
-    // Cipher not found in list
-    "00".to_string()
+    // Cipher present but not in JARM's known list. Canonical JARM encodes this as
+    // the post-loop counter (list length + 1), NOT "00" — "00" is reserved for
+    // the no-cipher case (empty/failed probe). Returning "00" here would make the
+    // fuzzy hash diverge from canonical for any server negotiating an off-list
+    // cipher, so it would never match the canonical-derived signature database.
+    format!("{:02x}", CIPHER_LIST_ORDER.len() + 1)
 }
 
 /// Extract version byte (convert to character)
@@ -583,8 +587,12 @@ mod tests {
         // TLS_AES_128_GCM_SHA256 (0x1301)
         assert_eq!(extract_cipher_bytes("1301"), "41");
 
-        // Empty
+        // Empty (no cipher negotiated / failed probe) encodes as "00".
         assert_eq!(extract_cipher_bytes(""), "00");
+
+        // A cipher not in JARM's known list encodes as the post-loop counter
+        // (list length + 1 = 70 = 0x46), matching canonical JARM — not "00".
+        assert_eq!(extract_cipher_bytes("ffff"), "46");
     }
 
     #[test]
