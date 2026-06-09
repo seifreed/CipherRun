@@ -10,6 +10,40 @@ fn test_ids_friendly_applies_conservative_throttle() {
 }
 
 #[test]
+fn test_compliance_framework_forces_full_scan_and_vulnerability_phase() {
+    let mut args = Args::default();
+    args.compliance.framework = Some("pci-dss-v4".to_string());
+    let request = args.to_scan_request();
+    assert!(
+        request.scan.scope.full,
+        "a compliance scan must run a full scan so its rules see complete data"
+    );
+    assert!(
+        request.should_run_vulnerability_phase(),
+        "a compliance scan must run the vulnerability phase, otherwise a vulnerability-free requirement passes vacuously"
+    );
+}
+
+#[test]
+fn test_policy_forces_full_scan_and_vulnerability_phase() {
+    let mut args = Args::default();
+    args.compliance.policy = Some(std::path::PathBuf::from("policy.yaml"));
+    let request = args.to_scan_request();
+    assert!(request.scan.scope.full);
+    assert!(request.should_run_vulnerability_phase());
+}
+
+#[test]
+fn test_default_scan_without_compliance_does_not_force_full() {
+    let args = Args::default();
+    let request = args.to_scan_request();
+    assert!(
+        !request.scan.scope.full,
+        "a plain scan must not be forced to full by the compliance wiring"
+    );
+}
+
+#[test]
 fn test_explicit_sleep_overrides_ids_friendly_throttle() {
     let mut args = Args::default();
     args.http.ids_friendly = true;

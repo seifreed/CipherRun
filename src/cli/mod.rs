@@ -352,7 +352,16 @@ impl Args {
             scan: crate::application::scan_request::ScanRequestScan {
                 scope: crate::application::scan_request::ScanRequestScope {
                     all: self.scan.all,
-                    full: self.scan.full,
+                    // A compliance framework or policy is assessed against the
+                    // scan results, and its rules consume protocol, cipher,
+                    // certificate AND vulnerability data. Without a full scan the
+                    // vulnerability phase does not run, so a "vulnerability-free"
+                    // requirement (e.g. PCI-DSS 4.2.8) would pass vacuously —
+                    // reporting a host with SWEET32/etc. as compliant. Force a
+                    // full scan so compliance/policy verdicts cannot fail open.
+                    full: self.scan.full
+                        || self.compliance.framework.is_some()
+                        || self.compliance.policy.is_some(),
                 },
                 proto: crate::application::scan_request::ScanRequestProto {
                     enabled: self.scan.protocols,
