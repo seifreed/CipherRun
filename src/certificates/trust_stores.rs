@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use x509_parser::prelude::*;
 
 /// Supported trust store platforms
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum TrustStore {
     /// Mozilla NSS (Firefox, Thunderbird)
     Mozilla,
@@ -116,21 +116,32 @@ impl TrustValidationResult {
     }
 
     /// Get platforms that trust this certificate
+    ///
+    /// Sorted for deterministic output: `platform_status` is a `HashMap`, so
+    /// its iteration order is otherwise nondeterministic across runs.
     pub fn trusted_platforms(&self) -> Vec<TrustStore> {
-        self.platform_status
+        let mut platforms: Vec<TrustStore> = self
+            .platform_status
             .iter()
             .filter(|(_, status)| status.trusted)
             .map(|(platform, _)| *platform)
-            .collect()
+            .collect();
+        platforms.sort_unstable();
+        platforms
     }
 
     /// Get platforms that don't trust this certificate
+    ///
+    /// Sorted for deterministic output (see `trusted_platforms`).
     pub fn untrusted_platforms(&self) -> Vec<TrustStore> {
-        self.platform_status
+        let mut platforms: Vec<TrustStore> = self
+            .platform_status
             .iter()
             .filter(|(_, status)| !status.trusted)
             .map(|(platform, _)| *platform)
-            .collect()
+            .collect();
+        platforms.sort_unstable();
+        platforms
     }
 
     /// Get summary text
