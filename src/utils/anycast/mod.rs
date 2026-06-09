@@ -508,6 +508,67 @@ mod tests {
     }
 
     #[test]
+    fn test_anycast_same_multi_protocol_cipher_prefs_not_flagged() {
+        // Two non-anycast backends with identical per-protocol preferred ciphers
+        // across multiple protocols must never be flagged as having different
+        // cipher preferences, regardless of HashMap iteration order.
+        let make = || {
+            let mut results = build_scan_with_fingerprint(
+                "fp1",
+                "ECDHE-RSA-AES128-GCM-SHA256",
+                vec![Protocol::TLS12, Protocol::TLS13],
+            );
+            results.ciphers.insert(
+                Protocol::TLS13,
+                ProtocolCipherSummary {
+                    protocol: Protocol::TLS13,
+                    supported_ciphers: vec![],
+                    server_ordered: false,
+                    server_preference: vec![],
+                    preferred_cipher: Some(CipherSuite {
+                        hexcode: "0x1303".to_string(),
+                        openssl_name: "TLS_CHACHA20_POLY1305_SHA256".to_string(),
+                        iana_name: "TLS_CHACHA20_POLY1305_SHA256".to_string(),
+                        protocol: "TLS13".to_string(),
+                        key_exchange: "ECDHE".to_string(),
+                        authentication: "RSA".to_string(),
+                        encryption: "CHACHA20".to_string(),
+                        mac: "AEAD".to_string(),
+                        bits: 256,
+                        export: false,
+                    }),
+                    counts: Default::default(),
+                    avg_handshake_time_ms: None,
+                },
+            );
+            results
+        };
+
+        let results = vec![
+            IpScanResult {
+                ip: "1.1.1.1".parse().unwrap(),
+                results: make(),
+                error: None,
+            },
+            IpScanResult {
+                ip: "2.2.2.2".parse().unwrap(),
+                results: make(),
+                error: None,
+            },
+        ];
+
+        let detection = AnycastScanner::detect_anycast(&results);
+        assert!(
+            !detection
+                .reasons
+                .iter()
+                .any(|r| r.contains("Different cipher preferences")),
+            "identical multi-protocol cipher preferences must not be flagged: {:?}",
+            detection.reasons
+        );
+    }
+
+    #[test]
     fn test_anycast_detection_different_protocols() {
         let results = vec![
             IpScanResult {

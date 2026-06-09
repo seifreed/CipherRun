@@ -33,11 +33,27 @@ impl super::AnycastScanner {
                 certificate_fingerprints.insert(fingerprint.clone());
             }
 
-            // Extract cipher preferences
-            if let Some(first_protocol) = result.results.ciphers.values().next()
-                && let Some(preferred_cipher) = &first_protocol.preferred_cipher
-            {
-                cipher_preferences.insert(result.ip, preferred_cipher.openssl_name.clone());
+            // Extract a deterministic per-protocol preferred-cipher signature.
+            // `ciphers` is a HashMap whose iteration order is randomized per
+            // instance, so picking `.values().next()` would compare an arbitrary
+            // (and differing) protocol's cipher across IPs and flag identical
+            // backends as anycast nondeterministically. Build a sorted signature
+            // of every protocol's preferred cipher so two IPs differ only when
+            // their actual preferences differ.
+            let mut cipher_signature: Vec<String> = result
+                .results
+                .ciphers
+                .iter()
+                .filter_map(|(protocol, summary)| {
+                    summary
+                        .preferred_cipher
+                        .as_ref()
+                        .map(|cipher| format!("{}={}", protocol, cipher.openssl_name))
+                })
+                .collect();
+            cipher_signature.sort();
+            if !cipher_signature.is_empty() {
+                cipher_preferences.insert(result.ip, cipher_signature.join(","));
             }
 
             // Extract protocol support
