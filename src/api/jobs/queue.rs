@@ -212,6 +212,44 @@ impl InMemoryJobQueue {
     }
 }
 
+impl InMemoryJobQueue {
+    fn is_terminal(status: ScanStatus) -> bool {
+        matches!(
+            status,
+            ScanStatus::Completed | ScanStatus::Failed | ScanStatus::Cancelled
+        )
+    }
+
+    /// Evict the oldest terminal (Completed/Failed/Cancelled) jobs so the job
+    /// history map cannot grow without bound over the lifetime of the server.
+    ///
+    /// Active (Queued/Running) jobs are never evicted. Recent terminal jobs are
+    /// retained up to `max_capacity` so a client can still poll a finished job's
+    /// result shortly after completion; only the oldest beyond that cap are
+    /// dropped. The caller must already hold the `jobs` write lock.
+    fn prune_terminal_jobs(&self, jobs: &mut HashMap<String, ScanJob>) {
+        let terminal_count = jobs
+            .values()
+            .filter(|j| Self::is_terminal(j.status))
+            .count();
+        if terminal_count <= self.max_capacity {
+            return;
+        }
+
+        let mut terminal: Vec<(String, DateTime<Utc>)> = jobs
+            .values()
+            .filter(|j| Self::is_terminal(j.status))
+            .map(|j| (j.id.clone(), j.completed_at.unwrap_or(j.queued_at)))
+            .collect();
+        terminal.sort_by_key(|(_, completed_at)| *completed_at); // oldest first
+
+        let to_remove = terminal_count - self.max_capacity;
+        for (id, _) in terminal.into_iter().take(to_remove) {
+            jobs.remove(&id);
+        }
+    }
+}
+
 #[async_trait]
 impl JobQueue for InMemoryJobQueue {
     async fn enqueue(&self, job: ScanJob) -> Result<String> {
@@ -271,6 +309,7 @@ impl JobQueue for InMemoryJobQueue {
     async fn update_job(&self, job: &ScanJob) -> Result<()> {
         let mut jobs = self.jobs.write().await;
         jobs.insert(job.id.clone(), job.clone());
+        self.prune_terminal_jobs(&mut jobs);
         Ok(())
     }
 
@@ -288,6 +327,7 @@ impl JobQueue for InMemoryJobQueue {
             }
         }
         jobs.insert(job.id.clone(), job.clone());
+        self.prune_terminal_jobs(&mut jobs);
         Ok(true)
     }
 
@@ -300,6 +340,7 @@ impl JobQueue for InMemoryJobQueue {
             if matches!(job.status, ScanStatus::Queued | ScanStatus::Running) {
                 job.mark_cancelled();
                 queue.retain(|queued| queued.id != id);
+                self.prune_terminal_jobs(&mut jobs);
                 return Ok(true);
             }
         }
@@ -350,6 +391,56 @@ mod tests {
         assert_eq!(dequeued.id, job.id);
         // dequeue claims the job, so it is reported as Running, not Queued.
         assert_eq!(dequeued.status, ScanStatus::Running);
+    }
+
+    #[tokio::test]
+    async fn test_terminal_job_history_is_bounded_and_keeps_active_jobs() {
+        let cap = 2;
+        let queue = InMemoryJobQueue::new(cap);
+
+        // An active (Running) job must survive any amount of terminal-job churn.
+        let mut active = ScanJob::new("active:443".to_string(), ScanOptions::default(), None);
+        active.mark_started();
+        queue
+            .update_job(&active)
+            .await
+            .expect("test assertion should succeed");
+
+        // Flood the history with terminal jobs well beyond capacity.
+        for i in 0..(cap + 6) {
+            let mut job = ScanJob::new(format!("done{i}:443"), ScanOptions::default(), None);
+            job.mark_completed(ScanResults::default());
+            queue
+                .update_job(&job)
+                .await
+                .expect("test assertion should succeed");
+        }
+
+        let all = queue
+            .list_jobs()
+            .await
+            .expect("test assertion should succeed");
+        let terminal = all
+            .iter()
+            .filter(|j| {
+                matches!(
+                    j.status,
+                    ScanStatus::Completed | ScanStatus::Failed | ScanStatus::Cancelled
+                )
+            })
+            .count();
+        assert!(
+            terminal <= cap,
+            "terminal job history must be bounded by capacity, found {terminal}"
+        );
+        assert!(
+            queue
+                .get_job(&active.id)
+                .await
+                .expect("test assertion should succeed")
+                .is_some(),
+            "active jobs must never be evicted"
+        );
     }
 
     #[tokio::test]
