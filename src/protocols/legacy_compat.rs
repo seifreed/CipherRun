@@ -55,7 +55,7 @@ impl LegacyCompatTester {
 
     /// Test if a specific cipher suite is supported by the server.
     async fn test_cipher_support(&self, cipher: &str) -> Result<LegacyProbeOutcome> {
-        use openssl::ssl::{SslConnector, SslMethod, SslVersion};
+        use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode, SslVersion};
 
         let addr = match self.target.socket_addrs().first().copied() {
             Some(a) => a,
@@ -75,6 +75,13 @@ impl LegacyCompatTester {
 
         let result = tokio::task::spawn_blocking(move || -> Result<LegacyProbeOutcome> {
             let mut builder = SslConnector::builder(SslMethod::tls())?;
+            // Certificate validity is irrelevant to whether the server will
+            // negotiate a given (weak/export/NULL/anonymous) cipher: OpenSSL
+            // selects the cipher before validating the certificate. A verifying
+            // connector would fail the handshake at cert validation on bad-cert
+            // hosts and falsely report a genuinely-supported weak cipher as
+            // NotSupported (a false negative).
+            builder.set_verify(SslVerifyMode::NONE);
 
             if cipher.starts_with("EXP") || cipher.starts_with("SSL_CK") {
                 let _ = builder.set_min_proto_version(Some(SslVersion::SSL3));
