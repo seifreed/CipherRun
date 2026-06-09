@@ -135,7 +135,12 @@ impl ScanPhase for ProtocolPhase {
         let tester = self.configure_tester(context);
 
         // Execute protocol enumeration
-        let protocol_results = tester.test_all_protocols().await?;
+        let mut protocol_results = tester.test_all_protocols().await?;
+
+        // The tester probes protocols concurrently, so the collected order is
+        // nondeterministic. Sort by protocol version for stable, consistent
+        // output across every formatter (terminal, JSON, XML, ...).
+        protocol_results.sort_by_key(|result| result.protocol);
 
         // Store results in context
         context.results.protocols = protocol_results;
