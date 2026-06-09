@@ -30,18 +30,6 @@ fn make_cipher(encryption: &str, bits: u16, export: bool) -> CipherSuite {
     }
 }
 
-fn empty_summary(protocol: Protocol) -> ProtocolCipherSummary {
-    ProtocolCipherSummary {
-        protocol,
-        supported_ciphers: Vec::new(),
-        server_ordered: false,
-        server_preference: Vec::new(),
-        preferred_cipher: None,
-        counts: CipherCounts::default(),
-        avg_handshake_time_ms: None,
-    }
-}
-
 fn summary_with_ciphers(
     protocol: Protocol,
     ciphers: Vec<CipherSuite>,
@@ -215,88 +203,66 @@ async fn test_lucky13_inactive_target_is_inconclusive() {
     assert!(result.details.to_ascii_lowercase().contains("inconclusive"));
 }
 
-// --- evaluate_rc4 ---
+// --- rc4_probe_verdict ---
 
 #[test]
-fn evaluate_rc4_empty_summaries() {
-    let result = super::super::cipher_checks::evaluate_rc4(std::iter::empty());
-    assert!(!result.vulnerable);
-    assert!(result.inconclusive);
+fn rc4_probe_verdict_supported_is_vulnerable() {
+    let supported = vec!["RC4-SHA".to_string()];
+    let result = super::super::cipher_checks::rc4_probe_verdict(&supported, false);
+    assert!(result.vulnerable);
+    assert!(!result.inconclusive);
     assert_eq!(result.vuln_type, VulnerabilityType::RC4);
+    assert_eq!(result.severity, Severity::Medium);
+    assert!(result.details.contains("RC4-SHA"));
+}
+
+#[test]
+fn rc4_probe_verdict_none_supported_is_not_vulnerable() {
+    let result = super::super::cipher_checks::rc4_probe_verdict(&[], false);
+    assert!(!result.vulnerable);
+    assert!(!result.inconclusive);
     assert_eq!(result.severity, Severity::Info);
 }
 
 #[test]
-fn evaluate_rc4_no_rc4_ciphers() {
-    let ciphers = vec![make_cipher("AES128-GCM", 128, false)];
-    let summary = summary_with_ciphers(
-        Protocol::TLS12,
-        ciphers,
-        CipherCounts {
-            total: 1,
-            high_strength: 1,
-            aead: 1,
-            ..Default::default()
-        },
-    );
-    let result =
-        super::super::cipher_checks::evaluate_rc4(std::iter::once((Protocol::TLS12, &summary)));
+fn rc4_probe_verdict_inconclusive_when_unclassified() {
+    let result = super::super::cipher_checks::rc4_probe_verdict(&[], true);
     assert!(!result.vulnerable);
+    assert!(result.inconclusive);
+}
+
+#[test]
+fn rc4_probe_verdict_supported_overrides_inconclusive() {
+    let supported = vec!["ECDHE-RSA-RC4-SHA".to_string()];
+    let result = super::super::cipher_checks::rc4_probe_verdict(&supported, true);
+    assert!(result.vulnerable);
     assert!(!result.inconclusive);
 }
 
+// --- null_probe_verdict ---
+
 #[test]
-fn evaluate_rc4_with_rc4_cipher() {
-    let ciphers = vec![make_cipher("RC4-SHA", 128, false)];
-    let summary = summary_with_ciphers(Protocol::TLS12, ciphers, CipherCounts::default());
-    let result =
-        super::super::cipher_checks::evaluate_rc4(std::iter::once((Protocol::TLS12, &summary)));
+fn null_probe_verdict_supported_is_vulnerable() {
+    let supported = vec!["NULL-SHA".to_string()];
+    let result = super::super::cipher_checks::null_probe_verdict(&supported, false);
     assert!(result.vulnerable);
-    assert_eq!(result.severity, Severity::Medium);
-    assert!(result.details.contains("RC4"));
-}
-
-// --- evaluate_null ---
-
-#[test]
-fn evaluate_null_empty_summaries() {
-    let result = super::super::cipher_checks::evaluate_null(std::iter::empty());
-    assert!(!result.vulnerable);
-    assert!(result.inconclusive);
+    assert!(!result.inconclusive);
     assert_eq!(result.vuln_type, VulnerabilityType::NullCipher);
-}
-
-#[test]
-fn evaluate_null_with_null_ciphers() {
-    let counts = CipherCounts {
-        total: 1,
-        null_ciphers: 1,
-        ..Default::default()
-    };
-    let summary = summary_with_ciphers(Protocol::TLS12, Vec::new(), counts);
-    let result =
-        super::super::cipher_checks::evaluate_null(std::iter::once((Protocol::TLS12, &summary)));
-    assert!(result.vulnerable);
     assert_eq!(result.severity, Severity::Critical);
 }
 
 #[test]
-fn evaluate_null_without_null_ciphers() {
-    let ciphers = vec![make_cipher("AES128-GCM", 128, false)];
-    let summary = summary_with_ciphers(
-        Protocol::TLS12,
-        ciphers,
-        CipherCounts {
-            total: 1,
-            high_strength: 1,
-            aead: 1,
-            ..Default::default()
-        },
-    );
-    let result =
-        super::super::cipher_checks::evaluate_null(std::iter::once((Protocol::TLS12, &summary)));
+fn null_probe_verdict_none_supported_is_not_vulnerable() {
+    let result = super::super::cipher_checks::null_probe_verdict(&[], false);
     assert!(!result.vulnerable);
     assert!(!result.inconclusive);
+}
+
+#[test]
+fn null_probe_verdict_inconclusive_when_unclassified() {
+    let result = super::super::cipher_checks::null_probe_verdict(&[], true);
+    assert!(!result.vulnerable);
+    assert!(result.inconclusive);
 }
 
 // --- evaluate_export ---
@@ -397,19 +363,6 @@ fn evaluate_beast_without_cbc_ciphers() {
     let summary = summary_with_ciphers(Protocol::TLS10, ciphers, CipherCounts::default());
     let result = super::super::cipher_checks::evaluate_beast(Some(&summary), None);
     assert!(!result.vulnerable);
-}
-
-// --- evaluate across multiple protocols ---
-
-#[test]
-fn evaluate_rc4_across_multiple_protocols() {
-    let s1 = empty_summary(Protocol::TLS10);
-    let ciphers = vec![make_cipher("RC4-MD5", 128, false)];
-    let s2 = summary_with_ciphers(Protocol::TLS12, ciphers, CipherCounts::default());
-    let summaries = vec![(Protocol::TLS10, &s1), (Protocol::TLS12, &s2)];
-    let result = super::super::cipher_checks::evaluate_rc4(summaries);
-    assert!(result.vulnerable);
-    assert!(result.details.contains("TLS 1.2"));
 }
 
 // --- VulnerabilityResult helper methods ---

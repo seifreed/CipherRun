@@ -29,48 +29,61 @@ fn no_cipher_evidence_result(
     }
 }
 
-pub(crate) fn evaluate_rc4<'a>(
-    summaries: impl IntoIterator<Item = (Protocol, &'a ProtocolCipherSummary)>,
-) -> VulnerabilityResult {
-    let mut has_rc4 = false;
-    let mut has_cipher_evidence = false;
-    let mut details = Vec::new();
+/// Protocol versions probed for weak stream/NULL cipher support. These suites
+/// are offered from SSL 3.0 through TLS 1.2 (TLS 1.3 dropped them entirely).
+pub(crate) const WEAK_CIPHER_PROBE_PROTOCOLS: &[Protocol] =
+    &[Protocol::TLS12, Protocol::TLS11, Protocol::TLS10];
 
-    for (protocol, summary) in summaries {
-        has_cipher_evidence |= summary_has_cipher_evidence(summary);
-        let count = summary
-            .supported_ciphers
-            .iter()
-            .filter(|c| c.encryption.contains("RC4"))
-            .count();
+/// RC4 cipher suites (wire IDs) paired with display names. Probed directly by
+/// wire ID because the vendored OpenSSL build omits RC4 and the default cipher
+/// enumeration deliberately excludes it, so summary-based detection never sees
+/// these suites — a structural false negative for an RC4-only server.
+pub(crate) const RC4_CIPHER_SUITES: &[(u16, &str)] = &[
+    (0x0005, "RC4-SHA"),
+    (0x0004, "RC4-MD5"),
+    (0xC011, "ECDHE-RSA-RC4-SHA"),
+    (0xC007, "ECDHE-ECDSA-RC4-SHA"),
+    (0xC00C, "ECDH-RSA-RC4-SHA"),
+    (0xC002, "ECDH-ECDSA-RC4-SHA"),
+    (0xC016, "AECDH-RC4-SHA"),
+    (0x0018, "ADH-RC4-MD5"),
+];
 
-        if count > 0 {
-            has_rc4 = true;
-            details.push(format!("{}: {} RC4 cipher(s)", protocol, count));
-        }
-    }
+/// NULL-encryption cipher suites (wire IDs) paired with display names. Probed
+/// directly for the same reason as [`RC4_CIPHER_SUITES`].
+pub(crate) const NULL_CIPHER_SUITES: &[(u16, &str)] = &[
+    (0x0001, "NULL-MD5"),
+    (0x0002, "NULL-SHA"),
+    (0x003B, "NULL-SHA256"),
+    (0xC006, "ECDHE-ECDSA-NULL-SHA"),
+    (0xC010, "ECDHE-RSA-NULL-SHA"),
+    (0xC001, "ECDH-ECDSA-NULL-SHA"),
+    (0xC00B, "ECDH-RSA-NULL-SHA"),
+    (0xC015, "AECDH-NULL-SHA"),
+];
 
-    if !has_rc4 && !has_cipher_evidence {
-        return no_cipher_evidence_result(
-            VulnerabilityType::RC4,
-            "RC4",
-            Some("CVE-2013-2566, CVE-2015-2808"),
-            Some("CWE-326"),
-        );
-    }
-
+/// Build the RC4 verdict from a direct cipher-suite probe.
+///
+/// `supported` lists the RC4 suites a ServerHello confirmed; `probe_inconclusive`
+/// is set when some suites could not be classified. Vulnerable when any RC4
+/// suite is supported; inconclusive only when nothing was supported but a probe
+/// was inconclusive (mirrors the SWEET32/FREAK probe semantics).
+pub(crate) fn rc4_probe_verdict(supported: &[String], probe_inconclusive: bool) -> VulnerabilityResult {
+    let vulnerable = !supported.is_empty();
     VulnerabilityResult {
         vuln_type: VulnerabilityType::RC4,
-        vulnerable: has_rc4,
-        inconclusive: false,
-        details: if has_rc4 {
-            format!("Server supports RC4 ciphers: {}", details.join(", "))
+        vulnerable,
+        inconclusive: !vulnerable && probe_inconclusive,
+        details: if vulnerable {
+            format!("Server supports RC4 ciphers: {}", supported.join(", "))
+        } else if probe_inconclusive {
+            "RC4 test inconclusive - could not classify one or more RC4 cipher probes".to_string()
         } else {
             "Server does not support RC4 ciphers".to_string()
         },
         cve: Some("CVE-2013-2566, CVE-2015-2808".to_string()),
         cwe: Some("CWE-326".to_string()),
-        severity: if has_rc4 {
+        severity: if vulnerable {
             Severity::Medium
         } else {
             Severity::Info
@@ -78,42 +91,25 @@ pub(crate) fn evaluate_rc4<'a>(
     }
 }
 
-pub(crate) fn evaluate_null<'a>(
-    summaries: impl IntoIterator<Item = (Protocol, &'a ProtocolCipherSummary)>,
+/// Build the NULL-cipher verdict from a direct cipher-suite probe. See
+/// [`rc4_probe_verdict`] for the verdict semantics.
+pub(crate) fn null_probe_verdict(
+    supported: &[String],
+    probe_inconclusive: bool,
 ) -> VulnerabilityResult {
-    let mut vulnerable = false;
-    let mut has_cipher_evidence = false;
-    let mut details = Vec::new();
-
-    for (protocol, summary) in summaries {
-        has_cipher_evidence |= summary_has_cipher_evidence(summary);
-        if summary.counts.null_ciphers > 0 {
-            vulnerable = true;
-            details.push(format!(
-                "{}: {} NULL cipher(s)",
-                protocol, summary.counts.null_ciphers
-            ));
-        }
-    }
-
-    if !vulnerable && !has_cipher_evidence {
-        return no_cipher_evidence_result(
-            VulnerabilityType::NullCipher,
-            "NULL cipher",
-            None,
-            Some("CWE-327"),
-        );
-    }
-
+    let vulnerable = !supported.is_empty();
     VulnerabilityResult {
         vuln_type: VulnerabilityType::NullCipher,
         vulnerable,
-        inconclusive: false,
+        inconclusive: !vulnerable && probe_inconclusive,
         details: if vulnerable {
             format!(
                 "Server supports NULL encryption ciphers: {}",
-                details.join(", ")
+                supported.join(", ")
             )
+        } else if probe_inconclusive {
+            "NULL cipher test inconclusive - could not classify one or more NULL cipher probes"
+                .to_string()
         } else {
             "Server does not support NULL ciphers".to_string()
         },

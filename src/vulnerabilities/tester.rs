@@ -401,46 +401,28 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_cached_cipher_vulnerabilities() {
+    async fn test_cached_export_cipher_vulnerability_from_summary() {
+        // EXPORT detection still reads the cipher-enumeration cache. RC4 and
+        // NULL no longer do — they use dedicated wire-ID probes (the default
+        // enumeration excludes those suites), so they cannot be unit-tested from
+        // a synthetic cache; their verdict logic is covered by
+        // rc4_probe_verdict / null_probe_verdict in checks_tests.rs.
         let scanner = VulnerabilityScanner::new(dummy_target());
         let mut cache = HashMap::new();
         cache.insert(
             Protocol::TLS12,
             make_summary(
                 Protocol::TLS12,
-                vec![
-                    make_cipher("RC4"),
-                    make_cipher("3DES"),
-                    make_cipher("NULL"),
-                    make_cipher("EXPORT"),
-                ],
+                vec![make_cipher("EXPORT")],
                 crate::ciphers::tester::CipherCounts {
-                    total: 4,
-                    null_ciphers: 1,
+                    total: 1,
                     export_ciphers: 1,
                     low_strength: 1,
-                    medium_strength: 1,
-                    high_strength: 0,
-                    forward_secrecy: 0,
-                    aead: 0,
+                    ..Default::default()
                 },
             ),
         );
 
-        assert!(
-            scanner
-                .test_rc4_cached(&cache)
-                .await
-                .expect("ok")
-                .vulnerable
-        );
-        assert!(
-            scanner
-                .test_null_ciphers_cached(&cache)
-                .await
-                .expect("ok")
-                .vulnerable
-        );
         assert!(
             scanner
                 .test_export_ciphers_cached(&cache)
@@ -659,27 +641,6 @@ mod tests {
             .await
             .expect("test assertion should succeed");
         assert_eq!(result.vuln_type, VulnerabilityType::DROWN);
-    }
-
-    #[tokio::test]
-    async fn test_rc4_detection() {
-        let scanner = VulnerabilityScanner::new(dummy_target());
-        let mut cache = HashMap::new();
-        cache.insert(
-            Protocol::TLS12,
-            make_summary(
-                Protocol::TLS12,
-                vec![make_cipher("RC4")],
-                crate::ciphers::tester::CipherCounts::default(),
-            ),
-        );
-        assert!(
-            scanner
-                .test_rc4_cached(&cache)
-                .await
-                .expect("ok")
-                .vulnerable
-        );
     }
 
     #[test]

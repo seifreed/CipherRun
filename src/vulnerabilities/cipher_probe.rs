@@ -70,6 +70,33 @@ pub(crate) async fn probe_cipher_suite(
     }
 }
 
+/// Probe a list of named cipher suites and collect which the server supports.
+///
+/// Returns `(supported_names, saw_inconclusive)`. A suite is included in
+/// `supported_names` only when a ServerHello confirmed it; `saw_inconclusive` is
+/// set when any suite could not be classified, so callers can avoid reporting a
+/// clean "not vulnerable" verdict on a transport anomaly. This is the shared
+/// engine behind the weak-cipher vulnerability checks (RC4, NULL), mirroring how
+/// SWEET32 and FREAK probe their suites by wire ID — necessary because the
+/// vendored OpenSSL build cannot offer these legacy ciphers and the default
+/// cipher enumeration deliberately excludes them.
+pub(crate) async fn probe_supported_suites(
+    target: &Target,
+    suites: &[(u16, &str)],
+    protocols: &[Protocol],
+) -> (Vec<String>, bool) {
+    let mut supported = Vec::new();
+    let mut inconclusive = false;
+    for (hexcode, name) in suites {
+        match probe_cipher_suite(target, *hexcode, protocols).await {
+            CipherProbeStatus::Supported => supported.push((*name).to_string()),
+            CipherProbeStatus::NotSupported => {}
+            CipherProbeStatus::Inconclusive => inconclusive = true,
+        }
+    }
+    (supported, inconclusive)
+}
+
 /// Send a single-cipher ClientHello at `protocol` and classify the response.
 async fn probe_cipher_at_protocol(
     target: &Target,

@@ -638,24 +638,21 @@ impl VulnerabilityScanner {
 
     pub(super) async fn test_rc4_cached(
         &self,
-        cipher_cache: &HashMap<Protocol, crate::ciphers::tester::ProtocolCipherSummary>,
+        _cipher_cache: &HashMap<Protocol, crate::ciphers::tester::ProtocolCipherSummary>,
     ) -> Result<VulnerabilityResult> {
-        Ok(super::cipher_checks::evaluate_rc4(
-            cipher_cache
-                .iter()
-                .map(|(protocol, summary)| (*protocol, summary)),
-        ))
+        // RC4 is detected by a dedicated wire-ID probe, not the cipher
+        // enumeration cache: the default enumeration excludes RC4 (and the
+        // vendored OpenSSL cannot offer it), so the cache can never reveal it.
+        self.test_rc4().await
     }
 
     pub(super) async fn test_null_ciphers_cached(
         &self,
-        cipher_cache: &HashMap<Protocol, crate::ciphers::tester::ProtocolCipherSummary>,
+        _cipher_cache: &HashMap<Protocol, crate::ciphers::tester::ProtocolCipherSummary>,
     ) -> Result<VulnerabilityResult> {
-        Ok(super::cipher_checks::evaluate_null(
-            cipher_cache
-                .iter()
-                .map(|(protocol, summary)| (*protocol, summary)),
-        ))
+        // NULL ciphers are detected by a dedicated wire-ID probe for the same
+        // reason as RC4 (see test_rc4_cached).
+        self.test_null_ciphers().await
     }
 
     #[cfg(test)]

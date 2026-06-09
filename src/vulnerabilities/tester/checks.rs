@@ -33,21 +33,23 @@ impl VulnerabilityScanner {
     }
 
     pub async fn test_rc4(&self) -> Result<VulnerabilityResult> {
-        let summaries = self.collect_protocol_cipher_summaries().await?;
-        Ok(super::cipher_checks::evaluate_rc4(
-            summaries
-                .iter()
-                .map(|(protocol, summary)| (*protocol, summary)),
-        ))
+        let (supported, inconclusive) = crate::vulnerabilities::cipher_probe::probe_supported_suites(
+            &self.target,
+            super::cipher_checks::RC4_CIPHER_SUITES,
+            super::cipher_checks::WEAK_CIPHER_PROBE_PROTOCOLS,
+        )
+        .await;
+        Ok(super::cipher_checks::rc4_probe_verdict(&supported, inconclusive))
     }
 
     pub async fn test_null_ciphers(&self) -> Result<VulnerabilityResult> {
-        let summaries = self.collect_protocol_cipher_summaries().await?;
-        Ok(super::cipher_checks::evaluate_null(
-            summaries
-                .iter()
-                .map(|(protocol, summary)| (*protocol, summary)),
-        ))
+        let (supported, inconclusive) = crate::vulnerabilities::cipher_probe::probe_supported_suites(
+            &self.target,
+            super::cipher_checks::NULL_CIPHER_SUITES,
+            super::cipher_checks::WEAK_CIPHER_PROBE_PROTOCOLS,
+        )
+        .await;
+        Ok(super::cipher_checks::null_probe_verdict(&supported, inconclusive))
     }
 
     pub async fn test_export_ciphers(&self) -> Result<VulnerabilityResult> {
