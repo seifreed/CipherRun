@@ -96,8 +96,12 @@ impl SchedulingEngine {
 
         // Calculate jitter range with overflow protection
         let seconds = duration.num_seconds();
-        // Use at least 1 second of jitter to prevent thundering herd even for short intervals
-        let jitter_range = (seconds.saturating_mul(self.jitter_percent as i64) + 50) / 100;
+        let mut jitter_range = (seconds.saturating_mul(self.jitter_percent as i64) + 50) / 100;
+        // Guarantee at least 1 second of jitter to prevent a thundering herd even for short
+        // intervals; a jitter_percent of 0 disables jitter entirely and is honored here.
+        if self.jitter_percent > 0 && seconds > 0 {
+            jitter_range = jitter_range.max(1);
+        }
 
         // Random jitter between -jitter_range and +jitter_range
         let jitter = rng.random_range(-jitter_range..=jitter_range);
@@ -201,6 +205,33 @@ mod tests {
     fn test_jitter_cap() {
         let scheduler = SchedulingEngine::new().with_jitter(100);
         assert_eq!(scheduler.jitter_percent, 50); // Should be capped at 50%
+    }
+
+    #[test]
+    fn test_short_interval_keeps_minimum_jitter() {
+        // A 1-second interval at 10% would round to 0 jitter, pinning every result to
+        // exactly 1 second. The engine must apply at least ±1 second so short intervals
+        // avoid a thundering herd, producing a spread across {0, 1, 2}.
+        let scheduler = SchedulingEngine::new();
+        let mut spread = false;
+        for _ in 0..256 {
+            let adjusted = scheduler.add_jitter(Duration::seconds(1)).num_seconds();
+            assert!((0..=2).contains(&adjusted));
+            if adjusted != 1 {
+                spread = true;
+            }
+        }
+        assert!(
+            spread,
+            "expected non-degenerate jitter range for a 1-second interval"
+        );
+    }
+
+    #[test]
+    fn test_disabled_jitter_leaves_interval_unchanged() {
+        let scheduler = SchedulingEngine::new().with_jitter(0);
+        let adjusted = scheduler.add_jitter(Duration::seconds(3600)).num_seconds();
+        assert_eq!(adjusted, 3600);
     }
 
     #[test]
