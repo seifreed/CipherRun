@@ -154,7 +154,10 @@ mod tests {
             "ssh-ed25519 host key must be flagged quantum-vulnerable: {:?}",
             result.quantum_vulnerable
         );
-        assert_ne!(result.score, 100, "config with a classical host key is not fully PQC-ready");
+        assert_ne!(
+            result.score, 100,
+            "config with a classical host key is not fully PQC-ready"
+        );
     }
 
     #[test]

@@ -68,7 +68,10 @@ pub(crate) const NULL_CIPHER_SUITES: &[(u16, &str)] = &[
 /// is set when some suites could not be classified. Vulnerable when any RC4
 /// suite is supported; inconclusive only when nothing was supported but a probe
 /// was inconclusive (mirrors the SWEET32/FREAK probe semantics).
-pub(crate) fn rc4_probe_verdict(supported: &[String], probe_inconclusive: bool) -> VulnerabilityResult {
+pub(crate) fn rc4_probe_verdict(
+    supported: &[String],
+    probe_inconclusive: bool,
+) -> VulnerabilityResult {
     let vulnerable = !supported.is_empty();
     VulnerabilityResult {
         vuln_type: VulnerabilityType::RC4,

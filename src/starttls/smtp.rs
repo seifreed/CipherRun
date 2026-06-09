@@ -193,7 +193,9 @@ mod tests {
             // dash after the code, the final line a space. A single-line read
             // would leave the trailing lines buffered and break EHLO parsing.
             stream
-                .write_all(b"220-mail.example.com ESMTP Postfix\r\n220-banner line\r\n220 ready\r\n")
+                .write_all(
+                    b"220-mail.example.com ESMTP Postfix\r\n220-banner line\r\n220 ready\r\n",
+                )
                 .await
                 .expect("test server should write greeting");
 

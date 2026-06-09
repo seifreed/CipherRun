@@ -168,8 +168,10 @@ impl CcsInjectionTester {
                                     // stapling). Omitting CertificateStatus made
                                     // stapling servers fall through to Inconclusive
                                     // instead of a conclusive not-vulnerable verdict.
-                                    if matches!(handshake_type, 0x02 | 0x0B | 0x0C | 0x0D | 0x0E | 0x16)
-                                    {
+                                    if matches!(
+                                        handshake_type,
+                                        0x02 | 0x0B | 0x0C | 0x0D | 0x0E | 0x16
+                                    ) {
                                         // Normal handshake continuation — skip this record
                                         reads_remaining = reads_remaining.saturating_sub(1);
                                         if reads_remaining == 0 {

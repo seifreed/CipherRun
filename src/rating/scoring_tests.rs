@@ -526,7 +526,11 @@ fn test_tls11_support_caps_grade_at_b() {
 
     let result = RatingCalculator::calculate(&protocols, &ciphers, None, &[]);
 
-    assert_eq!(result.grade, Grade::B, "TLS 1.1 support must cap the grade at B");
+    assert_eq!(
+        result.grade,
+        Grade::B,
+        "TLS 1.1 support must cap the grade at B"
+    );
 }
 
 #[test]

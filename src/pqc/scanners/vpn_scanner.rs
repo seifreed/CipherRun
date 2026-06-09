@@ -123,9 +123,8 @@ mod tests {
     fn test_vpn_symmetric_cipher_not_flagged_but_tls_kex_is() {
         // `cipher AES-256-GCM` is symmetric (quantum-safe) and must NOT be
         // flagged; the `tls-cipher` control-channel KEX is quantum-vulnerable.
-        let f = tmp_config(
-            "cipher AES-256-GCM\ntls-cipher TLS-ECDHE-RSA-WITH-AES-256-GCM-SHA384\n",
-        );
+        let f =
+            tmp_config("cipher AES-256-GCM\ntls-cipher TLS-ECDHE-RSA-WITH-AES-256-GCM-SHA384\n");
         let result = VpnScanner::scan(f.path()).expect("scan should succeed");
         assert!(
             !result

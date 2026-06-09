@@ -33,23 +33,31 @@ impl VulnerabilityScanner {
     }
 
     pub async fn test_rc4(&self) -> Result<VulnerabilityResult> {
-        let (supported, inconclusive) = crate::vulnerabilities::cipher_probe::probe_supported_suites(
-            &self.target,
-            super::cipher_checks::RC4_CIPHER_SUITES,
-            super::cipher_checks::WEAK_CIPHER_PROBE_PROTOCOLS,
-        )
-        .await;
-        Ok(super::cipher_checks::rc4_probe_verdict(&supported, inconclusive))
+        let (supported, inconclusive) =
+            crate::vulnerabilities::cipher_probe::probe_supported_suites(
+                &self.target,
+                super::cipher_checks::RC4_CIPHER_SUITES,
+                super::cipher_checks::WEAK_CIPHER_PROBE_PROTOCOLS,
+            )
+            .await;
+        Ok(super::cipher_checks::rc4_probe_verdict(
+            &supported,
+            inconclusive,
+        ))
     }
 
     pub async fn test_null_ciphers(&self) -> Result<VulnerabilityResult> {
-        let (supported, inconclusive) = crate::vulnerabilities::cipher_probe::probe_supported_suites(
-            &self.target,
-            super::cipher_checks::NULL_CIPHER_SUITES,
-            super::cipher_checks::WEAK_CIPHER_PROBE_PROTOCOLS,
-        )
-        .await;
-        Ok(super::cipher_checks::null_probe_verdict(&supported, inconclusive))
+        let (supported, inconclusive) =
+            crate::vulnerabilities::cipher_probe::probe_supported_suites(
+                &self.target,
+                super::cipher_checks::NULL_CIPHER_SUITES,
+                super::cipher_checks::WEAK_CIPHER_PROBE_PROTOCOLS,
+            )
+            .await;
+        Ok(super::cipher_checks::null_probe_verdict(
+            &supported,
+            inconclusive,
+        ))
     }
 
     pub async fn test_export_ciphers(&self) -> Result<VulnerabilityResult> {

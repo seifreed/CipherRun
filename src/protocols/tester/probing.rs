@@ -618,8 +618,12 @@ mod legacy_probe_tests {
     #[test]
     fn test_connection_reset_is_handshake_refusal() {
         use std::io::{Error, ErrorKind};
-        assert!(is_handshake_refusal(&Error::from(ErrorKind::ConnectionReset)));
-        assert!(is_handshake_refusal(&Error::from(ErrorKind::ConnectionAborted)));
+        assert!(is_handshake_refusal(&Error::from(
+            ErrorKind::ConnectionReset
+        )));
+        assert!(is_handshake_refusal(&Error::from(
+            ErrorKind::ConnectionAborted
+        )));
         assert!(is_handshake_refusal(&Error::from(ErrorKind::BrokenPipe)));
     }
 

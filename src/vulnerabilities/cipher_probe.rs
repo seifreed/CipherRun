@@ -107,11 +107,16 @@ async fn probe_cipher_at_protocol(
         return CipherProbeStatus::Inconclusive;
     };
 
-    let mut stream =
-        match crate::utils::network::connect_with_timeout(addr, PROBE_CONNECT_TIMEOUT, None).await {
-            Ok(s) => s,
-            Err(_) => return CipherProbeStatus::Inconclusive,
-        };
+    let mut stream = match crate::utils::network::connect_with_timeout(
+        addr,
+        PROBE_CONNECT_TIMEOUT,
+        None,
+    )
+    .await
+    {
+        Ok(s) => s,
+        Err(_) => return CipherProbeStatus::Inconclusive,
+    };
 
     let mut builder = ClientHelloBuilder::new(protocol);
     builder.add_cipher(hexcode);

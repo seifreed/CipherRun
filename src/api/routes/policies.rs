@@ -108,7 +108,10 @@ pub async fn create_policy(
         StatusCode::CREATED
     };
 
-    Ok((status, Json(present_created_policy(policy_id, request, now))))
+    Ok((
+        status,
+        Json(present_created_policy(policy_id, request, now)),
+    ))
 }
 
 /// Get policy
