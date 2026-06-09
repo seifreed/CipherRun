@@ -77,10 +77,14 @@ impl StarttlsNegotiator for IrcNegotiator {
         reader.get_mut().write_all(b"STARTTLS\r\n").await?;
         reader.get_mut().flush().await?;
 
-        // Read STARTTLS response
-        // Numeric 670 = STARTTLS successful, begin TLS
+        // Read STARTTLS response.
+        // Numeric 670 (RPL_STARTTLS) = proceed with TLS; 691 (ERR_STARTTLS) = failure.
+        // The numeric must be matched as the IRC reply-numeric token (the field
+        // after the optional `:source` prefix), NOT as a raw substring: an error
+        // line like ":irc 691 * :STARTTLS failed on port 6670" contains "670" and
+        // a naive `contains` would falsely report success.
         let response = Self::read_response(&mut reader).await?;
-        if !response.contains("670") {
+        if !irc_reply_is_numeric(&response, "670") {
             return Err(crate::error::TlsError::StarttlsError {
                 protocol: "IRC".to_string(),
                 details: format!("STARTTLS failed: {}", response),
@@ -93,6 +97,27 @@ impl StarttlsNegotiator for IrcNegotiator {
     fn protocol(&self) -> StarttlsProtocol {
         StarttlsProtocol::IRC
     }
+}
+
+/// Check whether an IRC reply line carries the given reply numeric.
+///
+/// IRC messages are `[':' <source> SPACE] <command> SPACE <params>`. For server
+/// replies `<command>` is a 3-digit numeric. This compares that positional field
+/// rather than substring-matching the whole line, so trailing free-form text or a
+/// hostname containing the digits cannot trigger a false match.
+fn irc_reply_is_numeric(response: &str, numeric: &str) -> bool {
+    let mut tokens = response.split_whitespace();
+    let first = match tokens.next() {
+        Some(token) => token,
+        None => return false,
+    };
+    // Skip the optional `:source` prefix; the numeric is then the next token.
+    let command = if first.starts_with(':') {
+        tokens.next()
+    } else {
+        Some(first)
+    };
+    command == Some(numeric)
 }
 
 fn has_irc_capability(response: &str, capability: &str) -> bool {
@@ -265,6 +290,69 @@ mod tests {
             .negotiate_starttls(&mut stream)
             .await
             .expect("test assertion should succeed");
+
+        let _ = handle.await;
+    }
+
+    #[test]
+    fn test_irc_reply_numeric_matches_positional_field_only() {
+        // Success: 670 is the reply numeric after the :source prefix.
+        assert!(irc_reply_is_numeric(
+            ":irc.example.net 670 nick :Proceed with TLS\r\n",
+            "670"
+        ));
+        // Numeric with no source prefix is still matched.
+        assert!(irc_reply_is_numeric("670 :ok\r\n", "670"));
+        // Failure 691 whose trailing text mentions a port containing "670" must
+        // NOT be treated as success.
+        assert!(!irc_reply_is_numeric(
+            ":irc.example.net 691 * :STARTTLS failed on port 6670\r\n",
+            "670"
+        ));
+        // A hostname containing the digits must not match either.
+        assert!(!irc_reply_is_numeric(":670.irc.example 691 :no\r\n", "670"));
+    }
+
+    #[tokio::test]
+    async fn test_irc_negotiation_rejects_error_numeric_mentioning_670_in_text() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let port = listener.local_addr().expect("local addr").port();
+
+        let handle = tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let mut reader = BufReader::new(&mut socket);
+                let mut line = String::new();
+
+                let _ = reader.read_line(&mut line).await;
+                let _ = reader
+                    .get_mut()
+                    .write_all(b"CAP * LS :multi-prefix tls\r\n")
+                    .await;
+                let _ = reader.get_mut().flush().await;
+
+                line.clear();
+                let _ = reader.read_line(&mut line).await;
+                // ERR_STARTTLS (691) whose trailing message contains "670".
+                let _ = reader
+                    .get_mut()
+                    .write_all(b":irc 691 * :STARTTLS failed on port 6670\r\n")
+                    .await;
+                let _ = reader.get_mut().flush().await;
+            }
+        });
+
+        let mut stream = TcpStream::connect(("127.0.0.1", port))
+            .await
+            .expect("test assertion should succeed");
+
+        let negotiator = IrcNegotiator::new();
+        let result = negotiator.negotiate_starttls(&mut stream).await;
+        assert!(
+            result.is_err(),
+            "ERR_STARTTLS 691 must not be accepted just because its text mentions 670"
+        );
 
         let _ = handle.await;
     }
