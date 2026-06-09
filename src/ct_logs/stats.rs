@@ -16,10 +16,6 @@ const MAX_SOURCES: usize = 1000;
 pub struct Stats {
     /// Total certificates processed
     pub total_processed: u64,
-    /// Unique certificates (post-deduplication)
-    pub unique_certificates: u64,
-    /// Duplicates filtered
-    pub duplicates_filtered: u64,
     /// Total retry attempts
     pub retry_attempts: u64,
     /// Per-source statistics (bounded to prevent memory exhaustion)
@@ -74,13 +70,6 @@ impl StatsTracker {
     pub fn increment_processed(&self) {
         if let Ok(mut stats) = self.stats.lock() {
             stats.total_processed += 1;
-        }
-    }
-
-    /// Increment unique certificates count
-    pub fn increment_unique(&self) {
-        if let Ok(mut stats) = self.stats.lock() {
-            stats.unique_certificates += 1;
         }
     }
 
@@ -214,16 +203,6 @@ impl StatsTracker {
 
         println!("\n=== CT Logs Streaming Statistics ===");
         println!("Total Processed:      {}", snapshot.total_processed);
-        println!("Unique Certificates:  {}", snapshot.unique_certificates);
-        println!("Duplicates Filtered:  {}", snapshot.duplicates_filtered);
-        println!(
-            "Deduplication Rate:   {:.2}%",
-            if snapshot.total_processed > 0 {
-                (snapshot.duplicates_filtered as f64 / snapshot.total_processed as f64) * 100.0
-            } else {
-                0.0
-            }
-        );
         println!("Processing Rate:      {:.2} certs/sec", rate);
         println!("Retry Attempts:       {}", snapshot.retry_attempts);
         println!(
@@ -283,8 +262,7 @@ mod tests {
         let snapshot = tracker.get_snapshot();
 
         assert_eq!(snapshot.total_processed, 0);
-        assert_eq!(snapshot.unique_certificates, 0);
-        assert_eq!(snapshot.duplicates_filtered, 0);
+        assert_eq!(snapshot.retry_attempts, 0);
         assert!(snapshot.start_time.is_some());
     }
 
@@ -294,11 +272,9 @@ mod tests {
 
         tracker.increment_processed();
         tracker.increment_processed();
-        tracker.increment_unique();
 
         let snapshot = tracker.get_snapshot();
         assert_eq!(snapshot.total_processed, 2);
-        assert_eq!(snapshot.unique_certificates, 1);
     }
 
     #[test]

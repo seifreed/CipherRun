@@ -23,12 +23,9 @@ fn test_stats_tracker() {
     // Increment counters
     tracker.increment_processed();
     tracker.increment_processed();
-    tracker.increment_unique();
 
     let snapshot = tracker.get_snapshot();
     assert_eq!(snapshot.total_processed, 2);
-    assert_eq!(snapshot.unique_certificates, 1);
-    assert_eq!(snapshot.duplicates_filtered, 0);
 }
 
 #[test]
