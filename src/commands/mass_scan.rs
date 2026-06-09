@@ -5,7 +5,7 @@
 use super::scan_exporter::{ExportKind, ScanExporter};
 use super::{Command, CommandExit};
 use crate::application::ScanRequest;
-use crate::input::AsnCidrParser;
+use crate::input::{AsnCidrParser, CidrExpansion};
 use crate::scanner::mass::{MassScanConfig, MassScanner};
 use crate::{Args, Result, TlsError};
 use async_trait::async_trait;
@@ -67,6 +67,30 @@ impl MassScanCommand {
         Ok(())
     }
 
+    /// Split announced prefixes into those small enough to enumerate (within the
+    /// per-prefix host cap) and those that must be skipped, returning the skipped
+    /// prefixes as strings for reporting.
+    ///
+    /// An ASN commonly announces IPv6 prefixes (a single /64 alone is
+    /// `u64::MAX` hosts) or very large IPv4 blocks that cannot be enumerated; we
+    /// scan the prefixes that fit and report the rest rather than failing the
+    /// whole scan, so `--asn` remains usable for real-world ASNs.
+    fn partition_prefixes(
+        networks: &[ipnetwork::IpNetwork],
+    ) -> Result<(Vec<CidrExpansion>, Vec<String>)> {
+        let mut enumerable = Vec::new();
+        let mut skipped = Vec::new();
+        for network in networks {
+            let expansion = AsnCidrParser::expand_cidr(&network.to_string())?;
+            if expansion.total_ips() > MAX_EXPANDED_TARGETS {
+                skipped.push(network.to_string());
+            } else {
+                enumerable.push(expansion);
+            }
+        }
+        Ok((enumerable, skipped))
+    }
+
     /// Build the mass scanner from the active target source (--file, --cidr, or
     /// --asn) and return it alongside a human-readable source label.
     async fn build_mass_scanner(
@@ -98,26 +122,52 @@ impl MassScanCommand {
 
         if let Some(asn) = self.args.asn.as_deref() {
             let networks = AsnCidrParser::expand_asn(asn).await?;
-            // Re-expand each announced prefix through the shared CIDR logic so
-            // the per-prefix host count and iteration stay consistent.
-            let expansions = networks
-                .iter()
-                .map(|network| AsnCidrParser::expand_cidr(&network.to_string()))
-                .collect::<Result<Vec<_>>>()?;
-            let total = expansions.iter().fold(0u64, |acc, expansion| {
+            let (enumerable, skipped) = Self::partition_prefixes(&networks)?;
+
+            if !skipped.is_empty() {
+                tracing::warn!(
+                    "Skipping {} of {} announced prefix(es) for {} that exceed the {}-host per-prefix limit and cannot be enumerated: {}",
+                    skipped.len(),
+                    networks.len(),
+                    asn,
+                    MAX_EXPANDED_TARGETS,
+                    skipped.join(", ")
+                );
+            }
+
+            if enumerable.is_empty() {
+                return Err(TlsError::InvalidInput {
+                    message: format!(
+                        "All {} announced prefixes for {} exceed the {}-host per-prefix limit (typically IPv6 or very large IPv4 ranges) and cannot be enumerated. Scan a specific sub-range with --cidr instead.",
+                        networks.len(),
+                        asn,
+                        MAX_EXPANDED_TARGETS
+                    ),
+                });
+            }
+
+            let total = enumerable.iter().fold(0u64, |acc, expansion| {
                 acc.saturating_add(expansion.total_ips())
             });
             Self::guard_target_count(total)?;
             let port = self.scan_port();
-            let targets = expansions
+            let targets = enumerable
                 .iter()
                 .flat_map(|expansion| expansion.iter())
                 .map(|ip| Self::format_ip_target(ip, port))
                 .collect();
-            return Ok((
-                MassScanner::new(request, config, targets),
-                format!("{} ({} announced prefixes)", asn, networks.len()),
-            ));
+            let label = if skipped.is_empty() {
+                format!("{} ({} announced prefixes)", asn, networks.len())
+            } else {
+                format!(
+                    "{} ({} of {} announced prefixes; {} skipped as too large)",
+                    asn,
+                    enumerable.len(),
+                    networks.len(),
+                    skipped.len()
+                )
+            };
+            return Ok((MassScanner::new(request, config, targets), label));
         }
 
         Err(TlsError::InvalidInput {
@@ -290,6 +340,27 @@ mod tests {
         };
 
         assert_eq!(scanner.targets, vec!["198.51.100.5:8443".to_string()]);
+    }
+
+    #[test]
+    fn test_partition_prefixes_splits_enumerable_from_oversized() {
+        let networks: Vec<ipnetwork::IpNetwork> = [
+            "192.0.2.0/24",  // 256 hosts — enumerable
+            "198.51.0.0/16", // 65536 hosts (== cap) — enumerable
+            "10.0.0.0/8",    // 16M hosts — skipped
+            "2001:db8::/64", // u64::MAX hosts — skipped
+        ]
+        .iter()
+        .map(|s| s.parse().expect("valid network"))
+        .collect();
+
+        let (enumerable, skipped) =
+            MassScanCommand::partition_prefixes(&networks).expect("partition should succeed");
+
+        assert_eq!(enumerable.len(), 2);
+        assert_eq!(skipped.len(), 2);
+        assert!(skipped.iter().any(|s| s.contains("10.0.0.0/8")));
+        assert!(skipped.iter().any(|s| s.contains("2001:db8")));
     }
 
     #[tokio::test]
