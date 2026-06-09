@@ -52,27 +52,47 @@ impl CtClient {
     pub async fn get_tree_size(&self, log_url: &str) -> Result<u64> {
         let url = format!("{}/ct/v1/get-sth", log_url.trim_end_matches('/'));
 
-        let response = self
+        let mut response = self
             .retry_request(|| async { self.client.get(&url).send().await })
             .await?;
 
-        // Validate response size to prevent memory exhaustion
-        let content_length = response.content_length();
-        if let Some(len) = content_length {
-            const MAX_RESPONSE_SIZE: u64 = 1024 * 1024; // 1 MB max for STH response
-            if len > MAX_RESPONSE_SIZE {
+        const MAX_RESPONSE_SIZE: u64 = 1024 * 1024; // 1 MB max for STH response
+
+        // Validate the advertised size first, then enforce the same limit on the
+        // bytes actually read: a chunked response carries no Content-Length, so a
+        // Content-Length-only check would let a malicious STH endpoint stream
+        // unbounded data past the cap (the get-entries path already guards this).
+        if let Some(len) = response.content_length()
+            && len > MAX_RESPONSE_SIZE
+        {
+            return Err(TlsError::ParseError {
+                message: format!(
+                    "STH response too large: {} bytes (max {})",
+                    len, MAX_RESPONSE_SIZE
+                ),
+            });
+        }
+
+        let mut body = Vec::new();
+        while let Some(chunk) = response.chunk().await.map_err(|e| TlsError::ParseError {
+            message: format!("Failed to read STH response body: {}", e),
+        })? {
+            body.extend_from_slice(&chunk);
+            if body.len() as u64 > MAX_RESPONSE_SIZE {
                 return Err(TlsError::ParseError {
                     message: format!(
-                        "STH response too large: {} bytes (max {})",
-                        len, MAX_RESPONSE_SIZE
+                        "STH response body too large: >{} bytes (max {})",
+                        body.len(),
+                        MAX_RESPONSE_SIZE
                     ),
                 });
             }
         }
 
-        let sth: SignedTreeHead = response.json().await.map_err(|e| TlsError::ParseError {
-            message: format!("Failed to parse STH response: {}", e),
-        })?;
+        let sth: SignedTreeHead =
+            serde_json::from_slice(&body).map_err(|e| TlsError::ParseError {
+                message: format!("Failed to parse STH response: {}", e),
+            })?;
 
         Ok(sth.tree_size)
     }
