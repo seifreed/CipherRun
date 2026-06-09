@@ -79,7 +79,7 @@ impl ApiServer {
 
         // Build main router with versioning
         // Note: Middleware layers are applied in reverse order in Axum
-        Router::new()
+        let router = Router::new()
             .nest("/api/v1", api_routes)
             // Also support /health at root level
             .route("/health", get(routes::health::health_check))
@@ -98,9 +98,19 @@ impl ApiServer {
             .layer(axum_middleware::from_fn_with_state(
                 self.state.clone(),
                 middleware::metrics,
-            ))
-            // Add CORS
-            .layer(middleware::cors_layer())
+            ));
+
+        // CORS is opt-in via enable_cors (default false). When disabled the
+        // browser same-origin policy applies; when enabled the layer permits any
+        // origin. Previously cors_layer() was applied unconditionally, ignoring
+        // the documented secure default.
+        let router = if self.config.enable_cors {
+            router.layer(middleware::cors_layer())
+        } else {
+            router
+        };
+
+        router
             // Add compression
             .layer(CompressionLayer::new())
             // Add logging
