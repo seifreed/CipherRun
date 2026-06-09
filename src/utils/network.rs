@@ -720,8 +720,12 @@ pub async fn test_cipher_support_outcome(
             builder.set_min_proto_version(Some(SslVersion::SSL3))?;
         }
 
+        // A `set_cipher_list` failure means the local OpenSSL build cannot offer
+        // this cipher (e.g. RC4/3DES/export are compiled out of the vendored
+        // build), so the server's support is undeterminable — not "unsupported".
+        // Reporting NotSupported here would be a false negative.
         if builder.set_cipher_list(&cipher).is_err() {
-            return Ok(CipherSupportOutcome::NotSupported);
+            return Ok(CipherSupportOutcome::Inconclusive);
         }
 
         let connector = builder.build();
