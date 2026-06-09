@@ -219,7 +219,7 @@ impl CipherDatabase {
     pub fn null_ciphers(&self) -> Vec<&CipherSuite> {
         self.by_hexcode
             .values()
-            .filter(|c| c.encryption.contains("NULL"))
+            .filter(|c| c.is_null_encryption())
             .collect()
     }
 
@@ -235,7 +235,7 @@ impl CipherDatabase {
             .filter(|c| {
                 // Filter for modern, secure ciphers
                 !c.export
-                    && !c.encryption.contains("NULL")
+                    && !c.is_null_encryption()
                     && c.bits >= 128
                     && !c.encryption.contains("RC4")
                     && !c.encryption.contains("DES")

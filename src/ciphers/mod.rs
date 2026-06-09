@@ -29,9 +29,16 @@ pub enum CipherStrength {
 }
 
 impl CipherSuite {
-    pub fn strength(&self) -> CipherStrength {
+    /// Whether this suite uses no encryption (a NULL/integrity-only cipher).
+    /// The cipher data renders the absence of encryption as either "NULL" or
+    /// "None" (e.g. the TLS 1.3 integrity-only suites), so both forms count.
+    pub fn is_null_encryption(&self) -> bool {
         let encryption = self.encryption.to_ascii_uppercase();
-        if encryption.contains("NULL") {
+        encryption.contains("NULL") || encryption == "NONE"
+    }
+
+    pub fn strength(&self) -> CipherStrength {
+        if self.is_null_encryption() {
             CipherStrength::NULL
         } else if self.export {
             CipherStrength::Export
@@ -128,6 +135,18 @@ mod tests {
 
         cipher.bits = 256;
         assert_eq!(cipher.strength(), CipherStrength::High);
+    }
+
+    #[test]
+    fn test_cipher_strength_none_encryption_is_null() {
+        // The cipher data file renders NULL encryption as "Enc=None" (e.g. the
+        // TLS 1.3 integrity-only suites and the *_WITH_NULL_* suites), so a
+        // suite whose encryption is "None" must classify as NULL, not Low.
+        let mut cipher = base_cipher();
+        cipher.encryption = "None".to_string();
+        cipher.bits = 0;
+        assert!(cipher.is_null_encryption());
+        assert_eq!(cipher.strength(), CipherStrength::NULL);
     }
 
     #[test]
