@@ -88,9 +88,14 @@ impl VulnerabilityScanner {
         Ok(VulnerabilityResult {
             vuln_type: VulnerabilityType::POODLE,
             vulnerable: protocol_result.supported,
-            inconclusive: false,
+            // An SSLv3 probe that could not be determined (e.g. a transport
+            // anomaly on a host that still accepts TCP) must not be reported as
+            // a definitive "does not support SSLv3".
+            inconclusive: protocol_result.inconclusive,
             details: if protocol_result.supported {
                 "Server supports SSLv3, vulnerable to POODLE attack".to_string()
+            } else if protocol_result.inconclusive {
+                "POODLE SSL test inconclusive - could not determine SSLv3 support".to_string()
             } else {
                 "Server does not support SSLv3".to_string()
             },
@@ -174,11 +179,20 @@ impl VulnerabilityScanner {
                 });
             }
 
+            // Neither protocol probe reported support; distinguish a definitive
+            // "not supported" from an undetermined probe (transport anomaly on a
+            // host that still accepts TCP) so the latter is not a clean pass.
+            let probes_inconclusive = tls10_result.inconclusive || ssl3_result.inconclusive;
             return Ok(VulnerabilityResult {
                 vuln_type: VulnerabilityType::BEAST,
                 vulnerable: false,
-                inconclusive: false,
-                details: "Server does not support TLS 1.0 or SSL 3.0".to_string(),
+                inconclusive: probes_inconclusive,
+                details: if probes_inconclusive {
+                    "BEAST test inconclusive - could not determine TLS 1.0 / SSL 3.0 support"
+                        .to_string()
+                } else {
+                    "Server does not support TLS 1.0 or SSL 3.0".to_string()
+                },
                 cve: Some("CVE-2011-3389".to_string()),
                 cwe: Some("CWE-326".to_string()),
                 severity: Severity::Info,
@@ -533,7 +547,12 @@ impl VulnerabilityScanner {
         Ok(VulnerabilityResult {
             vuln_type: VulnerabilityType::PaddingOracle2016,
             vulnerable: result.vulnerable,
-            inconclusive: result.cbc_supported && !result.vulnerable,
+            // The tester already reports `inconclusive` when AES-CBC support
+            // itself could not be determined (e.g. a transport stall on a host
+            // that still accepts TCP). Honour it so such a probe is not
+            // collapsed into a definitive "not vulnerable"; keep treating a
+            // CBC-supported-but-unconfirmed result as inconclusive too.
+            inconclusive: result.inconclusive || (result.cbc_supported && !result.vulnerable),
             details: result.details,
             cve: Some("CVE-2016-2107".to_string()),
             cwe: Some("CWE-203".to_string()),
