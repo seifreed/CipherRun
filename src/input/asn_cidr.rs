@@ -76,23 +76,39 @@ impl AsnCidrParser {
 
         // Parse prefixes from JSON response
         let mut prefixes = Vec::new();
+        let mut unparsed = 0usize;
 
         if let Some(data) = json.get("data")
             && let Some(prefixes_array) = data.get("prefixes").and_then(|p| p.as_array())
         {
             for prefix_obj in prefixes_array {
-                if let Some(prefix_str) = prefix_obj.get("prefix").and_then(|p| p.as_str())
-                    && let Ok(network) = prefix_str.parse::<IpNetwork>()
-                {
-                    prefixes.push(network);
+                let Some(prefix_str) = prefix_obj.get("prefix").and_then(|p| p.as_str()) else {
+                    continue;
+                };
+                match prefix_str.parse::<IpNetwork>() {
+                    Ok(network) => prefixes.push(network),
+                    Err(e) => {
+                        // Surface rather than silently drop: a dropped prefix
+                        // means announced targets the user asked for go unscanned.
+                        unparsed += 1;
+                        tracing::warn!(
+                            "Skipping unparseable prefix '{}' announced by AS{}: {}",
+                            prefix_str,
+                            asn,
+                            e
+                        );
+                    }
                 }
             }
         }
 
         if prefixes.is_empty() {
-            return Err(TlsError::InvalidInput {
-                message: format!("No prefixes found for AS{}", asn),
-            });
+            let message = if unparsed > 0 {
+                format!("AS{asn} announced {unparsed} prefix(es) but none could be parsed")
+            } else {
+                format!("No prefixes found for AS{asn}")
+            };
+            return Err(TlsError::InvalidInput { message });
         }
 
         Ok(prefixes)
