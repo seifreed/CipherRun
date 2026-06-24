@@ -1,7 +1,6 @@
 // mTLS (Mutual TLS) utilities for client authentication
 
 use crate::Result;
-use rustls::{ClientConfig, RootCertStore};
 use rustls_pki_types::{
     CertificateDer, PrivateKeyDer, PrivatePkcs1KeyDer, PrivatePkcs8KeyDer, PrivateSec1KeyDer,
 };
@@ -126,42 +125,21 @@ impl MtlsConfig {
         })
     }
 
-    /// Build a TLS connector with client authentication
+    /// Build a TLS connector with client authentication.
+    ///
+    /// Server-certificate verification is deliberately disabled: like every
+    /// other scanner inspection path, protocol/cipher detection and certificate
+    /// retrieval must succeed against bad-cert hosts (mTLS endpoints commonly
+    /// sit behind private/self-signed CAs). Trust is assessed separately by the
+    /// certificate validator on the retrieved chain.
     pub fn build_tls_connector(&self) -> Result<TlsConnector> {
-        let mut root_store = RootCertStore::empty();
-        root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-
-        let config =
-            ClientConfig::builder_with_provider(rustls::crypto::ring::default_provider().into())
-                .with_safe_default_protocol_versions()
-                .map_err(|e| crate::error::TlsError::MtlsError {
-                    message: format!("Failed to set protocol versions: {}", e),
-                })?
-                .with_root_certificates(root_store)
-                .with_client_auth_cert(self.cert_chain.clone(), self.private_key.clone_key())
-                .map_err(|e| crate::error::TlsError::MtlsError {
-                    message: format!("Failed to build TLS config with client auth: {}", e),
-                })?;
-
-        Ok(TlsConnector::from(Arc::new(config)))
-    }
-
-    /// Build a TLS connector with client authentication and custom root certificates
-    pub fn build_tls_connector_with_roots(
-        &self,
-        root_store: RootCertStore,
-    ) -> Result<TlsConnector> {
-        let config =
-            ClientConfig::builder_with_provider(rustls::crypto::ring::default_provider().into())
-                .with_safe_default_protocol_versions()
-                .map_err(|e| crate::error::TlsError::MtlsError {
-                    message: format!("Failed to set protocol versions: {}", e),
-                })?
-                .with_root_certificates(root_store)
-                .with_client_auth_cert(self.cert_chain.clone(), self.private_key.clone_key())
-                .map_err(|e| crate::error::TlsError::MtlsError {
-                    message: format!("Failed to build TLS config with client auth: {}", e),
-                })?;
+        let config = crate::utils::insecure_tls::insecure_client_config_with_client_auth(
+            self.cert_chain.clone(),
+            self.private_key.clone_key(),
+        )
+        .map_err(|e| crate::error::TlsError::MtlsError {
+            message: format!("Failed to build TLS config with client auth: {}", e),
+        })?;
 
         Ok(TlsConnector::from(Arc::new(config)))
     }

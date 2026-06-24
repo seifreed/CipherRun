@@ -38,6 +38,25 @@ pub fn insecure_client_config_with_versions(
         .with_no_client_auth()
 }
 
+/// Like [`insecure_client_config`] but presenting a client certificate for
+/// mutual TLS.
+///
+/// mTLS servers are predominantly internal/corporate endpoints fronted by
+/// private or self-signed CAs — exactly the certificates a verifying client
+/// rejects. The scanner must still probe protocols and retrieve the chain from
+/// such hosts (trust is assessed separately by the certificate validator), so
+/// server-certificate verification is deliberately bypassed here just as in the
+/// non-mTLS inspection path.
+pub fn insecure_client_config_with_client_auth(
+    cert_chain: Vec<rustls::pki_types::CertificateDer<'static>>,
+    key: rustls::pki_types::PrivateKeyDer<'static>,
+) -> std::result::Result<ClientConfig, rustls::Error> {
+    ClientConfig::builder()
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(NoCertVerifier))
+        .with_client_auth_cert(cert_chain, key)
+}
+
 /// Server-certificate verifier that accepts every certificate.
 #[derive(Debug)]
 struct NoCertVerifier;
