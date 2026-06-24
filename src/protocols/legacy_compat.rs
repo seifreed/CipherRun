@@ -579,9 +579,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_legacy_compat_tester_defaults() {
+        // Bind then immediately drop to obtain a port guaranteed to refuse
+        // connections; a hardcoded port (e.g. 443) makes this test flaky on
+        // hosts that happen to run a TLS server there (Docker, local dev).
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
         let target = Target::with_ips(
             "localhost".to_string(),
-            443,
+            addr.port(),
             vec![IpAddr::from([127, 0, 0, 1])],
         )
         .unwrap();
