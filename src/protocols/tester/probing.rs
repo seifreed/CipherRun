@@ -441,7 +441,7 @@ impl ProtocolTester {
 
         match connector.connect(sni_host, std_stream) {
             Ok(_) => Ok(ProtocolProbeOutcome::Supported),
-            Err(_) => Ok(ProtocolProbeOutcome::NotSupported),
+            Err(error) => Ok(classify_tls12_handshake_error(&error)),
         }
     }
 
@@ -529,6 +529,32 @@ fn is_handshake_refusal(error: &std::io::Error) -> bool {
         error.kind(),
         ErrorKind::ConnectionReset | ErrorKind::ConnectionAborted | ErrorKind::BrokenPipe
     )
+}
+
+/// Classify an OpenSSL handshake failure during the TLS 1.2 probe.
+///
+/// A protocol-level rejection (the server sends a TLS alert because it does not
+/// offer TLS 1.2) is `NotSupported`. A transport anomaly on a successfully
+/// connected socket — a read/write timeout (`SYSCALL`/`WANT_*`), a clean close
+/// (`ZERO_RETURN`), or a local setup/would-block failure — is ambiguous and
+/// must stay `Inconclusive` rather than masquerade as definitive absence.
+fn classify_tls12_handshake_error(
+    error: &openssl::ssl::HandshakeError<std::net::TcpStream>,
+) -> ProtocolProbeOutcome {
+    use openssl::ssl::{ErrorCode, HandshakeError};
+
+    match error {
+        HandshakeError::SetupFailure(_) | HandshakeError::WouldBlock(_) => {
+            ProtocolProbeOutcome::Inconclusive
+        }
+        HandshakeError::Failure(stream) => match stream.error().code() {
+            ErrorCode::SYSCALL
+            | ErrorCode::ZERO_RETURN
+            | ErrorCode::WANT_READ
+            | ErrorCode::WANT_WRITE => ProtocolProbeOutcome::Inconclusive,
+            _ => ProtocolProbeOutcome::NotSupported,
+        },
+    }
 }
 
 /// Classify a raw legacy-protocol ClientHello response.
