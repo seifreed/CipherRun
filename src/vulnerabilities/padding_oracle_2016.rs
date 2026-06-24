@@ -46,18 +46,7 @@ fn classify_cbc_handshake_error(
 }
 
 fn classify_cbc_handshake_error_string(error: &str) -> CbcSupportStatus {
-    let error = error.to_ascii_lowercase();
-    if error.contains("unexpected eof")
-        || error.contains("connection reset")
-        || error.contains("reset by peer")
-        || error.contains("connection refused")
-        || error.contains("timed out")
-        || error.contains("timeout")
-        || error.contains("closed")
-        || error.contains("no protocols available")
-        || error.contains("shutdown while in init")
-        || error.contains("errno=54")
-    {
+    if crate::utils::network::is_transport_anomaly_error(error) {
         CbcSupportStatus::Inconclusive
     } else {
         CbcSupportStatus::NotSupported

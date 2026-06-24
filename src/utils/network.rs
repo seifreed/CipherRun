@@ -466,6 +466,29 @@ pub fn parse_port(port_str: &str) -> Result<u16> {
     Ok(port)
 }
 
+/// Whether a TLS handshake error string describes a transport-level anomaly
+/// (connection reset, timeout, clean/unexpected EOF, no usable protocols)
+/// rather than a protocol-level rejection (a TLS alert).
+///
+/// OpenSSL 3.x surfaces a mid-handshake connection close as an `SSL`-class
+/// error ("unexpected eof while reading") rather than a `SYSCALL`, so callers
+/// that classify a probe outcome must inspect the message to keep such
+/// anomalies inconclusive instead of treating them as a definite "not
+/// supported"/"not vulnerable" verdict.
+pub fn is_transport_anomaly_error(error: &str) -> bool {
+    let error = error.to_ascii_lowercase();
+    error.contains("unexpected eof")
+        || error.contains("connection reset")
+        || error.contains("reset by peer")
+        || error.contains("connection refused")
+        || error.contains("timed out")
+        || error.contains("timeout")
+        || error.contains("closed")
+        || error.contains("no protocols available")
+        || error.contains("shutdown while in init")
+        || error.contains("errno=54")
+}
+
 /// Check if port is STARTTLS by default
 pub fn is_starttls_port(port: u16) -> bool {
     matches!(

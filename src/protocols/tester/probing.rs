@@ -536,8 +536,10 @@ fn is_handshake_refusal(error: &std::io::Error) -> bool {
 /// A protocol-level rejection (the server sends a TLS alert because it does not
 /// offer TLS 1.2) is `NotSupported`. A transport anomaly on a successfully
 /// connected socket — a read/write timeout (`SYSCALL`/`WANT_*`), a clean close
-/// (`ZERO_RETURN`), or a local setup/would-block failure — is ambiguous and
-/// must stay `Inconclusive` rather than masquerade as definitive absence.
+/// (`ZERO_RETURN`), a local setup/would-block failure, or an SSL-class
+/// "unexpected eof"/reset (how OpenSSL 3.x reports a mid-handshake close) — is
+/// ambiguous and must stay `Inconclusive` rather than masquerade as definitive
+/// absence.
 fn classify_tls12_handshake_error(
     error: &openssl::ssl::HandshakeError<std::net::TcpStream>,
 ) -> ProtocolProbeOutcome {
@@ -552,7 +554,18 @@ fn classify_tls12_handshake_error(
             | ErrorCode::ZERO_RETURN
             | ErrorCode::WANT_READ
             | ErrorCode::WANT_WRITE => ProtocolProbeOutcome::Inconclusive,
-            _ => ProtocolProbeOutcome::NotSupported,
+            // OpenSSL 3.x reports a mid-handshake connection close as an
+            // SSL-class error rather than SYSCALL, so inspect the message to
+            // keep such transport anomalies inconclusive; a genuine TLS alert
+            // ("alert handshake failure"/"protocol version") falls through to
+            // NotSupported.
+            _ => {
+                if crate::utils::network::is_transport_anomaly_error(&stream.error().to_string()) {
+                    ProtocolProbeOutcome::Inconclusive
+                } else {
+                    ProtocolProbeOutcome::NotSupported
+                }
+            }
         },
     }
 }
