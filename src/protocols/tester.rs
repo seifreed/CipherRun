@@ -418,6 +418,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_sslv2_connection_closed_without_response_is_not_supported() {
+        // A server that accepts the TCP connection then closes without sending an
+        // SSLv2 SERVER-HELLO does not speak SSLv2. The verdict must be a
+        // deterministic NotSupported (not Inconclusive) — a real SSLv2 server
+        // would have answered, so a close can never mask genuine support. This
+        // mirrors the legacy-TLS probe and keeps the result stable across runs.
+        let addr = spawn_close_server().await;
+        let target = Target::with_ips("example.test".to_string(), addr.port(), vec![addr.ip()])
+            .expect("target should build");
+        let tester = ProtocolTester::new(target)
+            .with_connect_timeout(Duration::from_millis(200))
+            .with_read_timeout(Duration::from_millis(200));
+
+        let result = tester
+            .test_protocol(Protocol::SSLv2)
+            .await
+            .expect("test assertion should succeed");
+
+        assert!(!result.supported);
+        assert!(!result.inconclusive);
+    }
+
+    #[tokio::test]
     async fn test_test_all_ips_reports_supported_when_any_ip_supports() {
         // Union semantics: protocol is "supported" if ANY IP in the target supports it.
         // This ensures security scanners surface vulnerabilities present on any backend,

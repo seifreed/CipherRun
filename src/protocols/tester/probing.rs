@@ -285,6 +285,19 @@ impl ProtocolTester {
                             Ok(ProtocolProbeOutcome::NotSupported)
                         }
                     }
+                    // Clean connection close with no SSLv2 SERVER-HELLO: a server
+                    // that actually spoke SSLv2 would have answered, so a close
+                    // means the handshake was refused. This mirrors the
+                    // legacy-TLS probe's rationale and keeps the verdict
+                    // deterministic (a modern server may either send a TLS alert
+                    // or just close in response to an SSLv2 hello).
+                    Ok(Ok(0)) => Ok(ProtocolProbeOutcome::NotSupported),
+                    // A reset/abort after the ClientHello is an active refusal.
+                    Ok(Err(ref e)) if is_handshake_refusal(e) => {
+                        Ok(ProtocolProbeOutcome::NotSupported)
+                    }
+                    // 1-2 byte partial reads, read timeouts, or other I/O errors
+                    // are genuinely ambiguous transport states.
                     Ok(Ok(_)) | Ok(Err(_)) | Err(_) => Ok(ProtocolProbeOutcome::Inconclusive),
                 }
             }
