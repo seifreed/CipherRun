@@ -82,16 +82,17 @@ impl CurvesDatabase {
         let mut by_id = HashMap::new();
         let mut by_name = HashMap::new();
 
-        for line in data.lines() {
+        for (line_num, line) in data.lines().enumerate() {
             let line = line.trim();
             if line.is_empty() || line.starts_with('#') {
                 continue;
             }
 
-            if let Ok(curve) = Self::parse_line(line) {
-                by_id.insert(curve.id.clone(), curve.clone());
-                by_name.insert(curve.short_name.to_lowercase(), curve.clone());
-            }
+            let curve = Self::parse_line(line).map_err(|e| TlsError::ParseError {
+                message: format!("Invalid curve mapping line {}: {}", line_num + 1, e),
+            })?;
+            by_id.insert(curve.id.clone(), curve.clone());
+            by_name.insert(curve.short_name.to_lowercase(), curve.clone());
         }
 
         Ok(Self { by_id, by_name })
@@ -254,6 +255,16 @@ mod tests {
     fn test_load_database() {
         let db = CURVES_DB.as_ref();
         assert!(db.count() > 10);
+    }
+
+    #[test]
+    fn test_parse_database_rejects_invalid_curve_line() {
+        let err = match CurvesDatabase::parse("0x00,0x1d - X25519  Curve25519\ninvalid") {
+            Ok(_) => panic!("invalid curve line should fail database parsing"),
+            Err(err) => err,
+        };
+
+        assert!(err.to_string().contains("Invalid curve mapping line 2"));
     }
 
     #[test]
