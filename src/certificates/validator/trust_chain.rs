@@ -143,16 +143,30 @@ impl CertificateValidator {
 
             // Verify cryptographic signature if DER bytes available
             if !cert.der_bytes.is_empty() && !issuer_cert.der_bytes.is_empty() {
-                if !verify_signature(&cert.der_bytes, &issuer_cert.der_bytes) {
-                    issues.push(ValidationIssue {
-                        severity: IssueSeverity::Critical,
-                        issue_type: IssueType::UntrustedCA,
-                        description: format!(
-                            "Intermediate signature verification failed: '{}' not signed by '{}'",
-                            cert.subject, issuer_cert.subject
-                        ),
-                    });
-                    return (false, None);
+                match verify_signature(&cert.der_bytes, &issuer_cert.der_bytes) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        issues.push(ValidationIssue {
+                            severity: IssueSeverity::Critical,
+                            issue_type: IssueType::UntrustedCA,
+                            description: format!(
+                                "Intermediate signature verification failed: '{}' not signed by '{}'",
+                                cert.subject, issuer_cert.subject
+                            ),
+                        });
+                        return (false, None);
+                    }
+                    Err(error) => {
+                        issues.push(ValidationIssue {
+                            severity: IssueSeverity::Critical,
+                            issue_type: IssueType::UntrustedCA,
+                            description: format!(
+                                "Intermediate signature verification error for '{}' -> '{}': {}",
+                                cert.subject, issuer_cert.subject, error
+                            ),
+                        });
+                        return (false, None);
+                    }
                 }
             } else {
                 // DER bytes unavailable - this is a security concern
@@ -196,18 +210,30 @@ impl CertificateValidator {
         if let Some((store_name, ca_der)) = find_store_for_subject(&last_cert.issuer) {
             // Verify signature if we have DER bytes
             if !last_cert.der_bytes.is_empty() && !ca_der.is_empty() {
-                if verify_signature(&last_cert.der_bytes, &ca_der) {
-                    return (true, Some(store_name));
-                } else {
-                    issues.push(ValidationIssue {
-                        severity: IssueSeverity::Critical,
-                        issue_type: IssueType::UntrustedCA,
-                        description: format!(
-                            "Certificate signature verification failed for issuer: {}",
-                            last_cert.issuer
-                        ),
-                    });
-                    return (false, None);
+                match verify_signature(&last_cert.der_bytes, &ca_der) {
+                    Ok(true) => return (true, Some(store_name)),
+                    Ok(false) => {
+                        issues.push(ValidationIssue {
+                            severity: IssueSeverity::Critical,
+                            issue_type: IssueType::UntrustedCA,
+                            description: format!(
+                                "Certificate signature verification failed for issuer: {}",
+                                last_cert.issuer
+                            ),
+                        });
+                        return (false, None);
+                    }
+                    Err(error) => {
+                        issues.push(ValidationIssue {
+                            severity: IssueSeverity::Critical,
+                            issue_type: IssueType::UntrustedCA,
+                            description: format!(
+                                "Certificate signature verification error for issuer {}: {}",
+                                last_cert.issuer, error
+                            ),
+                        });
+                        return (false, None);
+                    }
                 }
             }
             // DER bytes unavailable - cannot verify signature cryptographically

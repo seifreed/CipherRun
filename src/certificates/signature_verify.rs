@@ -10,35 +10,14 @@ use openssl::x509::X509;
 /// Verify that `cert_der` carries a signature produced by the private key
 /// corresponding to the public key in `issuer_der`.
 ///
-/// Returns `true` only when both DER blobs parse, the issuer public key can be
-/// extracted, and the cryptographic signature check succeeds. Any parsing or
-/// verification failure returns `false`.
-pub(crate) fn verify_cert_signature(cert_der: &[u8], issuer_der: &[u8]) -> bool {
-    let cert = match X509::from_der(cert_der) {
-        Ok(c) => c,
-        Err(_) => {
-            tracing::debug!("Failed to parse certificate DER bytes for signature verification");
-            return false;
-        }
-    };
+/// Returns `Ok(true)` only when both DER blobs parse, the issuer public key can
+/// be extracted, and the cryptographic signature check succeeds. Invalid
+/// signatures return `Ok(false)`; parsing and OpenSSL verification failures are
+/// returned to the caller.
+pub(crate) fn verify_cert_signature(cert_der: &[u8], issuer_der: &[u8]) -> crate::Result<bool> {
+    let cert = X509::from_der(cert_der)?;
+    let issuer = X509::from_der(issuer_der)?;
+    let issuer_pkey = issuer.public_key()?;
 
-    let issuer = match X509::from_der(issuer_der) {
-        Ok(c) => c,
-        Err(_) => {
-            tracing::debug!(
-                "Failed to parse issuer certificate DER bytes for signature verification"
-            );
-            return false;
-        }
-    };
-
-    let issuer_pkey = match issuer.public_key() {
-        Ok(pk) => pk,
-        Err(_) => {
-            tracing::debug!("Failed to extract issuer public key for signature verification");
-            return false;
-        }
-    };
-
-    cert.verify(&issuer_pkey).unwrap_or(false)
+    Ok(cert.verify(&issuer_pkey)?)
 }

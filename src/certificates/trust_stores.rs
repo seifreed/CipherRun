@@ -377,7 +377,7 @@ impl TrustStoreValidator {
         // proves a CA with that name exists; it does NOT prove the chain was signed
         // by that CA's private key. Verify every signature before trusting.
         let signatures_valid = root_in_store
-            && Self::verify_chain_signatures(chain, anchor_ca_der.as_deref(), anchor_is_identity);
+            && Self::verify_chain_signatures(chain, anchor_ca_der.as_deref(), anchor_is_identity)?;
 
         if chain_verified && root_in_store && !signatures_valid {
             message = format!(
@@ -416,13 +416,13 @@ impl TrustStoreValidator {
         chain: &CertificateChain,
         anchor_ca_der: Option<&[u8]>,
         anchor_is_identity: bool,
-    ) -> bool {
+    ) -> crate::Result<bool> {
         use crate::certificates::signature_verify::verify_cert_signature;
 
         let certs = &chain.certificates;
 
         let Some(last_cert) = certs.last() else {
-            return false;
+            return Ok(false);
         };
 
         // Internal links: cert[i] must be signed by cert[i + 1].
@@ -430,36 +430,37 @@ impl TrustStoreValidator {
             let cert = &certs[i];
             let issuer_cert = &certs[i + 1];
             if cert.der_bytes.is_empty() || issuer_cert.der_bytes.is_empty() {
-                return false;
+                return Ok(false);
             }
             // The issuer must be a CA (basic constraints CA:TRUE). Without this,
             // a non-CA end-entity certificate from a trusted CA could sign a
             // forged leaf and every signature would still verify — the classic
             // basic-constraints bypass. (Mirrors the chain validator.)
             if !issuer_cert.is_ca {
-                return false;
+                return Ok(false);
             }
-            if !verify_cert_signature(&cert.der_bytes, &issuer_cert.der_bytes) {
-                return false;
+            if !verify_cert_signature(&cert.der_bytes, &issuer_cert.der_bytes)? {
+                return Ok(false);
             }
         }
 
         // Trust anchor: the last chain cert must connect to the stored CA.
         let Some(ca_der) = anchor_ca_der else {
-            return false;
+            return Ok(false);
         };
         if ca_der.is_empty() || last_cert.der_bytes.is_empty() {
-            return false;
+            return Ok(false);
         }
 
-        if anchor_is_identity {
+        let valid = if anchor_is_identity {
             // The last cert IS the trusted CA: require an exact DER match so a
             // forged certificate that merely reuses the CA's name is rejected.
             last_cert.der_bytes == ca_der
         } else {
             // The last cert is issued by the trusted CA: verify its signature.
-            verify_cert_signature(&last_cert.der_bytes, ca_der)
-        }
+            verify_cert_signature(&last_cert.der_bytes, ca_der)?
+        };
+        Ok(valid)
     }
 
     /// Classify a single certificate: which platform trust stores contain it.
@@ -630,7 +631,8 @@ mod tests {
         };
 
         assert!(
-            !TrustStoreValidator::verify_chain_signatures(&chain, Some(&[7, 8, 9]), false),
+            !TrustStoreValidator::verify_chain_signatures(&chain, Some(&[7, 8, 9]), false)
+                .expect("signature verification should not error for non-CA issuer"),
             "a non-CA issuer must fail chain signature verification"
         );
     }
