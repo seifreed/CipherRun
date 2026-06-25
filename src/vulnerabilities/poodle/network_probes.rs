@@ -36,22 +36,37 @@ fn find_alert_description(response: &[u8], n: usize) -> Option<u8> {
 }
 
 /// Check if server supports CBC cipher suites
-pub(super) async fn supports_cbc_ciphers(target: &Target) -> Result<bool> {
+pub(super) async fn supports_cbc_ciphers(
+    target: &Target,
+    starttls: Option<crate::starttls::StarttlsProtocol>,
+) -> Result<bool> {
     const CBC_CIPHERS: &str = "AES128-SHA:AES256-SHA:AES128-SHA256:AES256-SHA256:DES-CBC3-SHA";
-    test_vuln_ssl_connection(target, VulnSslConfig::with_ciphers(CBC_CIPHERS)).await
+    test_vuln_ssl_connection(
+        target,
+        VulnSslConfig::with_ciphers(CBC_CIPHERS).with_starttls(starttls),
+    )
+    .await
 }
 
 /// Send a malformed TLS record for oracle detection
 pub(super) async fn send_malformed_record(
     target: &Target,
     record_type: MalformedRecordType,
+    starttls: Option<crate::starttls::StarttlsProtocol>,
 ) -> Result<ServerResponse> {
     let addr = target
         .socket_addrs()
         .first()
         .copied()
         .ok_or(crate::TlsError::NoSocketAddresses)?;
-    match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None).await {
+    match crate::utils::network::connect_with_starttls(
+        addr,
+        TLS_HANDSHAKE_TIMEOUT,
+        starttls,
+        &target.hostname,
+    )
+    .await
+    {
         Ok(mut stream) => {
             // Send ClientHello
             let client_hello = record_builder::build_client_hello_cbc();
@@ -114,7 +129,8 @@ pub(super) async fn send_malformed_record(
 pub(super) async fn measure_response_time(
     target: &Target,
     record_type: MalformedRecordType,
+    starttls: Option<crate::starttls::StarttlsProtocol>,
 ) -> Result<f64> {
-    let response = send_malformed_record(target, record_type).await?;
+    let response = send_malformed_record(target, record_type, starttls).await?;
     Ok(response.response_time_ms)
 }

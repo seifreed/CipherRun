@@ -19,6 +19,8 @@ pub struct FallbackScsvTester<'a> {
     sni_hostname: Option<String>,
     max_supported_protocol: Option<crate::protocols::Protocol>,
     test_all_ips: bool,
+    starttls: Option<crate::starttls::StarttlsProtocol>,
+    starttls_hostname: Option<String>,
 }
 
 impl<'a> FallbackScsvTester<'a> {
@@ -28,12 +30,38 @@ impl<'a> FallbackScsvTester<'a> {
             sni_hostname: None,
             max_supported_protocol: None,
             test_all_ips: false,
+            starttls: None,
+            starttls_hostname: None,
         }
     }
 
     pub fn with_sni(mut self, sni: Option<String>) -> Self {
         self.sni_hostname = sni;
         self
+    }
+
+    /// Configure STARTTLS negotiation before SCSV probing.
+    pub fn with_starttls(
+        mut self,
+        protocol: Option<crate::starttls::StarttlsProtocol>,
+        hostname: Option<String>,
+    ) -> Self {
+        self.starttls = protocol;
+        self.starttls_hostname = hostname;
+        self
+    }
+
+    /// Connect, upgrading via STARTTLS first for plaintext-first services.
+    pub(super) async fn starttls_connect(
+        &self,
+        addr: std::net::SocketAddr,
+        timeout: std::time::Duration,
+    ) -> Result<tokio::net::TcpStream> {
+        let hostname = self
+            .starttls_hostname
+            .clone()
+            .unwrap_or_else(|| self.target.hostname.clone());
+        crate::utils::network::connect_with_starttls(addr, timeout, self.starttls, &hostname).await
     }
 
     pub fn with_test_all_ips(mut self, enable: bool) -> Self {
@@ -43,8 +71,10 @@ impl<'a> FallbackScsvTester<'a> {
 
     pub async fn test(&mut self) -> Result<FallbackScsvTestResult> {
         tracing::debug!("Detecting maximum supported protocol version for SCSV testing");
-        let protocol_tester =
-            ProtocolTester::new(self.target.clone()).with_sni(self.sni_hostname.clone());
+        let protocol_tester = ProtocolTester::new(self.target.clone())
+            .with_sni(self.sni_hostname.clone())
+            .with_starttls(self.starttls)
+            .with_starttls_hostname(self.starttls_hostname.clone());
 
         match protocol_tester.get_preferred_protocol().await? {
             Some(max_protocol) => {

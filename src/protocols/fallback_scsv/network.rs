@@ -56,8 +56,7 @@ impl FallbackScsvTester<'_> {
         test_version: u16,
         addr: std::net::SocketAddr,
     ) -> Result<ScsvSupport> {
-        match crate::utils::network::connect_with_timeout(addr, Duration::from_secs(5), None).await
-        {
+        match self.starttls_connect(addr, Duration::from_secs(5)).await {
             Ok(mut stream) => {
                 let client_hello_no_scsv = self.build_client_hello_with_scsv(test_version, false);
 
@@ -78,9 +77,7 @@ impl FallbackScsvTester<'_> {
                     return Ok(ScsvSupport::inconclusive());
                 }
 
-                let stream =
-                    crate::utils::network::connect_with_timeout(addr, Duration::from_secs(5), None)
-                        .await;
+                let stream = self.starttls_connect(addr, Duration::from_secs(5)).await;
                 let Ok(mut stream) = stream else {
                     tracing::debug!("SCSV test: Failed to reconnect for SCSV test");
                     return Ok(ScsvSupport::inconclusive());

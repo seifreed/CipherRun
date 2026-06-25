@@ -31,11 +31,21 @@ use std::time::Duration;
 /// POODLE vulnerability tester
 pub struct PoodleTester<'a> {
     target: &'a Target,
+    starttls: Option<crate::starttls::StarttlsProtocol>,
 }
 
 impl<'a> PoodleTester<'a> {
     pub fn new(target: &'a Target) -> Self {
-        Self { target }
+        Self {
+            target,
+            starttls: None,
+        }
+    }
+
+    /// Configure STARTTLS negotiation before each POODLE probe.
+    pub fn with_starttls(mut self, protocol: Option<crate::starttls::StarttlsProtocol>) -> Self {
+        self.starttls = protocol;
+        self
     }
 
     /// Test for all POODLE vulnerability variants
@@ -67,7 +77,8 @@ impl<'a> PoodleTester<'a> {
         let ssl3_supported = self.test_ssl3().await?;
 
         // Check CBC connectivity once (same check test_tls_poodle does internally).
-        let config = VulnSslConfig::tls10_with_ciphers("AES128-SHA:AES256-SHA:DES-CBC3-SHA");
+        let config = VulnSslConfig::tls10_with_ciphers("AES128-SHA:AES256-SHA:DES-CBC3-SHA")
+            .with_starttls(self.starttls);
         let cbc_connected = test_vuln_ssl_connection(self.target, config).await?;
 
         // Run each sub-test once and reuse results for both tls_poodle and variants list.
@@ -144,12 +155,17 @@ impl<'a> PoodleTester<'a> {
 
     /// Test if SSL 3.0 is supported
     async fn test_ssl3(&self) -> Result<bool> {
-        test_vuln_ssl_connection(self.target, VulnSslConfig::ssl3_only()).await
+        test_vuln_ssl_connection(
+            self.target,
+            VulnSslConfig::ssl3_only().with_starttls(self.starttls),
+        )
+        .await
     }
 
     /// Test for TLS POODLE vulnerability
     async fn test_tls_poodle(&self) -> Result<Option<bool>> {
-        let config = VulnSslConfig::tls10_with_ciphers("AES128-SHA:AES256-SHA:DES-CBC3-SHA");
+        let config = VulnSslConfig::tls10_with_ciphers("AES128-SHA:AES256-SHA:DES-CBC3-SHA")
+            .with_starttls(self.starttls);
         let connected = test_vuln_ssl_connection(self.target, config).await?;
 
         if !connected {
@@ -198,7 +214,7 @@ impl<'a> PoodleTester<'a> {
         vulnerable_msg: &str,
         not_vulnerable_msg: &str,
     ) -> Result<PoodleVariantResult> {
-        if !network_probes::supports_cbc_ciphers(self.target).await? {
+        if !network_probes::supports_cbc_ciphers(self.target, self.starttls).await? {
             return Ok(Self::cbc_not_supported_result(variant));
         }
 
@@ -209,12 +225,14 @@ impl<'a> PoodleTester<'a> {
 
         for _ in 0..ITERATIONS {
             if let Ok(response) =
-                network_probes::send_malformed_record(self.target, record_type_a).await
+                network_probes::send_malformed_record(self.target, record_type_a, self.starttls)
+                    .await
             {
                 responses_a.push(response);
             }
             if let Ok(response) =
-                network_probes::send_malformed_record(self.target, record_type_b).await
+                network_probes::send_malformed_record(self.target, record_type_b, self.starttls)
+                    .await
             {
                 responses_b.push(response);
             }
@@ -253,7 +271,7 @@ impl<'a> PoodleTester<'a> {
 
     /// Test for Sleeping POODLE - Timing-based padding oracle
     async fn test_sleeping_poodle(&self) -> Result<PoodleVariantResult> {
-        if !network_probes::supports_cbc_ciphers(self.target).await? {
+        if !network_probes::supports_cbc_ciphers(self.target, self.starttls).await? {
             return Ok(Self::cbc_not_supported_result(
                 PoodleVariant::SleepingPoodle,
             ));
@@ -270,6 +288,7 @@ impl<'a> PoodleTester<'a> {
             if let Ok(timing) = network_probes::measure_response_time(
                 self.target,
                 MalformedRecordType::ValidPaddingInvalidMac,
+                self.starttls,
             )
             .await
             {
@@ -278,6 +297,7 @@ impl<'a> PoodleTester<'a> {
             if let Ok(timing) = network_probes::measure_response_time(
                 self.target,
                 MalformedRecordType::InvalidPaddingInvalidMac,
+                self.starttls,
             )
             .await
             {
@@ -408,7 +428,7 @@ impl<'a> PoodleTester<'a> {
             });
         }
 
-        if !network_probes::supports_cbc_ciphers(self.target).await? {
+        if !network_probes::supports_cbc_ciphers(self.target, self.starttls).await? {
             return Ok(Self::cbc_not_supported_result(
                 PoodleVariant::OpenSsl0Length,
             ));
@@ -426,6 +446,7 @@ impl<'a> PoodleTester<'a> {
             match network_probes::send_malformed_record(
                 self.target,
                 MalformedRecordType::ZeroLengthFragment,
+                self.starttls,
             )
             .await
             {

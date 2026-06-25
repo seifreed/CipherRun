@@ -582,6 +582,9 @@ pub struct VulnSslConfig {
     pub cipher_list: Option<&'static str>,
     pub timeout_secs: u64,
     pub verify_hostname: bool,
+    /// STARTTLS protocol to negotiate before the TLS handshake (plaintext-first
+    /// services); `None` connects directly.
+    pub starttls: Option<crate::starttls::StarttlsProtocol>,
 }
 
 impl Default for VulnSslConfig {
@@ -592,6 +595,7 @@ impl Default for VulnSslConfig {
             cipher_list: None,
             timeout_secs: 5,
             verify_hostname: true,
+            starttls: None,
         }
     }
 }
@@ -639,6 +643,12 @@ impl VulnSslConfig {
         self.timeout_secs = timeout_secs;
         self
     }
+
+    /// Negotiate STARTTLS before the handshake (for plaintext-first services).
+    pub fn with_starttls(mut self, starttls: Option<crate::starttls::StarttlsProtocol>) -> Self {
+        self.starttls = starttls;
+        self
+    }
 }
 
 /// Result of a vulnerability SSL connection attempt
@@ -678,14 +688,17 @@ pub async fn try_vuln_ssl_connection(
         .ok_or(TlsError::NoSocketAddresses)?;
     let hostname = target.hostname.clone();
 
-    let stream = match timeout(
+    // For plaintext-first services, upgrade via STARTTLS before the TLS handshake.
+    let stream = match connect_with_starttls(
+        addr,
         Duration::from_secs(config.timeout_secs),
-        TcpStream::connect(addr),
+        config.starttls,
+        &hostname,
     )
     .await
     {
-        Ok(Ok(s)) => s,
-        Ok(Err(_)) | Err(_) => return Ok(VulnSslResult::Failed),
+        Ok(s) => s,
+        Err(_) => return Ok(VulnSslResult::Failed),
     };
 
     let std_stream = into_blocking_std_stream(stream, Duration::from_secs(config.timeout_secs))?;

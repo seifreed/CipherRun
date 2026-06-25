@@ -115,7 +115,7 @@ impl VulnerabilityScanner {
     pub async fn test_poodle_variants(&self) -> Result<Vec<VulnerabilityResult>> {
         use crate::vulnerabilities::poodle::{PoodleTester, PoodleVariant};
 
-        let tester = PoodleTester::new(&self.target);
+        let tester = PoodleTester::new(&self.target).with_starttls(self.starttls);
         let test_result = tester.test_all_variants().await?;
 
         Ok(test_result
@@ -268,7 +268,9 @@ impl VulnerabilityScanner {
     pub async fn test_tls_fallback(&self) -> Result<VulnerabilityResult> {
         use crate::protocols::fallback_scsv::FallbackScsvTester;
 
-        let mut tester = FallbackScsvTester::new(&self.target).with_sni(self.sni_hostname.clone());
+        let mut tester = FallbackScsvTester::new(&self.target)
+            .with_sni(self.sni_hostname.clone())
+            .with_starttls(self.starttls, self.starttls_hostname.clone());
         let result = tester.test().await?;
 
         let severity = if result.vulnerable {
