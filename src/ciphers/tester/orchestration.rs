@@ -318,7 +318,7 @@ impl CipherTester {
             None
         };
 
-        let mut supported: Vec<CipherSuite> = results
+        let supported: Vec<CipherSuite> = results
             .into_iter()
             .filter(|r| r.supported)
             .map(|r| r.cipher)
@@ -328,7 +328,22 @@ impl CipherTester {
         // nondeterministic. Sort by IANA cipher id for stable output across
         // every formatter and reproducible server-preference probing (which
         // offers this list as its baseline "original order").
-        supported.sort_by_key(|c| u16::from_str_radix(&c.hexcode, 16).unwrap_or(u16::MAX));
+        let mut supported_with_ids = supported
+            .into_iter()
+            .map(|cipher| {
+                match u16::from_str_radix(&cipher.hexcode, 16) {
+                    Ok(id) => Ok((id, cipher)),
+                    Err(e) => Err(crate::TlsError::ParseError {
+                        message: format!("Invalid cipher hexcode '{}': {}", cipher.hexcode, e),
+                    }),
+                }
+            })
+            .collect::<Result<Vec<_>>>()?;
+        supported_with_ids.sort_by_key(|(id, _)| *id);
+        let supported: Vec<CipherSuite> = supported_with_ids
+            .into_iter()
+            .map(|(_, cipher)| cipher)
+            .collect();
 
         tracing::debug!(
             "Found {} supported ciphers for {:?}",
@@ -562,6 +577,24 @@ mod tests {
         ];
         let counts = tester.calculate_cipher_counts(&ciphers);
         assert_eq!(counts.forward_secrecy, 1);
+    }
+
+    #[tokio::test]
+    async fn aggregate_results_rejects_invalid_supported_cipher_hexcode() {
+        let tester = CipherTester::new(dummy_target());
+        let result = CipherTestResult {
+            cipher: tls12_cipher("ZZZZ", "AES128-CBC", 128),
+            supported: true,
+            protocol: Protocol::TLS12,
+            server_preference: None,
+            handshake_time_ms: Some(10),
+        };
+
+        let err = tester
+            .aggregate_results(Protocol::TLS12, vec![result])
+            .await
+            .expect_err("invalid supported cipher hexcode should fail aggregation");
+        assert!(err.to_string().contains("Invalid cipher hexcode"));
     }
 
     #[test]
