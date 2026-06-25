@@ -29,6 +29,8 @@ const TICKETBLEED_SESSION_ID_MARKER: [u8; 16] = [
 /// Ticketbleed vulnerability tester
 pub struct TicketbleedTester {
     target: Target,
+    starttls: Option<crate::starttls::StarttlsProtocol>,
+    starttls_hostname: Option<String>,
 }
 
 /// Internal verdict from `test_session_ticket_leak` that separates conclusive
@@ -43,7 +45,35 @@ enum TicketbleedProbeOutcome {
 
 impl TicketbleedTester {
     pub fn new(target: Target) -> Self {
-        Self { target }
+        Self {
+            target,
+            starttls: None,
+            starttls_hostname: None,
+        }
+    }
+
+    /// Configure STARTTLS negotiation before the Ticketbleed probe.
+    pub fn with_starttls(
+        mut self,
+        protocol: Option<crate::starttls::StarttlsProtocol>,
+        hostname: Option<String>,
+    ) -> Self {
+        self.starttls = protocol;
+        self.starttls_hostname = hostname;
+        self
+    }
+
+    /// Connect, upgrading via STARTTLS first for plaintext-first services.
+    async fn starttls_connect(
+        &self,
+        addr: std::net::SocketAddr,
+        timeout: std::time::Duration,
+    ) -> Result<tokio::net::TcpStream> {
+        let hostname = self
+            .starttls_hostname
+            .clone()
+            .unwrap_or_else(|| self.target.hostname.clone());
+        crate::utils::network::connect_with_starttls(addr, timeout, self.starttls, &hostname).await
     }
 
     /// Test for Ticketbleed vulnerability
@@ -84,7 +114,7 @@ impl TicketbleedTester {
             .copied()
             .ok_or(crate::TlsError::NoSocketAddresses)?;
 
-        match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None).await {
+        match self.starttls_connect(addr, TLS_HANDSHAKE_TIMEOUT).await {
             Ok(mut stream) => {
                 let client_hello = self.build_client_hello_with_session_ticket();
                 stream.write_all(&client_hello).await?;

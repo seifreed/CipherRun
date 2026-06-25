@@ -5,7 +5,8 @@ impl VulnerabilityScanner {
     pub async fn test_drown(&self) -> Result<VulnerabilityResult> {
         use crate::vulnerabilities::drown::{DrownTester, Sslv2Status};
 
-        let tester = DrownTester::new(self.target.clone());
+        let tester = DrownTester::new(self.target.clone())
+            .with_starttls(self.starttls, self.starttls_hostname.clone());
         let result = tester.test().await?;
         // A server that speaks SSLv2 but rejected our probe (Probable) is not a
         // confirmed DROWN oracle, but it is not clean either — report it as
@@ -358,7 +359,8 @@ impl VulnerabilityScanner {
     pub async fn test_ticketbleed(&self) -> Result<VulnerabilityResult> {
         use crate::vulnerabilities::ticketbleed::TicketbleedTester;
 
-        let tester = TicketbleedTester::new(self.target.clone());
+        let tester = TicketbleedTester::new(self.target.clone())
+            .with_starttls(self.starttls, self.starttls_hostname.clone());
         let result = tester.test().await?;
 
         Ok(VulnerabilityResult {
@@ -467,7 +469,8 @@ impl VulnerabilityScanner {
     pub async fn test_logjam(&self) -> Result<VulnerabilityResult> {
         use crate::vulnerabilities::logjam::LogjamTester;
 
-        let tester = LogjamTester::new(self.target.clone());
+        let tester = LogjamTester::new(self.target.clone())
+            .with_starttls(self.starttls, self.starttls_hostname.clone());
         let result = tester.test().await?;
 
         Ok(VulnerabilityResult {
@@ -488,7 +491,8 @@ impl VulnerabilityScanner {
     pub async fn test_lucky13(&self) -> Result<VulnerabilityResult> {
         use crate::vulnerabilities::lucky13::Lucky13Tester;
 
-        let tester = Lucky13Tester::new(self.target.clone());
+        let tester = Lucky13Tester::new(self.target.clone())
+            .with_starttls(self.starttls, self.starttls_hostname.clone());
         let result = tester.test().await?;
 
         Ok(VulnerabilityResult {

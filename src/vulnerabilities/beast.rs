@@ -48,11 +48,41 @@ fn classify_handshake_error(error: &str) -> BeastProbeStatus {
 /// BEAST vulnerability tester
 pub struct BeastTester {
     target: Target,
+    starttls: Option<crate::starttls::StarttlsProtocol>,
+    starttls_hostname: Option<String>,
 }
 
 impl BeastTester {
     pub fn new(target: Target) -> Self {
-        Self { target }
+        Self {
+            target,
+            starttls: None,
+            starttls_hostname: None,
+        }
+    }
+
+    /// Configure STARTTLS negotiation before each BEAST probe.
+    pub fn with_starttls(
+        mut self,
+        protocol: Option<crate::starttls::StarttlsProtocol>,
+        hostname: Option<String>,
+    ) -> Self {
+        self.starttls = protocol;
+        self.starttls_hostname = hostname;
+        self
+    }
+
+    /// Connect, upgrading via STARTTLS first for plaintext-first services.
+    async fn starttls_connect(
+        &self,
+        addr: std::net::SocketAddr,
+        timeout: std::time::Duration,
+    ) -> Result<tokio::net::TcpStream> {
+        let hostname = self
+            .starttls_hostname
+            .clone()
+            .unwrap_or_else(|| self.target.hostname.clone());
+        crate::utils::network::connect_with_starttls(addr, timeout, self.starttls, &hostname).await
     }
 
     /// Test for BEAST vulnerability
@@ -101,13 +131,10 @@ impl BeastTester {
             .ok_or(crate::TlsError::NoSocketAddresses)?;
 
         // Try to connect with TLS 1.0 and CBC cipher
-        let stream =
-            match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None)
-                .await
-            {
-                Ok(s) => s,
-                Err(_) => return Ok(BeastProbeStatus::Inconclusive),
-            };
+        let stream = match self.starttls_connect(addr, TLS_HANDSHAKE_TIMEOUT).await {
+            Ok(s) => s,
+            Err(_) => return Ok(BeastProbeStatus::Inconclusive),
+        };
 
         let std_stream =
             crate::utils::network::into_blocking_std_stream(stream, TLS_HANDSHAKE_TIMEOUT)?;
@@ -142,13 +169,10 @@ impl BeastTester {
             .copied()
             .ok_or(crate::TlsError::NoSocketAddresses)?;
 
-        let stream =
-            match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None)
-                .await
-            {
-                Ok(s) => s,
-                Err(_) => return Ok(BeastProbeStatus::Inconclusive),
-            };
+        let stream = match self.starttls_connect(addr, TLS_HANDSHAKE_TIMEOUT).await {
+            Ok(s) => s,
+            Err(_) => return Ok(BeastProbeStatus::Inconclusive),
+        };
 
         let std_stream =
             crate::utils::network::into_blocking_std_stream(stream, TLS_HANDSHAKE_TIMEOUT)?;

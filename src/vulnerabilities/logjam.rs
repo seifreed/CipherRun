@@ -15,6 +15,8 @@ use std::time::Duration;
 /// LOGJAM vulnerability tester
 pub struct LogjamTester {
     target: Target,
+    starttls: Option<crate::starttls::StarttlsProtocol>,
+    starttls_hostname: Option<String>,
 }
 
 /// Minimum DH parameter size (bits) considered secure. Groups below this are
@@ -62,7 +64,35 @@ impl WeakDhStatus {
 
 impl LogjamTester {
     pub fn new(target: Target) -> Self {
-        Self { target }
+        Self {
+            target,
+            starttls: None,
+            starttls_hostname: None,
+        }
+    }
+
+    /// Configure STARTTLS negotiation before each LOGJAM probe.
+    pub fn with_starttls(
+        mut self,
+        protocol: Option<crate::starttls::StarttlsProtocol>,
+        hostname: Option<String>,
+    ) -> Self {
+        self.starttls = protocol;
+        self.starttls_hostname = hostname;
+        self
+    }
+
+    /// Connect, upgrading via STARTTLS first for plaintext-first services.
+    async fn starttls_connect(
+        &self,
+        addr: std::net::SocketAddr,
+        timeout: std::time::Duration,
+    ) -> Result<tokio::net::TcpStream> {
+        let hostname = self
+            .starttls_hostname
+            .clone()
+            .unwrap_or_else(|| self.target.hostname.clone());
+        crate::utils::network::connect_with_starttls(addr, timeout, self.starttls, &hostname).await
     }
 
     /// Test for LOGJAM vulnerability
@@ -148,13 +178,10 @@ impl LogjamTester {
             .ok_or(crate::TlsError::NoSocketAddresses)?;
         let hostname = self.target.hostname.clone();
 
-        let stream =
-            match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None)
-                .await
-            {
-                Ok(s) => s,
-                Err(_) => return Ok(WeakDhStatus::Inconclusive),
-            };
+        let stream = match self.starttls_connect(addr, TLS_HANDSHAKE_TIMEOUT).await {
+            Ok(s) => s,
+            Err(_) => return Ok(WeakDhStatus::Inconclusive),
+        };
 
         // Convert to std stream for OpenSSL
         let std_stream = stream.into_std()?;
@@ -266,13 +293,10 @@ impl LogjamTester {
         let hostname = self.target.hostname.clone();
         let cipher = cipher.to_string();
 
-        let stream =
-            match crate::utils::network::connect_with_timeout(addr, Duration::from_secs(3), None)
-                .await
-            {
-                Ok(s) => s,
-                Err(_) => return Ok(LogjamProbeStatus::Inconclusive),
-            };
+        let stream = match self.starttls_connect(addr, Duration::from_secs(3)).await {
+            Ok(s) => s,
+            Err(_) => return Ok(LogjamProbeStatus::Inconclusive),
+        };
 
         // Convert to std stream for OpenSSL
         let std_stream = stream.into_std()?;
