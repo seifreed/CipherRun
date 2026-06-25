@@ -24,6 +24,9 @@ pub struct IntoleranceTestResult {
     pub inconclusive: bool,
     #[serde(default)]
     pub inconclusive_checks: Vec<String>,
+    // Serialize with sorted keys so JSON/XML output is deterministic across runs
+    // (a raw HashMap serializes in arbitrary iteration order).
+    #[serde(serialize_with = "crate::scanner::results::serialize_sorted_map")]
     pub details: HashMap<String, String>,
 }
 
@@ -60,6 +63,23 @@ mod tests {
         EXTENSION_SIGNATURE_ALGORITHMS, EXTENSION_SUPPORTED_GROUPS, HANDSHAKE_TYPE_CLIENT_HELLO,
         VERSION_TLS_1_0,
     };
+
+    #[test]
+    fn test_details_serialize_with_sorted_keys_for_deterministic_output() {
+        let mut result = IntoleranceTestResult::default();
+        result.details.insert("zeta".to_string(), "1".to_string());
+        result.details.insert("alpha".to_string(), "2".to_string());
+        result.details.insert("mu".to_string(), "3".to_string());
+
+        let json = serde_json::to_string(&result).expect("serialization should succeed");
+        let alpha = json.find("alpha").expect("alpha present");
+        let mu = json.find("mu").expect("mu present");
+        let zeta = json.find("zeta").expect("zeta present");
+        assert!(
+            alpha < mu && mu < zeta,
+            "details keys must serialize sorted"
+        );
+    }
 
     fn parse_client_hello_extensions(hello: &[u8]) -> Vec<(u16, Vec<u8>)> {
         assert!(hello.len() >= 5);
