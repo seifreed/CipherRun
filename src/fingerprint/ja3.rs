@@ -350,11 +350,11 @@ impl Ja3Database {
         Self { signatures }
     }
 
-    /// Load default embedded database, falling back to the small built-in set
-    /// only if the embedded JSON ever fails to parse.
+    /// Load default embedded database, failing fast if it is malformed.
     #[allow(clippy::should_implement_trait)]
     pub fn default() -> Self {
-        Self::load_default().unwrap_or_else(|_| Self::with_common_signatures())
+        Self::load_default()
+            .unwrap_or_else(|e| panic!("Failed to parse embedded JA3 database: {}", e))
     }
 
     /// Match a JA3 hash against the database
@@ -376,7 +376,8 @@ impl Ja3Database {
 impl Default for Ja3Database {
     fn default() -> Self {
         // Same embedded database as the inherent `default()`.
-        Self::load_default().unwrap_or_else(|_| Self::with_common_signatures())
+        Self::load_default()
+            .unwrap_or_else(|e| panic!("Failed to parse embedded JA3 database: {}", e))
     }
 }
 
