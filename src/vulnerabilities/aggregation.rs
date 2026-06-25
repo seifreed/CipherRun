@@ -76,7 +76,19 @@ pub fn merge_vulnerability_result(existing: &mut VulnerabilityResult, new: &Vuln
         // and were removed to avoid confusion between status and message content.
     }
 
-    // Case 4: New is not vulnerable but existing is - keep existing (no action needed)
+    // Case 4: New is not vulnerable but existing is.
+    // Mirror Case 1's invariant ("a confirmed negative beats an inconclusive
+    // positive") in the opposite arrival order: a confirmed not-vulnerable
+    // result must override an inconclusive positive. Without this, the merge is
+    // not commutative and the verdict for the same set of backends flips with
+    // IP merge order — an inconclusive positive seen before a confirmed negative
+    // would survive, but the reverse order would suppress it.
+    if !new.vulnerable && existing.vulnerable && existing.inconclusive && !new.inconclusive {
+        *existing = new.clone();
+    }
+    // Any other Case 4 sub-case keeps the existing positive: a confirmed
+    // positive is a real exposure on at least one backend, and an inconclusive
+    // positive outranks an inconclusive negative (symmetric with Case 1).
 }
 
 /// Merges a vulnerability result from a scan that encountered an error.
@@ -173,6 +185,68 @@ mod tests {
         assert!(existing.vulnerable);
         assert_eq!(existing.severity, Severity::High);
         assert_eq!(existing.details, "Vulnerable!");
+    }
+
+    fn inconclusive_vulnerable(severity: Severity, details: &str) -> VulnerabilityResult {
+        VulnerabilityResult {
+            vuln_type: VulnerabilityType::Heartbleed,
+            vulnerable: true,
+            inconclusive: true,
+            details: details.to_string(),
+            cve: None,
+            cwe: None,
+            severity,
+        }
+    }
+
+    #[test]
+    fn test_merge_confirmed_negative_overrides_inconclusive_positive() {
+        // existing=inconclusive-vulnerable, new=confirmed-not-vulnerable.
+        // A confirmed negative must beat an inconclusive positive (the same
+        // invariant Case 1 applies in the opposite arrival order).
+        let mut existing = inconclusive_vulnerable(Severity::Medium, "Possibly vulnerable");
+        let new = make_result(false, Severity::Info, "Not vulnerable");
+
+        merge_vulnerability_result(&mut existing, &new);
+
+        assert!(!existing.vulnerable);
+        assert!(!existing.inconclusive);
+    }
+
+    #[test]
+    fn test_merge_inconclusive_positive_and_confirmed_negative_is_order_independent() {
+        // The verdict for one inconclusive-positive backend and one
+        // confirmed-negative backend must not depend on merge order.
+        let inconclusive_pos = inconclusive_vulnerable(Severity::Medium, "Possibly vulnerable");
+        let confirmed_neg = make_result(false, Severity::Info, "Not vulnerable");
+
+        let mut pos_first = inconclusive_pos.clone();
+        merge_vulnerability_result(&mut pos_first, &confirmed_neg);
+
+        let mut neg_first = confirmed_neg.clone();
+        merge_vulnerability_result(&mut neg_first, &inconclusive_pos);
+
+        assert_eq!(pos_first.vulnerable, neg_first.vulnerable);
+        assert_eq!(pos_first.inconclusive, neg_first.inconclusive);
+        assert!(!pos_first.vulnerable, "confirmed negative wins both orders");
+    }
+
+    #[test]
+    fn test_merge_confirmed_positive_survives_confirmed_negative_both_orders() {
+        // A confirmed positive is a real exposure on one backend and must
+        // survive a confirmed negative regardless of order.
+        let confirmed_pos = make_result(true, Severity::High, "Vulnerable!");
+        let confirmed_neg = make_result(false, Severity::Info, "Not vulnerable");
+
+        let mut pos_first = confirmed_pos.clone();
+        merge_vulnerability_result(&mut pos_first, &confirmed_neg);
+
+        let mut neg_first = confirmed_neg.clone();
+        merge_vulnerability_result(&mut neg_first, &confirmed_pos);
+
+        assert!(pos_first.vulnerable);
+        assert!(neg_first.vulnerable);
+        assert_eq!(pos_first.severity, neg_first.severity);
     }
 
     #[test]
