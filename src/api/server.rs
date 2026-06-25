@@ -18,11 +18,30 @@ pub struct ApiServer {
 }
 
 impl ApiServer {
-    /// Create new API server
+    /// Create new API server without database persistence.
+    ///
+    /// History, certificate-inventory and stats endpoints will report 503
+    /// Service Unavailable until a pool is supplied via [`Self::with_db_pool`].
     pub fn new(config: ApiConfig) -> Result<Self> {
-        let state = Arc::new(AppState::new(config.clone())?);
+        Self::with_db_pool(config, None)
+    }
 
-        Ok(Self { config, state })
+    /// Create a new API server with an optional database pool attached.
+    ///
+    /// When `db_pool` is `Some`, the database-backed endpoints (history,
+    /// certificate inventory, stats persistence) become available. The
+    /// `--serve --db-config <file>` invocation supplies the pool.
+    pub fn with_db_pool(
+        config: ApiConfig,
+        db_pool: Option<Arc<crate::db::DatabasePool>>,
+    ) -> Result<Self> {
+        let mut state = AppState::new(config.clone())?;
+        state.db_pool = db_pool;
+
+        Ok(Self {
+            config,
+            state: Arc::new(state),
+        })
     }
 
     /// Build the router

@@ -59,6 +59,29 @@ impl ApiServerCommand {
     pub fn new(args: Args) -> Self {
         Self { args }
     }
+
+    /// Build the database pool from `--db-config`, running migrations so the
+    /// schema is present. Returns `None` when no database config was supplied,
+    /// in which case the server runs without persistence.
+    async fn load_db_pool(&self) -> Result<Option<std::sync::Arc<crate::db::DatabasePool>>> {
+        let Some(db_config_path) = &self.args.database.config else {
+            return Ok(None);
+        };
+
+        let path_str = db_config_path
+            .to_str()
+            .ok_or_else(|| TlsError::InvalidInput {
+                message: "Invalid database config file path".to_string(),
+            })?;
+
+        let config = crate::db::DatabaseConfig::from_file(path_str)?;
+        let pool = crate::db::DatabasePool::new(&config.database).await?;
+        crate::db::run_migrations(&pool).await?;
+
+        info!("API server database persistence enabled from {}", path_str);
+
+        Ok(Some(std::sync::Arc::new(pool)))
+    }
 }
 
 #[async_trait]
@@ -81,8 +104,13 @@ impl Command for ApiServerCommand {
 
         apply_cli_overrides(&mut config, &self.args.api_server, has_config_file);
 
+        // Attach a database pool when --db-config was supplied, so the
+        // history/certificate-inventory/stats endpoints are backed by storage
+        // instead of permanently returning 503.
+        let db_pool = self.load_db_pool().await?;
+
         // Create and run server
-        let server = ApiServer::new(config)?;
+        let server = ApiServer::with_db_pool(config, db_pool)?;
         server.run().await?;
 
         Ok(CommandExit::success())
