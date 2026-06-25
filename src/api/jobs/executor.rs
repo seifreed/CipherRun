@@ -168,9 +168,11 @@ impl ScanExecutor {
         }
 
         let progress_tx = self.progress_tx.clone();
+        let queue_for_scan = queue.clone();
         let job_for_scan = job.clone();
-        let mut scan_task =
-            tokio::spawn(async move { Self::run_scan(&job_for_scan, &progress_tx).await });
+        let mut scan_task = tokio::spawn(async move {
+            Self::run_scan(&job_for_scan, &queue_for_scan, &progress_tx).await
+        });
 
         let scan_result = loop {
             tokio::select! {
@@ -340,30 +342,51 @@ impl ScanExecutor {
     /// Run the actual scan
     async fn run_scan(
         job: &ScanJob,
+        queue: &Arc<dyn JobQueue>,
         progress_tx: &broadcast::Sender<ProgressMessage>,
     ) -> Result<ScanResults> {
         let request = Self::options_to_request(&job.target, &job.options)?;
 
-        let _ = progress_tx.send(ProgressMessage::new(&job.id, 5, "Initializing scanner"));
+        Self::report_running_progress(job, queue, progress_tx, 5, "Initializing scanner").await;
 
         // Create scanner
         let scanner = Scanner::new(request)?;
 
-        let _ = progress_tx.send(ProgressMessage::new(&job.id, 10, "Resolving target"));
+        Self::report_running_progress(job, queue, progress_tx, 10, "Resolving target").await;
 
         // Initialize scanner (DNS resolution)
         scanner.initialize().await?;
 
-        let _ = progress_tx.send(ProgressMessage::new(&job.id, 15, "Starting TLS scan"));
+        Self::report_running_progress(job, queue, progress_tx, 15, "Starting TLS scan").await;
 
         // Run the scan
-        // Note: We'll send progress updates during the scan
-        // This is a simplified version - in production you'd want more granular progress
         let results = scanner.run().await?;
 
-        let _ = progress_tx.send(ProgressMessage::new(&job.id, 95, "Finalizing results"));
+        Self::report_running_progress(job, queue, progress_tx, 95, "Finalizing results").await;
 
         Ok(results)
+    }
+
+    /// Broadcast a running-phase progress milestone and persist it to the job
+    /// record.
+    ///
+    /// Persisting (not just broadcasting) is what lets clients polling
+    /// `GET /scan/{id}` observe live progress; without it the stored record
+    /// stays frozen at the initial "Starting scan" until the scan reaches a
+    /// terminal state, and only WebSocket subscribers see intermediate updates.
+    /// The cancellation-preserving persist ensures a concurrent cancellation is
+    /// never overwritten back to Running.
+    async fn report_running_progress(
+        job: &ScanJob,
+        queue: &Arc<dyn JobQueue>,
+        progress_tx: &broadcast::Sender<ProgressMessage>,
+        progress: u8,
+        stage: &str,
+    ) {
+        let _ = progress_tx.send(ProgressMessage::new(&job.id, progress, stage));
+        let mut snapshot = job.clone();
+        snapshot.update_progress(progress, stage.to_string());
+        let _ = queue.update_job_preserving_cancelled(&snapshot).await;
     }
 
     fn options_to_request(target: &str, options: &ScanOptions) -> Result<ScanRequest> {
