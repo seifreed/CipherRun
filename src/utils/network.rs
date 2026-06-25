@@ -218,8 +218,12 @@ impl Target {
                 "Port must be between 1 and 65535".to_string(),
             ));
         }
+        // Canonicalize here too so every construction path (the --ip override and
+        // custom-resolver branches build Targets directly through this) yields
+        // the same hostname as the DNS path; otherwise a rooted FQDN reaches the
+        // TLS layer / output inconsistently depending on how the scan was invoked.
         Ok(Self {
-            hostname,
+            hostname: normalize_dns_hostname(hostname),
             port,
             ip_addresses,
         })
