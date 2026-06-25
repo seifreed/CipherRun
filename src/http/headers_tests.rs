@@ -184,6 +184,46 @@ fn test_extract_directive_parses_value() {
 }
 
 #[test]
+fn test_extract_directive_strips_quotes() {
+    let value = "max-age=\"31536000\"; includeSubDomains";
+    let directive = SecurityHeaderChecker::extract_directive(value, "max-age");
+    assert_eq!(directive, Some("31536000"));
+}
+
+#[test]
+fn test_hsts_quoted_max_age_is_not_invalid() {
+    // A spec-valid quoted max-age must not be reported as invalid.
+    let mut headers = HashMap::new();
+    headers.insert(
+        "Strict-Transport-Security".to_string(),
+        "max-age=\"31536000\"; includeSubDomains; preload".to_string(),
+    );
+
+    let issues = SecurityHeaderChecker::check_all_headers(&headers);
+    assert!(!issues.iter().any(|i| {
+        i.header_name == "Strict-Transport-Security" && matches!(i.issue_type, IssueType::Invalid)
+    }));
+}
+
+#[test]
+fn test_hsts_max_age_zero_is_high_severity_disabled() {
+    // max-age=0 disables HSTS (RFC 6797 §6.1.1) and must be flagged as serious,
+    // not as a merely-weak short max-age.
+    let mut headers = HashMap::new();
+    headers.insert(
+        "Strict-Transport-Security".to_string(),
+        "max-age=0".to_string(),
+    );
+
+    let issues = SecurityHeaderChecker::check_all_headers(&headers);
+    assert!(issues.iter().any(|i| {
+        i.header_name == "Strict-Transport-Security"
+            && matches!(i.severity, IssueSeverity::High)
+            && i.description.contains("disables HSTS")
+    }));
+}
+
+#[test]
 fn test_hsts_invalid_max_age() {
     let mut headers = HashMap::new();
     headers.insert(

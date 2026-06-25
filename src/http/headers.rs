@@ -131,7 +131,20 @@ impl SecurityHeaderChecker {
             // Check max-age value
             if let Some(age_str) = max_age {
                 if let Ok(age) = age_str.parse::<u64>() {
-                    if age < 31536000 {
+                    if age == 0 {
+                        // max-age=0 tells the browser to delete the HSTS policy
+                        // (RFC 6797 §6.1.1): the host is not protected, so this is
+                        // as serious as a missing header, not a merely-weak one.
+                        issues.push(HeaderIssue {
+                            header_name: "Strict-Transport-Security".to_string(),
+                            severity: IssueSeverity::High,
+                            issue_type: IssueType::Invalid,
+                            description: "HSTS max-age is 0 — this disables HSTS (policy deleted)"
+                                .to_string(),
+                            recommendation: "Set max-age to at least 31536000 (1 year)".to_string(),
+                            preload_status: None,
+                        });
+                    } else if age < 31536000 {
                         // Less than 1 year
                         issues.push(HeaderIssue {
                             header_name: "Strict-Transport-Security".to_string(),
@@ -533,7 +546,10 @@ impl SecurityHeaderChecker {
             if let Some((key, val)) = part.split_once('=')
                 && key.trim().to_lowercase() == directive_lower
             {
-                return Some(val.trim());
+                // RFC 6797/7469 permit quoted-string directive values
+                // (e.g. max-age="31536000"); strip surrounding quotes so a
+                // spec-valid quoted value is not misread as invalid.
+                return Some(val.trim().trim_matches('"'));
             }
         }
         None
