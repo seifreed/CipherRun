@@ -67,7 +67,10 @@ impl ScanPhase for ClientSimPhase {
 
     async fn execute(&self, context: &mut ScanContext) -> Result<()> {
         // Create client simulator with target
-        let simulator = ClientSimulator::new(context.target());
+        let simulator = ClientSimulator::new(context.target()).with_starttls(
+            context.args.starttls_protocol(),
+            context.args.starttls.xmpphost.clone(),
+        );
 
         // Simulate popular clients for faster scanning
         // This tests a representative sample of:

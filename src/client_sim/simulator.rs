@@ -49,6 +49,8 @@ pub struct ClientSimulator {
     target: Target,
     connect_timeout: Duration,
     read_timeout: Duration,
+    starttls: Option<crate::starttls::StarttlsProtocol>,
+    starttls_hostname: Option<String>,
 }
 
 impl ClientSimulator {
@@ -58,7 +60,24 @@ impl ClientSimulator {
             target,
             connect_timeout: Duration::from_secs(10),
             read_timeout: Duration::from_secs(5),
+            starttls: None,
+            starttls_hostname: None,
         }
+    }
+
+    /// Configure STARTTLS negotiation before each simulated handshake.
+    ///
+    /// Plaintext-first services (SMTP/IMAP/POP3/…) must be upgraded via STARTTLS
+    /// before the TLS handshake; otherwise every simulated client fails with an
+    /// `InvalidContentType` record error against the plaintext greeting.
+    pub fn with_starttls(
+        mut self,
+        protocol: Option<crate::starttls::StarttlsProtocol>,
+        hostname: Option<String>,
+    ) -> Self {
+        self.starttls = protocol;
+        self.starttls_hostname = hostname;
+        self
     }
 
     /// Simulate all current clients
@@ -136,7 +155,23 @@ impl ClientSimulator {
             .ok_or(crate::TlsError::NoSocketAddresses)?;
 
         // Connect TCP
-        let stream = connect_with_timeout(addr, self.connect_timeout, None).await?;
+        let mut stream = connect_with_timeout(addr, self.connect_timeout, None).await?;
+
+        // Upgrade plaintext-first services via STARTTLS before the handshake.
+        if let Some(starttls_proto) = self.starttls {
+            let hostname = self
+                .starttls_hostname
+                .clone()
+                .unwrap_or_else(|| self.target.hostname.clone());
+            let negotiator = crate::starttls::protocols::get_negotiator(starttls_proto, hostname);
+            negotiator
+                .negotiate_starttls(&mut stream)
+                .await
+                .map_err(|e| crate::TlsError::StarttlsError {
+                    protocol: starttls_proto.to_string(),
+                    details: format!("STARTTLS negotiation failed before client simulation: {e}"),
+                })?;
+        }
 
         // Build TLS config based on client profile
         let config = self.build_client_config(client)?;
