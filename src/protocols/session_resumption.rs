@@ -92,6 +92,34 @@ impl SessionResumptionTester {
         })
     }
 
+    /// Lightweight single-shot resumption probe for the protocol phase.
+    ///
+    /// Establishes one session, attempts to resume it once, and reports
+    /// `(session-id caching, session tickets)` support. Returns `None` for both
+    /// dimensions when the probe could not reach a verdict (connection or
+    /// handshake failure) so the caller surfaces an honest "unknown" rather than
+    /// a false negative. A resumed session whose Session ID is empty indicates
+    /// ticket-based resumption (RFC 5077); a non-empty Session ID indicates
+    /// session-ID cache resumption.
+    pub async fn quick_probe(&self) -> (Option<bool>, Option<bool>) {
+        let session = match self.establish_session().await {
+            Ok(Some(session)) => session,
+            // Connected, but the server offered no resumable session.
+            Ok(None) => return (Some(false), Some(false)),
+            // Connection/handshake failure: inconclusive, not "unsupported".
+            Err(_) => return (None, None),
+        };
+
+        let session_id_empty = session.id().is_empty();
+
+        match self.try_resume_with_session(session).await {
+            Ok(true) if session_id_empty => (Some(false), Some(true)),
+            Ok(true) => (Some(true), Some(false)),
+            Ok(false) => (Some(false), Some(false)),
+            Err(_) => (None, None),
+        }
+    }
+
     fn build_connector(&self) -> Result<SslConnector> {
         let mut builder = SslConnector::builder(SslMethod::tls())?;
         // Certificate validity is irrelevant to whether a server offers session
@@ -494,5 +522,25 @@ mod tests {
         assert!(result.inconclusive);
         assert!(result.session_id_reuse.inconclusive);
         assert!(result.session_ticket.inconclusive);
+    }
+
+    #[tokio::test]
+    async fn test_quick_probe_inactive_target_is_unknown() {
+        // A closed port can't reach a verdict, so quick_probe must report honest
+        // unknowns (None, None) rather than a false "not supported".
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            addr.port(),
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .unwrap();
+
+        let (caching, tickets) = SessionResumptionTester::new(target).quick_probe().await;
+        assert_eq!(caching, None);
+        assert_eq!(tickets, None);
     }
 }

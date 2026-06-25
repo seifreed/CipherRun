@@ -23,8 +23,15 @@ impl ProtocolTester {
         &self,
         protocol: Protocol,
     ) -> Result<(Option<bool>, Option<bool>)> {
+        // Session resumption is a server-level property negotiated by OpenSSL at
+        // its highest supported protocol, so the probed `protocol` is
+        // informational only. Delegate to the resumption tester's single-shot
+        // probe, which reports (session-id caching, session tickets) and yields
+        // honest `None`s on connection failure instead of a false negative.
         let _ = protocol;
-        Ok((None, None))
+        let tester =
+            crate::protocols::session_resumption::SessionResumptionTester::new(self.target.clone());
+        Ok(tester.quick_probe().await)
     }
 
     pub(super) async fn detect_secure_renegotiation(
