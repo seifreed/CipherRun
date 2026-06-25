@@ -67,9 +67,12 @@ impl JobStorage for FileJobStorage {
 
             if path.extension().and_then(|s| s.to_str()) == Some("json") {
                 let json = std::fs::read_to_string(&path)?;
-                if let Ok(job) = serde_json::from_str::<ScanJob>(&json) {
-                    jobs.push(job);
-                }
+                let job = serde_json::from_str::<ScanJob>(&json).map_err(|e| {
+                    crate::TlsError::ParseError {
+                        message: format!("Failed to parse job file {}: {}", path.display(), e),
+                    }
+                })?;
+                jobs.push(job);
             }
         }
 
@@ -118,5 +121,19 @@ mod tests {
             .delete_job(&job.id)
             .expect("test assertion should succeed");
         assert!(storage.load_job(&job.id).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_load_all_jobs_reports_corrupt_job_file() {
+        let temp_dir = TempDir::new().expect("test assertion should succeed");
+        let storage = FileJobStorage::new(temp_dir.path()).expect("test assertion should succeed");
+        std::fs::write(temp_dir.path().join("corrupt.json"), "{not-json")
+            .expect("test assertion should succeed");
+
+        let err = storage
+            .load_all_jobs()
+            .expect_err("corrupt persisted job should fail loudly");
+
+        assert!(err.to_string().contains("Failed to parse job file"));
     }
 }
