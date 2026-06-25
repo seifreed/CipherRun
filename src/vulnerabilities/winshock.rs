@@ -196,7 +196,7 @@ impl WinshockTester {
         };
 
         // Send normal ClientHello first
-        let client_hello = self.build_client_hello();
+        let client_hello = self.build_client_hello()?;
         if client_hello.is_empty() {
             return Ok(MalformedHandshakeStatus::Inconclusive);
         }
@@ -242,10 +242,10 @@ impl WinshockTester {
     }
 
     /// Build standard ClientHello using ClientHelloBuilder
-    fn build_client_hello(&self) -> Vec<u8> {
+    fn build_client_hello(&self) -> Result<Vec<u8>> {
         let mut builder = ClientHelloBuilder::new(Protocol::TLS12);
         builder.for_rsa_key_exchange();
-        builder.build_minimal().unwrap_or_else(|_| Vec::new())
+        builder.build_minimal()
     }
 
     /// Build malformed ClientKeyExchange that triggers Winshock
@@ -318,7 +318,9 @@ mod tests {
         .unwrap();
 
         let tester = WinshockTester::new(target);
-        let hello = tester.build_client_hello();
+        let hello = tester
+            .build_client_hello()
+            .expect("ClientHello should build");
 
         assert!(hello.len() > 40);
         assert_eq!(hello[0], 0x16); // Handshake record
