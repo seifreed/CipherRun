@@ -5,7 +5,6 @@ use crate::db::connection::DatabasePool;
 use sqlx::migrate::Migrator;
 use std::fs;
 use std::path::Path;
-use std::path::PathBuf;
 
 /// Run database migrations
 pub async fn run_migrations(pool: &DatabasePool) -> crate::Result<()> {
@@ -69,20 +68,21 @@ async fn run_sqlite_migrations_manual(
     })?;
 
     // Find all .sql migration files in migrations directory
-    let mut migration_files: Vec<PathBuf> = fs::read_dir(migrations_path)
+    let mut migration_files = Vec::new();
+    for entry in fs::read_dir(migrations_path)
         .map_err(|e| {
             crate::TlsError::DatabaseError(format!("Failed to read migrations directory: {}", e))
         })?
-        .filter_map(|entry| {
-            let entry = entry.ok()?;
-            let path = entry.path();
-            if path.extension().is_some_and(|ext| ext == "sql") {
-                Some(path)
-            } else {
-                None
-            }
-        })
-        .collect();
+    {
+        let path = entry
+            .map_err(|e| {
+                crate::TlsError::DatabaseError(format!("Failed to read migration entry: {}", e))
+            })?
+            .path();
+        if path.extension().is_some_and(|ext| ext == "sql") {
+            migration_files.push(path);
+        }
+    }
 
     // Sort by filename to ensure consistent migration order
     migration_files.sort();
