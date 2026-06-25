@@ -279,6 +279,18 @@ mod tests {
     }
 
     #[test]
+    fn test_schedule_next_scan_normalizes_rooted_fqdn_identifier() {
+        let mut scheduler = SchedulingEngine::new();
+        let domains = vec![create_test_domain("example.com", 3600)];
+
+        scheduler.schedule_next_scan("Example.COM.:443", 3600);
+
+        assert_eq!(scheduler.scheduled_count(), 1);
+        assert!(scheduler.next_scan_time("example.com:443").is_some());
+        assert!(scheduler.get_domains_to_scan(&domains).is_empty());
+    }
+
+    #[test]
     fn test_time_until_next_scan() {
         let mut scheduler = SchedulingEngine::new();
 

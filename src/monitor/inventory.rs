@@ -3,7 +3,7 @@
 use crate::Result;
 use crate::certificates::parser::CertificateInfo;
 use crate::error::TlsError;
-use crate::utils::network::{canonical_target, split_target_host_port};
+use crate::utils::network::{canonical_target, normalize_dns_hostname, split_target_host_port};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -25,6 +25,7 @@ pub(crate) fn canonical_inventory_key(hostname: &str, port: u16) -> String {
         .strip_prefix('[')
         .and_then(|value| value.strip_suffix(']'))
         .unwrap_or(hostname);
+    let hostname = normalize_dns_hostname(hostname.to_string());
     let normalized_hostname = hostname
         .parse::<IpAddr>()
         .map(|ip| ip.to_string())
@@ -404,6 +405,12 @@ mod tests {
     }
 
     #[test]
+    fn test_monitored_domain_identifier_normalizes_rooted_fqdn() {
+        let domain = MonitoredDomain::new("Example.COM.".to_string(), 8443);
+        assert_eq!(domain.identifier(), "example.com:8443");
+    }
+
+    #[test]
     fn test_monitored_domain_identifier_ipv6_is_bracketed() {
         let domain = MonitoredDomain::new("::1".to_string(), 443);
         assert_eq!(domain.identifier(), "[::1]:443");
@@ -456,6 +463,22 @@ mod tests {
 
         assert!(inventory.get_domain("example.com").is_some());
         assert!(inventory.get_domain("EXAMPLE.COM:443").is_some());
+
+        inventory
+            .remove_domain("example.com")
+            .expect("test assertion should succeed");
+        assert_eq!(inventory.len(), 0);
+    }
+
+    #[test]
+    fn test_inventory_domain_lookup_and_remove_normalize_rooted_fqdn() {
+        let mut inventory = CertificateInventory::new();
+        inventory
+            .add_domain(MonitoredDomain::new("Example.COM.".to_string(), 443))
+            .expect("test assertion should succeed");
+
+        assert!(inventory.get_domain("example.com").is_some());
+        assert!(inventory.get_domain("example.com.:443").is_some());
 
         inventory
             .remove_domain("example.com")
