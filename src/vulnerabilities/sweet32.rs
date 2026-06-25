@@ -15,6 +15,7 @@ use crate::utils::network::Target;
 /// Sweet32 vulnerability tester
 pub struct Sweet32Tester {
     target: Target,
+    starttls: Option<crate::starttls::StarttlsProtocol>,
 }
 
 /// 3DES (64-bit block) cipher suites (IANA wire IDs) paired with display names.
@@ -43,7 +44,16 @@ const SWEET32_PROBE_PROTOCOLS: &[Protocol] = &[Protocol::TLS12, Protocol::TLS10]
 
 impl Sweet32Tester {
     pub fn new(target: Target) -> Self {
-        Self { target }
+        Self {
+            target,
+            starttls: None,
+        }
+    }
+
+    /// Configure STARTTLS negotiation before each 3DES cipher probe.
+    pub fn with_starttls(mut self, protocol: Option<crate::starttls::StarttlsProtocol>) -> Self {
+        self.starttls = protocol;
+        self
     }
 
     /// Test for Sweet32 vulnerability
@@ -82,7 +92,14 @@ impl Sweet32Tester {
         let mut inconclusive = false;
 
         for (hexcode, name) in SWEET32_3DES_CIPHER_SUITES {
-            match probe_cipher_suite(&self.target, *hexcode, SWEET32_PROBE_PROTOCOLS).await {
+            match probe_cipher_suite(
+                &self.target,
+                *hexcode,
+                SWEET32_PROBE_PROTOCOLS,
+                self.starttls,
+            )
+            .await
+            {
                 CipherProbeStatus::Supported => supported.push((*name).to_string()),
                 CipherProbeStatus::NotSupported => {}
                 CipherProbeStatus::Inconclusive => inconclusive = true,

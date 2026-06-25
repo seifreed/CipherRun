@@ -152,7 +152,14 @@ impl LogjamTester {
     async fn test_export_dh(&self) -> Result<(bool, bool)> {
         let mut inconclusive = false;
         for &hexcode in EXPORT_DH_CIPHER_SUITES {
-            match probe_cipher_suite(&self.target, hexcode, EXPORT_DH_PROBE_PROTOCOLS).await {
+            match probe_cipher_suite(
+                &self.target,
+                hexcode,
+                EXPORT_DH_PROBE_PROTOCOLS,
+                self.starttls,
+            )
+            .await
+            {
                 CipherProbeStatus::Supported => return Ok((true, false)),
                 CipherProbeStatus::NotSupported => {}
                 CipherProbeStatus::Inconclusive => inconclusive = true,

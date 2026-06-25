@@ -39,6 +39,7 @@ impl VulnerabilityScanner {
                 &self.target,
                 super::cipher_checks::RC4_CIPHER_SUITES,
                 super::cipher_checks::WEAK_CIPHER_PROBE_PROTOCOLS,
+                self.starttls,
             )
             .await;
         Ok(super::cipher_checks::rc4_probe_verdict(
@@ -53,6 +54,7 @@ impl VulnerabilityScanner {
                 &self.target,
                 super::cipher_checks::NULL_CIPHER_SUITES,
                 super::cipher_checks::WEAK_CIPHER_PROBE_PROTOCOLS,
+                self.starttls,
             )
             .await;
         Ok(super::cipher_checks::null_probe_verdict(
@@ -427,7 +429,7 @@ impl VulnerabilityScanner {
     pub async fn test_sweet32(&self) -> Result<VulnerabilityResult> {
         use crate::vulnerabilities::sweet32::Sweet32Tester;
 
-        let tester = Sweet32Tester::new(self.target.clone());
+        let tester = Sweet32Tester::new(self.target.clone()).with_starttls(self.starttls);
         let result = tester.test().await?;
 
         Ok(VulnerabilityResult {
@@ -448,7 +450,7 @@ impl VulnerabilityScanner {
     pub async fn test_freak(&self) -> Result<VulnerabilityResult> {
         use crate::vulnerabilities::freak::FreakTester;
 
-        let tester = FreakTester::new(self.target.clone());
+        let tester = FreakTester::new(self.target.clone()).with_starttls(self.starttls);
         let result = tester.test().await?;
 
         Ok(VulnerabilityResult {

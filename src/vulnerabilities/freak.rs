@@ -13,6 +13,7 @@ use crate::utils::network::Target;
 /// FREAK vulnerability tester
 pub struct FreakTester {
     target: Target,
+    starttls: Option<crate::starttls::StarttlsProtocol>,
 }
 
 /// RSA_EXPORT cipher suites (legacy wire IDs) paired with display names. Probed
@@ -37,7 +38,16 @@ const FREAK_PROBE_PROTOCOLS: &[Protocol] = &[Protocol::TLS12, Protocol::TLS10];
 
 impl FreakTester {
     pub fn new(target: Target) -> Self {
-        Self { target }
+        Self {
+            target,
+            starttls: None,
+        }
+    }
+
+    /// Configure STARTTLS negotiation before each export-RSA cipher probe.
+    pub fn with_starttls(mut self, protocol: Option<crate::starttls::StarttlsProtocol>) -> Self {
+        self.starttls = protocol;
+        self
     }
 
     /// Test for FREAK vulnerability
@@ -76,7 +86,9 @@ impl FreakTester {
         let mut inconclusive = false;
 
         for (hexcode, name) in EXPORT_RSA_CIPHER_SUITES {
-            match probe_cipher_suite(&self.target, *hexcode, FREAK_PROBE_PROTOCOLS).await {
+            match probe_cipher_suite(&self.target, *hexcode, FREAK_PROBE_PROTOCOLS, self.starttls)
+                .await
+            {
                 CipherProbeStatus::Supported => supported.push((*name).to_string()),
                 CipherProbeStatus::NotSupported => {}
                 CipherProbeStatus::Inconclusive => inconclusive = true,

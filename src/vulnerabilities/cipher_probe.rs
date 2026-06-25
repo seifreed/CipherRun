@@ -53,10 +53,11 @@ pub(crate) async fn probe_cipher_suite(
     target: &Target,
     hexcode: u16,
     protocols: &[Protocol],
+    starttls: Option<crate::starttls::StarttlsProtocol>,
 ) -> CipherProbeStatus {
     let mut saw_inconclusive = false;
     for &protocol in protocols {
-        match probe_cipher_at_protocol(target, hexcode, protocol).await {
+        match probe_cipher_at_protocol(target, hexcode, protocol, starttls).await {
             CipherProbeStatus::Supported => return CipherProbeStatus::Supported,
             CipherProbeStatus::NotSupported => {}
             CipherProbeStatus::Inconclusive => saw_inconclusive = true,
@@ -84,11 +85,12 @@ pub(crate) async fn probe_supported_suites(
     target: &Target,
     suites: &[(u16, &str)],
     protocols: &[Protocol],
+    starttls: Option<crate::starttls::StarttlsProtocol>,
 ) -> (Vec<String>, bool) {
     let mut supported = Vec::new();
     let mut inconclusive = false;
     for (hexcode, name) in suites {
-        match probe_cipher_suite(target, *hexcode, protocols).await {
+        match probe_cipher_suite(target, *hexcode, protocols, starttls).await {
             CipherProbeStatus::Supported => supported.push((*name).to_string()),
             CipherProbeStatus::NotSupported => {}
             CipherProbeStatus::Inconclusive => inconclusive = true,
@@ -102,15 +104,17 @@ async fn probe_cipher_at_protocol(
     target: &Target,
     hexcode: u16,
     protocol: Protocol,
+    starttls: Option<crate::starttls::StarttlsProtocol>,
 ) -> CipherProbeStatus {
     let Some(addr) = target.socket_addrs().first().copied() else {
         return CipherProbeStatus::Inconclusive;
     };
 
-    let mut stream = match crate::utils::network::connect_with_timeout(
+    let mut stream = match crate::utils::network::connect_with_starttls(
         addr,
         PROBE_CONNECT_TIMEOUT,
-        None,
+        starttls,
+        &target.hostname,
     )
     .await
     {
