@@ -64,6 +64,24 @@ pub fn server_name_for_hostname(
     })
 }
 
+/// Canonicalize a DNS hostname by removing a single trailing dot.
+///
+/// `example.com.` is a valid absolute (rooted) FQDN and resolves fine, but the
+/// rooted form must not reach the TLS layer: the SNI extension (RFC 6066
+/// `HostName`) forbids a trailing dot, rustls' DNS `ServerName` rejects it, and
+/// a certificate's SAN never carries one — so leaving it on causes the TLS 1.3
+/// probe to fail and a spurious hostname mismatch. IP literals (which never end
+/// in a dot) and the bare root `.` are left untouched.
+pub fn normalize_dns_hostname(hostname: String) -> String {
+    if hostname.parse::<IpAddr>().is_ok() {
+        return hostname;
+    }
+    match hostname.strip_suffix('.') {
+        Some(stripped) if !stripped.is_empty() => stripped.to_string(),
+        _ => hostname,
+    }
+}
+
 /// Choose the hostname to use for an SNI extension.
 ///
 /// Explicit overrides win. Otherwise, raw IP literals are omitted because SNI
@@ -169,6 +187,7 @@ impl Target {
     /// The override wins over any embedded port in the input.
     pub async fn parse_with_port_override(input: &str, port_override: Option<u16>) -> Result<Self> {
         let (hostname, parsed_port) = split_target_host_port(input)?;
+        let hostname = normalize_dns_hostname(hostname);
         let port = port_override.or(parsed_port).unwrap_or(443);
         let ip_addresses = resolve_hostname(&hostname).await?;
 

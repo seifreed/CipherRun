@@ -248,3 +248,38 @@ fn test_starttls_port_and_protocol_mappings() {
     assert_eq!(default_starttls_protocol(389), Some("ldap"));
     assert_eq!(default_starttls_protocol(465), None);
 }
+
+#[test]
+fn test_normalize_dns_hostname_strips_single_trailing_dot() {
+    assert_eq!(
+        normalize_dns_hostname("example.com.".to_string()),
+        "example.com"
+    );
+}
+
+#[test]
+fn test_normalize_dns_hostname_leaves_dotless_name_untouched() {
+    assert_eq!(
+        normalize_dns_hostname("example.com".to_string()),
+        "example.com"
+    );
+}
+
+#[test]
+fn test_normalize_dns_hostname_preserves_ip_literal() {
+    assert_eq!(normalize_dns_hostname("192.0.2.1".to_string()), "192.0.2.1");
+}
+
+#[test]
+fn test_normalize_dns_hostname_keeps_bare_root_dot() {
+    // "." is not a scannable host; leave it so resolution fails loudly rather
+    // than collapsing to an empty hostname.
+    assert_eq!(normalize_dns_hostname(".".to_string()), ".");
+}
+
+#[test]
+fn test_server_name_for_hostname_accepts_normalized_fqdn() {
+    // After normalization a rooted FQDN must yield a valid rustls ServerName.
+    let normalized = normalize_dns_hostname("example.com.".to_string());
+    assert!(server_name_for_hostname(&normalized).is_ok());
+}
