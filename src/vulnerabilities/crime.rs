@@ -131,7 +131,7 @@ impl<'a> CrimeTester<'a> {
         };
 
         // Send ClientHello with compression method DEFLATE (0x01)
-        let client_hello = self.build_client_hello_with_compression();
+        let client_hello = self.build_client_hello_with_compression()?;
         stream.write_all(&client_hello).await?;
 
         // Read ServerHello
@@ -169,10 +169,10 @@ impl<'a> CrimeTester<'a> {
     }
 
     /// Build ClientHello offering DEFLATE compression
-    fn build_client_hello_with_compression(&self) -> Vec<u8> {
+    fn build_client_hello_with_compression(&self) -> Result<Vec<u8>> {
         let mut builder = ClientHelloBuilder::new(Protocol::TLS12);
         builder.for_rsa_key_exchange().with_compression(true);
-        builder.build().unwrap_or_else(|_| Vec::new())
+        builder.build()
     }
 
     /// Test if SPDY compression is enabled
@@ -197,7 +197,7 @@ impl<'a> CrimeTester<'a> {
         };
 
         // Send ClientHello with NPN extension advertising SPDY support
-        let client_hello = self.build_client_hello_with_npn();
+        let client_hello = self.build_client_hello_with_npn()?;
         stream.write_all(&client_hello).await?;
 
         // Read ServerHello
@@ -281,13 +281,13 @@ impl<'a> CrimeTester<'a> {
     }
 
     /// Build ClientHello with NPN extension for SPDY using ClientHelloBuilder
-    fn build_client_hello_with_npn(&self) -> Vec<u8> {
+    fn build_client_hello_with_npn(&self) -> Result<Vec<u8>> {
         let mut builder = ClientHelloBuilder::new(Protocol::TLS12);
         builder
             .for_rsa_key_exchange()
             .with_compression(true) // Enable DEFLATE for CRIME testing
             .add_npn(); // Add NPN extension for SPDY
-        builder.build().unwrap_or_else(|_| Vec::new())
+        builder.build()
     }
 }
 
@@ -330,7 +330,9 @@ mod tests {
         .unwrap();
 
         let tester = CrimeTester::new(&target);
-        let hello = tester.build_client_hello_with_npn();
+        let hello = tester
+            .build_client_hello_with_npn()
+            .expect("ClientHello should build");
 
         assert!(hello.len() > 50);
         assert_eq!(hello[0], 0x16); // Handshake
@@ -377,7 +379,9 @@ mod tests {
         .unwrap();
 
         let tester = CrimeTester::new(&target);
-        let hello = tester.build_client_hello_with_npn();
+        let hello = tester
+            .build_client_hello_with_npn()
+            .expect("ClientHello should build");
 
         // NPN extension type is 0x3374
         assert!(hello.windows(2).any(|w| w == [0x33, 0x74]));
@@ -393,7 +397,9 @@ mod tests {
         .unwrap();
 
         let tester = CrimeTester::new(&target);
-        let hello = tester.build_client_hello_with_compression();
+        let hello = tester
+            .build_client_hello_with_compression()
+            .expect("ClientHello should build");
 
         assert!(hello.len() > 50);
         assert_eq!(hello[0], 0x16); // Handshake
