@@ -3,21 +3,9 @@ use crate::certificates::validator::parse_cert_date;
 use crate::utils::network::split_target_host_port;
 use chrono::{DateTime, Utc};
 
-/// Parse a certificate validity date for persistence.
-///
-/// The `not_before`/`not_after` columns are non-nullable, so an unparseable
-/// date has no faithful representation. Both producers format dates that
-/// [`parse_cert_date`] round-trips, so a failure indicates an unexpected format
-/// drift — log it (the live validator already fails closed on the same input)
-/// instead of silently storing a fabricated timestamp as authoritative.
-fn parse_persisted_cert_date(raw: &str, field: &str) -> DateTime<Utc> {
-    parse_cert_date(raw).unwrap_or_else(|| {
-        tracing::warn!(
-            field,
-            raw,
-            "Unparseable certificate validity date while persisting; storing current time as a placeholder"
-        );
-        Utc::now()
+fn parse_persisted_cert_date(raw: &str, field: &str) -> crate::Result<DateTime<Utc>> {
+    parse_cert_date(raw).ok_or_else(|| crate::TlsError::ParseError {
+        message: format!("Invalid certificate {} date for persistence: {}", field, raw),
     })
 }
 
@@ -92,6 +80,11 @@ pub struct PersistedCertificate {
 
 impl PersistedScan {
     pub fn from_scan_results(results: &ScanResults) -> Self {
+        Self::try_from_scan_results(results)
+            .unwrap_or_else(|e| panic!("Failed to convert scan results for persistence: {}", e))
+    }
+
+    pub fn try_from_scan_results(results: &ScanResults) -> crate::Result<Self> {
         let (target_hostname, target_port) = match split_target_host_port(&results.target) {
             Ok((hostname, Some(port))) => (hostname, port),
             Ok((hostname, None)) => (hostname, 443),
@@ -197,31 +190,42 @@ impl PersistedScan {
                     .certificates
                     .iter()
                     .enumerate()
-                    .map(|(position, cert)| PersistedCertificate {
-                        fingerprint_sha256: cert
-                            .fingerprint_sha256
-                            .clone()
-                            .unwrap_or_else(|| format!("unknown_{}", position)),
-                        subject: cert.subject.clone(),
-                        issuer: cert.issuer.clone(),
-                        serial_number: Some(cert.serial_number.clone()),
-                        not_before: parse_persisted_cert_date(&cert.not_before, "not_before"),
-                        not_after: parse_persisted_cert_date(&cert.not_after, "not_after"),
-                        signature_algorithm: Some(cert.signature_algorithm.clone()),
-                        public_key_algorithm: Some(cert.public_key_algorithm.clone()),
-                        public_key_size: cert.public_key_size.map(|s| s as i32),
-                        san_domains: cert.san.clone(),
-                        is_ca: cert.is_ca,
-                        key_usage: cert.key_usage.clone(),
-                        extended_key_usage: cert.extended_key_usage.clone(),
-                        der_bytes: Some(cert.der_bytes.clone()),
-                        chain_position: position as i32,
+                    .map(|(position, cert)| {
+                        Ok::<_, crate::TlsError>(PersistedCertificate {
+                            fingerprint_sha256: cert
+                                .fingerprint_sha256
+                                .clone()
+                                .ok_or_else(|| crate::TlsError::ParseError {
+                                    message: format!(
+                                        "Missing certificate fingerprint for chain position {}",
+                                        position
+                                    ),
+                                })?,
+                            subject: cert.subject.clone(),
+                            issuer: cert.issuer.clone(),
+                            serial_number: Some(cert.serial_number.clone()),
+                            not_before: parse_persisted_cert_date(
+                                &cert.not_before,
+                                "not_before",
+                            )?,
+                            not_after: parse_persisted_cert_date(&cert.not_after, "not_after")?,
+                            signature_algorithm: Some(cert.signature_algorithm.clone()),
+                            public_key_algorithm: Some(cert.public_key_algorithm.clone()),
+                            public_key_size: cert.public_key_size.map(|s| s as i32),
+                            san_domains: cert.san.clone(),
+                            is_ca: cert.is_ca,
+                            key_usage: cert.key_usage.clone(),
+                            extended_key_usage: cert.extended_key_usage.clone(),
+                            der_bytes: Some(cert.der_bytes.clone()),
+                            chain_position: position as i32,
+                        })
                     })
                     .collect()
             })
+            .transpose()?
             .unwrap_or_default();
 
-        Self {
+        Ok(Self {
             target_hostname,
             target_port,
             overall_grade,
@@ -232,7 +236,7 @@ impl PersistedScan {
             vulnerabilities,
             ratings,
             certificates,
-        }
+        })
     }
 }
 
@@ -263,6 +267,7 @@ mod tests {
             subject: "CN=example.com".to_string(),
             issuer: "CN=Test CA".to_string(),
             serial_number: "123456".to_string(),
+            fingerprint_sha256: Some("abc123".to_string()),
             not_before: "2024-01-01 00:00:00 UTC".to_string(),
             not_after: "Jan 01 00:00:00 2030 GMT".to_string(),
             signature_algorithm: "SHA256-RSA".to_string(),
@@ -302,5 +307,90 @@ mod tests {
         assert_eq!(persisted.certificates.len(), 1);
         assert_eq!(persisted.certificates[0].not_before, expected_not_before);
         assert_eq!(persisted.certificates[0].not_after, expected_not_after);
+    }
+
+    #[test]
+    fn rejects_unparseable_certificate_dates() {
+        let cert = CertificateInfo {
+            subject: "CN=example.com".to_string(),
+            issuer: "CN=Test CA".to_string(),
+            serial_number: "123456".to_string(),
+            fingerprint_sha256: Some("abc123".to_string()),
+            not_before: "not-a-date".to_string(),
+            not_after: "Jan 01 00:00:00 2030 GMT".to_string(),
+            ..Default::default()
+        };
+
+        let results = ScanResults {
+            target: "example.com:443".to_string(),
+            certificate_chain: Some(CertificateAnalysisResult {
+                chain: CertificateChain {
+                    certificates: vec![cert],
+                    chain_length: 1,
+                    chain_size_bytes: 1000,
+                },
+                validation: ValidationResult {
+                    valid: true,
+                    issues: Vec::new(),
+                    trust_chain_valid: true,
+                    hostname_match: true,
+                    not_expired: true,
+                    signature_valid: true,
+                    trusted_ca: None,
+                    platform_trust: None,
+                },
+                revocation: None,
+            }),
+            ..Default::default()
+        };
+
+        let err = PersistedScan::try_from_scan_results(&results)
+            .expect_err("invalid certificate dates should fail persistence conversion");
+        assert!(
+            err.to_string()
+                .contains("Invalid certificate not_before date for persistence")
+        );
+    }
+
+    #[test]
+    fn rejects_missing_certificate_fingerprint() {
+        let cert = CertificateInfo {
+            subject: "CN=example.com".to_string(),
+            issuer: "CN=Test CA".to_string(),
+            serial_number: "123456".to_string(),
+            not_before: "2024-01-01 00:00:00 UTC".to_string(),
+            not_after: "Jan 01 00:00:00 2030 GMT".to_string(),
+            ..Default::default()
+        };
+
+        let results = ScanResults {
+            target: "example.com:443".to_string(),
+            certificate_chain: Some(CertificateAnalysisResult {
+                chain: CertificateChain {
+                    certificates: vec![cert],
+                    chain_length: 1,
+                    chain_size_bytes: 1000,
+                },
+                validation: ValidationResult {
+                    valid: true,
+                    issues: Vec::new(),
+                    trust_chain_valid: true,
+                    hostname_match: true,
+                    not_expired: true,
+                    signature_valid: true,
+                    trusted_ca: None,
+                    platform_trust: None,
+                },
+                revocation: None,
+            }),
+            ..Default::default()
+        };
+
+        let err = PersistedScan::try_from_scan_results(&results)
+            .expect_err("missing certificate fingerprint should fail persistence conversion");
+        assert!(
+            err.to_string()
+                .contains("Missing certificate fingerprint for chain position 0")
+        );
     }
 }

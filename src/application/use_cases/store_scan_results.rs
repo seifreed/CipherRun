@@ -8,7 +8,7 @@ impl StoreScanResults {
         store: &dyn ScanResultsStore,
         results: &ScanResults,
     ) -> Result<i64> {
-        let persisted = PersistedScan::from_scan_results(results);
+        let persisted = PersistedScan::try_from_scan_results(results)?;
         store.store_scan(&persisted).await
     }
 
