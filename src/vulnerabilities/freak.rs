@@ -14,6 +14,7 @@ use crate::utils::network::Target;
 pub struct FreakTester {
     target: Target,
     starttls: Option<crate::starttls::StarttlsProtocol>,
+    sni_hostname: Option<String>,
 }
 
 /// RSA_EXPORT cipher suites (legacy wire IDs) paired with display names. Probed
@@ -41,12 +42,19 @@ impl FreakTester {
         Self {
             target,
             starttls: None,
+            sni_hostname: None,
         }
     }
 
     /// Configure STARTTLS negotiation before each export-RSA cipher probe.
     pub fn with_starttls(mut self, protocol: Option<crate::starttls::StarttlsProtocol>) -> Self {
         self.starttls = protocol;
+        self
+    }
+
+    /// Configure an explicit SNI hostname (e.g. `--sni-name`) for each probe.
+    pub fn with_sni(mut self, sni: Option<String>) -> Self {
+        self.sni_hostname = sni;
         self
     }
 
@@ -86,8 +94,14 @@ impl FreakTester {
         let mut inconclusive = false;
 
         for (hexcode, name) in EXPORT_RSA_CIPHER_SUITES {
-            match probe_cipher_suite(&self.target, *hexcode, FREAK_PROBE_PROTOCOLS, self.starttls)
-                .await
+            match probe_cipher_suite(
+                &self.target,
+                *hexcode,
+                FREAK_PROBE_PROTOCOLS,
+                self.starttls,
+                self.sni_hostname.as_deref(),
+            )
+            .await
             {
                 CipherProbeStatus::Supported => supported.push((*name).to_string()),
                 CipherProbeStatus::NotSupported => {}

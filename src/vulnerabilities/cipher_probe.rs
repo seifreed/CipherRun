@@ -54,10 +54,11 @@ pub(crate) async fn probe_cipher_suite(
     hexcode: u16,
     protocols: &[Protocol],
     starttls: Option<crate::starttls::StarttlsProtocol>,
+    sni_override: Option<&str>,
 ) -> CipherProbeStatus {
     let mut saw_inconclusive = false;
     for &protocol in protocols {
-        match probe_cipher_at_protocol(target, hexcode, protocol, starttls).await {
+        match probe_cipher_at_protocol(target, hexcode, protocol, starttls, sni_override).await {
             CipherProbeStatus::Supported => return CipherProbeStatus::Supported,
             CipherProbeStatus::NotSupported => {}
             CipherProbeStatus::Inconclusive => saw_inconclusive = true,
@@ -86,11 +87,12 @@ pub(crate) async fn probe_supported_suites(
     suites: &[(u16, &str)],
     protocols: &[Protocol],
     starttls: Option<crate::starttls::StarttlsProtocol>,
+    sni_override: Option<&str>,
 ) -> (Vec<String>, bool) {
     let mut supported = Vec::new();
     let mut inconclusive = false;
     for (hexcode, name) in suites {
-        match probe_cipher_suite(target, *hexcode, protocols, starttls).await {
+        match probe_cipher_suite(target, *hexcode, protocols, starttls, sni_override).await {
             CipherProbeStatus::Supported => supported.push((*name).to_string()),
             CipherProbeStatus::NotSupported => {}
             CipherProbeStatus::Inconclusive => inconclusive = true,
@@ -105,6 +107,7 @@ async fn probe_cipher_at_protocol(
     hexcode: u16,
     protocol: Protocol,
     starttls: Option<crate::starttls::StarttlsProtocol>,
+    sni_override: Option<&str>,
 ) -> CipherProbeStatus {
     let Some(addr) = target.socket_addrs().first().copied() else {
         return CipherProbeStatus::Inconclusive;
@@ -124,7 +127,7 @@ async fn probe_cipher_at_protocol(
 
     let mut builder = ClientHelloBuilder::new(protocol);
     builder.add_cipher(hexcode);
-    let sni = crate::utils::network::sni_hostname_for_target(&target.hostname, None);
+    let sni = crate::utils::network::sni_hostname_for_target(&target.hostname, sni_override);
     let client_hello = match builder.build_with_defaults(sni.as_deref()) {
         Ok(hello) => hello,
         Err(_) => return CipherProbeStatus::Inconclusive,

@@ -16,6 +16,7 @@ use crate::utils::network::Target;
 pub struct Sweet32Tester {
     target: Target,
     starttls: Option<crate::starttls::StarttlsProtocol>,
+    sni_hostname: Option<String>,
 }
 
 /// 3DES (64-bit block) cipher suites (IANA wire IDs) paired with display names.
@@ -47,12 +48,19 @@ impl Sweet32Tester {
         Self {
             target,
             starttls: None,
+            sni_hostname: None,
         }
     }
 
     /// Configure STARTTLS negotiation before each 3DES cipher probe.
     pub fn with_starttls(mut self, protocol: Option<crate::starttls::StarttlsProtocol>) -> Self {
         self.starttls = protocol;
+        self
+    }
+
+    /// Configure an explicit SNI hostname (e.g. `--sni-name`) for each probe.
+    pub fn with_sni(mut self, sni: Option<String>) -> Self {
+        self.sni_hostname = sni;
         self
     }
 
@@ -97,6 +105,7 @@ impl Sweet32Tester {
                 *hexcode,
                 SWEET32_PROBE_PROTOCOLS,
                 self.starttls,
+                self.sni_hostname.as_deref(),
             )
             .await
             {

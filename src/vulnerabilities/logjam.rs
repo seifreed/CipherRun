@@ -17,6 +17,7 @@ pub struct LogjamTester {
     target: Target,
     starttls: Option<crate::starttls::StarttlsProtocol>,
     starttls_hostname: Option<String>,
+    sni_hostname: Option<String>,
 }
 
 /// Minimum DH parameter size (bits) considered secure. Groups below this are
@@ -68,6 +69,7 @@ impl LogjamTester {
             target,
             starttls: None,
             starttls_hostname: None,
+            sni_hostname: None,
         }
     }
 
@@ -80,6 +82,20 @@ impl LogjamTester {
         self.starttls = protocol;
         self.starttls_hostname = hostname;
         self
+    }
+
+    /// Configure an explicit SNI hostname (e.g. `--sni-name`) for each probe.
+    pub fn with_sni(mut self, sni: Option<String>) -> Self {
+        self.sni_hostname = sni;
+        self
+    }
+
+    /// Effective SNI hostname for OpenSSL-based probes: the explicit override if
+    /// set, otherwise the target hostname.
+    fn effective_sni(&self) -> &str {
+        self.sni_hostname
+            .as_deref()
+            .unwrap_or(self.target.hostname.as_str())
     }
 
     /// Connect, upgrading via STARTTLS first for plaintext-first services.
@@ -157,6 +173,7 @@ impl LogjamTester {
                 hexcode,
                 EXPORT_DH_PROBE_PROTOCOLS,
                 self.starttls,
+                self.sni_hostname.as_deref(),
             )
             .await
             {
@@ -183,7 +200,7 @@ impl LogjamTester {
             .first()
             .copied()
             .ok_or(crate::TlsError::NoSocketAddresses)?;
-        let hostname = self.target.hostname.clone();
+        let hostname = self.effective_sni().to_string();
 
         let stream = match self.starttls_connect(addr, TLS_HANDSHAKE_TIMEOUT).await {
             Ok(s) => s,
@@ -297,7 +314,7 @@ impl LogjamTester {
             .first()
             .copied()
             .ok_or(crate::TlsError::NoSocketAddresses)?;
-        let hostname = self.target.hostname.clone();
+        let hostname = self.effective_sni().to_string();
         let cipher = cipher.to_string();
 
         let stream = match self.starttls_connect(addr, Duration::from_secs(3)).await {
