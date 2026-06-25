@@ -186,21 +186,51 @@ impl ScanComparator {
                     )?;
 
                     Ok(Some(CertificateRecord {
-                        cert_id: row.try_get("cert_id").ok(),
+                        cert_id: row.try_get("cert_id").map_err(|e| {
+                            crate::TlsError::DatabaseError(format!(
+                                "Invalid certificate field cert_id: {}",
+                                e
+                            ))
+                        })?,
                         fingerprint_sha256,
                         subject,
                         issuer,
-                        serial_number: row.try_get("serial_number").ok(),
+                        serial_number: row.try_get("serial_number").map_err(|e| {
+                            crate::TlsError::DatabaseError(format!(
+                                "Invalid certificate field serial_number: {}",
+                                e
+                            ))
+                        })?,
                         not_before,
                         not_after,
-                        signature_algorithm: row.try_get("signature_algorithm").ok(),
-                        public_key_algorithm: row.try_get("public_key_algorithm").ok(),
-                        public_key_size: row.try_get("public_key_size").ok(),
+                        signature_algorithm: row.try_get("signature_algorithm").map_err(|e| {
+                            crate::TlsError::DatabaseError(format!(
+                                "Invalid certificate field signature_algorithm: {}",
+                                e
+                            ))
+                        })?,
+                        public_key_algorithm: row.try_get("public_key_algorithm").map_err(|e| {
+                            crate::TlsError::DatabaseError(format!(
+                                "Invalid certificate field public_key_algorithm: {}",
+                                e
+                            ))
+                        })?,
+                        public_key_size: row.try_get("public_key_size").map_err(|e| {
+                            crate::TlsError::DatabaseError(format!(
+                                "Invalid certificate field public_key_size: {}",
+                                e
+                            ))
+                        })?,
                         san_domains,
                         is_ca,
                         key_usage,
                         extended_key_usage,
-                        der_bytes: row.try_get("der_bytes").ok(),
+                        der_bytes: row.try_get("der_bytes").map_err(|e| {
+                            crate::TlsError::DatabaseError(format!(
+                                "Invalid certificate field der_bytes: {}",
+                                e
+                            ))
+                        })?,
                         created_at,
                     }))
                 } else {
