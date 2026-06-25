@@ -15,7 +15,7 @@ use crate::compliance::Severity;
 /// policy-as-code enforcement.
 #[derive(Args, Debug, Clone, Default)]
 pub struct ComplianceArgs {
-    /// Compliance framework to evaluate against (pci-dss-v4, nist-sp800-52r2, hipaa, soc2, mozilla-modern, mozilla-intermediate, gdpr)
+    /// Compliance framework to evaluate against (pci-dss-v4, nist-sp800-52r2, hipaa, soc2, mozilla-modern, mozilla-intermediate, gdpr, nist-sp800-131a, nist-fips-pqc)
     #[arg(long = "compliance", value_name = "FRAMEWORK")]
     pub framework: Option<String>,
 

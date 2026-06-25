@@ -71,9 +71,21 @@ mod tests {
     #[test]
     fn test_list_builtin_frameworks() {
         let frameworks = FrameworkLoader::list_builtin_frameworks();
-        assert_eq!(frameworks.len(), 7);
+        assert_eq!(frameworks.len(), 9);
         assert!(frameworks.iter().any(|(id, _)| *id == "pci-dss-v4"));
         assert!(frameworks.iter().any(|(id, _)| *id == "nist-sp800-52r2"));
+        assert!(frameworks.iter().any(|(id, _)| *id == "nist-sp800-131a"));
+        assert!(frameworks.iter().any(|(id, _)| *id == "nist-fips-pqc"));
+    }
+
+    #[test]
+    fn test_every_listed_framework_is_loadable() {
+        // Guards against a framework being advertised by `list_frameworks`
+        // without a corresponding, parseable data file behind it.
+        for (id, _) in FrameworkLoader::list_builtin_frameworks() {
+            FrameworkLoader::load_builtin(id)
+                .unwrap_or_else(|e| panic!("listed framework {id} failed to load: {e}"));
+        }
     }
 
     #[test]

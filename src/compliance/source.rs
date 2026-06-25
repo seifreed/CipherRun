@@ -47,6 +47,14 @@ impl BuiltinFrameworkSource {
                 "gdpr",
                 "GDPR - General Data Protection Regulation (encryption requirements)",
             ),
+            (
+                "nist-sp800-131a",
+                "NIST SP 800-131A Rev 3 - Cryptographic Algorithm Transitions",
+            ),
+            (
+                "nist-fips-pqc",
+                "NIST FIPS 203/204 - Post-Quantum Readiness",
+            ),
         ]
     }
 
@@ -59,9 +67,11 @@ impl BuiltinFrameworkSource {
             "mozilla-modern" | "modern" => Ok("mozilla_modern.yaml"),
             "mozilla-intermediate" | "intermediate" => Ok("mozilla_intermediate.yaml"),
             "gdpr" => Ok("gdpr.yaml"),
+            "nist-sp800-131a" | "sp800-131a" | "nist-131a" => Ok("nist_sp800_131a_r3.yaml"),
+            "nist-fips-pqc" | "fips-pqc" | "pqc" => Ok("nist_fips_pqc.yaml"),
             _ => Err(crate::error::TlsError::ConfigError {
                 message: format!(
-                    "Unknown framework ID: {}. Supported: pci-dss-v4, nist-sp800-52r2, hipaa, soc2, mozilla-modern, mozilla-intermediate, gdpr",
+                    "Unknown framework ID: {}. Supported: pci-dss-v4, nist-sp800-52r2, hipaa, soc2, mozilla-modern, mozilla-intermediate, gdpr, nist-sp800-131a, nist-fips-pqc",
                     framework_id
                 ),
             }),
