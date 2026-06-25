@@ -341,21 +341,38 @@ impl DatabasePool {
                     crate::TlsError::DatabaseError(format!("Failed to query top domains: {}", e))
                 })?;
 
-                Ok(rows
-                    .into_iter()
-                    .filter_map(|row| {
-                        let count: i64 = row.get("scan_count");
+                rows.into_iter()
+                    .map(|row| {
+                        let count: i64 = row.try_get("scan_count").map_err(|e| {
+                            crate::TlsError::DatabaseError(format!(
+                                "Invalid top domain field scan_count: {}",
+                                e
+                            ))
+                        })?;
                         if count < 0 {
-                            tracing::warn!("Negative scan count encountered: {}", count);
-                            return None;
+                            return Err(crate::TlsError::DatabaseError(format!(
+                                "Invalid top domain field scan_count: negative value {}",
+                                count
+                            )));
                         }
-                        Some((
-                            row.get::<String, _>("target_hostname"),
+                        Ok((
+                            row.try_get::<String, _>("target_hostname").map_err(|e| {
+                                crate::TlsError::DatabaseError(format!(
+                                    "Invalid top domain field target_hostname: {}",
+                                    e
+                                ))
+                            })?,
                             count,
-                            row.get::<chrono::DateTime<chrono::Utc>, _>("last_scan"),
+                            row.try_get::<chrono::DateTime<chrono::Utc>, _>("last_scan")
+                                .map_err(|e| {
+                                    crate::TlsError::DatabaseError(format!(
+                                        "Invalid top domain field last_scan: {}",
+                                        e
+                                    ))
+                                })?,
                         ))
                     })
-                    .collect())
+                    .collect()
             }
             DatabasePool::Sqlite(pool) => {
                 let rows = sqlx::query(
@@ -376,21 +393,38 @@ impl DatabasePool {
                     crate::TlsError::DatabaseError(format!("Failed to query top domains: {}", e))
                 })?;
 
-                Ok(rows
-                    .into_iter()
-                    .filter_map(|row| {
-                        let count: i64 = row.get::<i64, _>("scan_count");
+                rows.into_iter()
+                    .map(|row| {
+                        let count: i64 = row.try_get("scan_count").map_err(|e| {
+                            crate::TlsError::DatabaseError(format!(
+                                "Invalid top domain field scan_count: {}",
+                                e
+                            ))
+                        })?;
                         if count < 0 {
-                            tracing::warn!("Negative scan count encountered: {}", count);
-                            return None;
+                            return Err(crate::TlsError::DatabaseError(format!(
+                                "Invalid top domain field scan_count: negative value {}",
+                                count
+                            )));
                         }
-                        Some((
-                            row.get::<String, _>("target_hostname"),
+                        Ok((
+                            row.try_get::<String, _>("target_hostname").map_err(|e| {
+                                crate::TlsError::DatabaseError(format!(
+                                    "Invalid top domain field target_hostname: {}",
+                                    e
+                                ))
+                            })?,
                             count,
-                            row.get::<chrono::DateTime<chrono::Utc>, _>("last_scan"),
+                            row.try_get::<chrono::DateTime<chrono::Utc>, _>("last_scan")
+                                .map_err(|e| {
+                                    crate::TlsError::DatabaseError(format!(
+                                        "Invalid top domain field last_scan: {}",
+                                        e
+                                    ))
+                                })?,
                         ))
                     })
-                    .collect())
+                    .collect()
             }
         }
     }

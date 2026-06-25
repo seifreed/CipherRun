@@ -131,6 +131,43 @@ async fn test_scan_history_rejects_non_positive_limit() {
 }
 
 #[tokio::test]
+async fn test_top_domains_rejects_invalid_scan_timestamp() {
+    let config = DatabaseConfig::sqlite(common::sqlite::unique_sqlite_db_path("cipherruntest"));
+    let db = CipherRunDatabase::new(&config).await.unwrap();
+
+    let results = ScanResults {
+        target: "invalid-top-domain.test:443".to_string(),
+        scan_time_ms: 100,
+        ..Default::default()
+    };
+    db.store_scan(&PersistedScan::from_scan_results(&results))
+        .await
+        .unwrap();
+    db.pool()
+        .execute(
+            "UPDATE scans SET scan_timestamp = ? WHERE target_hostname = ?",
+            vec![
+                BindValue::String("not-a-timestamp".to_string()),
+                BindValue::String("invalid-top-domain.test".to_string()),
+            ],
+        )
+        .await
+        .unwrap();
+
+    let err = db
+        .pool()
+        .get_top_domains(10)
+        .await
+        .expect_err("invalid top domain timestamp should fail");
+    assert!(
+        err.to_string()
+            .contains("Invalid top domain field last_scan")
+    );
+
+    db.close().await;
+}
+
+#[tokio::test]
 async fn test_latest_scan_retrieval() {
     let config = DatabaseConfig::sqlite(common::sqlite::unique_sqlite_db_path("cipherruntest"));
     let db = CipherRunDatabase::new(&config).await.unwrap();
