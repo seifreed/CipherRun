@@ -432,6 +432,13 @@ impl TrustStoreValidator {
             if cert.der_bytes.is_empty() || issuer_cert.der_bytes.is_empty() {
                 return false;
             }
+            // The issuer must be a CA (basic constraints CA:TRUE). Without this,
+            // a non-CA end-entity certificate from a trusted CA could sign a
+            // forged leaf and every signature would still verify — the classic
+            // basic-constraints bypass. (Mirrors the chain validator.)
+            if !issuer_cert.is_ca {
+                return false;
+            }
             if !verify_cert_signature(&cert.der_bytes, &issuer_cert.der_bytes) {
                 return false;
             }
@@ -601,6 +608,31 @@ mod tests {
             certificate_transparency: None,
             der_bytes: vec![],
         }
+    }
+
+    #[test]
+    fn test_verify_chain_signatures_rejects_non_ca_issuer() {
+        // Basic-constraints bypass: a non-CA issuer must be rejected before any
+        // signature check. Non-empty (garbage) DER passes the empty-DER guard so
+        // the is_ca gate is what fails the chain.
+        let mut leaf = cert_with_subject("CN=leaf.example.com");
+        leaf.issuer = "CN=not-a-ca".to_string();
+        leaf.der_bytes = vec![1, 2, 3];
+
+        let mut issuer = cert_with_subject("CN=not-a-ca");
+        issuer.der_bytes = vec![4, 5, 6];
+        issuer.is_ca = false;
+
+        let chain = CertificateChain {
+            certificates: vec![leaf, issuer],
+            chain_length: 2,
+            chain_size_bytes: 0,
+        };
+
+        assert!(
+            !TrustStoreValidator::verify_chain_signatures(&chain, Some(&[7, 8, 9]), false),
+            "a non-CA issuer must fail chain signature verification"
+        );
     }
 
     #[test]
