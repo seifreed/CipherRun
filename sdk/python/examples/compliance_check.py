@@ -27,11 +27,9 @@ def check_compliance(client: CipherRunClient, target: str, framework: str):
     try:
         report = client.check_compliance(framework, target, detailed=True)
 
-        print(f"\nFramework: {report.framework}")
+        print(f"\nFramework: {report.framework_name} ({report.framework_version})")
         print(f"Status: {report.status}")
-
-        if report.message:
-            print(f"Message: {report.message}")
+        print(f"Compliance: {report.summary.compliance_percentage:.1f}%")
 
         return report
 
@@ -87,7 +85,7 @@ def main():
             print("=" * 80)
 
             for name, report in results.items():
-                status_symbol = "✓" if report.status == "compliant" else "✗"
+                status_symbol = "✓" if report.status == "pass" else "✗"
                 print(f"{status_symbol} {name}: {report.status}")
 
         print("\n" + "=" * 80)

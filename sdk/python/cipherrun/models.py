@@ -237,9 +237,10 @@ class HealthResponse(BaseModel):
     status: str = Field(..., description="Service status")
     version: str = Field(..., description="Service version")
     uptime_seconds: int = Field(..., description="Uptime in seconds")
-    active_scans: int = Field(..., description="Current number of active scans")
-    queued_scans: int = Field(..., description="Queued scans")
+    active_scans: Optional[int] = Field(default=None, description="Current number of active scans")
+    queued_scans: Optional[int] = Field(default=None, description="Queued scans")
     database: Optional[str] = Field(default=None, description="Database connection status")
+    queue: Optional[str] = Field(default=None, description="Job queue health status")
 
 
 class DomainStats(BaseModel):
@@ -278,13 +279,11 @@ class HistoricalScan(BaseModel):
     """Historical scan record."""
     model_config = ConfigDict(extra="allow")
 
-    scan_id: str = Field(..., description="Scan ID")
+    scan_id: int = Field(..., description="Scan ID")
     timestamp: datetime = Field(..., description="Scan timestamp")
     grade: Optional[str] = Field(default=None, description="Overall grade")
     score: Optional[int] = Field(default=None, description="Overall score")
-    duration_ms: int = Field(..., description="Scan duration in milliseconds")
-    vulnerability_count: int = Field(..., description="Number of vulnerabilities found")
-    results_url: str = Field(..., description="Link to full results")
+    duration_ms: Optional[int] = Field(default=None, description="Scan duration in milliseconds")
 
 
 class ScanHistoryResponse(BaseModel):
@@ -487,13 +486,62 @@ class ScanResults(BaseModel):
     rating: Optional[RatingResult] = Field(default=None, description="SSL Labs rating")
 
 
+class ComplianceSummary(BaseModel):
+    """Compliance check summary."""
+    model_config = ConfigDict(extra="allow")
+
+    total: int = Field(..., description="Total requirements")
+    passed: int = Field(..., description="Passed requirements")
+    failed: int = Field(..., description="Failed requirements")
+    warnings: int = Field(..., description="Warnings")
+    compliance_percentage: float = Field(..., description="Compliance percentage")
+
+
+class ViolationDetail(BaseModel):
+    """Compliance violation detail."""
+    model_config = ConfigDict(extra="allow")
+
+    rule_type: str = Field(..., description="Rule type that was violated")
+    message: str = Field(..., description="Violation message")
+    evidence: Optional[str] = Field(default=None, description="Evidence")
+
+
+class RequirementResult(BaseModel):
+    """Compliance requirement result."""
+    model_config = ConfigDict(extra="allow")
+
+    id: str = Field(..., description="Requirement ID")
+    name: str = Field(..., description="Requirement name")
+    category: str = Field(..., description="Requirement category")
+    status: str = Field(..., description="Requirement status")
+    severity: str = Field(..., description="Requirement severity")
+    violation_count: int = Field(..., description="Number of violations")
+    violations: Optional[List[ViolationDetail]] = Field(default=None, description="Violation details")
+    remediation: Optional[str] = Field(default=None, description="Remediation guidance")
+
+
 class ComplianceReport(BaseModel):
     """Compliance check report."""
     model_config = ConfigDict(extra="allow")
 
-    framework: str = Field(..., description="Compliance framework")
+    framework_id: str = Field(..., description="Compliance framework ID")
+    framework_name: str = Field(..., description="Compliance framework name")
+    framework_version: str = Field(..., description="Compliance framework version")
+    target: str = Field(..., description="Target evaluated")
     status: str = Field(..., description="Compliance status")
-    message: Optional[str] = Field(default=None, description="Status message")
+    summary: ComplianceSummary = Field(..., description="Compliance summary")
+    requirements: Optional[List[RequirementResult]] = Field(default=None, description="Detailed requirement results")
+    evaluated_at: datetime = Field(..., description="Evaluation timestamp")
+
+    @property
+    def framework(self) -> str:
+        """Backward-compatible framework identifier."""
+        return self.framework_id
+
+    @property
+    def message(self) -> Optional[str]:
+        """Backward-compatible status message placeholder."""
+        return None
 
 
 class ApiErrorResponse(BaseModel):
