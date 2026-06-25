@@ -360,6 +360,73 @@ async fn test_certificate_inventory_rejects_invalid_optional_certificate_row() {
 }
 
 #[tokio::test]
+async fn test_certificate_analytics_rejects_invalid_optional_certificate_row() {
+    let db = setup_db().await;
+    let now = Utc::now();
+    let scan1 = insert_scan(
+        &db,
+        "analytics-corrupt.test",
+        443,
+        now - Duration::days(2),
+        Some("A"),
+        Some(90),
+    )
+    .await;
+    let scan2 = insert_scan(
+        &db,
+        "analytics-corrupt.test",
+        443,
+        now - Duration::days(1),
+        Some("A"),
+        Some(90),
+    )
+    .await;
+    let cert1 = insert_certificate(
+        &db,
+        "analytics_corrupt_fp1",
+        "CN=analytics-corrupt.test",
+        "CN=CA",
+        now - Duration::days(90),
+        now + Duration::days(365),
+        Some(2048),
+    )
+    .await;
+    let cert2 = insert_certificate(
+        &db,
+        "analytics_corrupt_fp2",
+        "CN=analytics-corrupt.test",
+        "CN=CA",
+        now - Duration::days(90),
+        now + Duration::days(365),
+        Some(2048),
+    )
+    .await;
+    link_certificate(&db, scan1, cert1, 0).await;
+    link_certificate(&db, scan2, cert2, 0).await;
+    corrupt_certificate_san_domains(&db, cert1).await;
+
+    let compare_err = ScanComparator::new(Arc::clone(&db))
+        .compare_scans(scan1, scan2)
+        .await
+        .expect_err("invalid optional certificate field should fail scan comparison");
+    assert!(
+        compare_err
+            .to_string()
+            .contains("Invalid certificate field san_domains")
+    );
+
+    let tracker_err = ChangeTracker::new(Arc::clone(&db))
+        .detect_changes_between(scan1, scan2)
+        .await
+        .expect_err("invalid optional certificate field should fail change tracking");
+    assert!(
+        tracker_err
+            .to_string()
+            .contains("Invalid certificate field san_domains")
+    );
+}
+
+#[tokio::test]
 async fn test_scan_comparator_compare_scans() {
     let db = setup_db().await;
     let now = Utc::now();

@@ -525,20 +525,35 @@ impl ChangeTracker {
                         ))
                     })?;
 
-                    let san_json: Option<String> = row.try_get("san_domains").ok();
+                    let san_json: Option<String> = row.try_get("san_domains").map_err(|e| {
+                        crate::TlsError::DatabaseError(format!(
+                            "Invalid certificate field san_domains: {}",
+                            e
+                        ))
+                    })?;
                     let san_domains = CertificateRecord::parse_json_text_array(
                         san_json.as_deref(),
                         "san_domains",
                     )?;
 
-                    let key_usage_json: Option<String> = row.try_get("key_usage").ok();
+                    let key_usage_json: Option<String> = row.try_get("key_usage").map_err(|e| {
+                        crate::TlsError::DatabaseError(format!(
+                            "Invalid certificate field key_usage: {}",
+                            e
+                        ))
+                    })?;
                     let key_usage = CertificateRecord::parse_json_text_array(
                         key_usage_json.as_deref(),
                         "key_usage",
                     )?;
 
                     let extended_key_usage_json: Option<String> =
-                        row.try_get("extended_key_usage").ok();
+                        row.try_get("extended_key_usage").map_err(|e| {
+                            crate::TlsError::DatabaseError(format!(
+                                "Invalid certificate field extended_key_usage: {}",
+                                e
+                            ))
+                        })?;
                     let extended_key_usage = CertificateRecord::parse_json_text_array(
                         extended_key_usage_json.as_deref(),
                         "extended_key_usage",
