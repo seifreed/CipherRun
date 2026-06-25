@@ -117,14 +117,10 @@ pub(super) fn read_policy_with_metadata(
     let metadata = fs::metadata(policy_path)
         .map_err(|e| ApiError::Internal(format!("Failed to get policy metadata: {}", e)))?;
 
-    let updated_at = metadata
+    let modified = metadata
         .modified()
-        .ok()
-        .map(|t| {
-            let dt: chrono::DateTime<Utc> = t.into();
-            dt
-        })
-        .unwrap_or(created_at);
+        .map_err(|e| ApiError::Internal(format!("Failed to get policy modified time: {}", e)))?;
+    let updated_at: chrono::DateTime<Utc> = modified.into();
 
     Ok((
         name,
