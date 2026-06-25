@@ -29,6 +29,7 @@ pub fn validate_target(
     } else {
         parse_host_port(target)?
     };
+    let hostname = normalize_target_hostname(hostname);
 
     validate_hostname(&hostname)?;
 
@@ -47,6 +48,16 @@ pub fn validate_target(
     }
 
     Ok((hostname, port))
+}
+
+fn normalize_target_hostname(hostname: String) -> String {
+    if hostname.parse::<IpAddr>().is_ok() {
+        return hostname;
+    }
+    match hostname.strip_suffix('.') {
+        Some(stripped) if !stripped.is_empty() => stripped.to_string(),
+        _ => hostname,
+    }
 }
 
 /// Parse bracketed IPv6 target: `[::1]:443` or `[::1]`
@@ -260,6 +271,22 @@ mod tests {
         let (host, port) = result.expect("test assertion should succeed");
         assert_eq!(host, hostname);
         assert_eq!(port, Some(443));
+    }
+
+    #[test]
+    fn test_validate_target_normalizes_rooted_fqdn() {
+        let (host, port) = validate_target("example.com.:443", true)
+            .expect("rooted FQDN target should be valid");
+
+        assert_eq!(host, "example.com");
+        assert_eq!(port, Some(443));
+    }
+
+    #[test]
+    fn test_validate_target_rejects_double_trailing_dot() {
+        let result = validate_target("example.com..:443", true);
+
+        assert!(result.is_err());
     }
 
     #[test]

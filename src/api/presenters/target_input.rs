@@ -155,6 +155,13 @@ mod tests {
     }
 
     #[test]
+    fn parses_rooted_fqdn_target() {
+        let request = scan_request_from_target("example.com.:8443").expect("should parse");
+        assert_eq!(request.target.as_deref(), Some("example.com:8443"));
+        assert_eq!(request.port, Some(8443));
+    }
+
+    #[test]
     fn parses_ipv6_target() {
         let request = scan_request_from_target("2001:4860:4860::8888").expect("should parse");
         assert_eq!(
