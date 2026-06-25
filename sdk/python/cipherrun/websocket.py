@@ -15,6 +15,23 @@ from .models import ProgressMessage
 from .exceptions import WebSocketError, ConnectionError as SDKConnectionError
 
 
+def _progress_message_from_frame(data: dict) -> Optional[ProgressMessage]:
+    """Convert a WebSocket JSON frame into a progress message."""
+    frame_type = data.get("type")
+    if frame_type == "connected":
+        return None
+    if frame_type == "lagged":
+        raise WebSocketError(data.get("message", "Progress stream fell behind"))
+
+    if "msg_type" not in data:
+        raise WebSocketError(f"Unexpected WebSocket message: {data}")
+
+    try:
+        return ProgressMessage(**data)
+    except Exception as e:
+        raise WebSocketError(f"Invalid progress message: {e}")
+
+
 class WebSocketProgressClient:
     """WebSocket client for streaming scan progress updates.
 
@@ -106,7 +123,9 @@ class WebSocketProgressClient:
                             )
 
                             data = json.loads(message)
-                            progress = ProgressMessage(**data)
+                            progress = _progress_message_from_frame(data)
+                            if progress is None:
+                                continue
 
                             yield progress
 
@@ -123,6 +142,8 @@ class WebSocketProgressClient:
 
         except websockets.exceptions.WebSocketException as e:
             raise WebSocketError(f"WebSocket error: {str(e)}")
+        except WebSocketError:
+            raise
         except Exception as e:
             raise SDKConnectionError(f"Connection failed: {str(e)}")
         finally:

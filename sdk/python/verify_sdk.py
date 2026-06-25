@@ -181,6 +181,51 @@ def verify_type_hints():
         return False
 
 
+def verify_websocket_frames():
+    """Verify WebSocket control and progress frame handling."""
+    print("\nVerifying WebSocket frames...")
+
+    try:
+        from cipherrun.exceptions import WebSocketError
+        from cipherrun.websocket import _progress_message_from_frame
+
+        connected = _progress_message_from_frame({
+            "type": "connected",
+            "scan_id": "scan-1",
+            "message": "Connected",
+        })
+        assert connected is None
+        print("  ✓ Connected control frame is ignored")
+
+        try:
+            _progress_message_from_frame({
+                "type": "lagged",
+                "scan_id": "scan-1",
+                "message": "fell behind",
+            })
+            raise AssertionError("lagged frame should raise")
+        except WebSocketError:
+            pass
+        print("  ✓ Lagged control frame raises WebSocketError")
+
+        progress = _progress_message_from_frame({
+            "msg_type": "progress",
+            "scan_id": "scan-1",
+            "progress": 42,
+            "stage": "protocols",
+            "timestamp": "2026-01-01T00:00:00Z",
+        })
+        assert progress.scan_id == "scan-1"
+        assert progress.progress == 42
+        print("  ✓ Progress frame parses")
+
+        return True
+
+    except Exception as e:
+        print(f"  ✗ WebSocket frame error: {e}")
+        return False
+
+
 def main():
     """Run all verification checks."""
     print("=" * 60)
@@ -194,6 +239,7 @@ def main():
         ("Context Managers", verify_context_managers),
         ("Exceptions", verify_exceptions),
         ("Type Hints", verify_type_hints),
+        ("WebSocket Frames", verify_websocket_frames),
     ]
 
     results = []
