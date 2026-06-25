@@ -357,12 +357,14 @@ fn test_report_terminal_output() {
 fn test_framework_loader_list() {
     let frameworks = FrameworkLoader::list_builtin_frameworks();
 
-    assert_eq!(frameworks.len(), 7);
+    assert_eq!(frameworks.len(), 9);
 
     // Check all expected frameworks are listed
     let ids: Vec<&str> = frameworks.iter().map(|(id, _)| *id).collect();
     assert!(ids.contains(&"pci-dss-v4"));
     assert!(ids.contains(&"nist-sp800-52r2"));
+    assert!(ids.contains(&"nist-sp800-131a"));
+    assert!(ids.contains(&"nist-fips-pqc"));
     assert!(ids.contains(&"hipaa"));
     assert!(ids.contains(&"soc2"));
     assert!(ids.contains(&"mozilla-modern"));
