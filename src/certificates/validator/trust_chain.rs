@@ -124,6 +124,23 @@ impl CertificateValidator {
                 return (false, None);
             }
 
+            // The issuer must be a CA certificate (basic constraints CA:TRUE).
+            // Without this, a non-CA end-entity certificate legitimately issued by
+            // a trusted CA could be used to sign a forged certificate and the chain
+            // would still verify cryptographically — the classic basic-constraints
+            // bypass (Marlinspike, 2009). Browsers reject such chains; so must we.
+            if !issuer_cert.is_ca {
+                issues.push(ValidationIssue {
+                    severity: IssueSeverity::Critical,
+                    issue_type: IssueType::UntrustedCA,
+                    description: format!(
+                        "Chain invalid: issuer '{}' is not a CA certificate (basic constraints CA:FALSE)",
+                        issuer_cert.subject
+                    ),
+                });
+                return (false, None);
+            }
+
             // Verify cryptographic signature if DER bytes available
             if !cert.der_bytes.is_empty() && !issuer_cert.der_bytes.is_empty() {
                 if !verify_signature(&cert.der_bytes, &issuer_cert.der_bytes) {
@@ -430,6 +447,48 @@ mod tests {
                         .contains("Cannot verify signature without DER bytes")
             }),
             "Expected missing-DER signature validation issue"
+        );
+    }
+
+    #[test]
+    fn test_validate_trust_chain_rejects_non_ca_issuer() {
+        // Basic-constraints bypass: an end-entity (CA:FALSE) certificate is
+        // presented as the issuer of the leaf. The chain must be rejected before
+        // any signature check, since a non-CA certificate may not sign others.
+        let validator = CertificateValidator::new("leaf.example.com".to_string());
+        let mut issues = Vec::new();
+
+        let mut leaf = base_cert(
+            "2024-01-01 00:00:00 +0000".to_string(),
+            "2025-01-01 00:00:00 +0000".to_string(),
+        );
+        leaf.subject = "CN=leaf.example.com".to_string();
+        leaf.issuer = "CN=not-a-ca.example.com".to_string();
+
+        let mut issuer = base_cert(
+            "2024-01-01 00:00:00 +0000".to_string(),
+            "2025-01-01 00:00:00 +0000".to_string(),
+        );
+        issuer.subject = "CN=not-a-ca.example.com".to_string();
+        issuer.issuer = "CN=Some Root CA".to_string();
+        issuer.is_ca = false; // end-entity cert masquerading as an issuer
+
+        let chain = CertificateChain {
+            certificates: vec![leaf, issuer],
+            chain_length: 2,
+            chain_size_bytes: 0,
+        };
+
+        let (valid, ca) = validator.validate_trust_chain(&chain, &mut issues);
+
+        assert!(!valid);
+        assert!(ca.is_none());
+        assert!(
+            issues.iter().any(|i| {
+                i.issue_type == IssueType::UntrustedCA
+                    && i.description.contains("not a CA certificate")
+            }),
+            "Expected basic-constraints (non-CA issuer) rejection"
         );
     }
 }
