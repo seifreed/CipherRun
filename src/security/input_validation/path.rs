@@ -42,15 +42,30 @@ pub fn sanitize_path(path: &str, base_dir: &Path) -> std::result::Result<PathBuf
         ValidationError::InvalidPath(format!("Cannot canonicalize base dir: {}", e))
     })?;
 
-    let canonical_path = full_path.canonicalize().unwrap_or_else(|_| {
-        if let Some(parent) = full_path.parent()
-            && let Ok(canonical_parent) = parent.canonicalize()
-            && let Some(filename) = full_path.file_name()
-        {
-            return canonical_parent.join(filename);
+    let canonical_path = match full_path.canonicalize() {
+        Ok(path) => path,
+        Err(path_error) => {
+            let parent = full_path.parent().ok_or_else(|| {
+                ValidationError::InvalidPath(format!(
+                    "Cannot determine parent for path: {}",
+                    full_path.display()
+                ))
+            })?;
+            let filename = full_path.file_name().ok_or_else(|| {
+                ValidationError::InvalidPath(format!(
+                    "Cannot determine filename for path: {}",
+                    full_path.display()
+                ))
+            })?;
+            let canonical_parent = parent.canonicalize().map_err(|parent_error| {
+                ValidationError::InvalidPath(format!(
+                    "Cannot canonicalize path: {}; parent error: {}",
+                    path_error, parent_error
+                ))
+            })?;
+            canonical_parent.join(filename)
         }
-        full_path.clone()
-    });
+    };
 
     if !canonical_path.starts_with(&canonical_base) {
         return Err(ValidationError::InvalidPath(format!(
@@ -105,5 +120,15 @@ mod tests {
         assert!(safe_path.exists(), "File should have been created");
 
         let _ = fs::remove_file(&safe_path);
+    }
+
+    #[test]
+    fn test_sanitize_path_rejects_missing_parent() {
+        let temp_dir = TempDir::new().expect("test assertion should succeed");
+        let base = temp_dir.path();
+
+        let err = sanitize_path("missing/newfile.txt", base)
+            .expect_err("missing parent should not be accepted by lexical fallback");
+        assert!(err.to_string().contains("Cannot canonicalize path"));
     }
 }
