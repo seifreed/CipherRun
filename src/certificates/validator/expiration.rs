@@ -1,6 +1,73 @@
 use super::*;
 
 impl CertificateValidator {
+    /// Check the validity period of every intermediate certificate in the chain.
+    ///
+    /// The leaf is checked separately by [`Self::check_expiration`]. A self-signed
+    /// root is skipped: its validity is governed by trust-store membership, not by
+    /// the presented chain (mirroring how chain signature checks skip the root).
+    ///
+    /// Browsers reject a path that contains an expired or not-yet-valid
+    /// intermediate, so without this a chain anchored by an expired intermediate
+    /// CA (a recurring real-world incident, e.g. Sectigo AddTrust 2020) would be
+    /// reported valid. Returns `false` if any intermediate is outside its
+    /// validity window or carries an unparseable date (fail-closed).
+    pub(crate) fn check_chain_expiration(
+        &self,
+        chain: &CertificateChain,
+        issues: &mut Vec<ValidationIssue>,
+    ) -> bool {
+        let now = Utc::now();
+        let mut all_valid = true;
+
+        for cert in chain.certificates.iter().skip(1) {
+            if cert.subject == cert.issuer {
+                continue;
+            }
+
+            let (Some(not_before), Some(not_after)) = (
+                parse_cert_date(&cert.not_before),
+                parse_cert_date(&cert.not_after),
+            ) else {
+                issues.push(ValidationIssue {
+                    severity: IssueSeverity::High,
+                    issue_type: IssueType::InvalidDate,
+                    description: format!(
+                        "Intermediate CA certificate '{}' has an unparseable validity date \
+                         (not_before: '{}', not_after: '{}') — treating as invalid.",
+                        cert.subject, cert.not_before, cert.not_after
+                    ),
+                });
+                all_valid = false;
+                continue;
+            };
+
+            if now < not_before {
+                issues.push(ValidationIssue {
+                    severity: IssueSeverity::Critical,
+                    issue_type: IssueType::NotYetValid,
+                    description: format!(
+                        "Intermediate CA certificate '{}' is not yet valid (valid from: {})",
+                        cert.subject, cert.not_before
+                    ),
+                });
+                all_valid = false;
+            } else if now > not_after {
+                issues.push(ValidationIssue {
+                    severity: IssueSeverity::Critical,
+                    issue_type: IssueType::Expired,
+                    description: format!(
+                        "Intermediate CA certificate '{}' has expired (valid until: {})",
+                        cert.subject, cert.not_after
+                    ),
+                });
+                all_valid = false;
+            }
+        }
+
+        all_valid
+    }
+
     /// Check certificate expiration
     pub(crate) fn check_expiration(
         &self,
@@ -145,6 +212,57 @@ mod tests {
                 .iter()
                 .any(|i| matches!(i.issue_type, IssueType::Expired))
         );
+    }
+
+    #[test]
+    fn test_chain_expiration_flags_expired_intermediate_but_not_self_signed_root() {
+        use crate::certificates::parser::CertificateChain;
+
+        let validator = CertificateValidator::new("example.com".to_string());
+
+        // Leaf (index 0) is checked by check_expiration, not here.
+        let leaf = base_cert(
+            "2024-01-01 00:00:00 +0000".to_string(),
+            "2099-01-01 00:00:00 +0000".to_string(),
+        );
+
+        // Intermediate: expired (not_after in the past) — must be flagged.
+        let mut intermediate = base_cert(
+            "2020-01-01 00:00:00 +0000".to_string(),
+            "2021-01-01 00:00:00 +0000".to_string(),
+        );
+        intermediate.subject = "CN=Intermediate CA".to_string();
+        intermediate.issuer = "CN=Root CA".to_string();
+
+        // Root: self-signed and also expired — must NOT be flagged (trust is by
+        // store membership, mirroring the chain signature-algorithm check).
+        let mut root = base_cert(
+            "2020-01-01 00:00:00 +0000".to_string(),
+            "2021-01-01 00:00:00 +0000".to_string(),
+        );
+        root.subject = "CN=Root CA".to_string();
+        root.issuer = "CN=Root CA".to_string();
+
+        let chain = CertificateChain {
+            certificates: vec![leaf, intermediate, root],
+            chain_length: 3,
+            chain_size_bytes: 0,
+        };
+
+        let mut issues = Vec::new();
+        let ok = validator.check_chain_expiration(&chain, &mut issues);
+
+        assert!(!ok, "an expired intermediate must invalidate the chain");
+        let expired: Vec<_> = issues
+            .iter()
+            .filter(|i| matches!(i.issue_type, IssueType::Expired))
+            .collect();
+        assert_eq!(
+            expired.len(),
+            1,
+            "exactly the expired intermediate should be flagged, not the self-signed root"
+        );
+        assert!(expired[0].description.contains("Intermediate"));
     }
 
     #[test]

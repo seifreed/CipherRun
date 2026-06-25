@@ -253,8 +253,11 @@ impl CertificateValidator {
             }
         };
 
-        // 1. Check expiration
-        let not_expired = self.check_expiration(leaf, &mut issues);
+        // 1. Check expiration (leaf, then every intermediate — an expired
+        //    intermediate invalidates the whole path, as browsers enforce).
+        //    Non-short-circuit `&` so both run and report their own issues.
+        let not_expired = self.check_expiration(leaf, &mut issues)
+            & self.check_chain_expiration(chain, &mut issues);
         valid &= not_expired;
 
         // 2. Check hostname
