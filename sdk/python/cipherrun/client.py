@@ -362,7 +362,7 @@ class CipherRunClient:
         Example:
             >>> policy = client.create_policy(
             ...     name="My Policy",
-            ...     rules="min_tls_version: '1.2'",
+            ...     rules="name: My Policy\nversion: '1.0'\nprotocols:\n  required: ['TLS1.2']\n  action: FAIL",
             ... )
         """
         request = PolicyRequest(

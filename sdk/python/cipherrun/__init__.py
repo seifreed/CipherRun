@@ -83,6 +83,7 @@ from .exceptions import (
     ConnectionError,
     ValidationError,
     WebSocketError,
+    handle_http_error,
 )
 
 __all__ = [
@@ -137,4 +138,5 @@ __all__ = [
     "ConnectionError",
     "ValidationError",
     "WebSocketError",
+    "handle_http_error",
 ]

@@ -92,11 +92,6 @@ def main():
 
         print("\n" + "=" * 80)
 
-        # Note about implementation
-        print("\nNote: Compliance checking is currently in development.")
-        print("Full compliance reports will be available in a future release.")
-        print("Current implementation returns framework validation status.")
-
     except KeyboardInterrupt:
         print("\n\nInterrupted by user")
         sys.exit(1)

@@ -13,59 +13,73 @@ from cipherrun import CipherRunClient, ScanOptions
 
 # Example policy rules in YAML format
 EXAMPLE_POLICY = """
-# Minimum TLS version policy
-min_tls_version: "1.2"
+name: "Standard Security Policy"
+version: "1.0"
 
-# Allowed cipher suites
-allowed_ciphers:
-  - TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
-  - TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
-  - TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256
+protocols:
+  prohibited:
+    - "SSL3.0"
+    - "TLS1.0"
+    - "TLS1.1"
+  action: "FAIL"
 
-# Certificate requirements
-certificate:
+ciphers:
+  min_strength: "HIGH"
+  require_forward_secrecy: true
+  require_aead: true
+  prohibited_patterns:
+    - "RC4"
+    - "3DES"
+    - "NULL"
+    - "EXPORT"
+  action: "FAIL"
+
+certificates:
   min_key_size: 2048
-  max_validity_days: 398
   require_san: true
+  require_valid_trust_chain: true
+  require_hostname_match: true
+  action: "FAIL"
 
-# Security headers
-security_headers:
-  - Strict-Transport-Security
-  - X-Content-Type-Options
-  - X-Frame-Options
+vulnerabilities:
+  max_critical: 0
+  max_high: 0
+  action: "FAIL"
 """
 
 
 STRICT_POLICY = """
-# Strict security policy
-min_tls_version: "1.3"
+name: "Strict Security Policy"
+version: "1.0"
 
-# Only TLS 1.3 ciphers
-allowed_ciphers:
-  - TLS_AES_256_GCM_SHA384
-  - TLS_AES_128_GCM_SHA256
-  - TLS_CHACHA20_POLY1305_SHA256
+protocols:
+  required:
+    - "TLS1.3"
+  prohibited:
+    - "SSL3.0"
+    - "TLS1.0"
+    - "TLS1.1"
+    - "TLS1.2"
+  action: "FAIL"
 
-# Strict certificate requirements
-certificate:
+ciphers:
+  min_strength: "HIGH"
+  require_forward_secrecy: true
+  require_aead: true
+  action: "FAIL"
+
+certificates:
   min_key_size: 4096
-  max_validity_days: 90
   require_san: true
-  require_ocsp_stapling: true
+  require_valid_trust_chain: true
+  require_hostname_match: true
+  action: "FAIL"
 
-# Required security headers
-security_headers:
-  - Strict-Transport-Security
-  - Content-Security-Policy
-  - X-Content-Type-Options
-  - X-Frame-Options
-  - Referrer-Policy
-  - Permissions-Policy
-
-# Vulnerability checks
 vulnerabilities:
-  allow_none: true
-  max_severity: "low"
+  max_critical: 0
+  max_high: 0
+  max_medium: 0
+  action: "FAIL"
 """
 
 
@@ -94,7 +108,7 @@ def create_policy(client: CipherRunClient, name: str, rules: str) -> str:
         return policy.id
 
     except Exception as e:
-        print(f"Note: Policy creation is currently in development.")
+        print(f"Policy creation failed.")
         print(f"Error: {e}")
         return None
 
@@ -156,7 +170,7 @@ def evaluate_policy(client: CipherRunClient, policy_id: str, target: str):
         print("\n" + "=" * 80)
 
     except Exception as e:
-        print(f"\nNote: Policy evaluation is currently in development.")
+        print(f"\nPolicy evaluation failed.")
         print(f"Error: {e}")
 
 
@@ -254,7 +268,6 @@ def main():
         print("=" * 80)
         print(f"Target: {target}")
 
-        # Try to create policies (will fail if not implemented)
         print("\nAttempting to create example policies...")
 
         policy_id = create_policy(client, "Standard Security Policy", EXAMPLE_POLICY)
