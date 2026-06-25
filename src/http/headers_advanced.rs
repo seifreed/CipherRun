@@ -151,11 +151,14 @@ pub fn parse_hsts(headers: &HashMap<String, String>) -> HstsAnalysis {
 
 fn grade_hsts(max_age: Option<u64>, include_subdomains: bool, preload: bool) -> Grade {
     match max_age {
+        // max-age=0 signals the browser to delete the HSTS policy (RFC 6797
+        // §6.1.1): the host is no longer protected, so it must grade the same as
+        // no HSTS at all rather than as a weak-but-present policy.
+        None | Some(0) => Grade::F,
         Some(age) if age >= 31536000 && include_subdomains && preload => Grade::A,
         Some(age) if age >= 31536000 && include_subdomains => Grade::B,
         Some(age) if age >= 15768000 => Grade::C,
         Some(_) => Grade::D,
-        None => Grade::F,
     }
 }
 
@@ -520,6 +523,25 @@ mod tests {
         assert!(hsts.include_subdomains);
         assert!(hsts.preload);
         assert_eq!(hsts.grade, Grade::A);
+    }
+
+    #[test]
+    fn test_parse_hsts_max_age_zero_grades_f() {
+        // max-age=0 deletes the HSTS policy (RFC 6797 §6.1.1): the host is not
+        // protected and must not grade better than one with no HSTS at all.
+        let mut headers = HashMap::new();
+        headers.insert(
+            "strict-transport-security".to_string(),
+            "max-age=0; includeSubDomains".to_string(),
+        );
+
+        let hsts = parse_hsts(&headers);
+        assert_eq!(hsts.max_age, Some(0));
+        assert_eq!(
+            hsts.grade,
+            Grade::F,
+            "max-age=0 (HSTS disabled) must grade F, not D"
+        );
     }
 
     #[test]
