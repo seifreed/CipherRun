@@ -239,6 +239,10 @@ impl AppState {
         // Create rate limiter
         let rate_limiter = Arc::new(PerKeyRateLimiter::new(config.rate_limit_per_minute));
 
+        // Policy storage directory comes from the API config; when unset the
+        // policy endpoints report 503 Service Unavailable.
+        let policy_dir = config.policy_dir.clone();
+
         Ok(Self {
             config,
             job_queue,
@@ -248,7 +252,7 @@ impl AppState {
             stats,
             rate_limiter,
             db_pool: None,
-            policy_dir: None,
+            policy_dir,
         })
     }
 

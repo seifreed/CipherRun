@@ -4,6 +4,7 @@ use crate::Result;
 use crate::error::TlsError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::path::PathBuf;
 use subtle::ConstantTimeEq;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,6 +41,11 @@ pub struct ApiConfig {
 
     /// Enable Swagger UI
     pub enable_swagger: bool,
+
+    /// Directory where named scan policies are stored. When unset, the policy
+    /// management endpoints (`/policies`) report 503 Service Unavailable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy_dir: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -96,6 +102,7 @@ impl Default for ApiConfig {
             ws_ping_interval_seconds: 30,
             job_queue_capacity: 1000,
             enable_swagger: true,
+            policy_dir: None,
         }
     }
 }
