@@ -54,5 +54,6 @@ VULNERABILITY*.md
 *.txt
 !requirements.txt
 !LICENSE.txt
+!data/*.txt
 *.pcap
 cobertura.xml

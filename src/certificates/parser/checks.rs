@@ -11,8 +11,13 @@ use x509_parser::prelude::*;
 /// # Returns
 /// * `Some(true)` - Certificate uses a known Debian weak key
 /// * `Some(false)` - Certificate does not use a weak key
-/// * `None` - Unable to check (parsing error)
+/// * `None` - Not checked (blacklist not populated, or parsing error)
 pub(crate) fn check_debian_weak_key(der_bytes: &[u8]) -> Option<bool> {
+    // An empty blacklist cannot clear a certificate; report "not checked" rather
+    // than a false clean verdict.
+    if !crate::vulnerabilities::debian_keys::default_blacklist_populated() {
+        return None;
+    }
     match OpensslX509::from_der(der_bytes) {
         Ok(cert) => crate::vulnerabilities::debian_keys::is_debian_weak_key(&cert).ok(),
         Err(_) => None,

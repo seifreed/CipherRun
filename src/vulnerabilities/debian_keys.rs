@@ -43,6 +43,30 @@
 use openssl::hash::{MessageDigest, hash};
 use openssl::pkey::PKey;
 use openssl::x509::X509;
+use std::sync::LazyLock;
+
+/// Embedded weak-key blacklist, parsed once. Empty until populated offline by
+/// `scripts/gen_debian_blacklist.sh` (see `data/debian_blacklist.txt`).
+static DEFAULT_BLACKLIST: LazyLock<Vec<String>> =
+    LazyLock::new(|| parse_blacklist(include_str!("../../data/debian_blacklist.txt")));
+
+/// Parse a blacklist file: one lowercase-hex SHA-256 per line, '#' comments and
+/// blank lines ignored.
+fn parse_blacklist(raw: &str) -> Vec<String> {
+    raw.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(str::to_ascii_lowercase)
+        .collect()
+}
+
+/// Whether the embedded default blacklist contains any fingerprints.
+///
+/// When false, callers should report "not checked" rather than a (false) clean
+/// verdict — an unpopulated blacklist cannot clear a certificate.
+pub fn default_blacklist_populated() -> bool {
+    !DEFAULT_BLACKLIST.is_empty()
+}
 
 /// Debian weak key detector
 ///
@@ -54,14 +78,14 @@ pub struct DebianKeyDetector {
 }
 
 impl DebianKeyDetector {
-    /// Create a new Debian weak key detector
+    /// Create a new Debian weak key detector seeded with the embedded blacklist.
     ///
-    /// Initializes with a representative sample of weak key hashes.
-    /// For production use with full coverage, load the complete blacklist
-    /// from https://github.com/g0tmi1k/debian-ssh
+    /// The embedded blacklist is empty until populated offline by
+    /// `scripts/gen_debian_blacklist.sh`; use [`default_blacklist_populated`] to
+    /// tell an unpopulated blacklist apart from a genuine no-match.
     pub fn new() -> Self {
         Self {
-            weak_key_hashes: Self::load_sample_weak_keys(),
+            weak_key_hashes: DEFAULT_BLACKLIST.clone(),
         }
     }
 
@@ -128,25 +152,6 @@ impl DebianKeyDetector {
 
         // Check against known weak keys
         Ok(self.weak_key_hashes.contains(&fingerprint_hex))
-    }
-
-    /// Load sample weak key fingerprints
-    ///
-    /// This is a representative sample for testing purposes.
-    /// For production deployment with full coverage, load from:
-    /// https://github.com/g0tmi1k/debian-ssh
-    ///
-    /// The sample includes fingerprints from:
-    /// - RSA 1024-bit keys (various PIDs)
-    /// - RSA 2048-bit keys (various PIDs)
-    /// - DSA 1024-bit keys (various PIDs)
-    ///
-    /// NOTE: These are EXAMPLE hashes for demonstration. The actual weak key
-    /// database contains ~32,000 entries and would require external loading.
-    fn load_sample_weak_keys() -> Vec<String> {
-        // The real Debian weak key database (~32,000 entries) requires external loading.
-        // Use DebianKeyDetector::load_from_hashes() or with_hashes() to supply real fingerprints.
-        vec![]
     }
 
     /// Get the number of weak keys in the current blacklist
@@ -238,8 +243,8 @@ mod tests {
         let detector = DebianKeyDetector::new();
         assert_eq!(
             detector.blacklist_size(),
-            0,
-            "Default detector has no keys; load real fingerprints via load_from_hashes()"
+            DEFAULT_BLACKLIST.len(),
+            "Default detector is seeded from the embedded blacklist"
         );
     }
 
@@ -312,7 +317,30 @@ mod tests {
     #[test]
     fn test_default_implementation() {
         let detector = DebianKeyDetector::default();
-        assert_eq!(detector.blacklist_size(), 0);
+        assert_eq!(detector.blacklist_size(), DEFAULT_BLACKLIST.len());
+    }
+
+    #[test]
+    fn test_blacklisted_key_detected() {
+        // A populated blacklist must flag a key whose SPKI-DER SHA-256 it contains.
+        let rsa = Rsa::generate(2048).expect("test assertion should succeed");
+        let pkey = PKey::from_rsa(rsa).expect("test assertion should succeed");
+        let der = pkey
+            .public_key_to_der()
+            .expect("test assertion should succeed");
+        let fingerprint = hash(MessageDigest::sha256(), &der)
+            .expect("test assertion should succeed")
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<String>();
+
+        let detector = DebianKeyDetector::with_hashes(vec![fingerprint]);
+        assert!(
+            detector
+                .is_weak_public_key(&pkey)
+                .expect("test assertion should succeed"),
+            "Key whose fingerprint is in the blacklist must be detected as weak"
+        );
     }
 
     #[test]

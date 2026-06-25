@@ -1,0 +1,9 @@
+# Debian OpenSSL predictable-PRNG weak public-key blacklist (CVE-2008-0166).
+#
+# One lowercase-hex SHA-256 of the certificate SubjectPublicKeyInfo DER per line.
+# '#' comments and blank lines are ignored.
+#
+# Empty by default: an unpopulated blacklist reports "not checked" (None),
+# never a false "clean" verdict. Populate it offline with
+# scripts/gen_debian_blacklist.sh (pulls the g0tmi1k/debian-ssh key corpus,
+# ~1GB, which deliberately does not live in this repo).
