@@ -209,6 +209,18 @@ impl Impact {
     }
 }
 
+/// CVSS v3.1 Roundup (specification Appendix A): round `input` up to one
+/// decimal place using integer scaling, so floating-point representation error
+/// in the formula does not push an exact tenth up to the next one.
+fn roundup_one_decimal(input: f64) -> f64 {
+    let int_input = (input * 100_000.0).round() as i64;
+    if int_input % 10_000 == 0 {
+        int_input as f64 / 100_000.0
+    } else {
+        ((int_input as f64 / 10_000.0).floor() + 1.0) / 10.0
+    }
+}
+
 /// CVSS Calculator
 pub struct CvssCalculator;
 
@@ -250,8 +262,12 @@ impl CvssCalculator {
             (impact + exploitability).min(10.0)
         };
 
-        // Round up to 1 decimal place
-        (base_score * 10.0).ceil() / 10.0
+        // Round up to 1 decimal place using the CVSS v3.1 Roundup (spec
+        // Appendix A). A naive `(x * 10).ceil() / 10` bumps an exact tenth to
+        // the next one when floating-point error overshoots it (a true 6.0
+        // computed as 6.0000000001 would round to 6.1), which can also flip the
+        // severity band. The integer-scaling form absorbs that error.
+        roundup_one_decimal(base_score)
     }
 
     /// Generate CVSS vector string
@@ -499,5 +515,21 @@ mod tests {
     #[test]
     fn test_cvss_severity_boundary_medium() {
         assert_eq!(CvssSeverity::from_score(4.0), CvssSeverity::Medium);
+    }
+
+    #[test]
+    fn test_roundup_absorbs_floating_point_overshoot() {
+        // A true tenth computed with tiny FP overshoot must stay on that tenth,
+        // not bump to the next one (the failure mode of a naive ceil).
+        assert_eq!(roundup_one_decimal(6.0 + 1e-13), 6.0);
+        assert_eq!(roundup_one_decimal(7.0 + 2e-13), 7.0);
+    }
+
+    #[test]
+    fn test_roundup_still_rounds_up_genuine_fractions() {
+        assert_eq!(roundup_one_decimal(4.02), 4.1);
+        assert_eq!(roundup_one_decimal(4.0), 4.0);
+        assert_eq!(roundup_one_decimal(10.0), 10.0);
+        assert_eq!(roundup_one_decimal(0.0), 0.0);
     }
 }
