@@ -262,6 +262,19 @@ async fn corrupt_certificate_not_after(db: &CipherRunDatabase, cert_id: i64) {
         .expect("test assertion should succeed");
 }
 
+async fn corrupt_certificate_san_domains(db: &CipherRunDatabase, cert_id: i64) {
+    db.pool()
+        .execute(
+            "UPDATE certificates SET san_domains = ? WHERE cert_id = ?",
+            vec![
+                BindValue::OptBytes(Some(vec![0xff])),
+                BindValue::Int64(cert_id),
+            ],
+        )
+        .await
+        .expect("test assertion should succeed");
+}
+
 #[tokio::test]
 async fn test_certificate_inventory_rejects_invalid_certificate_row() {
     let db = setup_db().await;
@@ -301,6 +314,48 @@ async fn test_certificate_inventory_rejects_invalid_certificate_row() {
         detail_err
             .to_string()
             .contains("Invalid certificate field not_after")
+    );
+}
+
+#[tokio::test]
+async fn test_certificate_inventory_rejects_invalid_optional_certificate_row() {
+    let db = setup_db().await;
+    let now = Utc::now();
+    let cert_id = insert_certificate(
+        &db,
+        "inventory_corrupt_optional_fp",
+        "CN=inventory-corrupt-optional.test",
+        "CN=CA",
+        now - Duration::days(90),
+        now + Duration::days(365),
+        Some(2048),
+    )
+    .await;
+    corrupt_certificate_san_domains(&db, cert_id).await;
+
+    let query = CertificateInventoryQuery {
+        limit: 10,
+        offset: 0,
+        sort: CertificateInventorySort::ExpiryAsc,
+        hostname: None,
+        expiring_within_days: None,
+    };
+    let list_err = list_certificate_inventory(db.pool(), &query)
+        .await
+        .expect_err("invalid optional certificate field should fail inventory listing");
+    assert!(
+        list_err
+            .to_string()
+            .contains("Invalid certificate field san_domains")
+    );
+
+    let detail_err = get_certificate_inventory(db.pool(), "inventory_corrupt_optional_fp")
+        .await
+        .expect_err("invalid optional certificate field should fail inventory detail");
+    assert!(
+        detail_err
+            .to_string()
+            .contains("Invalid certificate field san_domains")
     );
 }
 

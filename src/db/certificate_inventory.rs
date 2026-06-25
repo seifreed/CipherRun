@@ -227,8 +227,12 @@ fn certificate_record_from_pg_row(row: PgRow) -> crate::Result<CertificateInvent
     let not_after = row
         .try_get("not_after")
         .map_err(|e| certificate_field_error("not_after", e))?;
-    let san_json: Option<String> = row.try_get("san_domains").ok();
-    let hostnames: Option<Vec<String>> = row.try_get("hostnames").ok();
+    let san_json = row
+        .try_get("san_domains")
+        .map_err(|e| certificate_field_error("san_domains", e))?;
+    let hostnames: Option<Vec<String>> = row
+        .try_get("hostnames")
+        .map_err(|e| certificate_field_error("hostnames", e))?;
 
     Ok(CertificateInventoryRecord {
         fingerprint,
@@ -257,8 +261,12 @@ fn certificate_record_from_sqlite_row(row: SqliteRow) -> crate::Result<Certifica
     let not_after = row
         .try_get("not_after")
         .map_err(|e| certificate_field_error("not_after", e))?;
-    let san_json: Option<String> = row.try_get("san_domains").ok();
-    let hostnames_str: Option<String> = row.try_get("hostnames").ok();
+    let san_json = row
+        .try_get("san_domains")
+        .map_err(|e| certificate_field_error("san_domains", e))?;
+    let hostnames_str: Option<String> = row
+        .try_get("hostnames")
+        .map_err(|e| certificate_field_error("hostnames", e))?;
 
     Ok(CertificateInventoryRecord {
         fingerprint,
@@ -289,7 +297,7 @@ async fn fetch_certificate_list_postgres(
             c.not_before,
             c.not_after,
             c.san_domains,
-            ARRAY_AGG(DISTINCT s.target_hostname) as hostnames
+            ARRAY_AGG(DISTINCT s.target_hostname) FILTER (WHERE s.target_hostname IS NOT NULL) as hostnames
         FROM certificates c
         LEFT JOIN scan_certificates sc ON c.cert_id = sc.cert_id
         LEFT JOIN scans s ON sc.scan_id = s.scan_id
@@ -377,7 +385,7 @@ async fn fetch_certificate_detail_postgres(
             c.not_before,
             c.not_after,
             c.san_domains,
-            ARRAY_AGG(DISTINCT s.target_hostname) as hostnames
+            ARRAY_AGG(DISTINCT s.target_hostname) FILTER (WHERE s.target_hostname IS NOT NULL) as hostnames
         FROM certificates c
         LEFT JOIN scan_certificates sc ON c.cert_id = sc.cert_id
         LEFT JOIN scans s ON sc.scan_id = s.scan_id
