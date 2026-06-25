@@ -31,7 +31,7 @@ pub fn inventory_service_from_state(
     let db_pool = state
         .db_pool
         .as_ref()
-        .ok_or_else(|| ApiError::Internal("Database not configured".to_string()))?;
+        .ok_or_else(|| ApiError::ServiceUnavailable("Database not configured".to_string()))?;
 
     Ok(CertificateInventoryService::new(db_pool))
 }

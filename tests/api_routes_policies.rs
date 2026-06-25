@@ -41,7 +41,7 @@ async fn test_create_policy_returns_created() {
 }
 
 #[tokio::test]
-async fn test_policies_no_policy_dir_returns_500() {
+async fn test_policies_no_policy_dir_returns_503() {
     let state = common::api::test_api_state();
 
     let app = Router::new()
@@ -57,17 +57,19 @@ async fn test_policies_no_policy_dir_returns_500() {
         enabled: true,
     };
 
+    // Unconfigured policy storage is a deliberate deployment state, so these
+    // endpoints report Service Unavailable rather than Internal Server Error.
     assert_eq!(
         common::api::send_status(
             &app,
             common::api::json_request("POST", "/policies", &request)
         )
         .await,
-        axum::http::StatusCode::INTERNAL_SERVER_ERROR
+        axum::http::StatusCode::SERVICE_UNAVAILABLE
     );
     assert_eq!(
         common::api::send_status(&app, common::api::request("GET", "/policies/test")).await,
-        axum::http::StatusCode::INTERNAL_SERVER_ERROR
+        axum::http::StatusCode::SERVICE_UNAVAILABLE
     );
 
     let eval_request = PolicyEvaluationRequest {
@@ -80,6 +82,6 @@ async fn test_policies_no_policy_dir_returns_500() {
             common::api::json_request("POST", "/policies/test/evaluate", &eval_request)
         )
         .await,
-        axum::http::StatusCode::INTERNAL_SERVER_ERROR
+        axum::http::StatusCode::SERVICE_UNAVAILABLE
     );
 }

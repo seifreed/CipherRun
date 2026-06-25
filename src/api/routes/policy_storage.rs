@@ -21,7 +21,7 @@ pub(super) fn policy_dir_from_state(state: &AppState) -> Result<&PathBuf, ApiErr
     state
         .policy_dir
         .as_ref()
-        .ok_or_else(|| ApiError::Internal("Policy storage not configured".to_string()))
+        .ok_or_else(|| ApiError::ServiceUnavailable("Policy storage not configured".to_string()))
 }
 
 pub(super) fn sanitized_policy_path(policy_dir: &Path, id: &str) -> Result<PathBuf, ApiError> {
