@@ -176,17 +176,17 @@ impl OpossumTester {
     /// Test certificate parsing for malformed EC parameters
     async fn test_certificate_parsing(&self) -> Result<OpossumStatus> {
         let hostname = self.target.hostname.clone();
-        let stream = match crate::utils::network::connect_with_timeout(
-            self.target
-                .socket_addrs()
-                .first()
-                .copied()
-                .ok_or(crate::TlsError::NoSocketAddresses)?,
-            TLS_HANDSHAKE_TIMEOUT,
-            None,
-        )
-        .await
-        {
+        let addr = self
+            .target
+            .socket_addrs()
+            .first()
+            .copied()
+            .ok_or(crate::TlsError::NoSocketAddresses)?;
+        // Upgrade via STARTTLS first, mirroring the control handshake below. A raw
+        // connect against a plaintext-first service would send the ClientHello in
+        // the clear, fail/hang, and then trip the control-driven "hang detected"
+        // path purely because this probe skipped the STARTTLS step.
+        let stream = match self.starttls_connect(addr, TLS_HANDSHAKE_TIMEOUT).await {
             Ok(s) => s,
             Err(_) => return Ok(OpossumStatus::Inconclusive),
         };
