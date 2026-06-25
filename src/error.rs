@@ -82,7 +82,7 @@ pub enum TlsError {
     ConfigError { message: String },
 
     /// Timeout occurred during operation
-    #[error("Operation timed out after {duration:?}")]
+    #[error("Operation timed out{}", .duration.as_ref().map(|d| format!(" after {d:?}")).unwrap_or_default())]
     Timeout { duration: Option<Duration> },
 
     /// Database operation errors
@@ -386,5 +386,19 @@ mod tests {
         let err = result.expect_err("timeout should occur");
         let tls_err: TlsError = err.into();
         assert!(matches!(tls_err, TlsError::Timeout { .. }));
+    }
+
+    #[test]
+    fn test_timeout_display_without_duration_omits_after_clause() {
+        let err = TlsError::Timeout { duration: None };
+        assert_eq!(err.to_string(), "Operation timed out");
+    }
+
+    #[test]
+    fn test_timeout_display_with_duration_includes_after_clause() {
+        let err = TlsError::Timeout {
+            duration: Some(Duration::from_secs(5)),
+        };
+        assert_eq!(err.to_string(), "Operation timed out after 5s");
     }
 }
