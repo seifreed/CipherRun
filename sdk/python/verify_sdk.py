@@ -151,6 +151,12 @@ def verify_exceptions():
         assert error.status_code == 404
         print("  ✓ Error handler works")
 
+        error = handle_http_error(429, {"error": "Rate limit exceeded", "retry_after": 7})
+        assert error.status_code == 429
+        assert error.retry_after == 7
+        assert "Rate limit exceeded" in str(error)
+        print("  ✓ Rate limit API error payload works")
+
         return True
 
     except Exception as e:

@@ -131,7 +131,7 @@ def handle_http_error(status_code: int, error_data: Dict[str, Any]) -> CipherRun
     Returns:
         Appropriate CipherRunError subclass
     """
-    message = error_data.get("message", "Unknown error")
+    message = error_data.get("message") or error_data.get("error") or "Unknown error"
     details = error_data.get("details")
 
     error_map = {
@@ -147,7 +147,7 @@ def handle_http_error(status_code: int, error_data: Dict[str, Any]) -> CipherRun
     }
 
     if status_code == 429:
-        return RateLimitError(message, details=details)
+        return RateLimitError(message, retry_after=error_data.get("retry_after"), details=details)
 
     error_class = error_map.get(status_code, APIError)
     return error_class(message, details=details)
