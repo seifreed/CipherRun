@@ -312,7 +312,9 @@ impl VulnerabilityScanner {
     pub async fn test_heartbleed(&self) -> Result<VulnerabilityResult> {
         use crate::vulnerabilities::heartbleed::HeartbleedTester;
 
-        let tester = HeartbleedTester::new(&self.target).with_sni(self.sni_hostname.clone());
+        let tester = HeartbleedTester::new(&self.target)
+            .with_sni(self.sni_hostname.clone())
+            .with_starttls(self.starttls, self.starttls_hostname.clone());
         let result = tester.test().await?;
 
         Ok(VulnerabilityResult {
@@ -334,7 +336,8 @@ impl VulnerabilityScanner {
     pub async fn test_ccs(&self) -> Result<VulnerabilityResult> {
         use crate::vulnerabilities::ccs::CcsInjectionTester;
 
-        let tester = CcsInjectionTester::new(self.target.clone());
+        let tester = CcsInjectionTester::new(self.target.clone())
+            .with_starttls(self.starttls, self.starttls_hostname.clone());
         let result = tester.test().await?;
 
         Ok(VulnerabilityResult {
@@ -376,7 +379,8 @@ impl VulnerabilityScanner {
     pub async fn test_robot(&self) -> Result<VulnerabilityResult> {
         use crate::vulnerabilities::robot::{RobotStatus, RobotTester};
 
-        let tester = RobotTester::new(self.target.clone());
+        let tester = RobotTester::new(self.target.clone())
+            .with_starttls(self.starttls, self.starttls_hostname.clone());
         let result = tester.test().await?;
 
         Ok(VulnerabilityResult {

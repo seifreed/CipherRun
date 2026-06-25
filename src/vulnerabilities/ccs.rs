@@ -19,11 +19,28 @@ use tokio::time::timeout;
 /// CCS Injection vulnerability tester
 pub struct CcsInjectionTester {
     target: Target,
+    starttls: Option<crate::starttls::StarttlsProtocol>,
+    starttls_hostname: Option<String>,
 }
 
 impl CcsInjectionTester {
     pub fn new(target: Target) -> Self {
-        Self { target }
+        Self {
+            target,
+            starttls: None,
+            starttls_hostname: None,
+        }
+    }
+
+    /// Configure STARTTLS negotiation before the CCS probe.
+    pub fn with_starttls(
+        mut self,
+        protocol: Option<crate::starttls::StarttlsProtocol>,
+        hostname: Option<String>,
+    ) -> Self {
+        self.starttls = protocol;
+        self.starttls_hostname = hostname;
+        self
     }
 
     /// Test for CCS Injection vulnerability
@@ -65,7 +82,18 @@ impl CcsInjectionTester {
             .copied()
             .ok_or(crate::TlsError::NoSocketAddresses)?;
 
-        match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None).await {
+        let hostname = self
+            .starttls_hostname
+            .clone()
+            .unwrap_or_else(|| self.target.hostname.clone());
+        match crate::utils::network::connect_with_starttls(
+            addr,
+            TLS_HANDSHAKE_TIMEOUT,
+            self.starttls,
+            &hostname,
+        )
+        .await
+        {
             Ok(mut stream) => {
                 // Send TLS ClientHello
                 let client_hello = self.build_client_hello();

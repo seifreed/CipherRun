@@ -429,6 +429,36 @@ pub async fn connect_with_timeout(
     }
 }
 
+/// Connect to `addr` and, for plaintext-first services, upgrade the connection
+/// via STARTTLS before returning it.
+///
+/// When `starttls` is `None` this is equivalent to [`connect_with_timeout`].
+/// When `Some`, the appropriate STARTTLS negotiation is performed so callers
+/// (vulnerability probes, certificate/cipher testers) receive a stream that is
+/// positioned at the start of the TLS handshake rather than at the plaintext
+/// application greeting (which would otherwise be misread as a corrupt TLS
+/// record). `hostname` is used where the negotiation announces a client/server
+/// name (e.g. SMTP EHLO, XMPP `to`).
+pub async fn connect_with_starttls(
+    addr: SocketAddr,
+    connect_timeout: Duration,
+    starttls: Option<crate::starttls::StarttlsProtocol>,
+    hostname: &str,
+) -> Result<TcpStream> {
+    let mut stream = connect_with_timeout(addr, connect_timeout, None).await?;
+    if let Some(protocol) = starttls {
+        let negotiator = crate::starttls::protocols::get_negotiator(protocol, hostname.to_string());
+        negotiator
+            .negotiate_starttls(&mut stream)
+            .await
+            .map_err(|e| TlsError::StarttlsError {
+                protocol: protocol.to_string(),
+                details: format!("STARTTLS negotiation failed: {e}"),
+            })?;
+    }
+    Ok(stream)
+}
+
 async fn connect_once(
     addr: SocketAddr,
     connect_timeout: Duration,

@@ -28,6 +28,8 @@ pub struct HeartbleedTester<'a> {
     sni_hostname: Option<String>,
     connect_timeout: Duration,
     read_timeout: Duration,
+    starttls: Option<crate::starttls::StarttlsProtocol>,
+    starttls_hostname: Option<String>,
 }
 
 impl<'a> HeartbleedTester<'a> {
@@ -38,12 +40,32 @@ impl<'a> HeartbleedTester<'a> {
             sni_hostname: None,
             connect_timeout: Duration::from_secs(10),
             read_timeout: TLS_HANDSHAKE_TIMEOUT,
+            starttls: None,
+            starttls_hostname: None,
         }
     }
 
     pub fn with_sni(mut self, sni: Option<String>) -> Self {
         self.sni_hostname = sni;
         self
+    }
+
+    /// Configure STARTTLS negotiation before the heartbeat probe.
+    pub fn with_starttls(
+        mut self,
+        protocol: Option<crate::starttls::StarttlsProtocol>,
+        hostname: Option<String>,
+    ) -> Self {
+        self.starttls = protocol;
+        self.starttls_hostname = hostname;
+        self
+    }
+
+    /// Hostname used for STARTTLS negotiation (EHLO/`to`/…).
+    fn starttls_negotiation_hostname(&self) -> String {
+        self.starttls_hostname
+            .clone()
+            .unwrap_or_else(|| self.target.hostname.clone())
     }
 
     /// Test for Heartbleed vulnerability
@@ -82,24 +104,27 @@ impl<'a> HeartbleedTester<'a> {
             .copied()
             .ok_or(crate::TlsError::NoSocketAddresses)?;
 
-        // Connect TCP
-        let mut stream =
-            match crate::utils::network::connect_with_timeout(addr, self.connect_timeout, None)
-                .await
-            {
-                Ok(s) => s,
-                Err(_) => {
-                    return Ok(HeartbleedResult {
-                        vulnerable: false,
-                        bytes_received: 0,
-                        bytes_sent: 0,
-                        details:
-                            "Connection failed - Vulnerability status UNKNOWN (unable to test)"
-                                .to_string(),
-                        tested: false,
-                    });
-                }
-            };
+        // Connect TCP (upgrading via STARTTLS first for plaintext-first services)
+        let mut stream = match crate::utils::network::connect_with_starttls(
+            addr,
+            self.connect_timeout,
+            self.starttls,
+            &self.starttls_negotiation_hostname(),
+        )
+        .await
+        {
+            Ok(s) => s,
+            Err(_) => {
+                return Ok(HeartbleedResult {
+                    vulnerable: false,
+                    bytes_received: 0,
+                    bytes_sent: 0,
+                    details: "Connection failed - Vulnerability status UNKNOWN (unable to test)"
+                        .to_string(),
+                    tested: false,
+                });
+            }
+        };
 
         // Build ClientHello with Heartbeat extension
         let mut builder = ClientHelloBuilder::new(protocol);
@@ -464,6 +489,8 @@ mod tests {
             sni_hostname: None,
             connect_timeout: Duration::from_secs(5),
             read_timeout: Duration::from_secs(5),
+            starttls: None,
+            starttls_hostname: None,
         };
 
         // Build a minimal valid ServerHello with heartbeat extension (0x000f)
@@ -527,6 +554,8 @@ mod tests {
             sni_hostname: None,
             connect_timeout: Duration::from_secs(5),
             read_timeout: Duration::from_secs(5),
+            starttls: None,
+            starttls_hostname: None,
         };
 
         assert!(!tester.check_heartbeat_extension(&[0x00]));
@@ -545,6 +574,8 @@ mod tests {
             sni_hostname: None,
             connect_timeout: Duration::from_secs(5),
             read_timeout: Duration::from_secs(5),
+            starttls: None,
+            starttls_hostname: None,
         };
 
         // Two bytes alone is insufficient - need at least 3 bytes for the search loop

@@ -93,11 +93,28 @@ fn extract_rsa_key_len(buffer: &[u8]) -> usize {
 /// ROBOT vulnerability tester
 pub struct RobotTester {
     target: Target,
+    starttls: Option<crate::starttls::StarttlsProtocol>,
+    starttls_hostname: Option<String>,
 }
 
 impl RobotTester {
     pub fn new(target: Target) -> Self {
-        Self { target }
+        Self {
+            target,
+            starttls: None,
+            starttls_hostname: None,
+        }
+    }
+
+    /// Configure STARTTLS negotiation before each ROBOT oracle probe.
+    pub fn with_starttls(
+        mut self,
+        protocol: Option<crate::starttls::StarttlsProtocol>,
+        hostname: Option<String>,
+    ) -> Self {
+        self.starttls = protocol;
+        self.starttls_hostname = hostname;
+        self
     }
 
     /// Test for ROBOT vulnerability
@@ -353,13 +370,21 @@ impl RobotTester {
             .copied()
             .ok_or(crate::TlsError::NoSocketAddresses)?;
 
-        let mut stream =
-            match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None)
-                .await
-            {
-                Ok(s) => s,
-                Err(_) => return Ok(None),
-            };
+        let hostname = self
+            .starttls_hostname
+            .clone()
+            .unwrap_or_else(|| self.target.hostname.clone());
+        let mut stream = match crate::utils::network::connect_with_starttls(
+            addr,
+            TLS_HANDSHAKE_TIMEOUT,
+            self.starttls,
+            &hostname,
+        )
+        .await
+        {
+            Ok(s) => s,
+            Err(_) => return Ok(None),
+        };
 
         // Send ClientHello
         let client_hello = self.build_client_hello();
