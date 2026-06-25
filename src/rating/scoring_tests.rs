@@ -322,6 +322,117 @@ fn test_user_reported_issue_fix() {
 }
 
 #[test]
+fn test_inconclusive_vulnerability_does_not_penalize_grade() {
+    // A vulnerability the scanner could not confirm (inconclusive) is surfaced
+    // in the report but must not tank the grade on unconfirmed evidence.
+    use std::collections::HashMap;
+
+    let protocols_with_tls13 = vec![
+        ProtocolTestResult {
+            protocol: Protocol::TLS12,
+            supported: true,
+            inconclusive: false,
+            preferred: false,
+            ciphers_count: 10,
+            handshake_time_ms: None,
+            heartbeat_enabled: None,
+            session_resumption_caching: None,
+            session_resumption_tickets: None,
+            secure_renegotiation: None,
+        },
+        ProtocolTestResult {
+            protocol: Protocol::TLS13,
+            supported: true,
+            inconclusive: false,
+            preferred: true,
+            ciphers_count: 5,
+            handshake_time_ms: None,
+            heartbeat_enabled: None,
+            session_resumption_caching: None,
+            session_resumption_tickets: None,
+            secure_renegotiation: None,
+        },
+    ];
+    let ciphers = HashMap::new();
+
+    let inconclusive_critical = vec![crate::vulnerabilities::VulnerabilityResult {
+        vuln_type: crate::vulnerabilities::VulnerabilityType::ROBOT,
+        vulnerable: true,
+        inconclusive: true,
+        details: "Timing signal below noise floor — unconfirmed".to_string(),
+        cve: None,
+        cwe: None,
+        severity: crate::vulnerabilities::Severity::Critical,
+    }];
+
+    let baseline = RatingCalculator::calculate(&protocols_with_tls13, &ciphers, None, &[]);
+    let with_inconclusive = RatingCalculator::calculate(
+        &protocols_with_tls13,
+        &ciphers,
+        None,
+        &inconclusive_critical,
+    );
+
+    assert_eq!(
+        with_inconclusive.score, baseline.score,
+        "Inconclusive vulnerability must not change the score"
+    );
+    assert_eq!(
+        with_inconclusive.grade, baseline.grade,
+        "Inconclusive vulnerability must not change the grade"
+    );
+    assert!(
+        with_inconclusive.warnings.is_empty(),
+        "Inconclusive vulnerability must not emit a grade-impact warning"
+    );
+}
+
+#[test]
+fn test_confirmed_critical_vulnerability_penalizes_grade() {
+    // Counterpart to the inconclusive test: a CONFIRMED critical vulnerability
+    // must still apply the full penalty, so the inconclusive skip cannot mask
+    // real findings.
+    use std::collections::HashMap;
+
+    let protocols_with_tls13 = vec![ProtocolTestResult {
+        protocol: Protocol::TLS13,
+        supported: true,
+        inconclusive: false,
+        preferred: true,
+        ciphers_count: 5,
+        handshake_time_ms: None,
+        heartbeat_enabled: None,
+        session_resumption_caching: None,
+        session_resumption_tickets: None,
+        secure_renegotiation: None,
+    }];
+    let ciphers = HashMap::new();
+
+    let confirmed_critical = vec![crate::vulnerabilities::VulnerabilityResult {
+        vuln_type: crate::vulnerabilities::VulnerabilityType::Heartbleed,
+        vulnerable: true,
+        inconclusive: false,
+        details: "Confirmed via direct probe".to_string(),
+        cve: None,
+        cwe: None,
+        severity: crate::vulnerabilities::Severity::Critical,
+    }];
+
+    let baseline = RatingCalculator::calculate(&protocols_with_tls13, &ciphers, None, &[]);
+    let with_confirmed =
+        RatingCalculator::calculate(&protocols_with_tls13, &ciphers, None, &confirmed_critical);
+
+    assert!(
+        with_confirmed.score < baseline.score,
+        "Confirmed critical vulnerability must reduce the score"
+    );
+    assert!(
+        !with_confirmed.warnings.is_empty(),
+        "Confirmed critical vulnerability must emit a warning"
+    );
+}
+
+#[test]
 fn test_tls13_overall_score_cap() {
     // Without TLS 1.3, the OVERALL score should be capped at 84 (A-)
     use std::collections::HashMap;

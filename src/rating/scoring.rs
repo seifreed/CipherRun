@@ -386,6 +386,16 @@ impl RatingCalculator {
                 continue;
             }
 
+            // Only confirmed vulnerabilities affect the grade. An inconclusive
+            // finding (e.g. a remote timing oracle the scanner could not confirm)
+            // is surfaced in the report's vulnerability section but must not tank
+            // the grade on unconfirmed evidence: doing so contradicts its
+            // "Inconclusive" status and re-introduces the timing-jitter false
+            // positives the detectors deliberately downgrade to inconclusive.
+            if vuln.inconclusive {
+                continue;
+            }
+
             if vuln.vulnerable {
                 use crate::vulnerabilities::Severity;
                 let (deduction, warning) = match vuln.severity {
