@@ -246,7 +246,8 @@ impl VulnerabilityScanner {
     pub async fn test_renegotiation(&self) -> Result<VulnerabilityResult> {
         use crate::protocols::renegotiation::RenegotiationTester;
 
-        let tester = RenegotiationTester::new(&self.target);
+        let tester = RenegotiationTester::new(&self.target)
+            .with_starttls(self.starttls, self.starttls_hostname.clone());
         let result = tester.test().await?;
 
         Ok(VulnerabilityResult {
