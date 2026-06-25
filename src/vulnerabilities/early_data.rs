@@ -160,10 +160,13 @@ impl<'a> EarlyDataTester<'a> {
             )
         } else if replay_result.inconclusive {
             format!(
-                "Inconclusive 0-RTT replay test - Server supports TLS 1.3 with early_data (max: {:?}). \
+                "Inconclusive 0-RTT replay test - Server supports TLS 1.3 with early_data (max: {}). \
                 Full replay testing was not performed. Potential vulnerability exists if server \
                 lacks anti-replay mechanisms (single-use tickets, time-based checks, nonce tracking).",
-                early_data_info.max_early_data_size
+                early_data_info
+                    .max_early_data_size
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "unknown".to_string())
             )
         } else if supports_early_data {
             "Server supports 0-RTT but appears to have anti-replay protection enabled".to_string()
@@ -457,12 +460,16 @@ impl<'a> EarlyDataTester<'a> {
             vulnerable: false,
             inconclusive: true,
             details: format!(
-                "TLS 1.3 with early_data supported (max: {:?} bytes, estimated: {}). \
+                "TLS 1.3 with early_data supported (max: {} bytes, estimated: {}). \
                  Full 0-RTT replay testing requires session resumption which is not \
                  currently implemented. Manual testing recommended. \
                  Potential vulnerability: Servers without anti-replay mechanisms may accept \
                  replayed 0-RTT data, allowing request duplication attacks.",
-                early_data_info.max_early_data_size, early_data_info.is_estimated
+                early_data_info
+                    .max_early_data_size
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "unknown".to_string()),
+                early_data_info.is_estimated
             ),
         })
     }
