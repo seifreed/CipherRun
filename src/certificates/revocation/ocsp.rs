@@ -111,7 +111,12 @@ impl RevocationChecker {
             )));
         }
 
-        let response_bytes = response.bytes().await?;
+        // Cap the body: the OCSP responder URL comes from the (untrusted)
+        // certificate's AIA extension, so an unbounded read is an OOM vector.
+        // OCSP responses are small (a single signed status), so 1 MiB is ample.
+        const MAX_OCSP_BYTES: u64 = 1024 * 1024;
+        let response_bytes =
+            crate::utils::http::read_response_body_capped(response, MAX_OCSP_BYTES, "OCSP").await?;
 
         // Parse OCSP response
         self.parse_ocsp_response(&response_bytes, cert, issuer)

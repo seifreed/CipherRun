@@ -235,7 +235,16 @@ impl CtVerifier {
         match client.get(&url).send().await {
             Ok(response) => {
                 if response.status().is_success() {
-                    let text = response.text().await?;
+                    // Cap the body to avoid an unbounded read from a MITM'd or
+                    // misbehaving crt.sh; a per-fingerprint query is small JSON.
+                    const MAX_CRT_SH_BYTES: u64 = 16 * 1024 * 1024;
+                    let body = crate::utils::http::read_response_body_capped(
+                        response,
+                        MAX_CRT_SH_BYTES,
+                        "crt.sh",
+                    )
+                    .await?;
+                    let text = String::from_utf8_lossy(&body);
                     Self::parse_ct_log_response(&text)
                 } else {
                     Err(crate::TlsError::HttpError {

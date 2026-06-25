@@ -4,6 +4,7 @@ pub mod adaptive;
 pub mod anycast;
 pub mod dns_cache;
 pub mod hints;
+pub mod http;
 pub mod ids_friendly;
 pub mod insecure_tls;
 pub mod mtls;

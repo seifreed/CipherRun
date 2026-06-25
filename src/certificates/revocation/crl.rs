@@ -63,7 +63,12 @@ impl RevocationChecker {
             )));
         }
 
-        let crl_bytes = response.bytes().await?;
+        // Cap the body: the CRL distribution point URL comes from the (untrusted)
+        // certificate being scanned, so an unbounded read is an OOM vector. Large
+        // CAs publish multi-MB CRLs, so the limit is generous but finite.
+        const MAX_CRL_BYTES: u64 = 64 * 1024 * 1024;
+        let crl_bytes =
+            crate::utils::http::read_response_body_capped(response, MAX_CRL_BYTES, "CRL").await?;
 
         // Parse CRL
         let (_, crl) = x509_parser::revocation_list::CertificateRevocationList::from_der(
