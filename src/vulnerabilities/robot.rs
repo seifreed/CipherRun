@@ -387,7 +387,7 @@ impl RobotTester {
         };
 
         // Send ClientHello
-        let client_hello = self.build_client_hello();
+        let client_hello = self.build_client_hello()?;
         stream.write_all(&client_hello).await?;
 
         // Read until ServerHelloDone so the full certificate chain is in the buffer,
@@ -447,10 +447,10 @@ impl RobotTester {
     }
 
     /// Build ClientHello with RSA key exchange using ClientHelloBuilder
-    fn build_client_hello(&self) -> Vec<u8> {
+    fn build_client_hello(&self) -> Result<Vec<u8>> {
         let mut builder = ClientHelloBuilder::new(Protocol::TLS10);
         builder.for_rsa_key_exchange();
-        builder.build_minimal().unwrap_or_else(|_| Vec::new())
+        builder.build_minimal()
     }
 
     /// Build ClientKeyExchange with invalid RSA padding, sized for the server's actual key length.
@@ -606,7 +606,9 @@ mod tests {
         )
         .unwrap();
         let tester = RobotTester::new(target);
-        let hello = tester.build_client_hello();
+        let hello = tester
+            .build_client_hello()
+            .expect("ClientHello should build");
         assert!(!hello.is_empty());
         assert_eq!(hello[0], CONTENT_TYPE_HANDSHAKE);
     }
