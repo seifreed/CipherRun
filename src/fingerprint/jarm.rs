@@ -93,20 +93,11 @@ impl JarmDatabase {
     ///
     /// Returns a JarmDatabase loaded from the embedded JSON file.
     /// The builtin database is compiled into the binary and should always parse correctly.
-    /// If parsing fails (should never happen with embedded data), returns an empty database.
+    /// If parsing fails, initialization fails fast.
     pub fn builtin() -> Self {
         let builtin_json = include_str!("../../data/jarm_signatures.json");
-        let signatures: Vec<JarmSignature> = match serde_json::from_str(builtin_json) {
-            Ok(sigs) => sigs,
-            Err(e) => {
-                // This should never happen with embedded data, but handle gracefully
-                tracing::error!(
-                    "Failed to parse builtin JARM database: {}. Using empty database.",
-                    e
-                );
-                Vec::new()
-            }
-        };
+        let signatures: Vec<JarmSignature> = serde_json::from_str(builtin_json)
+            .unwrap_or_else(|e| panic!("Failed to parse embedded JARM database: {}", e));
 
         let mut db = Self::new();
         for sig in signatures {

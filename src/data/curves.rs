@@ -13,18 +13,13 @@ static CURVES_DB_INNER: std::sync::OnceLock<Arc<CurvesDatabase>> = std::sync::On
 /// Get the global curves database
 ///
 /// Returns the database if already initialized, or initializes it on first call.
-/// Initialization errors are logged and an empty database is used as fallback.
+/// Initialization fails fast if the embedded database is malformed.
 pub fn curves_db() -> Arc<CurvesDatabase> {
     CURVES_DB_INNER
-        .get_or_init(|| match CurvesDatabase::load() {
-            Ok(db) => Arc::new(db),
-            Err(e) => {
-                tracing::error!(
-                    "Failed to load curves database: {}. Using empty database.",
-                    e
-                );
-                Arc::new(CurvesDatabase::empty())
-            }
+        .get_or_init(|| {
+            Arc::new(CurvesDatabase::load().unwrap_or_else(|e| {
+                panic!("Failed to load embedded curves database: {}", e)
+            }))
         })
         .clone()
 }

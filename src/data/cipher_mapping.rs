@@ -14,18 +14,13 @@ static CIPHER_DB_INNER: std::sync::OnceLock<Arc<CipherDatabase>> = std::sync::On
 /// Get the global cipher database
 ///
 /// Returns the database if already initialized, or initializes it on first call.
-/// Initialization errors are logged and an empty database is used as fallback.
+/// Initialization fails fast if the embedded database is malformed.
 pub fn cipher_db() -> Arc<CipherDatabase> {
     CIPHER_DB_INNER
-        .get_or_init(|| match CipherDatabase::load() {
-            Ok(db) => Arc::new(db),
-            Err(e) => {
-                tracing::error!(
-                    "Failed to load cipher database: {}. Using empty database.",
-                    e
-                );
-                Arc::new(CipherDatabase::empty())
-            }
+        .get_or_init(|| {
+            Arc::new(CipherDatabase::load().unwrap_or_else(|e| {
+                panic!("Failed to load embedded cipher database: {}", e)
+            }))
         })
         .clone()
 }

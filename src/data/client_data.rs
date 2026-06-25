@@ -7,24 +7,19 @@ use std::sync::Arc;
 /// Global client database loaded at startup
 ///
 /// Uses OnceLock for safe initialization with proper error handling.
-/// If loading fails, the error is captured and returned on first access.
+/// If loading fails, initialization fails fast.
 static CLIENT_DB_INNER: std::sync::OnceLock<Arc<ClientDatabase>> = std::sync::OnceLock::new();
 
 /// Get the global client database
 ///
 /// Returns the database if already initialized, or initializes it on first call.
-/// Initialization errors are cached and returned on subsequent calls.
+/// Initialization fails fast if the embedded database is malformed.
 pub fn client_db() -> Arc<ClientDatabase> {
     CLIENT_DB_INNER
-        .get_or_init(|| match ClientDatabase::load() {
-            Ok(db) => Arc::new(db),
-            Err(e) => {
-                tracing::error!(
-                    "Failed to load client database: {}. Using empty database.",
-                    e
-                );
-                Arc::new(ClientDatabase::empty())
-            }
+        .get_or_init(|| {
+            Arc::new(ClientDatabase::load().unwrap_or_else(|e| {
+                panic!("Failed to load embedded client database: {}", e)
+            }))
         })
         .clone()
 }
