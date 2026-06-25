@@ -132,10 +132,16 @@ impl PqcReadinessScorer {
             );
         }
 
-        let quantum_vulnerable_only = pq_safe_groups.is_empty();
+        // Only claim a verdict about key-exchange PQC when groups were actually
+        // enumerated. Without group data (e.g. --no-groups), an empty
+        // pq_safe_groups means "not measured", NOT "no PQC offered" — asserting
+        // quantum_vulnerable_only/HNDL there is a false alarm that also
+        // contradicts the "run --show-groups" recommendation emitted above.
+        let groups_assessed = groups.is_some();
+        let quantum_vulnerable_only = groups_assessed && pq_safe_groups.is_empty();
         // HNDL risk exists whenever any classical group is still negotiable — even in
         // hybrid deployments, an active attacker can force-select the classical path.
-        let hndl_risk = quantum_vulnerable_only || vulnerable_supported > 0;
+        let hndl_risk = groups_assessed && (quantum_vulnerable_only || vulnerable_supported > 0);
         if quantum_vulnerable_only {
             recommendations.push(
                 "HNDL risk: no post-quantum key exchange is offered, so intercepted traffic can be decrypted retroactively once a quantum computer exists. Deploy X25519MLKEM768 immediately.".to_string(),
@@ -223,14 +229,49 @@ mod tests {
         let assessment = PqcReadinessScorer::assess(None, None, &[]);
         assert_eq!(assessment.level, PqcLevel::None);
         assert_eq!(assessment.score, 0);
-        assert!(assessment.quantum_vulnerable_only);
     }
 
     #[test]
-    fn test_hndl_risk_true_when_quantum_vulnerable_only() {
+    fn test_no_group_data_does_not_assert_hndl_or_quantum_vulnerable() {
+        // Groups not enumerated (e.g. --no-groups): we cannot claim the host
+        // lacks PQC key exchange, so no definitive HNDL alarm — just the
+        // honest "run --show-groups" advice.
         let assessment = PqcReadinessScorer::assess(None, None, &[]);
+        assert!(
+            !assessment.quantum_vulnerable_only,
+            "unmeasured groups must not be reported as quantum-vulnerable-only"
+        );
+        assert!(
+            !assessment.hndl_risk,
+            "HNDL risk must not be asserted without group data"
+        );
+        assert!(
+            !assessment
+                .recommendations
+                .iter()
+                .any(|r| r.contains("HNDL")),
+            "no HNDL claim should be made when groups were not assessed"
+        );
+        assert!(
+            assessment
+                .recommendations
+                .iter()
+                .any(|r| r.contains("--show-groups")),
+            "should advise running group enumeration"
+        );
+    }
+
+    #[test]
+    fn test_hndl_risk_true_when_only_classical_groups_offered() {
+        // Groups WERE enumerated and only classical (quantum-vulnerable) groups
+        // are supported → quantum-vulnerable-only and HNDL risk are real.
+        let g = groups(vec![
+            kx_group("X25519", true, true),
+            kx_group("secp256r1", true, true),
+        ]);
+        let assessment = PqcReadinessScorer::assess(Some(&g), None, &[]);
+        assert!(assessment.quantum_vulnerable_only);
         assert!(assessment.hndl_risk);
-        // With no PQC group offered, the advice is to deploy one.
         assert!(
             assessment
                 .recommendations
