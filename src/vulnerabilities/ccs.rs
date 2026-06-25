@@ -96,7 +96,7 @@ impl CcsInjectionTester {
         {
             Ok(mut stream) => {
                 // Send TLS ClientHello
-                let client_hello = self.build_client_hello();
+                let client_hello = self.build_client_hello()?;
                 stream.write_all(&client_hello).await?;
 
                 // Read ServerHello
@@ -250,10 +250,10 @@ impl CcsInjectionTester {
     }
 
     /// Build a basic TLS ClientHello message using ClientHelloBuilder
-    fn build_client_hello(&self) -> Vec<u8> {
+    fn build_client_hello(&self) -> Result<Vec<u8>> {
         let mut builder = ClientHelloBuilder::new(Protocol::TLS10);
         builder.for_rsa_key_exchange();
-        builder.build_minimal().unwrap_or_else(|_| Vec::new())
+        builder.build_minimal()
     }
 }
 
@@ -311,7 +311,9 @@ mod tests {
         .unwrap();
 
         let tester = CcsInjectionTester::new(target);
-        let hello = tester.build_client_hello();
+        let hello = tester
+            .build_client_hello()
+            .expect("ClientHello should build");
 
         assert!(hello.len() > 40);
         assert_eq!(hello[0], CONTENT_TYPE_HANDSHAKE); // Handshake (0x16)
@@ -328,7 +330,9 @@ mod tests {
         .unwrap();
 
         let tester = CcsInjectionTester::new(target);
-        let hello = tester.build_client_hello();
+        let hello = tester
+            .build_client_hello()
+            .expect("ClientHello should build");
 
         assert_eq!(hello[1], 0x03);
         assert_eq!(hello[2], 0x01);
@@ -344,7 +348,9 @@ mod tests {
         .unwrap();
 
         let tester = CcsInjectionTester::new(target);
-        let hello = tester.build_client_hello();
+        let hello = tester
+            .build_client_hello()
+            .expect("ClientHello should build");
         assert!(!hello.is_empty());
     }
 
