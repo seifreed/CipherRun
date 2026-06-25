@@ -350,10 +350,14 @@ impl MxTester {
                         })
                         .unwrap_or_else(|| "?".yellow());
 
+                    // Count only confirmed vulnerabilities: inconclusive findings
+                    // are shown in the per-host detail but must not inflate the
+                    // red summary count (consistent with the grade and compliance,
+                    // which also exclude unconfirmed findings).
                     let vuln_count = scan_result
                         .vulnerabilities
                         .iter()
-                        .filter(|v| v.vulnerable)
+                        .filter(|v| v.vulnerable && !v.inconclusive)
                         .count();
 
                     summary.push_str(&format!(
