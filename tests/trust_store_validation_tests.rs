@@ -206,9 +206,9 @@ fn test_empty_chain_validation() {
 #[test]
 fn test_trust_validation_result_methods() {
     use cipherrun::certificates::trust_stores::{PlatformTrustStatus, ValidationDetails};
-    use std::collections::HashMap;
+    use std::collections::BTreeMap;
 
-    let mut platform_status = HashMap::new();
+    let mut platform_status = BTreeMap::new();
 
     // Mozilla trusts
     platform_status.insert(

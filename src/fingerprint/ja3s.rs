@@ -221,8 +221,12 @@ impl CdnDetection {
             indicators.push(format!("JA3S signature matches {}", sig.name));
         }
 
-        // Check HTTP headers for CDN indicators
-        for (header_name, header_value) in http_headers {
+        // Check HTTP headers for CDN indicators. Iterate in sorted key order so
+        // the `indicators` list and provider selection are deterministic across
+        // runs (a `HashMap` otherwise yields random iteration order).
+        let mut sorted_headers: Vec<(&String, &String)> = http_headers.iter().collect();
+        sorted_headers.sort_by(|left, right| left.0.cmp(right.0));
+        for (header_name, header_value) in sorted_headers {
             let header_lower = header_name.to_lowercase();
             let value_lower = header_value.to_lowercase();
 
@@ -322,8 +326,11 @@ impl LoadBalancerInfo {
             indicators.push(format!("JA3S signature matches {}", sig.name));
         }
 
-        // Check HTTP headers
-        for (header_name, header_value) in http_headers {
+        // Check HTTP headers in sorted key order so the `indicators` list and
+        // load-balancer-type selection are deterministic across runs.
+        let mut sorted_headers: Vec<(&String, &String)> = http_headers.iter().collect();
+        sorted_headers.sort_by(|left, right| left.0.cmp(right.0));
+        for (header_name, header_value) in sorted_headers {
             let header_lower = header_name.to_lowercase();
             let value_lower = header_value.to_lowercase();
 

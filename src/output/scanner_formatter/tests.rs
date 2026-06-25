@@ -29,7 +29,7 @@ use crate::protocols::signatures::{SignatureAlgorithm, SignatureEnumerationResul
 use crate::protocols::{Protocol, ProtocolTestResult};
 use crate::rating::RatingResult;
 use crate::vulnerabilities::{Severity, VulnerabilityResult, VulnerabilityType};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 #[test]
 fn test_scanner_formatter_creation() {
@@ -409,7 +409,7 @@ fn test_display_sections_smoke() {
         chain_size_bytes: 8,
     };
 
-    let mut platform_status = HashMap::new();
+    let mut platform_status = BTreeMap::new();
     platform_status.insert(
         TrustStore::Mozilla,
         PlatformTrustStatus {

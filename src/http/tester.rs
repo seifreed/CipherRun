@@ -12,6 +12,10 @@ use std::time::Duration;
 /// HTTP header analysis result
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HeaderAnalysisResult {
+    /// Raw response headers. Serialized in sorted key order so JSON/XML output
+    /// is deterministic across runs (a `HashMap` otherwise emits keys in random
+    /// hash order).
+    #[serde(serialize_with = "crate::scanner::results::serialize_sorted_map")]
     pub headers: HashMap<String, String>,
     pub issues: Vec<HeaderIssue>,
     pub score: u8,

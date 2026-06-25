@@ -7,7 +7,7 @@ use super::parser::{CertificateChain, CertificateInfo};
 use crate::Result;
 use crate::data::CA_STORES;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use x509_parser::prelude::*;
 
 /// Supported trust store platforms
@@ -93,8 +93,12 @@ pub struct ValidationDetails {
 /// Complete trust validation result across all platforms
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrustValidationResult {
-    /// Per-platform trust status
-    pub platform_status: HashMap<TrustStore, PlatformTrustStatus>,
+    /// Per-platform trust status.
+    ///
+    /// A `BTreeMap` (not `HashMap`) so serialized output (JSON/etc.) orders
+    /// platforms deterministically by `TrustStore` instead of by random hash
+    /// iteration order, which otherwise varied across runs.
+    pub platform_status: BTreeMap<TrustStore, PlatformTrustStatus>,
     /// Overall trust status (trusted by at least one major platform)
     pub overall_trusted: bool,
     /// Number of platforms that trust this certificate
@@ -115,10 +119,7 @@ impl TrustValidationResult {
             .unwrap_or(false)
     }
 
-    /// Get platforms that trust this certificate
-    ///
-    /// Sorted for deterministic output: `platform_status` is a `HashMap`, so
-    /// its iteration order is otherwise nondeterministic across runs.
+    /// Get platforms that trust this certificate, in stable `TrustStore` order.
     pub fn trusted_platforms(&self) -> Vec<TrustStore> {
         let mut platforms: Vec<TrustStore> = self
             .platform_status
@@ -130,9 +131,7 @@ impl TrustValidationResult {
         platforms
     }
 
-    /// Get platforms that don't trust this certificate
-    ///
-    /// Sorted for deterministic output (see `trusted_platforms`).
+    /// Get platforms that don't trust this certificate, in stable order.
     pub fn untrusted_platforms(&self) -> Vec<TrustStore> {
         let mut platforms: Vec<TrustStore> = self
             .platform_status
@@ -219,7 +218,7 @@ impl TrustStoreValidator {
 
     /// Validate certificate chain against all platform trust stores
     pub fn validate_chain(&self, chain: &CertificateChain) -> Result<TrustValidationResult> {
-        let mut platform_status = HashMap::new();
+        let mut platform_status = BTreeMap::new();
 
         for platform in TrustStore::all() {
             let status = self.validate_against_platform(chain, platform)?;
@@ -634,7 +633,7 @@ mod tests {
 
     #[test]
     fn test_trust_validation_result_methods() {
-        let mut platform_status = HashMap::new();
+        let mut platform_status = BTreeMap::new();
 
         platform_status.insert(
             TrustStore::Mozilla,
