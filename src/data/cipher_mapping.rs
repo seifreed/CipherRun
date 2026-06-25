@@ -67,18 +67,10 @@ impl CipherDatabase {
                 continue;
             }
 
-            // Parse line
-            match Self::parse_line(line) {
-                Ok(cipher) => {
-                    by_hexcode.insert(cipher.hexcode.clone(), cipher);
-                }
-                Err(e) => {
-                    // Suppress warnings for GOST ciphers (non-standard format)
-                    if !line.contains("GOST") {
-                        tracing::warn!("Failed to parse line {}: {} - {}", line_num + 1, line, e);
-                    }
-                }
-            }
+            let cipher = Self::parse_line(line).map_err(|e| TlsError::ParseError {
+                message: format!("Invalid cipher mapping line {}: {}", line_num + 1, e),
+            })?;
+            by_hexcode.insert(cipher.hexcode.clone(), cipher);
         }
 
         Ok(Self { by_hexcode })
@@ -87,15 +79,10 @@ impl CipherDatabase {
     /// Parse a single line from cipher-mapping.txt
     fn parse_line(line: &str) -> Result<CipherSuite> {
         // Split by " - " to separate hexcode from rest
-        let parts: Vec<&str> = line.split(" - ").collect();
-        if parts.len() < 2 {
-            return Err(TlsError::ParseError {
-                message: "Invalid format: missing ' - ' separator".to_string(),
-            });
-        }
-
-        let hexcode = parts[0].trim();
-        let rest = parts[1];
+        let (hexcode, rest) = line.split_once(" - ").ok_or_else(|| TlsError::ParseError {
+            message: "Invalid format: missing ' - ' separator".to_string(),
+        })?;
+        let hexcode = hexcode.trim();
 
         // Parse hexcode (e.g., "0xCC,0x14" -> "cc14")
         let hexcode = hexcode.replace("0x", "").replace(",", "").to_lowercase();
@@ -287,6 +274,16 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_cipher_with_dash_iana_name() {
+        let line = "0xFF,0x02 - GOST-GOST89MAC - TLSv1 Kx=RSA Au=RSA Enc=GOST(256) Mac=GOST89IMIT";
+        let cipher = CipherDatabase::parse_line(line).expect("dash IANA name should parse");
+
+        assert_eq!(cipher.hexcode, "ff02");
+        assert_eq!(cipher.iana_name, "-");
+        assert_eq!(cipher.protocol, "TLSv1");
+    }
+
+    #[test]
     fn test_load_database() {
         let db = CipherDatabase::load();
         assert!(db.is_ok());
@@ -321,6 +318,17 @@ mod tests {
         let line = "invalid line";
         let err = CipherDatabase::parse_line(line).expect_err("should fail");
         assert!(err.to_string().contains("Invalid format"));
+    }
+
+    #[test]
+    fn test_parse_database_rejects_invalid_cipher_line() {
+        let data = "0x13,0x02 - TLS_AES_256_GCM_SHA384 TLS_AES_256_GCM_SHA384 TLSv1.3 Kx=any Au=any Enc=AESGCM(256) Mac=AEAD\ninvalid line";
+        let err = match CipherDatabase::parse(data) {
+            Ok(_) => panic!("invalid cipher line should fail database parsing"),
+            Err(err) => err,
+        };
+
+        assert!(err.to_string().contains("Invalid cipher mapping line 2"));
     }
 
     #[test]
