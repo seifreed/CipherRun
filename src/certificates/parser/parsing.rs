@@ -57,6 +57,8 @@ pub struct CertificateParser {
     connect_timeout: Duration,
     read_timeout: Duration,
     mtls_config: Option<MtlsConfig>,
+    starttls: Option<crate::starttls::StarttlsProtocol>,
+    starttls_hostname: Option<String>,
 }
 
 impl CertificateParser {
@@ -76,6 +78,8 @@ impl CertificateParser {
             connect_timeout: Duration::from_secs(10),
             read_timeout: Duration::from_secs(5),
             mtls_config: None,
+            starttls: None,
+            starttls_hostname: None,
         }
     }
 
@@ -86,7 +90,25 @@ impl CertificateParser {
             connect_timeout: Duration::from_secs(10),
             read_timeout: Duration::from_secs(5),
             mtls_config: Some(mtls_config),
+            starttls: None,
+            starttls_hostname: None,
         }
+    }
+
+    /// Configure STARTTLS negotiation before the TLS handshake.
+    ///
+    /// Required for plaintext-first services (SMTP/IMAP/POP3/FTP/XMPP/…) that
+    /// upgrade to TLS via a STARTTLS command. Without this the rustls handshake
+    /// is sent against the plaintext greeting and fails with an
+    /// `InvalidContentType` record error, so no certificate chain is retrieved.
+    pub fn with_starttls(
+        mut self,
+        protocol: Option<crate::starttls::StarttlsProtocol>,
+        hostname: Option<String>,
+    ) -> Self {
+        self.starttls = protocol;
+        self.starttls_hostname = hostname;
+        self
     }
 
     /// Get certificate chain from server
@@ -103,8 +125,26 @@ impl CertificateParser {
             .ok_or(crate::TlsError::NoSocketAddresses)?;
 
         // Connect TCP
-        let stream =
+        let mut stream =
             crate::utils::network::connect_with_timeout(addr, self.connect_timeout, None).await?;
+
+        // For plaintext-first services, upgrade the connection via STARTTLS
+        // before the TLS handshake; otherwise rustls speaks TLS to the
+        // plaintext greeting and aborts with an InvalidContentType error.
+        if let Some(starttls_proto) = self.starttls {
+            let hostname = self
+                .starttls_hostname
+                .clone()
+                .unwrap_or_else(|| self.target.hostname.clone());
+            let negotiator = crate::starttls::protocols::get_negotiator(starttls_proto, hostname);
+            negotiator
+                .negotiate_starttls(&mut stream)
+                .await
+                .map_err(|e| crate::TlsError::StarttlsError {
+                    protocol: starttls_proto.to_string(),
+                    details: format!("STARTTLS negotiation failed before certificate fetch: {e}"),
+                })?;
+        }
 
         // Build TLS connector with or without client auth.
         //

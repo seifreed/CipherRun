@@ -72,7 +72,11 @@ impl CertificatePhase {
             CertificateParser::with_mtls(target, mtls_config.clone())
         } else {
             CertificateParser::new(target)
-        };
+        }
+        .with_starttls(
+            context.args.starttls_protocol(),
+            context.args.starttls.xmpphost.clone(),
+        );
 
         // Extract certificate chain from TLS handshake
         parser.get_certificate_chain().await
