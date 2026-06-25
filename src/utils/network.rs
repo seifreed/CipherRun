@@ -346,10 +346,14 @@ async fn resolve_hostname_with_ssrf_check(
     tracing::debug!("DNS cache miss for {}, performing lookup", hostname);
     let resolver = build_system_resolver()?;
 
-    let response = resolver
-        .lookup_ip(hostname)
-        .await
-        .map_err(|e| TlsError::Other(format!("DNS lookup failed: {e}")))?;
+    let response =
+        resolver
+            .lookup_ip(hostname)
+            .await
+            .map_err(|e| TlsError::DnsResolutionFailed {
+                hostname: hostname.to_string(),
+                source: std::io::Error::other(e.to_string()),
+            })?;
 
     let ips: Vec<IpAddr> = response.iter().collect();
 
