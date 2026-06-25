@@ -131,7 +131,8 @@ fn test_malformed_record_building() {
 
 #[test]
 fn test_client_hello_cbc_structure() {
-    let hello = record_builder::build_client_hello_cbc();
+    let hello =
+        record_builder::build_client_hello_cbc().expect("CBC ClientHello should build");
 
     // Verify TLS record header
     assert_eq!(hello[0], 0x16); // Handshake

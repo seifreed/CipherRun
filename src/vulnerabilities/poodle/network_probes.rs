@@ -69,7 +69,7 @@ pub(super) async fn send_malformed_record(
     {
         Ok(mut stream) => {
             // Send ClientHello
-            let client_hello = record_builder::build_client_hello_cbc();
+            let client_hello = record_builder::build_client_hello_cbc()?;
             stream.write_all(&client_hello).await?;
 
             // V5 fix: read until ServerHelloDone. Previously a single `stream.read`

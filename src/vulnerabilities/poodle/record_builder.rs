@@ -6,14 +6,15 @@
 use crate::constants::{CONTENT_TYPE_APPLICATION_DATA, VERSION_TLS_1_2};
 use crate::protocols::Protocol;
 use crate::protocols::handshake::ClientHelloBuilder;
+use crate::Result;
 
 use super::MalformedRecordType;
 
 /// Build ClientHello with CBC cipher preference using ClientHelloBuilder
-pub(super) fn build_client_hello_cbc() -> Vec<u8> {
+pub(super) fn build_client_hello_cbc() -> Result<Vec<u8>> {
     let mut builder = ClientHelloBuilder::new(Protocol::TLS12);
     builder.for_cbc_ciphers();
-    builder.build_minimal().unwrap_or_else(|_| Vec::new())
+    builder.build_minimal()
 }
 
 /// Build malformed TLS record based on type
