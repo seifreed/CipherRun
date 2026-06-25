@@ -80,7 +80,7 @@ impl HstsPreloadChecker {
         let normalized = Self::normalize_domain(domain);
 
         // Check cache first
-        if let Some(cached) = self.get_from_cache(&normalized) {
+        if let Some(cached) = self.get_from_cache(&normalized)? {
             return Ok(cached);
         }
 
@@ -90,7 +90,7 @@ impl HstsPreloadChecker {
         // Try API query
         match self.query_api(&normalized).await {
             Ok(status) => {
-                self.cache_status(&normalized, status.clone());
+                self.cache_status(&normalized, status.clone())?;
                 Ok(status)
             }
             Err(api_error) => {
@@ -194,37 +194,43 @@ impl HstsPreloadChecker {
     }
 
     /// Get status from cache if available and not expired
-    fn get_from_cache(&self, domain: &str) -> Option<PreloadStatus> {
-        let cache = self.cache.lock().ok()?;
+    fn get_from_cache(&self, domain: &str) -> Result<Option<PreloadStatus>, String> {
+        let cache = self
+            .cache
+            .lock()
+            .map_err(|_| "HSTS preload cache lock poisoned".to_string())?;
 
         if let Some(entry) = cache.get(domain)
             && entry.timestamp.elapsed() < self.cache_duration
         {
             let mut status = entry.status.clone();
             status.source = PreloadSource::Cache;
-            return Some(status);
+            return Ok(Some(status));
         }
 
-        None
+        Ok(None)
     }
 
     /// Cache preload status
-    fn cache_status(&self, domain: &str, status: PreloadStatus) {
-        if let Ok(mut cache) = self.cache.lock() {
-            cache.insert(
-                domain.to_string(),
-                CacheEntry {
-                    status,
-                    timestamp: Instant::now(),
-                },
-            );
+    fn cache_status(&self, domain: &str, status: PreloadStatus) -> Result<(), String> {
+        let mut cache = self
+            .cache
+            .lock()
+            .map_err(|_| "HSTS preload cache lock poisoned".to_string())?;
+        cache.insert(
+            domain.to_string(),
+            CacheEntry {
+                status,
+                timestamp: Instant::now(),
+            },
+        );
 
-            // Clean expired entries if cache is getting large
-            if cache.len() > 1000 {
-                let now = Instant::now();
-                cache.retain(|_, entry| now.duration_since(entry.timestamp) < self.cache_duration);
-            }
+        // Clean expired entries if cache is getting large
+        if cache.len() > 1000 {
+            let now = Instant::now();
+            cache.retain(|_, entry| now.duration_since(entry.timestamp) < self.cache_duration);
         }
+        Ok(())
     }
 
     /// Wait for rate limit before making request
@@ -246,16 +252,16 @@ impl HstsPreloadChecker {
 
     /// Get cache statistics
     pub fn cache_stats(&self) -> (usize, usize) {
-        if let Ok(cache) = self.cache.lock() {
-            let now = Instant::now();
-            let valid_entries = cache
-                .values()
-                .filter(|entry| now.duration_since(entry.timestamp) < self.cache_duration)
-                .count();
-            (cache.len(), valid_entries)
-        } else {
-            (0, 0)
-        }
+        let cache = self
+            .cache
+            .lock()
+            .expect("HSTS preload cache lock poisoned");
+        let now = Instant::now();
+        let valid_entries = cache
+            .values()
+            .filter(|entry| now.duration_since(entry.timestamp) < self.cache_duration)
+            .count();
+        (cache.len(), valid_entries)
     }
 }
 
@@ -415,9 +421,13 @@ mod tests {
             source: PreloadSource::Api,
         };
 
-        checker.cache_status("example.com", status);
+        checker
+            .cache_status("example.com", status)
+            .expect("cache should update");
 
-        let cached = checker.get_from_cache("example.com");
+        let cached = checker
+            .get_from_cache("example.com")
+            .expect("cache should read");
         assert!(cached.is_some());
 
         let cached_status = cached.expect("test assertion should succeed");
@@ -455,11 +465,32 @@ mod tests {
             source: PreloadSource::Api,
         };
 
-        checker.cache_status("example1.com", status.clone());
-        checker.cache_status("example2.com", status);
+        checker
+            .cache_status("example1.com", status.clone())
+            .expect("cache should update");
+        checker
+            .cache_status("example2.com", status)
+            .expect("cache should update");
 
         let (total, valid) = checker.cache_stats();
         assert_eq!(total, 2);
         assert_eq!(valid, 2);
+    }
+
+    #[tokio::test]
+    async fn test_poisoned_cache_lock_returns_error() {
+        let checker = HstsPreloadChecker::new();
+        let cache = checker.cache.clone();
+        let _ = std::thread::spawn(move || {
+            let _guard = cache.lock().expect("lock should acquire");
+            panic!("poison cache lock");
+        })
+        .join();
+
+        let err = checker
+            .check_preload_status("example.com")
+            .await
+            .expect_err("poisoned cache lock should fail");
+        assert!(err.contains("HSTS preload cache lock poisoned"));
     }
 }
