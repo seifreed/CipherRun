@@ -25,6 +25,8 @@ use tokio::time::{Duration, timeout};
 /// - Test for hanging behavior on certificate parsing
 pub struct OpossumTester {
     target: Target,
+    starttls: Option<crate::starttls::StarttlsProtocol>,
+    starttls_hostname: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,7 +46,35 @@ pub struct OpossumTestResult {
 
 impl OpossumTester {
     pub fn new(target: Target) -> Self {
-        Self { target }
+        Self {
+            target,
+            starttls: None,
+            starttls_hostname: None,
+        }
+    }
+
+    /// Configure STARTTLS negotiation before each Opossum probe.
+    pub fn with_starttls(
+        mut self,
+        protocol: Option<crate::starttls::StarttlsProtocol>,
+        hostname: Option<String>,
+    ) -> Self {
+        self.starttls = protocol;
+        self.starttls_hostname = hostname;
+        self
+    }
+
+    /// Connect, upgrading via STARTTLS first for plaintext-first services.
+    async fn starttls_connect(
+        &self,
+        addr: std::net::SocketAddr,
+        timeout: std::time::Duration,
+    ) -> Result<tokio::net::TcpStream> {
+        let hostname = self
+            .starttls_hostname
+            .clone()
+            .unwrap_or_else(|| self.target.hostname.clone());
+        crate::utils::network::connect_with_starttls(addr, timeout, self.starttls, &hostname).await
     }
 
     /// Test for Opossum vulnerability
@@ -111,13 +141,10 @@ impl OpossumTester {
             .copied()
             .ok_or(crate::TlsError::NoSocketAddresses)?;
         // Connect and try to extract OpenSSL version from server
-        let stream =
-            match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None)
-                .await
-            {
-                Ok(s) => s,
-                Err(_) => return Ok(OpossumStatus::Inconclusive),
-            };
+        let stream = match self.starttls_connect(addr, TLS_HANDSHAKE_TIMEOUT).await {
+            Ok(s) => s,
+            Err(_) => return Ok(OpossumStatus::Inconclusive),
+        };
 
         // Create a rustls client config
         let mut root_store = RootCertStore::empty();
@@ -219,13 +246,10 @@ impl OpossumTester {
         //
         // If the control handshake ALSO fails/times out, we know the network
         // is the issue, not the certificate parsing.
-        let stream =
-            match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None)
-                .await
-            {
-                Ok(s) => s,
-                Err(_) => return Ok(false),
-            };
+        let stream = match self.starttls_connect(addr, TLS_HANDSHAKE_TIMEOUT).await {
+            Ok(s) => s,
+            Err(_) => return Ok(false),
+        };
 
         let mut root_store = RootCertStore::empty();
         root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());

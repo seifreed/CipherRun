@@ -294,7 +294,8 @@ impl VulnerabilityScanner {
     pub async fn test_compression(&self) -> Result<VulnerabilityResult> {
         use crate::vulnerabilities::crime::CrimeTester;
 
-        let tester = CrimeTester::new(&self.target);
+        let tester = CrimeTester::new(&self.target)
+            .with_starttls(self.starttls, self.starttls_hostname.clone());
         let result = tester.test().await?;
 
         Ok(VulnerabilityResult {
@@ -517,7 +518,8 @@ impl VulnerabilityScanner {
     pub async fn test_early_data(&self) -> Result<VulnerabilityResult> {
         use crate::vulnerabilities::early_data::EarlyDataTester;
 
-        let tester = EarlyDataTester::new(&self.target);
+        let tester = EarlyDataTester::new(&self.target)
+            .with_starttls(self.starttls, self.starttls_hostname.clone());
         let result = tester.test().await?;
 
         Ok(VulnerabilityResult {
@@ -538,7 +540,8 @@ impl VulnerabilityScanner {
     pub async fn test_padding_oracle_2016(&self) -> Result<VulnerabilityResult> {
         use crate::vulnerabilities::padding_oracle_2016::PaddingOracle2016Tester;
 
-        let tester = PaddingOracle2016Tester::new(&self.target);
+        let tester = PaddingOracle2016Tester::new(&self.target)
+            .with_starttls(self.starttls, self.starttls_hostname.clone());
         let result = tester.test().await?;
 
         if !result.cbc_supported && !self.target_accepts_tcp().await? {
@@ -577,7 +580,8 @@ impl VulnerabilityScanner {
     pub async fn test_opossum(&self) -> Result<VulnerabilityResult> {
         use crate::vulnerabilities::opossum::OpossumTester;
 
-        let tester = OpossumTester::new(self.target.clone());
+        let tester = OpossumTester::new(self.target.clone())
+            .with_starttls(self.starttls, self.starttls_hostname.clone());
         let result = tester.test().await?;
 
         // V2: severity must track `vulnerable`, not `inconclusive`. The Opossum

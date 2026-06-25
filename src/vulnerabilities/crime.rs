@@ -16,6 +16,8 @@ use tokio::time::timeout;
 /// CRIME vulnerability tester
 pub struct CrimeTester<'a> {
     target: &'a Target,
+    starttls: Option<crate::starttls::StarttlsProtocol>,
+    starttls_hostname: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,7 +39,35 @@ impl CompressionProbeStatus {
 
 impl<'a> CrimeTester<'a> {
     pub fn new(target: &'a Target) -> Self {
-        Self { target }
+        Self {
+            target,
+            starttls: None,
+            starttls_hostname: None,
+        }
+    }
+
+    /// Configure STARTTLS negotiation before each CRIME probe.
+    pub fn with_starttls(
+        mut self,
+        protocol: Option<crate::starttls::StarttlsProtocol>,
+        hostname: Option<String>,
+    ) -> Self {
+        self.starttls = protocol;
+        self.starttls_hostname = hostname;
+        self
+    }
+
+    /// Connect, upgrading via STARTTLS first for plaintext-first services.
+    async fn starttls_connect(
+        &self,
+        addr: std::net::SocketAddr,
+        timeout: std::time::Duration,
+    ) -> Result<tokio::net::TcpStream> {
+        let hostname = self
+            .starttls_hostname
+            .clone()
+            .unwrap_or_else(|| self.target.hostname.clone());
+        crate::utils::network::connect_with_starttls(addr, timeout, self.starttls, &hostname).await
     }
 
     /// Test for CRIME vulnerability
@@ -95,13 +125,10 @@ impl<'a> CrimeTester<'a> {
             .copied()
             .ok_or(crate::TlsError::NoSocketAddresses)?;
 
-        let mut stream =
-            match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None)
-                .await
-            {
-                Ok(s) => s,
-                Err(_) => return Ok(CompressionProbeStatus::Inconclusive),
-            };
+        let mut stream = match self.starttls_connect(addr, TLS_HANDSHAKE_TIMEOUT).await {
+            Ok(s) => s,
+            Err(_) => return Ok(CompressionProbeStatus::Inconclusive),
+        };
 
         // Send ClientHello with compression method DEFLATE (0x01)
         let client_hello = self.build_client_hello_with_compression();
@@ -164,13 +191,10 @@ impl<'a> CrimeTester<'a> {
             .copied()
             .ok_or(crate::TlsError::NoSocketAddresses)?;
 
-        let mut stream =
-            match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None)
-                .await
-            {
-                Ok(s) => s,
-                Err(_) => return Ok(CompressionProbeStatus::Inconclusive),
-            };
+        let mut stream = match self.starttls_connect(addr, TLS_HANDSHAKE_TIMEOUT).await {
+            Ok(s) => s,
+            Err(_) => return Ok(CompressionProbeStatus::Inconclusive),
+        };
 
         // Send ClientHello with NPN extension advertising SPDY support
         let client_hello = self.build_client_hello_with_npn();

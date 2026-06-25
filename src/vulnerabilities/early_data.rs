@@ -53,6 +53,8 @@ pub struct ReplayTestResult {
 /// 0-RTT / Early Data vulnerability tester
 pub struct EarlyDataTester<'a> {
     target: &'a Target,
+    starttls: Option<crate::starttls::StarttlsProtocol>,
+    starttls_hostname: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,7 +73,35 @@ enum Tls13SupportStatus {
 
 impl<'a> EarlyDataTester<'a> {
     pub fn new(target: &'a Target) -> Self {
-        Self { target }
+        Self {
+            target,
+            starttls: None,
+            starttls_hostname: None,
+        }
+    }
+
+    /// Configure STARTTLS negotiation before each 0-RTT probe.
+    pub fn with_starttls(
+        mut self,
+        protocol: Option<crate::starttls::StarttlsProtocol>,
+        hostname: Option<String>,
+    ) -> Self {
+        self.starttls = protocol;
+        self.starttls_hostname = hostname;
+        self
+    }
+
+    /// Connect, upgrading via STARTTLS first for plaintext-first services.
+    async fn starttls_connect(
+        &self,
+        addr: std::net::SocketAddr,
+        timeout: std::time::Duration,
+    ) -> Result<tokio::net::TcpStream> {
+        let hostname = self
+            .starttls_hostname
+            .clone()
+            .unwrap_or_else(|| self.target.hostname.clone());
+        crate::utils::network::connect_with_starttls(addr, timeout, self.starttls, &hostname).await
     }
 
     /// Test for 0-RTT / Early Data replay vulnerability
@@ -317,8 +347,7 @@ impl<'a> EarlyDataTester<'a> {
             .first()
             .copied()
             .ok_or(crate::TlsError::NoSocketAddresses)?;
-        let stream =
-            crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None).await?;
+        let stream = self.starttls_connect(addr, TLS_HANDSHAKE_TIMEOUT).await?;
         let connector = tokio_rustls::TlsConnector::from(config.clone());
         let request = self.minimal_http_request();
 
@@ -350,13 +379,10 @@ impl<'a> EarlyDataTester<'a> {
         let Some(addr) = self.target.socket_addrs().first().copied() else {
             return EarlyDataSupportStatus::Inconclusive;
         };
-        let stream =
-            match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None)
-                .await
-            {
-                Ok(s) => s,
-                Err(_) => return EarlyDataSupportStatus::Inconclusive,
-            };
+        let stream = match self.starttls_connect(addr, TLS_HANDSHAKE_TIMEOUT).await {
+            Ok(s) => s,
+            Err(_) => return EarlyDataSupportStatus::Inconclusive,
+        };
         let connector = tokio_rustls::TlsConnector::from(config.clone()).early_data(true);
         let request = self.minimal_http_request();
 
@@ -484,13 +510,10 @@ impl<'a> EarlyDataTester<'a> {
             .ok_or(crate::TlsError::NoSocketAddresses)?;
 
         // Connect TCP
-        let stream =
-            match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None)
-                .await
-            {
-                Ok(s) => s,
-                Err(_) => return Ok(Tls13SupportStatus::Inconclusive),
-            };
+        let stream = match self.starttls_connect(addr, TLS_HANDSHAKE_TIMEOUT).await {
+            Ok(s) => s,
+            Err(_) => return Ok(Tls13SupportStatus::Inconclusive),
+        };
 
         // The scanner must determine TLS 1.3 support even on hosts with
         // expired/self-signed/untrusted certificates; certificate validity is

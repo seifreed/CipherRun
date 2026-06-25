@@ -72,6 +72,8 @@ pub struct PaddingOracleTimingResult {
 pub struct PaddingOracle2016Tester<'a> {
     target: &'a Target,
     connect_timeout: Duration,
+    starttls: Option<crate::starttls::StarttlsProtocol>,
+    starttls_hostname: Option<String>,
 }
 
 impl<'a> PaddingOracle2016Tester<'a> {
@@ -80,7 +82,33 @@ impl<'a> PaddingOracle2016Tester<'a> {
         Self {
             target,
             connect_timeout: Duration::from_secs(10),
+            starttls: None,
+            starttls_hostname: None,
         }
+    }
+
+    /// Configure STARTTLS negotiation before the padding-oracle probe.
+    pub fn with_starttls(
+        mut self,
+        protocol: Option<crate::starttls::StarttlsProtocol>,
+        hostname: Option<String>,
+    ) -> Self {
+        self.starttls = protocol;
+        self.starttls_hostname = hostname;
+        self
+    }
+
+    /// Connect, upgrading via STARTTLS first for plaintext-first services.
+    async fn starttls_connect(
+        &self,
+        addr: std::net::SocketAddr,
+        timeout: std::time::Duration,
+    ) -> Result<tokio::net::TcpStream> {
+        let hostname = self
+            .starttls_hostname
+            .clone()
+            .unwrap_or_else(|| self.target.hostname.clone());
+        crate::utils::network::connect_with_starttls(addr, timeout, self.starttls, &hostname).await
     }
 
     /// Test for CVE-2016-2107 Padding Oracle vulnerability
@@ -172,13 +200,10 @@ impl<'a> PaddingOracle2016Tester<'a> {
         // AES-CBC cipher suites (explicitly exclude GCM which is AEAD)
         let aes_cbc_ciphers = "AES128-SHA:AES256-SHA:AES128-SHA256:AES256-SHA256";
 
-        let stream =
-            match crate::utils::network::connect_with_timeout(addr, self.connect_timeout, None)
-                .await
-            {
-                Ok(s) => s,
-                Err(_) => return Ok(CbcSupportStatus::Inconclusive),
-            };
+        let stream = match self.starttls_connect(addr, self.connect_timeout).await {
+            Ok(s) => s,
+            Err(_) => return Ok(CbcSupportStatus::Inconclusive),
+        };
 
         let std_stream =
             crate::utils::network::into_blocking_std_stream(stream, self.connect_timeout)?;

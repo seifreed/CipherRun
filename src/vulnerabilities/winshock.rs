@@ -17,6 +17,8 @@ use tokio::time::timeout;
 /// Winshock vulnerability tester
 pub struct WinshockTester {
     target: Target,
+    starttls: Option<crate::starttls::StarttlsProtocol>,
+    starttls_hostname: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,7 +36,35 @@ enum MalformedHandshakeStatus {
 
 impl WinshockTester {
     pub fn new(target: Target) -> Self {
-        Self { target }
+        Self {
+            target,
+            starttls: None,
+            starttls_hostname: None,
+        }
+    }
+
+    /// Configure STARTTLS negotiation before each Winshock probe.
+    pub fn with_starttls(
+        mut self,
+        protocol: Option<crate::starttls::StarttlsProtocol>,
+        hostname: Option<String>,
+    ) -> Self {
+        self.starttls = protocol;
+        self.starttls_hostname = hostname;
+        self
+    }
+
+    /// Connect, upgrading via STARTTLS first for plaintext-first services.
+    async fn starttls_connect(
+        &self,
+        addr: std::net::SocketAddr,
+        timeout: std::time::Duration,
+    ) -> Result<tokio::net::TcpStream> {
+        let hostname = self
+            .starttls_hostname
+            .clone()
+            .unwrap_or_else(|| self.target.hostname.clone());
+        crate::utils::network::connect_with_starttls(addr, timeout, self.starttls, &hostname).await
     }
 
     /// Test for Winshock vulnerability
@@ -103,13 +133,10 @@ impl WinshockTester {
             .copied()
             .ok_or(crate::TlsError::NoSocketAddresses)?;
 
-        let stream =
-            match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None)
-                .await
-            {
-                Ok(s) => s,
-                Err(_) => return Ok(SchannelDetectionStatus::Inconclusive),
-            };
+        let stream = match self.starttls_connect(addr, TLS_HANDSHAKE_TIMEOUT).await {
+            Ok(s) => s,
+            Err(_) => return Ok(SchannelDetectionStatus::Inconclusive),
+        };
 
         let std_stream = stream.into_std()?;
         std_stream.set_nonblocking(false)?;
@@ -163,13 +190,10 @@ impl WinshockTester {
             .copied()
             .ok_or(crate::TlsError::NoSocketAddresses)?;
 
-        let mut stream =
-            match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None)
-                .await
-            {
-                Ok(s) => s,
-                Err(_) => return Ok(MalformedHandshakeStatus::Inconclusive),
-            };
+        let mut stream = match self.starttls_connect(addr, TLS_HANDSHAKE_TIMEOUT).await {
+            Ok(s) => s,
+            Err(_) => return Ok(MalformedHandshakeStatus::Inconclusive),
+        };
 
         // Send normal ClientHello first
         let client_hello = self.build_client_hello();
