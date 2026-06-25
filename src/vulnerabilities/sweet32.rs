@@ -16,6 +16,7 @@ use crate::utils::network::Target;
 pub struct Sweet32Tester {
     target: Target,
     starttls: Option<crate::starttls::StarttlsProtocol>,
+    starttls_hostname: Option<String>,
     sni_hostname: Option<String>,
 }
 
@@ -48,13 +49,20 @@ impl Sweet32Tester {
         Self {
             target,
             starttls: None,
+            starttls_hostname: None,
             sni_hostname: None,
         }
     }
 
-    /// Configure STARTTLS negotiation before each 3DES cipher probe.
-    pub fn with_starttls(mut self, protocol: Option<crate::starttls::StarttlsProtocol>) -> Self {
+    /// Configure STARTTLS negotiation before each 3DES cipher probe. `hostname`
+    /// is the STARTTLS negotiation hostname (e.g. XMPP `to=` via --xmpphost).
+    pub fn with_starttls(
+        mut self,
+        protocol: Option<crate::starttls::StarttlsProtocol>,
+        hostname: Option<String>,
+    ) -> Self {
         self.starttls = protocol;
+        self.starttls_hostname = hostname;
         self
     }
 
@@ -106,6 +114,7 @@ impl Sweet32Tester {
                 SWEET32_PROBE_PROTOCOLS,
                 self.starttls,
                 self.sni_hostname.as_deref(),
+                self.starttls_hostname.as_deref(),
             )
             .await
             {

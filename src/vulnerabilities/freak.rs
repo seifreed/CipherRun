@@ -14,6 +14,7 @@ use crate::utils::network::Target;
 pub struct FreakTester {
     target: Target,
     starttls: Option<crate::starttls::StarttlsProtocol>,
+    starttls_hostname: Option<String>,
     sni_hostname: Option<String>,
 }
 
@@ -42,13 +43,20 @@ impl FreakTester {
         Self {
             target,
             starttls: None,
+            starttls_hostname: None,
             sni_hostname: None,
         }
     }
 
     /// Configure STARTTLS negotiation before each export-RSA cipher probe.
-    pub fn with_starttls(mut self, protocol: Option<crate::starttls::StarttlsProtocol>) -> Self {
+    /// `hostname` is the STARTTLS negotiation hostname (e.g. XMPP `to=`).
+    pub fn with_starttls(
+        mut self,
+        protocol: Option<crate::starttls::StarttlsProtocol>,
+        hostname: Option<String>,
+    ) -> Self {
         self.starttls = protocol;
+        self.starttls_hostname = hostname;
         self
     }
 
@@ -100,6 +108,7 @@ impl FreakTester {
                 FREAK_PROBE_PROTOCOLS,
                 self.starttls,
                 self.sni_hostname.as_deref(),
+                self.starttls_hostname.as_deref(),
             )
             .await
             {

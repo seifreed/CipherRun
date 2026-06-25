@@ -55,10 +55,20 @@ pub(crate) async fn probe_cipher_suite(
     protocols: &[Protocol],
     starttls: Option<crate::starttls::StarttlsProtocol>,
     sni_override: Option<&str>,
+    starttls_hostname: Option<&str>,
 ) -> CipherProbeStatus {
     let mut saw_inconclusive = false;
     for &protocol in protocols {
-        match probe_cipher_at_protocol(target, hexcode, protocol, starttls, sni_override).await {
+        match probe_cipher_at_protocol(
+            target,
+            hexcode,
+            protocol,
+            starttls,
+            sni_override,
+            starttls_hostname,
+        )
+        .await
+        {
             CipherProbeStatus::Supported => return CipherProbeStatus::Supported,
             CipherProbeStatus::NotSupported => {}
             CipherProbeStatus::Inconclusive => saw_inconclusive = true,
@@ -88,11 +98,21 @@ pub(crate) async fn probe_supported_suites(
     protocols: &[Protocol],
     starttls: Option<crate::starttls::StarttlsProtocol>,
     sni_override: Option<&str>,
+    starttls_hostname: Option<&str>,
 ) -> (Vec<String>, bool) {
     let mut supported = Vec::new();
     let mut inconclusive = false;
     for (hexcode, name) in suites {
-        match probe_cipher_suite(target, *hexcode, protocols, starttls, sni_override).await {
+        match probe_cipher_suite(
+            target,
+            *hexcode,
+            protocols,
+            starttls,
+            sni_override,
+            starttls_hostname,
+        )
+        .await
+        {
             CipherProbeStatus::Supported => supported.push((*name).to_string()),
             CipherProbeStatus::NotSupported => {}
             CipherProbeStatus::Inconclusive => inconclusive = true,
@@ -108,16 +128,20 @@ async fn probe_cipher_at_protocol(
     protocol: Protocol,
     starttls: Option<crate::starttls::StarttlsProtocol>,
     sni_override: Option<&str>,
+    starttls_hostname: Option<&str>,
 ) -> CipherProbeStatus {
     let Some(addr) = target.socket_addrs().first().copied() else {
         return CipherProbeStatus::Inconclusive;
     };
 
+    // STARTTLS negotiation hostname (e.g. XMPP stream `to=`, SMTP EHLO): honor
+    // the explicit override (--xmpphost) when set, else the target hostname.
+    let starttls_host = starttls_hostname.unwrap_or(target.hostname.as_str());
     let mut stream = match crate::utils::network::connect_with_starttls(
         addr,
         PROBE_CONNECT_TIMEOUT,
         starttls,
-        &target.hostname,
+        starttls_host,
     )
     .await
     {

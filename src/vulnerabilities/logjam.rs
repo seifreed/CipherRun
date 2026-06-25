@@ -174,6 +174,7 @@ impl LogjamTester {
                 EXPORT_DH_PROBE_PROTOCOLS,
                 self.starttls,
                 self.sni_hostname.as_deref(),
+                self.starttls_hostname.as_deref(),
             )
             .await
             {
