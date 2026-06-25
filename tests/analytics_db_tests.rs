@@ -245,6 +245,19 @@ async fn link_certificate(db: &CipherRunDatabase, scan_id: i64, cert_id: i64, ch
         .expect("test assertion should succeed");
 }
 
+async fn corrupt_certificate_not_after(db: &CipherRunDatabase, cert_id: i64) {
+    db.pool()
+        .execute(
+            "UPDATE certificates SET not_after = ? WHERE cert_id = ?",
+            vec![
+                BindValue::String("not-a-timestamp".to_string()),
+                BindValue::Int64(cert_id),
+            ],
+        )
+        .await
+        .expect("test assertion should succeed");
+}
+
 #[tokio::test]
 async fn test_scan_comparator_compare_scans() {
     let db = setup_db().await;
@@ -368,6 +381,62 @@ async fn test_scan_comparator_compare_scans() {
         .format_comparison(&comparison, "terminal")
         .expect("test assertion should succeed");
     assert!(terminal_output.contains("SCAN COMPARISON"));
+}
+
+#[tokio::test]
+async fn test_scan_comparator_rejects_invalid_certificate_row() {
+    let db = setup_db().await;
+    let now = Utc::now();
+    let scan1 = insert_scan(
+        &db,
+        "corrupt-cert.test",
+        443,
+        now - Duration::days(2),
+        Some("A"),
+        Some(90),
+    )
+    .await;
+    let scan2 = insert_scan(
+        &db,
+        "corrupt-cert.test",
+        443,
+        now - Duration::days(1),
+        Some("A"),
+        Some(90),
+    )
+    .await;
+
+    let cert1 = insert_certificate(
+        &db,
+        "corrupt_fp1",
+        "CN=corrupt-cert.test",
+        "CN=CA",
+        now - Duration::days(90),
+        now + Duration::days(365),
+        Some(2048),
+    )
+    .await;
+    let cert2 = insert_certificate(
+        &db,
+        "corrupt_fp2",
+        "CN=corrupt-cert.test",
+        "CN=CA",
+        now - Duration::days(90),
+        now + Duration::days(365),
+        Some(2048),
+    )
+    .await;
+    link_certificate(&db, scan1, cert1, 0).await;
+    link_certificate(&db, scan2, cert2, 0).await;
+    corrupt_certificate_not_after(&db, cert2).await;
+
+    let comparator = ScanComparator::new(Arc::clone(&db));
+    let err = comparator
+        .compare_scans(scan1, scan2)
+        .await
+        .expect_err("invalid certificate timestamp should fail comparison");
+
+    assert!(err.to_string().contains("Invalid certificate field not_after"));
 }
 
 #[tokio::test]
@@ -1036,6 +1105,62 @@ async fn test_change_tracker_detect_changes_and_report() {
 
     let report = tracker.generate_change_report(&changes);
     assert!(report.contains("Change Report"));
+}
+
+#[tokio::test]
+async fn test_change_tracker_rejects_invalid_certificate_row() {
+    let db = setup_db().await;
+    let now = Utc::now();
+    let scan1 = insert_scan(
+        &db,
+        "corrupt-tracker.test",
+        443,
+        now - Duration::days(2),
+        Some("A"),
+        Some(90),
+    )
+    .await;
+    let scan2 = insert_scan(
+        &db,
+        "corrupt-tracker.test",
+        443,
+        now - Duration::days(1),
+        Some("A"),
+        Some(90),
+    )
+    .await;
+
+    let cert1 = insert_certificate(
+        &db,
+        "tracker_corrupt_fp1",
+        "CN=corrupt-tracker.test",
+        "CN=CA",
+        now - Duration::days(90),
+        now + Duration::days(365),
+        Some(2048),
+    )
+    .await;
+    let cert2 = insert_certificate(
+        &db,
+        "tracker_corrupt_fp2",
+        "CN=corrupt-tracker.test",
+        "CN=CA",
+        now - Duration::days(90),
+        now + Duration::days(365),
+        Some(2048),
+    )
+    .await;
+    link_certificate(&db, scan1, cert1, 0).await;
+    link_certificate(&db, scan2, cert2, 0).await;
+    corrupt_certificate_not_after(&db, cert2).await;
+
+    let tracker = ChangeTracker::new(Arc::clone(&db));
+    let err = tracker
+        .detect_changes_between(scan1, scan2)
+        .await
+        .expect_err("invalid certificate timestamp should fail change tracking");
+
+    assert!(err.to_string().contains("Invalid certificate field not_after"));
 }
 
 #[tokio::test]

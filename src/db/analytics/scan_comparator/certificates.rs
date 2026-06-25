@@ -108,6 +108,49 @@ impl ScanComparator {
                 .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to fetch certificate: {}", e)))?;
 
                 if let Some(row) = row {
+                    let fingerprint_sha256 = row.try_get("fingerprint_sha256").map_err(|e| {
+                        crate::TlsError::DatabaseError(format!(
+                            "Invalid certificate field fingerprint_sha256: {}",
+                            e
+                        ))
+                    })?;
+                    let subject = row.try_get("subject").map_err(|e| {
+                        crate::TlsError::DatabaseError(format!(
+                            "Invalid certificate field subject: {}",
+                            e
+                        ))
+                    })?;
+                    let issuer = row.try_get("issuer").map_err(|e| {
+                        crate::TlsError::DatabaseError(format!(
+                            "Invalid certificate field issuer: {}",
+                            e
+                        ))
+                    })?;
+                    let not_before = row.try_get("not_before").map_err(|e| {
+                        crate::TlsError::DatabaseError(format!(
+                            "Invalid certificate field not_before: {}",
+                            e
+                        ))
+                    })?;
+                    let not_after = row.try_get("not_after").map_err(|e| {
+                        crate::TlsError::DatabaseError(format!(
+                            "Invalid certificate field not_after: {}",
+                            e
+                        ))
+                    })?;
+                    let is_ca = row.try_get("is_ca").map_err(|e| {
+                        crate::TlsError::DatabaseError(format!(
+                            "Invalid certificate field is_ca: {}",
+                            e
+                        ))
+                    })?;
+                    let created_at = row.try_get("created_at").map_err(|e| {
+                        crate::TlsError::DatabaseError(format!(
+                            "Invalid certificate field created_at: {}",
+                            e
+                        ))
+                    })?;
+
                     let san_json: Option<String> = row.try_get("san_domains").ok();
                     let san_domains = CertificateRecord::parse_json_text_array(
                         san_json.as_deref(),
@@ -129,27 +172,21 @@ impl ScanComparator {
 
                     Ok(Some(CertificateRecord {
                         cert_id: row.try_get("cert_id").ok(),
-                        fingerprint_sha256: row.try_get("fingerprint_sha256").unwrap_or_default(),
-                        subject: row.try_get("subject").unwrap_or_default(),
-                        issuer: row.try_get("issuer").unwrap_or_default(),
+                        fingerprint_sha256,
+                        subject,
+                        issuer,
                         serial_number: row.try_get("serial_number").ok(),
-                        not_before: row
-                            .try_get("not_before")
-                            .unwrap_or_else(|_| chrono::Utc::now()),
-                        not_after: row
-                            .try_get("not_after")
-                            .unwrap_or_else(|_| chrono::Utc::now()),
+                        not_before,
+                        not_after,
                         signature_algorithm: row.try_get("signature_algorithm").ok(),
                         public_key_algorithm: row.try_get("public_key_algorithm").ok(),
                         public_key_size: row.try_get("public_key_size").ok(),
                         san_domains,
-                        is_ca: row.try_get("is_ca").unwrap_or(false),
+                        is_ca,
                         key_usage,
                         extended_key_usage,
                         der_bytes: row.try_get("der_bytes").ok(),
-                        created_at: row
-                            .try_get("created_at")
-                            .unwrap_or_else(|_| chrono::Utc::now()),
+                        created_at,
                     }))
                 } else {
                     Ok(None)
