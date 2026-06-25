@@ -62,7 +62,9 @@ fn inventory_query_from_api(
     })
 }
 
-fn present_inventory_record(record: CertificateInventoryRecord) -> CertificateSummary {
+fn present_inventory_record(
+    record: CertificateInventoryRecord,
+) -> Result<CertificateSummary, ApiError> {
     crate::api::presenters::certificates::present_certificate_summary(
         crate::api::presenters::certificates::CertificateView {
             fingerprint: record.fingerprint,
@@ -74,6 +76,7 @@ fn present_inventory_record(record: CertificateInventoryRecord) -> CertificateSu
             hostnames: record.hostnames,
         },
     )
+    .map_err(|e| ApiError::Internal(e.to_string()))
 }
 
 /// List certificates
@@ -110,7 +113,7 @@ pub async fn list_certificates(
             .certificates
             .into_iter()
             .map(present_inventory_record)
-            .collect(),
+            .collect::<Result<Vec<_>, _>>()?,
     )))
 }
 
@@ -141,7 +144,7 @@ pub async fn get_certificate(
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("Certificate {} not found", fingerprint)))?;
 
-    Ok(Json(present_inventory_record(cert)))
+    Ok(Json(present_inventory_record(cert)?))
 }
 
 #[cfg(test)]
@@ -163,7 +166,8 @@ mod tests {
             not_after: Utc::now(),
             san_json: None,
             hostnames: Vec::new(),
-        });
+        })
+        .expect("empty SAN should present");
         assert_eq!(summary.common_name, "example.com");
     }
 
@@ -178,7 +182,8 @@ mod tests {
             not_after: Utc::now(),
             san_json: None,
             hostnames: Vec::new(),
-        });
+        })
+        .expect("empty SAN should present");
         assert_eq!(summary.common_name, subject);
     }
 

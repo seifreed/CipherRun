@@ -13,15 +13,15 @@ pub struct CertificateView {
     pub hostnames: Vec<String>,
 }
 
-pub fn present_certificate_summary(view: CertificateView) -> CertificateSummary {
+pub fn present_certificate_summary(view: CertificateView) -> crate::Result<CertificateSummary> {
     let now = Utc::now();
     let days_until_expiry = signed_days_until_expiry(view.not_after, now);
     let is_expired = view.not_after < now;
 
-    CertificateSummary {
+    Ok(CertificateSummary {
         fingerprint: view.fingerprint,
         common_name: extract_cn_from_subject(&view.subject),
-        san: parse_san(view.san_json.as_deref()),
+        san: parse_san(view.san_json.as_deref())?,
         issuer: view.issuer,
         valid_from: view.not_before,
         valid_until: view.not_after,
@@ -29,7 +29,7 @@ pub fn present_certificate_summary(view: CertificateView) -> CertificateSummary 
         is_expired,
         is_expiring_soon: !is_expired && (0..30).contains(&days_until_expiry),
         hostnames: view.hostnames,
-    }
+    })
 }
 
 fn signed_days_until_expiry(not_after: DateTime<Utc>, now: DateTime<Utc>) -> i64 {
@@ -57,10 +57,13 @@ pub fn present_certificate_list(
     }
 }
 
-fn parse_san(san_json: Option<&str>) -> Vec<String> {
-    san_json
-        .and_then(|json| serde_json::from_str(json).ok())
-        .unwrap_or_default()
+fn parse_san(san_json: Option<&str>) -> crate::Result<Vec<String>> {
+    match san_json {
+        Some(json) => serde_json::from_str(json).map_err(|e| {
+            crate::TlsError::DatabaseError(format!("Invalid JSON in san_domains: {}", e))
+        }),
+        None => Ok(Vec::new()),
+    }
 }
 
 fn extract_cn_from_subject(subject: &str) -> String {
@@ -89,7 +92,8 @@ mod tests {
             not_after: now + chrono::Duration::days(10),
             san_json: Some("[\"example.com\",\"www.example.com\"]".to_string()),
             hostnames: vec!["example.com".to_string()],
-        });
+        })
+        .expect("valid SAN JSON should present");
 
         assert_eq!(summary.common_name, "example.com");
         assert_eq!(summary.san.len(), 2);
@@ -107,7 +111,8 @@ mod tests {
             not_after: now + chrono::Duration::days(10),
             san_json: None,
             hostnames: Vec::new(),
-        });
+        })
+        .expect("empty SAN should present");
 
         assert_eq!(summary.common_name, "spaced.example.com");
     }
@@ -121,9 +126,9 @@ mod tests {
     }
 
     #[test]
-    fn summary_handles_invalid_san_json_gracefully() {
+    fn summary_rejects_invalid_san_json() {
         let now = Utc::now();
-        let summary = present_certificate_summary(CertificateView {
+        let err = present_certificate_summary(CertificateView {
             fingerprint: "fp".to_string(),
             subject: "CN=example.com".to_string(),
             issuer: "Example CA".to_string(),
@@ -131,9 +136,10 @@ mod tests {
             not_after: now + chrono::Duration::days(90),
             san_json: Some("not-json".to_string()),
             hostnames: Vec::new(),
-        });
+        })
+        .expect_err("invalid SAN JSON should fail");
 
-        assert!(summary.san.is_empty());
+        assert!(err.to_string().contains("Invalid JSON in san_domains"));
     }
 
     #[test]
@@ -147,7 +153,8 @@ mod tests {
             not_after: now - chrono::Duration::days(1),
             san_json: Some("[]".to_string()),
             hostnames: vec!["expired.example".to_string()],
-        });
+        })
+        .expect("valid SAN JSON should present");
 
         assert!(summary.is_expired);
         assert!(!summary.is_expiring_soon);
@@ -165,7 +172,8 @@ mod tests {
             not_after: now - chrono::Duration::hours(1),
             san_json: Some("[]".to_string()),
             hostnames: vec!["recently-expired.example".to_string()],
-        });
+        })
+        .expect("valid SAN JSON should present");
 
         assert!(summary.is_expired);
         assert!(!summary.is_expiring_soon);
@@ -184,7 +192,8 @@ mod tests {
             not_after: now + chrono::Duration::days(120),
             san_json: None,
             hostnames: Vec::new(),
-        });
+        })
+        .expect("empty SAN should present");
 
         assert_eq!(summary.common_name, subject);
     }
@@ -200,7 +209,8 @@ mod tests {
             not_after: now + chrono::Duration::days(120),
             san_json: Some("[\"example.com\"]".to_string()),
             hostnames: vec!["".to_string(), "example.com".to_string()],
-        });
+        })
+        .expect("valid SAN JSON should present");
 
         assert_eq!(summary.hostnames.len(), 2);
         assert_eq!(summary.hostnames[0], "");
