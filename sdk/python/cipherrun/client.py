@@ -338,7 +338,8 @@ class CipherRunClient:
             >>> report = client.check_compliance("pci-dss-v4", "example.com:443")
             >>> print(report.status)
         """
-        response = self._make_request("GET", f"/api/v1/compliance/{framework}")
+        params = {"target": target, "detailed": detailed, "format": "json"}
+        response = self._make_request("GET", f"/api/v1/compliance/{framework}", params=params)
         return ComplianceReport(**response.json())
 
     def create_policy(
