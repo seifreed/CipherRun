@@ -45,8 +45,9 @@ async fn run_sqlite_migrations_manual(
     pool: &sqlx::SqlitePool,
     migrations_path: &Path,
 ) -> crate::Result<()> {
-    // Note: Foreign keys are disabled by default in SQLite and are not enforced in these tests
-    // In production, they would need to be explicitly enabled if desired
+    // sqlx's SqliteConnectOptions enables `PRAGMA foreign_keys` by default, so the
+    // schema's `ON DELETE CASCADE` constraints are enforced on this connection —
+    // the partial-scan rollback in `store_scan` (delete_scan) relies on that cascade.
 
     // Create _sqlx_migrations table if it doesn't exist
     sqlx::query(

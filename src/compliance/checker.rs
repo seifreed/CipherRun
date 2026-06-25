@@ -388,8 +388,7 @@ impl ComplianceChecker {
             && let Some(cert_analysis) = &results.certificate_chain
             && let Some(leaf_cert) = cert_analysis.chain.leaf()
         {
-            // Parse expiration date and calculate days remaining
-            // This is a simplified check - in production, parse the actual date
+            // Parse the certificate's not_after date and compute days remaining.
             if let Some(not_after) = parse_cert_date(&leaf_cert.not_after) {
                 let now = Utc::now();
                 let days_until_expiry = (not_after - now).num_days();
