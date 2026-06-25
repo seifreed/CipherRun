@@ -5,7 +5,7 @@ This module provides the main synchronous client for the CipherRun API.
 
 import time
 from typing import Optional, List, Dict, Any, Iterator
-from urllib.parse import urljoin
+from urllib.parse import quote, urljoin
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -441,8 +441,8 @@ class CipherRunClient:
             >>> history = client.get_scan_history("example.com")
             >>> print(f"Total scans: {history.total_scans}")
         """
-        params = {"hostname": hostname, "port": port, "limit": limit}
-        response = self._make_request("GET", "/api/v1/history", params=params)
+        params = {"port": port, "limit": limit}
+        response = self._make_request("GET", f"/api/v1/history/{quote(hostname, safe='')}", params=params)
         return ScanHistoryResponse(**response.json())
 
     def get_api_stats(self) -> StatsResponse:

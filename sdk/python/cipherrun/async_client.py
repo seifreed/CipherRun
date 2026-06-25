@@ -5,7 +5,7 @@ This module provides an async client for the CipherRun API using aiohttp.
 
 import asyncio
 from typing import Optional, Dict, Any
-from urllib.parse import urljoin
+from urllib.parse import quote, urljoin
 
 import aiohttp
 from aiohttp import ClientTimeout
@@ -452,8 +452,8 @@ class AsyncCipherRunClient:
             >>> history = await client.get_scan_history("example.com")
             >>> print(f"Total scans: {history.total_scans}")
         """
-        params = {"hostname": hostname, "port": port, "limit": limit}
-        data = await self._make_request("GET", "/api/v1/history", params=params)
+        params = {"port": port, "limit": limit}
+        data = await self._make_request("GET", f"/api/v1/history/{quote(hostname, safe='')}", params=params)
         return ScanHistoryResponse(**data)
 
     async def get_api_stats(self) -> StatsResponse:
