@@ -49,10 +49,9 @@ async fn fetch_history_postgres(
     .await
     .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to query scan history: {}", e)))?;
 
-    Ok(rows
-        .into_iter()
+    rows.into_iter()
         .map(scan_history_entry_from_pg_row)
-        .collect())
+        .collect()
 }
 
 async fn fetch_history_sqlite(
@@ -75,62 +74,105 @@ async fn fetch_history_sqlite(
     .await
     .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to query scan history: {}", e)))?;
 
-    Ok(rows
-        .into_iter()
+    rows.into_iter()
         .map(scan_history_entry_from_sqlite_row)
-        .collect())
+        .collect()
 }
 
-fn scan_history_entry_from_pg_row(row: PgRow) -> ScanHistoryEntry {
-    ScanHistoryEntry {
-        scan_id: {
-            let id = row.get::<i64, _>("scan_id");
-            if id < 0 {
-                tracing::error!(
-                    "Corrupt negative scan_id {} in database, using absolute value",
-                    id
-                );
-            }
-            id.unsigned_abs()
-        },
-        timestamp: row.get("scan_timestamp"),
-        grade: row.get("overall_grade"),
-        score: row.get::<Option<i32>, _>("overall_score").map(|score| {
-            if !(0..=100).contains(&score) {
-                tracing::warn!("Score {} out of valid range [0,100], clamping", score);
-            }
-            score.clamp(0, 100) as u8
-        }),
-        duration_ms: row
-            .get::<Option<i64>, _>("scan_duration_ms")
-            .map(|d| d.max(0) as u64),
-    }
+fn scan_history_field_error(field: &str, error: impl std::fmt::Display) -> crate::TlsError {
+    crate::TlsError::DatabaseError(format!("Invalid scan history field {}: {}", field, error))
 }
 
-fn scan_history_entry_from_sqlite_row(row: SqliteRow) -> ScanHistoryEntry {
-    ScanHistoryEntry {
-        scan_id: {
-            let id = row.get::<i64, _>("scan_id");
-            if id < 0 {
-                tracing::error!(
-                    "Corrupt negative scan_id {} in database, using absolute value",
-                    id
-                );
-            }
-            id.unsigned_abs()
-        },
-        timestamp: row.get("scan_timestamp"),
-        grade: row.get("overall_grade"),
-        score: row.get::<Option<i32>, _>("overall_score").map(|score| {
-            if !(0..=100).contains(&score) {
-                tracing::warn!("Score {} out of valid range [0,100], clamping", score);
-            }
-            score.clamp(0, 100) as u8
-        }),
-        duration_ms: row
-            .get::<Option<i64>, _>("scan_duration_ms")
-            .map(|d| d.max(0) as u64),
+fn normalize_scan_id(id: i64) -> crate::Result<u64> {
+    if id < 0 {
+        return Err(crate::TlsError::DatabaseError(format!(
+            "Invalid scan history field scan_id: negative value {}",
+            id
+        )));
     }
+    Ok(id as u64)
+}
+
+fn normalize_score(score: i32) -> crate::Result<u8> {
+    if !(0..=100).contains(&score) {
+        return Err(crate::TlsError::DatabaseError(format!(
+            "Invalid scan history field overall_score: out of range {}",
+            score
+        )));
+    }
+    Ok(score as u8)
+}
+
+fn normalize_duration(duration_ms: i64) -> crate::Result<u64> {
+    if duration_ms < 0 {
+        return Err(crate::TlsError::DatabaseError(format!(
+            "Invalid scan history field scan_duration_ms: negative value {}",
+            duration_ms
+        )));
+    }
+    Ok(duration_ms as u64)
+}
+
+fn scan_history_entry_from_pg_row(row: PgRow) -> crate::Result<ScanHistoryEntry> {
+    let scan_id = row
+        .try_get("scan_id")
+        .map_err(|e| scan_history_field_error("scan_id", e))
+        .and_then(normalize_scan_id)?;
+    let timestamp = row
+        .try_get("scan_timestamp")
+        .map_err(|e| scan_history_field_error("scan_timestamp", e))?;
+    let grade = row
+        .try_get("overall_grade")
+        .map_err(|e| scan_history_field_error("overall_grade", e))?;
+    let score = row
+        .try_get::<Option<i32>, _>("overall_score")
+        .map_err(|e| scan_history_field_error("overall_score", e))?
+        .map(normalize_score)
+        .transpose()?;
+    let duration_ms = row
+        .try_get::<Option<i64>, _>("scan_duration_ms")
+        .map_err(|e| scan_history_field_error("scan_duration_ms", e))?
+        .map(normalize_duration)
+        .transpose()?;
+
+    Ok(ScanHistoryEntry {
+        scan_id,
+        timestamp,
+        grade,
+        score,
+        duration_ms,
+    })
+}
+
+fn scan_history_entry_from_sqlite_row(row: SqliteRow) -> crate::Result<ScanHistoryEntry> {
+    let scan_id = row
+        .try_get("scan_id")
+        .map_err(|e| scan_history_field_error("scan_id", e))
+        .and_then(normalize_scan_id)?;
+    let timestamp = row
+        .try_get("scan_timestamp")
+        .map_err(|e| scan_history_field_error("scan_timestamp", e))?;
+    let grade = row
+        .try_get("overall_grade")
+        .map_err(|e| scan_history_field_error("overall_grade", e))?;
+    let score = row
+        .try_get::<Option<i32>, _>("overall_score")
+        .map_err(|e| scan_history_field_error("overall_score", e))?
+        .map(normalize_score)
+        .transpose()?;
+    let duration_ms = row
+        .try_get::<Option<i64>, _>("scan_duration_ms")
+        .map_err(|e| scan_history_field_error("scan_duration_ms", e))?
+        .map(normalize_duration)
+        .transpose()?;
+
+    Ok(ScanHistoryEntry {
+        scan_id,
+        timestamp,
+        grade,
+        score,
+        duration_ms,
+    })
 }
 
 #[cfg(test)]
@@ -198,5 +240,50 @@ mod tests {
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].grade.as_deref(), Some("A"));
         assert_eq!(entries[1].grade.as_deref(), Some("B"));
+    }
+
+    #[tokio::test]
+    async fn sqlite_scan_history_rejects_invalid_timestamp() {
+        let config = DatabaseConfig::sqlite(PathBuf::from(":memory:"));
+        let pool = DatabasePool::new(&config)
+            .await
+            .expect("pool should be created");
+        run_migrations(&pool).await.expect("migrations should run");
+
+        let DatabasePool::Sqlite(sqlite) = &pool else {
+            panic!("expected sqlite pool");
+        };
+
+        sqlx::query(
+            r#"
+            INSERT INTO scans (
+                target_hostname, target_port, scan_timestamp, overall_grade, overall_score, scan_duration_ms
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind("invalid-history.test")
+        .bind(443_i32)
+        .bind("not-a-timestamp")
+        .bind("A")
+        .bind(95_i32)
+        .bind(1200_i64)
+        .execute(sqlite)
+        .await
+        .expect("row should insert");
+
+        let service = ScanHistoryService::new(&pool);
+        let err = service
+            .get_history(&ScanHistoryQuery {
+                hostname: "invalid-history.test".to_string(),
+                port: 443,
+                limit: 10,
+            })
+            .await
+            .expect_err("invalid scan timestamp should fail history loading");
+
+        assert!(
+            err.to_string()
+                .contains("Invalid scan history field scan_timestamp")
+        );
     }
 }
