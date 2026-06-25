@@ -330,6 +330,37 @@ fn test_hsts_preload_missing_only_from_safari_is_reported() {
 }
 
 #[test]
+fn test_hsts_preload_check_error_is_reported() {
+    use crate::http::hsts_preload::{PreloadSource, PreloadStatus};
+
+    let mut headers = HashMap::new();
+    headers.insert(
+        "Strict-Transport-Security".to_string(),
+        "max-age=31536000; includeSubDomains; preload".to_string(),
+    );
+
+    let status = PreloadStatus {
+        in_chrome: false,
+        in_firefox: false,
+        in_edge: false,
+        in_safari: false,
+        chromium_status: Some("unknown".to_string()),
+        source: PreloadSource::Error("cache lock failed".to_string()),
+    };
+
+    let mut issues = Vec::new();
+    SecurityHeaderChecker::check_hsts(&headers, &mut issues, Some(status));
+
+    assert!(issues.iter().any(|issue| {
+        issue.header_name == "Strict-Transport-Security"
+            && matches!(issue.issue_type, IssueType::Invalid)
+            && issue
+                .description
+                .contains("HSTS preload status check failed")
+    }));
+}
+
+#[test]
 fn test_hsts_directives_match_exact_tokens() {
     let mut headers = HashMap::new();
     headers.insert(

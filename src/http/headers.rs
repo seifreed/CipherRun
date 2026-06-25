@@ -1,6 +1,6 @@
 // HTTP Security Headers Checker - Validate security headers
 
-use super::hsts_preload::PreloadStatus;
+use super::hsts_preload::{PreloadSource, PreloadStatus};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -95,7 +95,17 @@ impl SecurityHeaderChecker {
 
         // Only check preload status if preload directive is present
         let preload_status = if has_preload {
-            checker.check_preload_status(domain).await.ok()
+            match checker.check_preload_status(domain).await {
+                Ok(status) => Some(status),
+                Err(error) => Some(PreloadStatus {
+                    in_chrome: false,
+                    in_firefox: false,
+                    in_edge: false,
+                    in_safari: false,
+                    chromium_status: Some("unknown".to_string()),
+                    source: PreloadSource::Error(error),
+                }),
+            }
         } else {
             None
         };
@@ -202,15 +212,22 @@ impl SecurityHeaderChecker {
                 });
             } else if let Some(status) = &preload_status {
                 // Preload directive is present, check if actually preloaded
-                use super::hsts_preload::PreloadSource;
-
                 // Include Safari in the trigger so it matches the browsers_missing
                 // list and severity count below; otherwise a domain missing only
                 // from Safari would be reported nowhere yet inflate severity elsewhere.
                 let not_in_browsers =
                     !status.in_chrome || !status.in_firefox || !status.in_edge || !status.in_safari;
 
-                if not_in_browsers && !matches!(status.source, PreloadSource::Error(_)) {
+                if let PreloadSource::Error(error) = &status.source {
+                    issues.push(HeaderIssue {
+                        header_name: "Strict-Transport-Security".to_string(),
+                        severity: IssueSeverity::Info,
+                        issue_type: IssueType::Invalid,
+                        description: format!("HSTS preload status check failed: {}", error),
+                        recommendation: "Retry preload verification later".to_string(),
+                        preload_status: Some(status.clone()),
+                    });
+                } else if not_in_browsers {
                     let mut browsers_missing = Vec::new();
                     if !status.in_chrome {
                         browsers_missing.push("Chrome");
