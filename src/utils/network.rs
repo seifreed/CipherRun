@@ -448,7 +448,10 @@ async fn connect_once(
 
     timeout(effective_timeout, TcpStream::connect(addr))
         .await
-        .map_err(|e| TlsError::Other(format!("Connection timeout: {e}")))?
+        .map_err(|_| TlsError::ConnectionTimeout {
+            duration: effective_timeout,
+            addr,
+        })?
         .map_err(Into::into)
 }
 
