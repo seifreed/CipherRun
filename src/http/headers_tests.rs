@@ -105,9 +105,24 @@ fn test_x_content_type_options_invalid() {
 }
 
 #[test]
-fn test_x_xss_protection_disabled() {
+fn test_x_xss_protection_zero_is_not_flagged_insecure() {
+    // X-XSS-Protection: 0 is the OWASP-recommended value (disable the removed,
+    // XS-Leak-prone legacy auditor and rely on CSP); it must not be flagged.
     let mut headers = HashMap::new();
     headers.insert("X-XSS-Protection".to_string(), "0".to_string());
+
+    let issues = SecurityHeaderChecker::check_all_headers(&headers);
+    assert!(!issues.iter().any(|i| {
+        i.header_name == "X-XSS-Protection" && matches!(i.issue_type, IssueType::Insecure)
+    }));
+}
+
+#[test]
+fn test_x_xss_protection_enabling_value_is_flagged() {
+    // Enabling the legacy auditor (1; mode=block) is the weak setting under
+    // current guidance.
+    let mut headers = HashMap::new();
+    headers.insert("X-XSS-Protection".to_string(), "1; mode=block".to_string());
 
     let issues = SecurityHeaderChecker::check_all_headers(&headers);
     assert!(issues.iter().any(|i| {

@@ -387,14 +387,23 @@ impl SecurityHeaderChecker {
 
         if let Some((_, value)) = key {
             let value_lower = value.trim().to_lowercase();
-            if value_lower.starts_with('0') {
+            // Current guidance (OWASP Secure Headers, browser vendors) is the
+            // OPPOSITE of the old advice: the legacy XSS auditor was removed from
+            // Chrome/Edge and never existed in Firefox, and enabling it
+            // (`1; mode=block`) can introduce XS-Leaks. `X-XSS-Protection: 0`
+            // (disable, rely on CSP) is the recommended value — so an *enabling*
+            // value is the weak setting, not `0`.
+            if !value_lower.starts_with('0') {
                 issues.push(HeaderIssue {
                     header_name: "X-XSS-Protection".to_string(),
                     severity: IssueSeverity::Low,
                     issue_type: IssueType::Insecure,
-                    description: "X-XSS-Protection is disabled".to_string(),
+                    description:
+                        "X-XSS-Protection enables the legacy XSS auditor (removed from modern \
+                         browsers; can introduce XS-Leaks)"
+                            .to_string(),
                     recommendation:
-                        "Enable with '1; mode=block' or remove (deprecated, use CSP instead)"
+                        "Set 'X-XSS-Protection: 0' and rely on Content-Security-Policy instead"
                             .to_string(),
                     preload_status: None,
                 });
