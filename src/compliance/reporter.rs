@@ -198,7 +198,7 @@ impl Reporter {
                 .join("; ");
 
             csv.push_str(&format!(
-                "\"{}\",\"{}\",\"{}\",{:?},{},{},\"{}\"\n",
+                "\"{}\",\"{}\",\"{}\",{:?},{},\"{}\",\"{}\"\n",
                 req.requirement_id.replace('"', "\"\""),
                 req.name.replace('"', "\"\""),
                 req.category.replace('"', "\"\""),

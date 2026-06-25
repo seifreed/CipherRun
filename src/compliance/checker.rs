@@ -361,8 +361,13 @@ impl ComplianceChecker {
                 });
             }
         } else {
-            // No certificate analysis available
-            if rule.require_valid_chain.unwrap_or(false) {
+            // No certificate analysis available: any certificate requirement is
+            // unsatisfiable, so a missing measurement must fail closed rather than
+            // silently pass.
+            let requires_certificate = rule.require_valid_chain.unwrap_or(false)
+                || rule.require_unexpired.unwrap_or(false)
+                || rule.require_hostname_match.unwrap_or(false);
+            if requires_certificate {
                 violations.push(Violation {
                     violation_type: "Missing Certificate".to_string(),
                     description: "No certificate information available".to_string(),
