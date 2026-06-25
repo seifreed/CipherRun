@@ -205,9 +205,9 @@ pub fn parse_hpkp(headers: &HashMap<String, String>) -> HpkpAnalysis {
             } else if part.eq_ignore_ascii_case("includesubdomains") {
                 include_subdomains = true;
             } else if let Some(value) = directive_value(part, "report-uri") {
-                report_uri = Some(value.trim_matches('"').to_string());
+                report_uri = Some(value.to_string());
             } else if let Some(value) = directive_value(part, "pin-sha256") {
-                pins.push(value.trim_matches('"').to_string());
+                pins.push(value.to_string());
             }
         }
 
@@ -499,7 +499,12 @@ fn has_header(headers: &HashMap<String, String>, name: &str) -> bool {
 fn directive_value<'a>(part: &'a str, name: &str) -> Option<&'a str> {
     let (key, value) = part.split_once('=')?;
     if key.trim().eq_ignore_ascii_case(name) {
-        Some(value.trim())
+        // RFC 6797 (HSTS) and RFC 7469 (HPKP) permit quoted-string directive
+        // values, e.g. `max-age="31536000"` or `pin-sha256="..."`. Strip the
+        // surrounding quotes centrally so numeric and token values parse
+        // regardless of quoting — previously only report-uri/pin-sha256 did this
+        // ad hoc, leaving a quoted max-age unparsed and mis-graded.
+        Some(value.trim().trim_matches('"'))
     } else {
         None
     }
@@ -522,6 +527,21 @@ mod tests {
         assert_eq!(hsts.max_age, Some(31536000));
         assert!(hsts.include_subdomains);
         assert!(hsts.preload);
+        assert_eq!(hsts.grade, Grade::A);
+    }
+
+    #[test]
+    fn test_parse_hsts_accepts_quoted_max_age() {
+        // RFC 6797 permits a quoted-string directive value. A quoted max-age must
+        // parse and grade like its unquoted equivalent, not be treated as missing.
+        let mut headers = HashMap::new();
+        headers.insert(
+            "strict-transport-security".to_string(),
+            "max-age=\"31536000\"; includeSubDomains; preload".to_string(),
+        );
+
+        let hsts = parse_hsts(&headers);
+        assert_eq!(hsts.max_age, Some(31536000));
         assert_eq!(hsts.grade, Grade::A);
     }
 
