@@ -250,6 +250,18 @@ impl Ja3Database {
         Ok(Self { signatures })
     }
 
+    /// Load the default database from the embedded JA3 signature JSON.
+    ///
+    /// Mirrors the JA3S/JARM databases, which also embed their full curated
+    /// signature set via `include_str!`. The bundled file is the single source
+    /// of truth for known client fingerprints (browsers, tools, libraries and
+    /// malware/C2 families).
+    pub fn load_default() -> Result<Self> {
+        let json = include_str!("../../data/ja3_signatures.json");
+        let signatures: HashMap<String, Ja3Signature> = serde_json::from_str(json)?;
+        Ok(Self { signatures })
+    }
+
     /// Create database with common known signatures
     pub fn with_common_signatures() -> Self {
         let mut signatures = HashMap::new();
@@ -338,10 +350,11 @@ impl Ja3Database {
         Self { signatures }
     }
 
-    /// Load default embedded database
+    /// Load default embedded database, falling back to the small built-in set
+    /// only if the embedded JSON ever fails to parse.
     #[allow(clippy::should_implement_trait)]
     pub fn default() -> Self {
-        Self::with_common_signatures()
+        Self::load_default().unwrap_or_else(|_| Self::with_common_signatures())
     }
 
     /// Match a JA3 hash against the database
@@ -362,8 +375,8 @@ impl Ja3Database {
 
 impl Default for Ja3Database {
     fn default() -> Self {
-        // Return a database with common known signatures for immediate use
-        Self::with_common_signatures()
+        // Same embedded database as the inherent `default()`.
+        Self::load_default().unwrap_or_else(|_| Self::with_common_signatures())
     }
 }
 
@@ -425,6 +438,28 @@ mod tests {
         // Test unknown signature
         let unknown = db.match_fingerprint("0000000000000000000000000000000");
         assert!(unknown.is_none());
+    }
+
+    #[test]
+    fn test_default_database_loads_embedded_curated_set() {
+        // The default database must be the full embedded JSON, not the small
+        // hardcoded fallback — so malware/C2 client fingerprints are detected.
+        let db = Ja3Database::default();
+        assert!(
+            db.signatures().len() >= 35,
+            "expected the embedded curated set, got {}",
+            db.signatures().len()
+        );
+
+        let cobalt = db.match_fingerprint("a0e9f5d64349fb13191bc781f81f42e1");
+        assert_eq!(cobalt.map(|s| s.category.as_str()), Some("Malware"));
+        assert_eq!(cobalt.map(|s| s.name.as_str()), Some("Cobalt Strike"));
+    }
+
+    #[test]
+    fn test_load_default_parses_embedded_json() {
+        let db = Ja3Database::load_default().expect("embedded JA3 JSON must parse");
+        assert!(!db.signatures().is_empty());
     }
 
     #[test]
