@@ -207,16 +207,30 @@ async fn fetch_certificate_count_sqlite(
     Ok(total as usize)
 }
 
-fn certificate_record_from_pg_row(row: PgRow) -> CertificateInventoryRecord {
-    let fingerprint: String = row.get("fingerprint_sha256");
-    let subject: String = row.get("subject");
-    let issuer: String = row.get("issuer");
-    let not_before: chrono::DateTime<Utc> = row.get("not_before");
-    let not_after: chrono::DateTime<Utc> = row.get("not_after");
+fn certificate_field_error(field: &str, error: impl std::fmt::Display) -> crate::TlsError {
+    crate::TlsError::DatabaseError(format!("Invalid certificate field {}: {}", field, error))
+}
+
+fn certificate_record_from_pg_row(row: PgRow) -> crate::Result<CertificateInventoryRecord> {
+    let fingerprint = row
+        .try_get("fingerprint_sha256")
+        .map_err(|e| certificate_field_error("fingerprint_sha256", e))?;
+    let subject = row
+        .try_get("subject")
+        .map_err(|e| certificate_field_error("subject", e))?;
+    let issuer = row
+        .try_get("issuer")
+        .map_err(|e| certificate_field_error("issuer", e))?;
+    let not_before = row
+        .try_get("not_before")
+        .map_err(|e| certificate_field_error("not_before", e))?;
+    let not_after = row
+        .try_get("not_after")
+        .map_err(|e| certificate_field_error("not_after", e))?;
     let san_json: Option<String> = row.try_get("san_domains").ok();
     let hostnames: Option<Vec<String>> = row.try_get("hostnames").ok();
 
-    CertificateInventoryRecord {
+    Ok(CertificateInventoryRecord {
         fingerprint,
         subject,
         issuer,
@@ -224,19 +238,29 @@ fn certificate_record_from_pg_row(row: PgRow) -> CertificateInventoryRecord {
         not_after,
         san_json,
         hostnames: hostnames.unwrap_or_default(),
-    }
+    })
 }
 
-fn certificate_record_from_sqlite_row(row: SqliteRow) -> CertificateInventoryRecord {
-    let fingerprint: String = row.get("fingerprint_sha256");
-    let subject: String = row.get("subject");
-    let issuer: String = row.get("issuer");
-    let not_before: chrono::DateTime<Utc> = row.get("not_before");
-    let not_after: chrono::DateTime<Utc> = row.get("not_after");
+fn certificate_record_from_sqlite_row(row: SqliteRow) -> crate::Result<CertificateInventoryRecord> {
+    let fingerprint = row
+        .try_get("fingerprint_sha256")
+        .map_err(|e| certificate_field_error("fingerprint_sha256", e))?;
+    let subject = row
+        .try_get("subject")
+        .map_err(|e| certificate_field_error("subject", e))?;
+    let issuer = row
+        .try_get("issuer")
+        .map_err(|e| certificate_field_error("issuer", e))?;
+    let not_before = row
+        .try_get("not_before")
+        .map_err(|e| certificate_field_error("not_before", e))?;
+    let not_after = row
+        .try_get("not_after")
+        .map_err(|e| certificate_field_error("not_after", e))?;
     let san_json: Option<String> = row.try_get("san_domains").ok();
     let hostnames_str: Option<String> = row.try_get("hostnames").ok();
 
-    CertificateInventoryRecord {
+    Ok(CertificateInventoryRecord {
         fingerprint,
         subject,
         issuer,
@@ -246,7 +270,7 @@ fn certificate_record_from_sqlite_row(row: SqliteRow) -> CertificateInventoryRec
         hostnames: hostnames_str
             .map(|s| s.split(',').map(|h| h.to_string()).collect())
             .unwrap_or_default(),
-    }
+    })
 }
 
 async fn fetch_certificate_list_postgres(
@@ -290,10 +314,9 @@ async fn fetch_certificate_list_postgres(
             crate::TlsError::DatabaseError(format!("Failed to fetch certificates: {}", e))
         })?;
 
-    Ok(rows
-        .into_iter()
+    rows.into_iter()
         .map(certificate_record_from_pg_row)
-        .collect())
+        .collect()
 }
 
 async fn fetch_certificate_list_sqlite(
@@ -335,10 +358,9 @@ async fn fetch_certificate_list_sqlite(
             crate::TlsError::DatabaseError(format!("Failed to fetch certificates: {}", e))
         })?;
 
-    Ok(rows
-        .into_iter()
+    rows.into_iter()
         .map(certificate_record_from_sqlite_row)
-        .collect())
+        .collect()
 }
 
 async fn fetch_certificate_detail_postgres(
@@ -368,7 +390,7 @@ async fn fetch_certificate_detail_postgres(
     .await
     .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to fetch certificate: {}", e)))?;
 
-    Ok(row.map(certificate_record_from_pg_row))
+    row.map(certificate_record_from_pg_row).transpose()
 }
 
 async fn fetch_certificate_detail_sqlite(
@@ -398,7 +420,7 @@ async fn fetch_certificate_detail_sqlite(
     .await
     .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to fetch certificate: {}", e)))?;
 
-    Ok(row.map(certificate_record_from_sqlite_row))
+    row.map(certificate_record_from_sqlite_row).transpose()
 }
 
 #[cfg(test)]

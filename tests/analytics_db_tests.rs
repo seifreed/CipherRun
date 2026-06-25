@@ -3,10 +3,14 @@
 mod common;
 
 use chrono::{Duration, Utc};
+use cipherrun::application::{CertificateInventoryQuery, CertificateInventorySort};
 use cipherrun::db::analytics::{
     ChangeEvent, ChangeSeverity, ChangeTracker, ChangeType, DashboardGenerator, ScanComparator,
 };
-use cipherrun::db::{BindValue, CipherRunDatabase, DatabaseConfig};
+use cipherrun::db::{
+    BindValue, CipherRunDatabase, DatabaseConfig, get_certificate_inventory,
+    list_certificate_inventory,
+};
 use std::sync::Arc;
 
 async fn setup_db() -> Arc<CipherRunDatabase> {
@@ -259,6 +263,48 @@ async fn corrupt_certificate_not_after(db: &CipherRunDatabase, cert_id: i64) {
 }
 
 #[tokio::test]
+async fn test_certificate_inventory_rejects_invalid_certificate_row() {
+    let db = setup_db().await;
+    let now = Utc::now();
+    let cert_id = insert_certificate(
+        &db,
+        "inventory_corrupt_fp",
+        "CN=inventory-corrupt.test",
+        "CN=CA",
+        now - Duration::days(90),
+        now + Duration::days(365),
+        Some(2048),
+    )
+    .await;
+    corrupt_certificate_not_after(&db, cert_id).await;
+
+    let query = CertificateInventoryQuery {
+        limit: 10,
+        offset: 0,
+        sort: CertificateInventorySort::ExpiryAsc,
+        hostname: None,
+        expiring_within_days: None,
+    };
+    let list_err = list_certificate_inventory(db.pool(), &query)
+        .await
+        .expect_err("invalid certificate timestamp should fail inventory listing");
+    assert!(
+        list_err
+            .to_string()
+            .contains("Invalid certificate field not_after")
+    );
+
+    let detail_err = get_certificate_inventory(db.pool(), "inventory_corrupt_fp")
+        .await
+        .expect_err("invalid certificate timestamp should fail inventory detail");
+    assert!(
+        detail_err
+            .to_string()
+            .contains("Invalid certificate field not_after")
+    );
+}
+
+#[tokio::test]
 async fn test_scan_comparator_compare_scans() {
     let db = setup_db().await;
     let now = Utc::now();
@@ -436,7 +482,10 @@ async fn test_scan_comparator_rejects_invalid_certificate_row() {
         .await
         .expect_err("invalid certificate timestamp should fail comparison");
 
-    assert!(err.to_string().contains("Invalid certificate field not_after"));
+    assert!(
+        err.to_string()
+            .contains("Invalid certificate field not_after")
+    );
 }
 
 #[tokio::test]
@@ -1160,7 +1209,10 @@ async fn test_change_tracker_rejects_invalid_certificate_row() {
         .await
         .expect_err("invalid certificate timestamp should fail change tracking");
 
-    assert!(err.to_string().contains("Invalid certificate field not_after"));
+    assert!(
+        err.to_string()
+            .contains("Invalid certificate field not_after")
+    );
 }
 
 #[tokio::test]
