@@ -417,7 +417,12 @@ impl ComplianceChecker {
         let mut violations = Vec::new();
 
         for vuln in &results.vulnerabilities {
-            if vuln.vulnerable {
+            // Only confirmed vulnerabilities constitute a compliance violation.
+            // An inconclusive finding (e.g. a remote timing oracle the scanner
+            // could not confirm) is surfaced in the scan's vulnerability section
+            // but must not hard-fail compliance on unconfirmed evidence — the
+            // same rule the grade applies (see rating::scoring).
+            if vuln.vulnerable && !vuln.inconclusive {
                 let severity = match vuln.severity {
                     crate::vulnerabilities::Severity::Critical => Severity::Critical,
                     crate::vulnerabilities::Severity::High => Severity::High,

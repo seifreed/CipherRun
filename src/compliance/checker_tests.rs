@@ -577,3 +577,46 @@ fn test_check_vulnerabilities_maps_severity_and_evidence() {
     assert!(violations[0].violation_type.contains("Heartbleed"));
     assert_eq!(violations[0].severity, Severity::High);
 }
+
+#[test]
+fn test_check_vulnerabilities_ignores_inconclusive_findings() {
+    // An inconclusive (unconfirmed) finding must not produce a compliance
+    // violation: it would hard-fail compliance on evidence the scanner could
+    // not confirm, contradicting its "Inconclusive" status in the scan report.
+    let rule = Rule {
+        rule_type: "Vulnerability".to_string(),
+        allowed: vec![],
+        denied: vec![],
+        allowed_patterns: vec![],
+        denied_patterns: vec![],
+        preferred_patterns: vec![],
+        min_rsa_bits: None,
+        min_ecc_bits: None,
+        required: None,
+        require_valid_chain: None,
+        require_unexpired: None,
+        require_hostname_match: None,
+        max_days_until_expiration: None,
+        custom_params: HashMap::new(),
+    };
+
+    let results = ScanAssessment {
+        vulnerabilities: vec![VulnerabilityResult {
+            vuln_type: VulnerabilityType::ROBOT,
+            vulnerable: true,
+            inconclusive: true,
+            details: "Timing signal below noise floor — unconfirmed".to_string(),
+            cve: None,
+            cwe: None,
+            severity: VulnSeverity::Critical,
+        }],
+        ..Default::default()
+    };
+
+    let violations = ComplianceChecker::check_vulnerabilities(&rule, &results)
+        .expect("test assertion should succeed");
+    assert!(
+        violations.is_empty(),
+        "inconclusive findings must not create compliance violations"
+    );
+}
