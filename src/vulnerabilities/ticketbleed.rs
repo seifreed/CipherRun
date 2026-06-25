@@ -116,7 +116,7 @@ impl TicketbleedTester {
 
         match self.starttls_connect(addr, TLS_HANDSHAKE_TIMEOUT).await {
             Ok(mut stream) => {
-                let client_hello = self.build_client_hello_with_session_ticket();
+                let client_hello = self.build_client_hello_with_session_ticket()?;
                 stream.write_all(&client_hello).await?;
 
                 let mut buffer = vec![0u8; 16384];
@@ -126,7 +126,7 @@ impl TicketbleedTester {
 
                         if has_new_ticket {
                             let client_hello2 =
-                                self.build_client_hello_with_received_ticket(&buffer[..n]);
+                                self.build_client_hello_with_received_ticket(&buffer[..n])?;
                             stream.write_all(&client_hello2).await?;
 
                             let mut response = vec![0u8; 16384];
@@ -164,10 +164,10 @@ impl TicketbleedTester {
     }
 
     /// Build ClientHello with SessionTicket extension using ClientHelloBuilder
-    fn build_client_hello_with_session_ticket(&self) -> Vec<u8> {
+    fn build_client_hello_with_session_ticket(&self) -> Result<Vec<u8>> {
         let mut builder = ClientHelloBuilder::new(Protocol::TLS12);
         builder.for_vulnerability_testing().add_session_ticket(); // Add empty session ticket for ticketbleed testing
-        builder.build().unwrap_or_else(|_| Vec::new())
+        builder.build()
     }
 
     /// Build ClientHello with the received session ticket and a short marker
@@ -176,7 +176,7 @@ impl TicketbleedTester {
     /// Ticketbleed (CVE-2016-9244) is triggered by sending a valid session ticket
     /// alongside a Session ID shorter than 32 bytes. A vulnerable F5 BIG-IP leaks
     /// uninitialized memory by padding its echoed Session ID back out to 32 bytes.
-    fn build_client_hello_with_received_ticket(&self, server_response: &[u8]) -> Vec<u8> {
+    fn build_client_hello_with_received_ticket(&self, server_response: &[u8]) -> Result<Vec<u8>> {
         // Extract the session ticket from the server's NewSessionTicket message
         let ticket = self.extract_session_ticket(server_response);
 
@@ -194,7 +194,7 @@ impl TicketbleedTester {
             builder.add_session_ticket();
         }
 
-        builder.build().unwrap_or_else(|_| Vec::new())
+        builder.build()
     }
 
     /// Extract session ticket data from server's NewSessionTicket message
@@ -362,7 +362,9 @@ mod tests {
         .unwrap();
 
         let tester = TicketbleedTester::new(target);
-        let hello = tester.build_client_hello_with_session_ticket();
+        let hello = tester
+            .build_client_hello_with_session_ticket()
+            .expect("ClientHello should build");
 
         assert!(hello.len() > 50);
         assert_eq!(hello[0], 0x16); // Handshake
