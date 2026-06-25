@@ -35,7 +35,17 @@ impl AlertType {
     /// enabling proper deduplication in PagerDuty and similar systems.
     pub fn dedup_key(&self) -> String {
         match self {
-            AlertType::CertificateChange { .. } => "cert-change".to_string(),
+            AlertType::CertificateChange { changes } => {
+                // Group by max severity so an escalation (e.g. a Critical issuer
+                // change) is not deduplicated against an earlier low-severity
+                // change (e.g. a routine renewal) within the dedup window.
+                let severity = changes
+                    .iter()
+                    .map(|c| c.severity)
+                    .max()
+                    .unwrap_or(ChangeSeverity::Info);
+                format!("cert-change-{}", severity)
+            }
             AlertType::ExpiryWarning { days_remaining } => {
                 // Group by urgency bracket so "7 days" and "6 days" dedup together
                 let bracket = if *days_remaining <= 1 {
