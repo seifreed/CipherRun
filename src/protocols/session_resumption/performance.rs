@@ -1,5 +1,6 @@
 use super::SessionResumptionTester;
 use crate::Result;
+use crate::error::TlsError;
 use std::time::Instant;
 
 impl SessionResumptionTester {
@@ -18,37 +19,59 @@ impl SessionResumptionTester {
     }
 
     fn measure_performance_gain_sync(&self) -> Result<f64> {
-        let full_handshake_times: Vec<f64> = (0..5)
-            .filter_map(|_| {
-                let start = Instant::now();
-                if self.perform_full_handshake_sync().is_ok() {
-                    Some(start.elapsed().as_secs_f64())
-                } else {
-                    None
-                }
-            })
-            .collect();
+        let mut full_handshake_times = Vec::new();
+        let mut last_error = None;
+
+        for _ in 0..5 {
+            let start = Instant::now();
+            match self.perform_full_handshake_sync() {
+                Ok(()) => full_handshake_times.push(start.elapsed().as_secs_f64()),
+                Err(error) => last_error = Some(error.to_string()),
+            }
+        }
 
         if full_handshake_times.is_empty() {
-            return Ok(0.0);
+            return Err(TlsError::Other(format!(
+                "no successful full handshakes{}",
+                last_error
+                    .map(|error| format!("; last error: {error}"))
+                    .unwrap_or_default()
+            )));
         }
 
         let avg_full = full_handshake_times.iter().sum::<f64>() / full_handshake_times.len() as f64;
 
-        let resumed_handshake_times: Vec<f64> = (0..5)
-            .filter_map(|_| {
-                let session = self.establish_session_sync().ok().flatten()?;
-                let start = Instant::now();
-                if self.resume_with_session_sync(&session).ok()? {
-                    Some(start.elapsed().as_secs_f64())
-                } else {
-                    None
+        let mut resumed_handshake_times = Vec::new();
+        let mut last_error = None;
+
+        for _ in 0..5 {
+            let session = match self.establish_session_sync() {
+                Ok(Some(session)) => session,
+                Ok(None) => {
+                    last_error = Some("server did not provide a resumable session".to_string());
+                    continue;
                 }
-            })
-            .collect();
+                Err(error) => {
+                    last_error = Some(error.to_string());
+                    continue;
+                }
+            };
+
+            let start = Instant::now();
+            match self.resume_with_session_sync(&session) {
+                Ok(true) => resumed_handshake_times.push(start.elapsed().as_secs_f64()),
+                Ok(false) => last_error = Some("session was not reused".to_string()),
+                Err(error) => last_error = Some(error.to_string()),
+            }
+        }
 
         if resumed_handshake_times.is_empty() {
-            return Ok(0.0);
+            return Err(TlsError::Other(format!(
+                "no successful resumed handshakes{}",
+                last_error
+                    .map(|error| format!("; last error: {error}"))
+                    .unwrap_or_default()
+            )));
         }
 
         let avg_resumed =

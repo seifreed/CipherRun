@@ -68,18 +68,23 @@ impl SessionResumptionTester {
             ResumptionSupport::None
         };
 
-        let performance_gain = if session_id.reuse_successful || session_ticket.reuse_successful {
-            self.measure_performance_gain().await.ok()
-        } else {
-            None
-        };
+        let (performance_gain, performance_note) =
+            if session_id.reuse_successful || session_ticket.reuse_successful {
+                match self.measure_performance_gain().await {
+                    Ok(gain) => (Some(gain), String::new()),
+                    Err(error) => (None, format!(". Performance measurement failed: {error}")),
+                }
+            } else {
+                (None, String::new())
+            };
 
         let details = format!(
-            "Session resumption: {}. Session ID reuse: {}/{}. Ticket reuse: {}",
+            "Session resumption: {}. Session ID reuse: {}/{}. Ticket reuse: {}{}",
             resumption_support.as_str(),
             session_id.reuse_count,
             session_id.connections_tested,
-            session_ticket.reuse_successful
+            session_ticket.reuse_successful,
+            performance_note
         );
 
         Ok(SessionResumptionResult {
