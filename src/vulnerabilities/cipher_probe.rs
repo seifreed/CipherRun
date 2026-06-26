@@ -173,12 +173,19 @@ async fn probe_cipher_at_protocol(
 /// (`Supported`); a TLS alert means it rejected it (`NotSupported`); anything
 /// else (truncated, closed, non-TLS) is `Inconclusive`.
 fn classify_probe_response(response: &[u8], n: usize) -> CipherProbeStatus {
-    if n >= MIN_SERVER_HELLO_LEN
-        && response[0] == CONTENT_TYPE_HANDSHAKE
-        && response[5] == HANDSHAKE_TYPE_SERVER_HELLO
-    {
-        CipherProbeStatus::Supported
-    } else if n >= 7 && response[0] == CONTENT_TYPE_ALERT {
+    if n >= MIN_SERVER_HELLO_LEN && response[0] == CONTENT_TYPE_HANDSHAKE {
+        let record_len = u16::from_be_bytes([response[3], response[4]]) as usize;
+        let handshake_len =
+            u32::from_be_bytes([0, response[6], response[7], response[8]]) as usize;
+        if response[5] == HANDSHAKE_TYPE_SERVER_HELLO
+            && record_len + 5 <= n
+            && handshake_len + 9 <= n
+        {
+            return CipherProbeStatus::Supported;
+        }
+    }
+
+    if n >= 7 && response[0] == CONTENT_TYPE_ALERT {
         CipherProbeStatus::NotSupported
     } else {
         CipherProbeStatus::Inconclusive
@@ -193,7 +200,12 @@ mod tests {
     fn test_classify_serverhello_is_supported() {
         let mut response = vec![0u8; MIN_SERVER_HELLO_LEN];
         response[0] = CONTENT_TYPE_HANDSHAKE;
+        response[3] = 0x00;
+        response[4] = (MIN_SERVER_HELLO_LEN - 5) as u8;
         response[5] = HANDSHAKE_TYPE_SERVER_HELLO;
+        response[6] = 0x00;
+        response[7] = 0x00;
+        response[8] = (MIN_SERVER_HELLO_LEN - 9) as u8;
         assert_eq!(
             classify_probe_response(&response, response.len()),
             CipherProbeStatus::Supported
