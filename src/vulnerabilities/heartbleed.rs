@@ -165,14 +165,26 @@ impl<'a> HeartbleedTester<'a> {
         };
 
         // Check if server accepted heartbeat extension
-        if !self.check_heartbeat_extension(&response) {
-            return Ok(HeartbleedResult {
-                vulnerable: false,
-                bytes_received: 0,
-                bytes_sent: 0,
-                details: "Heartbeat extension not supported by server".to_string(),
-                tested: true,
-            });
+        match self.check_heartbeat_extension(&response) {
+            Ok(true) => {}
+            Ok(false) => {
+                return Ok(HeartbleedResult {
+                    vulnerable: false,
+                    bytes_received: 0,
+                    bytes_sent: 0,
+                    details: "Heartbeat extension not supported by server".to_string(),
+                    tested: true,
+                });
+            }
+            Err(error) => {
+                return Ok(HeartbleedResult {
+                    vulnerable: false,
+                    bytes_received: 0,
+                    bytes_sent: 0,
+                    details: format!("Unable to test - malformed ServerHello: {}", error),
+                    tested: false,
+                });
+            }
         }
 
         // Send malicious heartbeat request
@@ -182,34 +194,39 @@ impl<'a> HeartbleedTester<'a> {
     /// Check if ServerHello contains heartbeat extension.
     /// Parses the TLS ServerHello structure to find extensions, avoiding
     /// false positives from matching 0x000f in session ID or other fields.
-    fn check_heartbeat_extension(&self, data: &[u8]) -> bool {
+    fn check_heartbeat_extension(&self, data: &[u8]) -> Result<bool> {
         // TLS ServerHello minimum: 5 (record) + 4 (handshake) + 2 (version) + 32 (random) + 1 (sid len) = 44
         if data.len() < 44 {
-            return false;
+            return Ok(false);
         }
 
         // Verify this is a Handshake record (0x16) containing ServerHello (0x02)
         if data[0] != 0x16 || data[5] != 0x02 {
-            return false;
+            return Ok(false);
         }
 
         // Session ID length at offset 43
         let sid_len = data[43] as usize;
         if sid_len > 32 {
             // Malformed ServerHello: session_id_length exceeds TLS maximum
-            return false;
+            return Ok(false);
         }
         // After session ID: cipher suite (2 bytes) + compression method (1 byte)
         let ext_offset = 44 + sid_len + 2 + 1;
 
         // Check we have room for extensions length (2 bytes)
         if ext_offset + 2 > data.len() {
-            return false;
+            return Ok(false);
         }
 
         let ext_total_len = u16::from_be_bytes([data[ext_offset], data[ext_offset + 1]]) as usize;
         let ext_start = ext_offset + 2;
-        let ext_end = (ext_start + ext_total_len).min(data.len());
+        let ext_end = ext_start + ext_total_len;
+        if ext_end > data.len() {
+            return Err(crate::TlsError::ParseError {
+                message: "ServerHello extension block extends beyond declared length".to_string(),
+            });
+        }
 
         // Walk extensions looking for heartbeat (type 0x000f)
         let mut pos = ext_start;
@@ -219,16 +236,18 @@ impl<'a> HeartbleedTester<'a> {
             pos += 4;
 
             if ext_type == 0x000f {
-                return true;
+                return Ok(true);
             }
 
             if pos + ext_len > ext_end {
-                break;
+                return Err(crate::TlsError::ParseError {
+                    message: "ServerHello extension data extends beyond declared length".to_string(),
+                });
             }
             pos += ext_len;
         }
 
-        false
+        Ok(false)
     }
 
     /// Validate that the response is a proper Heartbeat Response (not a TLS alert or other response).
@@ -527,8 +546,8 @@ mod tests {
         data_with_ext.push(0x00); // session_id_length = 0
         data_with_ext.extend_from_slice(&[0x13, 0x01]); // cipher suite
         data_with_ext.push(0x00); // compression method
-        // Extensions: total length=7, heartbeat ext (type=0x000f, len=1, data=0x01)
-        data_with_ext.extend_from_slice(&[0x00, 0x07]); // extensions total length
+        // Extensions: total length=5, heartbeat ext (type=0x000f, len=1, data=0x01)
+        data_with_ext.extend_from_slice(&[0x00, 0x05]); // extensions total length
         data_with_ext.extend_from_slice(&[0x00, 0x0f]); // ext type: heartbeat
         data_with_ext.extend_from_slice(&[0x00, 0x01]); // ext length
         data_with_ext.push(0x01); // heartbeat mode: peer_allowed_to_send
@@ -541,7 +560,7 @@ mod tests {
         data_with_ext[7] = ((hs_len >> 8) & 0xff) as u8;
         data_with_ext[8] = (hs_len & 0xff) as u8;
 
-        assert!(tester.check_heartbeat_extension(&data_with_ext));
+        assert!(tester.check_heartbeat_extension(&data_with_ext).unwrap());
 
         // Same ServerHello but WITHOUT the heartbeat extension (no extensions)
         let mut data_without_ext = vec![
@@ -558,7 +577,7 @@ mod tests {
         data_without_ext[6] = ((hs_len >> 16) & 0xff) as u8;
         data_without_ext[7] = ((hs_len >> 8) & 0xff) as u8;
         data_without_ext[8] = (hs_len & 0xff) as u8;
-        assert!(!tester.check_heartbeat_extension(&data_without_ext));
+        assert!(!tester.check_heartbeat_extension(&data_without_ext).unwrap());
     }
 
     #[test]
@@ -578,7 +597,7 @@ mod tests {
             starttls_hostname: None,
         };
 
-        assert!(!tester.check_heartbeat_extension(&[0x00]));
+        assert!(!tester.check_heartbeat_extension(&[0x00]).unwrap());
     }
 
     #[test]
@@ -601,7 +620,7 @@ mod tests {
         // Two bytes alone is insufficient - need at least 3 bytes for the search loop
         // (saturating_sub(2) means we need at least 3 to have one iteration)
         // This test validates that minimum length is enforced
-        assert!(!tester.check_heartbeat_extension(&[0x00, 0x0f]));
+        assert!(!tester.check_heartbeat_extension(&[0x00, 0x0f]).unwrap());
     }
 
     #[test]
@@ -623,6 +642,48 @@ mod tests {
 
         let response = [0x18, 0x03, 0x03, 0x00, 0x04, 0x02, 0x00, 0x01];
         assert!(!tester.validate_heartbeat_response(&response));
+    }
+
+    #[test]
+    fn test_check_heartbeat_extension_rejects_truncated_extension_block() {
+        let target = Target::with_ips(
+            "test.com".to_string(),
+            443,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+        let tester = HeartbleedTester {
+            target: &target,
+            sni_hostname: None,
+            connect_timeout: Duration::from_secs(5),
+            read_timeout: Duration::from_secs(5),
+            starttls: None,
+            starttls_hostname: None,
+        };
+
+        let mut data = vec![
+            0x16, 0x03, 0x03, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x03, 0x03,
+        ];
+        data.extend_from_slice(&[0u8; 32]);
+        data.push(0x00);
+        data.extend_from_slice(&[0x13, 0x01]);
+        data.push(0x00);
+        data.extend_from_slice(&[0x00, 0x06, 0x00, 0x0f, 0x00, 0x01]);
+
+        let rec_len = (data.len() - 5) as u16;
+        data[3] = (rec_len >> 8) as u8;
+        data[4] = (rec_len & 0xff) as u8;
+        let hs_len = (data.len() - 9) as u32;
+        data[6] = ((hs_len >> 16) & 0xff) as u8;
+        data[7] = ((hs_len >> 8) & 0xff) as u8;
+        data[8] = (hs_len & 0xff) as u8;
+
+        let err = tester
+            .check_heartbeat_extension(&data)
+            .expect_err("truncated extension block should fail");
+        assert!(err
+            .to_string()
+            .contains("extension block extends beyond declared length"));
     }
 
     #[tokio::test]
