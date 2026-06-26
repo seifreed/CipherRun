@@ -206,26 +206,11 @@ impl ClientDatabase {
                                 .collect()
                         })
                         .unwrap_or_default(),
-                    min_dh_bits: all_sections
-                        .get("minDhBits")
-                        .and_then(|v| v.get(i))
-                        .and_then(|s| s.parse().ok()),
-                    max_dh_bits: all_sections
-                        .get("maxDhBits")
-                        .and_then(|v| v.get(i))
-                        .and_then(|s| s.parse().ok()),
-                    min_rsa_bits: all_sections
-                        .get("minRsaBits")
-                        .and_then(|v| v.get(i))
-                        .and_then(|s| s.parse().ok()),
-                    max_rsa_bits: all_sections
-                        .get("maxRsaBits")
-                        .and_then(|v| v.get(i))
-                        .and_then(|s| s.parse().ok()),
-                    min_ecdsa_bits: all_sections
-                        .get("minEcdsaBits")
-                        .and_then(|v| v.get(i))
-                        .and_then(|s| s.parse().ok()),
+                    min_dh_bits: Self::parse_optional_i32(&all_sections, "minDhBits", i)?,
+                    max_dh_bits: Self::parse_optional_i32(&all_sections, "maxDhBits", i)?,
+                    min_rsa_bits: Self::parse_optional_i32(&all_sections, "minRsaBits", i)?,
+                    max_rsa_bits: Self::parse_optional_i32(&all_sections, "maxRsaBits", i)?,
+                    min_ecdsa_bits: Self::parse_optional_i32(&all_sections, "minEcdsaBits", i)?,
                     curves: all_sections
                         .get("curves")
                         .and_then(|v| v.get(i))
@@ -236,16 +221,13 @@ impl ClientDatabase {
                                 .collect()
                         })
                         .unwrap_or_default(),
-                    requires_sha2: all_sections
-                        .get("requiresSha2")
-                        .and_then(|v| v.get(i))
-                        .and_then(|s| Self::parse_bool(s))
-                        .unwrap_or(false),
-                    current: all_sections
-                        .get("current")
-                        .and_then(|v| v.get(i))
-                        .and_then(|s| Self::parse_bool(s))
-                        .unwrap_or(true),
+                    requires_sha2: Self::parse_optional_bool(
+                        &all_sections,
+                        "requiresSha2",
+                        i,
+                        false,
+                    )?,
+                    current: Self::parse_optional_bool(&all_sections, "current", i, true)?,
                 };
 
                 by_id.insert(profile.short_id.clone(), i);
@@ -339,6 +321,41 @@ impl ClientDatabase {
             "false" | "0" | "no" => Some(false),
             _ => None,
         }
+    }
+
+    fn parse_optional_i32(
+        sections: &HashMap<String, Vec<String>>,
+        field: &str,
+        index: usize,
+    ) -> Result<Option<i32>> {
+        let Some(raw) = sections.get(field).and_then(|values| values.get(index)) else {
+            return Ok(None);
+        };
+        let value = raw.trim();
+        if value.is_empty() {
+            return Ok(None);
+        }
+        value.parse().map(Some).map_err(|e| crate::TlsError::ParseError {
+            message: format!("Invalid client data field {field}[{index}]='{value}': {e}"),
+        })
+    }
+
+    fn parse_optional_bool(
+        sections: &HashMap<String, Vec<String>>,
+        field: &str,
+        index: usize,
+        default: bool,
+    ) -> Result<bool> {
+        let Some(raw) = sections.get(field).and_then(|values| values.get(index)) else {
+            return Ok(default);
+        };
+        let value = raw.trim();
+        if value.is_empty() {
+            return Ok(default);
+        }
+        Self::parse_bool(value).ok_or_else(|| crate::TlsError::ParseError {
+            message: format!("Invalid client data field {field}[{index}]='{value}'"),
+        })
     }
 
     /// Get client by ID
@@ -524,6 +541,36 @@ curves+=("X25519:secp256r1 secp384r1")
         let client = db.get_by_id("client_a").expect("client should exist");
 
         assert_eq!(client.curves, ["X25519", "secp256r1", "secp384r1"]);
+    }
+
+    #[test]
+    fn test_parse_rejects_invalid_numeric_client_field() {
+        let data = r#"
+names+=("Client A")
+short+=("client_a")
+minRsaBits+=("not-a-number")
+"#;
+
+        let err = match ClientDatabase::parse(data) {
+            Ok(_) => panic!("invalid numeric field should fail"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("Invalid client data field minRsaBits"));
+    }
+
+    #[test]
+    fn test_parse_rejects_invalid_bool_client_field() {
+        let data = r#"
+names+=("Client A")
+short+=("client_a")
+current+=("maybe")
+"#;
+
+        let err = match ClientDatabase::parse(data) {
+            Ok(_) => panic!("invalid bool field should fail"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("Invalid client data field current"));
     }
 
     #[test]
