@@ -19,12 +19,12 @@ use super::{MalformedRecordType, ServerResponse};
 /// After sending a malformed record, the response buffer may contain leftover handshake
 /// messages from the previous read (e.g., tail of a certificate chain), so we cannot
 /// assume the alert starts at offset 0.
-fn find_alert_description(response: &[u8], n: usize) -> Option<u8> {
+fn find_alert_description(response: &[u8], n: usize) -> Result<Option<u8>> {
     let mut i = 0;
     while i + 7 <= n {
         let record_len = u16::from_be_bytes([response[i + 3], response[i + 4]]) as usize;
         if response[i] == CONTENT_TYPE_ALERT && record_len >= 2 {
-            return Some(response[i + 6]); // level at i+5, description at i+6
+            return Ok(Some(response[i + 6])); // level at i+5, description at i+6
         }
         let next = i + 5 + record_len;
         if record_len == 0 || next > n {
@@ -32,7 +32,14 @@ fn find_alert_description(response: &[u8], n: usize) -> Option<u8> {
         }
         i = next;
     }
-    None
+
+    if response.first() == Some(&CONTENT_TYPE_ALERT) && n < 7 {
+        return Err(crate::TlsError::ParseError {
+            message: "Truncated TLS alert record".to_string(),
+        });
+    }
+
+    Ok(None)
 }
 
 /// Check if server supports CBC cipher suites
@@ -105,7 +112,7 @@ pub(super) async fn send_malformed_record(
             let mut response = vec![0u8; 1024];
             let alert_type = match timeout(Duration::from_secs(2), stream.read(&mut response)).await
             {
-                Ok(Ok(n)) if n > 0 => find_alert_description(&response, n),
+                Ok(Ok(n)) if n > 0 => find_alert_description(&response, n)?,
                 _ => None,
             };
 
@@ -133,4 +140,26 @@ pub(super) async fn measure_response_time(
 ) -> Result<f64> {
     let response = send_malformed_record(target, record_type, starttls).await?;
     Ok(response.response_time_ms)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_find_alert_description_rejects_truncated_alert() {
+        let response = [CONTENT_TYPE_ALERT, 0x03, 0x03, 0x00, 0x02, 0x02];
+        let err = find_alert_description(&response, response.len())
+            .expect_err("truncated alert should fail");
+        assert!(err.to_string().contains("Truncated TLS alert record"));
+    }
+
+    #[test]
+    fn test_find_alert_description_parses_alert() {
+        let response = [CONTENT_TYPE_ALERT, 0x03, 0x03, 0x00, 0x02, 0x02, 0x46];
+        assert_eq!(
+            find_alert_description(&response, response.len()).expect("alert should parse"),
+            Some(0x46)
+        );
+    }
 }
