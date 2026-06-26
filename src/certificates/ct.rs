@@ -169,7 +169,13 @@ impl CtVerifier {
         }
 
         // Read total length (big-endian u16)
-        let total_len = u16::from_be_bytes([sct_list[0], sct_list[1]]) as usize;
+        let total_len_bytes = sct_list
+            .get(..2)
+            .and_then(|bytes| <[u8; 2]>::try_from(bytes).ok())
+            .ok_or_else(|| crate::error::TlsError::ParseError {
+                message: "Malformed SCT list: too short".to_string(),
+            })?;
+        let total_len = u16::from_be_bytes(total_len_bytes) as usize;
 
         // Validate that we have enough data for the declared length
         // The total_len represents the number of bytes that follow the 2-byte length field
@@ -190,10 +196,22 @@ impl CtVerifier {
         // Parse each SCT entry within the declared length
         while pos + 2 <= end_pos {
             // Each SCT starts with 2-byte length
-            let sct_len = u16::from_be_bytes([sct_list[pos], sct_list[pos + 1]]) as usize;
+            let sct_len_bytes = sct_list
+                .get(pos..pos + 2)
+                .and_then(|bytes| <[u8; 2]>::try_from(bytes).ok())
+                .ok_or_else(|| crate::error::TlsError::ParseError {
+                    message: "Malformed SCT entry: missing length".to_string(),
+                })?;
+            let sct_len = u16::from_be_bytes(sct_len_bytes) as usize;
             pos += 2;
 
-            if pos + sct_len > end_pos {
+            let next_pos =
+                pos.checked_add(sct_len)
+                    .ok_or_else(|| crate::error::TlsError::ParseError {
+                        message: "Malformed SCT entry: length overflow".to_string(),
+                    })?;
+
+            if next_pos > end_pos {
                 return Err(crate::error::TlsError::ParseError {
                     message: format!(
                         "Malformed SCT entry: SCT at offset {} with length {} extends past list end {}",
@@ -203,7 +221,7 @@ impl CtVerifier {
             }
 
             // Skip SCT data
-            pos += sct_len;
+            pos = next_pos;
             count += 1;
         }
 
