@@ -29,6 +29,11 @@ fn find_alert_description(response: &[u8], n: usize) -> Result<Option<u8>> {
                     message: "Malformed TLS alert record length".to_string(),
                 });
             }
+            if i + 5 + record_len != n {
+                return Err(crate::TlsError::ParseError {
+                    message: "TLS alert record length does not match buffer length".to_string(),
+                });
+            }
             return Ok(Some(response[i + 6])); // level at i+5, description at i+6
         }
         let next = i + 5 + record_len;
@@ -174,5 +179,15 @@ mod tests {
         let err = find_alert_description(&response, response.len())
             .expect_err("malformed alert length should fail");
         assert!(err.to_string().contains("Malformed TLS alert record length"));
+    }
+
+    #[test]
+    fn test_find_alert_description_rejects_trailing_bytes() {
+        let response = [CONTENT_TYPE_ALERT, 0x03, 0x03, 0x00, 0x02, 0x02, 0x46, 0x00];
+        let err = find_alert_description(&response, response.len())
+            .expect_err("alert with trailing bytes should fail");
+        assert!(err
+            .to_string()
+            .contains("TLS alert record length does not match buffer length"));
     }
 }
