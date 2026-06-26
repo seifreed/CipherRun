@@ -107,7 +107,7 @@ impl ServerHelloParser {
                     extensions.push(Extension::new(ext_type, ext_data));
                     offset += ext_data_len;
                 } else {
-                    break; // Extension data overflows — stop parsing
+                    crate::tls_bail!("ServerHello extension data extends beyond declared length");
                 }
             }
         }
@@ -306,5 +306,20 @@ mod tests {
         assert_eq!(parsed.heartbeat_enabled, Some(true));
         assert!(parsed.supports_ocsp_stapling().unwrap());
         assert!(parsed.supports_heartbeat().unwrap());
+    }
+
+    #[test]
+    fn test_server_hello_rejects_truncated_extension_data() {
+        let mut server_hello = vec![
+            0x16, 0x03, 0x03, 0x00, 0x4A, 0x02, 0x00, 0x00, 0x46, 0x03, 0x03,
+        ];
+        server_hello.extend_from_slice(&[0u8; 32]);
+        server_hello.push(0x00);
+        server_hello.extend_from_slice(&[0xc0, 0x2f]);
+        server_hello.push(0x00);
+        server_hello.extend_from_slice(&[0x00, 0x04, 0x00, 0x05, 0x00, 0x02, 0x01]);
+
+        let err = ServerHelloParser::parse(&server_hello).unwrap_err();
+        assert!(format!("{err}").contains("extension data extends beyond declared length"));
     }
 }
