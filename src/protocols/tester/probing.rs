@@ -591,10 +591,15 @@ fn classify_tls12_handshake_error(
 /// a TLS1.0 probe) is also `NotSupported`; anything else (truncated, non-TLS) is
 /// `Inconclusive` so a transport anomaly is never reported as a clean pass.
 fn classify_legacy_probe_response(response: &[u8], protocol: Protocol) -> ProtocolProbeOutcome {
-    if response.first() == Some(&CONTENT_TYPE_ALERT) && response.len() >= 7 {
+    if response.first() == Some(&CONTENT_TYPE_ALERT) {
+        if response.len() < 7 {
+            return ProtocolProbeOutcome::Inconclusive;
+        }
+        let alert_record_len = u16::from_be_bytes([response[3], response[4]]) as usize;
+        if alert_record_len != 2 {
+            return ProtocolProbeOutcome::Inconclusive;
+        }
         return ProtocolProbeOutcome::NotSupported;
-    } else if response.first() == Some(&CONTENT_TYPE_ALERT) {
-        return ProtocolProbeOutcome::Inconclusive;
     }
 
     match ServerHelloParser::parse(response) {
@@ -655,6 +660,15 @@ mod legacy_probe_tests {
     #[test]
     fn test_legacy_truncated_alert_is_inconclusive() {
         let alert = vec![CONTENT_TYPE_ALERT, 0x03, 0x01, 0x00, 0x02, 0x02];
+        assert_eq!(
+            classify_legacy_probe_response(&alert, Protocol::TLS10),
+            ProtocolProbeOutcome::Inconclusive
+        );
+    }
+
+    #[test]
+    fn test_legacy_malformed_alert_length_is_inconclusive() {
+        let alert = vec![CONTENT_TYPE_ALERT, 0x03, 0x01, 0x00, 0x03, 0x02, 0x46];
         assert_eq!(
             classify_legacy_probe_response(&alert, Protocol::TLS10),
             ProtocolProbeOutcome::Inconclusive
