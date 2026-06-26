@@ -315,12 +315,23 @@ impl CertificateParser {
         }
 
         // Check if CA certificate
-        let is_ca = cert
-            .basic_constraints()
-            .ok()
-            .flatten()
-            .map(|ext| ext.value.ca)
-            .unwrap_or(false);
+        let mut is_ca = false;
+        for ext in cert.extensions() {
+            if ext.oid.to_id_string() != "2.5.29.19" {
+                continue;
+            }
+            match ext.parsed_extension() {
+                ParsedExtension::BasicConstraints(basic_constraints) => {
+                    is_ca = basic_constraints.ca;
+                }
+                other => {
+                    return Err(crate::CertificateValidationError::ParseError {
+                        details: format!("Invalid basic constraints extension: {other:?}"),
+                    }
+                    .into());
+                }
+            }
+        }
 
         // Get public key size (key_size() returns size in bits for RSA modulus)
         let public_key_size = match cert.public_key().parsed() {
@@ -581,6 +592,50 @@ mod tests {
             issues.is_empty(),
             "strong EC key should produce no key-strength issues, got: {:?}",
             issues
+        );
+    }
+
+    #[test]
+    fn test_parse_certificate_rejects_malformed_basic_constraints() {
+        use openssl::asn1::{Asn1Object, Asn1OctetString, Asn1Time};
+        use openssl::hash::MessageDigest as OpensslMessageDigest;
+        use openssl::pkey::PKey;
+        use openssl::rsa::Rsa;
+        use openssl::x509::{X509Builder, X509Extension, X509NameBuilder};
+
+        let rsa = Rsa::generate(2048).unwrap();
+        let pkey = PKey::from_rsa(rsa).unwrap();
+
+        let mut name = X509NameBuilder::new().unwrap();
+        name.append_entry_by_text("CN", "bad-basic-constraints.example.com")
+            .unwrap();
+        let name = name.build();
+
+        let mut builder = X509Builder::new().unwrap();
+        builder.set_subject_name(&name).unwrap();
+        builder.set_issuer_name(&name).unwrap();
+        builder.set_pubkey(&pkey).unwrap();
+        builder
+            .set_not_before(&Asn1Time::days_from_now(0).unwrap())
+            .unwrap();
+        builder
+            .set_not_after(&Asn1Time::days_from_now(30).unwrap())
+            .unwrap();
+
+        let oid = Asn1Object::from_str("2.5.29.19").unwrap();
+        let contents = Asn1OctetString::new_from_bytes(b"\x05\x00").unwrap();
+        let malformed = X509Extension::new_from_der(&oid, false, &contents).unwrap();
+        builder.append_extension(malformed).unwrap();
+        builder.sign(&pkey, OpensslMessageDigest::sha256()).unwrap();
+
+        let der = builder.build().to_der().unwrap();
+        let error = CertificateParser::parse_certificate(&der)
+            .expect_err("malformed basic constraints should fail");
+
+        assert!(
+            error
+                .to_string()
+                .contains("Invalid basic constraints extension")
         );
     }
 
