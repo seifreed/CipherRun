@@ -90,25 +90,19 @@ impl CurvesDatabase {
 
     /// Parse a single line
     fn parse_line(line: &str) -> Result<EllipticCurve> {
-        let parts: Vec<&str> = line.split(" - ").collect();
-        if parts.len() < 2 {
-            return Err(TlsError::ParseError {
-                message: "Invalid format".to_string(),
-            });
-        }
+        let (id, names) = line.split_once(" - ").ok_or_else(|| TlsError::ParseError {
+            message: "Invalid format".to_string(),
+        })?;
 
-        let id = parts[0]
+        let id = id
             .trim()
             .replace("0x", "")
             .replace(",", "")
             .to_lowercase();
 
-        let names: Vec<&str> = parts[1].split_whitespace().collect();
-        let short_name = names.first().unwrap_or(&"unknown").to_string();
-        let full_name = names
-            .get(1..)
-            .map(|parts| parts.join(" "))
-            .unwrap_or_default();
+        let mut names = names.split_whitespace();
+        let short_name = names.next().unwrap_or("unknown").to_string();
+        let full_name = names.collect::<Vec<_>>().join(" ");
 
         let bits = Self::extract_bits(&short_name, &full_name);
         let post_quantum = Self::is_post_quantum(&short_name);
