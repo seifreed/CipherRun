@@ -199,7 +199,12 @@ impl DrownTester {
         // Read response
         let mut buffer = vec![0u8; 4096];
         match timeout(Duration::from_secs(3), stream.read(&mut buffer)).await {
-            Ok(Ok(n)) if n >= 2 => Self::analyze_sslv2_response(&buffer[..n]),
+            Ok(Ok(n)) if n >= 2 => {
+                let response = buffer.get(..n).ok_or_else(|| crate::TlsError::ParseError {
+                    message: "DROWN SSLv2 response read length exceeded buffer".to_string(),
+                })?;
+                Self::analyze_sslv2_response(response)
+            }
             Ok(Ok(_)) => {
                 // Zero bytes - connection closed
                 Ok(Sslv2Status::NotSupported)
@@ -217,8 +222,12 @@ impl DrownTester {
             return Ok(Sslv2Status::NotSupported);
         }
 
-        let first_byte = data[0];
-        let second_byte = data[1];
+        let Some((&first_byte, rest)) = data.split_first() else {
+            return Ok(Sslv2Status::NotSupported);
+        };
+        let Some(&second_byte) = rest.first() else {
+            return Ok(Sslv2Status::NotSupported);
+        };
 
         // SSLv2 uses 2-byte or 3-byte record headers
         // 2-byte header: high bit set, length in lower 15 bits
@@ -242,7 +251,9 @@ impl DrownTester {
             return Ok(Sslv2Status::Suspicious);
         }
 
-        let msg_type = data[2];
+        let Some(&msg_type) = data.get(2) else {
+            return Ok(Sslv2Status::Suspicious);
+        };
 
         // SSLv2 message types
         match msg_type {
@@ -326,7 +337,12 @@ impl DrownTester {
         // Read response
         let mut buffer = vec![0u8; 4096];
         match timeout(Duration::from_secs(3), stream.read(&mut buffer)).await {
-            Ok(Ok(n)) if n >= 2 => Self::analyze_sslv2_response(&buffer[..n]),
+            Ok(Ok(n)) if n >= 2 => {
+                let response = buffer.get(..n).ok_or_else(|| crate::TlsError::ParseError {
+                    message: "DROWN export response read length exceeded buffer".to_string(),
+                })?;
+                Self::analyze_sslv2_response(response)
+            }
             _ => Ok(Sslv2Status::Inconclusive),
         }
     }
@@ -488,6 +504,22 @@ pub struct DrownTestResult {
 mod tests {
     use super::*;
 
+    fn byte_at(data: &[u8], offset: usize) -> Option<u8> {
+        data.get(offset).copied()
+    }
+
+    fn sslv2_header_len(data: &[u8]) -> usize {
+        let first = data
+            .first()
+            .copied()
+            .expect("test SSLv2 header should contain first byte");
+        let second = data
+            .get(1)
+            .copied()
+            .expect("test SSLv2 header should contain second byte");
+        ((first as usize & 0x7f) << 8) | second as usize
+    }
+
     #[test]
     fn test_sslv2_status_is_vulnerable() {
         // Only an accepted SSLv2 handshake (Confirmed) is a usable DROWN oracle.
@@ -631,10 +663,10 @@ mod tests {
         let hello = tester.build_sslv2_client_hello();
 
         assert!(hello.len() > 40);
-        assert_eq!(hello[0], 0x80); // SSLv2 record
-        assert_eq!(hello[2], 0x01); // CLIENT-HELLO
-        assert_eq!(hello[3], 0x00); // SSL 2.0 version
-        assert_eq!(hello[4], 0x02);
+        assert_eq!(byte_at(&hello, 0), Some(0x80)); // SSLv2 record
+        assert_eq!(byte_at(&hello, 2), Some(0x01)); // CLIENT-HELLO
+        assert_eq!(byte_at(&hello, 3), Some(0x00)); // SSL 2.0 version
+        assert_eq!(byte_at(&hello, 4), Some(0x02));
     }
 
     #[test]
@@ -650,11 +682,11 @@ mod tests {
         let hello = tester.build_sslv2_client_hello_export();
 
         assert!(hello.len() > 30);
-        assert_eq!(hello[0], 0x80);
-        assert_eq!(hello[2], 0x01);
-        assert_eq!(hello[3], 0x00);
-        assert_eq!(hello[4], 0x02);
-        assert_eq!(hello[6], 0x06); // cipher specs length low byte
+        assert_eq!(byte_at(&hello, 0), Some(0x80));
+        assert_eq!(byte_at(&hello, 2), Some(0x01));
+        assert_eq!(byte_at(&hello, 3), Some(0x00));
+        assert_eq!(byte_at(&hello, 4), Some(0x02));
+        assert_eq!(byte_at(&hello, 6), Some(0x06)); // cipher specs length low byte
     }
 
     #[test]
@@ -668,7 +700,8 @@ mod tests {
 
         let tester = DrownTester::new(target);
         let hello = tester.build_sslv2_client_hello_export();
-        let cipher_specs_len = ((hello[5] as usize) << 8) | (hello[6] as usize);
+        let cipher_specs_len =
+            ((byte_at(&hello, 5).unwrap() as usize) << 8) | byte_at(&hello, 6).unwrap() as usize;
 
         // Header(2) + fixed ClientHello fields(9) + cipher specs + challenge(16)
         let actual_cipher_specs_len = hello.len() - 2 - 9 - 16;
@@ -686,7 +719,7 @@ mod tests {
 
         let tester = DrownTester::new(target);
         let hello = tester.build_sslv2_client_hello();
-        let len = ((hello[0] as usize & 0x7f) << 8) | (hello[1] as usize);
+        let len = sslv2_header_len(&hello);
         assert_eq!(hello.len(), len + 2);
     }
 
@@ -701,7 +734,7 @@ mod tests {
 
         let tester = DrownTester::new(target);
         let hello = tester.build_sslv2_client_hello_export();
-        let len = ((hello[0] as usize & 0x7f) << 8) | (hello[1] as usize);
+        let len = sslv2_header_len(&hello);
         assert_eq!(hello.len(), len + 2);
     }
 }
