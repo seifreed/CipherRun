@@ -497,4 +497,30 @@ mod tests {
             .expect("test assertion should succeed");
         assert!(parsed.certificate_data.is_none());
     }
+
+    #[test]
+    fn test_parse_handshake_response_invalid_certificate_der_fails() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["93.184.216.34".parse().expect("valid IP")],
+        )
+        .expect("target should build");
+
+        let scanner = PreHandshakeScanner::new(target);
+        let cert_der = vec![0x30, 0x03, 0x01, 0x02, 0x03];
+        let mut cert_body = Vec::new();
+        let certs_len = cert_der.len() + 3;
+        cert_body.extend_from_slice(&u24_len(certs_len));
+        cert_body.extend_from_slice(&u24_len(cert_der.len()));
+        cert_body.extend_from_slice(&cert_der);
+        let certificate = build_handshake_message(0x0b, &cert_body);
+        let record = build_handshake_record(&[certificate]);
+
+        let err = match scanner.parse_handshake_response(&record) {
+            Ok(_) => panic!("invalid certificate DER should fail"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("Failed to parse certificate"));
+    }
 }
