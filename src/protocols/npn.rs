@@ -25,6 +25,41 @@ impl NpnTester {
         Self { target }
     }
 
+    fn read_u8_at(data: &[u8], offset: usize, context: &str) -> Result<u8> {
+        data.get(offset)
+            .copied()
+            .ok_or_else(|| crate::TlsError::ParseError {
+                message: format!("{context} truncated"),
+            })
+    }
+
+    fn read_u16_at(data: &[u8], offset: usize, context: &str) -> Result<u16> {
+        let bytes = data
+            .get(offset..offset + 2)
+            .and_then(|bytes| <[u8; 2]>::try_from(bytes).ok())
+            .ok_or_else(|| crate::TlsError::ParseError {
+                message: format!("{context} truncated"),
+            })?;
+        Ok(u16::from_be_bytes(bytes))
+    }
+
+    fn slice_range<'a>(
+        data: &'a [u8],
+        start: usize,
+        len: usize,
+        context: &str,
+    ) -> Result<&'a [u8]> {
+        let end = start
+            .checked_add(len)
+            .ok_or_else(|| crate::TlsError::ParseError {
+                message: format!("{context} length overflow"),
+            })?;
+        data.get(start..end)
+            .ok_or_else(|| crate::TlsError::ParseError {
+                message: format!("{context} truncated"),
+            })
+    }
+
     /// Test if NPN is supported
     pub async fn test(&self) -> Result<NpnTestResult> {
         let (supported_protocols, inconclusive) = match self.test_npn_support().await? {
@@ -75,11 +110,12 @@ impl NpnTester {
                 let mut buffer = vec![0u8; 8192];
                 match timeout(Duration::from_secs(3), stream.read(&mut buffer)).await {
                     Ok(Ok(n)) if n > 0 => {
-                        if !Self::is_parseable_server_hello(&buffer[..n]) {
+                        let response = Self::slice_range(&buffer, 0, n, "NPN response buffer")?;
+                        if !Self::is_parseable_server_hello(response) {
                             return Ok(NpnProbeOutcome::Inconclusive);
                         }
                         // Parse ServerHello for NPN extension
-                        let protocols = self.parse_npn_response(&buffer[..n])?;
+                        let protocols = self.parse_npn_response(response)?;
                         if protocols.is_empty() {
                             Ok(NpnProbeOutcome::NotSupported)
                         } else {
@@ -94,16 +130,27 @@ impl NpnTester {
     }
 
     fn is_parseable_server_hello(response: &[u8]) -> bool {
-        if response.len() < 47 || response[0] != 0x16 || response[5] != 0x02 {
+        if response.len() < 47 || response.first() != Some(&0x16) || response.get(5) != Some(&0x02)
+        {
             return false;
         }
 
-        let record_len = u16::from_be_bytes([response[3], response[4]]) as usize;
+        let Some(record_len) = Self::read_u16_at(response, 3, "NPN ServerHello record length")
+            .ok()
+            .map(usize::from)
+        else {
+            return false;
+        };
         if 5 + record_len > response.len() {
             return false;
         }
 
-        let sid_len = response[43] as usize;
+        let Some(sid_len) = Self::read_u8_at(response, 43, "NPN ServerHello session ID length")
+            .ok()
+            .map(usize::from)
+        else {
+            return false;
+        };
         let min_after_sid = 44 + sid_len + 2 + 1;
         min_after_sid <= response.len()
     }
@@ -168,19 +215,25 @@ impl NpnTester {
 
         // Update extensions length
         let ext_len = hello.len() - ext_pos - 2;
-        hello[ext_pos] = ((ext_len >> 8) & 0xff) as u8;
-        hello[ext_pos + 1] = (ext_len & 0xff) as u8;
+        if let Some(len_bytes) = hello.get_mut(ext_pos..ext_pos + 2) {
+            len_bytes.copy_from_slice(&[((ext_len >> 8) & 0xff) as u8, (ext_len & 0xff) as u8]);
+        }
 
         // Update handshake length
         let hs_len = hello.len() - hs_len_pos - 3;
-        hello[hs_len_pos] = ((hs_len >> 16) & 0xff) as u8;
-        hello[hs_len_pos + 1] = ((hs_len >> 8) & 0xff) as u8;
-        hello[hs_len_pos + 2] = (hs_len & 0xff) as u8;
+        if let Some(len_bytes) = hello.get_mut(hs_len_pos..hs_len_pos + 3) {
+            len_bytes.copy_from_slice(&[
+                ((hs_len >> 16) & 0xff) as u8,
+                ((hs_len >> 8) & 0xff) as u8,
+                (hs_len & 0xff) as u8,
+            ]);
+        }
 
         // Update record length
         let rec_len = hello.len() - len_pos - 2;
-        hello[len_pos] = ((rec_len >> 8) & 0xff) as u8;
-        hello[len_pos + 1] = (rec_len & 0xff) as u8;
+        if let Some(len_bytes) = hello.get_mut(len_pos..len_pos + 2) {
+            len_bytes.copy_from_slice(&[((rec_len >> 8) & 0xff) as u8, (rec_len & 0xff) as u8]);
+        }
 
         hello
     }
@@ -191,12 +244,13 @@ impl NpnTester {
         const MAX_PROTOCOLS: usize = 100;
 
         // Need at least: record header (5) + handshake header (4) + version (2) + random (32) + sid_len (1) = 44
-        if response.len() < 44 || response[0] != 0x16 || response[5] != 0x02 {
+        if response.len() < 44 || response.first() != Some(&0x16) || response.get(5) != Some(&0x02)
+        {
             return Ok(protocols);
         }
 
         // Parse ServerHello structurally to find extensions
-        let sid_len = response[43] as usize;
+        let sid_len = Self::read_u8_at(response, 43, "NPN ServerHello session ID length")? as usize;
         // cipher suite (2) + compression (1) + extensions_length (2)
         let ext_len_offset = 44 + sid_len + 2 + 1;
         if ext_len_offset + 2 > response.len() {
@@ -204,9 +258,14 @@ impl NpnTester {
         }
 
         let ext_total =
-            u16::from_be_bytes([response[ext_len_offset], response[ext_len_offset + 1]]) as usize;
+            Self::read_u16_at(response, ext_len_offset, "NPN extensions length")? as usize;
         let ext_start = ext_len_offset + 2;
-        let ext_end = ext_start + ext_total;
+        let ext_end =
+            ext_start
+                .checked_add(ext_total)
+                .ok_or_else(|| crate::TlsError::ParseError {
+                    message: "NPN extension block length overflow".to_string(),
+                })?;
         if ext_end > response.len() {
             return Err(crate::TlsError::ParseError {
                 message: "NPN extension block extends beyond declared length".to_string(),
@@ -216,10 +275,15 @@ impl NpnTester {
         // Walk extensions structurally
         let mut pos = ext_start;
         while pos + 4 <= ext_end {
-            let ext_type = u16::from_be_bytes([response[pos], response[pos + 1]]);
-            let ext_len = u16::from_be_bytes([response[pos + 2], response[pos + 3]]) as usize;
+            let ext_type = Self::read_u16_at(response, pos, "NPN extension type")?;
+            let ext_len = Self::read_u16_at(response, pos + 2, "NPN extension length")? as usize;
             pos += 4;
-            if pos + ext_len > ext_end {
+            let ext_data_end =
+                pos.checked_add(ext_len)
+                    .ok_or_else(|| crate::TlsError::ParseError {
+                        message: "NPN extension data length overflow".to_string(),
+                    })?;
+            if ext_data_end > ext_end {
                 return Err(crate::TlsError::ParseError {
                     message: "NPN extension data extends beyond declared length".to_string(),
                 });
@@ -233,7 +297,8 @@ impl NpnTester {
                     && npn_pos < response.len()
                     && protocols.len() < MAX_PROTOCOLS
                 {
-                    let proto_len = response[npn_pos] as usize;
+                    let proto_len =
+                        Self::read_u8_at(response, npn_pos, "NPN protocol name length")? as usize;
                     npn_pos += 1;
                     if proto_len == 0 {
                         return Err(crate::TlsError::ParseError {
@@ -245,17 +310,20 @@ impl NpnTester {
                             message: "NPN protocol name extends beyond extension data".to_string(),
                         });
                     }
-                    let proto = String::from_utf8(response[npn_pos..npn_pos + proto_len].to_vec())
-                        .map_err(|error| crate::TlsError::ParseError {
-                            message: format!("Invalid NPN protocol name UTF-8: {error}"),
-                        })?;
+                    let proto = String::from_utf8(
+                        Self::slice_range(response, npn_pos, proto_len, "NPN protocol name")?
+                            .to_vec(),
+                    )
+                    .map_err(|error| crate::TlsError::ParseError {
+                        message: format!("Invalid NPN protocol name UTF-8: {error}"),
+                    })?;
                     protocols.push(proto);
                     npn_pos += proto_len;
                 }
                 break;
             }
 
-            pos += ext_len;
+            pos = ext_data_end;
         }
 
         Ok(protocols)
