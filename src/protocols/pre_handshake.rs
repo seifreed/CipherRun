@@ -407,8 +407,8 @@ mod tests {
         let parsed = scanner
             .parse_handshake_response(&record)
             .expect("test assertion should succeed");
-        assert!(parsed.certificate_data.is_none());
         assert!(parsed.server_hello_data.is_none());
+        assert!(parsed.certificate_data.is_none());
     }
 
     #[test]
@@ -422,11 +422,11 @@ mod tests {
 
         let scanner = PreHandshakeScanner::new(target);
         let data = vec![0x16, 0x03, 0x03, 0x00];
-        let parsed = scanner
-            .parse_handshake_response(&data)
-            .expect("test assertion should succeed");
-        assert!(parsed.server_hello_data.is_none());
-        assert!(parsed.certificate_data.is_none());
+        let err = match scanner.parse_handshake_response(&data) {
+            Ok(_) => panic!("truncated record header should fail"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("TLS record header truncated"));
     }
 
     #[test]
@@ -446,11 +446,11 @@ mod tests {
         record.extend_from_slice(&10u16.to_be_bytes());
         record.extend_from_slice(&[0x01, 0x00, 0x00, 0x00]);
 
-        let parsed = scanner
-            .parse_handshake_response(&record)
-            .expect("test assertion should succeed");
-        assert!(parsed.server_hello_data.is_none());
-        assert!(parsed.certificate_data.is_none());
+        let err = match scanner.parse_handshake_response(&record) {
+            Ok(_) => panic!("truncated record should fail"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("TLS record length exceeds available data"));
     }
 
     #[test]
@@ -469,11 +469,11 @@ mod tests {
         message.extend_from_slice(&[0x03, 0x03]);
         let record = build_handshake_record(&[message]);
 
-        let parsed = scanner
-            .parse_handshake_response(&record)
-            .expect("test assertion should succeed");
-        assert!(parsed.server_hello_data.is_none());
-        assert!(parsed.certificate_data.is_none());
+        let err = match scanner.parse_handshake_response(&record) {
+            Ok(_) => panic!("truncated handshake message should fail"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("Handshake length exceeds available data"));
     }
 
     #[test]
@@ -492,10 +492,13 @@ mod tests {
         let certificate = build_handshake_message(0x0b, &cert_body);
         let record = build_handshake_record(&[certificate]);
 
-        let parsed = scanner
-            .parse_handshake_response(&record)
-            .expect("test assertion should succeed");
-        assert!(parsed.certificate_data.is_none());
+        let err = match scanner.parse_handshake_response(&record) {
+            Ok(_) => panic!("truncated certificate list should fail"),
+            Err(err) => err,
+        };
+        assert!(err
+            .to_string()
+            .contains("Certificate list length exceeds available data"));
     }
 
     #[test]
@@ -522,5 +525,25 @@ mod tests {
             Err(err) => err,
         };
         assert!(err.to_string().contains("Failed to parse certificate"));
+    }
+
+    #[test]
+    fn test_parse_handshake_response_rejects_truncated_record() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["93.184.216.34".parse().expect("valid IP")],
+        )
+        .expect("target should build");
+
+        let scanner = PreHandshakeScanner::new(target);
+        // TLS record claims 6 bytes, but only 1 byte of handshake body follows.
+        let record = vec![0x16, 0x03, 0x03, 0x00, 0x06, 0x02];
+
+        let err = match scanner.parse_handshake_response(&record) {
+            Ok(_) => panic!("truncated record should fail"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("TLS record length exceeds available data"));
     }
 }

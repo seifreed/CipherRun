@@ -15,7 +15,9 @@ impl PreHandshakeScanner {
 
         while offset < data.len() {
             if offset + 5 > data.len() {
-                break;
+                return Err(TlsError::ParseError {
+                    message: "TLS record header truncated".to_string(),
+                });
             }
 
             let content_type = data[offset];
@@ -23,7 +25,9 @@ impl PreHandshakeScanner {
             offset += 5;
 
             if offset + record_length > data.len() {
-                break;
+                return Err(TlsError::ParseError {
+                    message: "TLS record length exceeds available data".to_string(),
+                });
             }
 
             if content_type != 0x16 {
@@ -34,7 +38,9 @@ impl PreHandshakeScanner {
             let record_end = offset + record_length;
             while offset < record_end {
                 if offset + 4 > data.len() {
-                    break;
+                    return Err(TlsError::ParseError {
+                        message: "Handshake header truncated".to_string(),
+                    });
                 }
 
                 let handshake_type = data[offset];
@@ -44,7 +50,9 @@ impl PreHandshakeScanner {
 
                 offset += 4;
                 if offset + handshake_length > data.len() {
-                    break;
+                    return Err(TlsError::ParseError {
+                        message: "Handshake length exceeds available data".to_string(),
+                    });
                 }
 
                 match handshake_type {
@@ -103,7 +111,10 @@ impl PreHandshakeScanner {
 
                             // Prevent integer overflow/wraparound on malicious input
                             if certs_length > data.len() - offset - 3 {
-                                break;
+                                return Err(TlsError::ParseError {
+                                    message: "Certificate list length exceeds available data"
+                                        .to_string(),
+                                });
                             }
 
                             let mut cert_offset = offset + 3;
