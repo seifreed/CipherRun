@@ -20,24 +20,35 @@ use super::{MalformedRecordType, ServerResponse};
 /// messages from the previous read (e.g., tail of a certificate chain), so we cannot
 /// assume the alert starts at offset 0.
 fn find_alert_description(response: &[u8], n: usize) -> Result<Option<u8>> {
+    let response = response
+        .get(..n)
+        .ok_or_else(|| crate::TlsError::ParseError {
+            message: "POODLE response read length exceeded buffer".to_string(),
+        })?;
     let mut i = 0;
-    while i + 7 <= n {
-        let record_len = u16::from_be_bytes([response[i + 3], response[i + 4]]) as usize;
-        if response[i] == CONTENT_TYPE_ALERT {
+    while i + 7 <= response.len() {
+        let Some(header) = response
+            .get(i..i + 5)
+            .and_then(|header| <&[u8; 5]>::try_from(header).ok())
+        else {
+            break;
+        };
+        let record_len = u16::from_be_bytes([header[3], header[4]]) as usize;
+        if header[0] == CONTENT_TYPE_ALERT {
             if record_len != 2 {
                 return Err(crate::TlsError::ParseError {
                     message: "Malformed TLS alert record length".to_string(),
                 });
             }
-            if i + 5 + record_len != n {
+            if i + 5 + record_len != response.len() {
                 return Err(crate::TlsError::ParseError {
                     message: "TLS alert record length does not match buffer length".to_string(),
                 });
             }
-            return Ok(Some(response[i + 6])); // level at i+5, description at i+6
+            return Ok(response.get(i + 6).copied()); // level at i+5, description at i+6
         }
         let next = i + 5 + record_len;
-        if record_len == 0 || next > n {
+        if record_len == 0 || next > response.len() {
             break;
         }
         i = next;
