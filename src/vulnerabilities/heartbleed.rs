@@ -11,6 +11,31 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::time::timeout;
 
+fn read_u16_at(data: &[u8], offset: usize) -> Option<u16> {
+    data.get(offset..offset.checked_add(2)?)?
+        .try_into()
+        .ok()
+        .map(u16::from_be_bytes)
+}
+
+#[cfg(test)]
+fn write_u16_at(data: &mut [u8], offset: usize, value: u16) {
+    data.get_mut(offset..offset + 2)
+        .expect("test fixture should contain u16 placeholder")
+        .copy_from_slice(&value.to_be_bytes());
+}
+
+#[cfg(test)]
+fn write_u24_at(data: &mut [u8], offset: usize, value: usize) {
+    data.get_mut(offset..offset + 3)
+        .expect("test fixture should contain u24 placeholder")
+        .copy_from_slice(&[
+            ((value >> 16) & 0xff) as u8,
+            ((value >> 8) & 0xff) as u8,
+            (value & 0xff) as u8,
+        ]);
+}
+
 /// Heartbleed detection result with detailed information
 #[derive(Debug, Clone)]
 pub struct HeartbleedResult {
@@ -201,12 +226,14 @@ impl<'a> HeartbleedTester<'a> {
         }
 
         // Verify this is a Handshake record (0x16) containing ServerHello (0x02)
-        if data[0] != 0x16 || data[5] != 0x02 {
+        if data.first() != Some(&0x16) || data.get(5) != Some(&0x02) {
             return Ok(false);
         }
 
         // Session ID length at offset 43
-        let sid_len = data[43] as usize;
+        let Some(sid_len) = data.get(43).copied().map(usize::from) else {
+            return Ok(false);
+        };
         if sid_len > 32 {
             // Malformed ServerHello: session_id_length exceeds TLS maximum
             return Ok(false);
@@ -219,7 +246,9 @@ impl<'a> HeartbleedTester<'a> {
             return Ok(false);
         }
 
-        let ext_total_len = u16::from_be_bytes([data[ext_offset], data[ext_offset + 1]]) as usize;
+        let Some(ext_total_len) = read_u16_at(data, ext_offset).map(usize::from) else {
+            return Ok(false);
+        };
         let ext_start = ext_offset + 2;
         let ext_end = ext_start + ext_total_len;
         if ext_end > data.len() {
@@ -231,8 +260,12 @@ impl<'a> HeartbleedTester<'a> {
         // Walk extensions looking for heartbeat (type 0x000f)
         let mut pos = ext_start;
         while pos + 4 <= ext_end {
-            let ext_type = u16::from_be_bytes([data[pos], data[pos + 1]]);
-            let ext_len = u16::from_be_bytes([data[pos + 2], data[pos + 3]]) as usize;
+            let Some(ext_type) = read_u16_at(data, pos) else {
+                return Ok(false);
+            };
+            let Some(ext_len) = read_u16_at(data, pos + 2).map(usize::from) else {
+                return Ok(false);
+            };
             pos += 4;
 
             if ext_type == 0x000f {
@@ -261,25 +294,36 @@ impl<'a> HeartbleedTester<'a> {
 
         // Check TLS record header
         // Content type must be Heartbeat (0x18)
-        if response[0] != CONTENT_TYPE_HEARTBEAT {
+        let Some(content_type) = response.first().copied() else {
+            return false;
+        };
+        if content_type != CONTENT_TYPE_HEARTBEAT {
             tracing::debug!(
                 "Heartbleed: Response content type is not Heartbeat (0x{:02x}, expected 0x18)",
-                response[0]
+                content_type
             );
             return false;
         }
 
         // Version check (should be TLS 1.0, 1.1, or 1.2)
-        if response[1] != 0x03 || response[2] < 0x01 || response[2] > 0x03 {
+        let Some((&major, rest)) = response.get(1..).and_then(|tail| tail.split_first()) else {
+            return false;
+        };
+        let Some(&minor) = rest.first() else {
+            return false;
+        };
+        if major != 0x03 || !(0x01..=0x03).contains(&minor) {
             tracing::debug!(
                 "Heartbleed: Response has unexpected TLS version 0x{:02x}{:02x}",
-                response[1],
-                response[2]
+                major,
+                minor
             );
             return false;
         }
 
-        let record_len = u16::from_be_bytes([response[3], response[4]]) as usize;
+        let Some(record_len) = read_u16_at(response, 3).map(usize::from) else {
+            return false;
+        };
         if record_len + 5 != response.len() {
             tracing::debug!(
                 "Heartbleed: Response record length {} does not match buffer length {}",
@@ -291,7 +335,9 @@ impl<'a> HeartbleedTester<'a> {
 
         // Heartbeat message type must be Response (0x02), not Request (0x01)
         // Response structure: type (1 byte) + length (2 bytes) + payload
-        let heartbeat_type = response[5];
+        let Some(heartbeat_type) = response.get(5).copied() else {
+            return false;
+        };
         if heartbeat_type != 0x02 {
             tracing::debug!(
                 "Heartbleed: Response type is not HeartbeatResponse (0x{:02x}, expected 0x02)",
@@ -300,7 +346,9 @@ impl<'a> HeartbleedTester<'a> {
             return false;
         }
 
-        let heartbeat_len = u16::from_be_bytes([response[6], response[7]]) as usize;
+        let Some(heartbeat_len) = read_u16_at(response, 6).map(usize::from) else {
+            return false;
+        };
         if heartbeat_len + 3 != record_len {
             tracing::debug!(
                 "Heartbleed: Heartbeat payload length {} does not match record length {}",
@@ -554,12 +602,9 @@ mod tests {
         data_with_ext.push(0x01); // heartbeat mode: peer_allowed_to_send
         // Patch record and handshake lengths
         let record_len = (data_with_ext.len() - 5) as u16;
-        data_with_ext[3] = (record_len >> 8) as u8;
-        data_with_ext[4] = (record_len & 0xff) as u8;
-        let hs_len = (data_with_ext.len() - 9) as u32;
-        data_with_ext[6] = ((hs_len >> 16) & 0xff) as u8;
-        data_with_ext[7] = ((hs_len >> 8) & 0xff) as u8;
-        data_with_ext[8] = (hs_len & 0xff) as u8;
+        write_u16_at(&mut data_with_ext, 3, record_len);
+        let hs_len = data_with_ext.len() - 9;
+        write_u24_at(&mut data_with_ext, 6, hs_len);
 
         assert!(tester.check_heartbeat_extension(&data_with_ext).unwrap());
 
@@ -572,12 +617,9 @@ mod tests {
         data_without_ext.extend_from_slice(&[0x13, 0x01]);
         data_without_ext.push(0x00);
         let record_len = (data_without_ext.len() - 5) as u16;
-        data_without_ext[3] = (record_len >> 8) as u8;
-        data_without_ext[4] = (record_len & 0xff) as u8;
-        let hs_len = (data_without_ext.len() - 9) as u32;
-        data_without_ext[6] = ((hs_len >> 16) & 0xff) as u8;
-        data_without_ext[7] = ((hs_len >> 8) & 0xff) as u8;
-        data_without_ext[8] = (hs_len & 0xff) as u8;
+        write_u16_at(&mut data_without_ext, 3, record_len);
+        let hs_len = data_without_ext.len() - 9;
+        write_u24_at(&mut data_without_ext, 6, hs_len);
         assert!(!tester.check_heartbeat_extension(&data_without_ext).unwrap());
     }
 
@@ -672,12 +714,9 @@ mod tests {
         data.extend_from_slice(&[0x00, 0x06, 0x00, 0x0f, 0x00, 0x01]);
 
         let rec_len = (data.len() - 5) as u16;
-        data[3] = (rec_len >> 8) as u8;
-        data[4] = (rec_len & 0xff) as u8;
-        let hs_len = (data.len() - 9) as u32;
-        data[6] = ((hs_len >> 16) & 0xff) as u8;
-        data[7] = ((hs_len >> 8) & 0xff) as u8;
-        data[8] = (hs_len & 0xff) as u8;
+        write_u16_at(&mut data, 3, rec_len);
+        let hs_len = data.len() - 9;
+        write_u24_at(&mut data, 6, hs_len);
 
         let err = tester
             .check_heartbeat_extension(&data)
@@ -698,7 +737,11 @@ mod tests {
         )
         .unwrap();
         let tester = HeartbleedTester::new(&target);
-        let addr = target.socket_addrs()[0];
+        let addr = target
+            .socket_addrs()
+            .first()
+            .copied()
+            .expect("test target should have socket address");
         let mut stream = TcpStream::connect(addr).await.unwrap();
         let result = tester.send_malicious_heartbeat(&mut stream).await.unwrap();
         assert!(result.vulnerable);
@@ -719,7 +762,11 @@ mod tests {
         )
         .unwrap();
         let tester = HeartbleedTester::new(&target);
-        let addr = target.socket_addrs()[0];
+        let addr = target
+            .socket_addrs()
+            .first()
+            .copied()
+            .expect("test target should have socket address");
         let mut stream = TcpStream::connect(addr).await.unwrap();
         let result = tester.send_malicious_heartbeat(&mut stream).await.unwrap();
         assert!(!result.vulnerable);
