@@ -5,30 +5,24 @@ use crate::error::TlsError;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// Global curves database loaded at startup
-///
-/// Uses OnceLock for safe initialization with proper error handling.
-static CURVES_DB_INNER: std::sync::OnceLock<Arc<CurvesDatabase>> = std::sync::OnceLock::new();
-
 /// Get the global curves database
 ///
 /// Returns the database if already initialized, or initializes it on first call.
-/// Initialization fails fast if the embedded database is malformed.
-pub fn curves_db() -> Arc<CurvesDatabase> {
-    CURVES_DB_INNER
-        .get_or_init(|| {
-            Arc::new(
-                CurvesDatabase::load()
-                    .unwrap_or_else(|e| panic!("Failed to load embedded curves database: {}", e)),
-            )
-        })
-        .clone()
+/// Returns an error if the embedded database is malformed.
+pub fn curves_db() -> Result<Arc<CurvesDatabase>> {
+    CURVES_DB
+        .as_ref()
+        .map(Arc::clone)
+        .map_err(|e| TlsError::Other(e.clone()))
 }
 
-/// Legacy static for backward compatibility
-/// Delegates to `curves_db()` to avoid loading data twice into memory
-pub static CURVES_DB: std::sync::LazyLock<Arc<CurvesDatabase>> =
-    std::sync::LazyLock::new(curves_db);
+/// Cached embedded curves database.
+pub static CURVES_DB: std::sync::LazyLock<std::result::Result<Arc<CurvesDatabase>, String>> =
+    std::sync::LazyLock::new(|| {
+        CurvesDatabase::load()
+            .map(Arc::new)
+            .map_err(|e| format!("Failed to load embedded curves database: {e}"))
+    });
 
 /// Elliptic curve information
 #[derive(Debug, Clone)]
@@ -249,7 +243,7 @@ mod tests {
 
     #[test]
     fn test_load_database() {
-        let db = CURVES_DB.as_ref();
+        let db = curves_db().expect("embedded curves database should load");
         assert!(db.count() > 10);
     }
 
@@ -265,7 +259,7 @@ mod tests {
 
     #[test]
     fn test_recommended_curves() {
-        let db = CURVES_DB.as_ref();
+        let db = curves_db().expect("embedded curves database should load");
         let recommended = db.recommended_curves();
 
         assert!(!recommended.is_empty());
