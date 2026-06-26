@@ -54,54 +54,7 @@ impl GreaseTester {
             ));
         }
 
-        // Parse response
-        let response = &buffer[..n];
-
-        // Check for TLS Alert
-        if response.len() >= 7 && response[0] == 0x15 {
-            // Alert record
-            let alert_level = response[5];
-            let alert_description = response[6];
-
-            // Common rejection alerts
-            match alert_description {
-                0x46 => {
-                    // handshake_failure (70)
-                    return Ok(GreaseTestOutcome::Rejected);
-                }
-                0x28 => {
-                    // decode_error (40) - server couldn't decode GREASE values
-                    return Ok(GreaseTestOutcome::Rejected);
-                }
-                0x2F => {
-                    // illegal_parameter (47) - GREASE value rejected as invalid
-                    return Ok(GreaseTestOutcome::Rejected);
-                }
-                0x32 => {
-                    // internal_error (80)
-                    return Ok(GreaseTestOutcome::Inconclusive(
-                        "Server returned internal error".to_string(),
-                    ));
-                }
-                _ => {
-                    return Ok(GreaseTestOutcome::Inconclusive(format!(
-                        "Server returned TLS alert {} (level {})",
-                        alert_description, alert_level
-                    )));
-                }
-            }
-        }
-
-        // Check for ServerHello (handshake record type 0x16, message type 0x02)
-        if response.len() >= 6 && response[0] == 0x16 && response[5] == 0x02 {
-            return Ok(GreaseTestOutcome::Tolerated);
-        }
-
-        // Unknown response
-        Ok(GreaseTestOutcome::Inconclusive(format!(
-            "Unexpected response (first bytes: {:02X?})",
-            &response[..response.len().min(10)]
-        )))
+        Ok(classify_grease_response(&buffer[..n]))
     }
 
     /// Build ClientHello with GREASE cipher suites interleaved with valid ciphers
@@ -297,5 +250,54 @@ impl GreaseTester {
     pub(super) async fn test_combined_grease(&self) -> Result<GreaseTestOutcome> {
         let client_hello = self.build_client_hello_combined_grease()?;
         self.send_client_hello(&client_hello).await
+    }
+}
+
+fn classify_grease_response(response: &[u8]) -> GreaseTestOutcome {
+    if response.first() == Some(&0x15) {
+        if response.len() < 7 {
+            return GreaseTestOutcome::Inconclusive("Truncated TLS alert record".to_string());
+        }
+
+        let alert_record_len = u16::from_be_bytes([response[3], response[4]]) as usize;
+        if alert_record_len != 2 {
+            return GreaseTestOutcome::Inconclusive("Malformed TLS alert record length".to_string());
+        }
+
+        let alert_level = response[5];
+        let alert_description = response[6];
+        return match alert_description {
+            0x46 | 0x28 | 0x2F => GreaseTestOutcome::Rejected,
+            0x32 => GreaseTestOutcome::Inconclusive("Server returned internal error".to_string()),
+            _ => GreaseTestOutcome::Inconclusive(format!(
+                "Server returned TLS alert {} (level {})",
+                alert_description, alert_level
+            )),
+        };
+    }
+
+    if response.len() >= 6 && response[0] == 0x16 && response[5] == 0x02 {
+        return GreaseTestOutcome::Tolerated;
+    }
+
+    GreaseTestOutcome::Inconclusive(format!(
+        "Unexpected response (first bytes: {:02X?})",
+        &response[..response.len().min(10)]
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_classify_grease_response_rejects_malformed_alert_length() {
+        let response = [0x15, 0x03, 0x03, 0x00, 0x03, 0x02, 0x46];
+        match classify_grease_response(&response) {
+            GreaseTestOutcome::Inconclusive(reason) => {
+                assert!(reason.contains("Malformed TLS alert record length"));
+            }
+            _ => panic!("expected inconclusive"),
+        }
     }
 }
