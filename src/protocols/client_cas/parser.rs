@@ -7,25 +7,20 @@ impl ClientCAsTester {
         let mut handshake_bytes = Vec::new();
 
         while pos + 5 <= data.len() {
-            if data[pos] != 0x16 {
-                // Skip non-handshake records by reading the full record header + length
-                if pos + 5 <= data.len() {
-                    let record_len = u16::from_be_bytes([data[pos + 3], data[pos + 4]]) as usize;
-                    pos += 5 + record_len;
-                } else {
-                    break;
-                }
-                continue;
-            }
-
             let record_len = u16::from_be_bytes([data[pos + 3], data[pos + 4]]) as usize;
-            pos += 5;
-
-            if pos + record_len > data.len() {
+            if pos + 5 + record_len > data.len() {
                 return Err(crate::TlsError::ParseError {
                     message: "TLS record length exceeds available data".to_string(),
                 });
             }
+
+            if data[pos] != 0x16 {
+                // Skip non-handshake records by reading the full record header + length
+                pos += 5 + record_len;
+                continue;
+            }
+
+            pos += 5;
 
             handshake_bytes.extend_from_slice(&data[pos..pos + record_len]);
             pos += record_len;

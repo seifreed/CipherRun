@@ -321,6 +321,24 @@ mod tests {
     }
 
     #[test]
+    fn test_find_certificate_request_rejects_truncated_non_handshake_record() {
+        let tester = ClientCAsTester::new(
+            Target::with_ips(
+                "example.test".to_string(),
+                443,
+                vec!["127.0.0.1".parse().expect("valid IP")],
+            )
+            .expect("test assertion should succeed"),
+        );
+
+        let record = vec![0x15, 0x03, 0x03, 0x00, 0x20, 0x01];
+        let err = tester
+            .find_certificate_request(&record)
+            .expect_err("truncated non-handshake record should fail");
+        assert!(err.to_string().contains("TLS record length exceeds available data"));
+    }
+
+    #[test]
     fn test_parse_ca_list_empty_returns_none() {
         let tester = ClientCAsTester::new(
             Target::with_ips(
