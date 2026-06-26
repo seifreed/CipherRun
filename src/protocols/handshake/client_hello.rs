@@ -311,4 +311,14 @@ mod tests {
         let hello = builder.build().expect("test assertion should succeed");
         assert!(hello.windows(2).any(|w| w == EXTENSION_ALPN.to_be_bytes()));
     }
+
+    #[test]
+    fn test_client_hello_rejects_oversized_extension_data() {
+        let mut builder = ClientHelloBuilder::new(Protocol::TLS12);
+        builder.add_cipher(0xc02f);
+        builder.add_extension(Extension::new(0x1234, vec![0u8; u16::MAX as usize + 1]));
+
+        let err = builder.build().unwrap_err();
+        assert!(format!("{err}").contains("extension data exceeds maximum length"));
+    }
 }
