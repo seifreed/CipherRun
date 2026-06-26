@@ -53,6 +53,13 @@ impl IntoleranceTester {
                             ),
                         });
                     }
+
+                    if response.len() != 5 + alert_record_len {
+                        return Err(crate::TlsError::ParseError {
+                            message: "TLS alert record length does not match buffer length"
+                                .to_string(),
+                        });
+                    }
                 }
 
                 if response.len() >= 7
@@ -189,5 +196,35 @@ mod tests {
         assert!(err
             .to_string()
             .contains("Malformed TLS alert record length"));
+    }
+
+    #[tokio::test]
+    async fn test_send_and_read_alert_rejects_trailing_bytes() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("local addr should exist");
+
+        tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let _ = socket
+                    .write_all(&[0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x46, 0x00])
+                    .await;
+            }
+        });
+
+        let target = Target::with_ips("example.test".to_string(), addr.port(), vec![addr.ip()])
+            .expect("target should build");
+        let tester = IntoleranceTester::new(target)
+            .with_sni(Some("example.test".to_string()));
+
+        let client_hello = tester.build_invalid_sni_client_hello().expect("hello should build");
+        let err = tester
+            .send_and_read_alert(&client_hello)
+            .await
+            .expect_err("alert with trailing bytes should fail");
+        assert!(err
+            .to_string()
+            .contains("TLS alert record length does not match buffer length"));
     }
 }
