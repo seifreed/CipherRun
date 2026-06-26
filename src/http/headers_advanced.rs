@@ -213,7 +213,7 @@ pub fn parse_hpkp(headers: &HashMap<String, String>) -> HpkpAnalysis {
 
         // Separate backup pins (just informational)
         if pins.len() > 1 {
-            backup_pins = pins[1..].to_vec();
+            backup_pins = pins.iter().skip(1).cloned().collect();
         }
 
         let details =
@@ -227,7 +227,7 @@ pub fn parse_hpkp(headers: &HashMap<String, String>) -> HpkpAnalysis {
             pins: if pins.is_empty() {
                 Vec::new()
             } else {
-                vec![pins[0].clone()]
+                pins.first().cloned().into_iter().collect()
             },
             backup_pins,
             details,
