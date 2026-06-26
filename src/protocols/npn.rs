@@ -497,7 +497,10 @@ mod tests {
         let err = tester
             .parse_npn_response(&response)
             .expect_err("truncated NPN extension should fail");
-        assert!(err.to_string().contains("NPN extension data extends beyond declared length"));
+        assert!(
+            err.to_string()
+                .contains("NPN extension data extends beyond declared length")
+        );
     }
 
     #[test]
@@ -541,9 +544,10 @@ mod tests {
         let err = tester
             .parse_npn_response(&response)
             .expect_err("truncated extension block should fail");
-        assert!(err
-            .to_string()
-            .contains("NPN extension block extends beyond declared length"));
+        assert!(
+            err.to_string()
+                .contains("NPN extension block extends beyond declared length")
+        );
     }
 
     #[tokio::test]

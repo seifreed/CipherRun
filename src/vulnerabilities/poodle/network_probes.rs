@@ -178,7 +178,10 @@ mod tests {
         let response = [CONTENT_TYPE_ALERT, 0x03, 0x03, 0x00, 0x03, 0x02, 0x46];
         let err = find_alert_description(&response, response.len())
             .expect_err("malformed alert length should fail");
-        assert!(err.to_string().contains("Malformed TLS alert record length"));
+        assert!(
+            err.to_string()
+                .contains("Malformed TLS alert record length")
+        );
     }
 
     #[test]
@@ -186,8 +189,9 @@ mod tests {
         let response = [CONTENT_TYPE_ALERT, 0x03, 0x03, 0x00, 0x02, 0x02, 0x46, 0x00];
         let err = find_alert_description(&response, response.len())
             .expect_err("alert with trailing bytes should fail");
-        assert!(err
-            .to_string()
-            .contains("TLS alert record length does not match buffer length"));
+        assert!(
+            err.to_string()
+                .contains("TLS alert record length does not match buffer length")
+        );
     }
 }

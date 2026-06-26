@@ -338,13 +338,11 @@ impl CipherTester {
         // offers this list as its baseline "original order").
         let mut supported_with_ids = supported
             .into_iter()
-            .map(|cipher| {
-                match u16::from_str_radix(&cipher.hexcode, 16) {
-                    Ok(id) => Ok((id, cipher)),
-                    Err(e) => Err(crate::TlsError::ParseError {
-                        message: format!("Invalid cipher hexcode '{}': {}", cipher.hexcode, e),
-                    }),
-                }
+            .map(|cipher| match u16::from_str_radix(&cipher.hexcode, 16) {
+                Ok(id) => Ok((id, cipher)),
+                Err(e) => Err(crate::TlsError::ParseError {
+                    message: format!("Invalid cipher hexcode '{}': {}", cipher.hexcode, e),
+                }),
             })
             .collect::<Result<Vec<_>>>()?;
         supported_with_ids.sort_by_key(|(id, _)| *id);

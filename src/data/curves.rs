@@ -17,9 +17,10 @@ static CURVES_DB_INNER: std::sync::OnceLock<Arc<CurvesDatabase>> = std::sync::On
 pub fn curves_db() -> Arc<CurvesDatabase> {
     CURVES_DB_INNER
         .get_or_init(|| {
-            Arc::new(CurvesDatabase::load().unwrap_or_else(|e| {
-                panic!("Failed to load embedded curves database: {}", e)
-            }))
+            Arc::new(
+                CurvesDatabase::load()
+                    .unwrap_or_else(|e| panic!("Failed to load embedded curves database: {}", e)),
+            )
         })
         .clone()
 }

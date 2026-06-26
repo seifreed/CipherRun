@@ -116,7 +116,8 @@ impl FallbackScsvTester<'_> {
                                 );
                                 return Ok(ScsvSupport::inconclusive());
                             }
-                            let alert_record_len = u16::from_be_bytes([buffer[3], buffer[4]]) as usize;
+                            let alert_record_len =
+                                u16::from_be_bytes([buffer[3], buffer[4]]) as usize;
                             if alert_record_len != 2 {
                                 tracing::debug!(
                                     "SCSV test: Malformed alert record length {} - inconclusive",

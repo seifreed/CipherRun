@@ -470,9 +470,9 @@ impl ClientSimulationResult {
                     .as_ref()
                     .unwrap_or(&"Connection failed".to_string())
             )
-            }
         }
     }
+}
 
 #[cfg(test)]
 mod tests {

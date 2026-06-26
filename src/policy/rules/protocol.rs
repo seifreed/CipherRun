@@ -151,7 +151,11 @@ mod tests {
             .evaluate("example.com:443")
             .expect_err("invalid required protocol should fail");
 
-        assert!(error.to_string().contains("Invalid protocol in required list"));
+        assert!(
+            error
+                .to_string()
+                .contains("Invalid protocol in required list")
+        );
     }
 
     #[test]

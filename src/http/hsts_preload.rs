@@ -252,10 +252,7 @@ impl HstsPreloadChecker {
 
     /// Get cache statistics
     pub fn cache_stats(&self) -> (usize, usize) {
-        let cache = self
-            .cache
-            .lock()
-            .expect("HSTS preload cache lock poisoned");
+        let cache = self.cache.lock().expect("HSTS preload cache lock poisoned");
         let now = Instant::now();
         let valid_entries = cache
             .values()

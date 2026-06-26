@@ -55,10 +55,7 @@ impl CipherTester {
             .map(|cipher| {
                 u16::from_str_radix(&cipher.hexcode, 16).map_err(|error| {
                     crate::TlsError::ParseError {
-                        message: format!(
-                            "Invalid cipher hexcode '{}': {}",
-                            cipher.hexcode, error
-                        ),
+                        message: format!("Invalid cipher hexcode '{}': {}", cipher.hexcode, error),
                     }
                 })
             })
@@ -193,8 +190,7 @@ impl CipherTester {
             let bytes_read = stream.read(&mut response).await?;
 
             Ok::<Result<Option<u16>>, std::io::Error>(Self::parse_server_hello_cipher(
-                &response,
-                bytes_read,
+                &response, bytes_read,
             ))
         })
         .await

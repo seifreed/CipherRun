@@ -75,7 +75,8 @@ impl ConnectionArgs {
         self.delay
             .as_deref()
             .map(|d| {
-                crate::utils::rate_limiter::parse_delay(d).map(|duration| duration.as_millis() as u64)
+                crate::utils::rate_limiter::parse_delay(d)
+                    .map(|duration| duration.as_millis() as u64)
             })
             .transpose()
     }

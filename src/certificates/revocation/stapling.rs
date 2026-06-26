@@ -44,9 +44,11 @@ impl RevocationChecker {
                     message: format!("Failed to parse TLS Feature extension: {error}"),
                 }
             })?;
-            let items = seq.as_sequence().map_err(|error| crate::TlsError::ParseError {
-                message: format!("Failed to parse TLS Feature extension: {error}"),
-            })?;
+            let items = seq
+                .as_sequence()
+                .map_err(|error| crate::TlsError::ParseError {
+                    message: format!("Failed to parse TLS Feature extension: {error}"),
+                })?;
             for item in items {
                 let val = item.as_u64().map_err(|error| crate::TlsError::ParseError {
                     message: format!("Failed to parse TLS Feature extension: {error}"),
@@ -386,7 +388,10 @@ mod tests {
         let data = vec![0x16, 0x03, 0x03, 0x00, 0x10, 0x02, 0x00];
 
         let err = checker.check_ocsp_stapling(&data).unwrap_err();
-        assert!(err.to_string().contains("TLS record length exceeds available data"));
+        assert!(
+            err.to_string()
+                .contains("TLS record length exceeds available data")
+        );
     }
 
     #[test]
@@ -395,7 +400,10 @@ mod tests {
         let data = vec![0x15, 0x03, 0x03, 0x00, 0x05, 0x02];
 
         let err = checker.check_ocsp_stapling(&data).unwrap_err();
-        assert!(err.to_string().contains("TLS record length exceeds available data"));
+        assert!(
+            err.to_string()
+                .contains("TLS record length exceeds available data")
+        );
     }
 
     #[test]

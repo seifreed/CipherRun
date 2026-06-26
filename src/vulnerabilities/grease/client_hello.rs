@@ -261,7 +261,9 @@ fn classify_grease_response(response: &[u8]) -> GreaseTestOutcome {
 
         let alert_record_len = u16::from_be_bytes([response[3], response[4]]) as usize;
         if alert_record_len != 2 {
-            return GreaseTestOutcome::Inconclusive("Malformed TLS alert record length".to_string());
+            return GreaseTestOutcome::Inconclusive(
+                "Malformed TLS alert record length".to_string(),
+            );
         }
         if response.len() != 5 + alert_record_len {
             return GreaseTestOutcome::Inconclusive(

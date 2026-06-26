@@ -241,7 +241,8 @@ impl<'a> HeartbleedTester<'a> {
 
             if pos + ext_len > ext_end {
                 return Err(crate::TlsError::ParseError {
-                    message: "ServerHello extension data extends beyond declared length".to_string(),
+                    message: "ServerHello extension data extends beyond declared length"
+                        .to_string(),
                 });
             }
             pos += ext_len;
@@ -681,9 +682,10 @@ mod tests {
         let err = tester
             .check_heartbeat_extension(&data)
             .expect_err("truncated extension block should fail");
-        assert!(err
-            .to_string()
-            .contains("extension block extends beyond declared length"));
+        assert!(
+            err.to_string()
+                .contains("extension block extends beyond declared length")
+        );
     }
 
     #[tokio::test]

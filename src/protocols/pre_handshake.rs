@@ -450,7 +450,10 @@ mod tests {
             Ok(_) => panic!("truncated record should fail"),
             Err(err) => err,
         };
-        assert!(err.to_string().contains("TLS record length exceeds available data"));
+        assert!(
+            err.to_string()
+                .contains("TLS record length exceeds available data")
+        );
     }
 
     #[test]
@@ -473,7 +476,10 @@ mod tests {
             Ok(_) => panic!("truncated handshake message should fail"),
             Err(err) => err,
         };
-        assert!(err.to_string().contains("Handshake length exceeds available data"));
+        assert!(
+            err.to_string()
+                .contains("Handshake length exceeds available data")
+        );
     }
 
     #[test]
@@ -499,9 +505,10 @@ mod tests {
             Ok(_) => panic!("cross-record handshake should fail"),
             Err(err) => err,
         };
-        assert!(err
-            .to_string()
-            .contains("Handshake length exceeds available data"));
+        assert!(
+            err.to_string()
+                .contains("Handshake length exceeds available data")
+        );
     }
 
     #[test]
@@ -524,9 +531,10 @@ mod tests {
             Ok(_) => panic!("truncated certificate list should fail"),
             Err(err) => err,
         };
-        assert!(err
-            .to_string()
-            .contains("Certificate list length exceeds available data"));
+        assert!(
+            err.to_string()
+                .contains("Certificate list length exceeds available data")
+        );
     }
 
     #[test]
@@ -572,6 +580,9 @@ mod tests {
             Ok(_) => panic!("truncated record should fail"),
             Err(err) => err,
         };
-        assert!(err.to_string().contains("TLS record length exceeds available data"));
+        assert!(
+            err.to_string()
+                .contains("TLS record length exceeds available data")
+        );
     }
 }

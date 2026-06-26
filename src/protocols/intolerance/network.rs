@@ -151,16 +151,19 @@ mod tests {
 
         tokio::spawn(async move {
             if let Ok((mut socket, _)) = listener.accept().await {
-                let _ = socket.write_all(&[0x15, 0x03, 0x03, 0x00, 0x02, 0x02]).await;
+                let _ = socket
+                    .write_all(&[0x15, 0x03, 0x03, 0x00, 0x02, 0x02])
+                    .await;
             }
         });
 
         let target = Target::with_ips("example.test".to_string(), addr.port(), vec![addr.ip()])
             .expect("target should build");
-        let tester = IntoleranceTester::new(target)
-            .with_sni(Some("example.test".to_string()));
+        let tester = IntoleranceTester::new(target).with_sni(Some("example.test".to_string()));
 
-        let client_hello = tester.build_invalid_sni_client_hello().expect("hello should build");
+        let client_hello = tester
+            .build_invalid_sni_client_hello()
+            .expect("hello should build");
         let err = tester
             .send_and_read_alert(&client_hello)
             .await
@@ -185,17 +188,19 @@ mod tests {
 
         let target = Target::with_ips("example.test".to_string(), addr.port(), vec![addr.ip()])
             .expect("target should build");
-        let tester = IntoleranceTester::new(target)
-            .with_sni(Some("example.test".to_string()));
+        let tester = IntoleranceTester::new(target).with_sni(Some("example.test".to_string()));
 
-        let client_hello = tester.build_invalid_sni_client_hello().expect("hello should build");
+        let client_hello = tester
+            .build_invalid_sni_client_hello()
+            .expect("hello should build");
         let err = tester
             .send_and_read_alert(&client_hello)
             .await
             .expect_err("malformed alert length should fail");
-        assert!(err
-            .to_string()
-            .contains("Malformed TLS alert record length"));
+        assert!(
+            err.to_string()
+                .contains("Malformed TLS alert record length")
+        );
     }
 
     #[tokio::test]
@@ -215,16 +220,18 @@ mod tests {
 
         let target = Target::with_ips("example.test".to_string(), addr.port(), vec![addr.ip()])
             .expect("target should build");
-        let tester = IntoleranceTester::new(target)
-            .with_sni(Some("example.test".to_string()));
+        let tester = IntoleranceTester::new(target).with_sni(Some("example.test".to_string()));
 
-        let client_hello = tester.build_invalid_sni_client_hello().expect("hello should build");
+        let client_hello = tester
+            .build_invalid_sni_client_hello()
+            .expect("hello should build");
         let err = tester
             .send_and_read_alert(&client_hello)
             .await
             .expect_err("alert with trailing bytes should fail");
-        assert!(err
-            .to_string()
-            .contains("TLS alert record length does not match buffer length"));
+        assert!(
+            err.to_string()
+                .contains("TLS alert record length does not match buffer length")
+        );
     }
 }

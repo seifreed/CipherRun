@@ -181,14 +181,16 @@ impl CcsInjectionTester {
                                 }
 
                                 if record_type == CONTENT_TYPE_ALERT {
-                                    result = Some(if alert_record_is_complete(
-                                        &accumulated[offset..],
-                                        5 + record_len,
-                                    ) {
-                                        TestStatus::NotVulnerable
-                                    } else {
-                                        TestStatus::Inconclusive
-                                    });
+                                    result = Some(
+                                        if alert_record_is_complete(
+                                            &accumulated[offset..],
+                                            5 + record_len,
+                                        ) {
+                                            TestStatus::NotVulnerable
+                                        } else {
+                                            TestStatus::Inconclusive
+                                        },
+                                    );
                                     break;
                                 } else if record_type == CONTENT_TYPE_CHANGE_CIPHER_SPEC {
                                     result = Some(TestStatus::Vulnerable);

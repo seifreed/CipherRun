@@ -495,7 +495,10 @@ mod tests {
         bytes[ext_len_pos + 1] = 0x01;
 
         let err = ClientHelloCapture::parse(&bytes).expect_err("malformed extension should fail");
-        assert!(err.to_string().contains("Data too short for extension data"));
+        assert!(
+            err.to_string()
+                .contains("Data too short for extension data")
+        );
     }
 
     #[test]

@@ -243,8 +243,10 @@ impl RobotTester {
         let mut stable_codes: std::collections::HashSet<u8> = std::collections::HashSet::new();
         let mut saw_unstable_code = false;
         for probes in &per_vector {
-            let codes: std::collections::HashSet<u8> =
-                probes.iter().filter_map(|response| alert_description_code(response)).collect();
+            let codes: std::collections::HashSet<u8> = probes
+                .iter()
+                .filter_map(|response| alert_description_code(response))
+                .collect();
             match codes.len() {
                 0 => {}
                 1 => stable_codes.extend(codes),
@@ -664,9 +666,10 @@ mod tests {
     #[test]
     fn test_extract_rsa_key_len_rejects_missing_certificate() {
         let err = extract_rsa_key_len(&[]).expect_err("missing handshake should fail");
-        assert!(err
-            .to_string()
-            .contains("Unable to determine RSA key length"));
+        assert!(
+            err.to_string()
+                .contains("Unable to determine RSA key length")
+        );
     }
 
     #[test]

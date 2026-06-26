@@ -175,8 +175,7 @@ async fn probe_cipher_at_protocol(
 fn classify_probe_response(response: &[u8], n: usize) -> CipherProbeStatus {
     if n >= MIN_SERVER_HELLO_LEN && response[0] == CONTENT_TYPE_HANDSHAKE {
         let record_len = u16::from_be_bytes([response[3], response[4]]) as usize;
-        let handshake_len =
-            u32::from_be_bytes([0, response[6], response[7], response[8]]) as usize;
+        let handshake_len = u32::from_be_bytes([0, response[6], response[7], response[8]]) as usize;
         if response[5] == HANDSHAKE_TYPE_SERVER_HELLO
             && record_len + 5 <= n
             && handshake_len + 9 <= n

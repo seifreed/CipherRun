@@ -20,9 +20,11 @@ pub fn cors_layer_with_origins(origins: Vec<String>) -> crate::Result<CorsLayer>
     let allow_origins: Vec<HeaderValue> = origins
         .iter()
         .map(|origin| {
-            origin.parse().map_err(|error| crate::TlsError::InvalidInput {
-                message: format!("Invalid CORS origin '{origin}': {error}"),
-            })
+            origin
+                .parse()
+                .map_err(|error| crate::TlsError::InvalidInput {
+                    message: format!("Invalid CORS origin '{origin}': {error}"),
+                })
         })
         .collect::<crate::Result<_>>()?;
 
@@ -73,10 +75,7 @@ mod tests {
     async fn test_cors_layer_with_origins_allows_match() {
         let app = Router::new()
             .route("/", get(|| async { "ok" }))
-            .layer(cors_layer_with_origins(vec![
-                "https://example.com".to_string(),
-            ])
-            .unwrap());
+            .layer(cors_layer_with_origins(vec!["https://example.com".to_string()]).unwrap());
 
         let response = app
             .oneshot(
@@ -102,10 +101,7 @@ mod tests {
     async fn test_cors_layer_with_origins_rejects_unlisted_origin() {
         let app = Router::new()
             .route("/", get(|| async { "ok" }))
-            .layer(cors_layer_with_origins(vec![
-                "https://example.com".to_string(),
-            ])
-            .unwrap());
+            .layer(cors_layer_with_origins(vec!["https://example.com".to_string()]).unwrap());
 
         let response = app
             .oneshot(

@@ -17,9 +17,10 @@ static CLIENT_DB_INNER: std::sync::OnceLock<Arc<ClientDatabase>> = std::sync::On
 pub fn client_db() -> Arc<ClientDatabase> {
     CLIENT_DB_INNER
         .get_or_init(|| {
-            Arc::new(ClientDatabase::load().unwrap_or_else(|e| {
-                panic!("Failed to load embedded client database: {}", e)
-            }))
+            Arc::new(
+                ClientDatabase::load()
+                    .unwrap_or_else(|e| panic!("Failed to load embedded client database: {}", e)),
+            )
         })
         .clone()
 }
@@ -335,9 +336,12 @@ impl ClientDatabase {
         if value.is_empty() {
             return Ok(None);
         }
-        value.parse().map(Some).map_err(|e| crate::TlsError::ParseError {
-            message: format!("Invalid client data field {field}[{index}]='{value}': {e}"),
-        })
+        value
+            .parse()
+            .map(Some)
+            .map_err(|e| crate::TlsError::ParseError {
+                message: format!("Invalid client data field {field}[{index}]='{value}': {e}"),
+            })
     }
 
     fn parse_optional_bool(
@@ -555,7 +559,10 @@ minRsaBits+=("not-a-number")
             Ok(_) => panic!("invalid numeric field should fail"),
             Err(err) => err,
         };
-        assert!(err.to_string().contains("Invalid client data field minRsaBits"));
+        assert!(
+            err.to_string()
+                .contains("Invalid client data field minRsaBits")
+        );
     }
 
     #[test]
@@ -570,7 +577,10 @@ current+=("maybe")
             Ok(_) => panic!("invalid bool field should fail"),
             Err(err) => err,
         };
-        assert!(err.to_string().contains("Invalid client data field current"));
+        assert!(
+            err.to_string()
+                .contains("Invalid client data field current")
+        );
     }
 
     #[test]

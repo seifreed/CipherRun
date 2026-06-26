@@ -18,9 +18,10 @@ static CIPHER_DB_INNER: std::sync::OnceLock<Arc<CipherDatabase>> = std::sync::On
 pub fn cipher_db() -> Arc<CipherDatabase> {
     CIPHER_DB_INNER
         .get_or_init(|| {
-            Arc::new(CipherDatabase::load().unwrap_or_else(|e| {
-                panic!("Failed to load embedded cipher database: {}", e)
-            }))
+            Arc::new(
+                CipherDatabase::load()
+                    .unwrap_or_else(|e| panic!("Failed to load embedded cipher database: {}", e)),
+            )
         })
         .clone()
 }

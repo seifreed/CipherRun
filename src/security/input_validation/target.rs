@@ -275,8 +275,8 @@ mod tests {
 
     #[test]
     fn test_validate_target_normalizes_rooted_fqdn() {
-        let (host, port) = validate_target("example.com.:443", true)
-            .expect("rooted FQDN target should be valid");
+        let (host, port) =
+            validate_target("example.com.:443", true).expect("rooted FQDN target should be valid");
 
         assert_eq!(host, "example.com");
         assert_eq!(port, Some(443));

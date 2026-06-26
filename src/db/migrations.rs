@@ -69,11 +69,9 @@ async fn run_sqlite_migrations_manual(
 
     // Find all .sql migration files in migrations directory
     let mut migration_files = Vec::new();
-    for entry in fs::read_dir(migrations_path)
-        .map_err(|e| {
-            crate::TlsError::DatabaseError(format!("Failed to read migrations directory: {}", e))
-        })?
-    {
+    for entry in fs::read_dir(migrations_path).map_err(|e| {
+        crate::TlsError::DatabaseError(format!("Failed to read migrations directory: {}", e))
+    })? {
         let path = entry
             .map_err(|e| {
                 crate::TlsError::DatabaseError(format!("Failed to read migration entry: {}", e))

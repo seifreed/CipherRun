@@ -5,7 +5,10 @@ use chrono::{DateTime, Utc};
 
 fn parse_persisted_cert_date(raw: &str, field: &str) -> crate::Result<DateTime<Utc>> {
     parse_cert_date(raw).ok_or_else(|| crate::TlsError::ParseError {
-        message: format!("Invalid certificate {} date for persistence: {}", field, raw),
+        message: format!(
+            "Invalid certificate {} date for persistence: {}",
+            field, raw
+        ),
     })
 }
 
@@ -192,22 +195,18 @@ impl PersistedScan {
                     .enumerate()
                     .map(|(position, cert)| {
                         Ok::<_, crate::TlsError>(PersistedCertificate {
-                            fingerprint_sha256: cert
-                                .fingerprint_sha256
-                                .clone()
-                                .ok_or_else(|| crate::TlsError::ParseError {
+                            fingerprint_sha256: cert.fingerprint_sha256.clone().ok_or_else(
+                                || crate::TlsError::ParseError {
                                     message: format!(
                                         "Missing certificate fingerprint for chain position {}",
                                         position
                                     ),
-                                })?,
+                                },
+                            )?,
                             subject: cert.subject.clone(),
                             issuer: cert.issuer.clone(),
                             serial_number: Some(cert.serial_number.clone()),
-                            not_before: parse_persisted_cert_date(
-                                &cert.not_before,
-                                "not_before",
-                            )?,
+                            not_before: parse_persisted_cert_date(&cert.not_before, "not_before")?,
                             not_after: parse_persisted_cert_date(&cert.not_after, "not_after")?,
                             signature_algorithm: Some(cert.signature_algorithm.clone()),
                             public_key_algorithm: Some(cert.public_key_algorithm.clone()),

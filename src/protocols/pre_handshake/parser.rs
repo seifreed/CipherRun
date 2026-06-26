@@ -177,11 +177,11 @@ impl PreHandshakeScanner {
         let serial_number = cert.serial.to_string();
 
         let mut san = Vec::new();
-        if let Some(san_ext) = cert
-            .subject_alternative_name()
-            .map_err(|e| TlsError::ParseError {
-                message: format!("Failed to parse subject alternative name: {:?}", e),
-            })?
+        if let Some(san_ext) =
+            cert.subject_alternative_name()
+                .map_err(|e| TlsError::ParseError {
+                    message: format!("Failed to parse subject alternative name: {:?}", e),
+                })?
         {
             for name in &san_ext.value.general_names {
                 if let x509_parser::extensions::GeneralName::DNSName(dns) = name {
@@ -255,20 +255,24 @@ mod tests {
 
     #[test]
     fn test_parse_certificate_rejects_malformed_san() {
-        let scanner = PreHandshakeScanner::new(crate::utils::network::Target::with_ips(
-            "localhost".to_string(),
-            443,
-            vec![std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)],
-        )
-        .unwrap());
+        let scanner = PreHandshakeScanner::new(
+            crate::utils::network::Target::with_ips(
+                "localhost".to_string(),
+                443,
+                vec![std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)],
+            )
+            .unwrap(),
+        );
         let der = cert_with_raw_extension_der("2.5.29.17", b"\x05\x00");
 
         let error = scanner
             .parse_certificate(&der)
             .expect_err("malformed SAN should fail");
 
-        assert!(error
-            .to_string()
-            .contains("Failed to parse subject alternative name"));
+        assert!(
+            error
+                .to_string()
+                .contains("Failed to parse subject alternative name")
+        );
     }
 }

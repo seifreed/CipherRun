@@ -462,10 +462,18 @@ impl<'a> RenegotiationTester<'a> {
             return Ok(false);
         }
 
+        let record_len = u16::from_be_bytes([response[3], response[4]]) as usize;
+        let record_end = 5 + record_len;
+        if record_end > response.len() {
+            return Err(crate::TlsError::ParseError {
+                message: "TLS record length exceeds available data".to_string(),
+            });
+        }
+
         // Skip TLS record header (5 bytes) + handshake header (4 bytes)
         // ServerHello: version(2) + random(32) + session_id_length(1)
         let sid_len_offset = 5 + 4 + 2 + 32;
-        if sid_len_offset >= response.len() {
+        if sid_len_offset >= record_end {
             return Err(crate::TlsError::ParseError {
                 message: "ServerHello truncated before session_id_len".to_string(),
             });
@@ -474,7 +482,7 @@ impl<'a> RenegotiationTester<'a> {
 
         // After session_id: cipher_suite(2) + compression(1) + extensions_length(2)
         let ext_len_offset = sid_len_offset + 1 + sid_len + 2 + 1;
-        if ext_len_offset + 2 > response.len() {
+        if ext_len_offset + 2 > record_end {
             return Err(crate::TlsError::ParseError {
                 message: "ServerHello truncated before extensions length".to_string(),
             });
@@ -485,9 +493,14 @@ impl<'a> RenegotiationTester<'a> {
         // Search only within the extensions section
         let ext_start = ext_len_offset + 2;
         let ext_end = ext_start + ext_total;
-        if ext_end > response.len() {
+        if ext_end > record_end {
             return Err(crate::TlsError::ParseError {
                 message: "ServerHello extension block extends beyond declared length".to_string(),
+            });
+        }
+        if ext_end != record_end {
+            return Err(crate::TlsError::ParseError {
+                message: "ServerHello extension block contains trailing bytes".to_string(),
             });
         }
         if ext_start >= ext_end {
@@ -500,15 +513,20 @@ impl<'a> RenegotiationTester<'a> {
         while pos + 4 <= ext_end {
             let ext_type = u16::from_be_bytes([response[pos], response[pos + 1]]);
             let ext_len = u16::from_be_bytes([response[pos + 2], response[pos + 3]]) as usize;
-            if ext_type == EXTENSION_RENEGOTIATION_INFO {
-                return Ok(true);
-            }
             if pos + 4 + ext_len > ext_end {
                 return Err(crate::TlsError::ParseError {
                     message: "ServerHello truncated in renegotiation extension data".to_string(),
                 });
             }
+            if ext_type == EXTENSION_RENEGOTIATION_INFO {
+                return Ok(true);
+            }
             pos += 4 + ext_len;
+        }
+        if pos != ext_end {
+            return Err(crate::TlsError::ParseError {
+                message: "ServerHello extension block contains trailing bytes".to_string(),
+            });
         }
         Ok(false)
     }
@@ -721,21 +739,29 @@ mod tests {
         .unwrap();
         let tester = RenegotiationTester::new(&target);
 
-        let mut response = vec![
-            0x16, 0x03, 0x03, 0x00, 0x31, // record
-            0x02, 0x00, 0x00, 0x2d, // ServerHello
-            0x03, 0x03,
-        ];
+        let mut response = vec![0x16, 0x03, 0x03, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00];
+        response.extend_from_slice(&[0x03, 0x03]);
         response.extend_from_slice(&[0x00; 32]);
         response.push(0x00);
         response.extend_from_slice(&[0x00, 0x2f]);
         response.push(0x00);
-        response.extend_from_slice(&[0x00, 0x04, 0x00, 0x00, 0x00, 0x02, 0x01]);
+        response.extend_from_slice(&[0x00, 0x05, 0xff, 0x01, 0x00, 0x02, 0x01]);
 
-        let err = tester.has_renegotiation_info_extension(&response).unwrap_err();
-        assert!(err
-            .to_string()
-            .contains("truncated in renegotiation extension data"));
+        let rec_len = (response.len() - 5) as u16;
+        response[3] = (rec_len >> 8) as u8;
+        response[4] = (rec_len & 0xff) as u8;
+        let hs_len = (response.len() - 9) as u32;
+        response[6] = ((hs_len >> 16) & 0xff) as u8;
+        response[7] = ((hs_len >> 8) & 0xff) as u8;
+        response[8] = (hs_len & 0xff) as u8;
+
+        let err = tester
+            .has_renegotiation_info_extension(&response)
+            .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("truncated in renegotiation extension data")
+        );
     }
 
     #[test]
@@ -771,8 +797,86 @@ mod tests {
         let err = tester
             .has_renegotiation_info_extension(&response)
             .expect_err("truncated extension block should fail");
-        assert!(err
-            .to_string()
-            .contains("extension block extends beyond declared length"));
+        assert!(
+            err.to_string()
+                .contains("extension block extends beyond declared length")
+        );
+    }
+
+    #[test]
+    fn test_has_renegotiation_info_extension_rejects_trailing_bytes_in_record() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["93.184.216.34".parse().unwrap()],
+        )
+        .unwrap();
+        let tester = RenegotiationTester::new(&target);
+
+        let mut response = vec![
+            0x16, 0x03, 0x03, 0x00, 0x00, // record
+            0x02, 0x00, 0x00, 0x00, // ServerHello
+            0x03, 0x03,
+        ];
+        response.extend_from_slice(&[0x00; 32]);
+        response.push(0x00);
+        response.extend_from_slice(&[0x00, 0x9c]);
+        response.push(0x00);
+        response.extend_from_slice(&[0x00, 0x00]); // no extensions
+        response.push(0xff); // trailing byte inside the record
+
+        let rec_len = (response.len() - 5) as u16;
+        response[3] = (rec_len >> 8) as u8;
+        response[4] = (rec_len & 0xff) as u8;
+        let hs_len = (response.len() - 9) as u32;
+        response[6] = ((hs_len >> 16) & 0xff) as u8;
+        response[7] = ((hs_len >> 8) & 0xff) as u8;
+        response[8] = (hs_len & 0xff) as u8;
+
+        let err = tester
+            .has_renegotiation_info_extension(&response)
+            .expect_err("trailing bytes in ServerHello record should fail");
+        assert!(
+            err.to_string()
+                .contains("ServerHello extension block contains trailing bytes")
+        );
+    }
+
+    #[test]
+    fn test_has_renegotiation_info_extension_rejects_partial_extension_header() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["93.184.216.34".parse().unwrap()],
+        )
+        .unwrap();
+        let tester = RenegotiationTester::new(&target);
+
+        let mut response = vec![
+            0x16, 0x03, 0x03, 0x00, 0x00, // record
+            0x02, 0x00, 0x00, 0x00, // ServerHello
+            0x03, 0x03,
+        ];
+        response.extend_from_slice(&[0x00; 32]);
+        response.push(0x00);
+        response.extend_from_slice(&[0x00, 0x9c]);
+        response.push(0x00);
+        response.extend_from_slice(&[0x00, 0x03, 0x00, 0x01, 0x00]); // partial extension header
+
+        let rec_len = (response.len() - 5) as u16;
+        response[3] = (rec_len >> 8) as u8;
+        response[4] = (rec_len & 0xff) as u8;
+        let hs_len = (response.len() - 9) as u32;
+        response[6] = ((hs_len >> 16) & 0xff) as u8;
+        response[7] = ((hs_len >> 8) & 0xff) as u8;
+        response[8] = (hs_len & 0xff) as u8;
+
+        let err = tester
+            .has_renegotiation_info_extension(&response)
+            .expect_err("partial extension header should fail");
+        assert!(
+            err.to_string()
+                .contains("ServerHello extension block contains trailing bytes")
+        );
     }
 }

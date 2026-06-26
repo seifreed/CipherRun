@@ -29,9 +29,8 @@ impl RevocationChecker {
                 ParsedExtension::CRLDistributionPoints(crl_dp) => {
                     for point in &crl_dp.points {
                         if let Some(dist_point) = &point.distribution_point
-                            && let x509_parser::extensions::DistributionPointName::FullName(
-                                names,
-                            ) = dist_point
+                            && let x509_parser::extensions::DistributionPointName::FullName(names) =
+                                dist_point
                         {
                             for name in names {
                                 if let GeneralName::URI(uri) = name

@@ -3,10 +3,10 @@
 // Builds deliberately malformed TLS records with different padding/MAC
 // combinations for oracle detection.
 
+use crate::Result;
 use crate::constants::{CONTENT_TYPE_APPLICATION_DATA, VERSION_TLS_1_2};
 use crate::protocols::Protocol;
 use crate::protocols::handshake::ClientHelloBuilder;
-use crate::Result;
 
 use super::MalformedRecordType;
 

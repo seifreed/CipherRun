@@ -126,20 +126,24 @@ pub async fn connect_via_proxy(
 
     // Parse HTTP status code from "HTTP/1.x NNN Reason" — substring matching "200"
     // would accept any response body or reason phrase that happens to contain "200".
-    let status_token = status_line.split(' ').nth(1).ok_or_else(|| {
-        TlsError::UnexpectedResponse {
-            details: format!("Proxy CONNECT response missing status code: {}", status_line.trim()),
-        }
-    })?;
-    let status_code: u16 =
-        status_token
-            .parse()
-            .map_err(|e| TlsError::UnexpectedResponse {
+    let status_token =
+        status_line
+            .split(' ')
+            .nth(1)
+            .ok_or_else(|| TlsError::UnexpectedResponse {
                 details: format!(
-                    "Proxy CONNECT response has invalid status code '{}': {}",
-                    status_token, e
+                    "Proxy CONNECT response missing status code: {}",
+                    status_line.trim()
                 ),
             })?;
+    let status_code: u16 = status_token
+        .parse()
+        .map_err(|e| TlsError::UnexpectedResponse {
+            details: format!(
+                "Proxy CONNECT response has invalid status code '{}': {}",
+                status_token, e
+            ),
+        })?;
     if !(200..300).contains(&status_code) {
         crate::tls_bail!("Proxy CONNECT failed: {}", status_line.trim());
     }

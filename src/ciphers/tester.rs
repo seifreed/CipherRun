@@ -240,7 +240,11 @@ mod tests {
         record
     }
 
-    async fn spawn_fake_tls_server(cipher: u16, session_id_len: usize, accepts: usize) -> SocketAddr {
+    async fn spawn_fake_tls_server(
+        cipher: u16,
+        session_id_len: usize,
+        accepts: usize,
+    ) -> SocketAddr {
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("listener should bind");
@@ -503,9 +507,10 @@ mod tests {
             .get_server_chosen_cipher(Protocol::TLS12, &[0xc02f, 0xc030])
             .await
             .expect_err("malformed ServerHello should fail");
-        assert!(err
-            .to_string()
-            .contains("Invalid ServerHello session_id_len"));
+        assert!(
+            err.to_string()
+                .contains("Invalid ServerHello session_id_len")
+        );
     }
 
     #[tokio::test]

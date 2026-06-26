@@ -87,7 +87,8 @@ impl ServerHelloParser {
                 let ext_type = u16::from_be_bytes([record[offset], record[offset + 1]]);
                 offset += 2;
 
-                let ext_data_len = u16::from_be_bytes([record[offset], record[offset + 1]]) as usize;
+                let ext_data_len =
+                    u16::from_be_bytes([record[offset], record[offset + 1]]) as usize;
                 offset += 2;
 
                 if offset + ext_data_len <= ext_end {
