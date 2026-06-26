@@ -91,6 +91,18 @@ fn extract_rsa_key_len(buffer: &[u8]) -> Result<usize> {
     })
 }
 
+/// Extract the description byte from a TLS alert record only if the record is
+/// structurally complete.
+fn alert_description_code(response: &[u8]) -> Option<u8> {
+    if response.len() >= 7 && response[0] == 0x15 {
+        let record_len = u16::from_be_bytes([response[3], response[4]]) as usize;
+        if record_len == 2 && response.len() == 5 + record_len {
+            return Some(response[6]);
+        }
+    }
+    None
+}
+
 /// ROBOT vulnerability tester
 pub struct RobotTester {
     target: Target,
@@ -222,16 +234,6 @@ impl RobotTester {
         // Extract a TLS alert description byte if the response is a single alert
         // record (0x15 .. record_len 0x0002 <level> <description>). The record
         // length check avoids reading stray bytes from concatenated/malformed records.
-        let alert_description_code = |response: &Vec<u8>| -> Option<u8> {
-            if response.len() >= 7 && response[0] == 0x15 {
-                let record_len = u16::from_be_bytes([response[3], response[4]]) as usize;
-                if record_len == 2 {
-                    return Some(response[6]);
-                }
-            }
-            None
-        };
-
         // Strong oracle: a malformed-padding vector must DETERMINISTICALLY yield its
         // own alert code (stable across rounds), and the stable codes must differ
         // between vectors — i.e. the server distinguishes padding by type, a real
@@ -242,7 +244,7 @@ impl RobotTester {
         let mut saw_unstable_code = false;
         for probes in &per_vector {
             let codes: std::collections::HashSet<u8> =
-                probes.iter().filter_map(alert_description_code).collect();
+                probes.iter().filter_map(|response| alert_description_code(response)).collect();
             match codes.len() {
                 0 => {}
                 1 => stable_codes.extend(codes),
@@ -665,5 +667,11 @@ mod tests {
         assert!(err
             .to_string()
             .contains("Unable to determine RSA key length"));
+    }
+
+    #[test]
+    fn test_alert_description_code_rejects_trailing_bytes() {
+        let response = [0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x46, 0x00];
+        assert_eq!(alert_description_code(&response), None);
     }
 }
