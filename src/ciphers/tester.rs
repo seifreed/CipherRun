@@ -514,6 +514,19 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_determine_server_preference_rejects_invalid_hexcode() {
+        let tester = CipherTester::new(dummy_target());
+        let ciphers = vec![make_cipher("TLSv1.2", "not-hex", "RSA", "AES", 128, false)];
+
+        let error = tester
+            .determine_server_preference(Protocol::TLS12, &ciphers)
+            .await
+            .expect_err("invalid cipher hexcode should fail");
+
+        assert!(error.to_string().contains("Invalid cipher hexcode"));
+    }
+
+    #[tokio::test]
     async fn test_cipher_handshake_rejects_invalid_hexcode() {
         let tester = CipherTester::new(dummy_target());
         let cipher = make_cipher("TLSv1.2", "not-hex", "RSA", "AES", 128, false);
@@ -703,24 +716,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_cipher_handshake_only_invalid_hexcode() {
-        let addr = spawn_fake_tls_server(0xc02f, 1).await;
-        let target = Target::with_ips(
-            "localhost".to_string(),
-            addr.port(),
-            vec![IpAddr::from([127, 0, 0, 1])],
-        )
-        .expect("target should build");
-
-        let tester = CipherTester::new(target);
+        let tester = CipherTester::new(dummy_target());
         let mut cipher = make_cipher("TLSv1.2", "0001", "RSA", "AES", 128, false);
         cipher.hexcode = "ZZZZ".to_string();
 
-        let (supported, time) = tester
+        let error = tester
             .test_cipher_handshake_only(&cipher, Protocol::TLS12, None)
             .await
-            .expect("test assertion should succeed");
+            .expect_err("invalid cipher hexcode should fail");
 
-        assert!(!supported);
-        assert!(time.is_none());
+        assert!(error.to_string().contains("Invalid cipher hexcode"));
     }
 }

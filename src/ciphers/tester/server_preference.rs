@@ -52,18 +52,17 @@ impl CipherTester {
 
         let cipher_hexcodes: Vec<u16> = supported_ciphers
             .iter()
-            .filter_map(|c| {
-                u16::from_str_radix(&c.hexcode, 16)
-                    .map_err(|e| {
-                        tracing::warn!(
-                            "Skipping cipher with invalid hexcode '{}': {}",
-                            c.hexcode,
-                            e
-                        );
-                    })
-                    .ok()
+            .map(|cipher| {
+                u16::from_str_radix(&cipher.hexcode, 16).map_err(|error| {
+                    crate::TlsError::ParseError {
+                        message: format!(
+                            "Invalid cipher hexcode '{}': {}",
+                            cipher.hexcode, error
+                        ),
+                    }
+                })
             })
-            .collect();
+            .collect::<Result<_>>()?;
 
         if cipher_hexcodes.len() < 2 {
             return Ok(Vec::new());
