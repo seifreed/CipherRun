@@ -39,9 +39,8 @@ fn has_server_hello_done(buf: &[u8]) -> bool {
 }
 
 /// Parse the server handshake buffer to find the Certificate message and return the RSA
-/// modulus length in bytes.  Falls back to 256 (RSA-2048) if parsing fails.
-fn extract_rsa_key_len(buffer: &[u8]) -> usize {
-    const DEFAULT: usize = 256; // RSA-2048 — the common modern case
+/// modulus length in bytes.
+fn extract_rsa_key_len(buffer: &[u8]) -> Result<usize> {
     let mut offset = 0;
     while offset + 5 <= buffer.len() {
         let record_type = buffer[offset];
@@ -78,7 +77,7 @@ fn extract_rsa_key_len(buffer: &[u8]) -> usize {
                             && let Ok(pkey) = cert.public_key()
                             && let Ok(rsa) = pkey.rsa()
                         {
-                            return rsa.n().num_bytes() as usize;
+                            return Ok(rsa.n().num_bytes() as usize);
                         }
                     }
                 }
@@ -87,7 +86,9 @@ fn extract_rsa_key_len(buffer: &[u8]) -> usize {
         }
         offset = record_end;
     }
-    DEFAULT
+    Err(crate::TlsError::ParseError {
+        message: "Unable to determine RSA key length from server handshake".to_string(),
+    })
 }
 
 /// ROBOT vulnerability tester
@@ -414,7 +415,7 @@ impl RobotTester {
 
         // Determine the server's RSA key size from the Certificate message so we send
         // the right payload length (128 bytes for RSA-1024, 256 for RSA-2048, etc.).
-        let rsa_key_len = extract_rsa_key_len(&buffer);
+        let rsa_key_len = extract_rsa_key_len(&buffer)?;
 
         // Send ClientKeyExchange with invalid padding
         let client_key_exchange = self.build_invalid_client_key_exchange(variant, rsa_key_len);
@@ -656,5 +657,13 @@ mod tests {
         };
         let debug = format!("{:?}", result);
         assert!(debug.contains("Vulnerable"));
+    }
+
+    #[test]
+    fn test_extract_rsa_key_len_rejects_missing_certificate() {
+        let err = extract_rsa_key_len(&[]).expect_err("missing handshake should fail");
+        assert!(err
+            .to_string()
+            .contains("Unable to determine RSA key length"));
     }
 }
