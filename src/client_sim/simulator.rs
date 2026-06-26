@@ -213,7 +213,8 @@ impl ClientSimulator {
         // Extract ALPN protocol
         let alpn = connection
             .alpn_protocol()
-            .and_then(|bytes| String::from_utf8(bytes.to_vec()).ok());
+            .map(Self::parse_alpn_protocol)
+            .transpose()?;
 
         // Prefer the actual negotiated key-exchange group; only fall back to the
         // cipher-suite heuristic (which guesses the client's first curve) when
@@ -419,6 +420,12 @@ impl ClientSimulator {
             .map_err(|e| crate::TlsError::InvalidInput { message: e })
     }
 
+    fn parse_alpn_protocol(bytes: &[u8]) -> Result<String> {
+        String::from_utf8(bytes.to_vec()).map_err(|error| crate::TlsError::InvalidHandshake {
+            details: format!("Invalid negotiated ALPN protocol: {}", error),
+        })
+    }
+
     /// Simulate popular clients (subset)
     ///
     /// Selects the most recent client per major family from the bundled
@@ -463,9 +470,9 @@ impl ClientSimulationResult {
                     .as_ref()
                     .unwrap_or(&"Connection failed".to_string())
             )
+            }
         }
     }
-}
 
 #[cfg(test)]
 mod tests {
@@ -554,6 +561,12 @@ mod tests {
         let name =
             ClientSimulator::format_cipher_suite(rustls::CipherSuite::TLS13_AES_128_GCM_SHA256);
         assert_eq!(name, "TLS_AES_128_GCM_SHA256");
+    }
+
+    #[test]
+    fn test_parse_alpn_protocol_rejects_invalid_utf8() {
+        let err = ClientSimulator::parse_alpn_protocol(&[0xff, 0xfe]).unwrap_err();
+        assert!(err.to_string().contains("Invalid negotiated ALPN protocol"));
     }
 
     #[test]
