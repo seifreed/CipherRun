@@ -161,14 +161,20 @@ impl CipherTester {
                 });
             }
 
-            if n >= 6
-                && response[0] == CONTENT_TYPE_HANDSHAKE
-                && response[5] == HANDSHAKE_TYPE_SERVER_HELLO
+            let received =
+                response
+                    .get(..n)
+                    .ok_or_else(|| crate::TlsError::UnexpectedResponse {
+                        details: "cipher probe read length exceeded response buffer".to_string(),
+                    })?;
+
+            if received.first() == Some(&CONTENT_TYPE_HANDSHAKE)
+                && received.get(5) == Some(&HANDSHAKE_TYPE_SERVER_HELLO)
             {
                 return Ok(true);
             }
 
-            if response[0] == 0x15 {
+            if received.first() == Some(&0x15) {
                 return Ok(false);
             }
 
