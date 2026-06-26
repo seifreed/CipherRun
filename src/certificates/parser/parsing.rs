@@ -353,7 +353,7 @@ impl CertificateParser {
         let expiry_countdown = super::fingerprints::format_expiry_countdown(&not_after_str);
 
         // Check for Debian weak key (CVE-2008-0166)
-        let debian_weak_key = super::checks::check_debian_weak_key(der_bytes);
+        let debian_weak_key = super::checks::check_debian_weak_key(der_bytes)?;
 
         // Extract AIA URL (CA Issuers URL for intermediate cert download)
         let aia_url = super::extraction::extract_aia_url(&cert).ok().flatten();
