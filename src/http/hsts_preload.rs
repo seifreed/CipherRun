@@ -251,14 +251,17 @@ impl HstsPreloadChecker {
     }
 
     /// Get cache statistics
-    pub fn cache_stats(&self) -> (usize, usize) {
-        let cache = self.cache.lock().expect("HSTS preload cache lock poisoned");
+    pub fn cache_stats(&self) -> Result<(usize, usize), String> {
+        let cache = self
+            .cache
+            .lock()
+            .map_err(|_| "HSTS preload cache lock poisoned".to_string())?;
         let now = Instant::now();
         let valid_entries = cache
             .values()
             .filter(|entry| now.duration_since(entry.timestamp) < self.cache_duration)
             .count();
-        (cache.len(), valid_entries)
+        Ok((cache.len(), valid_entries))
     }
 }
 
@@ -469,7 +472,7 @@ mod tests {
             .cache_status("example2.com", status)
             .expect("cache should update");
 
-        let (total, valid) = checker.cache_stats();
+        let (total, valid) = checker.cache_stats().expect("cache stats should read");
         assert_eq!(total, 2);
         assert_eq!(valid, 2);
     }
@@ -488,6 +491,22 @@ mod tests {
             .check_preload_status("example.com")
             .await
             .expect_err("poisoned cache lock should fail");
+        assert!(err.contains("HSTS preload cache lock poisoned"));
+    }
+
+    #[test]
+    fn test_poisoned_cache_stats_lock_returns_error() {
+        let checker = HstsPreloadChecker::new();
+        let cache = checker.cache.clone();
+        let _ = std::thread::spawn(move || {
+            let _guard = cache.lock().expect("lock should acquire");
+            panic!("poison cache lock");
+        })
+        .join();
+
+        let err = checker
+            .cache_stats()
+            .expect_err("poisoned cache stats lock should fail");
         assert!(err.contains("HSTS preload cache lock poisoned"));
     }
 }

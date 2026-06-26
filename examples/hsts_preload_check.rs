@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), String> {
     // Get domain from command line arguments
     let args: Vec<String> = std::env::args().collect();
     let domain = if args.len() > 1 {
@@ -106,10 +106,11 @@ async fn main() {
     // Example 3: Cache statistics
     println!("3. Cache Statistics:");
     println!("-------------------");
-    let (total, valid) = checker.cache_stats();
+    let (total, valid) = checker.cache_stats()?;
     println!("   Total entries: {}", total);
     println!("   Valid entries: {}", valid);
 
     println!();
     println!("✓ Examples completed successfully!");
+    Ok(())
 }
