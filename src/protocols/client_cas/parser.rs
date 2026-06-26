@@ -159,6 +159,12 @@ impl ClientCAsTester {
             ca_pos += dn_len;
         }
 
+        if ca_pos != ca_data.len() {
+            return Err(crate::TlsError::ParseError {
+                message: "CertificateRequest CA list contains trailing bytes".to_string(),
+            });
+        }
+
         Ok(cas)
     }
 
