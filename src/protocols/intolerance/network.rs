@@ -37,10 +37,22 @@ impl IntoleranceTester {
     pub(super) async fn send_and_read_alert(&self, client_hello: &[u8]) -> Result<Option<u8>> {
         match self.send_client_hello(client_hello).await {
             Ok(response) => {
-                if response.first() == Some(&CONTENT_TYPE_ALERT) && response.len() < 7 {
-                    return Err(crate::TlsError::ParseError {
-                        message: "Truncated TLS alert record".to_string(),
-                    });
+                if response.first() == Some(&CONTENT_TYPE_ALERT) {
+                    if response.len() < 7 {
+                        return Err(crate::TlsError::ParseError {
+                            message: "Truncated TLS alert record".to_string(),
+                        });
+                    }
+
+                    let alert_record_len = u16::from_be_bytes([response[3], response[4]]) as usize;
+                    if alert_record_len != 2 {
+                        return Err(crate::TlsError::ParseError {
+                            message: format!(
+                                "Malformed TLS alert record length: {}",
+                                alert_record_len
+                            ),
+                        });
+                    }
                 }
 
                 if response.len() >= 7
@@ -147,5 +159,35 @@ mod tests {
             .await
             .expect_err("truncated alert should fail");
         assert!(err.to_string().contains("Truncated TLS alert record"));
+    }
+
+    #[tokio::test]
+    async fn test_send_and_read_alert_rejects_malformed_alert_length() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("local addr should exist");
+
+        tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let _ = socket
+                    .write_all(&[0x15, 0x03, 0x03, 0x00, 0x03, 0x02, 0x46])
+                    .await;
+            }
+        });
+
+        let target = Target::with_ips("example.test".to_string(), addr.port(), vec![addr.ip()])
+            .expect("target should build");
+        let tester = IntoleranceTester::new(target)
+            .with_sni(Some("example.test".to_string()));
+
+        let client_hello = tester.build_invalid_sni_client_hello().expect("hello should build");
+        let err = tester
+            .send_and_read_alert(&client_hello)
+            .await
+            .expect_err("malformed alert length should fail");
+        assert!(err
+            .to_string()
+            .contains("Malformed TLS alert record length"));
     }
 }
