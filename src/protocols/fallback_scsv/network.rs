@@ -124,6 +124,14 @@ impl FallbackScsvTester<'_> {
                                 );
                                 return Ok(ScsvSupport::inconclusive());
                             }
+                            if n != 5 + alert_record_len {
+                                tracing::debug!(
+                                    "SCSV test: Alert record length {} does not match buffer length {} - inconclusive",
+                                    alert_record_len,
+                                    n
+                                );
+                                return Ok(ScsvSupport::inconclusive());
+                            }
                             let alert_level = buffer[5];
                             let alert_desc = buffer[6];
 
@@ -284,5 +292,36 @@ mod tests {
         buffer[3] = 0x00;
         buffer[4] = 0x02;
         assert!(!tester.baseline_fallback_accepted(Ok(Ok(7)), &buffer));
+    }
+
+    #[tokio::test]
+    async fn test_scsv_on_ip_rejects_trailing_bytes_in_alert() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("local addr should exist");
+
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept should succeed");
+            let mut buffer = vec![0u8; 4096];
+            let _ = socket.read(&mut buffer).await.expect("read should succeed");
+            let _ = socket
+                .write_all(&[0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x46, 0x00])
+                .await;
+        });
+
+        let target = crate::utils::network::Target::with_ips(
+            "example.com".to_string(),
+            addr.port(),
+            vec![addr.ip()],
+        )
+        .unwrap();
+        let tester = FallbackScsvTester::new(&target);
+
+        let result = tester
+            .test_scsv_on_ip(0x0301, addr)
+            .await
+            .expect("probe should return a result");
+        assert!(result.inconclusive);
     }
 }
