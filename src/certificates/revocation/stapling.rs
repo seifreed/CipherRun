@@ -71,7 +71,7 @@ impl RevocationChecker {
     ///
     /// # Returns
     /// * `OcspStaplingResult` with detection results
-    pub fn check_ocsp_stapling(&self, tls_handshake_data: &[u8]) -> OcspStaplingResult {
+    pub fn check_ocsp_stapling(&self, tls_handshake_data: &[u8]) -> Result<OcspStaplingResult> {
         let mut result = OcspStaplingResult {
             stapling_supported: false,
             stapled_response_present: false,
@@ -137,7 +137,7 @@ impl RevocationChecker {
                         if let Some(has_extension) = Self::parse_server_hello_extensions(
                             &handshake_data[msg_offset + 4..msg_offset + 4 + msg_len],
                             EXTENSION_STATUS_REQUEST,
-                        ) {
+                        )? {
                             result.stapling_supported = has_extension;
                             if has_extension {
                                 result.details.push_str("Server advertised OCSP stapling support (status_request extension). ");
@@ -197,11 +197,14 @@ impl RevocationChecker {
             result.details.push_str("(Note: Server supports stapling but did not provide stapled response - may be intentional or first connection)");
         }
 
-        result
+        Ok(result)
     }
 
     /// Parse ServerHello to find specific extension
-    fn parse_server_hello_extensions(server_hello: &[u8], extension_type: u16) -> Option<bool> {
+    fn parse_server_hello_extensions(
+        server_hello: &[u8],
+        extension_type: u16,
+    ) -> Result<Option<bool>> {
         // ServerHello structure: version (2) + random (32) + session_id_len (1) +
         // session_id (variable) + cipher_suites_len (2) + cipher_suites (variable) +
         // compression_method (1) + extensions_len (2) + extensions (variable)
@@ -210,44 +213,58 @@ impl RevocationChecker {
 
         // Version (2 bytes)
         if offset + 2 > server_hello.len() {
-            return None;
+            return Err(crate::TlsError::ParseError {
+                message: "ServerHello truncated before version".to_string(),
+            });
         }
         offset += 2;
 
         // Random (32 bytes)
         if offset + 32 > server_hello.len() {
-            return None;
+            return Err(crate::TlsError::ParseError {
+                message: "ServerHello truncated before random".to_string(),
+            });
         }
         offset += 32;
 
         // Session ID length
         if offset + 1 > server_hello.len() {
-            return None;
+            return Err(crate::TlsError::ParseError {
+                message: "ServerHello truncated before session ID length".to_string(),
+            });
         }
         let session_id_len = server_hello[offset] as usize;
         offset += 1;
 
         // Session ID
         if offset + session_id_len > server_hello.len() {
-            return None;
+            return Err(crate::TlsError::ParseError {
+                message: "ServerHello truncated before session ID".to_string(),
+            });
         }
         offset += session_id_len;
 
         // Cipher suite (2 bytes)
         if offset + 2 > server_hello.len() {
-            return None;
+            return Err(crate::TlsError::ParseError {
+                message: "ServerHello truncated before cipher suite".to_string(),
+            });
         }
         offset += 2;
 
         // Compression method (1 byte)
         if offset + 1 > server_hello.len() {
-            return None;
+            return Err(crate::TlsError::ParseError {
+                message: "ServerHello truncated before compression".to_string(),
+            });
         }
         offset += 1;
 
         // Extensions length (2 bytes)
         if offset + 2 > server_hello.len() {
-            return None;
+            return Err(crate::TlsError::ParseError {
+                message: "ServerHello truncated before extensions length".to_string(),
+            });
         }
         let extensions_len =
             ((server_hello[offset] as usize) << 8) | (server_hello[offset + 1] as usize);
@@ -256,7 +273,9 @@ impl RevocationChecker {
         // Parse extensions
         let extensions_end = offset + extensions_len;
         if extensions_end > server_hello.len() {
-            return None;
+            return Err(crate::TlsError::ParseError {
+                message: "ServerHello truncated in extensions".to_string(),
+            });
         }
 
         while offset + 4 <= extensions_end {
@@ -265,16 +284,18 @@ impl RevocationChecker {
                 ((server_hello[offset + 2] as usize) << 8) | (server_hello[offset + 3] as usize);
 
             if ext_type == extension_type {
-                return Some(true);
+                return Ok(Some(true));
             }
 
             if offset + 4 + ext_len > extensions_end {
-                break;
+                return Err(crate::TlsError::ParseError {
+                    message: "ServerHello truncated in extension data".to_string(),
+                });
             }
             offset += 4 + ext_len;
         }
 
-        Some(false)
+        Ok(Some(false))
     }
 }
 
@@ -321,10 +342,31 @@ mod tests {
     #[test]
     fn test_ocsp_stapling_empty_data() {
         let checker = RevocationChecker::new(true);
-        let result = checker.check_ocsp_stapling(&[]);
+        let result = checker.check_ocsp_stapling(&[]).unwrap();
         assert!(!result.stapling_supported);
         assert!(!result.stapled_response_present);
         assert!(result.details.contains("No OCSP stapling"));
+    }
+
+    #[test]
+    fn test_check_ocsp_stapling_rejects_truncated_server_hello_extension() {
+        let checker = RevocationChecker::new(true);
+        let mut data = vec![
+            0x16, 0x03, 0x03, 0x00, 0x31, // TLS record, length 49
+            0x02, 0x00, 0x00, 0x2d, // ServerHello, length 45
+            0x03, 0x03, // version
+        ];
+        data.extend_from_slice(&[0x00; 32]); // random
+        data.push(0x00); // session id len
+        data.extend_from_slice(&[0x00, 0x9c]); // cipher
+        data.push(0x00); // compression
+        data.extend_from_slice(&[0x00, 0x07]); // extensions len
+        data.extend_from_slice(&[0x00, 0x05]); // status_request
+        data.extend_from_slice(&[0x00, 0x02]); // ext len claims 2
+        data.push(0x01); // truncated ext data (1 byte instead of 2)
+
+        let err = checker.check_ocsp_stapling(&data).unwrap_err();
+        assert!(err.to_string().contains("truncated"));
     }
 
     #[test]

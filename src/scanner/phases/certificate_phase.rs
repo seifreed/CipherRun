@@ -295,7 +295,7 @@ impl CertificatePhase {
         };
 
         if let Some(pre_handshake) = context.pre_handshake.as_ref() {
-            let stapling = stapling_checker.check_ocsp_stapling(&pre_handshake.handshake_data);
+            let stapling = stapling_checker.check_ocsp_stapling(&pre_handshake.handshake_data)?;
             revocation.ocsp_stapling = stapling.stapled_response_present;
             revocation.ocsp_stapling_details = Some(stapling);
         }
