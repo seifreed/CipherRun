@@ -41,13 +41,23 @@ impl PreHandshakeScanner {
         client_hello.extend_from_slice(&extensions);
 
         let handshake_body_len = client_hello.len() - handshake_length_pos - 3;
-        client_hello[handshake_length_pos] = ((handshake_body_len >> 16) & 0xFF) as u8;
-        client_hello[handshake_length_pos + 1] = ((handshake_body_len >> 8) & 0xFF) as u8;
-        client_hello[handshake_length_pos + 2] = (handshake_body_len & 0xFF) as u8;
+        if let Some(len_bytes) =
+            client_hello.get_mut(handshake_length_pos..handshake_length_pos + 3)
+        {
+            len_bytes.copy_from_slice(&[
+                ((handshake_body_len >> 16) & 0xFF) as u8,
+                ((handshake_body_len >> 8) & 0xFF) as u8,
+                (handshake_body_len & 0xFF) as u8,
+            ]);
+        }
 
         let record_body_len = client_hello.len() - record_length_pos - 2;
-        client_hello[record_length_pos] = ((record_body_len >> 8) & 0xFF) as u8;
-        client_hello[record_length_pos + 1] = (record_body_len & 0xFF) as u8;
+        if let Some(len_bytes) = client_hello.get_mut(record_length_pos..record_length_pos + 2) {
+            len_bytes.copy_from_slice(&[
+                ((record_body_len >> 8) & 0xFF) as u8,
+                (record_body_len & 0xFF) as u8,
+            ]);
+        }
 
         Ok(client_hello)
     }

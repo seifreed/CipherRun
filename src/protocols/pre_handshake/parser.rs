@@ -5,6 +5,48 @@ use crate::error::TlsError;
 use tracing::trace;
 
 impl PreHandshakeScanner {
+    fn read_u8_at(data: &[u8], offset: usize, context: &str) -> Result<u8> {
+        data.get(offset)
+            .copied()
+            .ok_or_else(|| TlsError::ParseError {
+                message: format!("{context} truncated"),
+            })
+    }
+
+    fn read_u16_at(data: &[u8], offset: usize, context: &str) -> Result<u16> {
+        let bytes = data
+            .get(offset..offset + 2)
+            .and_then(|bytes| <[u8; 2]>::try_from(bytes).ok())
+            .ok_or_else(|| TlsError::ParseError {
+                message: format!("{context} truncated"),
+            })?;
+        Ok(u16::from_be_bytes(bytes))
+    }
+
+    fn read_u24_at(data: &[u8], offset: usize, context: &str) -> Result<usize> {
+        let [high, mid, low] = data
+            .get(offset..offset + 3)
+            .and_then(|bytes| <[u8; 3]>::try_from(bytes).ok())
+            .ok_or_else(|| TlsError::ParseError {
+                message: format!("{context} truncated"),
+            })?;
+        Ok(((high as usize) << 16) | ((mid as usize) << 8) | low as usize)
+    }
+
+    fn slice_range<'a>(
+        data: &'a [u8],
+        start: usize,
+        len: usize,
+        context: &str,
+    ) -> Result<&'a [u8]> {
+        let end = start.checked_add(len).ok_or_else(|| TlsError::ParseError {
+            message: format!("{context} length overflow"),
+        })?;
+        data.get(start..end).ok_or_else(|| TlsError::ParseError {
+            message: format!("{context} truncated"),
+        })
+    }
+
     pub(super) fn parse_handshake_response(&self, data: &[u8]) -> Result<HandshakeParseResult> {
         let mut offset = 0;
         let mut certificate_data = None;
@@ -20,8 +62,8 @@ impl PreHandshakeScanner {
                 });
             }
 
-            let content_type = data[offset];
-            let record_length = u16::from_be_bytes([data[offset + 3], data[offset + 4]]) as usize;
+            let content_type = Self::read_u8_at(data, offset, "TLS record type")?;
+            let record_length = Self::read_u16_at(data, offset + 3, "TLS record length")? as usize;
             offset += 5;
 
             if offset + record_length > data.len() {
@@ -43,10 +85,8 @@ impl PreHandshakeScanner {
                     });
                 }
 
-                let handshake_type = data[offset];
-                let handshake_length =
-                    u32::from_be_bytes([0, data[offset + 1], data[offset + 2], data[offset + 3]])
-                        as usize;
+                let handshake_type = Self::read_u8_at(data, offset, "Handshake type")?;
+                let handshake_length = Self::read_u24_at(data, offset + 1, "Handshake length")?;
 
                 offset += 4;
                 if offset + handshake_length > record_end {
@@ -58,22 +98,20 @@ impl PreHandshakeScanner {
                 match handshake_type {
                     0x02 => {
                         if handshake_length >= 38 {
-                            let version_maj = data[offset];
-                            let version_min = data[offset + 1];
+                            let version = Self::read_u16_at(data, offset, "ServerHello version")?;
                             // Map two-byte version field to canonical name. Arithmetic
                             // on `version_maj - 2` panics on SSLv2 (0x02) and produces
                             // nonsense for non-standard bytes; a match over the u16
                             // covers all real TLS versions safely.
-                            protocol_version =
-                                Some(match u16::from_be_bytes([version_maj, version_min]) {
-                                    0x0002 => "SSL 2.0".to_string(),
-                                    0x0300 => "SSL 3.0".to_string(),
-                                    0x0301 => "TLS 1.0".to_string(),
-                                    0x0302 => "TLS 1.1".to_string(),
-                                    0x0303 => "TLS 1.2".to_string(),
-                                    0x0304 => "TLS 1.3".to_string(),
-                                    v => format!("Unknown (0x{:04x})", v),
-                                });
+                            protocol_version = Some(match version {
+                                0x0002 => "SSL 2.0".to_string(),
+                                0x0300 => "SSL 3.0".to_string(),
+                                0x0301 => "TLS 1.0".to_string(),
+                                0x0302 => "TLS 1.1".to_string(),
+                                0x0303 => "TLS 1.2".to_string(),
+                                0x0304 => "TLS 1.3".to_string(),
+                                v => format!("Unknown (0x{:04x})", v),
+                            });
 
                             // ServerHello body: version(2) + random(32) + sid_len(1) +
                             // session_id(sid_len) + cipher(2) + compression(1).
@@ -81,33 +119,43 @@ impl PreHandshakeScanner {
                             // fixed `offset + 34` (which skips the sid_len byte).
                             let sid_len_at = offset + 34;
                             if sid_len_at < offset + handshake_length {
-                                let session_id_len = data[sid_len_at] as usize;
+                                let session_id_len =
+                                    Self::read_u8_at(data, sid_len_at, "ServerHello session ID")?
+                                        as usize;
                                 let cipher_offset = offset + 35 + session_id_len;
                                 if cipher_offset + 2 <= offset + handshake_length {
-                                    let cipher = u16::from_be_bytes([
-                                        data[cipher_offset],
-                                        data[cipher_offset + 1],
-                                    ]);
+                                    let cipher = Self::read_u16_at(
+                                        data,
+                                        cipher_offset,
+                                        "ServerHello cipher",
+                                    )?;
                                     cipher_suite = Some(format!("0x{:04x}", cipher));
 
                                     if cipher_offset + 3 <= offset + handshake_length {
-                                        compression_method = Some(data[cipher_offset + 2]);
+                                        compression_method = Some(Self::read_u8_at(
+                                            data,
+                                            cipher_offset + 2,
+                                            "ServerHello compression",
+                                        )?);
                                     }
                                 }
                             }
 
-                            server_hello_data =
-                                Some(data[offset..offset + handshake_length].to_vec());
+                            server_hello_data = Some(
+                                Self::slice_range(
+                                    data,
+                                    offset,
+                                    handshake_length,
+                                    "ServerHello body",
+                                )?
+                                .to_vec(),
+                            );
                         }
                     }
                     0x0b => {
                         if handshake_length >= 3 {
-                            let certs_length = u32::from_be_bytes([
-                                0,
-                                data[offset],
-                                data[offset + 1],
-                                data[offset + 2],
-                            ]) as usize;
+                            let certs_length =
+                                Self::read_u24_at(data, offset, "Certificate list length")?;
 
                             // Prevent integer overflow/wraparound on malicious input
                             if certs_length > record_end - offset - 3 {
@@ -121,18 +169,19 @@ impl PreHandshakeScanner {
                             let certs_end = offset + 3 + certs_length;
 
                             if cert_offset + 3 <= certs_end && cert_offset + 3 <= record_end {
-                                let cert_length = u32::from_be_bytes([
-                                    0,
-                                    data[cert_offset],
-                                    data[cert_offset + 1],
-                                    data[cert_offset + 2],
-                                ]) as usize;
+                                let cert_length =
+                                    Self::read_u24_at(data, cert_offset, "Certificate length")?;
                                 cert_offset += 3;
 
                                 if cert_offset + cert_length <= certs_end
                                     && cert_offset + cert_length <= record_end
                                 {
-                                    let cert_der = &data[cert_offset..cert_offset + cert_length];
+                                    let cert_der = Self::slice_range(
+                                        data,
+                                        cert_offset,
+                                        cert_length,
+                                        "Certificate DER",
+                                    )?;
                                     certificate_data = Some(self.parse_certificate(cert_der)?);
                                 }
                             }

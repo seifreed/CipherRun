@@ -64,7 +64,12 @@ impl PreHandshakeScanner {
             });
         }
 
-        let response_data = &response_buffer[..bytes_read];
+        let response_data =
+            response_buffer
+                .get(..bytes_read)
+                .ok_or_else(|| TlsError::ParseError {
+                    message: "Pre-handshake read length exceeded buffer".to_string(),
+                })?;
         let parse_result = self.parse_handshake_response(response_data)?;
 
         drop(stream);
