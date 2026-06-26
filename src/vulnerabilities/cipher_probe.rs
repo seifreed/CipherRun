@@ -186,6 +186,10 @@ fn classify_probe_response(response: &[u8], n: usize) -> CipherProbeStatus {
     }
 
     if n >= 7 && response[0] == CONTENT_TYPE_ALERT {
+        let alert_record_len = u16::from_be_bytes([response[3], response[4]]) as usize;
+        if alert_record_len != 2 {
+            return CipherProbeStatus::Inconclusive;
+        }
         CipherProbeStatus::NotSupported
     } else {
         CipherProbeStatus::Inconclusive
@@ -216,9 +220,25 @@ mod tests {
     fn test_classify_alert_is_not_supported() {
         let mut response = vec![0u8; 7];
         response[0] = CONTENT_TYPE_ALERT;
+        response[3] = 0x00;
+        response[4] = 0x02;
+        response[5] = 0x02;
+        response[6] = 0x46;
         assert_eq!(
             classify_probe_response(&response, response.len()),
             CipherProbeStatus::NotSupported
+        );
+    }
+
+    #[test]
+    fn test_classify_malformed_alert_is_inconclusive() {
+        let mut response = vec![0u8; 7];
+        response[0] = CONTENT_TYPE_ALERT;
+        response[3] = 0x00;
+        response[4] = 0x03;
+        assert_eq!(
+            classify_probe_response(&response, response.len()),
+            CipherProbeStatus::Inconclusive
         );
     }
 
