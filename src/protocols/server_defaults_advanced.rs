@@ -61,7 +61,9 @@ impl ServerDefaultsAdvancedTester {
             test_results.push(CipherOrderTest {
                 client_preference: test1_client_order.iter().map(|s| s.to_string()).collect(),
                 server_selected: selected.clone(),
-                matched_client_first: selected == test1_client_order[0],
+                matched_client_first: test1_client_order
+                    .first()
+                    .is_some_and(|first| selected == *first),
             });
         }
 
@@ -77,7 +79,9 @@ impl ServerDefaultsAdvancedTester {
             test_results.push(CipherOrderTest {
                 client_preference: test2_client_order.iter().map(|s| s.to_string()).collect(),
                 server_selected: selected.clone(),
-                matched_client_first: selected == test2_client_order[0],
+                matched_client_first: test2_client_order
+                    .first()
+                    .is_some_and(|first| selected == *first),
             });
         }
 
@@ -92,7 +96,9 @@ impl ServerDefaultsAdvancedTester {
             test_results.push(CipherOrderTest {
                 client_preference: test3_client_order.iter().map(|s| s.to_string()).collect(),
                 server_selected: selected.clone(),
-                matched_client_first: selected == test3_client_order[0],
+                matched_client_first: test3_client_order
+                    .first()
+                    .is_some_and(|first| selected == *first),
             });
         }
 
