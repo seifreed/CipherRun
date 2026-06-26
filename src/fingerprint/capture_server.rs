@@ -153,18 +153,27 @@ impl ServerHelloNetworkCapture {
 
         // Update extensions length
         let extensions_len = (client_hello.len() - extensions_start - 2) as u16;
-        client_hello[extensions_start..extensions_start + 2]
-            .copy_from_slice(&extensions_len.to_be_bytes());
+        if let Some(len_bytes) = client_hello.get_mut(extensions_start..extensions_start + 2) {
+            len_bytes.copy_from_slice(&extensions_len.to_be_bytes());
+        }
 
         // Update handshake length (3 bytes, big-endian, excludes handshake header)
         let handshake_body_len = (client_hello.len() - handshake_length_pos - 3) as u32;
-        client_hello[handshake_length_pos] = ((handshake_body_len >> 16) & 0xFF) as u8;
-        client_hello[handshake_length_pos + 1] = ((handshake_body_len >> 8) & 0xFF) as u8;
-        client_hello[handshake_length_pos + 2] = (handshake_body_len & 0xFF) as u8;
+        if let Some(len_bytes) =
+            client_hello.get_mut(handshake_length_pos..handshake_length_pos + 3)
+        {
+            len_bytes.copy_from_slice(&[
+                ((handshake_body_len >> 16) & 0xFF) as u8,
+                ((handshake_body_len >> 8) & 0xFF) as u8,
+                (handshake_body_len & 0xFF) as u8,
+            ]);
+        }
 
         // Update record length
         let record_len = (client_hello.len() - length_pos - 2) as u16;
-        client_hello[length_pos..length_pos + 2].copy_from_slice(&record_len.to_be_bytes());
+        if let Some(len_bytes) = client_hello.get_mut(length_pos..length_pos + 2) {
+            len_bytes.copy_from_slice(&record_len.to_be_bytes());
+        }
 
         client_hello
     }
@@ -275,11 +284,15 @@ impl ServerHelloNetworkCapture {
 
         // Update Server Name List Length
         let list_len = (extension.len() - list_len_pos - 2) as u16;
-        extension[list_len_pos..list_len_pos + 2].copy_from_slice(&list_len.to_be_bytes());
+        if let Some(len_bytes) = extension.get_mut(list_len_pos..list_len_pos + 2) {
+            len_bytes.copy_from_slice(&list_len.to_be_bytes());
+        }
 
         // Update Extension Length
         let ext_len = (extension.len() - ext_len_pos - 2) as u16;
-        extension[ext_len_pos..ext_len_pos + 2].copy_from_slice(&ext_len.to_be_bytes());
+        if let Some(len_bytes) = extension.get_mut(ext_len_pos..ext_len_pos + 2) {
+            len_bytes.copy_from_slice(&ext_len.to_be_bytes());
+        }
 
         extension
     }
