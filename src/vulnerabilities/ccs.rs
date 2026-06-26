@@ -181,7 +181,14 @@ impl CcsInjectionTester {
                                 }
 
                                 if record_type == CONTENT_TYPE_ALERT {
-                                    result = Some(TestStatus::NotVulnerable);
+                                    result = Some(if alert_record_is_complete(
+                                        &accumulated[offset..],
+                                        5 + record_len,
+                                    ) {
+                                        TestStatus::NotVulnerable
+                                    } else {
+                                        TestStatus::Inconclusive
+                                    });
                                     break;
                                 } else if record_type == CONTENT_TYPE_CHANGE_CIPHER_SPEC {
                                     result = Some(TestStatus::Vulnerable);
@@ -255,6 +262,14 @@ impl CcsInjectionTester {
         builder.for_rsa_key_exchange();
         builder.build_minimal()
     }
+}
+
+fn alert_record_is_complete(buffer: &[u8], n: usize) -> bool {
+    if n < 7 || buffer[0] != CONTENT_TYPE_ALERT {
+        return false;
+    }
+    let alert_record_len = u16::from_be_bytes([buffer[3], buffer[4]]) as usize;
+    alert_record_len == 2 && n == 5 + alert_record_len
 }
 
 /// CCS test status with detailed failure reasons
@@ -408,6 +423,12 @@ mod tests {
         assert!(TestStatus::HandshakeFailed.is_inconclusive());
         assert!(!TestStatus::Vulnerable.is_inconclusive());
         assert!(!TestStatus::NotVulnerable.is_inconclusive());
+    }
+
+    #[test]
+    fn test_alert_record_is_complete_rejects_trailing_bytes() {
+        let alert = [0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x46, 0x00];
+        assert!(!alert_record_is_complete(&alert, alert.len()));
     }
 
     #[tokio::test]
