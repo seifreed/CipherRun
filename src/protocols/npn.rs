@@ -215,7 +215,9 @@ impl NpnTester {
             let ext_len = u16::from_be_bytes([response[pos + 2], response[pos + 3]]) as usize;
             pos += 4;
             if pos + ext_len > ext_end {
-                break;
+                return Err(crate::TlsError::ParseError {
+                    message: "NPN extension data extends beyond declared length".to_string(),
+                });
             }
 
             if ext_type == 0x3374 {
@@ -229,11 +231,14 @@ impl NpnTester {
                     let proto_len = response[npn_pos] as usize;
                     npn_pos += 1;
                     if proto_len == 0 {
-                        // Invalid: zero-length protocol name per NPN spec
-                        break;
+                        return Err(crate::TlsError::ParseError {
+                            message: "NPN protocol name length cannot be zero".to_string(),
+                        });
                     }
                     if npn_pos + proto_len > npn_end {
-                        break;
+                        return Err(crate::TlsError::ParseError {
+                            message: "NPN protocol name extends beyond extension data".to_string(),
+                        });
                     }
                     if let Ok(proto) =
                         String::from_utf8(response[npn_pos..npn_pos + proto_len].to_vec())
@@ -419,6 +424,35 @@ mod tests {
             .parse_npn_response(&response)
             .expect("test assertion should succeed");
         assert!(protocols.is_empty());
+    }
+
+    #[test]
+    fn test_parse_npn_response_rejects_truncated_extension_data() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["93.184.216.34".parse().unwrap()],
+        )
+        .unwrap();
+        let tester = NpnTester::new(target);
+
+        let mut response = vec![
+            0x16, 0x03, 0x03, 0x00, 0x00, // record header
+            0x02, 0x00, 0x00, 0x00, // ServerHello header
+            0x03, 0x03, // version
+        ];
+        response.extend_from_slice(&[0x00; 32]);
+        response.push(0x00); // session id len
+        response.extend_from_slice(&[0x00, 0x9c]); // cipher
+        response.push(0x00); // compression
+        response.extend_from_slice(&[0x00, 0x04]); // extensions len
+        response.extend_from_slice(&[0x33, 0x74, 0x00, 0x02]); // NPN ext claims 2 bytes
+        response.push(0x01); // truncated protocol list
+
+        let err = tester
+            .parse_npn_response(&response)
+            .expect_err("truncated NPN extension should fail");
+        assert!(err.to_string().contains("NPN extension data extends beyond declared length"));
     }
 
     #[tokio::test]
