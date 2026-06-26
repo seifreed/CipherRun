@@ -54,7 +54,10 @@ impl GreaseTester {
             ));
         }
 
-        Ok(classify_grease_response(&buffer[..n]))
+        let response = buffer.get(..n).ok_or_else(|| crate::TlsError::ParseError {
+            message: "GREASE response read length exceeded buffer".to_string(),
+        })?;
+        Ok(classify_grease_response(response))
     }
 
     /// Build ClientHello with GREASE cipher suites interleaved with valid ciphers
@@ -69,8 +72,8 @@ impl GreaseTester {
         for (i, cipher) in valid_ciphers.iter().enumerate() {
             builder.add_cipher(*cipher);
             // Interleave GREASE cipher suites
-            if i < GREASE_CIPHER_SUITES.len() {
-                builder.add_cipher(GREASE_CIPHER_SUITES[i]);
+            if let Some(grease_cipher) = GREASE_CIPHER_SUITES.get(i).copied() {
+                builder.add_cipher(grease_cipher);
             }
         }
 
@@ -156,13 +159,11 @@ impl GreaseTester {
 
         // Add valid supported groups interleaved with GREASE values per RFC 8701
         let valid_groups = [0x001d, 0x0017, 0x0018];
-        let grease_groups = &GREASE_SUPPORTED_GROUPS[..3];
+        let grease_groups = GREASE_SUPPORTED_GROUPS.iter().take(3);
         let mut groups = Vec::new();
-        for (i, valid) in valid_groups.iter().enumerate() {
+        for (valid, grease) in valid_groups.iter().zip(grease_groups) {
             groups.push(*valid);
-            if i < grease_groups.len() {
-                groups.push(grease_groups[i]);
-            }
+            groups.push(*grease);
         }
         builder.add_supported_groups(&groups);
 
@@ -192,8 +193,8 @@ impl GreaseTester {
         let valid_ciphers = [0xc02f, 0xc030, 0x009e];
         for (i, cipher) in valid_ciphers.iter().enumerate() {
             builder.add_cipher(*cipher);
-            if i < GREASE_CIPHER_SUITES.len() {
-                builder.add_cipher(GREASE_CIPHER_SUITES[i]);
+            if let Some(grease_cipher) = GREASE_CIPHER_SUITES.get(i).copied() {
+                builder.add_cipher(grease_cipher);
             }
         }
 
@@ -206,7 +207,7 @@ impl GreaseTester {
 
         // Add supported groups with GREASE
         let mut groups = vec![0x001d, 0x0017];
-        groups.extend_from_slice(&GREASE_SUPPORTED_GROUPS[..2]);
+        groups.extend(GREASE_SUPPORTED_GROUPS.iter().take(2).copied());
         builder.add_supported_groups(&groups);
 
         builder.add_signature_algorithms(&[(0x04, 0x03), (0x05, 0x03), (0x06, 0x03)]);
@@ -259,7 +260,14 @@ fn classify_grease_response(response: &[u8]) -> GreaseTestOutcome {
             return GreaseTestOutcome::Inconclusive("Truncated TLS alert record".to_string());
         }
 
-        let alert_record_len = u16::from_be_bytes([response[3], response[4]]) as usize;
+        let Some(alert_record_len) = response
+            .get(3..5)
+            .and_then(|bytes| bytes.try_into().ok())
+            .map(u16::from_be_bytes)
+            .map(usize::from)
+        else {
+            return GreaseTestOutcome::Inconclusive("Truncated TLS alert record".to_string());
+        };
         if alert_record_len != 2 {
             return GreaseTestOutcome::Inconclusive(
                 "Malformed TLS alert record length".to_string(),
@@ -271,8 +279,13 @@ fn classify_grease_response(response: &[u8]) -> GreaseTestOutcome {
             );
         }
 
-        let alert_level = response[5];
-        let alert_description = response[6];
+        let Some((&alert_level, rest)) = response.get(5..).and_then(|tail| tail.split_first())
+        else {
+            return GreaseTestOutcome::Inconclusive("Truncated TLS alert record".to_string());
+        };
+        let Some(&alert_description) = rest.first() else {
+            return GreaseTestOutcome::Inconclusive("Truncated TLS alert record".to_string());
+        };
         return match alert_description {
             0x46 | 0x28 | 0x2F => GreaseTestOutcome::Rejected,
             0x32 => GreaseTestOutcome::Inconclusive("Server returned internal error".to_string()),
@@ -283,13 +296,13 @@ fn classify_grease_response(response: &[u8]) -> GreaseTestOutcome {
         };
     }
 
-    if response.len() >= 6 && response[0] == 0x16 && response[5] == 0x02 {
+    if response.len() >= 6 && response.first() == Some(&0x16) && response.get(5) == Some(&0x02) {
         return GreaseTestOutcome::Tolerated;
     }
 
     GreaseTestOutcome::Inconclusive(format!(
         "Unexpected response (first bytes: {:02X?})",
-        &response[..response.len().min(10)]
+        response.get(..response.len().min(10)).unwrap_or(response)
     ))
 }
 
