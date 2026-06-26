@@ -340,13 +340,9 @@ impl CertificateParser {
 
         // Calculate certificate fingerprint SHA256
         // This is the SHA256 hash of the entire DER-encoded certificate
-        let fingerprint_sha256 = super::fingerprints::calculate_fingerprint_sha256(der_bytes)
-            .ok()
-            .flatten();
+        let fingerprint_sha256 = super::fingerprints::calculate_fingerprint_sha256(der_bytes)?;
         // This is used for HTTP Public Key Pinning per RFC 7469
-        let pin_sha256 = super::fingerprints::calculate_pin_sha256(der_bytes)
-            .ok()
-            .flatten();
+        let pin_sha256 = super::fingerprints::calculate_pin_sha256(der_bytes)?;
 
         // Calculate expiry countdown
         let not_after_str = cert.validity().not_after.to_string();
