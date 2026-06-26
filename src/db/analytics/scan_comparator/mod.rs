@@ -214,10 +214,16 @@ impl ScanComparator {
             ));
         }
 
-        let scan_id_1 = scans[1]
+        let [latest_scan, previous_scan, ..] = scans.as_slice() else {
+            return Err(crate::TlsError::DatabaseError(
+                "Not enough scans found for comparison".to_string(),
+            ));
+        };
+
+        let scan_id_1 = previous_scan
             .scan_id
             .ok_or_else(|| crate::TlsError::DatabaseError("Scan ID missing".to_string()))?;
-        let scan_id_2 = scans[0]
+        let scan_id_2 = latest_scan
             .scan_id
             .ok_or_else(|| crate::TlsError::DatabaseError("Scan ID missing".to_string()))?;
 

@@ -250,11 +250,12 @@ impl ChangeTracker {
             return Ok(Vec::new());
         }
 
-        // Compare consecutive scans (use saturating_sub to prevent underflow)
+        // Compare consecutive scans
         let mut all_changes = Vec::new();
-        for i in 0..scans.len().saturating_sub(1) {
-            let newer_scan = &scans[i];
-            let older_scan = &scans[i + 1];
+        for scan_pair in scans.windows(2) {
+            let [newer_scan, older_scan] = scan_pair else {
+                continue;
+            };
 
             if let (Some(newer_id), Some(older_id)) = (newer_scan.scan_id, older_scan.scan_id) {
                 let mut changes = self.detect_changes_between(older_id, newer_id).await?;

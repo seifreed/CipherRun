@@ -229,9 +229,11 @@ impl TrendAnalyzer {
         values.sort_unstable();
         let mid = values.len() / 2;
         if values.len().is_multiple_of(2) {
-            ((values[mid - 1] as u16 + values[mid] as u16) / 2) as u8
+            let lower = values.get(mid - 1).copied().unwrap_or_default() as u16;
+            let upper = values.get(mid).copied().unwrap_or_default() as u16;
+            ((lower + upper) / 2) as u8
         } else {
-            values[mid]
+            values.get(mid).copied().unwrap_or_default()
         }
     }
 
@@ -242,9 +244,11 @@ impl TrendAnalyzer {
         values.sort_unstable();
         let mid = values.len() / 2;
         if values.len().is_multiple_of(2) {
-            ((values[mid - 1] as u128 + values[mid] as u128) / 2) as usize
+            let lower = values.get(mid - 1).copied().unwrap_or_default() as u128;
+            let upper = values.get(mid).copied().unwrap_or_default() as u128;
+            ((lower + upper) / 2) as usize
         } else {
-            values[mid]
+            values.get(mid).copied().unwrap_or_default()
         }
     }
 
