@@ -224,93 +224,130 @@ impl CertificateParser {
 
         // Extract Subject Alternative Names
         let mut san = Vec::new();
-        if let Ok(Some(ext)) =
-            cert.get_extension_unique(&oid_registry::OID_X509_EXT_SUBJECT_ALT_NAME)
-            && let ParsedExtension::SubjectAlternativeName(san_gen) = ext.parsed_extension()
+        if let Some(ext) = cert
+            .get_extension_unique(&oid_registry::OID_X509_EXT_SUBJECT_ALT_NAME)
+            .map_err(|error| crate::CertificateValidationError::ParseError {
+                details: format!("Invalid subject alternative name extension: {error}"),
+            })?
         {
-            for name in &san_gen.general_names {
-                match name {
-                    GeneralName::DNSName(dns) => {
-                        san.push(dns.to_string());
-                    }
-                    GeneralName::IPAddress(ip) => {
-                        let addr_str = match ip.len() {
-                            4 => format!("{}.{}.{}.{}", ip[0], ip[1], ip[2], ip[3]),
-                            16 => {
-                                // Convert IPv6 bytes to address, handling malformed data gracefully
-                                let arr: [u8; 16] = match (*ip).try_into() {
-                                    Ok(a) => a,
-                                    Err(_) => {
-                                        debug!(
-                                            "Invalid IPv6 address length in SAN: {} bytes, expected 16",
-                                            ip.len()
-                                        );
-                                        // Return unspecified address for malformed data
-                                        [0; 16]
-                                    }
-                                };
-                                format!("{}", std::net::Ipv6Addr::from(arr))
+            match ext.parsed_extension() {
+                ParsedExtension::SubjectAlternativeName(san_gen) => {
+                    for name in &san_gen.general_names {
+                        match name {
+                            GeneralName::DNSName(dns) => {
+                                san.push(dns.to_string());
                             }
-                            _ => format!("IP:{}", hex::encode(ip)),
-                        };
-                        san.push(addr_str);
+                            GeneralName::IPAddress(ip) => {
+                                let addr_str = match ip.len() {
+                                    4 => format!("{}.{}.{}.{}", ip[0], ip[1], ip[2], ip[3]),
+                                    16 => {
+                                        // Convert IPv6 bytes to address, handling malformed data gracefully
+                                        let arr: [u8; 16] = match (*ip).try_into() {
+                                            Ok(a) => a,
+                                            Err(_) => {
+                                                debug!(
+                                                    "Invalid IPv6 address length in SAN: {} bytes, expected 16",
+                                                    ip.len()
+                                                );
+                                                // Return unspecified address for malformed data
+                                                [0; 16]
+                                            }
+                                        };
+                                        format!("{}", std::net::Ipv6Addr::from(arr))
+                                    }
+                                    _ => format!("IP:{}", hex::encode(ip)),
+                                };
+                                san.push(addr_str);
+                            }
+                            other => {
+                                debug!("Skipping non-DNS/IP SAN type: {:?}", other);
+                            }
+                        }
                     }
-                    other => {
-                        debug!("Skipping non-DNS/IP SAN type: {:?}", other);
+                }
+                other => {
+                    return Err(crate::CertificateValidationError::ParseError {
+                        details: format!("Invalid subject alternative name extension: {other:?}"),
                     }
+                    .into());
                 }
             }
         }
 
         // Extract Key Usage
         let mut key_usage = Vec::new();
-        if let Ok(Some(ext)) = cert.get_extension_unique(&oid_registry::OID_X509_EXT_KEY_USAGE)
-            && let ParsedExtension::KeyUsage(ku) = ext.parsed_extension()
+        if let Some(ext) = cert
+            .get_extension_unique(&oid_registry::OID_X509_EXT_KEY_USAGE)
+            .map_err(|error| crate::CertificateValidationError::ParseError {
+                details: format!("Invalid key usage extension: {error}"),
+            })?
         {
-            if ku.digital_signature() {
-                key_usage.push("Digital Signature".to_string());
-            }
-            if ku.key_encipherment() {
-                key_usage.push("Key Encipherment".to_string());
-            }
-            if ku.key_cert_sign() {
-                key_usage.push("Certificate Sign".to_string());
+            match ext.parsed_extension() {
+                ParsedExtension::KeyUsage(ku) => {
+                    if ku.digital_signature() {
+                        key_usage.push("Digital Signature".to_string());
+                    }
+                    if ku.key_encipherment() {
+                        key_usage.push("Key Encipherment".to_string());
+                    }
+                    if ku.key_cert_sign() {
+                        key_usage.push("Certificate Sign".to_string());
+                    }
+                }
+                other => {
+                    return Err(crate::CertificateValidationError::ParseError {
+                        details: format!("Invalid key usage extension: {other:?}"),
+                    }
+                    .into());
+                }
             }
         }
 
         // Extract Extended Key Usage
         let mut extended_key_usage = Vec::new();
-        if let Ok(Some(ext)) =
-            cert.get_extension_unique(&oid_registry::OID_X509_EXT_EXTENDED_KEY_USAGE)
-            && let ParsedExtension::ExtendedKeyUsage(eku) = ext.parsed_extension()
+        if let Some(ext) = cert
+            .get_extension_unique(&oid_registry::OID_X509_EXT_EXTENDED_KEY_USAGE)
+            .map_err(|error| crate::CertificateValidationError::ParseError {
+                details: format!("Invalid extended key usage extension: {error}"),
+            })?
         {
-            // x509-parser decodes the well-known EKU purposes into dedicated
-            // boolean fields; only genuinely unrecognized OIDs land in `other`.
-            // Reading the booleans is therefore the only reliable way to report
-            // Code Signing / Email Protection / Time Stamping / OCSP Signing.
-            if eku.any {
-                extended_key_usage.push("Any".to_string());
-            }
-            if eku.server_auth {
-                extended_key_usage.push("Server Authentication".to_string());
-            }
-            if eku.client_auth {
-                extended_key_usage.push("Client Authentication".to_string());
-            }
-            if eku.code_signing {
-                extended_key_usage.push("Code Signing".to_string());
-            }
-            if eku.email_protection {
-                extended_key_usage.push("Email Protection".to_string());
-            }
-            if eku.time_stamping {
-                extended_key_usage.push("Time Stamping".to_string());
-            }
-            if eku.ocsp_signing {
-                extended_key_usage.push("OCSP Signing".to_string());
-            }
-            for oid in eku.other.iter() {
-                extended_key_usage.push(format!("Unknown ({})", oid));
+            match ext.parsed_extension() {
+                ParsedExtension::ExtendedKeyUsage(eku) => {
+                    // x509-parser decodes the well-known EKU purposes into dedicated
+                    // boolean fields; only genuinely unrecognized OIDs land in `other`.
+                    // Reading the booleans is therefore the only reliable way to report
+                    // Code Signing / Email Protection / Time Stamping / OCSP Signing.
+                    if eku.any {
+                        extended_key_usage.push("Any".to_string());
+                    }
+                    if eku.server_auth {
+                        extended_key_usage.push("Server Authentication".to_string());
+                    }
+                    if eku.client_auth {
+                        extended_key_usage.push("Client Authentication".to_string());
+                    }
+                    if eku.code_signing {
+                        extended_key_usage.push("Code Signing".to_string());
+                    }
+                    if eku.email_protection {
+                        extended_key_usage.push("Email Protection".to_string());
+                    }
+                    if eku.time_stamping {
+                        extended_key_usage.push("Time Stamping".to_string());
+                    }
+                    if eku.ocsp_signing {
+                        extended_key_usage.push("OCSP Signing".to_string());
+                    }
+                    for oid in eku.other.iter() {
+                        extended_key_usage.push(format!("Unknown ({})", oid));
+                    }
+                }
+                other => {
+                    return Err(crate::CertificateValidationError::ParseError {
+                        details: format!("Invalid extended key usage extension: {other:?}"),
+                    }
+                    .into());
+                }
             }
         }
 
@@ -407,6 +444,41 @@ impl CertificateParser {
 mod tests {
     use super::*;
     use crate::utils::network::Target;
+
+    fn cert_with_raw_extension_der(oid: &str, contents: &[u8]) -> Vec<u8> {
+        use openssl::asn1::{Asn1Object, Asn1OctetString, Asn1Time};
+        use openssl::hash::MessageDigest as OpensslMessageDigest;
+        use openssl::pkey::PKey;
+        use openssl::rsa::Rsa;
+        use openssl::x509::{X509Builder, X509Extension, X509NameBuilder};
+
+        let rsa = Rsa::generate(2048).unwrap();
+        let pkey = PKey::from_rsa(rsa).unwrap();
+
+        let mut name = X509NameBuilder::new().unwrap();
+        name.append_entry_by_text("CN", "malformed-extension.example.com")
+            .unwrap();
+        let name = name.build();
+
+        let mut builder = X509Builder::new().unwrap();
+        builder.set_subject_name(&name).unwrap();
+        builder.set_issuer_name(&name).unwrap();
+        builder.set_pubkey(&pkey).unwrap();
+        builder
+            .set_not_before(&Asn1Time::days_from_now(0).unwrap())
+            .unwrap();
+        builder
+            .set_not_after(&Asn1Time::days_from_now(30).unwrap())
+            .unwrap();
+
+        let oid = Asn1Object::from_str(oid).unwrap();
+        let contents = Asn1OctetString::new_from_bytes(contents).unwrap();
+        let extension = X509Extension::new_from_der(&oid, false, &contents).unwrap();
+        builder.append_extension(extension).unwrap();
+        builder.sign(&pkey, OpensslMessageDigest::sha256()).unwrap();
+
+        builder.build().to_der().unwrap()
+    }
 
     #[tokio::test]
     #[ignore] // Requires network access
@@ -596,38 +668,7 @@ mod tests {
 
     #[test]
     fn test_parse_certificate_rejects_malformed_basic_constraints() {
-        use openssl::asn1::{Asn1Object, Asn1OctetString, Asn1Time};
-        use openssl::hash::MessageDigest as OpensslMessageDigest;
-        use openssl::pkey::PKey;
-        use openssl::rsa::Rsa;
-        use openssl::x509::{X509Builder, X509Extension, X509NameBuilder};
-
-        let rsa = Rsa::generate(2048).unwrap();
-        let pkey = PKey::from_rsa(rsa).unwrap();
-
-        let mut name = X509NameBuilder::new().unwrap();
-        name.append_entry_by_text("CN", "bad-basic-constraints.example.com")
-            .unwrap();
-        let name = name.build();
-
-        let mut builder = X509Builder::new().unwrap();
-        builder.set_subject_name(&name).unwrap();
-        builder.set_issuer_name(&name).unwrap();
-        builder.set_pubkey(&pkey).unwrap();
-        builder
-            .set_not_before(&Asn1Time::days_from_now(0).unwrap())
-            .unwrap();
-        builder
-            .set_not_after(&Asn1Time::days_from_now(30).unwrap())
-            .unwrap();
-
-        let oid = Asn1Object::from_str("2.5.29.19").unwrap();
-        let contents = Asn1OctetString::new_from_bytes(b"\x05\x00").unwrap();
-        let malformed = X509Extension::new_from_der(&oid, false, &contents).unwrap();
-        builder.append_extension(malformed).unwrap();
-        builder.sign(&pkey, OpensslMessageDigest::sha256()).unwrap();
-
-        let der = builder.build().to_der().unwrap();
+        let der = cert_with_raw_extension_der("2.5.29.19", b"\x05\x00");
         let error = CertificateParser::parse_certificate(&der)
             .expect_err("malformed basic constraints should fail");
 
@@ -635,6 +676,19 @@ mod tests {
             error
                 .to_string()
                 .contains("Invalid basic constraints extension")
+        );
+    }
+
+    #[test]
+    fn test_parse_certificate_rejects_malformed_subject_alt_name() {
+        let der = cert_with_raw_extension_der("2.5.29.17", b"\x05\x00");
+        let error =
+            CertificateParser::parse_certificate(&der).expect_err("malformed SAN should fail");
+
+        assert!(
+            error
+                .to_string()
+                .contains("Invalid subject alternative name extension")
         );
     }
 
