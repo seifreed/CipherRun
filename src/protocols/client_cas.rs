@@ -71,7 +71,16 @@ impl ClientCAsTester {
             .await
             && let Ok(data) = response
         {
-            let cert_request = self.find_certificate_request(&data);
+            let cert_request = match self.find_certificate_request(&data) {
+                Ok(request) => request,
+                Err(_) => {
+                    return Ok(ClientCAsResult {
+                        cas: Vec::new(),
+                        requires_client_auth: false,
+                        inconclusive: true,
+                    });
+                }
+            };
             let cas = cert_request.clone().unwrap_or_default();
 
             let inconclusive = data.is_empty() || !Self::has_complete_tls_record(&data);
@@ -112,7 +121,7 @@ impl ClientCAsTester {
                 Ok(Ok(0)) => break,
                 Ok(Ok(n)) => {
                     response.extend_from_slice(&chunk[..n]);
-                    if self.find_certificate_request(&response).is_some() {
+                    if self.find_certificate_request(&response).is_ok_and(|request| request.is_some()) {
                         break;
                     }
                 }
@@ -289,8 +298,10 @@ mod tests {
             .expect("test assertion should succeed"),
         );
 
-        let cas = tester.parse_ca_list(&[13, 0, 0, 0]);
-        assert!(cas.is_none());
+        let err = tester
+            .parse_ca_list(&[13, 0, 0, 0])
+            .expect_err("short CertificateRequest should fail");
+        assert!(err.to_string().contains("CertificateRequest too short"));
     }
 
     #[test]
@@ -320,8 +331,33 @@ mod tests {
             .expect("test assertion should succeed"),
         );
 
-        let cas = tester.parse_ca_list(&[]);
-        assert!(cas.is_none());
+        let err = tester
+            .parse_ca_list(&[])
+            .expect_err("empty CertificateRequest should fail");
+        assert!(err.to_string().contains("CertificateRequest too short"));
+    }
+
+    #[test]
+    fn test_find_certificate_request_rejects_malformed_ca_list() {
+        let tester = ClientCAsTester::new(
+            Target::with_ips(
+                "example.test".to_string(),
+                443,
+                vec!["127.0.0.1".parse().expect("valid IP")],
+            )
+            .expect("test assertion should succeed"),
+        );
+
+        let malformed = vec![13, 0, 0, 6, 1, 1, 0, 0, 4, 0];
+        let record_len = malformed.len() as u16;
+        let mut record = vec![0x16, 0x03, 0x03];
+        record.extend_from_slice(&record_len.to_be_bytes());
+        record.extend_from_slice(&malformed);
+
+        let err = tester
+            .find_certificate_request(&record)
+            .expect_err("malformed CertificateRequest should fail");
+        assert!(err.to_string().contains("CA list length exceeds message"));
     }
 
     #[tokio::test]

@@ -1,7 +1,7 @@
 use super::{ClientCA, ClientCAsTester};
 
 impl ClientCAsTester {
-    pub(super) fn find_certificate_request(&self, data: &[u8]) -> Option<Vec<ClientCA>> {
+    pub(super) fn find_certificate_request(&self, data: &[u8]) -> crate::Result<Option<Vec<ClientCA>>> {
         let mut cert_request = None;
         let mut pos = 0;
         let mut handshake_bytes = Vec::new();
@@ -42,52 +42,61 @@ impl ClientCAsTester {
             }
 
             if msg_type == 13 {
-                cert_request = Some(
-                    self.parse_ca_list(&handshake_bytes[msg_pos..msg_end])
-                        .unwrap_or_default(),
-                );
+                cert_request = Some(self.parse_ca_list(&handshake_bytes[msg_pos..msg_end])?);
                 break;
             }
 
             msg_pos = msg_end;
         }
 
-        cert_request
+        Ok(cert_request)
     }
 
     #[cfg(test)]
     pub(super) fn parse_certificate_request(&self, data: &[u8]) -> Vec<ClientCA> {
-        self.find_certificate_request(data).unwrap_or_default()
+        self.find_certificate_request(data)
+            .expect("certificate request should parse")
+            .unwrap_or_default()
     }
 
-    pub(super) fn parse_ca_list(&self, data: &[u8]) -> Option<Vec<ClientCA>> {
+    pub(super) fn parse_ca_list(&self, data: &[u8]) -> crate::Result<Vec<ClientCA>> {
         if data.len() < 10 {
-            return None;
+            return Err(crate::TlsError::ParseError {
+                message: "CertificateRequest too short".to_string(),
+            });
         }
 
         let mut pos = 4;
 
         if pos >= data.len() {
-            return None;
+            return Err(crate::TlsError::ParseError {
+                message: "CertificateRequest missing certificate types".to_string(),
+            });
         }
         let cert_types_len = data[pos] as usize;
         pos += 1 + cert_types_len;
 
         if pos + 2 > data.len() {
-            return None;
+            return Err(crate::TlsError::ParseError {
+                message: "CertificateRequest truncated before signature algorithms".to_string(),
+            });
         }
         let sig_algs_len = u16::from_be_bytes([data[pos], data[pos + 1]]) as usize;
         pos += 2 + sig_algs_len;
 
         if pos + 2 > data.len() {
-            return None;
+            return Err(crate::TlsError::ParseError {
+                message: "CertificateRequest truncated before CA list".to_string(),
+            });
         }
 
         let ca_list_len = u16::from_be_bytes([data[pos], data[pos + 1]]) as usize;
         pos += 2;
 
         if pos + ca_list_len > data.len() {
-            return None;
+            return Err(crate::TlsError::ParseError {
+                message: "CertificateRequest CA list length exceeds message".to_string(),
+            });
         }
 
         let mut cas = Vec::new();
@@ -99,7 +108,10 @@ impl ClientCAsTester {
             ca_pos += 2;
 
             if ca_pos + dn_len > ca_data.len() {
-                break;
+                return Err(crate::TlsError::ParseError {
+                    message: "CertificateRequest CA distinguished name length exceeds list"
+                        .to_string(),
+                });
             }
 
             let dn_data = &ca_data[ca_pos..ca_pos + dn_len];
@@ -115,7 +127,7 @@ impl ClientCAsTester {
             ca_pos += dn_len;
         }
 
-        Some(cas)
+        Ok(cas)
     }
 
     pub(super) fn extract_dn_fields(&self, dn_data: &[u8]) -> (Option<String>, Option<String>) {
