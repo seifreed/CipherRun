@@ -115,7 +115,7 @@ impl ClientCAsTester {
 
             let dn_data = &ca_data[ca_pos..ca_pos + dn_len];
             let dn_hex = hex::encode(dn_data);
-            let (cn, org) = self.extract_dn_fields(dn_data);
+            let (cn, org) = self.extract_dn_fields(dn_data)?;
 
             cas.push(ClientCA {
                 distinguished_name: dn_hex,
@@ -129,7 +129,10 @@ impl ClientCAsTester {
         Ok(cas)
     }
 
-    pub(super) fn extract_dn_fields(&self, dn_data: &[u8]) -> (Option<String>, Option<String>) {
+    pub(super) fn extract_dn_fields(
+        &self,
+        dn_data: &[u8],
+    ) -> crate::Result<(Option<String>, Option<String>)> {
         let mut cn = None;
         let mut org = None;
 
@@ -143,8 +146,13 @@ impl ClientCAsTester {
             {
                 let len = dn_data[i + 6] as usize;
                 if i + 7 + len <= dn_data.len()
-                    && let Ok(value) = std::str::from_utf8(&dn_data[i + 7..i + 7 + len])
                 {
+                    let value =
+                        std::str::from_utf8(&dn_data[i + 7..i + 7 + len]).map_err(|error| {
+                            crate::TlsError::ParseError {
+                                message: format!("Invalid certificate request DN UTF-8: {error}"),
+                            }
+                        })?;
                     cn = Some(value.to_string());
                 }
             }
@@ -156,13 +164,18 @@ impl ClientCAsTester {
             {
                 let len = dn_data[i + 6] as usize;
                 if i + 7 + len <= dn_data.len()
-                    && let Ok(value) = std::str::from_utf8(&dn_data[i + 7..i + 7 + len])
                 {
+                    let value =
+                        std::str::from_utf8(&dn_data[i + 7..i + 7 + len]).map_err(|error| {
+                            crate::TlsError::ParseError {
+                                message: format!("Invalid certificate request DN UTF-8: {error}"),
+                            }
+                        })?;
                     org = Some(value.to_string());
                 }
             }
         }
 
-        (cn, org)
+        Ok((cn, org))
     }
 }

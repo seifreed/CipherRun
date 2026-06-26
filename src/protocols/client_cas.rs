@@ -152,6 +152,20 @@ mod tests {
         dn
     }
 
+    fn build_raw_dn(cn_bytes: &[u8], org_bytes: &[u8]) -> Vec<u8> {
+        let mut dn = Vec::new();
+
+        dn.extend_from_slice(&[0x06, 0x03, 0x55, 0x04, 0x03, 0x0c]);
+        dn.push(cn_bytes.len() as u8);
+        dn.extend_from_slice(cn_bytes);
+
+        dn.extend_from_slice(&[0x06, 0x03, 0x55, 0x04, 0x0a, 0x0c]);
+        dn.push(org_bytes.len() as u8);
+        dn.extend_from_slice(org_bytes);
+
+        dn
+    }
+
     fn build_certificate_request(dn: &[u8]) -> Vec<u8> {
         let mut body = Vec::new();
         body.push(0);
@@ -185,7 +199,9 @@ mod tests {
         );
 
         let dn = build_dn("Example CN", "Example Org");
-        let (cn, org) = tester.extract_dn_fields(&dn);
+        let (cn, org) = tester
+            .extract_dn_fields(&dn)
+            .expect("DN fields should parse");
         assert_eq!(cn.as_deref(), Some("Example CN"));
         assert_eq!(org.as_deref(), Some("Example Org"));
     }
@@ -223,9 +239,27 @@ mod tests {
             .expect("test assertion should succeed"),
         );
 
-        let (cn, org) = tester.extract_dn_fields(&[]);
+        let (cn, org) = tester.extract_dn_fields(&[]).expect("empty DN should parse");
         assert!(cn.is_none());
         assert!(org.is_none());
+    }
+
+    #[test]
+    fn test_extract_dn_fields_rejects_invalid_utf8() {
+        let tester = ClientCAsTester::new(
+            Target::with_ips(
+                "example.test".to_string(),
+                443,
+                vec!["127.0.0.1".parse().expect("valid IP")],
+            )
+            .expect("test assertion should succeed"),
+        );
+
+        let dn = build_raw_dn(&[0xff], b"Example Org");
+        let err = tester
+            .extract_dn_fields(&dn)
+            .expect_err("invalid DN UTF-8 should fail");
+        assert!(err.to_string().contains("Invalid certificate request DN UTF-8"));
     }
 
     #[test]
