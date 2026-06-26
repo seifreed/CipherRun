@@ -259,6 +259,16 @@ impl<'a> HeartbleedTester<'a> {
             return false;
         }
 
+        let record_len = u16::from_be_bytes([response[3], response[4]]) as usize;
+        if record_len + 5 != response.len() {
+            tracing::debug!(
+                "Heartbleed: Response record length {} does not match buffer length {}",
+                record_len,
+                response.len()
+            );
+            return false;
+        }
+
         // Heartbeat message type must be Response (0x02), not Request (0x01)
         // Response structure: type (1 byte) + length (2 bytes) + payload
         let heartbeat_type = response[5];
@@ -266,6 +276,16 @@ impl<'a> HeartbleedTester<'a> {
             tracing::debug!(
                 "Heartbleed: Response type is not HeartbeatResponse (0x{:02x}, expected 0x02)",
                 heartbeat_type
+            );
+            return false;
+        }
+
+        let heartbeat_len = u16::from_be_bytes([response[6], response[7]]) as usize;
+        if heartbeat_len + 3 != record_len {
+            tracing::debug!(
+                "Heartbleed: Heartbeat payload length {} does not match record length {}",
+                heartbeat_len,
+                record_len
             );
             return false;
         }
@@ -582,6 +602,27 @@ mod tests {
         // (saturating_sub(2) means we need at least 3 to have one iteration)
         // This test validates that minimum length is enforced
         assert!(!tester.check_heartbeat_extension(&[0x00, 0x0f]));
+    }
+
+    #[test]
+    fn test_validate_heartbeat_response_rejects_mismatched_lengths() {
+        let target = Target::with_ips(
+            "test.com".to_string(),
+            443,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+        let tester = HeartbleedTester {
+            target: &target,
+            sni_hostname: None,
+            connect_timeout: Duration::from_secs(5),
+            read_timeout: Duration::from_secs(5),
+            starttls: None,
+            starttls_hostname: None,
+        };
+
+        let response = [0x18, 0x03, 0x03, 0x00, 0x04, 0x02, 0x00, 0x01];
+        assert!(!tester.validate_heartbeat_response(&response));
     }
 
     #[tokio::test]
