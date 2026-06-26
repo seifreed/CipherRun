@@ -258,7 +258,7 @@ fn parse_server_hello(data: &[u8], _probe: &JarmProbe) -> Result<String> {
     let server_version = hex::encode(&data[9..11]);
 
     // Extract extensions
-    let server_ext = extract_extension_info(data, counter, server_hello_length);
+    let server_ext = extract_extension_info(data, counter, server_hello_length)?;
 
     Ok(format!(
         "{}|{}|{}",
@@ -273,10 +273,14 @@ fn parse_server_hello(data: &[u8], _probe: &JarmProbe) -> Result<String> {
 ///   compress:   offset + 46
 ///   ext_len:    offset + 47 .. offset + 49
 ///   ext_data:   offset + 49 ..
-fn extract_extension_info(data: &[u8], offset: usize, server_hello_length: usize) -> String {
+fn extract_extension_info(
+    data: &[u8],
+    offset: usize,
+    server_hello_length: usize,
+) -> Result<String> {
     // Need at least: offset + 49 (extensions length) + 4 (one minimal extension)
     if data.len() < offset + 53 {
-        return "|".to_string();
+        return Ok("|".to_string());
     }
 
     // Check if the server sent no extensions by reading the full 2-byte extension length.
@@ -284,7 +288,7 @@ fn extract_extension_info(data: &[u8], offset: usize, server_hello_length: usize
     // extension lengths 0x0B00-0x0BFF (2816-3071 bytes).
     let potential_ext_len = u16::from_be_bytes([data[offset + 47], data[offset + 48]]);
     if potential_ext_len == 0 {
-        return "|".to_string();
+        return Ok("|".to_string());
     }
     // If the high byte looks like a Certificate handshake type (0x0b) AND the claimed
     // extension length exceeds available data, the server likely sent no extensions
@@ -292,7 +296,7 @@ fn extract_extension_info(data: &[u8], offset: usize, server_hello_length: usize
     if data[offset + 47] == 0x0b
         && (offset + 49).saturating_add(potential_ext_len as usize) > data.len()
     {
-        return "|".to_string();
+        return Ok("|".to_string());
     }
 
     // S7 fix: `server_hello_length` is read from the *first* TLS record header
@@ -304,16 +308,16 @@ fn extract_extension_info(data: &[u8], offset: usize, server_hello_length: usize
     // extension-iteration loop against the declared extension length.
     let _ = server_hello_length;
     if offset + 49 > data.len() {
-        return "|".to_string();
+        return Ok("|".to_string());
     }
 
     // Check for malformed responses
     if offset + 53 <= data.len() && data[offset + 50..offset + 53] == [0x0e, 0xac, 0x0b] {
-        return "|".to_string();
+        return Ok("|".to_string());
     }
     // Secondary malformed check at fixed offset (original JARM reference)
     if data.len() >= 85 && data[82..85] == [0x0f, 0xf0, 0x0b] {
-        return "|".to_string();
+        return Ok("|".to_string());
     }
 
     let ecnt_start = offset + 49;
@@ -324,7 +328,7 @@ fn extract_extension_info(data: &[u8], offset: usize, server_hello_length: usize
         Some(sum) => sum,
         None => {
             tracing::debug!("Extension length overflow");
-            return "|".to_string();
+            return Ok("|".to_string());
         }
     };
 
@@ -345,9 +349,9 @@ fn extract_extension_info(data: &[u8], offset: usize, server_hello_length: usize
         let next_cnt = match ecnt.checked_add(4).and_then(|n| n.checked_add(ext_len)) {
             Some(n) if n <= data.len() => n,
             _ => {
-                // Bounds exceeded - truncated response
-                tracing::trace!("Extension bounds exceeded at {}", ecnt);
-                break;
+                return Err(TlsError::ParseError {
+                    message: format!("Truncated JARM extension at offset {}", ecnt),
+                });
             }
         };
 
@@ -367,7 +371,7 @@ fn extract_extension_info(data: &[u8], offset: usize, server_hello_length: usize
     // Build extension type list
     let etype_list: Vec<String> = etypes.iter().map(hex::encode).collect();
 
-    format!("{}|{}", alpn, etype_list.join("-"))
+    Ok(format!("{}|{}", alpn, etype_list.join("-")))
 }
 
 /// Extract specific extension type value
@@ -630,5 +634,28 @@ mod tests {
         let evals = vec![vec![0xde, 0xad, 0xbe, 0xef]];
         let value = extract_extension_type(&[0x00, 0x0a], &etypes, &evals);
         assert_eq!(value, "deadbeef");
+    }
+
+    #[test]
+    fn test_parse_server_hello_rejects_truncated_extension() {
+        let probe = &get_probes("example.com", 443)[0];
+        let response = vec![
+            0x16, 0x03, 0x03, 0x00, 0x3b, // TLS record
+            0x02, 0x00, 0x00, 0x37, // ServerHello handshake
+            0x03, 0x03, // version
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, // random
+            0x00, // session id length
+            0x00, 0x9c, // cipher
+            0x00, // compression
+            0x00, 0x04, // extensions length
+            0x00, 0x10, // NPN extension type
+            0x00, 0x02, // extension length
+            0x01, // truncated extension data
+        ];
+
+        let err = parse_server_hello(&response, probe).unwrap_err();
+        assert!(err.to_string().contains("Truncated JARM extension"));
     }
 }
