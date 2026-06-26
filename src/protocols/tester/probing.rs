@@ -270,9 +270,25 @@ impl ProtocolTester {
                 .await
                 {
                     Ok(Ok(n)) if n >= 3 => {
-                        let first = response[0];
-                        let second = response[1];
-                        let msg_type = response[2];
+                        let response =
+                            response
+                                .get(..n)
+                                .ok_or_else(|| crate::TlsError::ParseError {
+                                    message: "SSLv2 probe response read length exceeded buffer"
+                                        .to_string(),
+                                })?;
+                        let header =
+                            response
+                                .get(..3)
+                                .ok_or_else(|| crate::TlsError::ParseError {
+                                    message: "SSLv2 probe response truncated before header"
+                                        .to_string(),
+                                })?;
+                        let header: [u8; 3] =
+                            header.try_into().map_err(|_| crate::TlsError::ParseError {
+                                message: "SSLv2 probe response truncated before header".to_string(),
+                            })?;
+                        let [first, second, msg_type] = header;
                         let is_sslv2_header = (first & 0x80) != 0;
                         let record_len = ((first & 0x7f) as usize) << 8 | second as usize;
                         let reasonable = record_len > 0 && record_len <= 16384;
@@ -306,22 +322,23 @@ impl ProtocolTester {
     }
 
     pub(super) fn build_sslv2_client_hello(&self) -> Vec<u8> {
-        let mut hello = vec![0x80, 0x00, 0x01, 0x00, 0x02];
-        hello.push(0x00);
-        hello.push(0x09); // cipher_spec_length: 9 bytes (3 ciphers × 3 bytes each)
-        hello.push(0x00);
-        hello.push(0x00);
-        hello.push(0x00);
-        hello.push(0x10);
-        hello.extend_from_slice(&[0x01, 0x00, 0x80]);
-        hello.extend_from_slice(&[0x02, 0x00, 0x80]);
-        hello.extend_from_slice(&[0x03, 0x00, 0x80]);
-        hello.extend_from_slice(&[
+        let mut body = vec![0x01, 0x00, 0x02];
+        body.push(0x00);
+        body.push(0x09); // cipher_spec_length: 9 bytes (3 ciphers × 3 bytes each)
+        body.push(0x00);
+        body.push(0x00);
+        body.push(0x00);
+        body.push(0x10);
+        body.extend_from_slice(&[0x01, 0x00, 0x80]);
+        body.extend_from_slice(&[0x02, 0x00, 0x80]);
+        body.extend_from_slice(&[0x03, 0x00, 0x80]);
+        body.extend_from_slice(&[
             0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
             0x0f, 0x10,
         ]);
-        let len = hello.len() - 2;
-        hello[1] = len as u8;
+        let len = body.len();
+        let mut hello = vec![0x80, len as u8];
+        hello.extend_from_slice(&body);
         hello
     }
 
@@ -595,7 +612,14 @@ fn classify_legacy_probe_response(response: &[u8], protocol: Protocol) -> Protoc
         if response.len() < 7 {
             return ProtocolProbeOutcome::Inconclusive;
         }
-        let alert_record_len = u16::from_be_bytes([response[3], response[4]]) as usize;
+        let Some(alert_record_len) = response
+            .get(3..5)
+            .and_then(|bytes| bytes.try_into().ok())
+            .map(u16::from_be_bytes)
+            .map(usize::from)
+        else {
+            return ProtocolProbeOutcome::Inconclusive;
+        };
         if alert_record_len != 2 || response.len() != 5 + alert_record_len {
             return ProtocolProbeOutcome::Inconclusive;
         }
@@ -627,11 +651,14 @@ mod legacy_probe_tests {
         hello.extend_from_slice(&[0xc0, 0x13]); // cipher suite
         hello.push(0x00); // compression
         let body_len = hello.len() - 4;
-        hello[1..4].copy_from_slice(&[
-            ((body_len >> 16) & 0xff) as u8,
-            ((body_len >> 8) & 0xff) as u8,
-            (body_len & 0xff) as u8,
-        ]);
+        hello
+            .get_mut(1..4)
+            .expect("test ServerHello should contain handshake length placeholder")
+            .copy_from_slice(&[
+                ((body_len >> 16) & 0xff) as u8,
+                ((body_len >> 8) & 0xff) as u8,
+                (body_len & 0xff) as u8,
+            ]);
 
         let mut record = vec![CONTENT_TYPE_HANDSHAKE, 0x03, 0x01];
         record.extend_from_slice(&(hello.len() as u16).to_be_bytes());
