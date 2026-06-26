@@ -208,13 +208,25 @@ impl CipherTester {
         if bytes_read < SERVER_HELLO_MIN_SIZE {
             return Ok(None);
         }
-        if response[0] != CONTENT_TYPE_HANDSHAKE || response[5] != HANDSHAKE_TYPE_SERVER_HELLO {
+        let received = response
+            .get(..bytes_read)
+            .ok_or_else(|| crate::TlsError::ParseError {
+                message: "ServerHello read length exceeds response buffer".to_string(),
+            })?;
+        if received.first() != Some(&CONTENT_TYPE_HANDSHAKE)
+            || received.get(5) != Some(&HANDSHAKE_TYPE_SERVER_HELLO)
+        {
             return Err(crate::TlsError::ParseError {
                 message: "Invalid ServerHello response".to_string(),
             });
         }
 
-        let session_id_len = response[SESSION_ID_LENGTH_OFFSET] as usize;
+        let session_id_len = received
+            .get(SESSION_ID_LENGTH_OFFSET)
+            .copied()
+            .ok_or_else(|| crate::TlsError::ParseError {
+                message: "ServerHello truncated before session ID length".to_string(),
+            })? as usize;
         if session_id_len > 32 {
             return Err(crate::TlsError::ParseError {
                 message: format!("Invalid ServerHello session_id_len: {}", session_id_len),
@@ -229,14 +241,14 @@ impl CipherTester {
             bytes_read
         );
 
-        if bytes_read >= cipher_offset + 2 {
-            let cipher = u16::from_be_bytes([response[cipher_offset], response[cipher_offset + 1]]);
-            tracing::debug!("Server chose cipher: 0x{:04x}", cipher);
-            Ok(Some(cipher))
-        } else {
-            Err(crate::TlsError::ParseError {
+        let cipher_bytes = received
+            .get(cipher_offset..cipher_offset + 2)
+            .and_then(|bytes| <[u8; 2]>::try_from(bytes).ok())
+            .ok_or_else(|| crate::TlsError::ParseError {
                 message: "ServerHello truncated before cipher_suite".to_string(),
-            })
-        }
+            })?;
+        let cipher = u16::from_be_bytes(cipher_bytes);
+        tracing::debug!("Server chose cipher: 0x{:04x}", cipher);
+        Ok(Some(cipher))
     }
 }
