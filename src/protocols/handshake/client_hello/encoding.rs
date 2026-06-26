@@ -124,7 +124,11 @@ impl ClientHelloBuilder {
         let extensions_len = u16::try_from(extensions_len).map_err(|_| {
             crate::TlsError::Other("extensions list exceeds maximum length".to_string())
         })?;
-        buf[extensions_start..extensions_start + 2].copy_from_slice(&extensions_len.to_be_bytes());
+        buf.get_mut(extensions_start..extensions_start + 2)
+            .ok_or_else(|| {
+                crate::TlsError::Other("extensions length placeholder missing".to_string())
+            })?
+            .copy_from_slice(&extensions_len.to_be_bytes());
         Ok(())
     }
 
@@ -142,15 +146,24 @@ impl ClientHelloBuilder {
                 "handshake length exceeds maximum length".to_string(),
             ));
         }
-        buf[handshake_length_pos] = ((handshake_len >> 16) & 0xff) as u8;
-        buf[handshake_length_pos + 1..handshake_length_pos + 3]
+        buf.get_mut(handshake_length_pos..handshake_length_pos + 1)
+            .ok_or_else(|| {
+                crate::TlsError::Other("handshake length placeholder missing".to_string())
+            })?
+            .copy_from_slice(&[((handshake_len >> 16) & 0xff) as u8]);
+        buf.get_mut(handshake_length_pos + 1..handshake_length_pos + 3)
+            .ok_or_else(|| {
+                crate::TlsError::Other("handshake length placeholder missing".to_string())
+            })?
             .copy_from_slice(&((handshake_len & 0xffff) as u16).to_be_bytes());
 
         let record_len = buf.len() - handshake_start;
         let record_len = u16::try_from(record_len).map_err(|_| {
             crate::TlsError::Other("record length exceeds maximum length".to_string())
         })?;
-        buf[length_pos..length_pos + 2].copy_from_slice(&record_len.to_be_bytes());
+        buf.get_mut(length_pos..length_pos + 2)
+            .ok_or_else(|| crate::TlsError::Other("record length placeholder missing".to_string()))?
+            .copy_from_slice(&record_len.to_be_bytes());
         Ok(())
     }
 }

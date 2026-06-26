@@ -5,6 +5,41 @@ use crate::protocols::{Extension, Protocol};
 pub struct ServerHelloParser;
 
 impl ServerHelloParser {
+    fn read_u8_at(data: &[u8], offset: usize, context: &str) -> Result<u8> {
+        data.get(offset)
+            .copied()
+            .ok_or_else(|| crate::TlsError::ParseError {
+                message: format!("{context} truncated"),
+            })
+    }
+
+    fn read_u16_at(data: &[u8], offset: usize, context: &str) -> Result<u16> {
+        let bytes = data
+            .get(offset..offset + 2)
+            .and_then(|bytes| <[u8; 2]>::try_from(bytes).ok())
+            .ok_or_else(|| crate::TlsError::ParseError {
+                message: format!("{context} truncated"),
+            })?;
+        Ok(u16::from_be_bytes(bytes))
+    }
+
+    fn slice_range<'a>(
+        data: &'a [u8],
+        start: usize,
+        len: usize,
+        context: &str,
+    ) -> Result<&'a [u8]> {
+        let end = start
+            .checked_add(len)
+            .ok_or_else(|| crate::TlsError::ParseError {
+                message: format!("{context} length overflow"),
+            })?;
+        data.get(start..end)
+            .ok_or_else(|| crate::TlsError::ParseError {
+                message: format!("{context} truncated"),
+            })
+    }
+
     pub fn parse(data: &[u8]) -> Result<ServerHello> {
         // Minimum ServerHello: 5 (record header) + 4 (handshake header) + 2 (version) + 32 (random) = 43 bytes
         if data.len() < 43 {
@@ -13,57 +48,61 @@ impl ServerHelloParser {
 
         let mut offset = 0;
 
-        if data[0] != CONTENT_TYPE_HANDSHAKE {
+        if Self::read_u8_at(data, 0, "TLS record type")? != CONTENT_TYPE_HANDSHAKE {
             crate::tls_bail!("Not a handshake record");
         }
         // Compute record boundary from the TLS record header length field
-        let record_len = u16::from_be_bytes([data[3], data[4]]) as usize;
+        let record_len = Self::read_u16_at(data, 3, "TLS record length")? as usize;
         let record_end = 5 + record_len;
         if record_end > data.len() {
             crate::tls_bail!("ServerHello record length exceeds available data");
         }
-        let record = &data[..record_end];
+        let record = Self::slice_range(data, 0, record_end, "TLS record")?;
         offset += 5;
 
-        if record[offset] != HANDSHAKE_TYPE_SERVER_HELLO {
+        if Self::read_u8_at(record, offset, "Handshake message type")?
+            != HANDSHAKE_TYPE_SERVER_HELLO
+        {
             crate::tls_bail!("Not a ServerHello");
         }
         offset += 1;
         offset += 3;
 
-        let version = u16::from_be_bytes([record[offset], record[offset + 1]]);
+        let version = Self::read_u16_at(record, offset, "ServerHello version")?;
         offset += 2;
 
         let mut random = [0u8; 32];
-        random.copy_from_slice(&record[offset..offset + 32]);
+        random.copy_from_slice(Self::slice_range(record, offset, 32, "ServerHello random")?);
         offset += 32;
 
         // Session ID length with bounds check
         if offset >= record.len() {
             crate::tls_bail!("ServerHello truncated before session_id_len");
         }
-        let session_id_len = record[offset] as usize;
+        let session_id_len =
+            Self::read_u8_at(record, offset, "ServerHello session ID length")? as usize;
         offset += 1;
 
         // Validate session_id_len before using it
         if offset + session_id_len > record.len() {
             crate::tls_bail!("ServerHello session_id extends beyond data");
         }
-        let session_id = record[offset..offset + session_id_len].to_vec();
+        let session_id =
+            Self::slice_range(record, offset, session_id_len, "ServerHello session ID")?.to_vec();
         offset += session_id_len;
 
         // Cipher suite (2 bytes)
         if offset + 2 > record.len() {
             crate::tls_bail!("ServerHello truncated before cipher_suite");
         }
-        let cipher_suite = u16::from_be_bytes([record[offset], record[offset + 1]]);
+        let cipher_suite = Self::read_u16_at(record, offset, "ServerHello cipher suite")?;
         offset += 2;
 
         // Compression method (1 byte)
         if offset >= record.len() {
             crate::tls_bail!("ServerHello truncated before compression");
         }
-        let compression = record[offset];
+        let compression = Self::read_u8_at(record, offset, "ServerHello compression")?;
         offset += 1;
 
         let mut extensions = Vec::new();
@@ -76,23 +115,37 @@ impl ServerHelloParser {
         let mut negotiated_version = None;
 
         if offset + 2 <= record.len() {
-            let ext_len = u16::from_be_bytes([record[offset], record[offset + 1]]) as usize;
+            let ext_len =
+                Self::read_u16_at(record, offset, "ServerHello extensions length")? as usize;
             offset += 2;
 
-            let ext_end = offset + ext_len;
+            let ext_end =
+                offset
+                    .checked_add(ext_len)
+                    .ok_or_else(|| crate::TlsError::ParseError {
+                        message: "ServerHello extensions length overflow".to_string(),
+                    })?;
             if ext_end > record.len() {
                 crate::tls_bail!("ServerHello extension block extends beyond declared length");
             }
             while offset < ext_end && offset + 4 <= ext_end {
-                let ext_type = u16::from_be_bytes([record[offset], record[offset + 1]]);
+                let ext_type = Self::read_u16_at(record, offset, "ServerHello extension type")?;
                 offset += 2;
 
                 let ext_data_len =
-                    u16::from_be_bytes([record[offset], record[offset + 1]]) as usize;
+                    Self::read_u16_at(record, offset, "ServerHello extension length")? as usize;
                 offset += 2;
 
-                if offset + ext_data_len <= ext_end {
-                    let ext_data = record[offset..offset + ext_data_len].to_vec();
+                let ext_data_end = offset.checked_add(ext_data_len).ok_or_else(|| {
+                    crate::TlsError::ParseError {
+                        message: "ServerHello extension length overflow".to_string(),
+                    }
+                })?;
+
+                if ext_data_end <= ext_end {
+                    let ext_data =
+                        Self::slice_range(record, offset, ext_data_len, "ServerHello extension")?
+                            .to_vec();
 
                     if ext_type == 0x0005 {
                         ocsp_stapling_detected = Some(true);
@@ -109,11 +162,12 @@ impl ServerHelloParser {
                     // supported_versions in a ServerHello carries exactly one
                     // 2-byte selected version (RFC 8446 §4.2.1).
                     if ext_type == 0x002b && ext_data.len() >= 2 {
-                        negotiated_version = Some(u16::from_be_bytes([ext_data[0], ext_data[1]]));
+                        negotiated_version =
+                            Some(Self::read_u16_at(&ext_data, 0, "supported_versions")?);
                     }
 
                     extensions.push(Extension::new(ext_type, ext_data));
-                    offset += ext_data_len;
+                    offset = ext_data_end;
                 } else {
                     crate::tls_bail!("ServerHello extension data extends beyond declared length");
                 }

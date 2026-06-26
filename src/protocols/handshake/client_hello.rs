@@ -168,7 +168,7 @@ impl ClientHelloBuilder {
     pub fn add_supported_versions(&mut self, versions: &[u16]) -> &mut Self {
         let mut data = BytesMut::new();
         let max_versions = 127; // 127 * 2 = 254 bytes, fits in u8
-        let versions_to_write = &versions[..versions.len().min(max_versions)];
+        let versions_to_write = versions.iter().take(max_versions);
         let versions_byte_len = versions_to_write.len() * 2;
         data.put_u8(versions_byte_len as u8);
         for version in versions_to_write {
