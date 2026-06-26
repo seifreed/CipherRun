@@ -426,9 +426,10 @@ impl TrustStoreValidator {
         };
 
         // Internal links: cert[i] must be signed by cert[i + 1].
-        for i in 0..certs.len().saturating_sub(1) {
-            let cert = &certs[i];
-            let issuer_cert = &certs[i + 1];
+        for pair in certs.windows(2) {
+            let [cert, issuer_cert] = pair else {
+                continue;
+            };
             if cert.der_bytes.is_empty() || issuer_cert.der_bytes.is_empty() {
                 return Ok(false);
             }

@@ -107,9 +107,10 @@ impl CertificateValidator {
         let certs = &chain.certificates;
 
         // Verify intermediate chain signatures (cert[i] signed by cert[i+1])
-        for i in 0..certs.len().saturating_sub(1) {
-            let cert = &certs[i];
-            let issuer_cert = &certs[i + 1];
+        for pair in certs.windows(2) {
+            let [cert, issuer_cert] = pair else {
+                continue;
+            };
 
             // Check issuer/subject match
             if cert.issuer != issuer_cert.subject {
