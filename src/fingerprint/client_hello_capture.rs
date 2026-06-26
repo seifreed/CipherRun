@@ -409,7 +409,9 @@ impl ClientHelloCapture {
     /// Parse SNI extension data
     fn parse_sni(data: &[u8]) -> Result<Option<String>> {
         if data.len() < 5 {
-            return Ok(None);
+            return Err(TlsError::ParseError {
+                message: "SNI extension too short".to_string(),
+            });
         }
 
         // Skip server name list length (2 bytes)
@@ -417,7 +419,9 @@ impl ClientHelloCapture {
 
         // Server name type (1 byte, should be 0 for hostname)
         if data[cursor] != 0 {
-            return Ok(None);
+            return Err(TlsError::ParseError {
+                message: format!("Invalid SNI name type: {}", data[cursor]),
+            });
         }
         cursor += 1;
 
@@ -426,7 +430,9 @@ impl ClientHelloCapture {
         cursor += 2;
 
         if data.len() < cursor + name_len {
-            return Ok(None);
+            return Err(TlsError::ParseError {
+                message: "SNI name length exceeds extension data".to_string(),
+            });
         }
 
         // Server name
@@ -505,6 +511,21 @@ mod tests {
 
         let err = capture.get_sni().unwrap_err();
         assert!(err.to_string().contains("Invalid SNI UTF-8"));
+    }
+
+    #[test]
+    fn test_get_sni_rejects_invalid_name_type() {
+        let capture = ClientHelloCapture::synthetic(
+            0x0303,
+            vec![0x1301],
+            vec![(
+                EXTENSION_SERVER_NAME,
+                vec![0x00, 0x04, 0x01, 0x00, 0x01, b'a'],
+            )],
+        );
+
+        let err = capture.get_sni().expect_err("invalid SNI type should fail");
+        assert!(err.to_string().contains("Invalid SNI name type"));
     }
 
     #[test]
