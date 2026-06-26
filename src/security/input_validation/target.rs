@@ -164,24 +164,19 @@ fn parse_unbracketed_ipv6(
 
 /// Parse regular hostname or IPv4 with optional port: `host:port` or `host`
 fn parse_host_port(target: &str) -> std::result::Result<(String, Option<u16>), ValidationError> {
-    let parts: Vec<&str> = target.split(':').collect();
-    if parts.len() > 2 {
+    let Some((hostname, port)) = target.split_once(':') else {
+        return Ok((target.to_string(), None));
+    };
+    if port.contains(':') {
         return Err(ValidationError::InvalidPort(
             "Invalid host:port format".to_string(),
         ));
     }
 
-    let hostname = parts[0].to_string();
-    let port = if parts.len() > 1 {
-        Some(
-            parts[1]
-                .parse::<u16>()
-                .map_err(|_| ValidationError::InvalidPort("Invalid port format".to_string()))?,
-        )
-    } else {
-        None
-    };
-    Ok((hostname, port))
+    let port = port
+        .parse::<u16>()
+        .map_err(|_| ValidationError::InvalidPort("Invalid port format".to_string()))?;
+    Ok((hostname.to_string(), Some(port)))
 }
 
 #[cfg(test)]
