@@ -26,9 +26,7 @@ const PROBE_READ_TIMEOUT: Duration = Duration::from_secs(3);
 /// Read buffer size for the ServerHello/alert response of a probe.
 const PROBE_BUFFER_SIZE: usize = 4096;
 
-/// Minimum bytes needed to classify a TLS record's content/handshake type
-/// (5-byte record header + 1 handshake-type byte).
-const TLS_RECORD_TYPE_PREFIX_LEN: usize = 6;
+const MIN_SERVER_HELLO_LEN: usize = 43;
 
 /// Outcome of probing a server for support of a single cipher suite.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -175,12 +173,12 @@ async fn probe_cipher_at_protocol(
 /// (`Supported`); a TLS alert means it rejected it (`NotSupported`); anything
 /// else (truncated, closed, non-TLS) is `Inconclusive`.
 fn classify_probe_response(response: &[u8], n: usize) -> CipherProbeStatus {
-    if n >= TLS_RECORD_TYPE_PREFIX_LEN
+    if n >= MIN_SERVER_HELLO_LEN
         && response[0] == CONTENT_TYPE_HANDSHAKE
         && response[5] == HANDSHAKE_TYPE_SERVER_HELLO
     {
         CipherProbeStatus::Supported
-    } else if n > 0 && response[0] == CONTENT_TYPE_ALERT {
+    } else if n >= 7 && response[0] == CONTENT_TYPE_ALERT {
         CipherProbeStatus::NotSupported
     } else {
         CipherProbeStatus::Inconclusive
@@ -193,7 +191,7 @@ mod tests {
 
     #[test]
     fn test_classify_serverhello_is_supported() {
-        let mut response = vec![0u8; 16];
+        let mut response = vec![0u8; MIN_SERVER_HELLO_LEN];
         response[0] = CONTENT_TYPE_HANDSHAKE;
         response[5] = HANDSHAKE_TYPE_SERVER_HELLO;
         assert_eq!(
@@ -213,10 +211,30 @@ mod tests {
     }
 
     #[test]
+    fn test_classify_truncated_alert_is_inconclusive() {
+        let response = vec![CONTENT_TYPE_ALERT, 0x03, 0x03, 0x00, 0x02, 0x02];
+        assert_eq!(
+            classify_probe_response(&response, response.len()),
+            CipherProbeStatus::Inconclusive
+        );
+    }
+
+    #[test]
     fn test_classify_handshake_without_serverhello_is_inconclusive() {
         let mut response = vec![0u8; 16];
         response[0] = CONTENT_TYPE_HANDSHAKE;
         response[5] = HANDSHAKE_TYPE_SERVER_HELLO + 1;
+        assert_eq!(
+            classify_probe_response(&response, response.len()),
+            CipherProbeStatus::Inconclusive
+        );
+    }
+
+    #[test]
+    fn test_classify_truncated_serverhello_is_inconclusive() {
+        let mut response = vec![0u8; 16];
+        response[0] = CONTENT_TYPE_HANDSHAKE;
+        response[5] = HANDSHAKE_TYPE_SERVER_HELLO;
         assert_eq!(
             classify_probe_response(&response, response.len()),
             CipherProbeStatus::Inconclusive
