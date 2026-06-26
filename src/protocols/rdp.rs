@@ -39,6 +39,15 @@ impl RdpPreamble {
             tls_bail!("RDP response too short");
         }
 
+        let declared_len = u16::from_be_bytes([response[2], response[3]]) as usize;
+        if declared_len != n {
+            tls_bail!(
+                "Invalid RDP response: declared length {} does not match received {}",
+                declared_len,
+                n
+            );
+        }
+
         // Verify TPKT header
         if response[0] != 0x03 {
             tls_bail!("Invalid RDP response: not a TPKT packet");
@@ -91,6 +100,8 @@ mod tests {
             let _ = socket.read(&mut buffer).await.unwrap();
             let mut response = vec![0u8; 11];
             response[0] = 0x03;
+            response[2] = 0x00;
+            response[3] = 0x0b;
             response[5] = 0xD0;
             socket.write_all(&response).await.unwrap();
         });
@@ -128,6 +139,38 @@ mod tests {
             .expect("test assertion should succeed");
         let err = RdpPreamble::send(&mut stream).await.unwrap_err();
         assert!(err.to_string().contains("RDP response too short"));
+
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_rdp_preamble_mismatched_length() {
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test assertion should succeed");
+        let addr = listener
+            .local_addr()
+            .expect("test assertion should succeed");
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buffer = vec![0u8; 64];
+            let _ = socket.read(&mut buffer).await.unwrap();
+            let mut response = vec![0u8; 11];
+            response[0] = 0x03;
+            response[2] = 0x00;
+            response[3] = 0x0c; // claims 12 bytes, sends 11
+            response[5] = 0xD0;
+            socket.write_all(&response).await.unwrap();
+        });
+
+        let mut stream = TcpStream::connect(addr)
+            .await
+            .expect("test assertion should succeed");
+        let err = RdpPreamble::send(&mut stream).await.unwrap_err();
+        assert!(err.to_string().contains("declared length"));
 
         server.await.unwrap();
     }
