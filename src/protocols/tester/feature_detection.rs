@@ -102,9 +102,6 @@ impl ProtocolTester {
             _ => return Ok(None),
         };
 
-        match ServerHelloParser::parse(&response) {
-            Ok(server_hello) => Ok(Some(server_hello)),
-            Err(_) => Ok(None),
-        }
+        ServerHelloParser::parse(&response).map(Some)
     }
 }

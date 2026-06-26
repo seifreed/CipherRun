@@ -483,6 +483,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_detect_heartbeat_extension_propagates_parse_errors() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("local addr should exist");
+
+        tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let _ = socket
+                    .write_all(&[0x16, 0x03, 0x03, 0x00, 0x02, 0x01, 0x02])
+                    .await;
+            }
+        });
+
+        let target = Target::with_ips("example.test".to_string(), addr.port(), vec![addr.ip()])
+            .expect("target should build");
+        let tester = ProtocolTester::new(target)
+            .with_connect_timeout(Duration::from_millis(100))
+            .with_read_timeout(Duration::from_millis(100));
+
+        let err = tester
+            .detect_heartbeat_extension(Protocol::TLS12)
+            .await
+            .expect_err("malformed ServerHello should fail");
+        assert!(err.to_string().contains("ServerHello too short"));
+    }
+
+    #[tokio::test]
     async fn test_target_accepts_tcp_open_port_true() {
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
