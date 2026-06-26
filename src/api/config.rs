@@ -123,7 +123,7 @@ fn generate_secure_api_key() -> String {
     let key: String = (0..KEY_LENGTH)
         .map(|_| {
             let idx = rng.random_range(0..CHARSET.len());
-            CHARSET[idx] as char
+            char::from(*CHARSET.get(idx).unwrap_or(&b'A'))
         })
         .collect();
 
