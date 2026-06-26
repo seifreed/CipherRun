@@ -19,22 +19,36 @@ impl RevocationChecker {
         })?;
 
         // Look for CRL Distribution Points extension
-        if let Ok(Some(ext)) =
-            parsed_cert.get_extension_unique(&oid_registry::OID_X509_EXT_CRL_DISTRIBUTION_POINTS)
-            && let ParsedExtension::CRLDistributionPoints(crl_dp) = ext.parsed_extension()
+        if let Some(ext) = parsed_cert
+            .get_extension_unique(&oid_registry::OID_X509_EXT_CRL_DISTRIBUTION_POINTS)
+            .map_err(|error| crate::TlsError::ParseError {
+                message: format!("Failed to parse CRL Distribution Points extension: {error}"),
+            })?
         {
-            for point in &crl_dp.points {
-                if let Some(dist_point) = &point.distribution_point
-                    && let x509_parser::extensions::DistributionPointName::FullName(names) =
-                        dist_point
-                {
-                    for name in names {
-                        if let GeneralName::URI(uri) = name
-                            && uri.starts_with("http")
+            match ext.parsed_extension() {
+                ParsedExtension::CRLDistributionPoints(crl_dp) => {
+                    for point in &crl_dp.points {
+                        if let Some(dist_point) = &point.distribution_point
+                            && let x509_parser::extensions::DistributionPointName::FullName(
+                                names,
+                            ) = dist_point
                         {
-                            return Ok(Some(uri.to_string()));
+                            for name in names {
+                                if let GeneralName::URI(uri) = name
+                                    && uri.starts_with("http")
+                                {
+                                    return Ok(Some(uri.to_string()));
+                                }
+                            }
                         }
                     }
+                }
+                other => {
+                    return Err(crate::TlsError::ParseError {
+                        message: format!(
+                            "Failed to parse CRL Distribution Points extension: {other:?}"
+                        ),
+                    });
                 }
             }
         }
@@ -141,6 +155,42 @@ impl RevocationChecker {
 mod tests {
     use super::*;
 
+    fn cert_with_raw_extension_der(oid: &str, contents: &[u8]) -> CertificateInfo {
+        use openssl::asn1::{Asn1Object, Asn1OctetString, Asn1Time};
+        use openssl::hash::MessageDigest as OpensslMessageDigest;
+        use openssl::pkey::PKey;
+        use openssl::rsa::Rsa;
+        use openssl::x509::{X509Builder, X509Extension, X509NameBuilder};
+
+        let rsa = Rsa::generate(2048).unwrap();
+        let pkey = PKey::from_rsa(rsa).unwrap();
+        let mut name = X509NameBuilder::new().unwrap();
+        name.append_entry_by_text("CN", "malformed-extension.example.com")
+            .unwrap();
+        let name = name.build();
+
+        let mut builder = X509Builder::new().unwrap();
+        builder.set_subject_name(&name).unwrap();
+        builder.set_issuer_name(&name).unwrap();
+        builder.set_pubkey(&pkey).unwrap();
+        builder
+            .set_not_before(&Asn1Time::days_from_now(0).unwrap())
+            .unwrap();
+        builder
+            .set_not_after(&Asn1Time::days_from_now(30).unwrap())
+            .unwrap();
+        let oid = Asn1Object::from_str(oid).unwrap();
+        let contents = Asn1OctetString::new_from_bytes(contents).unwrap();
+        let extension = X509Extension::new_from_der(&oid, false, &contents).unwrap();
+        builder.append_extension(extension).unwrap();
+        builder.sign(&pkey, OpensslMessageDigest::sha256()).unwrap();
+
+        CertificateInfo {
+            der_bytes: builder.build().to_der().unwrap(),
+            ..Default::default()
+        }
+    }
+
     #[test]
     fn test_extract_crl_url_empty_der() {
         let checker = RevocationChecker::new(true);
@@ -162,5 +212,14 @@ mod tests {
 
         let err = checker.extract_crl_url(&cert).unwrap_err();
         assert!(format!("{err}").contains("Failed to parse certificate"));
+    }
+
+    #[test]
+    fn test_extract_crl_url_malformed_distribution_points_returns_error() {
+        let checker = RevocationChecker::new(false);
+        let cert = cert_with_raw_extension_der("2.5.29.31", b"\x05\x00");
+
+        let err = checker.extract_crl_url(&cert).unwrap_err();
+        assert!(format!("{err}").contains("CRL Distribution Points extension"));
     }
 }

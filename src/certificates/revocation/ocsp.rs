@@ -30,16 +30,29 @@ impl RevocationChecker {
         })?;
 
         // Look for Authority Information Access extension
-        if let Ok(Some(ext)) =
-            parsed_cert.get_extension_unique(&oid_registry::OID_PKIX_AUTHORITY_INFO_ACCESS)
-            && let ParsedExtension::AuthorityInfoAccess(aia) = ext.parsed_extension()
+        if let Some(ext) = parsed_cert
+            .get_extension_unique(&oid_registry::OID_PKIX_AUTHORITY_INFO_ACCESS)
+            .map_err(|error| crate::TlsError::ParseError {
+                message: format!("Failed to parse Authority Information Access extension: {error}"),
+            })?
         {
-            for access_desc in &aia.accessdescs {
-                // OCSP OID: 1.3.6.1.5.5.7.48.1
-                if access_desc.access_method.to_string() == "1.3.6.1.5.5.7.48.1"
-                    && let GeneralName::URI(uri) = &access_desc.access_location
-                {
-                    return Ok(Some(uri.to_string()));
+            match ext.parsed_extension() {
+                ParsedExtension::AuthorityInfoAccess(aia) => {
+                    for access_desc in &aia.accessdescs {
+                        // OCSP OID: 1.3.6.1.5.5.7.48.1
+                        if access_desc.access_method.to_string() == "1.3.6.1.5.5.7.48.1"
+                            && let GeneralName::URI(uri) = &access_desc.access_location
+                        {
+                            return Ok(Some(uri.to_string()));
+                        }
+                    }
+                }
+                other => {
+                    return Err(crate::TlsError::ParseError {
+                        message: format!(
+                            "Failed to parse Authority Information Access extension: {other:?}"
+                        ),
+                    });
                 }
             }
         }
@@ -332,6 +345,42 @@ impl RevocationChecker {
 mod tests {
     use super::*;
 
+    fn cert_with_raw_extension_der(oid: &str, contents: &[u8]) -> CertificateInfo {
+        use openssl::asn1::{Asn1Object, Asn1OctetString, Asn1Time};
+        use openssl::hash::MessageDigest as OpensslMessageDigest;
+        use openssl::pkey::PKey;
+        use openssl::rsa::Rsa;
+        use openssl::x509::{X509Builder, X509Extension, X509NameBuilder};
+
+        let rsa = Rsa::generate(2048).unwrap();
+        let pkey = PKey::from_rsa(rsa).unwrap();
+        let mut name = X509NameBuilder::new().unwrap();
+        name.append_entry_by_text("CN", "malformed-extension.example.com")
+            .unwrap();
+        let name = name.build();
+
+        let mut builder = X509Builder::new().unwrap();
+        builder.set_subject_name(&name).unwrap();
+        builder.set_issuer_name(&name).unwrap();
+        builder.set_pubkey(&pkey).unwrap();
+        builder
+            .set_not_before(&Asn1Time::days_from_now(0).unwrap())
+            .unwrap();
+        builder
+            .set_not_after(&Asn1Time::days_from_now(30).unwrap())
+            .unwrap();
+        let oid = Asn1Object::from_str(oid).unwrap();
+        let contents = Asn1OctetString::new_from_bytes(contents).unwrap();
+        let extension = X509Extension::new_from_der(&oid, false, &contents).unwrap();
+        builder.append_extension(extension).unwrap();
+        builder.sign(&pkey, OpensslMessageDigest::sha256()).unwrap();
+
+        CertificateInfo {
+            der_bytes: builder.build().to_der().unwrap(),
+            ..Default::default()
+        }
+    }
+
     #[test]
     fn test_extract_urls_empty_der() {
         let checker = RevocationChecker::new(true);
@@ -373,5 +422,14 @@ mod tests {
 
         let err = checker.extract_ocsp_url(&cert).unwrap_err();
         assert!(format!("{err}").contains("Failed to parse certificate"));
+    }
+
+    #[test]
+    fn test_extract_ocsp_url_malformed_aia_returns_error() {
+        let checker = RevocationChecker::new(false);
+        let cert = cert_with_raw_extension_der("1.3.6.1.5.5.7.1.1", b"\x05\x00");
+
+        let err = checker.extract_ocsp_url(&cert).unwrap_err();
+        assert!(format!("{err}").contains("Authority Information Access extension"));
     }
 }
