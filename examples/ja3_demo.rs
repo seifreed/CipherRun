@@ -150,7 +150,7 @@ fn demo_grease_filtering() {
 fn demo_database_matching() {
     println!("Demo 4: Signature Database Matching\n");
 
-    let db = Ja3Database::default();
+    let db = Ja3Database::load_default().expect("builtin JA3 database should parse");
 
     println!(
         "  Built-in database contains {} signatures\n",

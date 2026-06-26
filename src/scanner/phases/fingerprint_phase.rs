@@ -57,22 +57,28 @@ impl FingerprintPhase {
         Self
     }
 
-    fn load_ja3_database(&self, context: &mut ScanContext) -> crate::fingerprint::Ja3Database {
+    fn load_ja3_database(
+        &self,
+        context: &mut ScanContext,
+    ) -> Result<crate::fingerprint::Ja3Database> {
         use crate::fingerprint::Ja3Database;
 
         if let Some(db_path) = context.args.fingerprint.ja3_database.clone() {
-            return Ja3Database::from_file(&db_path).unwrap_or_else(|e| {
-                context
-                    .results
-                    .add_human_warning(format!("Failed to load custom JA3 database: {}", e));
-                context
-                    .results
-                    .add_human_warning("Falling back to builtin JA3 database");
-                Ja3Database::default()
-            });
+            return match Ja3Database::from_file(&db_path) {
+                Ok(database) => Ok(database),
+                Err(e) => {
+                    context
+                        .results
+                        .add_human_warning(format!("Failed to load custom JA3 database: {}", e));
+                    context
+                        .results
+                        .add_human_warning("Falling back to builtin JA3 database");
+                    Ja3Database::load_default()
+                }
+            };
         }
 
-        Ja3Database::default()
+        Ja3Database::load_default()
     }
 
     /// Capture JA3 client fingerprint
@@ -101,7 +107,7 @@ impl FingerprintPhase {
         fingerprints.ja3_fingerprint = Some(ja3.clone());
 
         // Match against signature database
-        let db = self.load_ja3_database(context);
+        let db = self.load_ja3_database(context)?;
 
         if let Some(signature) = db.match_fingerprint(&ja3.ja3_hash).cloned() {
             context.results.fingerprints_mut().ja3_match = Some(signature);
@@ -462,7 +468,9 @@ mod tests {
         )));
 
         let mut context = ScanContext::new(target, Arc::new(args), None, None);
-        let db = FingerprintPhase::new().load_ja3_database(&mut context);
+        let db = FingerprintPhase::new()
+            .load_ja3_database(&mut context)
+            .expect("builtin JA3 database should parse");
 
         assert!(
             db.match_fingerprint("773906b0efdefa24a7f2b8eb6985bf37")

@@ -162,7 +162,7 @@ fn test_ja3_string_format() {
 
 #[test]
 fn test_ja3_database_matching() {
-    let db = Ja3Database::default();
+    let db = Ja3Database::load_default().expect("builtin JA3 database should parse");
 
     // Test Chrome signature
     let chrome_sig = db.match_fingerprint("773906b0efdefa24a7f2b8eb6985bf37");

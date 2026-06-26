@@ -350,11 +350,10 @@ impl Ja3Database {
         Self { signatures }
     }
 
-    /// Load default embedded database, failing fast if it is malformed.
+    /// Load default embedded database.
     #[allow(clippy::should_implement_trait)]
-    pub fn default() -> Self {
+    pub fn default() -> Result<Self> {
         Self::load_default()
-            .unwrap_or_else(|e| panic!("Failed to parse embedded JA3 database: {}", e))
     }
 
     /// Match a JA3 hash against the database
@@ -375,9 +374,7 @@ impl Ja3Database {
 
 impl Default for Ja3Database {
     fn default() -> Self {
-        // Same embedded database as the inherent `default()`.
-        Self::load_default()
-            .unwrap_or_else(|e| panic!("Failed to parse embedded JA3 database: {}", e))
+        Self::new()
     }
 }
 
@@ -429,7 +426,7 @@ mod tests {
 
     #[test]
     fn test_database_matching() {
-        let db = Ja3Database::default();
+        let db = Ja3Database::load_default().expect("builtin JA3 database should parse");
 
         // Test known signature
         let chrome_sig = db.match_fingerprint("773906b0efdefa24a7f2b8eb6985bf37");
@@ -445,7 +442,7 @@ mod tests {
     fn test_default_database_loads_embedded_curated_set() {
         // The default database must be the full embedded JSON, not the small
         // hardcoded fallback — so malware/C2 client fingerprints are detected.
-        let db = Ja3Database::default();
+        let db = Ja3Database::load_default().expect("builtin JA3 database should parse");
         assert!(
             db.signatures().len() >= 35,
             "expected the embedded curated set, got {}",
