@@ -345,9 +345,7 @@ impl CertificateParser {
 
         // Calculate Pin SHA256 (HPKP) for the certificate's public key
         // Extract RSA public key exponent if the key is RSA
-        let rsa_exponent = super::extraction::extract_rsa_exponent(der_bytes)
-            .ok()
-            .flatten();
+        let rsa_exponent = super::extraction::extract_rsa_exponent(der_bytes)?;
 
         // Calculate certificate fingerprint SHA256
         // This is the SHA256 hash of the entire DER-encoded certificate
@@ -539,6 +537,7 @@ mod tests {
         assert!(info.subject.contains("CN=example.com"));
         assert!(info.issuer.contains("CN=example.com"));
         assert!(info.san.iter().any(|s| s.contains("example.com")));
+        assert_eq!(info.rsa_exponent.as_deref(), Some("e 65537"));
         assert!(info.fingerprint_sha256.is_some());
     }
 
