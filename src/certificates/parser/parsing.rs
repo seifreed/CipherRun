@@ -693,6 +693,32 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_certificate_rejects_malformed_certificate_policies() {
+        let der = cert_with_raw_extension_der("2.5.29.32", b"\x05\x00");
+        let error = CertificateParser::parse_certificate(&der)
+            .expect_err("malformed certificate policies should fail");
+
+        assert!(
+            error
+                .to_string()
+                .contains("Invalid certificate policies extension")
+        );
+    }
+
+    #[test]
+    fn test_parse_certificate_rejects_malformed_aia() {
+        let der = cert_with_raw_extension_der("1.3.6.1.5.5.7.1.1", b"\x05\x00");
+        let error =
+            CertificateParser::parse_certificate(&der).expect_err("malformed AIA should fail");
+
+        assert!(
+            error
+                .to_string()
+                .contains("Authority Information Access extension")
+        );
+    }
+
+    #[test]
     fn test_server_name_for_ipv4_literal_uses_ip_address_variant() {
         let server_name = CertificateParser::server_name_for_hostname("93.184.216.34").unwrap();
         assert!(matches!(

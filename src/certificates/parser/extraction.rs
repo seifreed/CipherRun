@@ -62,21 +62,27 @@ pub(crate) fn check_extended_validation(cert: &X509Certificate) -> Result<(bool,
     let mut policy_oids = Vec::new();
     let mut is_ev = false;
 
-    // Try to get Certificate Policies extension (OID 2.5.29.32)
-    if let Ok(Some(ext)) =
-        cert.get_extension_unique(&oid_registry::OID_X509_EXT_CERTIFICATE_POLICIES)
+    if let Some(ext) = cert
+        .get_extension_unique(&oid_registry::OID_X509_EXT_CERTIFICATE_POLICIES)
+        .map_err(|error| crate::TlsError::ParseError {
+            message: format!("Invalid certificate policies extension: {error}"),
+        })?
     {
-        // Parse the extension as Certificate Policies
-        if let ParsedExtension::CertificatePolicies(policies) = ext.parsed_extension() {
-            // policies is a &Vec<PolicyInformation>, iterate directly
-            for policy in policies.iter() {
-                let oid_str = policy.policy_id.to_id_string();
-                policy_oids.push(oid_str.clone());
+        match ext.parsed_extension() {
+            ParsedExtension::CertificatePolicies(policies) => {
+                for policy in policies.iter() {
+                    let oid_str = policy.policy_id.to_id_string();
+                    policy_oids.push(oid_str.clone());
 
-                // Check if this OID matches any known EV OID
-                if EV_POLICY_OIDS.contains(&oid_str.as_str()) {
-                    is_ev = true;
+                    if EV_POLICY_OIDS.contains(&oid_str.as_str()) {
+                        is_ev = true;
+                    }
                 }
+            }
+            other => {
+                return Err(crate::TlsError::ParseError {
+                    message: format!("Invalid certificate policies extension: {other:?}"),
+                });
             }
         }
     }
@@ -153,15 +159,24 @@ pub(crate) fn extract_aia_url(cert: &X509Certificate) -> Result<Option<String>> 
             message: format!("Failed to parse Authority Information Access extension: {e}"),
         })?;
 
-    if let Some(ext) = aia_ext
-        && let ParsedExtension::AuthorityInfoAccess(aia) = ext.parsed_extension()
-    {
-        for access_desc in &aia.accessdescs {
-            // CA Issuers OID: 1.3.6.1.5.5.7.48.2
-            if access_desc.access_method.to_string() == "1.3.6.1.5.5.7.48.2"
-                && let GeneralName::URI(uri) = &access_desc.access_location
-            {
-                return Ok(Some(uri.to_string()));
+    if let Some(ext) = aia_ext {
+        match ext.parsed_extension() {
+            ParsedExtension::AuthorityInfoAccess(aia) => {
+                for access_desc in &aia.accessdescs {
+                    // CA Issuers OID: 1.3.6.1.5.5.7.48.2
+                    if access_desc.access_method.to_string() == "1.3.6.1.5.5.7.48.2"
+                        && let GeneralName::URI(uri) = &access_desc.access_location
+                    {
+                        return Ok(Some(uri.to_string()));
+                    }
+                }
+            }
+            other => {
+                return Err(crate::TlsError::ParseError {
+                    message: format!(
+                        "Failed to parse Authority Information Access extension: {other:?}"
+                    ),
+                });
             }
         }
     }
