@@ -166,21 +166,27 @@ impl ServerHelloCapture {
                             // Parse extension type (2 bytes)
                             let mut ext_type_bytes = [0u8; 2];
                             if cursor.read_exact(&mut ext_type_bytes).is_err() {
-                                break;
+                                return Err(TlsError::ParseError {
+                                    message: "Failed to read extension type".to_string(),
+                                });
                             }
                             let ext_type = u16::from_be_bytes(ext_type_bytes);
 
                             // Parse extension length (2 bytes)
                             let mut ext_data_len_bytes = [0u8; 2];
                             if cursor.read_exact(&mut ext_data_len_bytes).is_err() {
-                                break;
+                                return Err(TlsError::ParseError {
+                                    message: "Failed to read extension length".to_string(),
+                                });
                             }
                             let ext_data_len = u16::from_be_bytes(ext_data_len_bytes) as usize;
 
                             // Parse extension data
                             let mut ext_data = vec![0u8; ext_data_len];
                             if ext_data_len > 0 && cursor.read_exact(&mut ext_data).is_err() {
-                                break;
+                                return Err(TlsError::ParseError {
+                                    message: "Failed to read extension data".to_string(),
+                                });
                             }
 
                             extensions.push(Extension {
@@ -364,6 +370,28 @@ mod tests {
         assert_eq!(server_hello.extensions.len(), 2);
         assert_eq!(server_hello.extensions[0].extension_type, 0xFF01);
         assert_eq!(server_hello.extensions[1].extension_type, 0x0000);
+    }
+
+    #[test]
+    fn test_parse_serverhello_rejects_truncated_extension_data() {
+        let data = vec![
+            0x16, 0x03, 0x03, 0x00, 0x3B, // Handshake, TLS 1.2, length 59
+            0x02, 0x00, 0x00, 0x37, // ServerHello, length 55
+            0x03, 0x03, // TLS 1.2
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, // Session ID
+            0x00, // Cipher suite
+            0xC0, 0x2F, // TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+            0x00, // Compression
+            0x00, 0x05, // Extensions length: 5 bytes
+            0x00, 0x00, // Extension type: server_name
+            0x00, 0x02, // Extension length: 2 bytes
+            0x00, // Truncated extension data
+        ];
+
+        let err = ServerHelloCapture::parse(&data).unwrap_err();
+        assert!(err.to_string().contains("Failed to read extension data"));
     }
 
     #[test]
