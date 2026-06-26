@@ -163,7 +163,9 @@ impl CtVerifier {
     /// Count SCTs in SCT list
     fn count_scts_in_list(&self, sct_list: &[u8]) -> Result<usize> {
         if sct_list.len() < 2 {
-            return Ok(0);
+            return Err(crate::error::TlsError::ParseError {
+                message: "Malformed SCT list: too short".to_string(),
+            });
         }
 
         // Read total length (big-endian u16)
@@ -172,12 +174,13 @@ impl CtVerifier {
         // Validate that we have enough data for the declared length
         // The total_len represents the number of bytes that follow the 2-byte length field
         if total_len + 2 > sct_list.len() {
-            tracing::warn!(
-                "Malformed SCT list: declared length {} exceeds data length {}",
-                total_len + 2,
-                sct_list.len()
-            );
-            return Ok(0);
+            return Err(crate::error::TlsError::ParseError {
+                message: format!(
+                    "Malformed SCT list: declared length {} exceeds data length {}",
+                    total_len + 2,
+                    sct_list.len()
+                ),
+            });
         }
 
         let mut count = 0;
@@ -191,13 +194,12 @@ impl CtVerifier {
             pos += 2;
 
             if pos + sct_len > end_pos {
-                tracing::warn!(
-                    "Malformed SCT entry: SCT at offset {} with length {} extends past list end {}",
-                    pos,
-                    sct_len,
-                    end_pos
-                );
-                break;
+                return Err(crate::error::TlsError::ParseError {
+                    message: format!(
+                        "Malformed SCT entry: SCT at offset {} with length {} extends past list end {}",
+                        pos, sct_len, end_pos
+                    ),
+                });
             }
 
             // Skip SCT data
@@ -359,11 +361,12 @@ mod tests {
         // SCT list format: 2-byte total length + SCT entries
         // This test has a mismatch: declared length (4 bytes) but actual data is shorter
         // 0x00 0x04 = 4 bytes declared, but only 3 bytes follow (00 05 01)
-        // The function should gracefully handle this malformed data by returning 0
+        // The function should reject malformed data instead of silently counting 0.
         let sct_list = vec![0x00, 0x04, 0x00, 0x05, 0x01];
-        let count = verifier.count_scts_in_list(&sct_list).unwrap();
-        // For malformed SCT list with length mismatch, we return 0 (graceful degradation)
-        assert_eq!(count, 0, "Malformed SCT list should return 0 count");
+        let err = verifier
+            .count_scts_in_list(&sct_list)
+            .expect_err("Malformed SCT list should fail");
+        assert!(err.to_string().contains("Malformed SCT list"));
     }
 
     #[tokio::test]
