@@ -144,7 +144,7 @@ impl DatabaseConfig {
                 } else if path_str.starts_with("/") {
                     // For absolute UNIX paths, use sqlite:// (two slashes) since path starts with /
                     Ok(format!("sqlite://{}", path.display()))
-                } else if cfg!(windows) && path_str.len() > 1 && path_str.as_bytes()[1] == b':' {
+                } else if cfg!(windows) && path_str.as_bytes().get(1).is_some_and(|b| *b == b':') {
                     // For Windows absolute paths (e.g., C:\...), use sqlite:/// (three slashes)
                     Ok(format!("sqlite:///{}", path.display()))
                 } else {
