@@ -596,7 +596,7 @@ fn classify_legacy_probe_response(response: &[u8], protocol: Protocol) -> Protoc
             return ProtocolProbeOutcome::Inconclusive;
         }
         let alert_record_len = u16::from_be_bytes([response[3], response[4]]) as usize;
-        if alert_record_len != 2 {
+        if alert_record_len != 2 || response.len() != 5 + alert_record_len {
             return ProtocolProbeOutcome::Inconclusive;
         }
         return ProtocolProbeOutcome::NotSupported;
@@ -669,6 +669,15 @@ mod legacy_probe_tests {
     #[test]
     fn test_legacy_malformed_alert_length_is_inconclusive() {
         let alert = vec![CONTENT_TYPE_ALERT, 0x03, 0x01, 0x00, 0x03, 0x02, 0x46];
+        assert_eq!(
+            classify_legacy_probe_response(&alert, Protocol::TLS10),
+            ProtocolProbeOutcome::Inconclusive
+        );
+    }
+
+    #[test]
+    fn test_legacy_alert_with_trailing_bytes_is_inconclusive() {
+        let alert = vec![CONTENT_TYPE_ALERT, 0x03, 0x01, 0x00, 0x02, 0x02, 0x46, 0x00];
         assert_eq!(
             classify_legacy_probe_response(&alert, Protocol::TLS10),
             ProtocolProbeOutcome::Inconclusive
