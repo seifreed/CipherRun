@@ -224,15 +224,19 @@ impl FingerprintPhase {
         // Load custom database if specified, otherwise use builtin
         let database = if let Some(ref db_path) = context.args.fingerprint.jarm_database {
             if let Some(path_str) = db_path.to_str() {
-                JarmDatabase::from_file(path_str).unwrap_or_else(|e| {
-                    context
-                        .results
-                        .add_human_warning(format!("Failed to load custom JARM database: {}", e));
-                    context
-                        .results
-                        .add_human_warning("Falling back to builtin database");
-                    JarmDatabase::builtin()
-                })
+                match JarmDatabase::from_file(path_str) {
+                    Ok(database) => database,
+                    Err(e) => {
+                        context.results.add_human_warning(format!(
+                            "Failed to load custom JARM database: {}",
+                            e
+                        ));
+                        context
+                            .results
+                            .add_human_warning("Falling back to builtin database");
+                        JarmDatabase::builtin()?
+                    }
+                }
             } else {
                 context
                     .results
@@ -240,10 +244,10 @@ impl FingerprintPhase {
                 context
                     .results
                     .add_human_warning("Falling back to builtin database");
-                JarmDatabase::builtin()
+                JarmDatabase::builtin()?
             }
         } else {
-            JarmDatabase::builtin()
+            JarmDatabase::builtin()?
         };
 
         // Use socket timeout if specified, otherwise default to 5 seconds

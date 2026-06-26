@@ -34,7 +34,7 @@ fn test_jarm_probe_generation() {
 #[test]
 fn test_jarm_database_loading() {
     // Test builtin database
-    let db = JarmDatabase::builtin();
+    let db = JarmDatabase::builtin().expect("builtin JARM database should parse");
     let sigs = db.all_signatures();
 
     // Should have multiple signatures
@@ -99,7 +99,8 @@ fn test_jarm_signature_serialization() {
 #[tokio::test]
 async fn test_jarm_fingerprint_timeout() {
     // Test with non-existent server (should timeout quickly)
-    let fingerprinter = JarmFingerprinter::new(Duration::from_millis(100));
+    let fingerprinter = JarmFingerprinter::new(Duration::from_millis(100))
+        .expect("JARM fingerprinter should build");
 
     // Use a non-routable IP address
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)), 443);
@@ -118,7 +119,8 @@ async fn test_jarm_fingerprint_timeout() {
 #[ignore] // Ignored by default - requires internet connection
 async fn test_jarm_fingerprint_google() {
     // Test against Google (stable, well-known server)
-    let fingerprinter = JarmFingerprinter::new(Duration::from_secs(5));
+    let fingerprinter =
+        JarmFingerprinter::new(Duration::from_secs(5)).expect("JARM fingerprinter should build");
 
     // Resolve google.com
     use std::net::ToSocketAddrs;
@@ -156,7 +158,8 @@ async fn test_jarm_fingerprint_google() {
 #[ignore] // Ignored by default - requires internet connection
 async fn test_jarm_fingerprint_cloudflare() {
     // Test against Cloudflare (1.1.1.1)
-    let fingerprinter = JarmFingerprinter::new(Duration::from_secs(5));
+    let fingerprinter =
+        JarmFingerprinter::new(Duration::from_secs(5)).expect("JARM fingerprinter should build");
 
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)), 443);
 
@@ -183,7 +186,7 @@ async fn test_jarm_fingerprint_cloudflare() {
 
 #[test]
 fn test_jarm_threat_detection() {
-    let db = JarmDatabase::builtin();
+    let db = JarmDatabase::builtin().expect("builtin JARM database should parse");
 
     // Check for known malware C2 signatures
     let signatures = db.all_signatures();
@@ -208,7 +211,7 @@ fn test_jarm_threat_detection() {
 
 #[test]
 fn test_jarm_cdn_detection() {
-    let db = JarmDatabase::builtin();
+    let db = JarmDatabase::builtin().expect("builtin JARM database should parse");
     let signatures = db.all_signatures();
 
     let cdn_sigs: Vec<_> = signatures
@@ -228,7 +231,7 @@ fn test_jarm_cdn_detection() {
 
 #[test]
 fn test_jarm_load_balancer_detection() {
-    let db = JarmDatabase::builtin();
+    let db = JarmDatabase::builtin().expect("builtin JARM database should parse");
     let signatures = db.all_signatures();
 
     let lb_sigs: Vec<_> = signatures
@@ -242,7 +245,7 @@ fn test_jarm_load_balancer_detection() {
 
 #[test]
 fn test_jarm_waf_detection() {
-    let db = JarmDatabase::builtin();
+    let db = JarmDatabase::builtin().expect("builtin JARM database should parse");
     let signatures = db.all_signatures();
 
     let waf_sigs: Vec<_> = signatures
@@ -257,7 +260,7 @@ fn test_jarm_waf_detection() {
 #[test]
 fn test_jarm_hash_format() {
     // JARM hashes should always be exactly 62 characters
-    let db = JarmDatabase::builtin();
+    let db = JarmDatabase::builtin().expect("builtin JARM database should parse");
 
     for sig in db.all_signatures() {
         assert_eq!(
@@ -334,7 +337,7 @@ fn test_jarm_probe_packet_structure() {
 
 #[test]
 fn test_jarm_signature_coverage() {
-    let db = JarmDatabase::builtin();
+    let db = JarmDatabase::builtin().expect("builtin JARM database should parse");
     let signatures = db.all_signatures();
 
     // Should have reasonable coverage of different server types

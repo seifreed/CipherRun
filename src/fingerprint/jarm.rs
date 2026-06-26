@@ -89,22 +89,20 @@ impl JarmDatabase {
         Ok(db)
     }
 
-    /// Load builtin database
-    ///
-    /// Returns a JarmDatabase loaded from the embedded JSON file.
-    /// The builtin database is compiled into the binary and should always parse correctly.
-    /// If parsing fails, initialization fails fast.
-    pub fn builtin() -> Self {
+    /// Load builtin database.
+    pub fn builtin() -> Result<Self> {
         let builtin_json = include_str!("../../data/jarm_signatures.json");
-        let signatures: Vec<JarmSignature> = serde_json::from_str(builtin_json)
-            .unwrap_or_else(|e| panic!("Failed to parse embedded JARM database: {}", e));
+        let signatures: Vec<JarmSignature> =
+            serde_json::from_str(builtin_json).map_err(|e| TlsError::ParseError {
+                message: format!("Failed to parse embedded JARM database: {e}"),
+            })?;
 
         let mut db = Self::new();
         for sig in signatures {
             db.signatures.insert(sig.hash.clone(), sig);
         }
 
-        db
+        Ok(db)
     }
 
     /// Look up a JARM hash
@@ -125,7 +123,7 @@ impl JarmDatabase {
 
 impl Default for JarmDatabase {
     fn default() -> Self {
-        Self::builtin()
+        Self::new()
     }
 }
 
@@ -140,11 +138,11 @@ pub struct JarmFingerprinter {
 
 impl JarmFingerprinter {
     /// Create new JARM fingerprinter
-    pub fn new(timeout: Duration) -> Self {
-        Self {
+    pub fn new(timeout: Duration) -> Result<Self> {
+        Ok(Self {
             timeout,
-            database: JarmDatabase::builtin(),
-        }
+            database: JarmDatabase::builtin()?,
+        })
     }
 
     /// Create with custom database
