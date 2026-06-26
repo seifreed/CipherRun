@@ -352,7 +352,7 @@ impl CertificateParser {
         let debian_weak_key = super::checks::check_debian_weak_key(der_bytes)?;
 
         // Extract AIA URL (CA Issuers URL for intermediate cert download)
-        let aia_url = super::extraction::extract_aia_url(&cert).ok().flatten();
+        let aia_url = super::extraction::extract_aia_url(&cert)?;
 
         // Check for Certificate Transparency (SCT extension)
         let certificate_transparency = super::checks::check_certificate_transparency(&cert);

@@ -147,7 +147,13 @@ pub(crate) fn extract_rsa_exponent(der_bytes: &[u8]) -> Result<Option<String>> {
 /// * `Err` - On parsing errors
 pub(crate) fn extract_aia_url(cert: &X509Certificate) -> Result<Option<String>> {
     // Look for Authority Information Access extension (OID 1.3.6.1.5.5.7.1.1)
-    if let Ok(Some(ext)) = cert.get_extension_unique(&oid_registry::OID_PKIX_AUTHORITY_INFO_ACCESS)
+    let aia_ext = cert
+        .get_extension_unique(&oid_registry::OID_PKIX_AUTHORITY_INFO_ACCESS)
+        .map_err(|e| crate::TlsError::ParseError {
+            message: format!("Failed to parse Authority Information Access extension: {e}"),
+        })?;
+
+    if let Some(ext) = aia_ext
         && let ParsedExtension::AuthorityInfoAccess(aia) = ext.parsed_extension()
     {
         for access_desc in &aia.accessdescs {
