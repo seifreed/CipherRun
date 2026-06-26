@@ -42,6 +42,38 @@ pub struct ClientHelloCapture {
 }
 
 impl ClientHelloCapture {
+    fn read_u8_at(data: &[u8], offset: usize, context: &str) -> Result<u8> {
+        data.get(offset)
+            .copied()
+            .ok_or_else(|| TlsError::ParseError {
+                message: format!("{context} too short"),
+            })
+    }
+
+    fn read_u16_at(data: &[u8], offset: usize, context: &str) -> Result<u16> {
+        let bytes = data
+            .get(offset..offset + 2)
+            .and_then(|bytes| <[u8; 2]>::try_from(bytes).ok())
+            .ok_or_else(|| TlsError::ParseError {
+                message: format!("{context} too short"),
+            })?;
+        Ok(u16::from_be_bytes(bytes))
+    }
+
+    fn slice_range<'a>(
+        data: &'a [u8],
+        start: usize,
+        len: usize,
+        context: &str,
+    ) -> Result<&'a [u8]> {
+        let end = start.checked_add(len).ok_or_else(|| TlsError::ParseError {
+            message: format!("{context} length overflow"),
+        })?;
+        data.get(start..end).ok_or_else(|| TlsError::ParseError {
+            message: format!("{context} too short"),
+        })
+    }
+
     /// Parse ClientHello from raw TLS record
     pub fn parse(data: &[u8]) -> Result<Self> {
         let mut cursor = 0;
@@ -53,7 +85,7 @@ impl ClientHelloCapture {
             });
         }
 
-        let record_type = data[cursor];
+        let record_type = Self::read_u8_at(data, cursor, "TLS record")?;
         cursor += 1;
 
         if record_type != CONTENT_TYPE_HANDSHAKE {
@@ -72,7 +104,7 @@ impl ClientHelloCapture {
             });
         }
 
-        let handshake_type = data[cursor];
+        let handshake_type = Self::read_u8_at(data, cursor, "Handshake header")?;
         cursor += 1;
 
         if handshake_type != HANDSHAKE_TYPE_CLIENT_HELLO {
@@ -91,7 +123,7 @@ impl ClientHelloCapture {
             });
         }
 
-        let version = u16::from_be_bytes([data[cursor], data[cursor + 1]]);
+        let version = Self::read_u16_at(data, cursor, "ClientHello version")?;
         cursor += 2;
 
         // Random (32 bytes)
@@ -102,7 +134,12 @@ impl ClientHelloCapture {
         }
 
         let mut random = [0u8; RANDOM_BYTES_SIZE];
-        random.copy_from_slice(&data[cursor..cursor + RANDOM_BYTES_SIZE]);
+        random.copy_from_slice(Self::slice_range(
+            data,
+            cursor,
+            RANDOM_BYTES_SIZE,
+            "ClientHello random",
+        )?);
         cursor += RANDOM_BYTES_SIZE;
 
         // Session ID
@@ -112,7 +149,7 @@ impl ClientHelloCapture {
             });
         }
 
-        let session_id_len = data[cursor] as usize;
+        let session_id_len = Self::read_u8_at(data, cursor, "Session ID length")? as usize;
         cursor += 1;
 
         if data.len() < cursor + session_id_len {
@@ -121,7 +158,7 @@ impl ClientHelloCapture {
             });
         }
 
-        let session_id = data[cursor..cursor + session_id_len].to_vec();
+        let session_id = Self::slice_range(data, cursor, session_id_len, "Session ID")?.to_vec();
         cursor += session_id_len;
 
         // Cipher suites
@@ -131,7 +168,7 @@ impl ClientHelloCapture {
             });
         }
 
-        let cipher_suites_len = u16::from_be_bytes([data[cursor], data[cursor + 1]]) as usize;
+        let cipher_suites_len = Self::read_u16_at(data, cursor, "Cipher suites length")? as usize;
         cursor += 2;
 
         // Validate cipher suites length is even (each cipher suite is 2 bytes)
@@ -151,14 +188,13 @@ impl ClientHelloCapture {
         }
 
         let mut cipher_suites = Vec::new();
-        let mut i = 0;
-        while i < cipher_suites_len {
-            if cursor + i + 2 > data.len() {
-                break;
-            }
-            let cipher = u16::from_be_bytes([data[cursor + i], data[cursor + i + 1]]);
-            cipher_suites.push(cipher);
-            i += 2;
+        for chunk in
+            Self::slice_range(data, cursor, cipher_suites_len, "Cipher suites")?.chunks_exact(2)
+        {
+            let bytes = <[u8; 2]>::try_from(chunk).map_err(|_| TlsError::ParseError {
+                message: "Invalid cipher suite width".to_string(),
+            })?;
+            cipher_suites.push(u16::from_be_bytes(bytes));
         }
         cursor += cipher_suites_len;
 
@@ -169,7 +205,8 @@ impl ClientHelloCapture {
             });
         }
 
-        let compression_methods_len = data[cursor] as usize;
+        let compression_methods_len =
+            Self::read_u8_at(data, cursor, "Compression methods length")? as usize;
         cursor += 1;
 
         if data.len() < cursor + compression_methods_len {
@@ -178,7 +215,9 @@ impl ClientHelloCapture {
             });
         }
 
-        let compression_methods = data[cursor..cursor + compression_methods_len].to_vec();
+        let compression_methods =
+            Self::slice_range(data, cursor, compression_methods_len, "Compression methods")?
+                .to_vec();
         cursor += compression_methods_len;
 
         // Extensions
@@ -192,7 +231,7 @@ impl ClientHelloCapture {
                 });
             }
 
-            let extensions_len = u16::from_be_bytes([data[cursor], data[cursor + 1]]) as usize;
+            let extensions_len = Self::read_u16_at(data, cursor, "Extensions length")? as usize;
             cursor += 2;
 
             if data.len() < cursor + extensions_len {
@@ -210,10 +249,10 @@ impl ClientHelloCapture {
                     });
                 }
 
-                let extension_type = u16::from_be_bytes([data[cursor], data[cursor + 1]]);
+                let extension_type = Self::read_u16_at(data, cursor, "Extension type")?;
                 cursor += 2;
 
-                let extension_len = u16::from_be_bytes([data[cursor], data[cursor + 1]]) as usize;
+                let extension_len = Self::read_u16_at(data, cursor, "Extension length")? as usize;
                 cursor += 2;
 
                 if cursor + extension_len > extensions_end {
@@ -222,7 +261,8 @@ impl ClientHelloCapture {
                     });
                 }
 
-                let extension_data = data[cursor..cursor + extension_len].to_vec();
+                let extension_data =
+                    Self::slice_range(data, cursor, extension_len, "Extension data")?.to_vec();
                 cursor += extension_len;
 
                 extensions.push(Extension {
@@ -282,24 +322,20 @@ impl ClientHelloCapture {
 
     /// Parse supported groups extension data
     fn parse_supported_groups(data: &[u8]) -> Vec<u16> {
-        if data.len() < 2 {
+        let Ok(list_len) = Self::read_u16_at(data, 0, "Supported groups length") else {
             return vec![];
-        }
+        };
+        let list_len = list_len as usize;
 
-        let list_len = u16::from_be_bytes([data[0], data[1]]) as usize;
-        if data.len() < 2 + list_len {
-            return vec![];
-        }
-
-        let mut groups = Vec::new();
-        let mut i = 2;
-        while i + 2 <= 2 + list_len {
-            let group = u16::from_be_bytes([data[i], data[i + 1]]);
-            groups.push(group);
-            i += 2;
-        }
-
-        groups
+        data.get(2..2 + list_len)
+            .map(|groups| {
+                groups
+                    .chunks_exact(2)
+                    .filter_map(|chunk| <[u8; 2]>::try_from(chunk).ok())
+                    .map(u16::from_be_bytes)
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// Get EC point formats from extensions
@@ -318,12 +354,8 @@ impl ClientHelloCapture {
             return vec![];
         }
 
-        let list_len = data[0] as usize;
-        if data.len() < 1 + list_len {
-            return vec![];
-        }
-
-        data[1..1 + list_len].to_vec()
+        let list_len = data.first().copied().unwrap_or_default() as usize;
+        data.get(1..1 + list_len).unwrap_or_default().to_vec()
     }
 
     /// Convert ClientHello to bytes (for storage/transmission)
@@ -384,14 +416,20 @@ impl ClientHelloCapture {
 
         // Update handshake length
         let handshake_len = (bytes.len() - handshake_len_pos - 3) as u32;
-        bytes[handshake_len_pos] = ((handshake_len >> 16) & 0xff) as u8;
-        bytes[handshake_len_pos + 1] = ((handshake_len >> 8) & 0xff) as u8;
-        bytes[handshake_len_pos + 2] = (handshake_len & 0xff) as u8;
+        if let Some(len_bytes) = bytes.get_mut(handshake_len_pos..handshake_len_pos + 3) {
+            len_bytes.copy_from_slice(&[
+                ((handshake_len >> 16) & 0xff) as u8,
+                ((handshake_len >> 8) & 0xff) as u8,
+                (handshake_len & 0xff) as u8,
+            ]);
+        }
 
         // Update record length
         let record_len = (bytes.len() - record_len_pos - 2) as u16;
-        bytes[record_len_pos] = ((record_len >> 8) & 0xff) as u8;
-        bytes[record_len_pos + 1] = (record_len & 0xff) as u8;
+        if let Some(len_bytes) = bytes.get_mut(record_len_pos..record_len_pos + 2) {
+            len_bytes
+                .copy_from_slice(&[((record_len >> 8) & 0xff) as u8, (record_len & 0xff) as u8]);
+        }
 
         bytes
     }
@@ -418,15 +456,16 @@ impl ClientHelloCapture {
         let mut cursor = 2;
 
         // Server name type (1 byte, should be 0 for hostname)
-        if data[cursor] != 0 {
+        let name_type = Self::read_u8_at(data, cursor, "SNI name type")?;
+        if name_type != 0 {
             return Err(TlsError::ParseError {
-                message: format!("Invalid SNI name type: {}", data[cursor]),
+                message: format!("Invalid SNI name type: {}", name_type),
             });
         }
         cursor += 1;
 
         // Server name length (2 bytes)
-        let name_len = u16::from_be_bytes([data[cursor], data[cursor + 1]]) as usize;
+        let name_len = Self::read_u16_at(data, cursor, "SNI name length")? as usize;
         cursor += 2;
 
         if data.len() < cursor + name_len {
@@ -436,7 +475,7 @@ impl ClientHelloCapture {
         }
 
         // Server name
-        let name_bytes = &data[cursor..cursor + name_len];
+        let name_bytes = Self::slice_range(data, cursor, name_len, "SNI name")?;
         let sni = String::from_utf8(name_bytes.to_vec()).map_err(|error| TlsError::ParseError {
             message: format!("Invalid SNI UTF-8: {}", error),
         })?;
