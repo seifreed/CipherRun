@@ -240,11 +240,11 @@ impl NpnTester {
                             message: "NPN protocol name extends beyond extension data".to_string(),
                         });
                     }
-                    if let Ok(proto) =
-                        String::from_utf8(response[npn_pos..npn_pos + proto_len].to_vec())
-                    {
-                        protocols.push(proto);
-                    }
+                    let proto = String::from_utf8(response[npn_pos..npn_pos + proto_len].to_vec())
+                        .map_err(|error| crate::TlsError::ParseError {
+                            message: format!("Invalid NPN protocol name UTF-8: {error}"),
+                        })?;
+                    protocols.push(proto);
                     npn_pos += proto_len;
                 }
                 break;
@@ -367,6 +367,46 @@ mod tests {
             .parse_npn_response(&response)
             .expect("test assertion should succeed");
         assert_eq!(protocols, vec!["h2".to_string(), "http/1.1".to_string()]);
+    }
+
+    #[test]
+    fn test_parse_npn_response_rejects_invalid_protocol_utf8() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["93.184.216.34".parse().unwrap()],
+        )
+        .unwrap();
+        let tester = NpnTester::new(target);
+
+        let mut response = Vec::new();
+        response.extend_from_slice(&[0x16, 0x03, 0x03, 0x00, 0x00]);
+        response.extend_from_slice(&[0x02, 0x00, 0x00, 0x00]);
+        response.extend_from_slice(&[0x03, 0x03]);
+        response.extend_from_slice(&[0x00; 32]);
+        response.push(0x00);
+        response.extend_from_slice(&[0x00, 0x9c]);
+        response.push(0x00);
+        let ext_len_pos = response.len();
+        response.extend_from_slice(&[0x00, 0x00]);
+        response.extend_from_slice(&[0x33, 0x74, 0x00, 0x02]);
+        response.extend_from_slice(&[0x01, 0xff]);
+
+        let ext_len = (response.len() - ext_len_pos - 2) as u16;
+        response[ext_len_pos] = (ext_len >> 8) as u8;
+        response[ext_len_pos + 1] = (ext_len & 0xff) as u8;
+        let rec_len = (response.len() - 5) as u16;
+        response[3] = (rec_len >> 8) as u8;
+        response[4] = (rec_len & 0xff) as u8;
+        let hs_len = (response.len() - 9) as u32;
+        response[6] = ((hs_len >> 16) & 0xff) as u8;
+        response[7] = ((hs_len >> 8) & 0xff) as u8;
+        response[8] = (hs_len & 0xff) as u8;
+
+        let err = tester
+            .parse_npn_response(&response)
+            .expect_err("invalid protocol UTF-8 should fail");
+        assert!(err.to_string().contains("Invalid NPN protocol name UTF-8"));
     }
 
     #[test]
