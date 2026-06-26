@@ -38,7 +38,7 @@ impl PreHandshakeScanner {
     pub async fn scan_pre_handshake(&self) -> Result<PreHandshakeScanResult> {
         let start_time = Instant::now();
 
-        let addr = self.target.primary_ip();
+        let addr = self.target.primary_ip()?;
         let socket_addr = std::net::SocketAddr::new(addr, self.target.port);
         let mut stream =
             crate::utils::network::connect_with_timeout(socket_addr, self.timeout_duration, None)

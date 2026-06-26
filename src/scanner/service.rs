@@ -191,7 +191,7 @@ impl Scanner {
 
         let target = self.get_target_owned();
         let (request, sni_used, sni_generation_method) =
-            self.request_with_effective_sni(&target).await;
+            self.request_with_effective_sni(&target).await?;
 
         let mut context = builders::build_scan_context(
             target,
@@ -427,26 +427,29 @@ impl Scanner {
     async fn request_with_effective_sni(
         &self,
         target: &Target,
-    ) -> (ScanRequest, Option<String>, Option<SniMethod>) {
-        let (resolved_sni, method) = self.resolve_effective_sni(target).await;
+    ) -> Result<(ScanRequest, Option<String>, Option<SniMethod>)> {
+        let (resolved_sni, method) = self.resolve_effective_sni(target).await?;
         let mut request = self.request.clone();
         request.tls.sni_name = resolved_sni.clone();
-        (request, resolved_sni, method)
+        Ok((request, resolved_sni, method))
     }
 
-    async fn resolve_effective_sni(&self, target: &Target) -> (Option<String>, Option<SniMethod>) {
+    async fn resolve_effective_sni(
+        &self,
+        target: &Target,
+    ) -> Result<(Option<String>, Option<SniMethod>)> {
         if let Some(explicit_sni) = self.request.tls.sni_name.clone() {
-            return (
+            return Ok((
                 Some(explicit_sni.clone()),
                 Some(SniMethod::Custom(explicit_sni)),
-            );
+            ));
         }
 
         if target.hostname.parse::<IpAddr>().is_err() {
-            return (Some(target.hostname.clone()), Some(SniMethod::Hostname));
+            return Ok((Some(target.hostname.clone()), Some(SniMethod::Hostname)));
         }
 
-        let ip = target.primary_ip();
+        let ip = target.primary_ip()?;
         if self.request.tls.reverse_ptr_sni
             && matches!(
                 ReversePtrLookup::validate_ptr_forward_match(&ip).await,
@@ -454,17 +457,17 @@ impl Scanner {
             )
             && let Ok(ptr_hostname) = ReversePtrLookup::lookup_ptr(&ip).await
         {
-            return (Some(ptr_hostname), Some(SniMethod::ReversePTR));
+            return Ok((Some(ptr_hostname), Some(SniMethod::ReversePTR)));
         }
 
         if self.request.tls.random_sni {
-            return (
+            return Ok((
                 Some(SniGenerator::generate_random()),
                 Some(SniMethod::Random),
-            );
+            ));
         }
 
-        (None, None)
+        Ok((None, None))
     }
 
     fn reconcile_probe_status(
@@ -796,7 +799,10 @@ mod tests {
             .expect("initialization should succeed");
 
         let target = scanner.get_target_owned();
-        let (_request, sni_used, method) = scanner.request_with_effective_sni(&target).await;
+        let (_request, sni_used, method) = scanner
+            .request_with_effective_sni(&target)
+            .await
+            .expect("effective SNI should resolve");
 
         assert_eq!(sni_used.as_deref(), Some("example.com"));
         assert!(matches!(method, Some(SniMethod::Hostname)));

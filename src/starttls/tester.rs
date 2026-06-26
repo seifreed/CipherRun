@@ -71,7 +71,7 @@ impl StarttlsTester {
         negotiator: Arc<dyn StarttlsNegotiator>,
     ) -> Result<()> {
         // Connect to target
-        let addr = std::net::SocketAddr::new(self.target.primary_ip(), port);
+        let addr = std::net::SocketAddr::new(self.target.primary_ip()?, port);
         let mut stream =
             crate::utils::network::connect_with_timeout(addr, self.connect_timeout, None).await?;
 

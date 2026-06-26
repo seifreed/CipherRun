@@ -164,7 +164,7 @@ fn test_primary_ip_and_socket_addrs() {
     let ip: IpAddr = "192.0.2.10".parse().expect("test assertion should succeed");
     let target = Target::with_ips("example.com".to_string(), 8443, vec![ip])
         .expect("test assertion should succeed");
-    assert_eq!(target.primary_ip(), ip);
+    assert_eq!(target.primary_ip().expect("primary IP should exist"), ip);
     let addrs = target.socket_addrs();
     assert_eq!(addrs.len(), 1);
     assert_eq!(addrs[0].ip(), ip);
@@ -220,7 +220,23 @@ fn test_primary_ip() {
     )
     .unwrap();
     let primary: IpAddr = "93.184.216.34".parse().unwrap();
-    assert_eq!(target.primary_ip(), primary);
+    assert_eq!(
+        target.primary_ip().expect("primary IP should exist"),
+        primary
+    );
+}
+
+#[test]
+fn test_primary_ip_empty_target_returns_error() {
+    let target = Target {
+        hostname: "example.com".to_string(),
+        port: 443,
+        ip_addresses: vec![],
+    };
+    let err = target
+        .primary_ip()
+        .expect_err("empty target should not have a primary IP");
+    assert!(err.to_string().contains("at least one IP address"));
 }
 
 #[test]

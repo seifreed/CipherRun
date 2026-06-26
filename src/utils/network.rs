@@ -253,17 +253,12 @@ impl Target {
             .collect()
     }
 
-    /// Returns the primary IP address (guaranteed to exist after construction)
-    ///
-    /// # Panics
-    /// This method will panic if the Target was constructed improperly (empty IP list).
-    /// This should never happen with Target::parse() or Target::with_ips() which
-    /// enforce non-empty IP addresses.
-    pub fn primary_ip(&self) -> IpAddr {
-        // Use first() for clearer intent and better error message if invariant is violated
-        *self.ip_addresses.first().expect(
-            "Target must have at least one IP address (constructors enforce this invariant)",
-        )
+    /// Returns the primary IP address.
+    pub fn primary_ip(&self) -> Result<IpAddr> {
+        self.ip_addresses
+            .first()
+            .copied()
+            .ok_or_else(|| TlsError::Other("Target must have at least one IP address".to_string()))
     }
 }
 
