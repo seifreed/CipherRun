@@ -170,7 +170,7 @@ impl CertificateAdvancedTester {
             .peer_certificate()
             .ok_or_else(|| crate::error::TlsError::Other("No certificate presented".into()))?;
 
-        Ok(extract_certificate_info(&cert))
+        extract_certificate_info(&cert)
     }
 
     /// Test certificate compression
@@ -415,7 +415,7 @@ impl CertificateAdvancedTester {
     }
 }
 
-fn extract_certificate_info(cert: &X509) -> CertificateInfo {
+fn extract_certificate_info(cert: &X509) -> Result<CertificateInfo> {
     let subject = cert
         .subject_name()
         .entries()
@@ -470,24 +470,21 @@ fn extract_certificate_info(cert: &X509) -> CertificateInfo {
     let valid_from = cert.not_before().to_string();
     let valid_until = cert.not_after().to_string();
 
-    let fingerprint = if let Ok(digest) = cert.digest(openssl::hash::MessageDigest::sha256()) {
-        digest
-            .iter()
-            .map(|b| format!("{:02X}", b))
-            .collect::<Vec<_>>()
-            .join(":")
-    } else {
-        "unknown".to_string()
-    };
+    let digest = cert.digest(openssl::hash::MessageDigest::sha256())?;
+    let fingerprint = digest
+        .iter()
+        .map(|b| format!("{:02X}", b))
+        .collect::<Vec<_>>()
+        .join(":");
 
-    CertificateInfo {
+    Ok(CertificateInfo {
         subject,
         issuer,
         san_entries,
         valid_from,
         valid_until,
         fingerprint,
-    }
+    })
 }
 
 #[cfg(test)]
@@ -528,7 +525,7 @@ mod tests {
         builder.sign(&pkey, MessageDigest::sha256()).unwrap();
         let cert = builder.build();
 
-        let info = extract_certificate_info(&cert);
+        let info = extract_certificate_info(&cert).expect("certificate info should parse");
         assert!(info.subject.contains("CN=example.com"));
         assert!(info.issuer.contains("CN=example.com"));
         assert!(
@@ -562,7 +559,7 @@ mod tests {
         builder.sign(&pkey, MessageDigest::sha256()).unwrap();
         let cert = builder.build();
 
-        let info = extract_certificate_info(&cert);
+        let info = extract_certificate_info(&cert).expect("certificate info should parse");
         assert!(info.san_entries.is_empty());
         assert!(info.subject.contains("CN=no-san.example"));
     }
@@ -590,7 +587,7 @@ mod tests {
         builder.sign(&pkey, MessageDigest::sha256()).unwrap();
         let cert = builder.build();
 
-        let info = extract_certificate_info(&cert);
+        let info = extract_certificate_info(&cert).expect("certificate info should parse");
         assert!(!info.fingerprint.is_empty());
     }
 
