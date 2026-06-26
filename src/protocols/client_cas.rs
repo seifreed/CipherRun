@@ -360,6 +360,35 @@ mod tests {
         assert!(err.to_string().contains("CA list length exceeds message"));
     }
 
+    #[test]
+    fn test_find_certificate_request_rejects_truncated_ca_entry() {
+        let tester = ClientCAsTester::new(
+            Target::with_ips(
+                "example.test".to_string(),
+                443,
+                vec!["127.0.0.1".parse().expect("valid IP")],
+            )
+            .expect("test assertion should succeed"),
+        );
+
+        let handshake = vec![
+            13, 0, 0, 11, // CertificateRequest handshake header
+            1, 1, // certificate_types length + type
+            0, 2, 0x04, 0x01, // signature algorithms length + one algorithm
+            0, 3, // CA list length
+            0, 2, 0x30, // truncated CA distinguished name (claims 2 bytes, provides 1)
+        ];
+        let record_len = handshake.len() as u16;
+        let mut record = vec![0x16, 0x03, 0x03];
+        record.extend_from_slice(&record_len.to_be_bytes());
+        record.extend_from_slice(&handshake);
+
+        let err = tester
+            .find_certificate_request(&record)
+            .expect_err("truncated CA entry should fail");
+        assert!(err.to_string().contains("distinguished name length exceeds list"));
+    }
+
     #[tokio::test]
     async fn test_enumerate_client_cas_closed_target_is_inconclusive() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")

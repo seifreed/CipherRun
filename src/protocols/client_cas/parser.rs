@@ -22,7 +22,9 @@ impl ClientCAsTester {
             pos += 5;
 
             if pos + record_len > data.len() {
-                break;
+                return Err(crate::TlsError::ParseError {
+                    message: "TLS record length exceeds available data".to_string(),
+                });
             }
 
             handshake_bytes.extend_from_slice(&data[pos..pos + record_len]);
@@ -38,7 +40,9 @@ impl ClientCAsTester {
             let msg_end = msg_pos + 4 + msg_len;
 
             if msg_end > handshake_bytes.len() {
-                break;
+                return Err(crate::TlsError::ParseError {
+                    message: "Handshake message length exceeds available data".to_string(),
+                });
             }
 
             if msg_type == 13 {
