@@ -65,7 +65,7 @@ impl CertificateChain {
         if end <= 1 {
             return &[];
         }
-        &self.certificates[1..end]
+        self.certificates.get(1..end).unwrap_or(&[])
     }
 
     /// Check if chain is complete (has self-signed root CA)
