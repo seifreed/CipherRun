@@ -5,6 +5,51 @@ use tracing::trace;
 use x509_parser::prelude::*;
 
 impl RevocationChecker {
+    fn read_u8_at(data: &[u8], offset: usize, context: &str) -> Result<u8> {
+        data.get(offset)
+            .copied()
+            .ok_or_else(|| crate::TlsError::ParseError {
+                message: format!("{context} truncated"),
+            })
+    }
+
+    fn read_u16_at(data: &[u8], offset: usize, context: &str) -> Result<u16> {
+        let bytes = data
+            .get(offset..offset + 2)
+            .and_then(|bytes| <[u8; 2]>::try_from(bytes).ok())
+            .ok_or_else(|| crate::TlsError::ParseError {
+                message: format!("{context} truncated"),
+            })?;
+        Ok(u16::from_be_bytes(bytes))
+    }
+
+    fn read_u24_at(data: &[u8], offset: usize, context: &str) -> Result<usize> {
+        let [high, mid, low] = data
+            .get(offset..offset + 3)
+            .and_then(|bytes| <[u8; 3]>::try_from(bytes).ok())
+            .ok_or_else(|| crate::TlsError::ParseError {
+                message: format!("{context} truncated"),
+            })?;
+        Ok(((high as usize) << 16) | ((mid as usize) << 8) | low as usize)
+    }
+
+    fn slice_range<'a>(
+        data: &'a [u8],
+        start: usize,
+        len: usize,
+        context: &str,
+    ) -> Result<&'a [u8]> {
+        let end = start
+            .checked_add(len)
+            .ok_or_else(|| crate::TlsError::ParseError {
+                message: format!("{context} length overflow"),
+            })?;
+        data.get(start..end)
+            .ok_or_else(|| crate::TlsError::ParseError {
+                message: format!("{context} length exceeds available data"),
+            })
+    }
+
     /// Check if certificate has OCSP Must-Staple extension
     pub(crate) fn check_must_staple(&self, cert: &CertificateInfo) -> Result<bool> {
         // Handle empty DER bytes gracefully
@@ -92,14 +137,15 @@ impl RevocationChecker {
         let mut offset = 0;
         while offset + 5 <= tls_handshake_data.len() {
             // TLS record header: type (1) + version (2) + length (2)
-            let record_type = tls_handshake_data[offset];
+            let record_type = Self::read_u8_at(tls_handshake_data, offset, "TLS record header")?;
 
             // Skip non-handshake records by reading their full record header and length
             if record_type != 0x16 {
                 // Handshake
                 // Read the 5-byte TLS record header to skip the entire record
-                let record_len = ((tls_handshake_data[offset + 3] as usize) << 8)
-                    | (tls_handshake_data[offset + 4] as usize);
+                let record_len =
+                    Self::read_u16_at(tls_handshake_data, offset + 3, "TLS record length")?
+                        as usize;
                 if offset + 5 + record_len > tls_handshake_data.len() {
                     return Err(crate::TlsError::ParseError {
                         message: "TLS record length exceeds available data".to_string(),
@@ -116,8 +162,8 @@ impl RevocationChecker {
             }
 
             // Get record length
-            let record_len = ((tls_handshake_data[offset + 3] as usize) << 8)
-                | (tls_handshake_data[offset + 4] as usize);
+            let record_len =
+                Self::read_u16_at(tls_handshake_data, offset + 3, "TLS record length")? as usize;
 
             if offset + 5 + record_len > tls_handshake_data.len() {
                 return Err(crate::TlsError::ParseError {
@@ -127,16 +173,20 @@ impl RevocationChecker {
 
             let handshake_start = offset + 5;
             let handshake_end = handshake_start + record_len;
-            let handshake_data =
-                &tls_handshake_data[handshake_start..handshake_end.min(tls_handshake_data.len())];
+            let handshake_data = Self::slice_range(
+                tls_handshake_data,
+                handshake_start,
+                record_len,
+                "TLS handshake record",
+            )?;
 
             // Parse handshake messages within this record
             let mut msg_offset = 0;
             while msg_offset + 4 <= handshake_data.len() {
-                let msg_type = handshake_data[msg_offset];
-                let msg_len = ((handshake_data[msg_offset + 1] as usize) << 16)
-                    | ((handshake_data[msg_offset + 2] as usize) << 8)
-                    | (handshake_data[msg_offset + 3] as usize);
+                let msg_type =
+                    Self::read_u8_at(handshake_data, msg_offset, "Handshake message type")?;
+                let msg_len =
+                    Self::read_u24_at(handshake_data, msg_offset + 1, "Handshake message length")?;
 
                 if msg_offset + 4 + msg_len > handshake_data.len() {
                     return Err(crate::TlsError::ParseError {
@@ -147,10 +197,15 @@ impl RevocationChecker {
                 match msg_type {
                     HANDSHAKE_TYPE_SERVER_HELLO => {
                         // Check for status_request extension in ServerHello
-                        if let Some(has_extension) = Self::parse_server_hello_extensions(
-                            &handshake_data[msg_offset + 4..msg_offset + 4 + msg_len],
-                            EXTENSION_STATUS_REQUEST,
-                        )? {
+                        let body = Self::slice_range(
+                            handshake_data,
+                            msg_offset + 4,
+                            msg_len,
+                            "ServerHello body",
+                        )?;
+                        if let Some(has_extension) =
+                            Self::parse_server_hello_extensions(body, EXTENSION_STATUS_REQUEST)?
+                        {
                             result.stapling_supported = has_extension;
                             if has_extension {
                                 result.details.push_str("Server advertised OCSP stapling support (status_request extension). ");
@@ -169,9 +224,11 @@ impl RevocationChecker {
                         // Body starts at msg_offset + 4 (after 4-byte handshake header)
                         if msg_len >= 4 && msg_offset + 8 <= handshake_data.len() {
                             // Skip status_type (1 byte at msg_offset+4), read response_length (3 bytes at msg_offset+5..8)
-                            let response_len = ((handshake_data[msg_offset + 5] as usize) << 16)
-                                | ((handshake_data[msg_offset + 6] as usize) << 8)
-                                | (handshake_data[msg_offset + 7] as usize);
+                            let response_len = Self::read_u24_at(
+                                handshake_data,
+                                msg_offset + 5,
+                                "OCSP response length",
+                            )?;
 
                             // Certificate Status structure: status_type (1 byte) + response_length (3 bytes) + response
                             // Total overhead is 4 bytes, so check response_len + 4 <= msg_len
@@ -246,7 +303,8 @@ impl RevocationChecker {
                 message: "ServerHello truncated before session ID length".to_string(),
             });
         }
-        let session_id_len = server_hello[offset] as usize;
+        let session_id_len =
+            Self::read_u8_at(server_hello, offset, "ServerHello session ID length")? as usize;
         offset += 1;
 
         // Session ID
@@ -280,7 +338,7 @@ impl RevocationChecker {
             });
         }
         let extensions_len =
-            ((server_hello[offset] as usize) << 8) | (server_hello[offset + 1] as usize);
+            Self::read_u16_at(server_hello, offset, "ServerHello extensions length")? as usize;
         offset += 2;
 
         // Parse extensions
@@ -292,9 +350,10 @@ impl RevocationChecker {
         }
 
         while offset + 4 <= extensions_end {
-            let ext_type = ((server_hello[offset] as u16) << 8) | (server_hello[offset + 1] as u16);
+            let ext_type = Self::read_u16_at(server_hello, offset, "ServerHello extension type")?;
             let ext_len =
-                ((server_hello[offset + 2] as usize) << 8) | (server_hello[offset + 3] as usize);
+                Self::read_u16_at(server_hello, offset + 2, "ServerHello extension length")?
+                    as usize;
 
             if ext_type == extension_type {
                 return Ok(Some(true));
