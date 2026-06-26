@@ -103,7 +103,9 @@ impl RevocationChecker {
             }
 
             if offset + 5 > tls_handshake_data.len() {
-                break;
+                return Err(crate::TlsError::ParseError {
+                    message: "TLS record header truncated".to_string(),
+                });
             }
 
             // Get record length
@@ -111,7 +113,9 @@ impl RevocationChecker {
                 | (tls_handshake_data[offset + 4] as usize);
 
             if offset + 5 + record_len > tls_handshake_data.len() {
-                break;
+                return Err(crate::TlsError::ParseError {
+                    message: "TLS record length exceeds available data".to_string(),
+                });
             }
 
             let handshake_start = offset + 5;
@@ -128,7 +132,9 @@ impl RevocationChecker {
                     | (handshake_data[msg_offset + 3] as usize);
 
                 if msg_offset + 4 + msg_len > handshake_data.len() {
-                    break;
+                    return Err(crate::TlsError::ParseError {
+                        message: "Handshake message length exceeds available data".to_string(),
+                    });
                 }
 
                 match msg_type {
@@ -367,6 +373,15 @@ mod tests {
 
         let err = checker.check_ocsp_stapling(&data).unwrap_err();
         assert!(err.to_string().contains("truncated"));
+    }
+
+    #[test]
+    fn test_check_ocsp_stapling_rejects_truncated_record() {
+        let checker = RevocationChecker::new(true);
+        let data = vec![0x16, 0x03, 0x03, 0x00, 0x10, 0x02, 0x00];
+
+        let err = checker.check_ocsp_stapling(&data).unwrap_err();
+        assert!(err.to_string().contains("TLS record length exceeds available data"));
     }
 
     #[test]
