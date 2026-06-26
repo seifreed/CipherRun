@@ -238,7 +238,12 @@ impl Parser {
 
         // Extract Subject Alternative Names (DNS names only)
         let mut subject_an = Vec::new();
-        if let Ok(Some(san_ext)) = tbs.subject_alternative_name() {
+        if let Some(san_ext) = tbs
+            .subject_alternative_name()
+            .map_err(|e| TlsError::ParseError {
+                message: format!("Failed to parse subject alternative name: {}", e),
+            })?
+        {
             for name in &san_ext.value.general_names {
                 if let GeneralName::DNSName(dns) = name {
                     subject_an.push(dns.to_string());
@@ -285,11 +290,11 @@ impl Parser {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use openssl::asn1::Asn1Time;
+    use openssl::asn1::{Asn1Object, Asn1OctetString, Asn1Time};
     use openssl::hash::MessageDigest;
     use openssl::pkey::PKey;
     use openssl::rsa::Rsa;
-    use openssl::x509::{X509Builder, X509NameBuilder};
+    use openssl::x509::{X509Builder, X509Extension, X509NameBuilder};
 
     #[test]
     fn test_parser_creation() {
@@ -338,6 +343,35 @@ mod tests {
         leaf.extend_from_slice(cert_der);
 
         base64::engine::general_purpose::STANDARD.encode(leaf)
+    }
+
+    fn cert_with_raw_extension_der(oid: &str, contents: &[u8]) -> Vec<u8> {
+        let rsa = Rsa::generate(2048).unwrap();
+        let pkey = PKey::from_rsa(rsa).unwrap();
+
+        let mut name = X509NameBuilder::new().unwrap();
+        name.append_entry_by_text("CN", "malformed-extension.example.com")
+            .unwrap();
+        let name = name.build();
+
+        let mut builder = X509Builder::new().unwrap();
+        builder.set_subject_name(&name).unwrap();
+        builder.set_issuer_name(&name).unwrap();
+        builder.set_pubkey(&pkey).unwrap();
+        builder
+            .set_not_before(&Asn1Time::days_from_now(0).unwrap())
+            .unwrap();
+        builder
+            .set_not_after(&Asn1Time::days_from_now(365).unwrap())
+            .unwrap();
+
+        let oid = Asn1Object::from_str(oid).unwrap();
+        let contents = Asn1OctetString::new_from_bytes(contents).unwrap();
+        let extension = X509Extension::new_from_der(&oid, false, &contents).unwrap();
+        builder.append_extension(extension).unwrap();
+        builder.sign(&pkey, MessageDigest::sha256()).unwrap();
+
+        builder.build().to_der().unwrap()
     }
 
     #[test]
@@ -481,6 +515,20 @@ mod tests {
             parsed.certificate.subject_cn.as_deref(),
             Some("precert.example.com")
         );
+    }
+
+    #[test]
+    fn test_parse_entry_precertificate_rejects_malformed_san() {
+        let cert_der = cert_with_raw_extension_der("2.5.29.17", b"\x05\x00");
+        let tbs_der = tbs_der_from_cert(&cert_der);
+        let entry = CtLogEntryResponse {
+            leaf_input: build_precert_leaf_input(&tbs_der),
+            extra_data: String::new(),
+        };
+
+        let parser = Parser::new("test-log".to_string());
+        let err = parser.parse_entry(&entry, 7).unwrap_err();
+        assert!(format!("{err}").contains("Failed to parse subject alternative name"));
     }
 
     #[test]
