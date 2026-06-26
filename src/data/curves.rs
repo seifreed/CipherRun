@@ -94,11 +94,7 @@ impl CurvesDatabase {
             message: "Invalid format".to_string(),
         })?;
 
-        let id = id
-            .trim()
-            .replace("0x", "")
-            .replace(",", "")
-            .to_lowercase();
+        let id = id.trim().replace("0x", "").replace(",", "").to_lowercase();
 
         let mut names = names.split_whitespace();
         let short_name = names.next().unwrap_or("unknown").to_string();
