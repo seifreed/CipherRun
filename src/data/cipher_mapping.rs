@@ -78,16 +78,25 @@ impl CipherDatabase {
         let hexcode = hexcode.replace("0x", "").replace(",", "").to_lowercase();
 
         // Split rest into fields
-        let fields: Vec<&str> = rest.split_whitespace().collect();
-        if fields.len() < 3 {
-            return Err(TlsError::ParseError {
+        let mut fields = rest.split_whitespace();
+        let openssl_name = fields
+            .next()
+            .ok_or_else(|| TlsError::ParseError {
                 message: "Invalid format: not enough fields".to_string(),
-            });
-        }
-
-        let openssl_name = fields[0].to_string();
-        let iana_name = fields[1].to_string();
-        let protocol = fields[2].to_string();
+            })?
+            .to_string();
+        let iana_name = fields
+            .next()
+            .ok_or_else(|| TlsError::ParseError {
+                message: "Invalid format: not enough fields".to_string(),
+            })?
+            .to_string();
+        let protocol = fields
+            .next()
+            .ok_or_else(|| TlsError::ParseError {
+                message: "Invalid format: not enough fields".to_string(),
+            })?
+            .to_string();
 
         // Parse key exchange, authentication, encryption, mac
         let mut kx = String::new();
@@ -95,7 +104,7 @@ impl CipherDatabase {
         let mut enc = String::new();
         let mut mac = String::new();
 
-        for field in &fields[3..] {
+        for field in fields {
             if let Some(value) = field.strip_prefix("Kx=") {
                 kx = value.to_string();
             } else if let Some(value) = field.strip_prefix("Au=") {
@@ -133,11 +142,10 @@ impl CipherDatabase {
         if let Some(start) = enc.find('(')
             && let Some(end) = enc.find(')')
             && end > start
+            && let Some(num_str) = enc.get(start + 1..end)
+            && let Ok(bits) = num_str.parse::<u16>()
         {
-            let num_str = &enc[start + 1..end];
-            if let Ok(bits) = num_str.parse::<u16>() {
-                return bits;
-            }
+            return bits;
         }
 
         // Special cases
