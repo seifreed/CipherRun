@@ -263,6 +263,11 @@ fn classify_grease_response(response: &[u8]) -> GreaseTestOutcome {
         if alert_record_len != 2 {
             return GreaseTestOutcome::Inconclusive("Malformed TLS alert record length".to_string());
         }
+        if response.len() != 5 + alert_record_len {
+            return GreaseTestOutcome::Inconclusive(
+                "TLS alert record length does not match buffer length".to_string(),
+            );
+        }
 
         let alert_level = response[5];
         let alert_description = response[6];
@@ -296,6 +301,17 @@ mod tests {
         match classify_grease_response(&response) {
             GreaseTestOutcome::Inconclusive(reason) => {
                 assert!(reason.contains("Malformed TLS alert record length"));
+            }
+            _ => panic!("expected inconclusive"),
+        }
+    }
+
+    #[test]
+    fn test_classify_grease_response_rejects_trailing_bytes() {
+        let response = [0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x46, 0x00];
+        match classify_grease_response(&response) {
+            GreaseTestOutcome::Inconclusive(reason) => {
+                assert!(reason.contains("record length does not match buffer length"));
             }
             _ => panic!("expected inconclusive"),
         }
