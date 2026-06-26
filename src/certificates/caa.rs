@@ -101,7 +101,10 @@ impl CaaChecker {
             return self.parse_host_caa_output(&output.stdout);
         }
 
-        Ok(Vec::new())
+        Err(crate::TlsError::Other(format!(
+            "CAA lookup failed for {}",
+            self.domain
+        )))
     }
 
     /// Parse dig CAA output
@@ -437,5 +440,19 @@ mod tests {
                 .iter()
                 .any(|rec| rec.contains("issuewild"))
         );
+    }
+
+    #[test]
+    fn test_check_reports_query_failure_instead_of_no_records() {
+        let checker = CaaChecker::new("invalid.invalid".to_string());
+        let result = checker.check().expect("check should return a result");
+
+        assert!(
+            result
+                .issues
+                .iter()
+                .any(|issue| issue.contains("Failed to query CAA records"))
+        );
+        assert!(!result.has_caa_records);
     }
 }
