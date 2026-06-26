@@ -235,7 +235,10 @@ impl<'a> CrimeTester<'a> {
                 let ext_total =
                     u16::from_be_bytes([data[ext_len_offset], data[ext_len_offset + 1]]) as usize;
                 let ext_start = ext_len_offset + 2;
-                let ext_end = (ext_start + ext_total).min(record_end);
+                let ext_end = ext_start + ext_total;
+                if ext_end > record_end {
+                    return Ok(CompressionProbeStatus::Inconclusive);
+                }
 
                 // Walk extensions structurally looking for NPN (0x3374)
                 let mut pos = ext_start;
@@ -244,7 +247,7 @@ impl<'a> CrimeTester<'a> {
                     let ext_len = u16::from_be_bytes([data[pos + 2], data[pos + 3]]) as usize;
                     pos += 4;
                     if pos + ext_len > ext_end {
-                        break;
+                        return Ok(CompressionProbeStatus::Inconclusive);
                     }
 
                     if ext_type == 0x3374 {
@@ -255,7 +258,7 @@ impl<'a> CrimeTester<'a> {
                             let proto_len = data[proto_pos] as usize;
                             proto_pos += 1;
                             if proto_pos + proto_len > proto_end {
-                                break;
+                                return Ok(CompressionProbeStatus::Inconclusive);
                             }
                             if let Ok(proto) =
                                 std::str::from_utf8(&data[proto_pos..proto_pos + proto_len])
@@ -385,6 +388,55 @@ mod tests {
 
         // NPN extension type is 0x3374
         assert!(hello.windows(2).any(|w| w == [0x33, 0x74]));
+    }
+
+    #[tokio::test]
+    async fn test_spdy_probe_rejects_truncated_npn_extension() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = vec![0u8; 4096];
+            let _ = socket.read(&mut buf).await.unwrap();
+
+            let mut response = vec![
+                0x16, 0x03, 0x03, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x03, 0x03,
+            ];
+            response.extend_from_slice(&[0xAA; 32]);
+            response.push(0x00);
+            response.extend_from_slice(&[0x00, 0x9c]);
+            response.push(0x00);
+            response.extend_from_slice(&[0x00, 0x06]); // claims 6 bytes of extensions
+            response.extend_from_slice(&[0x33, 0x74, 0x00, 0x02]); // NPN ext header
+            response.push(0x01); // truncated protocol list
+
+            let rec_len = (response.len() - 5) as u16;
+            response[3] = (rec_len >> 8) as u8;
+            response[4] = (rec_len & 0xff) as u8;
+            let hs_len = (response.len() - 9) as u32;
+            response[6] = ((hs_len >> 16) & 0xff) as u8;
+            response[7] = ((hs_len >> 8) & 0xff) as u8;
+            response[8] = (hs_len & 0xff) as u8;
+
+            socket.write_all(&response).await.unwrap();
+        });
+
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+        let tester = CrimeTester::new(&target);
+
+        let status = tester
+            .test_spdy_compression()
+            .await
+            .expect("probe should return a status");
+        assert_eq!(status, CompressionProbeStatus::Inconclusive);
+
+        server.await.unwrap();
     }
 
     #[test]
