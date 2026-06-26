@@ -121,7 +121,10 @@ impl ClientCAsTester {
                 Ok(Ok(0)) => break,
                 Ok(Ok(n)) => {
                     response.extend_from_slice(&chunk[..n]);
-                    if self.find_certificate_request(&response).is_ok_and(|request| request.is_some()) {
+                    if self
+                        .find_certificate_request(&response)
+                        .is_ok_and(|request| request.is_some())
+                    {
                         break;
                     }
                 }
@@ -239,7 +242,9 @@ mod tests {
             .expect("test assertion should succeed"),
         );
 
-        let (cn, org) = tester.extract_dn_fields(&[]).expect("empty DN should parse");
+        let (cn, org) = tester
+            .extract_dn_fields(&[])
+            .expect("empty DN should parse");
         assert!(cn.is_none());
         assert!(org.is_none());
     }
@@ -259,7 +264,10 @@ mod tests {
         let err = tester
             .extract_dn_fields(&dn)
             .expect_err("invalid DN UTF-8 should fail");
-        assert!(err.to_string().contains("Invalid certificate request DN UTF-8"));
+        assert!(
+            err.to_string()
+                .contains("Invalid certificate request DN UTF-8")
+        );
     }
 
     #[test]
@@ -339,6 +347,34 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_ca_list_rejects_oversized_certificate_types_length() {
+        let tester = ClientCAsTester::new(
+            Target::with_ips(
+                "example.test".to_string(),
+                443,
+                vec!["127.0.0.1".parse().expect("valid IP")],
+            )
+            .expect("test assertion should succeed"),
+        );
+
+        let malformed = vec![
+            13, 0, 0, 6, // CertificateRequest handshake header
+            6, // certificate_types length claims six bytes
+            0, // only one certificate type byte is present
+            0, 0, // signature algorithms length
+            0, 0, // padding to satisfy the minimum length check
+        ];
+
+        let err = tester
+            .parse_ca_list(&malformed)
+            .expect_err("oversized certificate_types length should fail");
+        assert!(
+            err.to_string()
+                .contains("CertificateRequest certificate types length exceeds message")
+        );
+    }
+
+    #[test]
     fn test_parse_certificate_request_skips_non_handshake() {
         let tester = ClientCAsTester::new(
             Target::with_ips(
@@ -369,7 +405,10 @@ mod tests {
         let err = tester
             .find_certificate_request(&record)
             .expect_err("truncated non-handshake record should fail");
-        assert!(err.to_string().contains("TLS record length exceeds available data"));
+        assert!(
+            err.to_string()
+                .contains("TLS record length exceeds available data")
+        );
     }
 
     #[test]
@@ -438,7 +477,10 @@ mod tests {
         let err = tester
             .find_certificate_request(&record)
             .expect_err("truncated CA entry should fail");
-        assert!(err.to_string().contains("distinguished name length exceeds list"));
+        assert!(
+            err.to_string()
+                .contains("distinguished name length exceeds list")
+        );
     }
 
     #[tokio::test]

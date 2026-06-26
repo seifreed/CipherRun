@@ -1,7 +1,10 @@
 use super::{ClientCA, ClientCAsTester};
 
 impl ClientCAsTester {
-    pub(super) fn find_certificate_request(&self, data: &[u8]) -> crate::Result<Option<Vec<ClientCA>>> {
+    pub(super) fn find_certificate_request(
+        &self,
+        data: &[u8],
+    ) -> crate::Result<Option<Vec<ClientCA>>> {
         let mut cert_request = None;
         let mut pos = 0;
         let mut handshake_bytes = Vec::new();
@@ -73,7 +76,19 @@ impl ClientCAsTester {
             });
         }
         let cert_types_len = data[pos] as usize;
-        pos += 1 + cert_types_len;
+        pos += 1;
+        let cert_types_end =
+            pos.checked_add(cert_types_len)
+                .ok_or_else(|| crate::TlsError::ParseError {
+                    message: "CertificateRequest certificate types length exceeds message"
+                        .to_string(),
+                })?;
+        if cert_types_end > data.len() {
+            return Err(crate::TlsError::ParseError {
+                message: "CertificateRequest certificate types length exceeds message".to_string(),
+            });
+        }
+        pos = cert_types_end;
 
         if pos + 2 > data.len() {
             return Err(crate::TlsError::ParseError {
@@ -81,7 +96,20 @@ impl ClientCAsTester {
             });
         }
         let sig_algs_len = u16::from_be_bytes([data[pos], data[pos + 1]]) as usize;
-        pos += 2 + sig_algs_len;
+        pos += 2;
+        let sig_algs_end =
+            pos.checked_add(sig_algs_len)
+                .ok_or_else(|| crate::TlsError::ParseError {
+                    message: "CertificateRequest signature algorithms length exceeds message"
+                        .to_string(),
+                })?;
+        if sig_algs_end > data.len() {
+            return Err(crate::TlsError::ParseError {
+                message: "CertificateRequest signature algorithms length exceeds message"
+                    .to_string(),
+            });
+        }
+        pos = sig_algs_end;
 
         if pos + 2 > data.len() {
             return Err(crate::TlsError::ParseError {
@@ -92,14 +120,19 @@ impl ClientCAsTester {
         let ca_list_len = u16::from_be_bytes([data[pos], data[pos + 1]]) as usize;
         pos += 2;
 
-        if pos + ca_list_len > data.len() {
+        let ca_list_end =
+            pos.checked_add(ca_list_len)
+                .ok_or_else(|| crate::TlsError::ParseError {
+                    message: "CertificateRequest CA list length exceeds message".to_string(),
+                })?;
+        if ca_list_end > data.len() {
             return Err(crate::TlsError::ParseError {
                 message: "CertificateRequest CA list length exceeds message".to_string(),
             });
         }
 
         let mut cas = Vec::new();
-        let ca_data = &data[pos..pos + ca_list_len];
+        let ca_data = &data[pos..ca_list_end];
         let mut ca_pos = 0;
 
         while ca_pos + 2 <= ca_data.len() {
@@ -145,8 +178,7 @@ impl ClientCAsTester {
                     || dn_data[i + 3..i + 6] == [0x04, 0x03, 0x13])
             {
                 let len = dn_data[i + 6] as usize;
-                if i + 7 + len <= dn_data.len()
-                {
+                if i + 7 + len <= dn_data.len() {
                     let value =
                         std::str::from_utf8(&dn_data[i + 7..i + 7 + len]).map_err(|error| {
                             crate::TlsError::ParseError {
@@ -163,8 +195,7 @@ impl ClientCAsTester {
                     || dn_data[i + 3..i + 6] == [0x04, 0x0a, 0x13])
             {
                 let len = dn_data[i + 6] as usize;
-                if i + 7 + len <= dn_data.len()
-                {
+                if i + 7 + len <= dn_data.len() {
                     let value =
                         std::str::from_utf8(&dn_data[i + 7..i + 7 + len]).map_err(|error| {
                             crate::TlsError::ParseError {
