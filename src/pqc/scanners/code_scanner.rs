@@ -31,16 +31,22 @@ struct PqcCodePattern {
     severity: &'static str,
 }
 
-static PATTERNS: LazyLock<Vec<PqcCodePattern>> = LazyLock::new(|| {
-    let mk = |display: &'static str, re: &str, algorithm: &'static str, severity: &'static str| {
-        PqcCodePattern {
+static PATTERNS: LazyLock<Result<Vec<PqcCodePattern>>> = LazyLock::new(|| {
+    let mk = |display: &'static str,
+              re: &str,
+              algorithm: &'static str,
+              severity: &'static str|
+     -> Result<PqcCodePattern> {
+        Ok(PqcCodePattern {
             display,
-            regex: Regex::new(re).expect("valid pattern regex"),
+            regex: Regex::new(re).map_err(|e| {
+                crate::TlsError::Other(format!("Invalid PQC code pattern {display}: {e}"))
+            })?,
             algorithm,
             severity,
-        }
+        })
     };
-    vec![
+    [
         mk("RSA.new", r"RSA\.new\b", "RSA", "High"),
         mk(
             "KeyPairGenerator.getInstance(\"RSA\")",
@@ -73,7 +79,16 @@ static PATTERNS: LazyLock<Vec<PqcCodePattern>> = LazyLock::new(|| {
         mk("SHA1", r"(?i)\bSHA-?1\b", "SHA-1", "Medium"),
         mk("DES", r"(?i)\bDES\b", "DES", "High"),
     ]
+    .into_iter()
+    .collect()
 });
+
+fn patterns() -> Result<&'static [PqcCodePattern]> {
+    PATTERNS
+        .as_ref()
+        .map(|patterns| patterns.as_slice())
+        .map_err(|e| crate::TlsError::Other(e.to_string()))
+}
 
 pub struct CodeScanner;
 
@@ -115,7 +130,7 @@ fn scan_dir(dir: &Path, findings: &mut Vec<CodeFinding>, count: &mut usize) -> R
 fn scan_file(path: &Path, findings: &mut Vec<CodeFinding>) -> Result<()> {
     let content = std::fs::read_to_string(path)?;
     for (line_no, line) in content.lines().enumerate() {
-        for pat in PATTERNS.iter() {
+        for pat in patterns()? {
             if pat.regex.is_match(line) {
                 findings.push(CodeFinding {
                     file: path.display().to_string(),
@@ -142,7 +157,8 @@ mod tests {
     use super::*;
 
     fn algorithms_matched(line: &str) -> Vec<&'static str> {
-        PATTERNS
+        patterns()
+            .expect("patterns should compile")
             .iter()
             .filter(|p| p.regex.is_match(line))
             .map(|p| p.algorithm)
