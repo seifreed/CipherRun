@@ -151,6 +151,15 @@ fn test_with_ips_empty_fails() {
 }
 
 #[test]
+fn test_deserialize_target_empty_ips_fails() {
+    let result = serde_json::from_str::<Target>(
+        r#"{"hostname":"example.com","port":443,"ip_addresses":[]}"#,
+    );
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("at least one IP"));
+}
+
+#[test]
 fn test_primary_ip_and_socket_addrs() {
     let ip: IpAddr = "192.0.2.10".parse().expect("test assertion should succeed");
     let target = Target::with_ips("example.com".to_string(), 8443, vec![ip])

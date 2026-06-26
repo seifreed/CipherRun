@@ -17,10 +17,26 @@ use crate::utils::{network_runtime, proxy::connect_via_proxy};
 
 /// Target information
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(try_from = "TargetUnchecked")]
 pub struct Target {
     pub hostname: String,
     pub port: u16,
     pub ip_addresses: Vec<IpAddr>,
+}
+
+#[derive(serde::Deserialize)]
+struct TargetUnchecked {
+    hostname: String,
+    port: u16,
+    ip_addresses: Vec<IpAddr>,
+}
+
+impl TryFrom<TargetUnchecked> for Target {
+    type Error = String;
+
+    fn try_from(value: TargetUnchecked) -> std::result::Result<Self, Self::Error> {
+        Self::with_ips(value.hostname, value.port, value.ip_addresses).map_err(|e| e.to_string())
+    }
 }
 
 /// Canonical target formatter.
