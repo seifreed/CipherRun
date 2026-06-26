@@ -484,7 +484,12 @@ impl<'a> RenegotiationTester<'a> {
 
         // Search only within the extensions section
         let ext_start = ext_len_offset + 2;
-        let ext_end = (ext_start + ext_total).min(response.len());
+        let ext_end = ext_start + ext_total;
+        if ext_end > response.len() {
+            return Err(crate::TlsError::ParseError {
+                message: "ServerHello extension block extends beyond declared length".to_string(),
+            });
+        }
         if ext_start >= ext_end {
             return Ok(false);
         }
@@ -731,5 +736,43 @@ mod tests {
         assert!(err
             .to_string()
             .contains("truncated in renegotiation extension data"));
+    }
+
+    #[test]
+    fn test_has_renegotiation_info_extension_rejects_truncated_extension_block() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["93.184.216.34".parse().unwrap()],
+        )
+        .unwrap();
+        let tester = RenegotiationTester::new(&target);
+
+        let mut response = vec![
+            0x16, 0x03, 0x03, 0x00, 0x00, // record
+            0x02, 0x00, 0x00, 0x00, // ServerHello
+            0x03, 0x03,
+        ];
+        response.extend_from_slice(&[0x00; 32]);
+        response.push(0x00);
+        response.extend_from_slice(&[0x00, 0x9c]);
+        response.push(0x00);
+        response.extend_from_slice(&[0x00, 0x06]); // claims 6 bytes of extensions
+        response.extend_from_slice(&[0xff, 0x01, 0x00, 0x01]); // missing final data byte
+
+        let rec_len = (response.len() - 5) as u16;
+        response[3] = (rec_len >> 8) as u8;
+        response[4] = (rec_len & 0xff) as u8;
+        let hs_len = (response.len() - 9) as u32;
+        response[6] = ((hs_len >> 16) & 0xff) as u8;
+        response[7] = ((hs_len >> 8) & 0xff) as u8;
+        response[8] = (hs_len & 0xff) as u8;
+
+        let err = tester
+            .has_renegotiation_info_extension(&response)
+            .expect_err("truncated extension block should fail");
+        assert!(err
+            .to_string()
+            .contains("extension block extends beyond declared length"));
     }
 }
