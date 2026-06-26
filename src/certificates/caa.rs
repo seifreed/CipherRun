@@ -117,15 +117,8 @@ impl CaaChecker {
                 continue;
             }
 
-            // Format: 0 issue "ca.example.com"
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() >= 3
-                && let Ok(flags) = parts[0].parse::<u8>()
-            {
-                let tag = parts[1].to_ascii_lowercase();
-                let value = Self::normalize_caa_value(&parts[2..].join(" "));
-
-                records.push(CaaRecord { flags, tag, value });
+            if let Some(record) = Self::parse_caa_record_fields(line) {
+                records.push(record);
             }
         }
 
@@ -138,21 +131,31 @@ impl CaaChecker {
         let mut records = Vec::new();
 
         for line in output_str.lines() {
-            if let Some(record_part) = Self::split_after_case_insensitive(line, "has CAA record") {
-                // Format: example.com has CAA record 0 issue "ca.example.com"
-                let parts: Vec<&str> = record_part.split_whitespace().collect();
-                if parts.len() >= 3
-                    && let Ok(flags) = parts[0].parse::<u8>()
-                {
-                    let tag = parts[1].to_ascii_lowercase();
-                    let value = Self::normalize_caa_value(&parts[2..].join(" "));
-
-                    records.push(CaaRecord { flags, tag, value });
-                }
+            if let Some(record_part) = Self::split_after_case_insensitive(line, "has CAA record")
+                && let Some(record) = Self::parse_caa_record_fields(record_part)
+            {
+                records.push(record);
             }
         }
 
         Ok(records)
+    }
+
+    fn parse_caa_record_fields(record: &str) -> Option<CaaRecord> {
+        let mut parts = record.split_whitespace();
+        let flags = parts.next()?.parse::<u8>().ok()?;
+        let tag = parts.next()?.to_ascii_lowercase();
+        let value = parts.collect::<Vec<_>>().join(" ");
+
+        if value.is_empty() {
+            return None;
+        }
+
+        Some(CaaRecord {
+            flags,
+            tag,
+            value: Self::normalize_caa_value(&value),
+        })
     }
 
     fn normalize_caa_value(value: &str) -> String {
@@ -302,6 +305,18 @@ mod tests {
             .expect("parse should succeed");
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].tag, "issue");
+    }
+
+    #[test]
+    fn test_parse_dig_caa_output_skips_short_records() {
+        let checker = CaaChecker::new("example.com".to_string());
+        let output = b"0\n0 issue\n0 issue \"letsencrypt.org\"";
+        let records = checker
+            .parse_dig_caa_output(output)
+            .expect("parse should succeed");
+
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].value, "letsencrypt.org");
     }
 
     #[test]
