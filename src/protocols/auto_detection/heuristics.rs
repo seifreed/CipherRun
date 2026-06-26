@@ -91,8 +91,13 @@ pub(super) fn analyze_banner(banner: &[u8]) -> (ApplicationProtocol, f64) {
     (ApplicationProtocol::Unknown, 0.0)
 }
 
-pub(super) fn extract_version(banner: &[u8], protocol: ApplicationProtocol) -> Option<String> {
-    let s = std::str::from_utf8(banner).ok()?;
+pub(super) fn extract_version(
+    banner: &[u8],
+    protocol: ApplicationProtocol,
+) -> crate::Result<Option<String>> {
+    let s = std::str::from_utf8(banner).map_err(|error| crate::TlsError::ParseError {
+        message: format!("Invalid protocol banner UTF-8: {error}"),
+    })?;
     match protocol {
         ApplicationProtocol::Smtp
         | ApplicationProtocol::SmtpStartTls
@@ -101,8 +106,8 @@ pub(super) fn extract_version(banner: &[u8], protocol: ApplicationProtocol) -> O
         | ApplicationProtocol::Pop3
         | ApplicationProtocol::Pop3StartTls
         | ApplicationProtocol::Ftp
-        | ApplicationProtocol::FtpStartTls => s.lines().next().map(|l| l.to_string()),
-        _ => None,
+        | ApplicationProtocol::FtpStartTls => Ok(s.lines().next().map(|l| l.to_string())),
+        _ => Ok(None),
     }
 }
 

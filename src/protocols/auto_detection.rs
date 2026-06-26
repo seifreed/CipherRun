@@ -71,7 +71,7 @@ impl ProtocolDetector {
 
         Ok(DetectedProtocol {
             protocol,
-            version: extract_version(banner_bytes, protocol),
+            version: extract_version(banner_bytes, protocol)?,
             banner: if !banner_bytes.is_empty() {
                 Some(String::from_utf8_lossy(banner_bytes).to_string())
             } else {
@@ -266,12 +266,22 @@ mod tests {
     #[tokio::test]
     async fn test_detect_by_banner_smtp() {
         let port = spawn_banner_server(b"220 mail.example.com ESMTP Postfix\r\n").await;
-        let detected = ProtocolDetector::detect("127.0.0.1", port)
+        let detected = ProtocolDetector::detect_by_banner("127.0.0.1", port)
             .await
             .expect("test assertion should succeed");
 
         assert_eq!(detected.protocol, ApplicationProtocol::SmtpStartTls);
         assert!(detected.banner.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_detect_by_banner_rejects_invalid_utf8_version() {
+        let port = spawn_banner_server(b"220 mail.example.com ESMTP Postfix\xff\r\n").await;
+        let err = ProtocolDetector::detect_by_banner("127.0.0.1", port)
+            .await
+            .expect_err("invalid banner UTF-8 should fail");
+
+        assert!(err.to_string().contains("Invalid protocol banner UTF-8"));
     }
 
     #[tokio::test]
