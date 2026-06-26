@@ -190,6 +190,9 @@ fn classify_probe_response(response: &[u8], n: usize) -> CipherProbeStatus {
         if alert_record_len != 2 {
             return CipherProbeStatus::Inconclusive;
         }
+        if n != 5 + alert_record_len {
+            return CipherProbeStatus::Inconclusive;
+        }
         CipherProbeStatus::NotSupported
     } else {
         CipherProbeStatus::Inconclusive
@@ -227,6 +230,15 @@ mod tests {
         assert_eq!(
             classify_probe_response(&response, response.len()),
             CipherProbeStatus::NotSupported
+        );
+    }
+
+    #[test]
+    fn test_classify_alert_with_trailing_bytes_is_inconclusive() {
+        let response = vec![CONTENT_TYPE_ALERT, 0x03, 0x03, 0x00, 0x02, 0x02, 0x46, 0x00];
+        assert_eq!(
+            classify_probe_response(&response, response.len()),
+            CipherProbeStatus::Inconclusive
         );
     }
 
