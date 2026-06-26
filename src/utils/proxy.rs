@@ -126,11 +126,20 @@ pub async fn connect_via_proxy(
 
     // Parse HTTP status code from "HTTP/1.x NNN Reason" — substring matching "200"
     // would accept any response body or reason phrase that happens to contain "200".
-    let status_code: u16 = status_line
-        .split(' ')
-        .nth(1)
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
+    let status_token = status_line.split(' ').nth(1).ok_or_else(|| {
+        TlsError::UnexpectedResponse {
+            details: format!("Proxy CONNECT response missing status code: {}", status_line.trim()),
+        }
+    })?;
+    let status_code: u16 =
+        status_token
+            .parse()
+            .map_err(|e| TlsError::UnexpectedResponse {
+                details: format!(
+                    "Proxy CONNECT response has invalid status code '{}': {}",
+                    status_token, e
+                ),
+            })?;
     if !(200..300).contains(&status_code) {
         crate::tls_bail!("Proxy CONNECT failed: {}", status_line.trim());
     }
@@ -378,5 +387,31 @@ mod tests {
             .peer_addr()
             .expect("connected stream should expose peer address");
         assert_eq!(peer, fallback_addr);
+    }
+
+    #[tokio::test]
+    async fn test_connect_via_proxy_rejects_malformed_status_code() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("listener should expose addr");
+
+        tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let _ = socket.write_all(b"HTTP/1.1 OK\r\n\r\n").await;
+            }
+        });
+
+        let proxy = ProxyConfig {
+            host: "127.0.0.1".to_string(),
+            port: addr.port(),
+            username: None,
+            password: None,
+        };
+
+        let err = connect_via_proxy(&proxy, "example.com", 443, Duration::from_secs(1))
+            .await
+            .expect_err("malformed proxy status code should fail");
+        assert!(err.to_string().contains("invalid status code"));
     }
 }
