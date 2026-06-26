@@ -173,10 +173,30 @@ async fn probe_cipher_at_protocol(
 /// (`Supported`); a TLS alert means it rejected it (`NotSupported`); anything
 /// else (truncated, closed, non-TLS) is `Inconclusive`.
 fn classify_probe_response(response: &[u8], n: usize) -> CipherProbeStatus {
-    if n >= MIN_SERVER_HELLO_LEN && response[0] == CONTENT_TYPE_HANDSHAKE {
-        let record_len = u16::from_be_bytes([response[3], response[4]]) as usize;
-        let handshake_len = u32::from_be_bytes([0, response[6], response[7], response[8]]) as usize;
-        if response[5] == HANDSHAKE_TYPE_SERVER_HELLO
+    let Some(response) = response.get(..n) else {
+        return CipherProbeStatus::Inconclusive;
+    };
+
+    if n >= MIN_SERVER_HELLO_LEN && response.first() == Some(&CONTENT_TYPE_HANDSHAKE) {
+        let Some(record_len) = response
+            .get(3..5)
+            .and_then(|bytes| bytes.try_into().ok())
+            .map(u16::from_be_bytes)
+            .map(usize::from)
+        else {
+            return CipherProbeStatus::Inconclusive;
+        };
+        let Some(handshake_len) = response
+            .get(6..9)
+            .and_then(|bytes| <&[u8; 3]>::try_from(bytes).ok())
+            .map(|bytes| {
+                let [high, mid, low] = *bytes;
+                u32::from_be_bytes([0, high, mid, low]) as usize
+            })
+        else {
+            return CipherProbeStatus::Inconclusive;
+        };
+        if response.get(5) == Some(&HANDSHAKE_TYPE_SERVER_HELLO)
             && record_len + 5 <= n
             && handshake_len + 9 <= n
         {
@@ -184,8 +204,15 @@ fn classify_probe_response(response: &[u8], n: usize) -> CipherProbeStatus {
         }
     }
 
-    if n >= 7 && response[0] == CONTENT_TYPE_ALERT {
-        let alert_record_len = u16::from_be_bytes([response[3], response[4]]) as usize;
+    if n >= 7 && response.first() == Some(&CONTENT_TYPE_ALERT) {
+        let Some(alert_record_len) = response
+            .get(3..5)
+            .and_then(|bytes| bytes.try_into().ok())
+            .map(u16::from_be_bytes)
+            .map(usize::from)
+        else {
+            return CipherProbeStatus::Inconclusive;
+        };
         if alert_record_len != 2 {
             return CipherProbeStatus::Inconclusive;
         }
@@ -202,16 +229,37 @@ fn classify_probe_response(response: &[u8], n: usize) -> CipherProbeStatus {
 mod tests {
     use super::*;
 
+    fn set_byte(response: &mut [u8], offset: usize, value: u8) {
+        *response
+            .get_mut(offset)
+            .expect("test response should contain byte offset") = value;
+    }
+
+    fn set_u16_be(response: &mut [u8], offset: usize, value: u16) {
+        response
+            .get_mut(offset..offset + 2)
+            .expect("test response should contain u16 offset")
+            .copy_from_slice(&value.to_be_bytes());
+    }
+
+    fn set_u24_be(response: &mut [u8], offset: usize, value: usize) {
+        response
+            .get_mut(offset..offset + 3)
+            .expect("test response should contain u24 offset")
+            .copy_from_slice(&[
+                ((value >> 16) & 0xff) as u8,
+                ((value >> 8) & 0xff) as u8,
+                (value & 0xff) as u8,
+            ]);
+    }
+
     #[test]
     fn test_classify_serverhello_is_supported() {
         let mut response = vec![0u8; MIN_SERVER_HELLO_LEN];
-        response[0] = CONTENT_TYPE_HANDSHAKE;
-        response[3] = 0x00;
-        response[4] = (MIN_SERVER_HELLO_LEN - 5) as u8;
-        response[5] = HANDSHAKE_TYPE_SERVER_HELLO;
-        response[6] = 0x00;
-        response[7] = 0x00;
-        response[8] = (MIN_SERVER_HELLO_LEN - 9) as u8;
+        set_byte(&mut response, 0, CONTENT_TYPE_HANDSHAKE);
+        set_u16_be(&mut response, 3, (MIN_SERVER_HELLO_LEN - 5) as u16);
+        set_byte(&mut response, 5, HANDSHAKE_TYPE_SERVER_HELLO);
+        set_u24_be(&mut response, 6, MIN_SERVER_HELLO_LEN - 9);
         assert_eq!(
             classify_probe_response(&response, response.len()),
             CipherProbeStatus::Supported
@@ -221,11 +269,10 @@ mod tests {
     #[test]
     fn test_classify_alert_is_not_supported() {
         let mut response = vec![0u8; 7];
-        response[0] = CONTENT_TYPE_ALERT;
-        response[3] = 0x00;
-        response[4] = 0x02;
-        response[5] = 0x02;
-        response[6] = 0x46;
+        set_byte(&mut response, 0, CONTENT_TYPE_ALERT);
+        set_u16_be(&mut response, 3, 2);
+        set_byte(&mut response, 5, 0x02);
+        set_byte(&mut response, 6, 0x46);
         assert_eq!(
             classify_probe_response(&response, response.len()),
             CipherProbeStatus::NotSupported
@@ -244,9 +291,8 @@ mod tests {
     #[test]
     fn test_classify_malformed_alert_is_inconclusive() {
         let mut response = vec![0u8; 7];
-        response[0] = CONTENT_TYPE_ALERT;
-        response[3] = 0x00;
-        response[4] = 0x03;
+        set_byte(&mut response, 0, CONTENT_TYPE_ALERT);
+        set_u16_be(&mut response, 3, 3);
         assert_eq!(
             classify_probe_response(&response, response.len()),
             CipherProbeStatus::Inconclusive
@@ -265,8 +311,8 @@ mod tests {
     #[test]
     fn test_classify_handshake_without_serverhello_is_inconclusive() {
         let mut response = vec![0u8; 16];
-        response[0] = CONTENT_TYPE_HANDSHAKE;
-        response[5] = HANDSHAKE_TYPE_SERVER_HELLO + 1;
+        set_byte(&mut response, 0, CONTENT_TYPE_HANDSHAKE);
+        set_byte(&mut response, 5, HANDSHAKE_TYPE_SERVER_HELLO + 1);
         assert_eq!(
             classify_probe_response(&response, response.len()),
             CipherProbeStatus::Inconclusive
@@ -276,8 +322,8 @@ mod tests {
     #[test]
     fn test_classify_truncated_serverhello_is_inconclusive() {
         let mut response = vec![0u8; 16];
-        response[0] = CONTENT_TYPE_HANDSHAKE;
-        response[5] = HANDSHAKE_TYPE_SERVER_HELLO;
+        set_byte(&mut response, 0, CONTENT_TYPE_HANDSHAKE);
+        set_byte(&mut response, 5, HANDSHAKE_TYPE_SERVER_HELLO);
         assert_eq!(
             classify_probe_response(&response, response.len()),
             CipherProbeStatus::Inconclusive
