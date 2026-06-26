@@ -373,15 +373,15 @@ impl CipherTester {
         };
         let server_ordered = !server_preference.is_empty();
 
-        let preferred_cipher = if !server_preference.is_empty() {
+        let preferred_cipher = if let Some(preferred_hexcode) = server_preference.first() {
             if let Some(cipher) = supported
                 .iter()
-                .find(|c| c.hexcode == server_preference[0])
+                .find(|c| c.hexcode == *preferred_hexcode)
                 .cloned()
             {
                 Some(cipher)
             } else {
-                cipher_db()?.get_by_hexcode(&server_preference[0])
+                cipher_db()?.get_by_hexcode(preferred_hexcode)
             }
         } else {
             supported.first().cloned()
