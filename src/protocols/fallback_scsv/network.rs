@@ -116,6 +116,14 @@ impl FallbackScsvTester<'_> {
                                 );
                                 return Ok(ScsvSupport::inconclusive());
                             }
+                            let alert_record_len = u16::from_be_bytes([buffer[3], buffer[4]]) as usize;
+                            if alert_record_len != 2 {
+                                tracing::debug!(
+                                    "SCSV test: Malformed alert record length {} - inconclusive",
+                                    alert_record_len
+                                );
+                                return Ok(ScsvSupport::inconclusive());
+                            }
                             let alert_level = buffer[5];
                             let alert_desc = buffer[6];
 
@@ -259,5 +267,22 @@ mod tests {
         let buffer = [CONTENT_TYPE_ALERT, 0x03, 0x03, 0x00, 0x02, 0x02];
         let accepted = tester.baseline_fallback_accepted(Ok(Ok(6)), &buffer);
         assert!(!accepted);
+    }
+
+    #[test]
+    fn test_baseline_fallback_accepted_rejects_alert_record() {
+        let target = crate::utils::network::Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["93.184.216.34".parse().unwrap()],
+        )
+        .unwrap();
+        let tester = FallbackScsvTester::new(&target);
+
+        let mut buffer = [0u8; 7];
+        buffer[0] = CONTENT_TYPE_ALERT;
+        buffer[3] = 0x00;
+        buffer[4] = 0x02;
+        assert!(!tester.baseline_fallback_accepted(Ok(Ok(7)), &buffer));
     }
 }
