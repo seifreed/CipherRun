@@ -1,34 +1,27 @@
 // Client Simulation Data Parser - Parses client-simulation.txt
 
-use crate::Result;
+use crate::{Result, TlsError};
 use std::collections::HashMap;
 use std::sync::Arc;
-
-/// Global client database loaded at startup
-///
-/// Uses OnceLock for safe initialization with proper error handling.
-/// If loading fails, initialization fails fast.
-static CLIENT_DB_INNER: std::sync::OnceLock<Arc<ClientDatabase>> = std::sync::OnceLock::new();
 
 /// Get the global client database
 ///
 /// Returns the database if already initialized, or initializes it on first call.
-/// Initialization fails fast if the embedded database is malformed.
-pub fn client_db() -> Arc<ClientDatabase> {
-    CLIENT_DB_INNER
-        .get_or_init(|| {
-            Arc::new(
-                ClientDatabase::load()
-                    .unwrap_or_else(|e| panic!("Failed to load embedded client database: {}", e)),
-            )
-        })
-        .clone()
+/// Returns an error if the embedded database is malformed.
+pub fn client_db() -> Result<Arc<ClientDatabase>> {
+    CLIENT_DB
+        .as_ref()
+        .map(Arc::clone)
+        .map_err(|e| TlsError::Other(e.clone()))
 }
 
-/// Legacy static for backward compatibility
-/// Delegates to `client_db()` to avoid loading data twice into memory
-pub static CLIENT_DB: std::sync::LazyLock<Arc<ClientDatabase>> =
-    std::sync::LazyLock::new(client_db);
+/// Cached embedded client database.
+pub static CLIENT_DB: std::sync::LazyLock<std::result::Result<Arc<ClientDatabase>, String>> =
+    std::sync::LazyLock::new(|| {
+        ClientDatabase::load()
+            .map(Arc::new)
+            .map_err(|e| format!("Failed to load embedded client database: {e}"))
+    });
 
 /// Client handshake profile
 #[derive(Debug, Clone)]
@@ -425,7 +418,7 @@ mod tests {
 
     #[test]
     fn test_current_clients_filter() {
-        let db = client_db();
+        let db = client_db().expect("embedded client database should load");
         let current = db.current_clients();
 
         for client in current {
@@ -444,7 +437,7 @@ mod tests {
     fn test_latest_by_family_picks_highest_version() {
         // The bundled database must resolve every popular family, otherwise
         // simulate_popular_clients would silently run zero simulations.
-        let db = client_db();
+        let db = client_db().expect("embedded client database should load");
         for family in ["chrome", "firefox", "safari", "edge", "android"] {
             let client = db
                 .latest_by_family(family)

@@ -42,7 +42,7 @@ mod tests {
         // Test that accessor functions work
         let _ = cipher_db();
         let _ = curves_db().expect("embedded curves database should load");
-        let _ = client_db();
+        let _ = client_db().expect("embedded client database should load");
         let _ = ca_stores();
     }
 

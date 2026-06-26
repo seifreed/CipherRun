@@ -1,7 +1,7 @@
 // Client Simulator - Simulates TLS connections from various clients
 
 use crate::Result;
-use crate::data::client_data::{CLIENT_DB, ClientProfile};
+use crate::data::client_data::{ClientProfile, client_db};
 use crate::protocols::Protocol;
 use crate::utils::network::{Target, connect_with_timeout};
 use rustls::ClientConfig;
@@ -82,7 +82,8 @@ impl ClientSimulator {
 
     /// Simulate all current clients
     pub async fn simulate_all_clients(&self) -> Result<Vec<ClientSimulationResult>> {
-        let clients = CLIENT_DB.current_clients();
+        let db = client_db()?;
+        let clients = db.current_clients();
         let mut results = Vec::new();
 
         for client in clients {
@@ -433,9 +434,10 @@ impl ClientSimulator {
     /// out of sync with the data file and matched nothing (zero clients
     /// simulated).
     pub async fn simulate_popular_clients(&self) -> Result<Vec<ClientSimulationResult>> {
+        let db = client_db()?;
         let mut results = Vec::new();
         for family in POPULAR_CLIENT_FAMILIES {
-            if let Some(client) = CLIENT_DB.latest_by_family(family) {
+            if let Some(client) = db.latest_by_family(family) {
                 results.push(self.simulate_client(client).await);
             }
         }
