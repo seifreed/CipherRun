@@ -45,7 +45,7 @@ impl ScanCommand {
 impl Command for ScanCommand {
     async fn execute(&self) -> Result<CommandExit> {
         let input = ScanWorkflowInput {
-            request: self.args.to_scan_request(),
+            request: self.args.to_scan_request()?,
             compliance_framework: self.args.compliance.framework.clone(),
             policy_path: self.args.compliance.policy.clone(),
             store_results: self.args.database.store_results,

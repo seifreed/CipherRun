@@ -167,7 +167,7 @@ impl AnycastScanner {
         }
 
         // Create and run scanner
-        let scanner = crate::scanner::Scanner::new(scanner_args.to_scan_request())?;
+        let scanner = crate::scanner::Scanner::new(scanner_args.to_scan_request()?)?;
         scanner.run().await
     }
 }

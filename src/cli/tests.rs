@@ -4,7 +4,7 @@ use super::*;
 fn test_ids_friendly_applies_conservative_throttle() {
     let mut args = Args::default();
     args.http.ids_friendly = true;
-    let request = args.to_scan_request();
+    let request = args.to_scan_request().expect("scan request should build");
     let expected = crate::utils::ids_friendly::IdsFriendlyConfig::default().min_delay_ms;
     assert_eq!(request.connection.sleep, Some(expected));
 }
@@ -13,7 +13,7 @@ fn test_ids_friendly_applies_conservative_throttle() {
 fn test_compliance_framework_forces_full_scan_and_vulnerability_phase() {
     let mut args = Args::default();
     args.compliance.framework = Some("pci-dss-v4".to_string());
-    let request = args.to_scan_request();
+    let request = args.to_scan_request().expect("scan request should build");
     assert!(
         request.scan.scope.full,
         "a compliance scan must run a full scan so its rules see complete data"
@@ -28,7 +28,7 @@ fn test_compliance_framework_forces_full_scan_and_vulnerability_phase() {
 fn test_policy_forces_full_scan_and_vulnerability_phase() {
     let mut args = Args::default();
     args.compliance.policy = Some(std::path::PathBuf::from("policy.yaml"));
-    let request = args.to_scan_request();
+    let request = args.to_scan_request().expect("scan request should build");
     assert!(request.scan.scope.full);
     assert!(request.should_run_vulnerability_phase());
 }
@@ -36,7 +36,7 @@ fn test_policy_forces_full_scan_and_vulnerability_phase() {
 #[test]
 fn test_default_scan_without_compliance_does_not_force_full() {
     let args = Args::default();
-    let request = args.to_scan_request();
+    let request = args.to_scan_request().expect("scan request should build");
     assert!(
         !request.scan.scope.full,
         "a plain scan must not be forced to full by the compliance wiring"
@@ -48,7 +48,7 @@ fn test_explicit_sleep_overrides_ids_friendly_throttle() {
     let mut args = Args::default();
     args.http.ids_friendly = true;
     args.connection.sleep = Some(250);
-    let request = args.to_scan_request();
+    let request = args.to_scan_request().expect("scan request should build");
     assert_eq!(request.connection.sleep, Some(250));
 }
 
@@ -208,7 +208,10 @@ fn test_validate_accepts_supported_color_modes() {
 fn test_run_default_suite_flags() {
     let parsed = Args::parse_with_sources_from(["cipherrun"]).expect("parse should succeed");
     let args = parsed;
-    assert!(args.run_default_suite());
+    assert!(
+        args.run_default_suite()
+            .expect("default suite should resolve")
+    );
 
     let args = Args {
         scan: ScanArgs {
@@ -217,13 +220,21 @@ fn test_run_default_suite_flags() {
         },
         ..Default::default()
     };
-    assert!(!args.run_default_suite());
+    assert!(
+        !args
+            .run_default_suite()
+            .expect("default suite should resolve")
+    );
 }
 
 #[test]
 fn test_vulnerability_flags() {
     let args = Args::default();
-    assert!(!args.test_vulnerabilities());
+    assert!(
+        !args
+            .test_vulnerabilities()
+            .expect("vulnerability setting should resolve")
+    );
 
     let args = Args {
         scan: ScanArgs {
@@ -232,7 +243,10 @@ fn test_vulnerability_flags() {
         },
         ..Default::default()
     };
-    assert!(args.test_vulnerabilities());
+    assert!(
+        args.test_vulnerabilities()
+            .expect("vulnerability setting should resolve")
+    );
 }
 
 #[test]
@@ -254,7 +268,10 @@ fn test_protocols_to_test_flags() {
         },
         ..Default::default()
     };
-    let protocols = args.protocols_to_test().unwrap();
+    let protocols = args
+        .protocols_to_test()
+        .expect("protocols should resolve")
+        .unwrap();
     assert_eq!(
         protocols,
         vec![
@@ -270,7 +287,10 @@ fn test_protocols_to_test_flags() {
         },
         ..Default::default()
     };
-    let protocols = args.protocols_to_test().unwrap();
+    let protocols = args
+        .protocols_to_test()
+        .expect("protocols should resolve")
+        .unwrap();
     assert_eq!(
         protocols,
         vec![
@@ -282,7 +302,11 @@ fn test_protocols_to_test_flags() {
     );
 
     let args = Args::default();
-    assert!(args.protocols_to_test().is_none());
+    assert!(
+        args.protocols_to_test()
+            .expect("protocols should resolve")
+            .is_none()
+    );
 }
 
 #[test]
@@ -294,7 +318,11 @@ fn test_retry_config() {
         },
         ..Default::default()
     };
-    assert!(args.retry_config().is_none());
+    assert!(
+        args.retry_config()
+            .expect("retry config should resolve")
+            .is_none()
+    );
 
     let args = Args {
         connection: ConnectionArgs {
@@ -303,7 +331,11 @@ fn test_retry_config() {
         },
         ..Default::default()
     };
-    assert!(args.retry_config().is_none());
+    assert!(
+        args.retry_config()
+            .expect("retry config should resolve")
+            .is_none()
+    );
 
     let args = Args {
         connection: ConnectionArgs {
@@ -314,7 +346,10 @@ fn test_retry_config() {
         },
         ..Default::default()
     };
-    let cfg = args.retry_config().expect("should return retry config");
+    let cfg = args
+        .retry_config()
+        .expect("retry config should resolve")
+        .expect("should return retry config");
     assert_eq!(cfg.max_retries, 5);
     assert_eq!(cfg.initial_backoff, std::time::Duration::from_millis(250));
     assert_eq!(cfg.max_backoff, std::time::Duration::from_millis(2000));
@@ -338,7 +373,11 @@ fn test_run_default_suite_disabled_by_client_simulation() {
         },
         ..Default::default()
     };
-    assert!(!args.run_default_suite());
+    assert!(
+        !args
+            .run_default_suite()
+            .expect("default suite should resolve")
+    );
 }
 
 #[test]
@@ -358,7 +397,7 @@ fn test_to_scan_request_preserves_functional_scan_flags() {
         ..Default::default()
     };
 
-    let request = args.to_scan_request();
+    let request = args.to_scan_request().expect("scan request should build");
 
     assert!(request.scan.ciphers.cipher_per_proto);
     assert!(request.scan.ciphers.server_defaults);
@@ -381,7 +420,11 @@ fn test_run_default_suite_respects_all_false() {
         ..Default::default()
     };
 
-    assert!(!args.run_default_suite());
+    assert!(
+        !args
+            .run_default_suite()
+            .expect("default suite should resolve")
+    );
 }
 
 #[test]
@@ -399,7 +442,7 @@ fn test_to_scan_request_preserves_explicit_fingerprint_sources() {
     let args = Args::parse_with_sources_from(["cipherrun", "--all=false", "--ja3=true"])
         .expect("parse should succeed");
 
-    let request = args.to_scan_request();
+    let request = args.to_scan_request().expect("scan request should build");
 
     assert!(request.fingerprint.explicit_ja3);
     assert!(!request.fingerprint.explicit_ja3s);
@@ -414,8 +457,16 @@ fn test_explicit_positive_fingerprint_request_disables_default_suite() {
     let args =
         Args::parse_with_sources_from(["cipherrun", "--ja3=true"]).expect("parse should succeed");
 
-    assert!(!args.run_default_suite());
-    assert!(args.to_scan_request().should_run_ja3_fingerprint());
+    assert!(
+        !args
+            .run_default_suite()
+            .expect("default suite should resolve")
+    );
+    assert!(
+        args.to_scan_request()
+            .expect("scan request should build")
+            .should_run_ja3_fingerprint()
+    );
 }
 
 #[test]
@@ -423,8 +474,16 @@ fn test_explicit_negative_fingerprint_flag_keeps_default_suite() {
     let args =
         Args::parse_with_sources_from(["cipherrun", "--ja3=false"]).expect("parse should succeed");
 
-    assert!(args.run_default_suite());
-    assert!(!args.to_scan_request().should_run_ja3_fingerprint());
+    assert!(
+        args.run_default_suite()
+            .expect("default suite should resolve")
+    );
+    assert!(
+        !args
+            .to_scan_request()
+            .expect("scan request should build")
+            .should_run_ja3_fingerprint()
+    );
 }
 
 #[test]
@@ -432,7 +491,11 @@ fn test_probe_status_flag_disables_default_suite() {
     let args = Args::parse_with_sources_from(["cipherrun", "--probe-status"])
         .expect("parse should succeed");
 
-    assert!(!args.run_default_suite());
+    assert!(
+        !args
+            .run_default_suite()
+            .expect("default suite should resolve")
+    );
 }
 
 #[test]
@@ -440,7 +503,11 @@ fn test_pre_handshake_flag_disables_default_suite() {
     let args = Args::parse_with_sources_from(["cipherrun", "--pre-handshake"])
         .expect("parse should succeed");
 
-    assert!(!args.run_default_suite());
+    assert!(
+        !args
+            .run_default_suite()
+            .expect("default suite should resolve")
+    );
 }
 
 #[test]
@@ -448,7 +515,11 @@ fn test_ocsp_flag_disables_default_suite() {
     let args =
         Args::parse_with_sources_from(["cipherrun", "--ocsp"]).expect("parse should succeed");
 
-    assert!(!args.run_default_suite());
+    assert!(
+        !args
+            .run_default_suite()
+            .expect("default suite should resolve")
+    );
 }
 
 #[test]
@@ -456,8 +527,16 @@ fn test_client_simulation_flag_disables_default_suite() {
     let args = Args::parse_with_sources_from(["cipherrun", "--client-simulation"])
         .expect("parse should succeed");
 
-    assert!(!args.run_default_suite());
-    assert!(args.to_scan_request().should_run_client_simulation_phase());
+    assert!(
+        !args
+            .run_default_suite()
+            .expect("default suite should resolve")
+    );
+    assert!(
+        args.to_scan_request()
+            .expect("scan request should build")
+            .should_run_client_simulation_phase()
+    );
 }
 
 #[test]
@@ -510,7 +589,7 @@ fn test_to_scan_request_preserves_proxy_and_resolvers() {
         ..Default::default()
     };
 
-    let request = args.to_scan_request();
+    let request = args.to_scan_request().expect("scan request should build");
 
     assert_eq!(
         request.network.proxy.as_deref(),

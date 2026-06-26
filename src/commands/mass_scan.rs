@@ -179,7 +179,7 @@ impl MassScanCommand {
 #[async_trait]
 impl Command for MassScanCommand {
     async fn execute(&self) -> Result<CommandExit> {
-        let scan_request = self.args.to_scan_request();
+        let scan_request = self.args.to_scan_request()?;
         let certificate_filters = self.args.to_certificate_filters();
         let config = MassScanConfig {
             max_parallel: self.args.network.max_parallel,

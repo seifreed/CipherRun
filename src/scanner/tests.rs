@@ -863,7 +863,8 @@ fn test_build_conservative_multi_ip_result() {
         },
         ..Default::default()
     };
-    let scanner = Scanner::new(args.to_scan_request()).expect("test assertion should succeed");
+    let scanner = Scanner::new(args.to_scan_request().expect("scan request should build"))
+        .expect("test assertion should succeed");
 
     let leaf = CertificateInfo {
         fingerprint_sha256: Some("AA".to_string()),
@@ -973,7 +974,8 @@ fn test_build_conservative_multi_ip_result_missing_cert_yields_grade_unverified(
         },
         ..Default::default()
     };
-    let scanner = Scanner::new(args.to_scan_request()).expect("test assertion should succeed");
+    let scanner = Scanner::new(args.to_scan_request().expect("scan request should build"))
+        .expect("test assertion should succeed");
 
     let scan_result = ScanResults {
         target: "192.0.2.10:443".to_string(),
@@ -1052,7 +1054,8 @@ fn test_build_conservative_multi_ip_result_respects_disable_rating() {
         },
         ..Default::default()
     };
-    let scanner = Scanner::new(args.to_scan_request()).expect("test assertion should succeed");
+    let scanner = Scanner::new(args.to_scan_request().expect("scan request should build"))
+        .expect("test assertion should succeed");
 
     let ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
     let scan_result = ScanResults {
@@ -1122,7 +1125,8 @@ fn test_build_conservative_multi_ip_result_aggregates_probe_metadata() {
         },
         ..Default::default()
     };
-    let scanner = Scanner::new(args.to_scan_request()).expect("test assertion should succeed");
+    let scanner = Scanner::new(args.to_scan_request().expect("scan request should build"))
+        .expect("test assertion should succeed");
 
     let ip1: std::net::IpAddr = "127.0.0.1".parse().unwrap();
     let ip2: std::net::IpAddr = "127.0.0.2".parse().unwrap();
@@ -1236,7 +1240,8 @@ fn test_build_conservative_multi_ip_result_keeps_success_with_failed_ips() {
         },
         ..Default::default()
     };
-    let scanner = Scanner::new(args.to_scan_request()).expect("test assertion should succeed");
+    let scanner = Scanner::new(args.to_scan_request().expect("scan request should build"))
+        .expect("test assertion should succeed");
 
     let ip1: std::net::IpAddr = "127.0.0.1".parse().unwrap();
     let ip2: std::net::IpAddr = "127.0.0.2".parse().unwrap();
@@ -1331,7 +1336,8 @@ fn test_build_conservative_multi_ip_result_uses_stable_probe_fallback() {
         },
         ..Default::default()
     };
-    let scanner = Scanner::new(args.to_scan_request()).expect("test assertion should succeed");
+    let scanner = Scanner::new(args.to_scan_request().expect("scan request should build"))
+        .expect("test assertion should succeed");
 
     let ip_low: std::net::IpAddr = "127.0.0.1".parse().unwrap();
     let ip_high: std::net::IpAddr = "127.0.0.2".parse().unwrap();
@@ -1424,7 +1430,8 @@ fn test_build_conservative_multi_ip_result_partial_success_without_probe_attempt
         },
         ..Default::default()
     };
-    let scanner = Scanner::new(args.to_scan_request()).expect("test assertion should succeed");
+    let scanner = Scanner::new(args.to_scan_request().expect("scan request should build"))
+        .expect("test assertion should succeed");
 
     let ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
     let scan_result = ScanResults {
@@ -1502,7 +1509,8 @@ fn test_build_conservative_multi_ip_result_clears_unaggregated_residual_sections
         },
         ..Default::default()
     };
-    let scanner = Scanner::new(args.to_scan_request()).expect("test assertion should succeed");
+    let scanner = Scanner::new(args.to_scan_request().expect("scan request should build"))
+        .expect("test assertion should succeed");
 
     let ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
 
@@ -1658,7 +1666,7 @@ fn test_build_conservative_multi_ip_result_clears_unaggregated_residual_sections
 #[test]
 fn test_scanner_new_requires_target() {
     let args = Args::default();
-    let err = Scanner::new(args.to_scan_request())
+    let err = Scanner::new(args.to_scan_request().expect("scan request should build"))
         .err()
         .expect("should error");
     assert!(

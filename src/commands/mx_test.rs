@@ -235,7 +235,7 @@ impl Command for MxTestCommand {
 
         let mx_tester =
             MxTester::with_resolvers(mx_domain.clone(), self.args.network.resolvers.clone());
-        let base_request = self.args.to_scan_request();
+        let base_request = self.args.to_scan_request()?;
         let results = mx_tester
             .scan_all_mx(
                 &base_request,

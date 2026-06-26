@@ -274,7 +274,7 @@ impl Args {
                 .map_err(|e| crate::error::TlsError::Other(e.to_string()))?;
 
             if !matches!(
-                self.starttls_protocol(),
+                self.starttls_protocol()?,
                 Some(crate::starttls::StarttlsProtocol::XMPP)
             ) {
                 crate::tls_bail!("--xmpphost requires an XMPP STARTTLS mode");
@@ -328,7 +328,7 @@ impl Args {
             );
         }
 
-        self.to_scan_request().validate_common()
+        self.to_scan_request()?.validate_common()
     }
 
     /// Effective inter-connection throttle in milliseconds.
@@ -344,8 +344,8 @@ impl Args {
         }))
     }
 
-    pub fn to_scan_request(&self) -> crate::application::ScanRequest {
-        crate::application::ScanRequest {
+    pub fn to_scan_request(&self) -> crate::Result<crate::application::ScanRequest> {
+        Ok(crate::application::ScanRequest {
             target: self.target.clone(),
             port: self.port,
             ip: self.ip.clone(),
@@ -435,10 +435,7 @@ impl Args {
             connection: crate::application::scan_request::ScanRequestConnection {
                 socket_timeout: self.connection.socket_timeout,
                 connect_timeout: self.connection.connect_timeout,
-                sleep: match self.effective_throttle_ms() {
-                    Ok(sleep) => sleep,
-                    Err(error) => panic!("Invalid delay configuration: {}", error),
-                },
+                sleep: self.effective_throttle_ms()?,
                 max_retries: self.connection.max_retries,
                 retry_backoff_ms: self.connection.retry_backoff_ms,
                 max_backoff_ms: self.connection.max_backoff_ms,
@@ -505,7 +502,7 @@ impl Args {
                 enable: self.ct_logs.enable,
             },
             presentation_mode: self.cert_filters.presentation_mode(),
-        }
+        })
     }
 
     pub fn output_presentation_mode(&self) -> crate::application::OutputPresentationMode {
@@ -523,18 +520,18 @@ impl Args {
     }
 
     /// Detect which STARTTLS protocol is requested
-    pub fn starttls_protocol(&self) -> Option<crate::starttls::StarttlsProtocol> {
-        self.to_scan_request().starttls_protocol()
+    pub fn starttls_protocol(&self) -> crate::Result<Option<crate::starttls::StarttlsProtocol>> {
+        Ok(self.to_scan_request()?.starttls_protocol())
     }
 
     /// Check if we should run the default test suite
-    pub fn run_default_suite(&self) -> bool {
-        self.to_scan_request().baseline_scan_requested()
+    pub fn run_default_suite(&self) -> crate::Result<bool> {
+        Ok(self.to_scan_request()?.baseline_scan_requested())
     }
 
     /// Check if vulnerability testing is enabled
-    pub fn test_vulnerabilities(&self) -> bool {
-        self.to_scan_request().should_run_vulnerability_phase()
+    pub fn test_vulnerabilities(&self) -> crate::Result<bool> {
+        Ok(self.to_scan_request()?.should_run_vulnerability_phase())
     }
 
     /// Get the SNI hostname to use (custom or default)
@@ -546,16 +543,16 @@ impl Args {
     }
 
     /// Get list of protocols to test based on flags
-    pub fn protocols_to_test(&self) -> Option<Vec<crate::protocols::Protocol>> {
-        self.to_scan_request().protocols_to_test()
+    pub fn protocols_to_test(&self) -> crate::Result<Option<Vec<crate::protocols::Protocol>>> {
+        Ok(self.to_scan_request()?.protocols_to_test())
     }
 
     /// Build a RetryConfig from CLI arguments
     ///
     /// Returns None if retry is disabled (--no-retry or --max-retries 0)
     /// Otherwise returns a configured RetryConfig with the specified parameters
-    pub fn retry_config(&self) -> Option<crate::utils::retry::RetryConfig> {
-        self.to_scan_request().retry_config()
+    pub fn retry_config(&self) -> crate::Result<Option<crate::utils::retry::RetryConfig>> {
+        Ok(self.to_scan_request()?.retry_config())
     }
 
     /// Check if any certificate validation filters are active
