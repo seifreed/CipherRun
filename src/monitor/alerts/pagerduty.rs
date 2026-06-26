@@ -48,37 +48,41 @@ impl PagerDutyChannel {
         });
 
         // Add alert-type specific details
-        match &alert.alert_type {
-            AlertType::CertificateChange { changes } => {
-                let changes_desc = changes
-                    .iter()
-                    .map(|c| format!("{:?}: {}", c.change_type, c.description))
-                    .collect::<Vec<_>>()
-                    .join(", ");
+        if let Some(details) = custom_details.as_object_mut() {
+            match &alert.alert_type {
+                AlertType::CertificateChange { changes } => {
+                    let changes_desc = changes
+                        .iter()
+                        .map(|c| format!("{:?}: {}", c.change_type, c.description))
+                        .collect::<Vec<_>>()
+                        .join(", ");
 
-                custom_details["change_count"] = json!(changes.len());
-                custom_details["changes"] = json!(changes_desc);
-            }
-            AlertType::ExpiryWarning { days_remaining } => {
-                custom_details["days_remaining"] = json!(days_remaining);
-            }
-            AlertType::ValidationFailure { reason } => {
-                custom_details["validation_failure"] = json!(reason);
-            }
-            AlertType::ScanFailure { error } => {
-                custom_details["scan_error"] = json!(error);
+                    details.insert("change_count".to_string(), json!(changes.len()));
+                    details.insert("changes".to_string(), json!(changes_desc));
+                }
+                AlertType::ExpiryWarning { days_remaining } => {
+                    details.insert("days_remaining".to_string(), json!(days_remaining));
+                }
+                AlertType::ValidationFailure { reason } => {
+                    details.insert("validation_failure".to_string(), json!(reason));
+                }
+                AlertType::ScanFailure { error } => {
+                    details.insert("scan_error".to_string(), json!(error));
+                }
             }
         }
 
         // Add certificate details
-        if let Some(ref serial) = alert.details.certificate_serial {
-            custom_details["certificate_serial"] = json!(serial);
-        }
-        if let Some(ref issuer) = alert.details.certificate_issuer {
-            custom_details["certificate_issuer"] = json!(issuer);
-        }
-        if let Some(ref expiry) = alert.details.certificate_expiry {
-            custom_details["certificate_expiry"] = json!(expiry);
+        if let Some(details) = custom_details.as_object_mut() {
+            if let Some(ref serial) = alert.details.certificate_serial {
+                details.insert("certificate_serial".to_string(), json!(serial));
+            }
+            if let Some(ref issuer) = alert.details.certificate_issuer {
+                details.insert("certificate_issuer".to_string(), json!(issuer));
+            }
+            if let Some(ref expiry) = alert.details.certificate_expiry {
+                details.insert("certificate_expiry".to_string(), json!(expiry));
+            }
         }
 
         json!({
