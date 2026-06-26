@@ -17,19 +17,41 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::timeout;
 
+fn read_u16_at(data: &[u8], offset: usize) -> Option<u16> {
+    data.get(offset..offset.checked_add(2)?)?
+        .try_into()
+        .ok()
+        .map(u16::from_be_bytes)
+}
+
+fn read_u24_at(data: &[u8], offset: usize) -> Option<usize> {
+    data.get(offset..offset.checked_add(3)?)
+        .and_then(|bytes| <&[u8; 3]>::try_from(bytes).ok())
+        .map(|bytes| {
+            let [high, mid, low] = *bytes;
+            u32::from_be_bytes([0, high, mid, low]) as usize
+        })
+}
+
 /// Return true once a ServerHelloDone record (handshake type 0x0e) is present in `buf`.
 fn has_server_hello_done(buf: &[u8]) -> bool {
     let mut offset = 0;
     while offset + 5 <= buf.len() {
-        let content_type = buf[offset];
-        let record_len = u16::from_be_bytes([buf[offset + 3], buf[offset + 4]]) as usize;
+        let Some(header) = buf
+            .get(offset..offset + 5)
+            .and_then(|header| <&[u8; 5]>::try_from(header).ok())
+        else {
+            break;
+        };
+        let [content_type, _, _, len_high, len_low] = *header;
+        let record_len = u16::from_be_bytes([len_high, len_low]) as usize;
         let record_end = offset + 5 + record_len;
         if record_end > buf.len() {
             break;
         }
         if content_type == 0x16 {
             let hs_start = offset + 5;
-            if hs_start < record_end && buf[hs_start] == 0x0e {
+            if hs_start < record_end && buf.get(hs_start) == Some(&0x0e) {
                 return true;
             }
         }
@@ -43,8 +65,14 @@ fn has_server_hello_done(buf: &[u8]) -> bool {
 fn extract_rsa_key_len(buffer: &[u8]) -> Result<usize> {
     let mut offset = 0;
     while offset + 5 <= buffer.len() {
-        let record_type = buffer[offset];
-        let record_len = u16::from_be_bytes([buffer[offset + 3], buffer[offset + 4]]) as usize;
+        let Some(header) = buffer
+            .get(offset..offset + 5)
+            .and_then(|header| <&[u8; 5]>::try_from(header).ok())
+        else {
+            break;
+        };
+        let [record_type, _, _, len_high, len_low] = *header;
+        let record_len = u16::from_be_bytes([len_high, len_low]) as usize;
         let record_end = offset + 5 + record_len;
         if record_end > buffer.len() {
             break;
@@ -53,32 +81,29 @@ fn extract_rsa_key_len(buffer: &[u8]) -> Result<usize> {
             // Handshake record — scan for Certificate message (type 0x0b)
             let mut hoff = offset + 5;
             while hoff + 4 <= record_end {
-                let hs_type = buffer[hoff];
-                let hs_len =
-                    u32::from_be_bytes([0, buffer[hoff + 1], buffer[hoff + 2], buffer[hoff + 3]])
-                        as usize;
+                let Some(hs_type) = buffer.get(hoff).copied() else {
+                    break;
+                };
+                let Some(hs_len) = read_u24_at(buffer, hoff + 1) else {
+                    break;
+                };
                 let hs_end = hoff + 4 + hs_len;
                 if hs_end > record_end {
                     break;
                 }
                 // Certificate message: type=0x0b, body=[3:list_len][3:cert_len][der...]
                 if hs_type == 0x0b && hoff + 10 <= hs_end {
-                    let cert_len = u32::from_be_bytes([
-                        0,
-                        buffer[hoff + 7],
-                        buffer[hoff + 8],
-                        buffer[hoff + 9],
-                    ]) as usize;
+                    let Some(cert_len) = read_u24_at(buffer, hoff + 7) else {
+                        break;
+                    };
                     let cert_start = hoff + 10;
                     let cert_end = cert_start + cert_len;
-                    if cert_end <= buffer.len() {
-                        let cert_der = &buffer[cert_start..cert_end];
-                        if let Ok(cert) = X509::from_der(cert_der)
-                            && let Ok(pkey) = cert.public_key()
-                            && let Ok(rsa) = pkey.rsa()
-                        {
-                            return Ok(rsa.n().num_bytes() as usize);
-                        }
+                    if let Some(cert_der) = buffer.get(cert_start..cert_end)
+                        && let Ok(cert) = X509::from_der(cert_der)
+                        && let Ok(pkey) = cert.public_key()
+                        && let Ok(rsa) = pkey.rsa()
+                    {
+                        return Ok(rsa.n().num_bytes() as usize);
                     }
                 }
                 hoff = hs_end;
@@ -94,10 +119,10 @@ fn extract_rsa_key_len(buffer: &[u8]) -> Result<usize> {
 /// Extract the description byte from a TLS alert record only if the record is
 /// structurally complete.
 fn alert_description_code(response: &[u8]) -> Option<u8> {
-    if response.len() >= 7 && response[0] == 0x15 {
-        let record_len = u16::from_be_bytes([response[3], response[4]]) as usize;
+    if response.len() >= 7 && response.first() == Some(&0x15) {
+        let record_len = read_u16_at(response, 3)? as usize;
         if record_len == 2 && response.len() == 5 + record_len {
-            return Some(response[6]);
+            return response.get(6).copied();
         }
     }
     None
@@ -226,7 +251,9 @@ impl RobotTester {
         for response in &successful_responses {
             // Create a pattern from first N bytes for comparison
             let pattern_len = response.len().min(32);
-            response_patterns.insert(response[..pattern_len].to_vec());
+            if let Some(pattern) = response.get(..pattern_len) {
+                response_patterns.insert(pattern.to_vec());
+            }
         }
 
         let unique_patterns = response_patterns.len();
@@ -279,18 +306,24 @@ impl RobotTester {
             // BTreeSet ordering is lexicographic, so the first two entries are not
             // necessarily the most different — iterate all pairs to find the true maximum.
             let mut best_diff = 0usize;
-            let (mut p1, mut p2) = (patterns[0], patterns[1]);
-            for i in 0..patterns.len() {
-                for j in (i + 1)..patterns.len() {
-                    let min_len = patterns[i].len().min(patterns[j].len());
+            let Some((&mut_p1, rest)) = patterns.split_first() else {
+                return Ok(RobotStatus::Inconclusive);
+            };
+            let Some(&mut_p2) = rest.first() else {
+                return Ok(RobotStatus::Inconclusive);
+            };
+            let (mut p1, mut p2) = (mut_p1, mut_p2);
+            for (i, left) in patterns.iter().enumerate() {
+                for right in patterns.iter().skip(i + 1) {
+                    let min_len = left.len().min(right.len());
                     let diff: usize = (0..min_len)
-                        .filter(|&k| patterns[i][k] != patterns[j][k])
+                        .filter(|&k| left.get(k) != right.get(k))
                         .count()
-                        + (patterns[i].len() as isize - patterns[j].len() as isize).unsigned_abs();
+                        + (left.len() as isize - right.len() as isize).unsigned_abs();
                     if diff > best_diff {
                         best_diff = diff;
-                        p1 = patterns[i];
-                        p2 = patterns[j];
+                        p1 = left;
+                        p2 = right;
                     }
                 }
             }
@@ -399,8 +432,8 @@ impl RobotTester {
         // even for large chains (e.g. RSA-4096) that span multiple TLS records.
         let mut buffer = vec![0u8; 32768];
         let mut total = 0usize;
-        loop {
-            let n = match timeout(Duration::from_secs(3), stream.read(&mut buffer[total..])).await {
+        while let Some(read_buffer) = buffer.get_mut(total..) {
+            let n = match timeout(Duration::from_secs(3), stream.read(read_buffer)).await {
                 Ok(Ok(n)) => n,
                 _ => break,
             };
@@ -408,7 +441,10 @@ impl RobotTester {
                 break;
             }
             total += n;
-            if has_server_hello_done(&buffer[..total]) || total >= buffer.len() {
+            let Some(accumulated) = buffer.get(..total) else {
+                break;
+            };
+            if has_server_hello_done(accumulated) || total >= buffer.len() {
                 break;
             }
         }
@@ -598,8 +634,8 @@ mod tests {
         .unwrap();
         let tester = RobotTester::new(target);
         let msg = tester.build_finished();
-        assert_eq!(msg[0], CONTENT_TYPE_HANDSHAKE);
-        assert_eq!(msg[5], HANDSHAKE_TYPE_FINISHED);
+        assert_eq!(msg.first(), Some(&CONTENT_TYPE_HANDSHAKE));
+        assert_eq!(msg.get(5), Some(&HANDSHAKE_TYPE_FINISHED));
     }
 
     #[test]
@@ -615,7 +651,7 @@ mod tests {
             .build_client_hello()
             .expect("ClientHello should build");
         assert!(!hello.is_empty());
-        assert_eq!(hello[0], CONTENT_TYPE_HANDSHAKE);
+        assert_eq!(hello.first(), Some(&CONTENT_TYPE_HANDSHAKE));
     }
 
     #[test]
@@ -632,9 +668,15 @@ mod tests {
         let msg1 = tester.build_invalid_client_key_exchange(1, 128);
         let msg2 = tester.build_invalid_client_key_exchange(2, 128);
 
-        let payload0 = &msg0[msg0.len() - 128..];
-        let payload1 = &msg1[msg1.len() - 128..];
-        let payload2 = &msg2[msg2.len() - 128..];
+        let payload0 = msg0
+            .get(msg0.len() - 128..)
+            .expect("test message should contain payload");
+        let payload1 = msg1
+            .get(msg1.len() - 128..)
+            .expect("test message should contain payload");
+        let payload2 = msg2
+            .get(msg2.len() - 128..)
+            .expect("test message should contain payload");
 
         assert!(payload0.iter().all(|b| *b == 0x00));
         assert!(payload1.iter().all(|b| *b == 0xff));
