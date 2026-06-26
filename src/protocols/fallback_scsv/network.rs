@@ -108,7 +108,14 @@ impl FallbackScsvTester<'_> {
                             .collect();
                         tracing::debug!("SCSV test: full response bytes: {}", bytes_hex.join(" "));
 
-                        if n > 6 && buffer[0] == CONTENT_TYPE_ALERT {
+                        if buffer[0] == CONTENT_TYPE_ALERT {
+                            if n < 7 {
+                                tracing::debug!(
+                                    "SCSV test: Truncated alert response ({} bytes) - inconclusive",
+                                    n
+                                );
+                                return Ok(ScsvSupport::inconclusive());
+                            }
                             let alert_level = buffer[5];
                             let alert_desc = buffer[6];
 
@@ -194,7 +201,7 @@ impl FallbackScsvTester<'_> {
     ) -> bool {
         match read_result {
             Ok(Ok(n)) if n > 0 => {
-                if n > 6 && buffer[0] == CONTENT_TYPE_ALERT {
+                if buffer[0] == CONTENT_TYPE_ALERT {
                     return false;
                 }
                 true
@@ -237,5 +244,20 @@ mod tests {
         assert!(!result.supported);
         assert!(result.vulnerable);
         assert!(result.accepts_downgrade);
+    }
+
+    #[test]
+    fn test_baseline_fallback_accepted_rejects_truncated_alert() {
+        let target = crate::utils::network::Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["93.184.216.34".parse().unwrap()],
+        )
+        .unwrap();
+        let tester = FallbackScsvTester::new(&target);
+
+        let buffer = [CONTENT_TYPE_ALERT, 0x03, 0x03, 0x00, 0x02, 0x02];
+        let accepted = tester.baseline_fallback_accepted(Ok(Ok(6)), &buffer);
+        assert!(!accepted);
     }
 }
