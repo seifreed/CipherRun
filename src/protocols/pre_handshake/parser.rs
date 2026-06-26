@@ -37,7 +37,7 @@ impl PreHandshakeScanner {
 
             let record_end = offset + record_length;
             while offset < record_end {
-                if offset + 4 > data.len() {
+                if offset + 4 > record_end {
                     return Err(TlsError::ParseError {
                         message: "Handshake header truncated".to_string(),
                     });
@@ -49,7 +49,7 @@ impl PreHandshakeScanner {
                         as usize;
 
                 offset += 4;
-                if offset + handshake_length > data.len() {
+                if offset + handshake_length > record_end {
                     return Err(TlsError::ParseError {
                         message: "Handshake length exceeds available data".to_string(),
                     });
@@ -110,7 +110,7 @@ impl PreHandshakeScanner {
                             ]) as usize;
 
                             // Prevent integer overflow/wraparound on malicious input
-                            if certs_length > data.len() - offset - 3 {
+                            if certs_length > record_end - offset - 3 {
                                 return Err(TlsError::ParseError {
                                     message: "Certificate list length exceeds available data"
                                         .to_string(),
@@ -120,7 +120,7 @@ impl PreHandshakeScanner {
                             let mut cert_offset = offset + 3;
                             let certs_end = offset + 3 + certs_length;
 
-                            if cert_offset + 3 <= certs_end && cert_offset + 3 <= data.len() {
+                            if cert_offset + 3 <= certs_end && cert_offset + 3 <= record_end {
                                 let cert_length = u32::from_be_bytes([
                                     0,
                                     data[cert_offset],
@@ -130,7 +130,7 @@ impl PreHandshakeScanner {
                                 cert_offset += 3;
 
                                 if cert_offset + cert_length <= certs_end
-                                    && cert_offset + cert_length <= data.len()
+                                    && cert_offset + cert_length <= record_end
                                 {
                                     let cert_der = &data[cert_offset..cert_offset + cert_length];
                                     certificate_data = Some(self.parse_certificate(cert_der)?);

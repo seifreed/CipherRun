@@ -477,6 +477,34 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_handshake_response_rejects_handshake_spanning_records() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["93.184.216.34".parse().expect("valid IP")],
+        )
+        .expect("target should build");
+
+        let scanner = PreHandshakeScanner::new(target);
+
+        let mut record = vec![0x16, 0x03, 0x03, 0x00, 0x06];
+        record.extend_from_slice(&[
+            0x02, // ServerHello
+            0x00, 0x00, 0x06, // claims 6-byte body
+            0x03, 0x03, // only 2 bytes of body are in this record
+        ]);
+        record.extend_from_slice(&[0x15, 0x03, 0x03, 0x00, 0x01, 0x00]);
+
+        let err = match scanner.parse_handshake_response(&record) {
+            Ok(_) => panic!("cross-record handshake should fail"),
+            Err(err) => err,
+        };
+        assert!(err
+            .to_string()
+            .contains("Handshake length exceeds available data"));
+    }
+
+    #[test]
     fn test_parse_handshake_response_certificate_length_exceeds() {
         let target = Target::with_ips(
             "example.com".to_string(),
