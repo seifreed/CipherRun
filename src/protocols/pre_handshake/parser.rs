@@ -166,7 +166,12 @@ impl PreHandshakeScanner {
         let serial_number = cert.serial.to_string();
 
         let mut san = Vec::new();
-        if let Ok(Some(san_ext)) = cert.subject_alternative_name() {
+        if let Some(san_ext) = cert
+            .subject_alternative_name()
+            .map_err(|e| TlsError::ParseError {
+                message: format!("Failed to parse subject alternative name: {:?}", e),
+            })?
+        {
             for name in &san_ext.value.general_names {
                 if let x509_parser::extensions::GeneralName::DNSName(dns) = name {
                     san.push(dns.to_string());
@@ -198,5 +203,61 @@ impl PreHandshakeScanner {
             public_key_size,
             ..Default::default()
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use openssl::asn1::{Asn1Object, Asn1OctetString, Asn1Time};
+    use openssl::hash::MessageDigest;
+    use openssl::pkey::PKey;
+    use openssl::rsa::Rsa;
+    use openssl::x509::{X509Builder, X509Extension, X509NameBuilder};
+
+    fn cert_with_raw_extension_der(oid: &str, contents: &[u8]) -> Vec<u8> {
+        let rsa = Rsa::generate(2048).unwrap();
+        let pkey = PKey::from_rsa(rsa).unwrap();
+        let mut name = X509NameBuilder::new().unwrap();
+        name.append_entry_by_text("CN", "malformed-extension.example.com")
+            .unwrap();
+        let name = name.build();
+
+        let mut builder = X509Builder::new().unwrap();
+        builder.set_subject_name(&name).unwrap();
+        builder.set_issuer_name(&name).unwrap();
+        builder.set_pubkey(&pkey).unwrap();
+        builder
+            .set_not_before(&Asn1Time::days_from_now(0).unwrap())
+            .unwrap();
+        builder
+            .set_not_after(&Asn1Time::days_from_now(30).unwrap())
+            .unwrap();
+        let oid = Asn1Object::from_str(oid).unwrap();
+        let contents = Asn1OctetString::new_from_bytes(contents).unwrap();
+        let extension = X509Extension::new_from_der(&oid, false, &contents).unwrap();
+        builder.append_extension(extension).unwrap();
+        builder.sign(&pkey, MessageDigest::sha256()).unwrap();
+
+        builder.build().to_der().unwrap()
+    }
+
+    #[test]
+    fn test_parse_certificate_rejects_malformed_san() {
+        let scanner = PreHandshakeScanner::new(crate::utils::network::Target::with_ips(
+            "localhost".to_string(),
+            443,
+            vec![std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)],
+        )
+        .unwrap());
+        let der = cert_with_raw_extension_der("2.5.29.17", b"\x05\x00");
+
+        let error = scanner
+            .parse_certificate(&der)
+            .expect_err("malformed SAN should fail");
+
+        assert!(error
+            .to_string()
+            .contains("Failed to parse subject alternative name"));
     }
 }
