@@ -35,14 +35,13 @@ impl Command for CtLogsCommand {
         // Parse custom indices from CLI arguments
         let mut custom_indices = HashMap::new();
         for index_str in &self.args.ct_logs.index {
-            let parts: Vec<&str> = index_str.split('=').collect();
-            if parts.len() == 2 {
-                if let Ok(index) = parts[1].parse::<u64>() {
-                    custom_indices.insert(parts[0].to_string(), index);
+            if let Some((source, index_value)) = index_str.split_once('=') {
+                if let Ok(index) = index_value.parse::<u64>() {
+                    custom_indices.insert(source.to_string(), index);
                 } else {
                     eprintln!(
                         "Warning: Invalid index value for source {}: {}",
-                        parts[0], parts[1]
+                        source, index_value
                     );
                 }
             } else {
