@@ -75,7 +75,10 @@ impl ServerHelloParser {
             let ext_len = u16::from_be_bytes([data[offset], data[offset + 1]]) as usize;
             offset += 2;
 
-            let ext_end = (offset + ext_len).min(record_end).min(data.len());
+            let ext_end = offset + ext_len;
+            if ext_end > record_end || ext_end > data.len() {
+                crate::tls_bail!("ServerHello extension block extends beyond declared length");
+            }
             while offset < ext_end && offset + 4 <= ext_end {
                 let ext_type = u16::from_be_bytes([data[offset], data[offset + 1]]);
                 offset += 2;
@@ -321,5 +324,28 @@ mod tests {
 
         let err = ServerHelloParser::parse(&server_hello).unwrap_err();
         assert!(format!("{err}").contains("extension data extends beyond declared length"));
+    }
+
+    #[test]
+    fn test_server_hello_rejects_truncated_extension_block() {
+        let mut server_hello = vec![
+            0x16, 0x03, 0x03, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x03, 0x03,
+        ];
+        server_hello.extend_from_slice(&[0u8; 32]);
+        server_hello.push(0x00);
+        server_hello.extend_from_slice(&[0xc0, 0x2f]);
+        server_hello.push(0x00);
+        server_hello.extend_from_slice(&[0x00, 0x06, 0x00, 0x0f, 0x00, 0x01]); // claims 6 bytes, only 4 follow
+
+        let rec_len = (server_hello.len() - 5) as u16;
+        server_hello[3] = (rec_len >> 8) as u8;
+        server_hello[4] = (rec_len & 0xff) as u8;
+        let hs_len = (server_hello.len() - 9) as u32;
+        server_hello[6] = ((hs_len >> 16) & 0xff) as u8;
+        server_hello[7] = ((hs_len >> 8) & 0xff) as u8;
+        server_hello[8] = (hs_len & 0xff) as u8;
+
+        let err = ServerHelloParser::parse(&server_hello).unwrap_err();
+        assert!(format!("{err}").contains("extension block extends beyond declared length"));
     }
 }
