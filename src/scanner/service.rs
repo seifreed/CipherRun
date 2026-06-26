@@ -162,7 +162,7 @@ impl Scanner {
         let placeholder_ip = PLACEHOLDER_IP;
         let needs_init = {
             let target = self.target.read();
-            target.ip_addresses.len() == 1 && target.ip_addresses[0] == placeholder_ip
+            target.ip_addresses.as_slice() == [placeholder_ip]
         };
         if needs_init && let Err(error) = self.initialize().await {
             if self.request.scan.prefs.probe_status {

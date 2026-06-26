@@ -78,9 +78,8 @@ impl HttpHeadersPhase {
             .iter()
             .filter_map(|h| {
                 // Split on first colon only
-                let parts: Vec<&str> = h.splitn(2, ':').collect();
-                if parts.len() == 2 {
-                    Some((parts[0].trim().to_string(), parts[1].trim().to_string()))
+                if let Some((name, value)) = h.split_once(':') {
+                    Some((name.trim().to_string(), value.trim().to_string()))
                 } else {
                     context.results.add_human_warning(format!(
                         "Invalid header format '{}', expected 'Name: Value'",

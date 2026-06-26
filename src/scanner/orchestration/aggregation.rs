@@ -99,7 +99,10 @@ impl Scanner {
             return aggregated;
         }
 
-        let mut aggregated = attempted_statuses[0].1.clone();
+        let Some((_, status)) = attempted_statuses.first() else {
+            return ProbeStatus::default();
+        };
+        let mut aggregated = (*status).clone();
         aggregated.attempts = total_attempts;
         aggregated
     }
