@@ -32,10 +32,10 @@ impl<'a> ProtocolRule<'a> {
         if let Some(ref required) = self.policy.required {
             for protocol_name in required {
                 // Parse the protocol name to handle different string formats
-                let protocol_match = Protocol::from_str(protocol_name).ok();
+                let protocol_match = Self::parse_policy_protocol("required", protocol_name)?;
 
                 let is_supported =
-                    self.protocol_supported_by_any_result(protocol_name, protocol_match.as_ref());
+                    self.protocol_supported_by_any_result(protocol_name, Some(&protocol_match));
 
                 if !is_supported {
                     violations.push(
@@ -62,10 +62,10 @@ impl<'a> ProtocolRule<'a> {
         if let Some(ref prohibited) = self.policy.prohibited {
             for protocol_name in prohibited {
                 // Parse the protocol name to handle different string formats
-                let protocol_match = Protocol::from_str(protocol_name).ok();
+                let protocol_match = Self::parse_policy_protocol("prohibited", protocol_name)?;
 
                 let is_supported =
-                    self.protocol_supported_on_any_backend(protocol_name, protocol_match.as_ref());
+                    self.protocol_supported_on_any_backend(protocol_name, Some(&protocol_match));
 
                 if is_supported {
                     violations.push(
@@ -86,6 +86,12 @@ impl<'a> ProtocolRule<'a> {
         }
 
         Ok(violations)
+    }
+
+    fn parse_policy_protocol(field: &str, protocol_name: &str) -> Result<Protocol> {
+        Protocol::from_str(protocol_name).map_err(|error| crate::TlsError::ConfigError {
+            message: format!("Invalid protocol in {} list: {}", field, error),
+        })
     }
 
     /// Check if a protocol is supported by checking if ANY result matches
@@ -131,6 +137,42 @@ mod tests {
     use super::*;
     use crate::policy::PolicyAction;
     use crate::protocols::Protocol;
+
+    #[test]
+    fn test_required_protocol_rejects_invalid_name() {
+        let policy = ProtocolPolicy {
+            required: Some(vec!["TLSv9.9".to_string()]),
+            prohibited: None,
+            action: PolicyAction::Fail,
+        };
+
+        let rule = ProtocolRule::new(&policy, &[], &[]);
+        let error = rule
+            .evaluate("example.com:443")
+            .expect_err("invalid required protocol should fail");
+
+        assert!(error.to_string().contains("Invalid protocol in required list"));
+    }
+
+    #[test]
+    fn test_prohibited_protocol_rejects_invalid_name() {
+        let policy = ProtocolPolicy {
+            required: None,
+            prohibited: Some(vec!["TLSv9.9".to_string()]),
+            action: PolicyAction::Fail,
+        };
+
+        let rule = ProtocolRule::new(&policy, &[], &[]);
+        let error = rule
+            .evaluate("example.com:443")
+            .expect_err("invalid prohibited protocol should fail");
+
+        assert!(
+            error
+                .to_string()
+                .contains("Invalid protocol in prohibited list")
+        );
+    }
 
     #[test]
     fn test_required_protocol_violation() {
