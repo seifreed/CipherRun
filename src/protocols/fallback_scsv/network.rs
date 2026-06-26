@@ -217,10 +217,14 @@ impl FallbackScsvTester<'_> {
     ) -> bool {
         match read_result {
             Ok(Ok(n)) if n > 0 => {
+                if n < 5 {
+                    return false;
+                }
+                let record_len = u16::from_be_bytes([buffer[3], buffer[4]]) as usize;
                 if buffer[0] == CONTENT_TYPE_ALERT {
                     return false;
                 }
-                true
+                5 + record_len <= n
             }
             _ => false,
         }
@@ -292,6 +296,20 @@ mod tests {
         buffer[3] = 0x00;
         buffer[4] = 0x02;
         assert!(!tester.baseline_fallback_accepted(Ok(Ok(7)), &buffer));
+    }
+
+    #[test]
+    fn test_baseline_fallback_accepted_rejects_truncated_non_alert_record() {
+        let target = crate::utils::network::Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["93.184.216.34".parse().unwrap()],
+        )
+        .unwrap();
+        let tester = FallbackScsvTester::new(&target);
+
+        let buffer = [0x16, 0x03, 0x03, 0x00, 0x10, 0x02];
+        assert!(!tester.baseline_fallback_accepted(Ok(Ok(6)), &buffer));
     }
 
     #[tokio::test]
