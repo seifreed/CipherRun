@@ -136,15 +136,21 @@ impl ScanComparator {
             let mut new_used = vec![false; new_vulns.len()];
 
             for candidate in candidates {
-                if old_used[candidate.old_index] || new_used[candidate.new_index] {
+                if old_used.get(candidate.old_index).copied().unwrap_or(true)
+                    || new_used.get(candidate.new_index).copied().unwrap_or(true)
+                {
                     continue;
                 }
                 if candidate.score == 0 && !allow_zero_score_pairing {
                     continue;
                 }
 
-                old_used[candidate.old_index] = true;
-                new_used[candidate.new_index] = true;
+                if let Some(used) = old_used.get_mut(candidate.old_index) {
+                    *used = true;
+                }
+                if let Some(used) = new_used.get_mut(candidate.new_index) {
+                    *used = true;
+                }
 
                 if vulnerability_record_changed(candidate.old, candidate.new) {
                     changed.push(to_vuln_info(candidate.new));
@@ -154,13 +160,13 @@ impl ScanComparator {
             }
 
             for (index, vuln) in old_vulns.iter().enumerate() {
-                if !old_used[index] {
+                if !old_used.get(index).copied().unwrap_or(true) {
                     resolved.push(to_vuln_info(vuln));
                 }
             }
 
             for (index, vuln) in new_vulns.iter().enumerate() {
-                if !new_used[index] {
+                if !new_used.get(index).copied().unwrap_or(true) {
                     new_entries.push(to_vuln_info(vuln));
                 }
             }
