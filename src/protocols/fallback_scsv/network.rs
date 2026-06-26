@@ -99,16 +99,22 @@ impl FallbackScsvTester<'_> {
                         tracing::debug!(
                             "SCSV test: received {} bytes, first byte: 0x{:02x}",
                             n,
-                            buffer[0]
+                            buffer.first().copied().unwrap_or_default()
                         );
 
-                        let bytes_hex: Vec<String> = buffer[..n]
+                        let Some(response) = buffer.get(..n) else {
+                            return Err(crate::TlsError::ParseError {
+                                message: "SCSV response read length exceeded buffer".to_string(),
+                            });
+                        };
+
+                        let bytes_hex: Vec<String> = response
                             .iter()
                             .map(|byte| format!("{:02x}", byte))
                             .collect();
                         tracing::debug!("SCSV test: full response bytes: {}", bytes_hex.join(" "));
 
-                        if buffer[0] == CONTENT_TYPE_ALERT {
+                        if response.first() == Some(&CONTENT_TYPE_ALERT) {
                             if n < 7 {
                                 tracing::debug!(
                                     "SCSV test: Truncated alert response ({} bytes) - inconclusive",
@@ -116,8 +122,14 @@ impl FallbackScsvTester<'_> {
                                 );
                                 return Ok(ScsvSupport::inconclusive());
                             }
-                            let alert_record_len =
-                                u16::from_be_bytes([buffer[3], buffer[4]]) as usize;
+                            let Some(alert_record_len) = response
+                                .get(3..5)
+                                .and_then(|bytes| <[u8; 2]>::try_from(bytes).ok())
+                                .map(u16::from_be_bytes)
+                            else {
+                                return Ok(ScsvSupport::inconclusive());
+                            };
+                            let alert_record_len = alert_record_len as usize;
                             if alert_record_len != 2 {
                                 tracing::debug!(
                                     "SCSV test: Malformed alert record length {} - inconclusive",
@@ -133,8 +145,12 @@ impl FallbackScsvTester<'_> {
                                 );
                                 return Ok(ScsvSupport::inconclusive());
                             }
-                            let alert_level = buffer[5];
-                            let alert_desc = buffer[6];
+                            let Some([alert_level, alert_desc]) = response
+                                .get(5..7)
+                                .and_then(|bytes| <&[u8; 2]>::try_from(bytes).ok())
+                            else {
+                                return Ok(ScsvSupport::inconclusive());
+                            };
 
                             tracing::debug!(
                                 "SCSV test: Alert level: 0x{:02x}, description: 0x{:02x}",
@@ -142,7 +158,7 @@ impl FallbackScsvTester<'_> {
                                 alert_desc
                             );
 
-                            if alert_desc == 0x56 {
+                            if *alert_desc == 0x56 {
                                 tracing::info!(
                                     "✓ Server correctly rejected inappropriate fallback with alert 0x56 (inappropriate_fallback)"
                                 );
@@ -221,8 +237,15 @@ impl FallbackScsvTester<'_> {
                 if n < 5 {
                     return false;
                 }
-                let record_len = u16::from_be_bytes([buffer[3], buffer[4]]) as usize;
-                if buffer[0] == CONTENT_TYPE_ALERT {
+                let Some(record_len) = buffer
+                    .get(3..5)
+                    .and_then(|bytes| <[u8; 2]>::try_from(bytes).ok())
+                    .map(u16::from_be_bytes)
+                else {
+                    return false;
+                };
+                let record_len = record_len as usize;
+                if buffer.first() == Some(&CONTENT_TYPE_ALERT) {
                     return false;
                 }
                 5 + record_len <= n

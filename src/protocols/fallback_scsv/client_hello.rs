@@ -61,17 +61,23 @@ impl FallbackScsvTester<'_> {
         }
 
         let ext_len = hello.len() - ext_start_pos - 2;
-        hello[ext_start_pos] = ((ext_len >> 8) & 0xff) as u8;
-        hello[ext_start_pos + 1] = (ext_len & 0xff) as u8;
+        if let Some(len_bytes) = hello.get_mut(ext_start_pos..ext_start_pos + 2) {
+            len_bytes.copy_from_slice(&[((ext_len >> 8) & 0xff) as u8, (ext_len & 0xff) as u8]);
+        }
 
         let hs_len = hello.len() - hs_len_pos - 3;
-        hello[hs_len_pos] = ((hs_len >> 16) & 0xff) as u8;
-        hello[hs_len_pos + 1] = ((hs_len >> 8) & 0xff) as u8;
-        hello[hs_len_pos + 2] = (hs_len & 0xff) as u8;
+        if let Some(len_bytes) = hello.get_mut(hs_len_pos..hs_len_pos + 3) {
+            len_bytes.copy_from_slice(&[
+                ((hs_len >> 16) & 0xff) as u8,
+                ((hs_len >> 8) & 0xff) as u8,
+                (hs_len & 0xff) as u8,
+            ]);
+        }
 
         let rec_len = hello.len() - len_pos - 2;
-        hello[len_pos] = ((rec_len >> 8) & 0xff) as u8;
-        hello[len_pos + 1] = (rec_len & 0xff) as u8;
+        if let Some(len_bytes) = hello.get_mut(len_pos..len_pos + 2) {
+            len_bytes.copy_from_slice(&[((rec_len >> 8) & 0xff) as u8, (rec_len & 0xff) as u8]);
+        }
 
         hello
     }
