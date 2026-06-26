@@ -62,7 +62,9 @@ impl ProtocolDetector {
                 duration: Some(read_timeout),
             })??;
 
-        let banner_bytes = &banner[..n];
+        let banner_bytes = banner.get(..n).ok_or_else(|| crate::TlsError::ParseError {
+            message: "Protocol banner read length exceeded buffer".to_string(),
+        })?;
         let (protocol, confidence) = analyze_banner(banner_bytes);
 
         if protocol == ApplicationProtocol::Unknown && (port == 80 || port == 443 || port == 8080) {
@@ -95,7 +97,12 @@ impl ProtocolDetector {
                 duration: Some(read_timeout),
             })??;
 
-        let response_str = String::from_utf8_lossy(&response[..n]).to_string();
+        let response_bytes = response
+            .get(..n)
+            .ok_or_else(|| crate::TlsError::ParseError {
+                message: "HTTP detection read length exceeded buffer".to_string(),
+            })?;
+        let response_str = String::from_utf8_lossy(response_bytes).to_string();
 
         if response_str.starts_with("HTTP/") {
             let version = response_str

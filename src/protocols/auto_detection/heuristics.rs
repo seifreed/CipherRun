@@ -61,10 +61,17 @@ pub(super) fn analyze_banner(banner: &[u8]) -> (ApplicationProtocol, f64) {
     // and that the version string at offset 5 consists of printable ASCII
     // (digits, dots, letters, hyphens) — matching real MySQL greetings like
     // "5.7.38-log" or "8.0.31".
-    if banner.len() > 10 && banner[3] == 0x00 && banner[4] == 0x0a {
-        let b = banner;
-        let pkt_len = u32::from_le_bytes([b[0], b[1], b[2], 0]) as usize;
-        let version_ok = b[5..]
+    if banner.get(3) == Some(&0x00) && banner.get(4) == Some(&0x0a) {
+        let Some([len_low, len_mid, len_high]) = banner
+            .get(..3)
+            .and_then(|bytes| <[u8; 3]>::try_from(bytes).ok())
+        else {
+            return (ApplicationProtocol::Unknown, 0.0);
+        };
+        let pkt_len = u32::from_le_bytes([len_low, len_mid, len_high, 0]) as usize;
+        let version_ok = banner
+            .get(5..)
+            .unwrap_or_default()
             .iter()
             .take_while(|&&byte| byte != 0x00)
             .take(32)
@@ -84,7 +91,7 @@ pub(super) fn analyze_banner(banner: &[u8]) -> (ApplicationProtocol, f64) {
         return (ApplicationProtocol::Redis, 0.85);
     }
 
-    if banner.len() > 16 && banner[0..4] == [0x3a, 0x00, 0x00, 0x00] {
+    if banner.get(..4) == Some(&[0x3a, 0x00, 0x00, 0x00]) {
         return (ApplicationProtocol::MongoDB, 0.80);
     }
 

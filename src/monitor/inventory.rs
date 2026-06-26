@@ -226,18 +226,17 @@ impl CertificateInventory {
 
             // Parse line: hostname[:port] [interval]
             // IPv6 with port must be bracketed, e.g. [2001:db8::1]:443
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.is_empty() {
+            let mut parts = line.split_whitespace();
+            let Some(host_port) = parts.next() else {
                 continue;
-            }
+            };
 
-            let host_port = parts[0];
             let (hostname, port) = split_target_host_port(host_port)?;
             let port = port.unwrap_or(443);
 
             // Parse interval if provided; otherwise use the configured default.
-            let interval_seconds = if parts.len() > 1 {
-                parse_interval(parts[1])?
+            let interval_seconds = if let Some(interval) = parts.next() {
+                parse_interval(interval)?
             } else {
                 default_interval_seconds
             };
