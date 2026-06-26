@@ -1,4 +1,5 @@
-use super::{CIPHER_DB, CipherCounts, CipherStrength, CipherSuite, CipherTester, Result};
+use super::{CipherCounts, CipherStrength, CipherSuite, CipherTester, Result};
+use crate::data::cipher_db;
 use crate::protocols::Protocol;
 use std::collections::HashMap;
 
@@ -91,7 +92,7 @@ impl CipherTester {
     }
 
     pub async fn quick_test(&self, protocol: Protocol) -> Result<Vec<CipherSuite>> {
-        let common_ciphers = CIPHER_DB.get_recommended_ciphers();
+        let common_ciphers = cipher_db()?.get_recommended_ciphers();
         let mut supported = Vec::new();
 
         for cipher in common_ciphers {

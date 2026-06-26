@@ -89,16 +89,17 @@ impl Ja3sFingerprint {
 
     /// Get cipher suite name (basic mapping)
     pub fn cipher_name(&self) -> String {
-        // Use the cipher database if available
-        use crate::data::CIPHER_DB;
+        use crate::data::cipher_db;
 
         // Convert decimal cipher value to hex string (lowercase, no 0x prefix)
         let hexcode = format!("{:04x}", self.cipher);
 
-        if let Some(cipher_info) = CIPHER_DB.get_by_hexcode(&hexcode) {
-            cipher_info.openssl_name.clone()
-        } else {
-            format!("Unknown (0x{:04X})", self.cipher)
+        match cipher_db() {
+            Ok(db) => db
+                .get_by_hexcode(&hexcode)
+                .map(|cipher_info| cipher_info.openssl_name)
+                .unwrap_or_else(|| format!("Unknown (0x{:04X})", self.cipher)),
+            Err(error) => format!("Cipher database error: {error}"),
         }
     }
 

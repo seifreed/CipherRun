@@ -26,7 +26,6 @@ use crate::constants::{
     BUFFER_SIZE_DEFAULT, CIPHER_TEST_READ_TIMEOUT, CONTENT_TYPE_HANDSHAKE, DEFAULT_CONNECT_TIMEOUT,
     HANDSHAKE_TYPE_SERVER_HELLO,
 };
-use crate::data::CIPHER_DB;
 use crate::protocols::Protocol;
 use crate::utils::adaptive::AdaptiveController;
 use crate::utils::network::Target;
@@ -681,7 +680,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_quick_test_with_fake_server() {
-        let accepts = CIPHER_DB.get_recommended_ciphers().len().saturating_add(5);
+        let accepts = crate::data::cipher_db()
+            .expect("embedded cipher database should load")
+            .get_recommended_ciphers()
+            .len()
+            .saturating_add(5);
         let addr = spawn_fake_tls_server(0xc02f, 0, accepts).await;
         let target = Target::with_ips(
             "localhost".to_string(),

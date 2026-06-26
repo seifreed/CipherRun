@@ -40,7 +40,7 @@ mod tests {
     #[test]
     fn test_reexports_available() {
         // Test that accessor functions work
-        let _ = cipher_db();
+        let _ = cipher_db().expect("embedded cipher database should load");
         let _ = curves_db().expect("embedded curves database should load");
         let _ = client_db().expect("embedded client database should load");
         let _ = ca_stores();

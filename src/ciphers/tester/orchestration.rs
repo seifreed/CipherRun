@@ -1,12 +1,12 @@
 use super::{
-    BACKOFF_BASE_DELAY_MS, BACKOFF_MAX_EXPONENT, BATCH_SIZE_MULTIPLIER, CIPHER_DB,
-    RETRY_BACKOFF_SECS,
+    BACKOFF_BASE_DELAY_MS, BACKOFF_MAX_EXPONENT, BATCH_SIZE_MULTIPLIER, RETRY_BACKOFF_SECS,
 };
 use super::{
     CipherBatchResult, CipherTestResult, CipherTester, ProtocolCipherSummary, Result,
     TlsConnectionPool,
 };
 use crate::ciphers::CipherSuite;
+use crate::data::cipher_db;
 use crate::protocols::Protocol;
 use futures::stream::{self, StreamExt};
 use std::sync::Arc;
@@ -141,9 +141,9 @@ impl CipherTester {
         protocol: Protocol,
     ) -> Result<(Vec<CipherSuite>, usize, Option<Arc<TlsConnectionPool>>)> {
         let ciphers = if self.test_all_ciphers {
-            CIPHER_DB.get_all_ciphers()
+            cipher_db()?.get_all_ciphers()
         } else {
-            CIPHER_DB.get_recommended_ciphers()
+            cipher_db()?.get_recommended_ciphers()
         };
 
         let compatible_ciphers: Vec<CipherSuite> = ciphers
@@ -374,11 +374,15 @@ impl CipherTester {
         let server_ordered = !server_preference.is_empty();
 
         let preferred_cipher = if !server_preference.is_empty() {
-            supported
+            if let Some(cipher) = supported
                 .iter()
                 .find(|c| c.hexcode == server_preference[0])
                 .cloned()
-                .or_else(|| CIPHER_DB.get_by_hexcode(&server_preference[0]))
+            {
+                Some(cipher)
+            } else {
+                cipher_db()?.get_by_hexcode(&server_preference[0])
+            }
         } else {
             supported.first().cloned()
         };

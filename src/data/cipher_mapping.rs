@@ -6,30 +6,24 @@ use crate::error::TlsError;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// Global cipher database loaded at startup
-///
-/// Uses OnceLock for safe initialization with proper error handling.
-static CIPHER_DB_INNER: std::sync::OnceLock<Arc<CipherDatabase>> = std::sync::OnceLock::new();
-
 /// Get the global cipher database
 ///
 /// Returns the database if already initialized, or initializes it on first call.
-/// Initialization fails fast if the embedded database is malformed.
-pub fn cipher_db() -> Arc<CipherDatabase> {
-    CIPHER_DB_INNER
-        .get_or_init(|| {
-            Arc::new(
-                CipherDatabase::load()
-                    .unwrap_or_else(|e| panic!("Failed to load embedded cipher database: {}", e)),
-            )
-        })
-        .clone()
+/// Returns an error if the embedded database is malformed.
+pub fn cipher_db() -> Result<Arc<CipherDatabase>> {
+    CIPHER_DB
+        .as_ref()
+        .map(Arc::clone)
+        .map_err(|e| TlsError::Other(e.clone()))
 }
 
-/// Legacy static for backward compatibility
-/// Delegates to `cipher_db()` to avoid loading data twice into memory
-pub static CIPHER_DB: std::sync::LazyLock<Arc<CipherDatabase>> =
-    std::sync::LazyLock::new(cipher_db);
+/// Cached embedded cipher database.
+pub static CIPHER_DB: std::sync::LazyLock<std::result::Result<Arc<CipherDatabase>, String>> =
+    std::sync::LazyLock::new(|| {
+        CipherDatabase::load()
+            .map(Arc::new)
+            .map_err(|e| format!("Failed to load embedded cipher database: {e}"))
+    });
 
 /// Database of all cipher suites
 pub struct CipherDatabase {
@@ -290,7 +284,7 @@ mod tests {
 
     #[test]
     fn test_lookup_by_hexcode() {
-        let db = CIPHER_DB.as_ref();
+        let db = cipher_db().expect("embedded cipher database should load");
 
         // Test a common cipher
         if let Some(cipher) = db.get_by_hexcode_ref("c030") {
@@ -300,7 +294,7 @@ mod tests {
 
     #[test]
     fn test_forward_secrecy_filter() {
-        let db = CIPHER_DB.as_ref();
+        let db = cipher_db().expect("embedded cipher database should load");
         let fs_ciphers = db.forward_secrecy_ciphers();
 
         assert!(!fs_ciphers.is_empty());

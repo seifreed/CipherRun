@@ -127,13 +127,13 @@ async fn run_cli() -> cipherrun::Result<CommandExit> {
 
     // Handle --show-ciphers (list ciphers and exit)
     if args.scan.show_ciphers {
-        use cipherrun::data::CIPHER_DB;
+        use cipherrun::data::cipher_db;
         println!(
             "CipherRun v{} - Supported Cipher Suites\n",
             env!("CARGO_PKG_VERSION")
         );
 
-        let all_ciphers = CIPHER_DB.get_all_ciphers();
+        let all_ciphers = cipher_db()?.get_all_ciphers();
         println!("Total: {} cipher suites\n", all_ciphers.len());
 
         for cipher in all_ciphers {
