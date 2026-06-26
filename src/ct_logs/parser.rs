@@ -79,6 +79,44 @@ fn datetime_from_millis(timestamp_ms: u64, field: &str) -> Result<DateTime<Utc>>
     )
 }
 
+fn read_u8_at(data: &[u8], offset: usize, context: &str) -> Result<u8> {
+    data.get(offset)
+        .copied()
+        .ok_or_else(|| TlsError::ParseError {
+            message: format!("{context} truncated"),
+        })
+}
+
+fn read_u16_at(data: &[u8], offset: usize, context: &str) -> Result<u16> {
+    let bytes = data
+        .get(offset..offset + 2)
+        .and_then(|bytes| <[u8; 2]>::try_from(bytes).ok())
+        .ok_or_else(|| TlsError::ParseError {
+            message: format!("{context} truncated"),
+        })?;
+    Ok(u16::from_be_bytes(bytes))
+}
+
+fn read_u24_at(data: &[u8], offset: usize, context: &str) -> Result<u32> {
+    let [high, mid, low] = data
+        .get(offset..offset + 3)
+        .and_then(|bytes| <[u8; 3]>::try_from(bytes).ok())
+        .ok_or_else(|| TlsError::ParseError {
+            message: format!("{context} truncated"),
+        })?;
+    Ok(((high as u32) << 16) | ((mid as u32) << 8) | low as u32)
+}
+
+fn read_u64_at(data: &[u8], offset: usize, context: &str) -> Result<u64> {
+    let bytes = data
+        .get(offset..offset + 8)
+        .and_then(|bytes| <[u8; 8]>::try_from(bytes).ok())
+        .ok_or_else(|| TlsError::ParseError {
+            message: format!("{context} truncated"),
+        })?;
+    Ok(u64::from_be_bytes(bytes))
+}
+
 impl Parser {
     /// Create a new parser for a specific log source
     pub fn new(log_source_id: String) -> Self {
@@ -107,14 +145,14 @@ impl Parser {
         // Bytes 10-11: LogEntryType (0 = X509, 1 = PreCert)
         // Rest: Certificate data
 
-        let version = leaf_bytes[0];
+        let version = read_u8_at(&leaf_bytes, 0, "CT leaf version")?;
         if version != 0 {
             return Err(TlsError::ParseError {
                 message: format!("Unsupported CT version: {}", version),
             });
         }
 
-        let leaf_type = leaf_bytes[1];
+        let leaf_type = read_u8_at(&leaf_bytes, 1, "CT leaf type")?;
         if leaf_type != 0 {
             return Err(TlsError::ParseError {
                 message: format!("Unsupported leaf type: {}", leaf_type),
@@ -122,21 +160,12 @@ impl Parser {
         }
 
         // Parse timestamp (8 bytes, big-endian)
-        let timestamp_ms = u64::from_be_bytes([
-            leaf_bytes[2],
-            leaf_bytes[3],
-            leaf_bytes[4],
-            leaf_bytes[5],
-            leaf_bytes[6],
-            leaf_bytes[7],
-            leaf_bytes[8],
-            leaf_bytes[9],
-        ]);
+        let timestamp_ms = read_u64_at(&leaf_bytes, 2, "CT leaf timestamp")?;
 
         let timestamp = datetime_from_millis(timestamp_ms, "CT leaf")?;
 
         // Parse log entry type
-        let entry_type = u16::from_be_bytes([leaf_bytes[10], leaf_bytes[11]]);
+        let entry_type = read_u16_at(&leaf_bytes, 10, "CT leaf entry type")?;
         let cert_type = match entry_type {
             0 => CertType::X509Certificate,
             1 => CertType::PreCertificate,
@@ -159,7 +188,7 @@ impl Parser {
                         message: "Leaf too short for X.509 certificate".to_string(),
                     });
                 }
-                let len = u32::from_be_bytes([0, leaf_bytes[12], leaf_bytes[13], leaf_bytes[14]]);
+                let len = read_u24_at(&leaf_bytes, 12, "X.509 certificate length")?;
                 (len, 15usize)
             }
             CertType::PreCertificate => {
@@ -170,11 +199,16 @@ impl Parser {
                                 .to_string(),
                     });
                 }
-                let len = u32::from_be_bytes([0, leaf_bytes[44], leaf_bytes[45], leaf_bytes[46]]);
+                let len = read_u24_at(&leaf_bytes, 44, "PreCertificate TBS length")?;
                 (len, 47usize)
             }
         };
-        let cert_end = cert_start + cert_len as usize;
+        let cert_end =
+            cert_start
+                .checked_add(cert_len as usize)
+                .ok_or_else(|| TlsError::ParseError {
+                    message: "Certificate length overflow".to_string(),
+                })?;
 
         if cert_end > leaf_bytes.len() {
             return Err(TlsError::ParseError {
@@ -186,7 +220,12 @@ impl Parser {
             });
         }
 
-        let cert_der = leaf_bytes[cert_start..cert_end].to_vec();
+        let cert_der = leaf_bytes
+            .get(cert_start..cert_end)
+            .ok_or_else(|| TlsError::ParseError {
+                message: "Certificate range exceeds leaf size".to_string(),
+            })?
+            .to_vec();
 
         // Parse certificate to extract metadata
         let certificate = self.parse_certificate(&cert_der, cert_type)?;
