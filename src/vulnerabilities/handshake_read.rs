@@ -19,15 +19,21 @@ use tokio::time::timeout;
 pub(super) fn has_server_hello_done(buf: &[u8]) -> bool {
     let mut offset = 0;
     while offset + 5 <= buf.len() {
-        let content_type = buf[offset];
-        let record_len = u16::from_be_bytes([buf[offset + 3], buf[offset + 4]]) as usize;
+        let Some(record_header) = buf
+            .get(offset..offset + 5)
+            .and_then(|header| <&[u8; 5]>::try_from(header).ok())
+        else {
+            break;
+        };
+        let content_type = record_header[0];
+        let record_len = u16::from_be_bytes([record_header[3], record_header[4]]) as usize;
         let record_end = offset + 5 + record_len;
         if record_end > buf.len() {
             break;
         }
         if content_type == 0x16 {
             let hs_start = offset + 5;
-            if hs_start < record_end && buf[hs_start] == 0x0e {
+            if hs_start < record_end && buf.get(hs_start) == Some(&0x0e) {
                 return true;
             }
         }
@@ -53,7 +59,10 @@ pub(super) async fn read_until_server_hello_done(
         if total >= buffer.len() {
             break;
         }
-        let n = match timeout(per_read_timeout, stream.read(&mut buffer[total..])).await {
+        let Some(read_buffer) = buffer.get_mut(total..) else {
+            break;
+        };
+        let n = match timeout(per_read_timeout, stream.read(read_buffer)).await {
             Ok(Ok(n)) => n,
             _ => break,
         };
@@ -61,7 +70,10 @@ pub(super) async fn read_until_server_hello_done(
             break;
         }
         total += n;
-        if has_server_hello_done(&buffer[..total]) {
+        let Some(accumulated) = buffer.get(..total) else {
+            break;
+        };
+        if has_server_hello_done(accumulated) {
             break;
         }
     }
@@ -105,7 +117,10 @@ mod tests {
     fn returns_false_when_record_truncated() {
         let full = handshake_record(0x0e, &[]);
         // Slice short of the full record → not detected yet.
-        assert!(!has_server_hello_done(&full[..6]));
+        assert!(!has_server_hello_done(
+            full.get(..6)
+                .expect("test record should have partial prefix")
+        ));
     }
 
     #[test]
