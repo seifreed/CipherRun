@@ -98,6 +98,11 @@ impl RevocationChecker {
                 // Read the 5-byte TLS record header to skip the entire record
                 let record_len = ((tls_handshake_data[offset + 3] as usize) << 8)
                     | (tls_handshake_data[offset + 4] as usize);
+                if offset + 5 + record_len > tls_handshake_data.len() {
+                    return Err(crate::TlsError::ParseError {
+                        message: "TLS record length exceeds available data".to_string(),
+                    });
+                }
                 offset += 5 + record_len;
                 continue;
             }
@@ -379,6 +384,15 @@ mod tests {
     fn test_check_ocsp_stapling_rejects_truncated_record() {
         let checker = RevocationChecker::new(true);
         let data = vec![0x16, 0x03, 0x03, 0x00, 0x10, 0x02, 0x00];
+
+        let err = checker.check_ocsp_stapling(&data).unwrap_err();
+        assert!(err.to_string().contains("TLS record length exceeds available data"));
+    }
+
+    #[test]
+    fn test_check_ocsp_stapling_rejects_truncated_alert_record() {
+        let checker = RevocationChecker::new(true);
+        let data = vec![0x15, 0x03, 0x03, 0x00, 0x05, 0x02];
 
         let err = checker.check_ocsp_stapling(&data).unwrap_err();
         assert!(err.to_string().contains("TLS record length exceeds available data"));
