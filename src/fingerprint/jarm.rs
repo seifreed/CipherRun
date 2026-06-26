@@ -23,6 +23,21 @@ use tokio::time::timeout;
 
 pub use super::jarm_probes::{JarmProbe, JarmProbeOptions, get_probes};
 
+fn read_u8_at(data: &[u8], offset: usize) -> Option<u8> {
+    data.get(offset).copied()
+}
+
+fn read_u16_at(data: &[u8], offset: usize) -> Option<u16> {
+    let bytes = data
+        .get(offset..offset + 2)
+        .and_then(|bytes| <[u8; 2]>::try_from(bytes).ok())?;
+    Some(u16::from_be_bytes(bytes))
+}
+
+fn slice_range(data: &[u8], start: usize, len: usize) -> Option<&[u8]> {
+    data.get(start..start.checked_add(len)?)
+}
+
 /// JARM fingerprint result
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct JarmFingerprint {
@@ -224,17 +239,20 @@ fn parse_server_hello(data: &[u8], _probe: &JarmProbe) -> Result<String> {
     }
 
     // Alert indicates failed handshake
-    if data[0] == 21 {
+    if read_u8_at(data, 0) == Some(21) {
         return Ok("|||".to_string());
     }
 
     // Not a ServerHello response (should be 22 = handshake, type 2 = server_hello)
-    if !(data[0] == 22 && data.len() > 5 && data[5] == 2) {
+    if !(read_u8_at(data, 0) == Some(22) && read_u8_at(data, 5) == Some(2)) {
         return Ok("|||".to_string());
     }
 
     // ServerHello length
-    let server_hello_length = u16::from_be_bytes([data[3], data[4]]) as usize;
+    let Some(server_hello_length) = read_u16_at(data, 3) else {
+        return Ok("|||".to_string());
+    };
+    let server_hello_length = server_hello_length as usize;
 
     // Too short
     if data.len() < 44 {
@@ -242,7 +260,10 @@ fn parse_server_hello(data: &[u8], _probe: &JarmProbe) -> Result<String> {
     }
 
     // Session ID length
-    let counter = data[43] as usize;
+    let Some(counter) = read_u8_at(data, 43) else {
+        return Ok("|||".to_string());
+    };
+    let counter = counter as usize;
     let cipher_offset = counter + 44;
 
     if data.len() < cipher_offset + 2 {
@@ -250,10 +271,16 @@ fn parse_server_hello(data: &[u8], _probe: &JarmProbe) -> Result<String> {
     }
 
     // Extract cipher
-    let server_cipher = hex::encode(&data[cipher_offset..cipher_offset + 2]);
+    let Some(server_cipher) = slice_range(data, cipher_offset, 2) else {
+        return Ok("|||".to_string());
+    };
+    let server_cipher = hex::encode(server_cipher);
 
     // Extract version
-    let server_version = hex::encode(&data[9..11]);
+    let Some(server_version) = slice_range(data, 9, 2) else {
+        return Ok("|||".to_string());
+    };
+    let server_version = hex::encode(server_version);
 
     // Extract extensions
     let server_ext = extract_extension_info(data, counter, server_hello_length)?;
@@ -284,14 +311,16 @@ fn extract_extension_info(
     // Check if the server sent no extensions by reading the full 2-byte extension length.
     // Previously this only checked data[offset + 47] == 0x0b, which collided with valid
     // extension lengths 0x0B00-0x0BFF (2816-3071 bytes).
-    let potential_ext_len = u16::from_be_bytes([data[offset + 47], data[offset + 48]]);
+    let Some(potential_ext_len) = read_u16_at(data, offset + 47) else {
+        return Ok("|".to_string());
+    };
     if potential_ext_len == 0 {
         return Ok("|".to_string());
     }
     // If the high byte looks like a Certificate handshake type (0x0b) AND the claimed
     // extension length exceeds available data, the server likely sent no extensions
     // and the next handshake record follows immediately.
-    if data[offset + 47] == 0x0b
+    if read_u8_at(data, offset + 47) == Some(0x0b)
         && (offset + 49).saturating_add(potential_ext_len as usize) > data.len()
     {
         return Ok("|".to_string());
@@ -310,11 +339,11 @@ fn extract_extension_info(
     }
 
     // Check for malformed responses
-    if offset + 53 <= data.len() && data[offset + 50..offset + 53] == [0x0e, 0xac, 0x0b] {
+    if slice_range(data, offset + 50, 3) == Some(&[0x0e, 0xac, 0x0b]) {
         return Ok("|".to_string());
     }
     // Secondary malformed check at fixed offset (original JARM reference)
-    if data.len() >= 85 && data[82..85] == [0x0f, 0xf0, 0x0b] {
+    if slice_range(data, 82, 3) == Some(&[0x0f, 0xf0, 0x0b]) {
         return Ok("|".to_string());
     }
 
@@ -337,10 +366,21 @@ fn extract_extension_info(
     // Improved bounds checking in extension iteration
     while ecnt < emax && ecnt + 4 <= data.len() {
         // Extension type (2 bytes)
-        let ext_type = [data[ecnt], data[ecnt + 1]];
+        let Some(ext_type) =
+            slice_range(data, ecnt, 2).and_then(|bytes| <[u8; 2]>::try_from(bytes).ok())
+        else {
+            return Err(TlsError::ParseError {
+                message: format!("Truncated JARM extension type at offset {}", ecnt),
+            });
+        };
 
         // Extension length (2 bytes)
-        let ext_len = u16::from_be_bytes([data[ecnt + 2], data[ecnt + 3]]) as usize;
+        let Some(ext_len) = read_u16_at(data, ecnt + 2) else {
+            return Err(TlsError::ParseError {
+                message: format!("Truncated JARM extension length at offset {}", ecnt),
+            });
+        };
+        let ext_len = ext_len as usize;
 
         // Check bounds for extension value
         // Use <= because next_cnt == data.len() is a valid end-of-data position
@@ -358,7 +398,12 @@ fn extract_extension_info(
         if ext_len == 0 {
             evals.push(Vec::new());
         } else {
-            evals.push(data[ecnt + 4..ecnt + 4 + ext_len].to_vec());
+            let Some(value) = slice_range(data, ecnt + 4, ext_len) else {
+                return Err(TlsError::ParseError {
+                    message: format!("Truncated JARM extension value at offset {}", ecnt),
+                });
+            };
+            evals.push(value.to_vec());
         }
         ecnt = next_cnt;
     }
@@ -374,17 +419,15 @@ fn extract_extension_info(
 
 /// Extract specific extension type value
 fn extract_extension_type(ext: &[u8], etypes: &[[u8; 2]], evals: &[Vec<u8>]) -> String {
-    for (i, etype) in etypes.iter().enumerate() {
-        if etype == ext && i < evals.len() {
-            let eval = &evals[i];
-
+    for (etype, eval) in etypes.iter().zip(evals) {
+        if etype == ext {
             // ALPN extension (0x0010)
             // Format: [2-byte list_len][1-byte proto_len][proto_name...]...
             if ext == [0x00, 0x10] && eval.len() >= 4 {
-                let proto_len = eval[2] as usize;
+                let proto_len = eval.get(2).copied().unwrap_or_default() as usize;
                 let proto_end = 3 + proto_len;
-                if proto_end <= eval.len() {
-                    return String::from_utf8_lossy(&eval[3..proto_end]).to_string();
+                if let Some(proto) = eval.get(3..proto_end) {
+                    return String::from_utf8_lossy(proto).to_string();
                 }
             }
 
@@ -424,15 +467,21 @@ fn raw_hash_to_fuzzy_hash(raw: &str) -> String {
     }
 
     for handshake in handshakes {
-        let comp: Vec<&str> = handshake.split('|').collect();
-        if comp.len() != 4 {
+        let mut comp = handshake.split('|');
+        let (Some(cipher), Some(version), Some(alpn), Some(extensions), None) = (
+            comp.next(),
+            comp.next(),
+            comp.next(),
+            comp.next(),
+            comp.next(),
+        ) else {
             return ZERO_HASH.to_string();
-        }
+        };
 
-        fhash.push_str(&extract_cipher_bytes(comp[0]));
-        fhash.push_str(&extract_version_byte(comp[1]));
-        alpex.push_str(comp[2]);
-        alpex.push_str(comp[3]);
+        fhash.push_str(&extract_cipher_bytes(cipher));
+        fhash.push_str(&extract_version_byte(version));
+        alpex.push_str(alpn);
+        alpex.push_str(extensions);
     }
 
     // Hash the ALPN and extensions portion
@@ -440,7 +489,7 @@ fn raw_hash_to_fuzzy_hash(raw: &str) -> String {
     let hash_hex = hex::encode(hash_result.as_ref());
 
     // Append first 32 characters of SHA256 hash
-    fhash.push_str(&hash_hex[0..32]);
+    fhash.push_str(hash_hex.get(..32).unwrap_or(&hash_hex));
 
     fhash
 }
@@ -526,7 +575,10 @@ fn extract_cipher_bytes(cipher_hex: &str) -> String {
 
     // Decode hex string
     let cipher_bytes = match hex::decode(cipher_hex) {
-        Ok(b) if b.len() == 2 => [b[0], b[1]],
+        Ok(bytes) => match <[u8; 2]>::try_from(bytes.as_slice()) {
+            Ok(bytes) => bytes,
+            Err(_) => return "00".to_string(),
+        },
         _ => return "00".to_string(),
     };
 
