@@ -39,6 +39,71 @@ pub enum RenegotiationSupport {
 }
 
 impl<'a> RenegotiationTester<'a> {
+    fn parse_error(message: &str) -> crate::TlsError {
+        crate::TlsError::ParseError {
+            message: message.to_string(),
+        }
+    }
+
+    fn read_u8_at(data: &[u8], offset: usize, context: &str) -> Result<u8> {
+        data.get(offset)
+            .copied()
+            .ok_or_else(|| Self::parse_error(context))
+    }
+
+    fn read_u16_at(data: &[u8], offset: usize, context: &str) -> Result<u16> {
+        let end = offset
+            .checked_add(2)
+            .ok_or_else(|| Self::parse_error(context))?;
+        let bytes = data
+            .get(offset..end)
+            .ok_or_else(|| Self::parse_error(context))?;
+        let bytes: [u8; 2] = bytes.try_into().map_err(|_| Self::parse_error(context))?;
+        Ok(u16::from_be_bytes(bytes))
+    }
+
+    fn slice_range<'b>(
+        data: &'b [u8],
+        start: usize,
+        len: usize,
+        context: &str,
+    ) -> Result<&'b [u8]> {
+        let end = start
+            .checked_add(len)
+            .ok_or_else(|| Self::parse_error(context))?;
+        data.get(start..end)
+            .ok_or_else(|| Self::parse_error(context))
+    }
+
+    fn write_u16_at(data: &mut [u8], offset: usize, value: u16, context: &str) -> Result<()> {
+        let bytes = value.to_be_bytes();
+        Self::slice_range_mut(data, offset, 2, context)?.copy_from_slice(&bytes);
+        Ok(())
+    }
+
+    fn write_u24_at(data: &mut [u8], offset: usize, value: usize, context: &str) -> Result<()> {
+        let bytes = [
+            ((value >> 16) & 0xff) as u8,
+            ((value >> 8) & 0xff) as u8,
+            (value & 0xff) as u8,
+        ];
+        Self::slice_range_mut(data, offset, 3, context)?.copy_from_slice(&bytes);
+        Ok(())
+    }
+
+    fn slice_range_mut<'b>(
+        data: &'b mut [u8],
+        start: usize,
+        len: usize,
+        context: &str,
+    ) -> Result<&'b mut [u8]> {
+        let end = start
+            .checked_add(len)
+            .ok_or_else(|| Self::parse_error(context))?;
+        data.get_mut(start..end)
+            .ok_or_else(|| Self::parse_error(context))
+    }
+
     pub fn new(target: &'a Target) -> Self {
         Self {
             target,
@@ -222,20 +287,20 @@ impl<'a> RenegotiationTester<'a> {
         match self.starttls_connect(addr, DEFAULT_READ_TIMEOUT).await {
             Ok(mut stream) => {
                 // Send ClientHello WITHOUT renegotiation_info extension
-                let client_hello = self.build_client_hello_without_reneg_info();
+                let client_hello = self.build_client_hello_without_reneg_info()?;
                 stream.write_all(&client_hello).await?;
 
                 // Read ServerHello
                 let mut buffer = vec![0u8; VULNERABILITY_CHECK_BUFFER_SIZE];
                 match timeout(SHORT_TIMEOUT, stream.read(&mut buffer)).await {
                     Ok(Ok(n)) if n > 0 => {
+                        let response = Self::slice_range(&buffer, 0, n, "renegotiation response")?;
                         // Check if server responded with a valid ServerHello
                         // If server responds but WITHOUT renegotiation_info,
                         // it may be vulnerable
-                        if buffer[0] == CONTENT_TYPE_HANDSHAKE && n > 5 {
+                        if response.first() == Some(&CONTENT_TYPE_HANDSHAKE) && response.len() > 5 {
                             // Check if server's ServerHello includes renegotiation_info
-                            let has_reneg_info =
-                                self.has_renegotiation_info_extension(&buffer[..n])?;
+                            let has_reneg_info = self.has_renegotiation_info_extension(response)?;
 
                             // Detection analysis:
                             // - Server sends ServerHello WITHOUT renegotiation_info extension:
@@ -287,7 +352,7 @@ impl<'a> RenegotiationTester<'a> {
         match self.starttls_connect(addr, DEFAULT_READ_TIMEOUT).await {
             Ok(mut stream) => {
                 // Send ClientHello
-                let client_hello = self.build_client_hello();
+                let client_hello = self.build_client_hello()?;
                 stream.write_all(&client_hello).await?;
 
                 // Read ServerHello
@@ -295,7 +360,8 @@ impl<'a> RenegotiationTester<'a> {
                 match timeout(SHORT_TIMEOUT, stream.read(&mut buffer)).await {
                     Ok(Ok(n)) if n > 0 => {
                         // Look for renegotiation_info extension (0xff01)
-                        let has_extension = self.has_renegotiation_info_extension(&buffer[..n])?;
+                        let response = Self::slice_range(&buffer, 0, n, "renegotiation response")?;
+                        let has_extension = self.has_renegotiation_info_extension(response)?;
                         Ok(Some(has_extension))
                     }
                     _ => Ok(None),
@@ -306,7 +372,7 @@ impl<'a> RenegotiationTester<'a> {
     }
 
     /// Build ClientHello with renegotiation_info extension
-    fn build_client_hello(&self) -> Vec<u8> {
+    fn build_client_hello(&self) -> Result<Vec<u8>> {
         let mut hello = Vec::new();
 
         // TLS Record: Handshake
@@ -366,26 +432,37 @@ impl<'a> RenegotiationTester<'a> {
 
         // Update extensions length
         let ext_len = hello.len() - ext_pos - 2;
-        hello[ext_pos] = ((ext_len >> 8) & 0xff) as u8;
-        hello[ext_pos + 1] = (ext_len & 0xff) as u8;
+        Self::write_u16_at(
+            &mut hello,
+            ext_pos,
+            ext_len as u16,
+            "ClientHello extensions length placeholder",
+        )?;
 
         // Update handshake length
         let hs_len = hello.len() - hs_len_pos - 3;
-        hello[hs_len_pos] = ((hs_len >> 16) & 0xff) as u8;
-        hello[hs_len_pos + 1] = ((hs_len >> 8) & 0xff) as u8;
-        hello[hs_len_pos + 2] = (hs_len & 0xff) as u8;
+        Self::write_u24_at(
+            &mut hello,
+            hs_len_pos,
+            hs_len,
+            "ClientHello handshake length placeholder",
+        )?;
 
         // Update record length
         let rec_len = hello.len() - len_pos - 2;
-        hello[len_pos] = ((rec_len >> 8) & 0xff) as u8;
-        hello[len_pos + 1] = (rec_len & 0xff) as u8;
+        Self::write_u16_at(
+            &mut hello,
+            len_pos,
+            rec_len as u16,
+            "ClientHello record length placeholder",
+        )?;
 
-        hello
+        Ok(hello)
     }
 
     /// Build ClientHello WITHOUT renegotiation_info extension
     /// Used to test for insecure renegotiation (CVE-2009-3555)
-    fn build_client_hello_without_reneg_info(&self) -> Vec<u8> {
+    fn build_client_hello_without_reneg_info(&self) -> Result<Vec<u8>> {
         let mut hello = Vec::new();
 
         // TLS Record: Handshake
@@ -435,16 +512,23 @@ impl<'a> RenegotiationTester<'a> {
 
         // Update handshake length
         let hs_len = hello.len() - hs_len_pos - 3;
-        hello[hs_len_pos] = ((hs_len >> 16) & 0xff) as u8;
-        hello[hs_len_pos + 1] = ((hs_len >> 8) & 0xff) as u8;
-        hello[hs_len_pos + 2] = (hs_len & 0xff) as u8;
+        Self::write_u24_at(
+            &mut hello,
+            hs_len_pos,
+            hs_len,
+            "ClientHello handshake length placeholder",
+        )?;
 
         // Update record length
         let rec_len = hello.len() - len_pos - 2;
-        hello[len_pos] = ((rec_len >> 8) & 0xff) as u8;
-        hello[len_pos + 1] = (rec_len & 0xff) as u8;
+        Self::write_u16_at(
+            &mut hello,
+            len_pos,
+            rec_len as u16,
+            "ClientHello record length placeholder",
+        )?;
 
-        hello
+        Ok(hello)
     }
 
     /// Check if ServerHello response contains renegotiation_info extension (0xff01).
@@ -456,13 +540,14 @@ impl<'a> RenegotiationTester<'a> {
 
         // Minimum ServerHello: 5 (record) + 4 (handshake) + 2 (version) + 32 (random) + 1 (sid len) = 44
         if response.len() < 44
-            || response[0] != CONTENT_TYPE_HANDSHAKE
-            || response[5] != HANDSHAKE_TYPE_SERVER_HELLO
+            || response.first() != Some(&CONTENT_TYPE_HANDSHAKE)
+            || Self::read_u8_at(response, 5, "ServerHello handshake type")?
+                != HANDSHAKE_TYPE_SERVER_HELLO
         {
             return Ok(false);
         }
 
-        let record_len = u16::from_be_bytes([response[3], response[4]]) as usize;
+        let record_len = Self::read_u16_at(response, 3, "TLS record length")? as usize;
         let record_end = 5 + record_len;
         if record_end > response.len() {
             return Err(crate::TlsError::ParseError {
@@ -478,7 +563,8 @@ impl<'a> RenegotiationTester<'a> {
                 message: "ServerHello truncated before session_id_len".to_string(),
             });
         }
-        let sid_len = response[sid_len_offset] as usize;
+        let sid_len =
+            Self::read_u8_at(response, sid_len_offset, "ServerHello session_id_len")? as usize;
 
         // After session_id: cipher_suite(2) + compression(1) + extensions_length(2)
         let ext_len_offset = sid_len_offset + 1 + sid_len + 2 + 1;
@@ -488,7 +574,7 @@ impl<'a> RenegotiationTester<'a> {
             });
         }
         let ext_total =
-            u16::from_be_bytes([response[ext_len_offset], response[ext_len_offset + 1]]) as usize;
+            Self::read_u16_at(response, ext_len_offset, "ServerHello extensions length")? as usize;
 
         // Search only within the extensions section
         let ext_start = ext_len_offset + 2;
@@ -511,8 +597,9 @@ impl<'a> RenegotiationTester<'a> {
         // to avoid false positives from extension data containing 0xff01
         let mut pos = ext_start;
         while pos + 4 <= ext_end {
-            let ext_type = u16::from_be_bytes([response[pos], response[pos + 1]]);
-            let ext_len = u16::from_be_bytes([response[pos + 2], response[pos + 3]]) as usize;
+            let ext_type = Self::read_u16_at(response, pos, "ServerHello extension type")?;
+            let ext_len =
+                Self::read_u16_at(response, pos + 2, "ServerHello extension length")? as usize;
             if pos + 4 + ext_len > ext_end {
                 return Err(crate::TlsError::ParseError {
                     message: "ServerHello truncated in renegotiation extension data".to_string(),
@@ -551,6 +638,26 @@ pub struct RenegotiationTestResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn patch_test_server_hello_lengths(response: &mut [u8]) {
+        let rec_len = (response.len() - 5) as u16;
+        RenegotiationTester::write_u16_at(
+            response,
+            3,
+            rec_len,
+            "test ServerHello record length placeholder",
+        )
+        .expect("test ServerHello should contain record length placeholder");
+
+        let hs_len = response.len() - 9;
+        RenegotiationTester::write_u24_at(
+            response,
+            6,
+            hs_len,
+            "test ServerHello handshake length placeholder",
+        )
+        .expect("test ServerHello should contain handshake length placeholder");
+    }
 
     #[test]
     fn test_renegotiation_result() {
@@ -635,7 +742,9 @@ mod tests {
         .unwrap();
 
         let tester = RenegotiationTester::new(&target);
-        let hello = tester.build_client_hello();
+        let hello = tester
+            .build_client_hello()
+            .expect("ClientHello should build");
 
         assert!(hello.len() > 50);
         // Check for renegotiation_info extension (0xff01)
@@ -687,15 +796,7 @@ mod tests {
         // Extension: renegotiation_info (0xff01), length=1, data=0x00
         response.extend_from_slice(&[0xff, 0x01, 0x00, 0x01, 0x00]);
 
-        // Patch record length
-        let rec_len = (response.len() - 5) as u16;
-        response[3] = (rec_len >> 8) as u8;
-        response[4] = (rec_len & 0xff) as u8;
-        // Patch handshake length
-        let hs_len = (response.len() - 9) as u32;
-        response[6] = ((hs_len >> 16) & 0xff) as u8;
-        response[7] = ((hs_len >> 8) & 0xff) as u8;
-        response[8] = (hs_len & 0xff) as u8;
+        patch_test_server_hello_lengths(&mut response);
 
         assert!(tester.has_renegotiation_info_extension(&response).unwrap());
     }
@@ -709,10 +810,13 @@ mod tests {
         )
         .unwrap();
         let tester = RenegotiationTester::new(&target);
-        let hello = tester.build_client_hello();
+        let hello = tester
+            .build_client_hello()
+            .expect("ClientHello should build");
         assert!(hello.len() > 10);
 
-        let rec_len = u16::from_be_bytes([hello[3], hello[4]]) as usize;
+        let rec_len = RenegotiationTester::read_u16_at(&hello, 3, "ClientHello record length")
+            .unwrap() as usize;
         assert_eq!(rec_len, hello.len() - 5);
     }
 
@@ -747,13 +851,7 @@ mod tests {
         response.push(0x00);
         response.extend_from_slice(&[0x00, 0x05, 0xff, 0x01, 0x00, 0x02, 0x01]);
 
-        let rec_len = (response.len() - 5) as u16;
-        response[3] = (rec_len >> 8) as u8;
-        response[4] = (rec_len & 0xff) as u8;
-        let hs_len = (response.len() - 9) as u32;
-        response[6] = ((hs_len >> 16) & 0xff) as u8;
-        response[7] = ((hs_len >> 8) & 0xff) as u8;
-        response[8] = (hs_len & 0xff) as u8;
+        patch_test_server_hello_lengths(&mut response);
 
         let err = tester
             .has_renegotiation_info_extension(&response)
@@ -786,13 +884,7 @@ mod tests {
         response.extend_from_slice(&[0x00, 0x06]); // claims 6 bytes of extensions
         response.extend_from_slice(&[0xff, 0x01, 0x00, 0x01]); // missing final data byte
 
-        let rec_len = (response.len() - 5) as u16;
-        response[3] = (rec_len >> 8) as u8;
-        response[4] = (rec_len & 0xff) as u8;
-        let hs_len = (response.len() - 9) as u32;
-        response[6] = ((hs_len >> 16) & 0xff) as u8;
-        response[7] = ((hs_len >> 8) & 0xff) as u8;
-        response[8] = (hs_len & 0xff) as u8;
+        patch_test_server_hello_lengths(&mut response);
 
         let err = tester
             .has_renegotiation_info_extension(&response)
@@ -825,13 +917,7 @@ mod tests {
         response.extend_from_slice(&[0x00, 0x00]); // no extensions
         response.push(0xff); // trailing byte inside the record
 
-        let rec_len = (response.len() - 5) as u16;
-        response[3] = (rec_len >> 8) as u8;
-        response[4] = (rec_len & 0xff) as u8;
-        let hs_len = (response.len() - 9) as u32;
-        response[6] = ((hs_len >> 16) & 0xff) as u8;
-        response[7] = ((hs_len >> 8) & 0xff) as u8;
-        response[8] = (hs_len & 0xff) as u8;
+        patch_test_server_hello_lengths(&mut response);
 
         let err = tester
             .has_renegotiation_info_extension(&response)
@@ -863,13 +949,7 @@ mod tests {
         response.push(0x00);
         response.extend_from_slice(&[0x00, 0x03, 0x00, 0x01, 0x00]); // partial extension header
 
-        let rec_len = (response.len() - 5) as u16;
-        response[3] = (rec_len >> 8) as u8;
-        response[4] = (rec_len & 0xff) as u8;
-        let hs_len = (response.len() - 9) as u32;
-        response[6] = ((hs_len >> 16) & 0xff) as u8;
-        response[7] = ((hs_len >> 8) & 0xff) as u8;
-        response[8] = (hs_len & 0xff) as u8;
+        patch_test_server_hello_lengths(&mut response);
 
         let err = tester
             .has_renegotiation_info_extension(&response)

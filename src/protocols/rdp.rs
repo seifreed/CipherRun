@@ -39,9 +39,11 @@ impl RdpPreamble {
             tls_bail!("RDP response too short");
         }
 
-        let response = response.get(..n).ok_or_else(|| crate::TlsError::ParseError {
-            message: "RDP response read length exceeded buffer".to_string(),
-        })?;
+        let response = response
+            .get(..n)
+            .ok_or_else(|| crate::TlsError::ParseError {
+                message: "RDP response read length exceeded buffer".to_string(),
+            })?;
 
         let declared_len = response
             .get(2..4)
