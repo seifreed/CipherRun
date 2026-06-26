@@ -362,10 +362,12 @@ fn has_capability_token(line: &str, marker: &str) -> bool {
 fn strip_status_prefix(token: &str) -> &str {
     let bytes = token.as_bytes();
     if bytes.len() > 4
-        && bytes[..3].iter().all(u8::is_ascii_digit)
-        && matches!(bytes[3], b'-' | b' ')
+        && bytes
+            .get(..3)
+            .is_some_and(|prefix| prefix.iter().all(u8::is_ascii_digit))
+        && matches!(bytes.get(3), Some(b'-' | b' '))
     {
-        &token[4..]
+        token.get(4..).unwrap_or(token)
     } else {
         token
     }

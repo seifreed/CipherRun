@@ -31,7 +31,12 @@ impl XmppNegotiator {
                 });
             }
 
-            let chunk = String::from_utf8_lossy(&buffer[..n]);
+            let bytes = buffer
+                .get(..n)
+                .ok_or_else(|| crate::error::TlsError::ParseError {
+                    message: "XMPP STARTTLS response read length exceeded buffer".to_string(),
+                })?;
+            let chunk = String::from_utf8_lossy(bytes);
             accumulated.push_str(&chunk);
 
             if accumulated.contains(tag) {

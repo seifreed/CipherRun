@@ -80,7 +80,13 @@ impl StarttlsNegotiator for MysqlNegotiator {
         // Layout: protocol_version(1) + server_version(NUL-terminated) +
         //         connection_id(4) + auth_plugin_data_part_1(8) + filler(1) +
         //         capability_flags_lower(2)
-        if handshake.is_empty() || handshake[0] != 0x0a {
+        let Some((&protocol_version, handshake_rest)) = handshake.split_first() else {
+            return Err(crate::error::TlsError::StarttlsError {
+                protocol: "MySQL".to_string(),
+                details: "Empty MySQL handshake packet".to_string(),
+            });
+        };
+        if protocol_version != 0x0a {
             return Err(crate::error::TlsError::StarttlsError {
                 protocol: "MySQL".to_string(),
                 details: "Not a MySQL Handshake v10 packet".to_string(),
@@ -88,7 +94,7 @@ impl StarttlsNegotiator for MysqlNegotiator {
         }
 
         // Find end of null-terminated server version string
-        let version_end = handshake[1..].iter().position(|&b| b == 0).ok_or_else(|| {
+        let version_end = handshake_rest.iter().position(|&b| b == 0).ok_or_else(|| {
             crate::error::TlsError::StarttlsError {
                 protocol: "MySQL".to_string(),
                 details: "Malformed handshake: no null terminator in version string".to_string(),
@@ -103,7 +109,20 @@ impl StarttlsNegotiator for MysqlNegotiator {
             });
         }
 
-        let capabilities = u16::from_le_bytes([handshake[cap_offset], handshake[cap_offset + 1]]);
+        let cap_bytes = handshake.get(cap_offset..cap_offset + 2).ok_or_else(|| {
+            crate::error::TlsError::StarttlsError {
+                protocol: "MySQL".to_string(),
+                details: "Handshake packet too short for capability flags".to_string(),
+            }
+        })?;
+        let cap_bytes: [u8; 2] =
+            cap_bytes
+                .try_into()
+                .map_err(|_| crate::error::TlsError::StarttlsError {
+                    protocol: "MySQL".to_string(),
+                    details: "Handshake packet too short for capability flags".to_string(),
+                })?;
+        let capabilities = u16::from_le_bytes(cap_bytes);
         const CLIENT_SSL: u16 = 0x0800;
 
         if capabilities & CLIENT_SSL == 0 {
@@ -118,13 +137,30 @@ impl StarttlsNegotiator for MysqlNegotiator {
 
         // Client capabilities (4 bytes) - include CLIENT_SSL
         let client_caps: u32 = 0x0000A685 | (CLIENT_SSL as u32);
-        ssl_request[0..4].copy_from_slice(&client_caps.to_le_bytes());
+        ssl_request
+            .get_mut(0..4)
+            .ok_or_else(|| crate::error::TlsError::StarttlsError {
+                protocol: "MySQL".to_string(),
+                details: "SSL request missing capability field".to_string(),
+            })?
+            .copy_from_slice(&client_caps.to_le_bytes());
 
         // Max packet size (4 bytes)
-        ssl_request[4..8].copy_from_slice(&0x01000000u32.to_le_bytes());
+        ssl_request
+            .get_mut(4..8)
+            .ok_or_else(|| crate::error::TlsError::StarttlsError {
+                protocol: "MySQL".to_string(),
+                details: "SSL request missing max packet size field".to_string(),
+            })?
+            .copy_from_slice(&0x01000000u32.to_le_bytes());
 
         // Character set (1 byte) - utf8mb4
-        ssl_request[8] = 45;
+        *ssl_request
+            .get_mut(8)
+            .ok_or_else(|| crate::error::TlsError::StarttlsError {
+                protocol: "MySQL".to_string(),
+                details: "SSL request missing character set field".to_string(),
+            })? = 45;
 
         // Reserved (23 bytes of zeros already in vec)
 

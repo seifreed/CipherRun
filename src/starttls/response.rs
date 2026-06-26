@@ -59,8 +59,10 @@ where
     // a multi-byte UTF-8 character crosses byte index 3 (e.g. a hostile greeting
     // beginning with a non-ASCII char). Byte slicing is panic-free; non-digit or
     // non-UTF-8 prefixes fall through to the ParseError below.
-    let code: u16 = std::str::from_utf8(&line.as_bytes()[..3])
-        .ok()
+    let code: u16 = line
+        .as_bytes()
+        .get(..3)
+        .and_then(|prefix| std::str::from_utf8(prefix).ok())
         .and_then(|prefix| prefix.parse().ok())
         .ok_or_else(|| crate::error::TlsError::ParseError {
             message: format!("Invalid {} status code", protocol_name),

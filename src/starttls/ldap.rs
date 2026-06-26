@@ -61,12 +61,17 @@ impl StarttlsNegotiator for LdapNegotiator {
         // LDAP response should contain resultCode = success (0)
         // Simplified check: look for success indicator in response
         if n >= 10 {
+            let response = response
+                .get(..n)
+                .ok_or_else(|| crate::error::TlsError::ParseError {
+                    message: "LDAP STARTTLS response read length exceeded buffer".to_string(),
+                })?;
             // Check if response contains ExtendedResponse (tag 0x78)
             // and resultCode = 0 (success)
             // LDAP ExtendedResponse structure:
             // [0x30, len, 0x02, 0x01, msgid, 0x78, len, 0x0a, 0x01, resultCode]
             // resultCode (success = 0x00) is at offset 9
-            if response[5] == 0x78 && response[9] == 0x00 {
+            if response.get(5) == Some(&0x78) && response.get(9) == Some(&0x00) {
                 return Ok(());
             }
         }
