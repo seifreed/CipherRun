@@ -101,7 +101,10 @@ impl CertificateAdvancedTester {
         // Add SNI certificate
         if let Ok(cert) = cert_with_sni {
             // Only add if different from no-SNI cert
-            if certificates.is_empty() || cert.fingerprint != certificates[0].fingerprint {
+            if certificates
+                .first()
+                .is_none_or(|existing| cert.fingerprint != existing.fingerprint)
+            {
                 certificates.push(cert);
             }
         }
@@ -452,7 +455,10 @@ fn extract_certificate_info(cert: &X509) -> Result<CertificateInfo> {
                     // (4 for IPv4, 16 for IPv6), not text — format them as an
                     // address rather than lossy-decoding the bytes as UTF-8.
                     name.ipaddress().map(|ip| match ip.len() {
-                        4 => format!("IP:{}", std::net::Ipv4Addr::new(ip[0], ip[1], ip[2], ip[3])),
+                        4 => <[u8; 4]>::try_from(ip)
+                            .map(std::net::Ipv4Addr::from)
+                            .map(|addr| format!("IP:{addr}"))
+                            .unwrap_or_else(|_| format!("IP:{}", hex::encode(ip))),
                         16 => {
                             let mut octets = [0u8; 16];
                             octets.copy_from_slice(ip);
