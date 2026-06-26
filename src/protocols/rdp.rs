@@ -39,7 +39,17 @@ impl RdpPreamble {
             tls_bail!("RDP response too short");
         }
 
-        let declared_len = u16::from_be_bytes([response[2], response[3]]) as usize;
+        let response = response.get(..n).ok_or_else(|| crate::TlsError::ParseError {
+            message: "RDP response read length exceeded buffer".to_string(),
+        })?;
+
+        let declared_len = response
+            .get(2..4)
+            .and_then(|bytes| <[u8; 2]>::try_from(bytes).ok())
+            .map(u16::from_be_bytes)
+            .ok_or_else(|| crate::TlsError::ParseError {
+                message: "RDP response length field truncated".to_string(),
+            })? as usize;
         if declared_len != n {
             tls_bail!(
                 "Invalid RDP response: declared length {} does not match received {}",
@@ -49,12 +59,12 @@ impl RdpPreamble {
         }
 
         // Verify TPKT header
-        if response[0] != 0x03 {
+        if response.first() != Some(&0x03) {
             tls_bail!("Invalid RDP response: not a TPKT packet");
         }
 
         // Check for CC_TPDU (Connection Confirm)
-        if response[5] != 0xD0 {
+        if response.get(5) != Some(&0xD0) {
             tls_bail!("Invalid RDP response: expected CC_TPDU");
         }
 
