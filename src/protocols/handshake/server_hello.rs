@@ -18,48 +18,52 @@ impl ServerHelloParser {
         }
         // Compute record boundary from the TLS record header length field
         let record_len = u16::from_be_bytes([data[3], data[4]]) as usize;
-        let record_end = (5 + record_len).min(data.len());
+        let record_end = 5 + record_len;
+        if record_end > data.len() {
+            crate::tls_bail!("ServerHello record length exceeds available data");
+        }
+        let record = &data[..record_end];
         offset += 5;
 
-        if data[offset] != HANDSHAKE_TYPE_SERVER_HELLO {
+        if record[offset] != HANDSHAKE_TYPE_SERVER_HELLO {
             crate::tls_bail!("Not a ServerHello");
         }
         offset += 1;
         offset += 3;
 
-        let version = u16::from_be_bytes([data[offset], data[offset + 1]]);
+        let version = u16::from_be_bytes([record[offset], record[offset + 1]]);
         offset += 2;
 
         let mut random = [0u8; 32];
-        random.copy_from_slice(&data[offset..offset + 32]);
+        random.copy_from_slice(&record[offset..offset + 32]);
         offset += 32;
 
         // Session ID length with bounds check
-        if offset >= data.len() {
+        if offset >= record.len() {
             crate::tls_bail!("ServerHello truncated before session_id_len");
         }
-        let session_id_len = data[offset] as usize;
+        let session_id_len = record[offset] as usize;
         offset += 1;
 
         // Validate session_id_len before using it
-        if offset + session_id_len > data.len() {
+        if offset + session_id_len > record.len() {
             crate::tls_bail!("ServerHello session_id extends beyond data");
         }
-        let session_id = data[offset..offset + session_id_len].to_vec();
+        let session_id = record[offset..offset + session_id_len].to_vec();
         offset += session_id_len;
 
         // Cipher suite (2 bytes)
-        if offset + 2 > data.len() {
+        if offset + 2 > record.len() {
             crate::tls_bail!("ServerHello truncated before cipher_suite");
         }
-        let cipher_suite = u16::from_be_bytes([data[offset], data[offset + 1]]);
+        let cipher_suite = u16::from_be_bytes([record[offset], record[offset + 1]]);
         offset += 2;
 
         // Compression method (1 byte)
-        if offset >= data.len() {
+        if offset >= record.len() {
             crate::tls_bail!("ServerHello truncated before compression");
         }
-        let compression = data[offset];
+        let compression = record[offset];
         offset += 1;
 
         let mut extensions = Vec::new();
@@ -71,23 +75,23 @@ impl ServerHelloParser {
         // 0x0303 (TLS 1.2). Track the real negotiated version here.
         let mut negotiated_version = None;
 
-        if offset + 2 <= data.len() {
-            let ext_len = u16::from_be_bytes([data[offset], data[offset + 1]]) as usize;
+        if offset + 2 <= record.len() {
+            let ext_len = u16::from_be_bytes([record[offset], record[offset + 1]]) as usize;
             offset += 2;
 
             let ext_end = offset + ext_len;
-            if ext_end > record_end || ext_end > data.len() {
+            if ext_end > record.len() {
                 crate::tls_bail!("ServerHello extension block extends beyond declared length");
             }
             while offset < ext_end && offset + 4 <= ext_end {
-                let ext_type = u16::from_be_bytes([data[offset], data[offset + 1]]);
+                let ext_type = u16::from_be_bytes([record[offset], record[offset + 1]]);
                 offset += 2;
 
-                let ext_data_len = u16::from_be_bytes([data[offset], data[offset + 1]]) as usize;
+                let ext_data_len = u16::from_be_bytes([record[offset], record[offset + 1]]) as usize;
                 offset += 2;
 
                 if offset + ext_data_len <= ext_end {
-                    let ext_data = data[offset..offset + ext_data_len].to_vec();
+                    let ext_data = record[offset..offset + ext_data_len].to_vec();
 
                     if ext_type == 0x0005 {
                         ocsp_stapling_detected = Some(true);
@@ -178,6 +182,16 @@ impl ServerHello {
 mod tests {
     use super::*;
 
+    fn patch_lengths(server_hello: &mut [u8]) {
+        let record_len = (server_hello.len() - 5) as u16;
+        server_hello[3] = (record_len >> 8) as u8;
+        server_hello[4] = (record_len & 0xff) as u8;
+        let hs_len = (server_hello.len() - 9) as u32;
+        server_hello[6] = ((hs_len >> 16) & 0xff) as u8;
+        server_hello[7] = ((hs_len >> 8) & 0xff) as u8;
+        server_hello[8] = (hs_len & 0xff) as u8;
+    }
+
     #[test]
     fn test_server_hello_ocsp_stapling_detected() {
         let mut server_hello = vec![
@@ -188,6 +202,7 @@ mod tests {
         server_hello.extend_from_slice(&[0xc0, 0x2f]);
         server_hello.push(0x00);
         server_hello.extend_from_slice(&[0x00, 0x05, 0x00, 0x05, 0x00, 0x01, 0x00]);
+        patch_lengths(&mut server_hello);
 
         let parsed =
             ServerHelloParser::parse(&server_hello).expect("test assertion should succeed");
@@ -207,6 +222,7 @@ mod tests {
         server_hello.push(0x00);
         server_hello
             .extend_from_slice(&[0x00, 0x08, 0x00, 0x00, 0x00, 0x04, 0x00, 0x02, 0x00, 0x00]);
+        patch_lengths(&mut server_hello);
 
         let parsed =
             ServerHelloParser::parse(&server_hello).expect("test assertion should succeed");
@@ -224,6 +240,7 @@ mod tests {
         server_hello.push(0x00);
         server_hello.extend_from_slice(&[0xc0, 0x2f]);
         server_hello.push(0x00);
+        patch_lengths(&mut server_hello);
 
         let parsed =
             ServerHelloParser::parse(&server_hello).expect("test assertion should succeed");
@@ -243,6 +260,7 @@ mod tests {
         server_hello.extend_from_slice(&[0xc0, 0x2f]);
         server_hello.push(0x00);
         server_hello.extend_from_slice(&[0x00, 0x05, 0x00, 0x0f, 0x00, 0x01, 0x01]);
+        patch_lengths(&mut server_hello);
 
         let parsed =
             ServerHelloParser::parse(&server_hello).expect("test assertion should succeed");
@@ -262,6 +280,7 @@ mod tests {
         server_hello.push(0x00);
         server_hello
             .extend_from_slice(&[0x00, 0x08, 0x00, 0x0b, 0x00, 0x04, 0x01, 0x00, 0x00, 0x00]);
+        patch_lengths(&mut server_hello);
 
         let parsed =
             ServerHelloParser::parse(&server_hello).expect("test assertion should succeed");
@@ -283,6 +302,7 @@ mod tests {
         server_hello.push(0x00); // compression
         // extensions: length 6, supported_versions (0x002b) body 0x0304
         server_hello.extend_from_slice(&[0x00, 0x06, 0x00, 0x2b, 0x00, 0x02, 0x03, 0x04]);
+        patch_lengths(&mut server_hello);
 
         let parsed =
             ServerHelloParser::parse(&server_hello).expect("test assertion should succeed");
@@ -302,6 +322,7 @@ mod tests {
         server_hello.extend_from_slice(&[
             0x00, 0x0a, 0x00, 0x05, 0x00, 0x01, 0x00, 0x00, 0x0f, 0x00, 0x01, 0x01,
         ]);
+        patch_lengths(&mut server_hello);
 
         let parsed =
             ServerHelloParser::parse(&server_hello).expect("test assertion should succeed");
@@ -321,6 +342,7 @@ mod tests {
         server_hello.extend_from_slice(&[0xc0, 0x2f]);
         server_hello.push(0x00);
         server_hello.extend_from_slice(&[0x00, 0x04, 0x00, 0x05, 0x00, 0x02, 0x01]);
+        patch_lengths(&mut server_hello);
 
         let err = ServerHelloParser::parse(&server_hello).unwrap_err();
         assert!(format!("{err}").contains("extension data extends beyond declared length"));
@@ -347,5 +369,19 @@ mod tests {
 
         let err = ServerHelloParser::parse(&server_hello).unwrap_err();
         assert!(format!("{err}").contains("extension block extends beyond declared length"));
+    }
+
+    #[test]
+    fn test_server_hello_rejects_inflated_record_length() {
+        let mut server_hello = vec![
+            0x16, 0x03, 0x03, 0x00, 0x40, 0x02, 0x00, 0x00, 0x3c, 0x03, 0x03,
+        ];
+        server_hello.extend_from_slice(&[0u8; 32]);
+        server_hello.push(0x00);
+        server_hello.extend_from_slice(&[0xc0, 0x2f]);
+        server_hello.push(0x00);
+
+        let err = ServerHelloParser::parse(&server_hello).unwrap_err();
+        assert!(format!("{err}").contains("record length exceeds available data"));
     }
 }
