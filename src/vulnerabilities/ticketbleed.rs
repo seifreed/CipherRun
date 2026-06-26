@@ -219,9 +219,14 @@ impl TicketbleedTester {
                     let hs_len = ((response[hs_start + 1] as usize) << 16)
                         | ((response[hs_start + 2] as usize) << 8)
                         | (response[hs_start + 3] as usize);
+                    let hs_end = hs_start + 4 + hs_len;
+                    if hs_end > record_end {
+                        offset = record_end;
+                        continue;
+                    }
 
                     let ticket_len_offset = hs_start + 4 + 4; // skip type+length+lifetime
-                    if ticket_len_offset + 2 > response.len() {
+                    if ticket_len_offset + 2 > hs_end {
                         offset = record_end;
                         continue;
                     }
@@ -234,10 +239,7 @@ impl TicketbleedTester {
                     let ticket_end = ticket_start
                         .checked_add(ticket_len)
                         .filter(|&end| end <= response.len())
-                        .filter(|&end| {
-                            let ticket_msg_end = hs_start + 4 + hs_len;
-                            end <= ticket_msg_end && end <= record_end
-                        })
+                        .filter(|&end| end <= hs_end && end <= record_end)
                         .filter(|_| ticket_len > 0 && ticket_len <= hs_len)?;
                     return Some(response[ticket_start..ticket_end].to_vec());
                 }
@@ -485,6 +487,33 @@ mod tests {
 
         let tester = TicketbleedTester::new(target);
         assert!(!tester.parse_new_session_ticket(&[0x16, 0x03]).unwrap());
+    }
+
+    #[test]
+    fn test_extract_session_ticket_ignores_trailing_bytes_after_truncated_ticket() {
+        let tester = TicketbleedTester::new(ticketbleed_test_target());
+        let mut response = vec![
+            CONTENT_TYPE_HANDSHAKE,
+            0x03,
+            0x03,
+            0x00,
+            0x20, // record length 32
+            0x04,
+            0x00,
+            0x00,
+            0x04, // NewSessionTicket handshake length 4
+            0x00,
+            0x00,
+            0x00,
+            0x01, // lifetime
+            0x00,
+            0x02, // bytes outside the declared handshake body
+            0xaa,
+            0xbb, // ticket bytes that should be ignored
+        ];
+        response.extend_from_slice(&[0xcc; 16]); // trailing record bytes
+
+        assert!(tester.extract_session_ticket(&response).is_none());
     }
 
     #[test]
