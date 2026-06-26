@@ -8,6 +8,10 @@ use cipherrun::protocols::Protocol;
 use cipherrun::scanner::ScanResults;
 use std::path::PathBuf;
 
+fn persisted_scan(results: &ScanResults) -> PersistedScan {
+    PersistedScan::from_scan_results(results).expect("scan results should convert for persistence")
+}
+
 #[tokio::test]
 async fn test_sqlite_database_creation() {
     let config = DatabaseConfig::sqlite(common::sqlite::unique_sqlite_db_path("cipherruntest"));
@@ -48,10 +52,7 @@ async fn test_scan_storage_and_retrieval() {
         });
 
     // Store scan
-    let scan_id = db
-        .store_scan(&PersistedScan::from_scan_results(&results))
-        .await
-        .unwrap();
+    let scan_id = db.store_scan(&persisted_scan(&results)).await.unwrap();
     assert!(scan_id > 0);
 
     // Retrieve scan
@@ -75,9 +76,7 @@ async fn test_scan_history_limit() {
             scan_time_ms: i * 100,
             ..Default::default()
         };
-        db.store_scan(&PersistedScan::from_scan_results(&results))
-            .await
-            .unwrap();
+        db.store_scan(&persisted_scan(&results)).await.unwrap();
     }
 
     // Query with limit
@@ -102,9 +101,7 @@ async fn test_scan_history_rejects_non_positive_limit() {
             scan_time_ms: i * 100,
             ..Default::default()
         };
-        db.store_scan(&PersistedScan::from_scan_results(&results))
-            .await
-            .unwrap();
+        db.store_scan(&persisted_scan(&results)).await.unwrap();
     }
 
     let zero_error = db
@@ -140,9 +137,7 @@ async fn test_top_domains_rejects_invalid_scan_timestamp() {
         scan_time_ms: 100,
         ..Default::default()
     };
-    db.store_scan(&PersistedScan::from_scan_results(&results))
-        .await
-        .unwrap();
+    db.store_scan(&persisted_scan(&results)).await.unwrap();
     db.pool()
         .execute(
             "UPDATE scans SET scan_timestamp = ? WHERE target_hostname = ?",
@@ -179,9 +174,7 @@ async fn test_latest_scan_retrieval() {
             scan_time_ms: i * 1000,
             ..Default::default()
         };
-        db.store_scan(&PersistedScan::from_scan_results(&results))
-            .await
-            .unwrap();
+        db.store_scan(&persisted_scan(&results)).await.unwrap();
 
         // Small delay to ensure different timestamps
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
@@ -223,9 +216,7 @@ async fn test_cleanup_old_scans() {
         scan_time_ms: 1000,
         ..Default::default()
     };
-    db.store_scan(&PersistedScan::from_scan_results(&results))
-        .await
-        .unwrap();
+    db.store_scan(&persisted_scan(&results)).await.unwrap();
 
     // Cleanup scans older than 0 days (should delete all)
     let deleted = db.cleanup_old_scans(0).await.unwrap();
@@ -278,9 +269,7 @@ async fn test_cleanup_old_scans_preserves_recent_history_lookup() {
         scan_time_ms: 1000,
         ..Default::default()
     };
-    db.store_scan(&PersistedScan::from_scan_results(&results))
-        .await
-        .unwrap();
+    db.store_scan(&persisted_scan(&results)).await.unwrap();
 
     let _deleted = db.cleanup_old_scans(365).await.unwrap();
     let latest = db.get_latest_scan("recent.com", 443).await.unwrap();
@@ -376,9 +365,7 @@ async fn test_protocol_storage() {
         });
 
     // Store scan
-    db.store_scan(&PersistedScan::from_scan_results(&results))
-        .await
-        .unwrap();
+    db.store_scan(&persisted_scan(&results)).await.unwrap();
 
     db.close().await;
 }
@@ -420,9 +407,7 @@ async fn test_vulnerability_storage() {
         });
 
     // Store scan (only vulnerable items should be stored)
-    db.store_scan(&PersistedScan::from_scan_results(&results))
-        .await
-        .unwrap();
+    db.store_scan(&persisted_scan(&results)).await.unwrap();
 
     db.close().await;
 }
@@ -459,9 +444,7 @@ async fn test_multiple_scans_same_target() {
             scan_time_ms: i * 500,
             ..Default::default()
         };
-        db.store_scan(&PersistedScan::from_scan_results(&results))
-            .await
-            .unwrap();
+        db.store_scan(&persisted_scan(&results)).await.unwrap();
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
     }
 
@@ -500,9 +483,7 @@ async fn test_scan_with_rating() {
     });
 
     // Store scan
-    db.store_scan(&PersistedScan::from_scan_results(&results))
-        .await
-        .unwrap();
+    db.store_scan(&persisted_scan(&results)).await.unwrap();
 
     // Retrieve and verify
     let history = db.get_scan_history("rated.com", 443, 1).await.unwrap();

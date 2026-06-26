@@ -82,9 +82,8 @@ pub struct PersistedCertificate {
 }
 
 impl PersistedScan {
-    pub fn from_scan_results(results: &ScanResults) -> Self {
+    pub fn from_scan_results(results: &ScanResults) -> crate::Result<Self> {
         Self::try_from_scan_results(results)
-            .unwrap_or_else(|e| panic!("Failed to convert scan results for persistence: {}", e))
     }
 
     pub fn try_from_scan_results(results: &ScanResults) -> crate::Result<Self> {
@@ -254,7 +253,8 @@ mod tests {
             ..Default::default()
         };
 
-        let persisted = PersistedScan::from_scan_results(&results);
+        let persisted =
+            PersistedScan::from_scan_results(&results).expect("persistence conversion succeeds");
         assert_eq!(persisted.target_hostname, "example.com");
         assert_eq!(persisted.target_port, 443);
         assert_eq!(persisted.scan_duration_ms, 123);
@@ -301,7 +301,8 @@ mod tests {
             ..Default::default()
         };
 
-        let persisted = PersistedScan::from_scan_results(&results);
+        let persisted =
+            PersistedScan::from_scan_results(&results).expect("persistence conversion succeeds");
 
         assert_eq!(persisted.certificates.len(), 1);
         assert_eq!(persisted.certificates[0].not_before, expected_not_before);
