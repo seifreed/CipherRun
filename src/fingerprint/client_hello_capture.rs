@@ -397,19 +397,19 @@ impl ClientHelloCapture {
     }
 
     /// Get SNI (Server Name Indication) from extensions
-    pub fn get_sni(&self) -> Option<String> {
+    pub fn get_sni(&self) -> Result<Option<String>> {
         for ext in &self.extensions {
             if ext.extension_type == EXTENSION_SERVER_NAME {
                 return Self::parse_sni(&ext.data);
             }
         }
-        None
+        Ok(None)
     }
 
     /// Parse SNI extension data
-    fn parse_sni(data: &[u8]) -> Option<String> {
+    fn parse_sni(data: &[u8]) -> Result<Option<String>> {
         if data.len() < 5 {
-            return None;
+            return Ok(None);
         }
 
         // Skip server name list length (2 bytes)
@@ -417,7 +417,7 @@ impl ClientHelloCapture {
 
         // Server name type (1 byte, should be 0 for hostname)
         if data[cursor] != 0 {
-            return None;
+            return Ok(None);
         }
         cursor += 1;
 
@@ -426,12 +426,15 @@ impl ClientHelloCapture {
         cursor += 2;
 
         if data.len() < cursor + name_len {
-            return None;
+            return Ok(None);
         }
 
         // Server name
         let name_bytes = &data[cursor..cursor + name_len];
-        String::from_utf8(name_bytes.to_vec()).ok()
+        let sni = String::from_utf8(name_bytes.to_vec()).map_err(|error| TlsError::ParseError {
+            message: format!("Invalid SNI UTF-8: {}", error),
+        })?;
+        Ok(Some(sni))
     }
 }
 
@@ -487,6 +490,21 @@ mod tests {
 
         let err = ClientHelloCapture::parse(&bytes).expect_err("malformed extension should fail");
         assert!(err.to_string().contains("Data too short for extension data"));
+    }
+
+    #[test]
+    fn test_get_sni_rejects_invalid_utf8() {
+        let capture = ClientHelloCapture::synthetic(
+            0x0303,
+            vec![0x1301],
+            vec![(
+                EXTENSION_SERVER_NAME,
+                vec![0x00, 0x04, 0x00, 0x00, 0x01, 0xff],
+            )],
+        );
+
+        let err = capture.get_sni().unwrap_err();
+        assert!(err.to_string().contains("Invalid SNI UTF-8"));
     }
 
     #[test]

@@ -192,7 +192,7 @@ mod tests {
         assert!(!client_hello.extensions.is_empty());
 
         // Verify SNI is present
-        let sni = client_hello.get_sni();
+        let sni = client_hello.get_sni().expect("SNI should parse");
         assert!(sni.is_some());
         assert_eq!(sni.unwrap(), "example.com");
 
