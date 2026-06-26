@@ -67,16 +67,17 @@ impl ConnectionArgs {
     /// Effective inter-connection throttle in milliseconds.
     ///
     /// `--sleep` (raw milliseconds) takes precedence; otherwise the human-readable
-    /// `--delay` (e.g. "200ms", "1s") is parsed. Returns `None` when neither is set
-    /// or `--delay` cannot be parsed (its format is validated earlier in `validate`).
-    pub fn effective_sleep_ms(&self) -> Option<u64> {
+    /// `--delay` (e.g. "200ms", "1s") is parsed.
+    pub fn effective_sleep_ms(&self) -> crate::Result<Option<u64>> {
         if let Some(ms) = self.sleep {
-            return Some(ms);
+            return Ok(Some(ms));
         }
         self.delay
             .as_deref()
-            .and_then(|d| crate::utils::rate_limiter::parse_delay(d).ok())
-            .map(|duration| duration.as_millis() as u64)
+            .map(|d| {
+                crate::utils::rate_limiter::parse_delay(d).map(|duration| duration.as_millis() as u64)
+            })
+            .transpose()
     }
 }
 
@@ -116,22 +117,32 @@ mod tests {
     #[test]
     fn test_effective_sleep_ms_parses_delay_string() {
         let parsed = TestCli::parse_from(["test", "--delay", "1s"]);
-        assert_eq!(parsed.args.effective_sleep_ms(), Some(1000));
+        assert_eq!(parsed.args.effective_sleep_ms().unwrap(), Some(1000));
 
         let parsed = TestCli::parse_from(["test", "--delay", "250ms"]);
-        assert_eq!(parsed.args.effective_sleep_ms(), Some(250));
+        assert_eq!(parsed.args.effective_sleep_ms().unwrap(), Some(250));
     }
 
     #[test]
     fn test_effective_sleep_ms_prefers_explicit_sleep() {
         let parsed = TestCli::parse_from(["test", "--sleep", "500", "--delay", "1s"]);
-        assert_eq!(parsed.args.effective_sleep_ms(), Some(500));
+        assert_eq!(parsed.args.effective_sleep_ms().unwrap(), Some(500));
     }
 
     #[test]
     fn test_effective_sleep_ms_none_when_unset() {
         let parsed = TestCli::parse_from(["test"]);
-        assert_eq!(parsed.args.effective_sleep_ms(), None);
+        assert_eq!(parsed.args.effective_sleep_ms().unwrap(), None);
+    }
+
+    #[test]
+    fn test_effective_sleep_ms_rejects_invalid_delay() {
+        let args = ConnectionArgs {
+            delay: Some("nope".to_string()),
+            ..Default::default()
+        };
+
+        assert!(args.effective_sleep_ms().is_err());
     }
 
     #[test]
