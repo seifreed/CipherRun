@@ -17,7 +17,11 @@ impl CipherTester {
     ) -> Result<(bool, Option<u64>)> {
         let hexcode = match u16::from_str_radix(&cipher.hexcode, 16) {
             Ok(h) => h,
-            Err(_) => return Ok((false, None)),
+            Err(error) => {
+                return Err(crate::TlsError::ParseError {
+                    message: format!("Invalid cipher hexcode '{}': {}", cipher.hexcode, error),
+                });
+            }
         };
 
         let start = std::time::Instant::now();

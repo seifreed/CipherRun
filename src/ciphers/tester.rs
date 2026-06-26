@@ -514,6 +514,19 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_cipher_handshake_rejects_invalid_hexcode() {
+        let tester = CipherTester::new(dummy_target());
+        let cipher = make_cipher("TLSv1.2", "not-hex", "RSA", "AES", 128, false);
+
+        let error = tester
+            .test_cipher_handshake_only(&cipher, Protocol::TLS12, None)
+            .await
+            .expect_err("invalid cipher hexcode should fail");
+
+        assert!(error.to_string().contains("Invalid cipher hexcode"));
+    }
+
+    #[tokio::test]
     async fn test_perform_cipher_handshake_success() {
         let addr = spawn_fake_tls_server(0xc02f, 1).await;
         let target = Target::with_ips(

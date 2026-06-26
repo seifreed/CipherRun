@@ -14,7 +14,7 @@ use std::sync::Arc;
 impl CipherTester {
     pub async fn test_protocol_ciphers(&self, protocol: Protocol) -> Result<ProtocolCipherSummary> {
         let (compatible_ciphers, max_concurrent_tests, connection_pool) =
-            self.prepare_cipher_batch(protocol);
+            self.prepare_cipher_batch(protocol)?;
 
         let (results, enetdown_count) = self
             .run_cipher_test_loop(
@@ -139,7 +139,7 @@ impl CipherTester {
     fn prepare_cipher_batch(
         &self,
         protocol: Protocol,
-    ) -> (Vec<CipherSuite>, usize, Option<Arc<TlsConnectionPool>>) {
+    ) -> Result<(Vec<CipherSuite>, usize, Option<Arc<TlsConnectionPool>>)> {
         let ciphers = if self.test_all_ciphers {
             CIPHER_DB.get_all_ciphers()
         } else {
@@ -150,6 +150,14 @@ impl CipherTester {
             .into_iter()
             .filter(|c| self.is_cipher_compatible_with_protocol(c, protocol))
             .collect();
+
+        for cipher in &compatible_ciphers {
+            u16::from_str_radix(&cipher.hexcode, 16).map_err(|error| {
+                crate::TlsError::ParseError {
+                    message: format!("Invalid cipher hexcode '{}': {}", cipher.hexcode, error),
+                }
+            })?;
+        }
 
         let mut max_concurrent_tests = self.max_concurrent_tests.max(1);
         if let Some(adaptive) = &self.adaptive {
@@ -180,7 +188,7 @@ impl CipherTester {
             }
         };
 
-        (compatible_ciphers, max_concurrent_tests, connection_pool)
+        Ok((compatible_ciphers, max_concurrent_tests, connection_pool))
     }
 
     async fn execute_cipher_batch(
