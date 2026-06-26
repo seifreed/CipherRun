@@ -179,7 +179,7 @@ impl ClientHelloBuilder {
         self
     }
 
-    pub fn add_key_share(&mut self, group: u16) -> &mut Self {
+    pub fn add_key_share(&mut self, group: u16) -> crate::Result<&mut Self> {
         let mut data = BytesMut::new();
         let public_key = if group == 0x001d {
             // Use ring for X25519 key generation to avoid rand_core version conflicts
@@ -187,10 +187,12 @@ impl ClientHelloBuilder {
             use ring::rand::SystemRandom;
             let rng = SystemRandom::new();
             let private_key = agreement::EphemeralPrivateKey::generate(&agreement::X25519, &rng)
-                .expect("X25519 key generation requires system entropy");
+                .map_err(|_| crate::TlsError::Other("X25519 key generation failed".to_string()))?;
             private_key
                 .compute_public_key()
-                .expect("X25519 public key derivation is infallible")
+                .map_err(|_| {
+                    crate::TlsError::Other("X25519 public key derivation failed".to_string())
+                })?
                 .as_ref()
                 .to_vec()
         } else if group == 0x0017 {
@@ -212,7 +214,7 @@ impl ClientHelloBuilder {
         data.put_slice(&public_key);
         self.extensions
             .push(Extension::new(EXTENSION_KEY_SHARE, data.to_vec()));
-        self
+        Ok(self)
     }
 
     pub fn add_psk_key_exchange_modes(&mut self) -> &mut Self {

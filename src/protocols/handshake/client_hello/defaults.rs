@@ -50,7 +50,7 @@ impl ClientHelloBuilder {
 
     pub fn build_with_defaults(&mut self, hostname: Option<&str>) -> Result<Vec<u8>> {
         if matches!(self.protocol, Protocol::TLS13) {
-            self.add_tls13_defaults(hostname);
+            self.add_tls13_defaults(hostname)?;
         } else {
             self.add_legacy_defaults(hostname);
         }
@@ -58,7 +58,7 @@ impl ClientHelloBuilder {
         self.build()
     }
 
-    fn add_tls13_defaults(&mut self, hostname: Option<&str>) {
+    fn add_tls13_defaults(&mut self, hostname: Option<&str>) -> Result<()> {
         if let Some(host) = hostname {
             self.add_sni(host);
         }
@@ -71,7 +71,8 @@ impl ClientHelloBuilder {
         self.add_signature_algorithms(TLS13_SIGNATURE_ALGORITHMS);
         self.add_supported_versions(&[VERSION_TLS_1_3]);
         self.add_psk_key_exchange_modes();
-        self.add_key_share(0x001d);
+        self.add_key_share(0x001d)?;
+        Ok(())
     }
 
     fn add_legacy_defaults(&mut self, hostname: Option<&str>) {
