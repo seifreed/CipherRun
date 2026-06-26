@@ -44,14 +44,12 @@ impl NmapParser {
     /// Parse a single host line
     fn parse_host_line(line: &str) -> Option<Vec<NmapTarget>> {
         // Extract IP and hostname
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() < 2 {
-            return None;
-        }
+        let mut parts = line.split_whitespace();
+        parts.next()?;
+        let ip = parts.next()?.to_string();
 
-        let ip = parts[1].to_string();
-        let hostname = if parts.len() > 2 && parts[2].starts_with('(') {
-            let parsed_hostname = parts[2].trim_matches(|c| c == '(' || c == ')');
+        let hostname = if let Some(host_part) = parts.next().filter(|part| part.starts_with('(')) {
+            let parsed_hostname = host_part.trim_matches(|c| c == '(' || c == ')');
             if parsed_hostname.is_empty() {
                 ip.clone()
             } else {
@@ -67,13 +65,15 @@ impl NmapParser {
         // Parse each port entry
         let mut targets = Vec::new();
         for port_entry in ports_section.split(',') {
-            let port_parts: Vec<&str> = port_entry.trim().split('/').collect();
-            if port_parts.len() >= 3 {
-                let Ok(port) = port_parts[0].parse::<u16>() else {
+            let mut port_parts = port_entry.trim().split('/');
+            if let (Some(port), Some(state), Some(protocol)) =
+                (port_parts.next(), port_parts.next(), port_parts.next())
+            {
+                let Ok(port) = port.parse::<u16>() else {
                     continue;
                 };
-                let state = port_parts[1].to_string();
-                let protocol = port_parts[2].to_string();
+                let state = state.to_string();
+                let protocol = protocol.to_string();
 
                 // Only include open ports
                 if state == "open" {

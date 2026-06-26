@@ -92,12 +92,13 @@ impl super::AnycastScanner {
             .map(|v| v.iter().cloned().collect())
             .collect();
 
-        if protocol_sets.len() >= 2 {
-            let first_set = &protocol_sets[0];
-            if protocol_sets.iter().any(|set| set != first_set) {
-                is_anycast = true;
-                reasons.push("Different protocol support detected".to_string());
-            }
+        if protocol_sets.len() >= 2
+            && protocol_sets
+                .first()
+                .is_some_and(|first_set| protocol_sets.iter().any(|set| set != first_set))
+        {
+            is_anycast = true;
+            reasons.push("Different protocol support detected".to_string());
         }
 
         // Calculate confidence score
@@ -115,14 +116,20 @@ impl super::AnycastScanner {
             }
 
             // Protocol differences = low confidence
-            if protocol_sets.len() >= 2 && protocol_sets.iter().any(|s| s != &protocol_sets[0]) {
+            if protocol_sets.len() >= 2
+                && protocol_sets
+                    .first()
+                    .is_some_and(|first_set| protocol_sets.iter().any(|s| s != first_set))
+            {
                 score += 0.1;
             }
 
             score.min(1.0)
         } else if certificate_fingerprints.len() == 1
             && unique_ciphers.len() == 1
-            && protocol_sets.iter().all(|s| s == &protocol_sets[0])
+            && protocol_sets
+                .first()
+                .is_some_and(|first_set| protocol_sets.iter().all(|s| s == first_set))
         {
             0.0 // Not Anycast
         } else {
