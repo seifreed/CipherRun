@@ -125,7 +125,11 @@ impl BreachTester {
                 let n = ssl_stream.read(&mut buffer)?;
 
                 if n > 0 {
-                    let response = String::from_utf8_lossy(&buffer[..n]);
+                    let bytes = buffer.get(..n).ok_or_else(|| crate::TlsError::ParseError {
+                        message: "BREACH compression response read length exceeded buffer"
+                            .to_string(),
+                    })?;
+                    let response = String::from_utf8_lossy(bytes);
                     // Check for Content-Encoding header
                     let compressed = response.lines().any(|line| {
                         let lower = line.to_lowercase();
@@ -196,17 +200,23 @@ impl BreachTester {
                     let n = ssl_stream.read(&mut buffer)?;
 
                     if n > 0 {
-                        let response = String::from_utf8_lossy(&buffer[..n]);
+                        let bytes = buffer.get(..n).ok_or_else(|| crate::TlsError::ParseError {
+                            message: "BREACH dynamic response read length exceeded buffer"
+                                .to_string(),
+                        })?;
+                        let response = String::from_utf8_lossy(bytes);
                         // Require a 2xx response: 404/error pages that echo the URL in their
                         // body would otherwise trigger a false positive for dynamic content.
-                        let is_success = response.starts_with("HTTP/")
-                            && response[5..]
-                                .split_once(' ')
-                                .map(|x| x.1)
-                                .and_then(|rest| rest.split_whitespace().next())
-                                .and_then(|code| code.parse::<u16>().ok())
-                                .map(|code| (200..300).contains(&code))
-                                .unwrap_or(false);
+                        let is_success =
+                            response.strip_prefix("HTTP/").is_some_and(|status_line| {
+                                status_line
+                                    .split_once(' ')
+                                    .map(|x| x.1)
+                                    .and_then(|rest| rest.split_whitespace().next())
+                                    .and_then(|code| code.parse::<u16>().ok())
+                                    .map(|code| (200..300).contains(&code))
+                                    .unwrap_or(false)
+                            });
                         Ok(Some(is_success && response.contains(marker)))
                     } else {
                         Ok(None)
@@ -269,7 +279,11 @@ impl BreachTester {
                 let n = ssl_stream.read(&mut buffer)?;
 
                 if n > 0 {
-                    let response = String::from_utf8_lossy(&buffer[..n]);
+                    let bytes = buffer.get(..n).ok_or_else(|| crate::TlsError::ParseError {
+                        message: "BREACH sensitive response read length exceeded buffer"
+                            .to_string(),
+                    })?;
+                    let response = String::from_utf8_lossy(bytes);
                     // Check for sensitive data with more precise matching
                     let has_sensitive = Self::detect_sensitive_patterns(&response);
                     Ok(Some(has_sensitive))
