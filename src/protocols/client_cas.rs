@@ -100,11 +100,18 @@ impl ClientCAsTester {
     }
 
     fn has_complete_tls_record(data: &[u8]) -> bool {
-        if data.len() < 5 || data[0] != 0x16 {
+        if data.len() < 5 || data.first() != Some(&0x16) {
             return false;
         }
 
-        let record_len = u16::from_be_bytes([data[3], data[4]]) as usize;
+        let Some(record_len) = data
+            .get(3..5)
+            .and_then(|bytes| <[u8; 2]>::try_from(bytes).ok())
+            .map(u16::from_be_bytes)
+        else {
+            return false;
+        };
+        let record_len = record_len as usize;
         data.len() >= 5 + record_len
     }
 
@@ -120,7 +127,12 @@ impl ClientCAsTester {
             match timeout(read_timeout, stream.read(&mut chunk)).await {
                 Ok(Ok(0)) => break,
                 Ok(Ok(n)) => {
-                    response.extend_from_slice(&chunk[..n]);
+                    let Some(read_bytes) = chunk.get(..n) else {
+                        return Err(crate::TlsError::ParseError {
+                            message: "TLS handshake read length exceeded buffer".to_string(),
+                        });
+                    };
+                    response.extend_from_slice(read_bytes);
                     if self
                         .find_certificate_request(&response)
                         .is_ok_and(|request| request.is_some())
