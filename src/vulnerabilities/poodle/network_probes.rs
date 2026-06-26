@@ -23,7 +23,12 @@ fn find_alert_description(response: &[u8], n: usize) -> Result<Option<u8>> {
     let mut i = 0;
     while i + 7 <= n {
         let record_len = u16::from_be_bytes([response[i + 3], response[i + 4]]) as usize;
-        if response[i] == CONTENT_TYPE_ALERT && record_len >= 2 {
+        if response[i] == CONTENT_TYPE_ALERT {
+            if record_len != 2 {
+                return Err(crate::TlsError::ParseError {
+                    message: "Malformed TLS alert record length".to_string(),
+                });
+            }
             return Ok(Some(response[i + 6])); // level at i+5, description at i+6
         }
         let next = i + 5 + record_len;
@@ -33,7 +38,7 @@ fn find_alert_description(response: &[u8], n: usize) -> Result<Option<u8>> {
         i = next;
     }
 
-    if response.first() == Some(&CONTENT_TYPE_ALERT) && n < 7 {
+    if response.first() == Some(&CONTENT_TYPE_ALERT) {
         return Err(crate::TlsError::ParseError {
             message: "Truncated TLS alert record".to_string(),
         });
@@ -161,5 +166,13 @@ mod tests {
             find_alert_description(&response, response.len()).expect("alert should parse"),
             Some(0x46)
         );
+    }
+
+    #[test]
+    fn test_find_alert_description_rejects_malformed_length() {
+        let response = [CONTENT_TYPE_ALERT, 0x03, 0x03, 0x00, 0x03, 0x02, 0x46];
+        let err = find_alert_description(&response, response.len())
+            .expect_err("malformed alert length should fail");
+        assert!(err.to_string().contains("Malformed TLS alert record length"));
     }
 }
