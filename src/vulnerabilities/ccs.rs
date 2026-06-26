@@ -163,29 +163,48 @@ impl CcsInjectionTester {
                     let mut read_buf = vec![0u8; 1024];
                     match timeout(Duration::from_secs(2), stream.read(&mut read_buf)).await {
                         Ok(Ok(n)) if n > 0 => {
-                            accumulated.extend_from_slice(&read_buf[..n]);
+                            let bytes =
+                                read_buf
+                                    .get(..n)
+                                    .ok_or_else(|| crate::TlsError::ParseError {
+                                        message: "CCS response read length exceeded buffer"
+                                            .to_string(),
+                                    })?;
+                            accumulated.extend_from_slice(bytes);
                             // A single read() may return multiple concatenated TLS records.
                             // Scan all complete records; carry forward any partial tail.
                             let mut offset = 0usize;
                             let mut result: Option<TestStatus> = None;
                             while offset + 5 <= accumulated.len() {
-                                let record_type = accumulated[offset];
-                                let record_len = u16::from_be_bytes([
-                                    accumulated[offset + 3],
-                                    accumulated[offset + 4],
-                                ]) as usize;
+                                let Some(record_header) = accumulated
+                                    .get(offset..offset + 5)
+                                    .and_then(|header| <&[u8; 5]>::try_from(header).ok())
+                                else {
+                                    result = Some(TestStatus::Inconclusive);
+                                    break;
+                                };
+                                let record_type = record_header[0];
+                                let record_len =
+                                    u16::from_be_bytes([record_header[3], record_header[4]])
+                                        as usize;
 
-                                if offset + 5 + record_len > accumulated.len() {
+                                let Some(record_end) = offset
+                                    .checked_add(5)
+                                    .and_then(|v| v.checked_add(record_len))
+                                else {
+                                    result = Some(TestStatus::Inconclusive);
+                                    break;
+                                };
+                                if record_end > accumulated.len() {
                                     // Record not yet complete — wait for more data
                                     break;
                                 }
 
                                 if record_type == CONTENT_TYPE_ALERT {
                                     result = Some(
-                                        if alert_record_is_complete(
-                                            &accumulated[offset..],
-                                            5 + record_len,
-                                        ) {
+                                        if accumulated.get(offset..).is_some_and(|record| {
+                                            alert_record_is_complete(record, 5 + record_len)
+                                        }) {
                                             TestStatus::NotVulnerable
                                         } else {
                                             TestStatus::Inconclusive
@@ -198,7 +217,10 @@ impl CcsInjectionTester {
                                 } else if record_type == CONTENT_TYPE_HANDSHAKE
                                     && offset + 6 <= accumulated.len()
                                 {
-                                    let handshake_type = accumulated[offset + 5];
+                                    let Some(&handshake_type) = accumulated.get(offset + 5) else {
+                                        result = Some(TestStatus::Inconclusive);
+                                        break;
+                                    };
                                     // ServerHello(0x02), Certificate(0x0B),
                                     // ServerKeyExchange(0x0C), CertificateRequest(0x0D),
                                     // ServerHelloDone(0x0E), CertificateStatus(0x16, OCSP
@@ -219,7 +241,7 @@ impl CcsInjectionTester {
                                             result = Some(TestStatus::NotVulnerable);
                                             break;
                                         }
-                                        offset += 5 + record_len;
+                                        offset = record_end;
                                         continue;
                                     } else {
                                         result = Some(TestStatus::Inconclusive);
@@ -267,10 +289,17 @@ impl CcsInjectionTester {
 }
 
 fn alert_record_is_complete(buffer: &[u8], n: usize) -> bool {
-    if n < 7 || buffer[0] != CONTENT_TYPE_ALERT {
+    if n < 7 || buffer.first() != Some(&CONTENT_TYPE_ALERT) {
         return false;
     }
-    let alert_record_len = u16::from_be_bytes([buffer[3], buffer[4]]) as usize;
+    let Some(alert_record_len) = buffer
+        .get(3..5)
+        .and_then(|bytes| bytes.try_into().ok())
+        .map(u16::from_be_bytes)
+        .map(usize::from)
+    else {
+        return false;
+    };
     alert_record_len == 2 && n == 5 + alert_record_len
 }
 
@@ -333,8 +362,8 @@ mod tests {
             .expect("ClientHello should build");
 
         assert!(hello.len() > 40);
-        assert_eq!(hello[0], CONTENT_TYPE_HANDSHAKE); // Handshake (0x16)
-        assert_eq!(hello[5], HANDSHAKE_TYPE_CLIENT_HELLO); // ClientHello (0x01)
+        assert_eq!(hello.first(), Some(&CONTENT_TYPE_HANDSHAKE)); // Handshake (0x16)
+        assert_eq!(hello.get(5), Some(&HANDSHAKE_TYPE_CLIENT_HELLO)); // ClientHello (0x01)
     }
 
     #[test]
@@ -351,8 +380,8 @@ mod tests {
             .build_client_hello()
             .expect("ClientHello should build");
 
-        assert_eq!(hello[1], 0x03);
-        assert_eq!(hello[2], 0x01);
+        assert_eq!(hello.get(1), Some(&0x03));
+        assert_eq!(hello.get(2), Some(&0x01));
     }
 
     #[test]
