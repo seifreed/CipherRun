@@ -239,7 +239,16 @@ impl CertificateParser {
                             }
                             GeneralName::IPAddress(ip) => {
                                 let addr_str = match ip.len() {
-                                    4 => format!("{}.{}.{}.{}", ip[0], ip[1], ip[2], ip[3]),
+                                    4 => match <[u8; 4]>::try_from(*ip) {
+                                        Ok(addr) => std::net::Ipv4Addr::from(addr).to_string(),
+                                        Err(_) => {
+                                            debug!(
+                                                "Invalid IPv4 address length in SAN: {} bytes, expected 4",
+                                                ip.len()
+                                            );
+                                            format!("IP:{}", hex::encode(ip))
+                                        }
+                                    },
                                     16 => {
                                         // Convert IPv6 bytes to address, handling malformed data gracefully
                                         let arr: [u8; 16] = match (*ip).try_into() {
