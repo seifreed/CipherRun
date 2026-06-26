@@ -205,7 +205,9 @@ impl ClientHelloCapture {
 
             while cursor < extensions_end {
                 if cursor + 4 > extensions_end {
-                    break;
+                    return Err(TlsError::ParseError {
+                        message: "Data too short for extension header".to_string(),
+                    });
                 }
 
                 let extension_type = u16::from_be_bytes([data[cursor], data[cursor + 1]]);
@@ -215,7 +217,9 @@ impl ClientHelloCapture {
                 cursor += 2;
 
                 if cursor + extension_len > extensions_end {
-                    break;
+                    return Err(TlsError::ParseError {
+                        message: "Data too short for extension data".to_string(),
+                    });
                 }
 
                 let extension_data = data[cursor..cursor + extension_len].to_vec();
@@ -470,6 +474,19 @@ mod tests {
         let data = vec![1, 0]; // Length: 1, Format: 0 (uncompressed)
         let formats = ClientHelloCapture::parse_point_formats(&data);
         assert_eq!(formats, vec![0]);
+    }
+
+    #[test]
+    fn test_parse_rejects_malformed_extension_length() {
+        let capture = ClientHelloCapture::synthetic(0x0303, vec![0x1301], vec![(0x0000, vec![])]);
+        let mut bytes = capture.to_bytes();
+
+        let ext_len_pos = bytes.len() - 2;
+        bytes[ext_len_pos] = 0x00;
+        bytes[ext_len_pos + 1] = 0x01;
+
+        let err = ClientHelloCapture::parse(&bytes).expect_err("malformed extension should fail");
+        assert!(err.to_string().contains("Data too short for extension data"));
     }
 
     #[test]
