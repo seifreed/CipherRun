@@ -27,6 +27,35 @@ enum CompressionProbeStatus {
     Inconclusive,
 }
 
+fn read_u16_at(data: &[u8], offset: usize) -> Option<u16> {
+    data.get(offset..offset.checked_add(2)?)?
+        .try_into()
+        .ok()
+        .map(u16::from_be_bytes)
+}
+
+fn slice_range(data: &[u8], start: usize, len: usize) -> Option<&[u8]> {
+    data.get(start..start.checked_add(len)?)
+}
+
+#[cfg(test)]
+fn write_u16_at(data: &mut [u8], offset: usize, value: u16) {
+    data.get_mut(offset..offset + 2)
+        .expect("test fixture should contain u16 placeholder")
+        .copy_from_slice(&value.to_be_bytes());
+}
+
+#[cfg(test)]
+fn write_u24_at(data: &mut [u8], offset: usize, value: usize) {
+    data.get_mut(offset..offset + 3)
+        .expect("test fixture should contain u24 placeholder")
+        .copy_from_slice(&[
+            ((value >> 16) & 0xff) as u8,
+            ((value >> 8) & 0xff) as u8,
+            (value & 0xff) as u8,
+        ]);
+}
+
 impl CompressionProbeStatus {
     fn is_enabled(self) -> bool {
         matches!(self, Self::Enabled)
@@ -138,14 +167,21 @@ impl<'a> CrimeTester<'a> {
         let mut buffer = vec![0u8; 4096];
         match timeout(Duration::from_secs(3), stream.read(&mut buffer)).await {
             Ok(Ok(n)) if n > 11 => {
+                let Some(response) = buffer.get(..n) else {
+                    return Ok(CompressionProbeStatus::Inconclusive);
+                };
                 // Validate the TLS record length so we only parse within the first record
-                let record_len = u16::from_be_bytes([buffer[3], buffer[4]]) as usize;
+                let Some(record_len) = read_u16_at(response, 3).map(usize::from) else {
+                    return Ok(CompressionProbeStatus::Inconclusive);
+                };
                 if record_len + 5 > n {
                     // Truncated ServerHello split across reads; the probe cannot decide.
                     return Ok(CompressionProbeStatus::Inconclusive);
                 }
-                if buffer[0] == 0x16 && buffer[5] == 0x02 && n > 43 {
-                    let session_id_len = buffer[43] as usize;
+                if response.first() == Some(&0x16) && response.get(5) == Some(&0x02) && n > 43 {
+                    let Some(session_id_len) = response.get(43).copied().map(usize::from) else {
+                        return Ok(CompressionProbeStatus::Inconclusive);
+                    };
                     if session_id_len > 32 {
                         // Malformed ServerHello — cannot determine compression status
                         return Ok(CompressionProbeStatus::Inconclusive);
@@ -153,7 +189,10 @@ impl<'a> CrimeTester<'a> {
                     let cipher_offset = 44 + session_id_len;
                     // Ensure cipher_offset is within the first TLS record body (5+record_len)
                     if cipher_offset + 2 < 5 + record_len && n > cipher_offset + 2 {
-                        let compression_method = buffer[cipher_offset + 2];
+                        let Some(compression_method) = response.get(cipher_offset + 2).copied()
+                        else {
+                            return Ok(CompressionProbeStatus::Inconclusive);
+                        };
                         tracing::debug!("Server compression method: {}", compression_method);
                         return Ok(if compression_method == 0x01 {
                             CompressionProbeStatus::Enabled
@@ -205,10 +244,12 @@ impl<'a> CrimeTester<'a> {
         match timeout(Duration::from_secs(3), stream.read(&mut buffer)).await {
             Ok(Ok(n)) if n > 43 => {
                 // Parse ServerHello structurally to find NPN extension
-                let data = &buffer[..n];
+                let Some(data) = buffer.get(..n) else {
+                    return Ok(CompressionProbeStatus::Inconclusive);
+                };
 
                 // Verify it's a handshake ServerHello
-                if data.len() < 6 || data[0] != 0x16 || data[5] != 0x02 {
+                if data.len() < 6 || data.first() != Some(&0x16) || data.get(5) != Some(&0x02) {
                     return Ok(CompressionProbeStatus::Disabled);
                 }
 
@@ -218,7 +259,9 @@ impl<'a> CrimeTester<'a> {
                 if sid_offset >= n {
                     return Ok(CompressionProbeStatus::Inconclusive);
                 }
-                let sid_len = data[sid_offset] as usize;
+                let Some(sid_len) = data.get(sid_offset).copied().map(usize::from) else {
+                    return Ok(CompressionProbeStatus::Inconclusive);
+                };
                 // cipher suite (2) + compression (1) + extensions_length (2)
                 let ext_len_offset = sid_offset + 1 + sid_len + 2 + 1;
                 if ext_len_offset + 2 > n {
@@ -226,14 +269,17 @@ impl<'a> CrimeTester<'a> {
                 }
 
                 // Validate TLS record length before parsing extensions
-                let record_len = u16::from_be_bytes([data[3], data[4]]) as usize;
+                let Some(record_len) = read_u16_at(data, 3).map(usize::from) else {
+                    return Ok(CompressionProbeStatus::Inconclusive);
+                };
                 if record_len + 5 > n {
                     return Ok(CompressionProbeStatus::Inconclusive);
                 }
                 let record_end = 5 + record_len;
 
-                let ext_total =
-                    u16::from_be_bytes([data[ext_len_offset], data[ext_len_offset + 1]]) as usize;
+                let Some(ext_total) = read_u16_at(data, ext_len_offset).map(usize::from) else {
+                    return Ok(CompressionProbeStatus::Inconclusive);
+                };
                 let ext_start = ext_len_offset + 2;
                 let ext_end = ext_start + ext_total;
                 if ext_end > record_end {
@@ -243,8 +289,12 @@ impl<'a> CrimeTester<'a> {
                 // Walk extensions structurally looking for NPN (0x3374)
                 let mut pos = ext_start;
                 while pos + 4 <= ext_end {
-                    let ext_type = u16::from_be_bytes([data[pos], data[pos + 1]]);
-                    let ext_len = u16::from_be_bytes([data[pos + 2], data[pos + 3]]) as usize;
+                    let Some(ext_type) = read_u16_at(data, pos) else {
+                        return Ok(CompressionProbeStatus::Inconclusive);
+                    };
+                    let Some(ext_len) = read_u16_at(data, pos + 2).map(usize::from) else {
+                        return Ok(CompressionProbeStatus::Inconclusive);
+                    };
                     pos += 4;
                     if pos + ext_len > ext_end {
                         return Ok(CompressionProbeStatus::Inconclusive);
@@ -255,13 +305,16 @@ impl<'a> CrimeTester<'a> {
                         let mut proto_pos = pos;
                         let proto_end = pos + ext_len;
                         while proto_pos < proto_end {
-                            let proto_len = data[proto_pos] as usize;
+                            let Some(proto_len) = data.get(proto_pos).copied().map(usize::from)
+                            else {
+                                return Ok(CompressionProbeStatus::Inconclusive);
+                            };
                             proto_pos += 1;
                             if proto_pos + proto_len > proto_end {
                                 return Ok(CompressionProbeStatus::Inconclusive);
                             }
-                            if let Ok(proto) =
-                                std::str::from_utf8(&data[proto_pos..proto_pos + proto_len])
+                            if let Some(proto_bytes) = slice_range(data, proto_pos, proto_len)
+                                && let Ok(proto) = std::str::from_utf8(proto_bytes)
                             {
                                 // Only flag SPDY protocols as CRIME-vulnerable
                                 // HTTP/2 (h2, h2c) uses HPACK which is CRIME-resistant
@@ -338,8 +391,8 @@ mod tests {
             .expect("ClientHello should build");
 
         assert!(hello.len() > 50);
-        assert_eq!(hello[0], 0x16); // Handshake
-        assert_eq!(hello[5], 0x01); // ClientHello
+        assert_eq!(hello.first(), Some(&0x16)); // Handshake
+        assert_eq!(hello.get(5), Some(&0x01)); // ClientHello
 
         // Check for compression methods (DEFLATE = 0x01)
         let has_deflate = hello.windows(2).any(|w| w == [0x02, 0x01]);
@@ -412,12 +465,9 @@ mod tests {
             response.push(0x01); // truncated protocol list
 
             let rec_len = (response.len() - 5) as u16;
-            response[3] = (rec_len >> 8) as u8;
-            response[4] = (rec_len & 0xff) as u8;
-            let hs_len = (response.len() - 9) as u32;
-            response[6] = ((hs_len >> 16) & 0xff) as u8;
-            response[7] = ((hs_len >> 8) & 0xff) as u8;
-            response[8] = (hs_len & 0xff) as u8;
+            write_u16_at(&mut response, 3, rec_len);
+            let hs_len = response.len() - 9;
+            write_u24_at(&mut response, 6, hs_len);
 
             socket.write_all(&response).await.unwrap();
         });
@@ -454,8 +504,8 @@ mod tests {
             .expect("ClientHello should build");
 
         assert!(hello.len() > 50);
-        assert_eq!(hello[0], 0x16); // Handshake
-        assert_eq!(hello[5], 0x01); // ClientHello
+        assert_eq!(hello.first(), Some(&0x16)); // Handshake
+        assert_eq!(hello.get(5), Some(&0x01)); // ClientHello
 
         // Check for compression methods (should include DEFLATE = 0x01)
         let has_deflate = hello.windows(2).any(|w| w == [0x02, 0x01]);
