@@ -34,6 +34,13 @@ enum StarttlsInjectionProtocol {
     Pop3,
 }
 
+fn response_text(buffer: &[u8], n: usize, context: &str) -> Result<String> {
+    let bytes = buffer.get(..n).ok_or_else(|| crate::TlsError::ParseError {
+        message: format!("STARTTLS injection {} read length exceeded buffer", context),
+    })?;
+    Ok(String::from_utf8_lossy(bytes).into_owned())
+}
+
 impl StarttlsInjectionProtocol {
     fn name(self) -> &'static str {
         match self {
@@ -127,7 +134,7 @@ impl StarttlsInjectionTester {
             Ok(Ok(n)) if n > 0 => n,
             _ => return Ok(StarttlsInjectionStatus::Inconclusive),
         };
-        let response = String::from_utf8_lossy(&buf[..n]);
+        let response = response_text(&buf, n, "SMTP greeting")?;
 
         if !response.starts_with("220") {
             return Ok(StarttlsInjectionStatus::NotVulnerable);
@@ -150,7 +157,7 @@ impl StarttlsInjectionTester {
             Ok(Ok(n)) if n > 0 => n,
             _ => return Ok(StarttlsInjectionStatus::Inconclusive),
         };
-        let response = String::from_utf8_lossy(&buf[..n]);
+        let response = response_text(&buf, n, "SMTP injection")?;
 
         // If server accepts the injected MAIL FROM before TLS, it's vulnerable.
         // Expected: Only "220 Ready to start TLS" (no "250" at all)
@@ -210,7 +217,7 @@ impl StarttlsInjectionTester {
             Ok(Ok(n)) if n > 0 => n,
             _ => return Ok(StarttlsInjectionStatus::Inconclusive),
         };
-        let response = String::from_utf8_lossy(&buf[..n]);
+        let response = response_text(&buf, n, "IMAP greeting")?;
 
         if !response.starts_with("* OK") {
             return Ok(StarttlsInjectionStatus::NotVulnerable);
@@ -222,7 +229,7 @@ impl StarttlsInjectionTester {
             Ok(Ok(n)) if n > 0 => n,
             _ => return Ok(StarttlsInjectionStatus::Inconclusive),
         };
-        let response = String::from_utf8_lossy(&buf[..n]);
+        let response = response_text(&buf, n, "IMAP capability")?;
 
         if !Self::response_has_ascii_token(&response, "STARTTLS") {
             return Ok(StarttlsInjectionStatus::NotVulnerable);
@@ -236,7 +243,7 @@ impl StarttlsInjectionTester {
             Ok(Ok(n)) if n > 0 => n,
             _ => return Ok(StarttlsInjectionStatus::Inconclusive),
         };
-        let response = String::from_utf8_lossy(&buf[..n]);
+        let response = response_text(&buf, n, "IMAP injection")?;
 
         // Vulnerable if server processes LOGIN before TLS upgrade
         // IMAP responses are tagged with the command tag at the start of the line
@@ -288,7 +295,7 @@ impl StarttlsInjectionTester {
             Ok(Ok(n)) if n > 0 => n,
             _ => return Ok(StarttlsInjectionStatus::Inconclusive),
         };
-        let response = String::from_utf8_lossy(&buf[..n]);
+        let response = response_text(&buf, n, "POP3 greeting")?;
 
         if !response.starts_with("+OK") {
             return Ok(StarttlsInjectionStatus::NotVulnerable);
@@ -300,7 +307,7 @@ impl StarttlsInjectionTester {
             Ok(Ok(n)) if n > 0 => n,
             _ => return Ok(StarttlsInjectionStatus::Inconclusive),
         };
-        let response = String::from_utf8_lossy(&buf[..n]);
+        let response = response_text(&buf, n, "POP3 capability")?;
 
         if !Self::response_has_ascii_token(&response, "STLS") {
             return Ok(StarttlsInjectionStatus::NotVulnerable);
@@ -314,7 +321,7 @@ impl StarttlsInjectionTester {
             Ok(Ok(n)) if n > 0 => n,
             _ => return Ok(StarttlsInjectionStatus::Inconclusive),
         };
-        let response = String::from_utf8_lossy(&buf[..n]);
+        let response = response_text(&buf, n, "POP3 injection")?;
 
         // Vulnerable if USER command is processed before TLS
         // Improved detection: Check for specific response patterns
