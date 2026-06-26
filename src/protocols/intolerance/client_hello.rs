@@ -118,12 +118,20 @@ impl IntoleranceTester {
         let total_length = result.len() - length_pos - 2;
         let hs_length = result.len() - hs_length_pos - 3;
 
-        result[length_pos] = ((total_length >> 8) & 0xff) as u8;
-        result[length_pos + 1] = (total_length & 0xff) as u8;
+        if let Some(len_bytes) = result.get_mut(length_pos..length_pos + 2) {
+            len_bytes.copy_from_slice(&[
+                ((total_length >> 8) & 0xff) as u8,
+                (total_length & 0xff) as u8,
+            ]);
+        }
 
-        result[hs_length_pos] = ((hs_length >> 16) & 0xff) as u8;
-        result[hs_length_pos + 1] = ((hs_length >> 8) & 0xff) as u8;
-        result[hs_length_pos + 2] = (hs_length & 0xff) as u8;
+        if let Some(len_bytes) = result.get_mut(hs_length_pos..hs_length_pos + 3) {
+            len_bytes.copy_from_slice(&[
+                ((hs_length >> 16) & 0xff) as u8,
+                ((hs_length >> 8) & 0xff) as u8,
+                (hs_length & 0xff) as u8,
+            ]);
+        }
 
         Ok(result)
     }

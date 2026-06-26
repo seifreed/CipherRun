@@ -44,7 +44,16 @@ impl IntoleranceTester {
                         });
                     }
 
-                    let alert_record_len = u16::from_be_bytes([response[3], response[4]]) as usize;
+                    let Some(alert_record_len) = response
+                        .get(3..5)
+                        .and_then(|bytes| <[u8; 2]>::try_from(bytes).ok())
+                        .map(u16::from_be_bytes)
+                    else {
+                        return Err(crate::TlsError::ParseError {
+                            message: "Truncated TLS alert record length".to_string(),
+                        });
+                    };
+                    let alert_record_len = alert_record_len as usize;
                     if alert_record_len != 2 {
                         return Err(crate::TlsError::ParseError {
                             message: format!(
@@ -62,11 +71,10 @@ impl IntoleranceTester {
                     }
                 }
 
-                if response.len() >= 7
-                    && response[0] == CONTENT_TYPE_ALERT
-                    && response[5] == ALERT_LEVEL_FATAL
+                if response.first() == Some(&CONTENT_TYPE_ALERT)
+                    && response.get(5) == Some(&ALERT_LEVEL_FATAL)
                 {
-                    Ok(Some(response[6]))
+                    Ok(response.get(6).copied())
                 } else {
                     Ok(None)
                 }
