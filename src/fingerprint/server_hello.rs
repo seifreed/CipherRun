@@ -48,15 +48,16 @@ impl ServerHelloCapture {
         // Check for TLS Alert (0x15) before expecting handshake
         if content_type == 0x15 {
             // Try to parse the alert to provide better error message
-            if data.len() >= 7 {
-                let alert_level = data[5];
-                let alert_description = data[6];
+            if let Some([alert_level, alert_description]) = data
+                .get(5..7)
+                .and_then(|bytes| <&[u8; 2]>::try_from(bytes).ok())
+            {
                 return Err(TlsError::ParseError {
                     message: format!(
                         "TLS Alert received (level: {}, description: {}): {}",
                         alert_level,
                         alert_description,
-                        Self::get_alert_description(alert_description)
+                        Self::get_alert_description(*alert_description)
                     ),
                 });
             } else {

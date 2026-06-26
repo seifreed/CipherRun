@@ -407,10 +407,12 @@ fn reorder_ciphers(mut ciphers: Vec<[u8; 2]>, order: CipherOrder) -> Vec<[u8; 2]
             let len = ciphers.len();
             let middle = len / 2;
             let mut result = Vec::with_capacity(len.div_ceil(2));
-            if len % 2 == 1 {
-                result.push(ciphers[middle]);
+            if len % 2 == 1
+                && let Some(cipher) = ciphers.get(middle).copied()
+            {
+                result.push(cipher);
             }
-            for cipher in ciphers[0..middle].iter().rev() {
+            for cipher in ciphers.get(..middle).unwrap_or_default().iter().rev() {
                 result.push(*cipher);
             }
             result
@@ -418,9 +420,9 @@ fn reorder_ciphers(mut ciphers: Vec<[u8; 2]>, order: CipherOrder) -> Vec<[u8; 2]
         CipherOrder::BottomHalf => {
             let len = ciphers.len();
             if len % 2 == 1 {
-                ciphers[(len / 2) + 1..].to_vec()
+                ciphers.get((len / 2) + 1..).unwrap_or_default().to_vec()
             } else {
-                ciphers[len / 2..].to_vec()
+                ciphers.get(len / 2..).unwrap_or_default().to_vec()
             }
         }
         CipherOrder::MiddleOut => {
@@ -429,17 +431,27 @@ fn reorder_ciphers(mut ciphers: Vec<[u8; 2]>, order: CipherOrder) -> Vec<[u8; 2]
             let mut result = Vec::new();
 
             if len % 2 == 1 {
-                result.push(ciphers[middle]);
+                if let Some(cipher) = ciphers.get(middle).copied() {
+                    result.push(cipher);
+                }
                 for i in 1..=middle {
-                    result.push(ciphers[middle + i]);
-                    result.push(ciphers[middle - i]);
+                    if let Some(cipher) = ciphers.get(middle + i).copied() {
+                        result.push(cipher);
+                    }
+                    if let Some(cipher) = ciphers.get(middle - i).copied() {
+                        result.push(cipher);
+                    }
                 }
             } else {
                 // Canonical JARM: interleave outward from the center, taking the
                 // right-of-center element before the left-of-center one each step.
                 for i in 1..=middle {
-                    result.push(ciphers[middle - 1 + i]);
-                    result.push(ciphers[middle - i]);
+                    if let Some(cipher) = ciphers.get(middle - 1 + i).copied() {
+                        result.push(cipher);
+                    }
+                    if let Some(cipher) = ciphers.get(middle - i).copied() {
+                        result.push(cipher);
+                    }
                 }
             }
 
