@@ -26,6 +26,33 @@ const TICKETBLEED_SESSION_ID_MARKER: [u8; 16] = [
     0xca, 0xfe, 0xba, 0xbe, 0xde, 0xad, 0xbe, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef,
 ];
 
+fn read_u16_at(data: &[u8], offset: usize) -> Option<u16> {
+    data.get(offset..offset.checked_add(2)?)?
+        .try_into()
+        .ok()
+        .map(u16::from_be_bytes)
+}
+
+fn read_u24_at(data: &[u8], offset: usize) -> Option<usize> {
+    data.get(offset..offset.checked_add(3)?)
+        .and_then(|bytes| <&[u8; 3]>::try_from(bytes).ok())
+        .map(|bytes| {
+            let [high, mid, low] = *bytes;
+            u32::from_be_bytes([0, high, mid, low]) as usize
+        })
+}
+
+#[cfg(test)]
+fn write_u24_at(data: &mut [u8], offset: usize, value: usize) {
+    data.get_mut(offset..offset + 3)
+        .expect("test fixture should contain u24 placeholder")
+        .copy_from_slice(&[
+            ((value >> 16) & 0xff) as u8,
+            ((value >> 8) & 0xff) as u8,
+            (value & 0xff) as u8,
+        ]);
+}
+
 /// Ticketbleed vulnerability tester
 pub struct TicketbleedTester {
     target: Target,
@@ -122,18 +149,30 @@ impl TicketbleedTester {
                 let mut buffer = vec![0u8; 16384];
                 match timeout(Duration::from_secs(3), stream.read(&mut buffer)).await {
                     Ok(Ok(n)) if n > 0 => {
-                        let has_new_ticket = self.parse_new_session_ticket(&buffer[..n])?;
+                        let server_response =
+                            buffer.get(..n).ok_or_else(|| crate::TlsError::ParseError {
+                                message: "Ticketbleed ticket response read length exceeded buffer"
+                                    .to_string(),
+                            })?;
+                        let has_new_ticket = self.parse_new_session_ticket(server_response)?;
 
                         if has_new_ticket {
                             let client_hello2 =
-                                self.build_client_hello_with_received_ticket(&buffer[..n])?;
+                                self.build_client_hello_with_received_ticket(server_response)?;
                             stream.write_all(&client_hello2).await?;
 
                             let mut response = vec![0u8; 16384];
                             match timeout(Duration::from_secs(3), stream.read(&mut response)).await
                             {
                                 Ok(Ok(m)) if m > 0 => {
-                                    let leaked = self.detect_memory_leak(&response[..m])?;
+                                    let resumed_response = response.get(..m).ok_or_else(|| {
+                                        crate::TlsError::ParseError {
+                                            message:
+                                                "Ticketbleed resumed response read length exceeded buffer"
+                                                    .to_string(),
+                                        }
+                                    })?;
+                                    let leaked = self.detect_memory_leak(resumed_response)?;
                                     if leaked {
                                         Ok(TicketbleedProbeOutcome::Vulnerable)
                                     } else {
@@ -201,24 +240,30 @@ impl TicketbleedTester {
     fn extract_session_ticket(&self, response: &[u8]) -> Option<Vec<u8>> {
         let mut offset = 0;
         while offset + 5 <= response.len() {
-            let content_type = response[offset];
-            let record_len =
-                u16::from_be_bytes([response[offset + 3], response[offset + 4]]) as usize;
+            let Some(header) = response
+                .get(offset..offset + 5)
+                .and_then(|header| <&[u8; 5]>::try_from(header).ok())
+            else {
+                break;
+            };
+            let [content_type, _, _, len_high, len_low] = *header;
+            let record_len = u16::from_be_bytes([len_high, len_low]) as usize;
             let record_end = offset + 5 + record_len;
             if record_end > response.len() {
                 break;
             }
             if content_type == 0x16 {
                 let hs_start = offset + 5;
-                if hs_start < record_end && response[hs_start] == 0x04 {
+                if hs_start < record_end && response.get(hs_start) == Some(&0x04) {
                     // NewSessionTicket: type(1) + length(3) + lifetime(4) + ticket_length(2) + ticket
                     if hs_start + 4 > response.len() {
                         offset = record_end;
                         continue;
                     }
-                    let hs_len = ((response[hs_start + 1] as usize) << 16)
-                        | ((response[hs_start + 2] as usize) << 8)
-                        | (response[hs_start + 3] as usize);
+                    let Some(hs_len) = read_u24_at(response, hs_start + 1) else {
+                        offset = record_end;
+                        continue;
+                    };
                     let hs_end = hs_start + 4 + hs_len;
                     if hs_end > record_end {
                         offset = record_end;
@@ -230,10 +275,12 @@ impl TicketbleedTester {
                         offset = record_end;
                         continue;
                     }
-                    let ticket_len = u16::from_be_bytes([
-                        response[ticket_len_offset],
-                        response[ticket_len_offset + 1],
-                    ]) as usize;
+                    let Some(ticket_len) =
+                        read_u16_at(response, ticket_len_offset).map(usize::from)
+                    else {
+                        offset = record_end;
+                        continue;
+                    };
 
                     let ticket_start = ticket_len_offset + 2;
                     let ticket_end = ticket_start
@@ -241,7 +288,9 @@ impl TicketbleedTester {
                         .filter(|&end| end <= response.len())
                         .filter(|&end| end <= hs_end && end <= record_end)
                         .filter(|_| ticket_len > 0 && ticket_len <= hs_len)?;
-                    return Some(response[ticket_start..ticket_end].to_vec());
+                    return response
+                        .get(ticket_start..ticket_end)
+                        .map(|ticket| ticket.to_vec());
                 }
             }
             offset = record_end;
@@ -253,16 +302,21 @@ impl TicketbleedTester {
     fn parse_new_session_ticket(&self, response: &[u8]) -> Result<bool> {
         let mut offset = 0;
         while offset + 5 <= response.len() {
-            let content_type = response[offset];
-            let record_len =
-                u16::from_be_bytes([response[offset + 3], response[offset + 4]]) as usize;
+            let Some(header) = response
+                .get(offset..offset + 5)
+                .and_then(|header| <&[u8; 5]>::try_from(header).ok())
+            else {
+                break;
+            };
+            let [content_type, _, _, len_high, len_low] = *header;
+            let record_len = u16::from_be_bytes([len_high, len_low]) as usize;
             let record_end = offset + 5 + record_len;
             if record_end > response.len() {
                 break;
             }
             if content_type == 0x16 {
                 let hs_start = offset + 5;
-                if hs_start < record_end && response[hs_start] == 0x04 {
+                if hs_start < record_end && response.get(hs_start) == Some(&0x04) {
                     return Ok(true);
                 }
             }
@@ -281,23 +335,28 @@ impl TicketbleedTester {
     fn extract_serverhello_session_id(response: &[u8]) -> Option<&[u8]> {
         let mut offset = 0;
         while offset + 5 <= response.len() {
-            let record_len =
-                u16::from_be_bytes([response[offset + 3], response[offset + 4]]) as usize;
+            let Some(record_len) = read_u16_at(response, offset + 3).map(usize::from) else {
+                break;
+            };
             let record_end = offset + 5 + record_len;
             if record_end > response.len() {
                 break;
             }
-            if response[offset] == CONTENT_TYPE_HANDSHAKE {
+            if response.get(offset) == Some(&CONTENT_TYPE_HANDSHAKE) {
                 let hs_start = offset + 5;
                 // ServerHello body: type(1) + length(3) + version(2) + random(32)
                 // + session_id_length(1) + session_id(..)
                 let session_id_len_pos = hs_start + 4 + 2 + 32;
                 if response.get(hs_start) == Some(&0x02) && session_id_len_pos < record_end {
-                    let session_id_len = response[session_id_len_pos] as usize;
+                    let Some(session_id_len) =
+                        response.get(session_id_len_pos).copied().map(usize::from)
+                    else {
+                        break;
+                    };
                     let session_id_start = session_id_len_pos + 1;
                     let session_id_end = session_id_start + session_id_len;
                     if session_id_end <= record_end {
-                        return Some(&response[session_id_start..session_id_end]);
+                        return response.get(session_id_start..session_id_end);
                     }
                 }
             }
@@ -369,8 +428,8 @@ mod tests {
             .expect("ClientHello should build");
 
         assert!(hello.len() > 50);
-        assert_eq!(hello[0], 0x16); // Handshake
-        assert_eq!(hello[5], 0x01); // ClientHello
+        assert_eq!(hello.first(), Some(&0x16)); // Handshake
+        assert_eq!(hello.get(5), Some(&0x01)); // ClientHello
 
         // Check for SessionTicket extension (0x0023)
         let has_ticket_ext = hello.windows(2).any(|w| w == [0x00, 0x23]);
@@ -390,12 +449,17 @@ mod tests {
         // Well-formed TLS record: content_type=0x16, version=0x03 0x03, record_len=0x00 0x01
         // Handshake: type=0x04 (NewSessionTicket)
         let mut response = vec![0u8; 16];
-        response[0] = 0x16; // content_type: Handshake
-        response[1] = 0x03; // version hi
-        response[2] = 0x03; // version lo
-        response[3] = 0x00; // record_len hi
-        response[4] = 0x0b; // record_len lo = 11 (enough to hold hs type byte)
-        response[5] = 0x04; // hs_type: NewSessionTicket
+        response
+            .get_mut(..6)
+            .expect("test response should contain TLS header")
+            .copy_from_slice(&[
+                0x16, // content_type: Handshake
+                0x03, // version hi
+                0x03, // version lo
+                0x00, // record_len hi
+                0x0b, // record_len lo = 11 (enough to hold hs type byte)
+                0x04, // hs_type: NewSessionTicket
+            ]);
 
         assert!(tester.parse_new_session_ticket(&response).unwrap());
         assert!(
@@ -424,9 +488,7 @@ mod tests {
         body.extend_from_slice(&[0xc0, 0x2f]); // cipher suite
         body.push(0x00); // compression method
         let hs_len = body.len() - 4;
-        body[1] = ((hs_len >> 16) & 0xff) as u8;
-        body[2] = ((hs_len >> 8) & 0xff) as u8;
-        body[3] = (hs_len & 0xff) as u8;
+        write_u24_at(&mut body, 1, hs_len);
 
         let mut record = vec![CONTENT_TYPE_HANDSHAKE, 0x03, 0x03];
         record.extend_from_slice(&(body.len() as u16).to_be_bytes());
@@ -469,7 +531,9 @@ mod tests {
         let mut session_id = TICKETBLEED_SESSION_ID_MARKER.to_vec();
         session_id.extend_from_slice(&[0x77u8; 16]);
         let mut response = server_hello_record_with_session_id(&session_id);
-        response[4] = 0xff; // inflate the record length past the buffer
+        *response
+            .get_mut(4)
+            .expect("test response should contain record length byte") = 0xff; // inflate the record length past the buffer
         assert!(
             !tester.detect_memory_leak(&response).unwrap(),
             "a record longer than the buffer must be rejected, not parsed"
