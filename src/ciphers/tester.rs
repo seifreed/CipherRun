@@ -215,13 +215,14 @@ mod tests {
         .expect("test assertion should succeed")
     }
 
-    fn build_fake_server_hello(cipher: u16) -> Vec<u8> {
+    fn build_fake_server_hello(cipher: u16, session_id_len: usize) -> Vec<u8> {
         let mut body = Vec::new();
         body.push(0x02);
         body.extend_from_slice(&[0x00, 0x00, 0x00]);
         body.extend_from_slice(&[0x03, 0x03]);
         body.extend_from_slice(&[0u8; 32]);
-        body.push(0x00);
+        body.push(session_id_len as u8);
+        body.extend(std::iter::repeat_n(0x41, session_id_len));
         body.extend_from_slice(&cipher.to_be_bytes());
         body.push(0x00);
         body.extend_from_slice(&[0x00, 0x00]);
@@ -239,14 +240,14 @@ mod tests {
         record
     }
 
-    async fn spawn_fake_tls_server(cipher: u16, accepts: usize) -> SocketAddr {
+    async fn spawn_fake_tls_server(cipher: u16, session_id_len: usize, accepts: usize) -> SocketAddr {
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("listener should bind");
         let addr = listener.local_addr().expect("local addr should exist");
 
         tokio::spawn(async move {
-            let response = build_fake_server_hello(cipher);
+            let response = build_fake_server_hello(cipher, session_id_len);
             let mut remaining = accepts;
             while remaining > 0 {
                 if let Ok((mut socket, _)) = listener.accept().await {
@@ -464,7 +465,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_server_chosen_cipher_parses_response() {
-        let addr = spawn_fake_tls_server(0xc02f, 1).await;
+        let addr = spawn_fake_tls_server(0xc02f, 0, 1).await;
         let target = Target::with_ips(
             "localhost".to_string(),
             addr.port(),
@@ -485,8 +486,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_get_server_chosen_cipher_propagates_parse_errors() {
+        let addr = spawn_fake_tls_server(0xc02f, 33, 1).await;
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            addr.port(),
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .expect("target should build");
+
+        let tester = CipherTester::new(target)
+            .with_connect_timeout(Duration::from_millis(200))
+            .with_read_timeout(Duration::from_millis(200));
+
+        let err = tester
+            .get_server_chosen_cipher(Protocol::TLS12, &[0xc02f, 0xc030])
+            .await
+            .expect_err("malformed ServerHello should fail");
+        assert!(err
+            .to_string()
+            .contains("Invalid ServerHello session_id_len"));
+    }
+
+    #[tokio::test]
     async fn test_determine_server_preference_fixed_choice() {
-        let addr = spawn_fake_tls_server(0xc030, 3).await;
+        let addr = spawn_fake_tls_server(0xc030, 0, 3).await;
         let target = Target::with_ips(
             "localhost".to_string(),
             addr.port(),
@@ -541,7 +565,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_perform_cipher_handshake_success() {
-        let addr = spawn_fake_tls_server(0xc02f, 1).await;
+        let addr = spawn_fake_tls_server(0xc02f, 0, 1).await;
         let target = Target::with_ips(
             "localhost".to_string(),
             addr.port(),
@@ -627,7 +651,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_protocol_ciphers_with_fake_server() {
-        let addr = spawn_fake_tls_server(0xc02f, 200).await;
+        let addr = spawn_fake_tls_server(0xc02f, 0, 200).await;
         let target = Target::with_ips(
             "localhost".to_string(),
             addr.port(),
@@ -653,7 +677,7 @@ mod tests {
     #[tokio::test]
     async fn test_quick_test_with_fake_server() {
         let accepts = CIPHER_DB.get_recommended_ciphers().len().saturating_add(5);
-        let addr = spawn_fake_tls_server(0xc02f, accepts).await;
+        let addr = spawn_fake_tls_server(0xc02f, 0, accepts).await;
         let target = Target::with_ips(
             "localhost".to_string(),
             addr.port(),
@@ -692,7 +716,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_all_protocols_with_fake_server() {
-        let addr = spawn_fake_tls_server(0xc02f, 600).await;
+        let addr = spawn_fake_tls_server(0xc02f, 0, 600).await;
         let target = Target::with_ips(
             "localhost".to_string(),
             addr.port(),

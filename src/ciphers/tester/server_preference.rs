@@ -192,11 +192,14 @@ impl CipherTester {
             let mut response = vec![0u8; BUFFER_SIZE_DEFAULT];
             let bytes_read = stream.read(&mut response).await?;
 
-            Ok(Self::parse_server_hello_cipher(&response, bytes_read))
+            Ok::<Result<Option<u16>>, std::io::Error>(Self::parse_server_hello_cipher(
+                &response,
+                bytes_read,
+            ))
         })
         .await
         {
-            Ok(result) => result,
+            Ok(result) => result?,
             Err(_) => Ok(None),
         }
     }
@@ -205,21 +208,21 @@ impl CipherTester {
     ///
     /// Returns `None` if the response is not a valid ServerHello or lacks
     /// enough bytes to extract the cipher suite.
-    fn parse_server_hello_cipher(response: &[u8], bytes_read: usize) -> Option<u16> {
+    fn parse_server_hello_cipher(response: &[u8], bytes_read: usize) -> Result<Option<u16>> {
         if bytes_read < SERVER_HELLO_MIN_SIZE {
-            return None;
+            return Ok(None);
         }
         if response[0] != CONTENT_TYPE_HANDSHAKE || response[5] != HANDSHAKE_TYPE_SERVER_HELLO {
-            return None;
+            return Err(crate::TlsError::ParseError {
+                message: "Invalid ServerHello response".to_string(),
+            });
         }
 
         let session_id_len = response[SESSION_ID_LENGTH_OFFSET] as usize;
         if session_id_len > 32 {
-            tracing::warn!(
-                "Invalid session_id_len: {} (max 32), skipping cipher extraction",
-                session_id_len
-            );
-            return None;
+            return Err(crate::TlsError::ParseError {
+                message: format!("Invalid ServerHello session_id_len: {}", session_id_len),
+            });
         }
 
         let cipher_offset = CIPHER_SUITE_BASE_OFFSET + session_id_len;
@@ -233,9 +236,11 @@ impl CipherTester {
         if bytes_read >= cipher_offset + 2 {
             let cipher = u16::from_be_bytes([response[cipher_offset], response[cipher_offset + 1]]);
             tracing::debug!("Server chose cipher: 0x{:04x}", cipher);
-            Some(cipher)
+            Ok(Some(cipher))
         } else {
-            None
+            Err(crate::TlsError::ParseError {
+                message: "ServerHello truncated before cipher_suite".to_string(),
+            })
         }
     }
 }
