@@ -257,32 +257,41 @@ impl GroupTester {
             Err(_) => return GroupProbeOutcome::Inconclusive,
         };
 
-        let mut builder = match SslConnector::builder(SslMethod::tls()) {
-            Ok(builder) => builder,
-            Err(_) => return GroupProbeOutcome::Inconclusive,
-        };
-        builder.set_verify(SslVerifyMode::NONE);
+        let hostname = self.target.hostname.clone();
+        let openssl_name = openssl_name.to_string();
+        match tokio::task::spawn_blocking(move || {
+            let mut builder = match SslConnector::builder(SslMethod::tls()) {
+                Ok(builder) => builder,
+                Err(_) => return GroupProbeOutcome::Inconclusive,
+            };
+            builder.set_verify(SslVerifyMode::NONE);
 
-        // If the local OpenSSL cannot offer this group (e.g. a post-quantum group
-        // on an older build), the server's support cannot be determined — report
-        // it as unprobeable rather than falsely claiming it is unsupported.
-        if builder.set_groups_list(openssl_name).is_err() {
-            return GroupProbeOutcome::Unprobeable;
-        }
-        if builder.set_cipher_list(GROUP_KX_CIPHER_LIST).is_err() {
-            return GroupProbeOutcome::Inconclusive;
-        }
+            // If the local OpenSSL cannot offer this group (e.g. a post-quantum group
+            // on an older build), the server's support cannot be determined — report
+            // it as unprobeable rather than falsely claiming it is unsupported.
+            if builder.set_groups_list(&openssl_name).is_err() {
+                return GroupProbeOutcome::Unprobeable;
+            }
+            if builder.set_cipher_list(GROUP_KX_CIPHER_LIST).is_err() {
+                return GroupProbeOutcome::Inconclusive;
+            }
 
-        let connector = builder.build();
-        match connector.connect(&self.target.hostname, std_stream) {
-            Ok(_) => GroupProbeOutcome::Supported,
-            Err(error) => {
-                if is_operational_tls_error(&error.to_string()) {
-                    GroupProbeOutcome::Inconclusive
-                } else {
-                    GroupProbeOutcome::NotSupported
+            let connector = builder.build();
+            match connector.connect(&hostname, std_stream) {
+                Ok(_) => GroupProbeOutcome::Supported,
+                Err(error) => {
+                    if is_operational_tls_error(&error.to_string()) {
+                        GroupProbeOutcome::Inconclusive
+                    } else {
+                        GroupProbeOutcome::NotSupported
+                    }
                 }
             }
+        })
+        .await
+        {
+            Ok(outcome) => outcome,
+            Err(_) => GroupProbeOutcome::Inconclusive,
         }
     }
 }
