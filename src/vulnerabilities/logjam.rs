@@ -208,9 +208,8 @@ impl LogjamTester {
             Err(_) => return Ok(WeakDhStatus::Inconclusive),
         };
 
-        // Convert to std stream for OpenSSL
-        let std_stream = stream.into_std()?;
-        std_stream.set_nonblocking(false)?;
+        let std_stream =
+            crate::utils::network::into_blocking_std_stream(stream, TLS_HANDSHAKE_TIMEOUT)?;
 
         // Wrap blocking SSL operations in spawn_blocking
         let result = tokio::task::spawn_blocking(move || -> crate::Result<WeakDhStatus> {
@@ -318,14 +317,14 @@ impl LogjamTester {
         let hostname = self.effective_sni().to_string();
         let cipher = cipher.to_string();
 
-        let stream = match self.starttls_connect(addr, Duration::from_secs(3)).await {
+        let handshake_timeout = Duration::from_secs(3);
+        let stream = match self.starttls_connect(addr, handshake_timeout).await {
             Ok(s) => s,
             Err(_) => return Ok(LogjamProbeStatus::Inconclusive),
         };
 
-        // Convert to std stream for OpenSSL
-        let std_stream = stream.into_std()?;
-        std_stream.set_nonblocking(false)?;
+        let std_stream =
+            crate::utils::network::into_blocking_std_stream(stream, handshake_timeout)?;
 
         // Wrap blocking SSL operations in spawn_blocking
         let result = tokio::task::spawn_blocking(move || -> Result<LogjamProbeStatus> {
