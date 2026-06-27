@@ -139,22 +139,27 @@ impl BeastTester {
         let std_stream =
             crate::utils::network::into_blocking_std_stream(stream, TLS_HANDSHAKE_TIMEOUT)?;
 
-        let mut builder = SslConnector::builder(SslMethod::tls())?;
-        // Certificate validity is irrelevant to whether the server accepts a
-        // TLS 1.0 CBC cipher; a verifying connector would false-negative on
-        // bad-cert hosts by failing the handshake at cert validation.
-        builder.set_verify(SslVerifyMode::NONE);
-        builder.set_min_proto_version(Some(SslVersion::TLS1))?;
-        builder.set_max_proto_version(Some(SslVersion::TLS1))?;
+        let hostname = self.target.hostname.clone();
+        tokio::task::spawn_blocking(move || -> Result<BeastProbeStatus> {
+            let mut builder = SslConnector::builder(SslMethod::tls())?;
+            // Certificate validity is irrelevant to whether the server accepts a
+            // TLS 1.0 CBC cipher; a verifying connector would false-negative on
+            // bad-cert hosts by failing the handshake at cert validation.
+            builder.set_verify(SslVerifyMode::NONE);
+            builder.set_min_proto_version(Some(SslVersion::TLS1))?;
+            builder.set_max_proto_version(Some(SslVersion::TLS1))?;
 
-        // Try CBC cipher
-        builder.set_cipher_list("AES128-SHA:AES256-SHA:DES-CBC3-SHA")?;
+            // Try CBC cipher
+            builder.set_cipher_list("AES128-SHA:AES256-SHA:DES-CBC3-SHA")?;
 
-        let connector = builder.build();
-        match connector.connect(&self.target.hostname, std_stream) {
-            Ok(_) => Ok(BeastProbeStatus::Supported),
-            Err(e) => Ok(classify_handshake_error(&e.to_string())),
-        }
+            let connector = builder.build();
+            match connector.connect(&hostname, std_stream) {
+                Ok(_) => Ok(BeastProbeStatus::Supported),
+                Err(e) => Ok(classify_handshake_error(&e.to_string())),
+            }
+        })
+        .await
+        .map_err(|e| crate::TlsError::Other(format!("Spawn blocking failed: {e}")))?
     }
 
     /// Test for SSL 3.0 with CBC ciphers
@@ -177,52 +182,61 @@ impl BeastTester {
         let std_stream =
             crate::utils::network::into_blocking_std_stream(stream, TLS_HANDSHAKE_TIMEOUT)?;
 
-        let mut builder = SslConnector::builder(SslMethod::tls())?;
-        // Certificate validity is irrelevant to CBC cipher support over SSL 3.0;
-        // without this a bad-cert host would false-negative.
-        builder.set_verify(SslVerifyMode::NONE);
+        let hostname = self.target.hostname.clone();
+        tokio::task::spawn_blocking(move || -> Result<BeastProbeStatus> {
+            let mut builder = SslConnector::builder(SslMethod::tls())?;
+            // Certificate validity is irrelevant to CBC cipher support over SSL 3.0;
+            // without this a bad-cert host would false-negative.
+            builder.set_verify(SslVerifyMode::NONE);
 
-        // Try to set SSL 3.0 - this may fail on modern OpenSSL versions
-        // that have SSL 3.0 disabled at compile time
-        if builder
-            .set_min_proto_version(Some(SslVersion::SSL3))
-            .is_err()
-        {
-            // SSL 3.0 is not supported by this OpenSSL build
-            // This means we cannot test SSL 3.0, but also modern servers
-            // shouldn't support it anyway
-            tracing::debug!("SSL 3.0 not supported by OpenSSL - cannot test for BEAST on SSL 3.0");
-            return Ok(BeastProbeStatus::NotSupported);
-        }
+            // Try to set SSL 3.0 - this may fail on modern OpenSSL versions
+            // that have SSL 3.0 disabled at compile time
+            if builder
+                .set_min_proto_version(Some(SslVersion::SSL3))
+                .is_err()
+            {
+                // SSL 3.0 is not supported by this OpenSSL build
+                // This means we cannot test SSL 3.0, but also modern servers
+                // shouldn't support it anyway
+                tracing::debug!(
+                    "SSL 3.0 not supported by OpenSSL - cannot test for BEAST on SSL 3.0"
+                );
+                return Ok(BeastProbeStatus::NotSupported);
+            }
 
-        if builder
-            .set_max_proto_version(Some(SslVersion::SSL3))
-            .is_err()
-        {
-            tracing::debug!("SSL 3.0 not supported by OpenSSL - cannot test for BEAST on SSL 3.0");
-            return Ok(BeastProbeStatus::NotSupported);
-        }
+            if builder
+                .set_max_proto_version(Some(SslVersion::SSL3))
+                .is_err()
+            {
+                tracing::debug!(
+                    "SSL 3.0 not supported by OpenSSL - cannot test for BEAST on SSL 3.0"
+                );
+                return Ok(BeastProbeStatus::NotSupported);
+            }
 
-        builder.set_cipher_list("AES128-SHA:AES256-SHA:DES-CBC3-SHA")?;
+            builder.set_cipher_list("AES128-SHA:AES256-SHA:DES-CBC3-SHA")?;
 
-        let connector = builder.build();
-        match connector.connect(&self.target.hostname, std_stream) {
-            Ok(_) => Ok(BeastProbeStatus::Supported),
-            Err(e) => {
-                // Check if error is due to SSL 3.0 being disabled
-                let err_str = e.to_string().to_lowercase();
-                if err_str.contains("no protocols available") {
-                    Ok(BeastProbeStatus::Inconclusive)
-                } else if err_str.contains("ssl3") || err_str.contains("version") {
-                    // SSL 3.0 not supported - treat as not vulnerable
-                    tracing::debug!("SSL 3.0 connection failed (likely not supported): {}", e);
-                    Ok(BeastProbeStatus::NotSupported)
-                } else {
-                    // Other error - server might not support SSL 3.0
-                    Ok(classify_handshake_error(&err_str))
+            let connector = builder.build();
+            match connector.connect(&hostname, std_stream) {
+                Ok(_) => Ok(BeastProbeStatus::Supported),
+                Err(e) => {
+                    // Check if error is due to SSL 3.0 being disabled
+                    let err_str = e.to_string().to_lowercase();
+                    if err_str.contains("no protocols available") {
+                        Ok(BeastProbeStatus::Inconclusive)
+                    } else if err_str.contains("ssl3") || err_str.contains("version") {
+                        // SSL 3.0 not supported - treat as not vulnerable
+                        tracing::debug!("SSL 3.0 connection failed (likely not supported): {}", e);
+                        Ok(BeastProbeStatus::NotSupported)
+                    } else {
+                        // Other error - server might not support SSL 3.0
+                        Ok(classify_handshake_error(&err_str))
+                    }
                 }
             }
-        }
+        })
+        .await
+        .map_err(|e| crate::TlsError::Other(format!("Spawn blocking failed: {e}")))?
     }
 }
 
