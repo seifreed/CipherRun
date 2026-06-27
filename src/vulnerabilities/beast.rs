@@ -196,12 +196,12 @@ impl BeastTester {
                 .is_err()
             {
                 // SSL 3.0 is not supported by this OpenSSL build
-                // This means we cannot test SSL 3.0, but also modern servers
-                // shouldn't support it anyway
+                // This means we cannot test SSL 3.0, so the probe stays
+                // inconclusive instead of claiming the server is safe.
                 tracing::debug!(
                     "SSL 3.0 not supported by OpenSSL - cannot test for BEAST on SSL 3.0"
                 );
-                return Ok(BeastProbeStatus::NotSupported);
+                return Ok(BeastProbeStatus::Inconclusive);
             }
 
             if builder
