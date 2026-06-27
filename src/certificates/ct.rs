@@ -188,6 +188,11 @@ impl CtVerifier {
                 ),
             });
         }
+        if total_len + 2 != sct_list.len() {
+            return Err(crate::error::TlsError::ParseError {
+                message: "Malformed SCT list: trailing bytes after declared length".to_string(),
+            });
+        }
 
         let mut count = 0;
         let mut pos = 2usize;
@@ -228,6 +233,11 @@ impl CtVerifier {
             // Skip SCT data
             pos = next_pos;
             count += 1;
+        }
+        if pos != end_pos {
+            return Err(crate::error::TlsError::ParseError {
+                message: "Malformed SCT entry: trailing bytes in SCT list".to_string(),
+            });
         }
 
         Ok(count)
@@ -390,6 +400,34 @@ mod tests {
             .count_scts_in_list(&sct_list)
             .expect_err("Malformed SCT list should fail");
         assert!(err.to_string().contains("Malformed SCT list"));
+    }
+
+    #[test]
+    fn test_count_scts_in_list_rejects_trailing_bytes() {
+        let verifier = CtVerifier::new(false);
+        let sct_list = vec![
+            0x00, 0x05, // total length
+            0x00, 0x03, 0x01, 0x02, 0x03, // entry
+            0xff, // trailing byte outside declared length
+        ];
+        let err = verifier
+            .count_scts_in_list(&sct_list)
+            .expect_err("trailing bytes should fail");
+        assert!(err.to_string().contains("trailing bytes"));
+    }
+
+    #[test]
+    fn test_count_scts_in_list_rejects_trailing_entry_byte() {
+        let verifier = CtVerifier::new(false);
+        let sct_list = vec![
+            0x00, 0x06, // total length
+            0x00, 0x03, 0x01, 0x02, 0x03, // entry
+            0xff, // trailing byte inside declared length
+        ];
+        let err = verifier
+            .count_scts_in_list(&sct_list)
+            .expect_err("trailing entry byte should fail");
+        assert!(err.to_string().contains("trailing bytes"));
     }
 
     #[tokio::test]
