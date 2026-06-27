@@ -8,7 +8,7 @@ pub use model::{ApplicationProtocol, DetectedProtocol};
 
 use crate::Result;
 use heuristics::{analyze_banner, extract_version, protocol_from_port, requires_starttls};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::time::{Duration, timeout};
 
@@ -89,20 +89,14 @@ impl ProtocolDetector {
         let request = b"GET / HTTP/1.0\r\nHost: localhost\r\n\r\n";
         stream.write_all(request).await?;
 
-        let mut response = vec![0u8; 1024];
         let read_timeout = protocol_read_timeout();
-        let n = timeout(read_timeout, stream.read(&mut response))
+        let mut reader = BufReader::new(stream);
+        let mut response_str = String::new();
+        timeout(read_timeout, reader.read_line(&mut response_str))
             .await
             .map_err(|_| crate::TlsError::Timeout {
                 duration: Some(read_timeout),
             })??;
-
-        let response_bytes = response
-            .get(..n)
-            .ok_or_else(|| crate::TlsError::ParseError {
-                message: "HTTP detection read length exceeded buffer".to_string(),
-            })?;
-        let response_str = String::from_utf8_lossy(response_bytes).to_string();
 
         if response_str.starts_with("HTTP/") {
             let version = response_str
@@ -294,6 +288,39 @@ mod tests {
     #[tokio::test]
     async fn test_detect_http_response() {
         let port = spawn_http_server().await;
+        let mut stream = TcpStream::connect(("127.0.0.1", port))
+            .await
+            .expect("test assertion should succeed");
+        let detected = ProtocolDetector::detect_http(&mut stream)
+            .await
+            .expect("test assertion should succeed");
+
+        assert_eq!(detected.protocol, ApplicationProtocol::Http);
+        assert!(
+            detected
+                .version
+                .as_deref()
+                .unwrap_or("")
+                .starts_with("HTTP/")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_detect_http_fragmented_status_line() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        tokio::spawn(async move {
+            if let Ok((mut stream, _)) = listener.accept().await {
+                let mut buf = [0u8; 256];
+                let _ = stream.read(&mut buf).await;
+                stream.write_all(b"HTTP/1.1 200").await.unwrap();
+                stream.flush().await.unwrap();
+                tokio::time::sleep(Duration::from_millis(20)).await;
+                stream.write_all(b" OK\r\nContent-Length: 0\r\n\r\n").await.unwrap();
+            }
+        });
+
         let mut stream = TcpStream::connect(("127.0.0.1", port))
             .await
             .expect("test assertion should succeed");
