@@ -25,7 +25,7 @@ mod record_builder;
 use crate::Result;
 use crate::utils::network::Target;
 use crate::utils::timing::{TimingOracleConfig, TimingSampleSet, detect_timing_oracle};
-use crate::utils::{VulnSslConfig, test_vuln_ssl_connection};
+use crate::utils::{VulnSslConfig, test_vuln_ssl_connection, test_vuln_ssl_connection_outcome};
 use std::time::Duration;
 
 /// POODLE vulnerability tester
@@ -79,7 +79,7 @@ impl<'a> PoodleTester<'a> {
         // Check CBC connectivity once (same check test_tls_poodle does internally).
         let config = VulnSslConfig::tls10_with_ciphers("AES128-SHA:AES256-SHA:DES-CBC3-SHA")
             .with_starttls(self.starttls);
-        let cbc_connected = test_vuln_ssl_connection(self.target, config).await?;
+        let cbc_connected = test_vuln_ssl_connection_outcome(self.target, config).await?;
 
         // Run each sub-test once and reuse results for both tls_poodle and variants list.
         let zombie = self.test_zombie_poodle().await?;
@@ -87,7 +87,7 @@ impl<'a> PoodleTester<'a> {
         let sleeping = self.test_sleeping_poodle().await?;
         let openssl_0len = self.test_openssl_0length(ssl3_supported).await?;
 
-        let tls_poodle = if cbc_connected {
+        let tls_poodle = if cbc_connected == Some(true) {
             Some(zombie.vulnerable || golden.vulnerable || sleeping.vulnerable)
         } else {
             None
@@ -103,6 +103,7 @@ impl<'a> PoodleTester<'a> {
         ];
 
         let vulnerable = variants.iter().any(|v| v.vulnerable);
+        let inconclusive = variants.iter().any(|v| v.inconclusive);
         let details = if vulnerable {
             let names: Vec<_> = variants
                 .iter()
@@ -110,6 +111,8 @@ impl<'a> PoodleTester<'a> {
                 .map(|v| v.variant.name())
                 .collect();
             format!("Vulnerable to: {}", names.join(", "))
+        } else if inconclusive {
+            "POODLE variant testing inconclusive".to_string()
         } else {
             "Not vulnerable to any POODLE variants".to_string()
         };
@@ -214,8 +217,10 @@ impl<'a> PoodleTester<'a> {
         vulnerable_msg: &str,
         not_vulnerable_msg: &str,
     ) -> Result<PoodleVariantResult> {
-        if !network_probes::supports_cbc_ciphers(self.target, self.starttls).await? {
-            return Ok(Self::cbc_not_supported_result(variant));
+        match network_probes::supports_cbc_ciphers(self.target, self.starttls).await? {
+            Some(true) => {}
+            Some(false) => return Ok(Self::cbc_not_supported_result(variant)),
+            None => return Ok(Self::cbc_inconclusive_result(variant)),
         }
 
         // Increased from 5 to 10 for better statistical significance
@@ -271,10 +276,14 @@ impl<'a> PoodleTester<'a> {
 
     /// Test for Sleeping POODLE - Timing-based padding oracle
     async fn test_sleeping_poodle(&self) -> Result<PoodleVariantResult> {
-        if !network_probes::supports_cbc_ciphers(self.target, self.starttls).await? {
-            return Ok(Self::cbc_not_supported_result(
-                PoodleVariant::SleepingPoodle,
-            ));
+        match network_probes::supports_cbc_ciphers(self.target, self.starttls).await? {
+            Some(true) => {}
+            Some(false) => {
+                return Ok(Self::cbc_not_supported_result(
+                    PoodleVariant::SleepingPoodle,
+                ));
+            }
+            None => return Ok(Self::cbc_inconclusive_result(PoodleVariant::SleepingPoodle)),
         }
 
         // Increased from 20 to 30 for better statistical confidence
@@ -428,10 +437,14 @@ impl<'a> PoodleTester<'a> {
             });
         }
 
-        if !network_probes::supports_cbc_ciphers(self.target, self.starttls).await? {
-            return Ok(Self::cbc_not_supported_result(
-                PoodleVariant::OpenSsl0Length,
-            ));
+        match network_probes::supports_cbc_ciphers(self.target, self.starttls).await? {
+            Some(true) => {}
+            Some(false) => {
+                return Ok(Self::cbc_not_supported_result(
+                    PoodleVariant::OpenSsl0Length,
+                ));
+            }
+            None => return Ok(Self::cbc_inconclusive_result(PoodleVariant::OpenSsl0Length)),
         }
 
         // SSL 3.0 with CBC is offered. Send the zero-length fragment and treat
@@ -479,6 +492,17 @@ impl<'a> PoodleTester<'a> {
             vulnerable: false,
             inconclusive: false,
             details: "CBC ciphers not supported - not vulnerable".to_string(),
+            timing_data: None,
+        }
+    }
+
+    fn cbc_inconclusive_result(variant: PoodleVariant) -> PoodleVariantResult {
+        PoodleVariantResult {
+            variant,
+            vulnerable: false,
+            inconclusive: true,
+            details: "CBC cipher support probe inconclusive - could not complete TLS connection"
+                .to_string(),
             timing_data: None,
         }
     }

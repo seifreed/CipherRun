@@ -199,6 +199,25 @@ async fn test_cipher_support_outcome_closed_port_is_inconclusive() {
 }
 
 #[tokio::test]
+async fn test_vuln_ssl_connection_outcome_closed_port_is_inconclusive() {
+    let target = Target::with_ips(
+        "example.com".to_string(),
+        9,
+        vec!["127.0.0.1".parse().expect("valid IP")],
+    )
+    .expect("test assertion should succeed");
+
+    let outcome = test_vuln_ssl_connection_outcome(
+        &target,
+        VulnSslConfig::with_ciphers("AES128-SHA").with_timeout(1),
+    )
+    .await
+    .expect("test assertion should succeed");
+
+    assert_eq!(outcome, None);
+}
+
+#[tokio::test]
 async fn test_resolve_hostname_short_circuit_ip() {
     // Use a public IP address (Google DNS) to avoid SSRF validation
     let ips = resolve_hostname("8.8.8.8")

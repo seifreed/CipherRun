@@ -30,7 +30,7 @@ pub use path_ext::PathExt;
 // Re-export SSL connection helpers for vulnerability testing
 pub use network::{
     VulnSslConfig, VulnSslResult, test_cipher_support, test_vuln_ssl_connection,
-    try_vuln_ssl_connection,
+    test_vuln_ssl_connection_outcome, try_vuln_ssl_connection,
 };
 
 #[cfg(test)]

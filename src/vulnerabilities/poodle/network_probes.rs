@@ -6,7 +6,7 @@
 use crate::Result;
 use crate::constants::{CONTENT_TYPE_ALERT, TLS_HANDSHAKE_TIMEOUT};
 use crate::utils::network::Target;
-use crate::utils::{VulnSslConfig, test_vuln_ssl_connection};
+use crate::utils::{VulnSslConfig, test_vuln_ssl_connection_outcome};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::{Instant, timeout};
@@ -77,9 +77,9 @@ fn find_alert_description(response: &[u8], n: usize) -> Result<Option<u8>> {
 pub(super) async fn supports_cbc_ciphers(
     target: &Target,
     starttls: Option<crate::starttls::StarttlsProtocol>,
-) -> Result<bool> {
+) -> Result<Option<bool>> {
     const CBC_CIPHERS: &str = "AES128-SHA:AES256-SHA:AES128-SHA256:AES256-SHA256:DES-CBC3-SHA";
-    test_vuln_ssl_connection(
+    test_vuln_ssl_connection_outcome(
         target,
         VulnSslConfig::with_ciphers(CBC_CIPHERS).with_starttls(starttls),
     )

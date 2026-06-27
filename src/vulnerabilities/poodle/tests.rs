@@ -89,6 +89,15 @@ fn test_variant_result_without_timing_data() {
 }
 
 #[test]
+fn test_cbc_probe_inconclusive_result() {
+    let result = PoodleTester::cbc_inconclusive_result(PoodleVariant::GoldenDoodle);
+
+    assert!(!result.vulnerable);
+    assert!(result.inconclusive);
+    assert!(result.details.contains("inconclusive"));
+}
+
+#[test]
 fn test_malformed_record_building() {
     let target = crate::utils::network::Target::with_ips(
         "example.com".to_string(),

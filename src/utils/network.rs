@@ -671,6 +671,8 @@ impl VulnSslConfig {
 pub enum VulnSslResult {
     /// Connection succeeded - returns the SSL stream for further inspection
     Connected(SslStream<StdTcpStream>),
+    /// Probe could not complete (transport/STARTTLS/local setup failure)
+    Inconclusive,
     /// Connection failed (handshake rejected, timeout, etc.)
     Failed,
 }
@@ -679,6 +681,10 @@ impl VulnSslResult {
     /// Check if the connection was successful
     pub fn is_connected(&self) -> bool {
         matches!(self, VulnSslResult::Connected(_))
+    }
+
+    pub fn is_inconclusive(&self) -> bool {
+        matches!(self, VulnSslResult::Inconclusive)
     }
 }
 
@@ -713,7 +719,7 @@ pub async fn try_vuln_ssl_connection(
     .await
     {
         Ok(s) => s,
-        Err(_) => return Ok(VulnSslResult::Failed),
+        Err(_) => return Ok(VulnSslResult::Inconclusive),
     };
 
     let std_stream = into_blocking_std_stream(stream, Duration::from_secs(config.timeout_secs))?;
@@ -738,7 +744,7 @@ pub async fn try_vuln_ssl_connection(
         if let Some(ciphers) = config.cipher_list
             && builder.set_cipher_list(ciphers).is_err()
         {
-            return Ok(VulnSslResult::Failed);
+            return Ok(VulnSslResult::Inconclusive);
         }
 
         let connector = builder.build();
@@ -761,6 +767,18 @@ pub async fn try_vuln_ssl_connection(
 pub async fn test_vuln_ssl_connection(target: &Target, config: VulnSslConfig) -> Result<bool> {
     let result = try_vuln_ssl_connection(target, config).await?;
     Ok(result.is_connected())
+}
+
+pub async fn test_vuln_ssl_connection_outcome(
+    target: &Target,
+    config: VulnSslConfig,
+) -> Result<Option<bool>> {
+    let result = try_vuln_ssl_connection(target, config).await?;
+    if result.is_inconclusive() {
+        Ok(None)
+    } else {
+        Ok(Some(result.is_connected()))
+    }
 }
 
 /// Outcome for single-cipher support probes.
