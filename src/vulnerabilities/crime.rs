@@ -34,6 +34,11 @@ fn read_u16_at(data: &[u8], offset: usize) -> Option<u16> {
         .map(u16::from_be_bytes)
 }
 
+fn read_u24_at(data: &[u8], offset: usize) -> Option<usize> {
+    let bytes = data.get(offset..offset.checked_add(3)?)?;
+    Some(((bytes[0] as usize) << 16) | ((bytes[1] as usize) << 8) | bytes[2] as usize)
+}
+
 fn slice_range(data: &[u8], start: usize, len: usize) -> Option<&[u8]> {
     data.get(start..start.checked_add(len)?)
 }
@@ -295,6 +300,21 @@ impl<'a> CrimeTester<'a> {
                 if record_end > n {
                     return Ok(CompressionProbeStatus::Inconclusive);
                 }
+                let Some(hs_len) = read_u24_at(data, 6) else {
+                    return Ok(CompressionProbeStatus::Inconclusive);
+                };
+                let Some(hs_end) = 9usize.checked_add(hs_len) else {
+                    return Ok(CompressionProbeStatus::Inconclusive);
+                };
+                if hs_end > record_end {
+                    return Ok(CompressionProbeStatus::Inconclusive);
+                }
+                if ext_len_offset == hs_end {
+                    return Ok(CompressionProbeStatus::Disabled);
+                }
+                if ext_start > hs_end {
+                    return Ok(CompressionProbeStatus::Inconclusive);
+                }
 
                 let Some(ext_total) = read_u16_at(data, ext_len_offset).map(usize::from) else {
                     return Ok(CompressionProbeStatus::Inconclusive);
@@ -302,10 +322,10 @@ impl<'a> CrimeTester<'a> {
                 let Some(ext_end) = ext_start.checked_add(ext_total) else {
                     return Ok(CompressionProbeStatus::Inconclusive);
                 };
-                if ext_end > record_end {
+                if ext_end > hs_end {
                     return Ok(CompressionProbeStatus::Inconclusive);
                 }
-                if ext_end != record_end {
+                if ext_end != hs_end {
                     return Ok(CompressionProbeStatus::Inconclusive);
                 }
 
@@ -578,6 +598,58 @@ mod tests {
             .await
             .expect("probe should return a status");
         assert_eq!(status, CompressionProbeStatus::Inconclusive);
+
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_spdy_probe_detects_npn_in_combined_handshake_record() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = vec![0u8; 4096];
+            let _ = socket.read(&mut buf).await.unwrap();
+
+            let mut response = vec![
+                0x16, 0x03, 0x03, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x03, 0x03,
+            ];
+            response.extend_from_slice(&[0xAA; 32]);
+            response.push(0x00);
+            response.extend_from_slice(&[0x00, 0x9c]);
+            response.push(0x00);
+            response.extend_from_slice(&[0x00, 0x00]);
+            let ext_len_pos = response.len() - 2;
+            response.extend_from_slice(&[0x33, 0x74, 0x00, 0x07]);
+            response.push(0x06);
+            response.extend_from_slice(b"spdy/3");
+
+            let ext_len = (response.len() - ext_len_pos - 2) as u16;
+            write_u16_at(&mut response, ext_len_pos, ext_len);
+            let hs_len = response.len() - 9;
+            write_u24_at(&mut response, 6, hs_len);
+
+            response.extend_from_slice(&[0x0b, 0x00, 0x00, 0x00]);
+            let rec_len = (response.len() - 5) as u16;
+            write_u16_at(&mut response, 3, rec_len);
+
+            socket.write_all(&response).await.unwrap();
+        });
+
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+        let tester = CrimeTester::new(&target);
+
+        let status = tester
+            .test_spdy_compression()
+            .await
+            .expect("probe should return a status");
+        assert_eq!(status, CompressionProbeStatus::Enabled);
 
         server.await.unwrap();
     }
