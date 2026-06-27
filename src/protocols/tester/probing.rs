@@ -447,34 +447,34 @@ impl ProtocolTester {
             }
         }
 
-        let std_stream = stream.into_std()?;
-        std_stream.set_nonblocking(false)?;
+        let socket_timeout = std::time::Duration::from_secs(self.read_timeout.as_secs().max(10));
+        let std_stream = crate::utils::network::into_blocking_std_stream(stream, socket_timeout)?;
 
-        // Set socket-level read/write timeouts to prevent indefinite blocking
-        // on servers that accept TCP but never complete the TLS handshake
-        let socket_timeout = Some(std::time::Duration::from_secs(
-            self.read_timeout.as_secs().max(10),
-        ));
-        std_stream.set_read_timeout(socket_timeout)?;
-        std_stream.set_write_timeout(socket_timeout)?;
+        let enable_bugs_mode = self.enable_bugs_mode;
+        let sni_host = self
+            .sni_hostname
+            .clone()
+            .unwrap_or_else(|| self.target.hostname.clone());
+        tokio::task::spawn_blocking(move || -> Result<ProtocolProbeOutcome> {
+            let mut builder = SslConnector::builder(SslMethod::tls())?;
+            builder.set_verify(SslVerifyMode::NONE);
+            builder.set_min_proto_version(Some(SslVersion::TLS1_2))?;
+            builder.set_max_proto_version(Some(SslVersion::TLS1_2))?;
 
-        let mut builder = SslConnector::builder(SslMethod::tls())?;
-        builder.set_verify(SslVerifyMode::NONE);
-        builder.set_min_proto_version(Some(SslVersion::TLS1_2))?;
-        builder.set_max_proto_version(Some(SslVersion::TLS1_2))?;
+            if enable_bugs_mode {
+                use openssl::ssl::SslOptions;
+                builder.set_options(SslOptions::ALL);
+            }
 
-        if self.enable_bugs_mode {
-            use openssl::ssl::SslOptions;
-            builder.set_options(SslOptions::ALL);
-        }
+            let connector = builder.build();
 
-        let connector = builder.build();
-        let sni_host = self.sni_hostname.as_ref().unwrap_or(&self.target.hostname);
-
-        match connector.connect(sni_host, std_stream) {
-            Ok(_) => Ok(ProtocolProbeOutcome::Supported),
-            Err(error) => Ok(classify_tls12_handshake_error(&error)),
-        }
+            match connector.connect(&sni_host, std_stream) {
+                Ok(_) => Ok(ProtocolProbeOutcome::Supported),
+                Err(error) => Ok(classify_tls12_handshake_error(&error)),
+            }
+        })
+        .await
+        .map_err(|e| crate::TlsError::Other(format!("TLS 1.2 probe task failed: {}", e)))?
     }
 
     pub(super) async fn test_tls13_on_ip(
