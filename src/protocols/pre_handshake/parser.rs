@@ -213,7 +213,7 @@ impl PreHandshakeScanner {
                                 Self::read_u24_at(data, offset, "Certificate list length")?;
 
                             // Prevent integer overflow/wraparound on malicious input
-                            if certs_length > record_end - offset - 3 {
+                            if certs_length > handshake_end - offset - 3 {
                                 return Err(TlsError::ParseError {
                                     message: "Certificate list length exceeds available data"
                                         .to_string(),
@@ -232,9 +232,16 @@ impl PreHandshakeScanner {
                                     }
                                 })?;
 
+                            if certs_end != handshake_end {
+                                return Err(TlsError::ParseError {
+                                    message: "Certificate message contains trailing bytes"
+                                        .to_string(),
+                                });
+                            }
+
                             if cert_offset
                                 .checked_add(3)
-                                .is_some_and(|end| end <= certs_end && end <= record_end)
+                                .is_some_and(|end| end <= certs_end)
                             {
                                 let cert_length =
                                     Self::read_u24_at(data, cert_offset, "Certificate length")?;
@@ -244,18 +251,28 @@ impl PreHandshakeScanner {
                                     }
                                 })?;
 
-                                if cert_offset
-                                    .checked_add(cert_length)
-                                    .is_some_and(|end| end <= certs_end && end <= record_end)
-                                {
-                                    let cert_der = Self::slice_range(
-                                        data,
-                                        cert_offset,
-                                        cert_length,
-                                        "Certificate DER",
-                                    )?;
-                                    certificate_data = Some(self.parse_certificate(cert_der)?);
+                                let cert_end =
+                                    cert_offset.checked_add(cert_length).ok_or_else(|| {
+                                        TlsError::ParseError {
+                                            message: "Certificate length overflow".to_string(),
+                                        }
+                                    })?;
+                                if cert_end > certs_end {
+                                    return Err(TlsError::ParseError {
+                                        message: "Certificate length exceeds list".to_string(),
+                                    });
                                 }
+                                let cert_der = Self::slice_range(
+                                    data,
+                                    cert_offset,
+                                    cert_length,
+                                    "Certificate DER",
+                                )?;
+                                certificate_data = Some(self.parse_certificate(cert_der)?);
+                            } else if cert_offset != certs_end {
+                                return Err(TlsError::ParseError {
+                                    message: "Certificate entry header truncated".to_string(),
+                                });
                             }
                         }
                     }
@@ -347,6 +364,30 @@ mod tests {
     use openssl::rsa::Rsa;
     use openssl::x509::{X509Builder, X509Extension, X509NameBuilder};
 
+    fn test_scanner() -> PreHandshakeScanner {
+        PreHandshakeScanner::new(
+            crate::utils::network::Target::with_ips(
+                "localhost".to_string(),
+                443,
+                vec![std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)],
+            )
+            .unwrap(),
+        )
+    }
+
+    fn handshake_record(handshake_type: u8, body: &[u8]) -> Vec<u8> {
+        let handshake_len = body.len() as u32;
+        let record_len = (4 + body.len()) as u16;
+        let mut record = vec![0x16, 0x03, 0x03];
+        record.extend_from_slice(&record_len.to_be_bytes());
+        record.push(handshake_type);
+        record.push(((handshake_len >> 16) & 0xff) as u8);
+        record.push(((handshake_len >> 8) & 0xff) as u8);
+        record.push((handshake_len & 0xff) as u8);
+        record.extend_from_slice(body);
+        record
+    }
+
     fn cert_with_raw_extension_der(oid: &str, contents: &[u8]) -> Vec<u8> {
         let rsa = Rsa::generate(2048).unwrap();
         let pkey = PKey::from_rsa(rsa).unwrap();
@@ -376,14 +417,7 @@ mod tests {
 
     #[test]
     fn test_parse_certificate_rejects_malformed_san() {
-        let scanner = PreHandshakeScanner::new(
-            crate::utils::network::Target::with_ips(
-                "localhost".to_string(),
-                443,
-                vec![std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)],
-            )
-            .unwrap(),
-        );
+        let scanner = test_scanner();
         let der = cert_with_raw_extension_der("2.5.29.17", b"\x05\x00");
 
         let error = scanner
@@ -394,6 +428,57 @@ mod tests {
             error
                 .to_string()
                 .contains("Failed to parse subject alternative name")
+        );
+    }
+
+    #[test]
+    fn test_parse_handshake_rejects_certificate_list_beyond_message() {
+        let scanner = test_scanner();
+        let record = handshake_record(0x0b, &[0x00, 0x00, 0x01]);
+
+        let error = match scanner.parse_handshake_response(&record) {
+            Ok(_) => panic!("certificate list past handshake should fail"),
+            Err(error) => error,
+        };
+
+        assert!(
+            error
+                .to_string()
+                .contains("Certificate list length exceeds available data")
+        );
+    }
+
+    #[test]
+    fn test_parse_handshake_rejects_truncated_certificate_entry() {
+        let scanner = test_scanner();
+        let record = handshake_record(0x0b, &[0x00, 0x00, 0x05, 0x00, 0x00, 0x04, 0x00, 0x00]);
+
+        let error = match scanner.parse_handshake_response(&record) {
+            Ok(_) => panic!("truncated certificate entry should fail"),
+            Err(error) => error,
+        };
+
+        assert!(
+            error
+                .to_string()
+                .contains("Certificate length exceeds list")
+        );
+    }
+
+    #[test]
+    fn test_parse_handshake_rejects_certificate_trailing_bytes() {
+        let scanner = test_scanner();
+        let record = handshake_record(0x0b, &[0x00, 0x00, 0x00, 0xff]);
+
+        let error = match scanner.parse_handshake_response(&record) {
+            Ok(_) => panic!("certificate trailing bytes should fail"),
+            Err(error) => error,
+        };
+
+        assert!(
+            error
+                .to_string()
+                .contains("Certificate message contains trailing bytes")
         );
     }
 }
