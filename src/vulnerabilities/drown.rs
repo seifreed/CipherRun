@@ -199,7 +199,7 @@ impl DrownTester {
         // Read response
         let mut buffer = vec![0u8; 4096];
         match timeout(Duration::from_secs(3), stream.read(&mut buffer)).await {
-            Ok(Ok(n)) if n >= 2 => {
+            Ok(Ok(n)) if n > 0 => {
                 let response = buffer.get(..n).ok_or_else(|| crate::TlsError::ParseError {
                     message: "DROWN SSLv2 response read length exceeded buffer".to_string(),
                 })?;
@@ -219,14 +219,14 @@ impl DrownTester {
     /// Analyze SSLv2 response and return detection status
     fn analyze_sslv2_response(data: &[u8]) -> Result<Sslv2Status> {
         if data.len() < 2 {
-            return Ok(Sslv2Status::NotSupported);
+            return Ok(Sslv2Status::Inconclusive);
         }
 
         let Some((&first_byte, rest)) = data.split_first() else {
-            return Ok(Sslv2Status::NotSupported);
+            return Ok(Sslv2Status::Inconclusive);
         };
         let Some(&second_byte) = rest.first() else {
-            return Ok(Sslv2Status::NotSupported);
+            return Ok(Sslv2Status::Inconclusive);
         };
 
         // SSLv2 uses 2-byte or 3-byte record headers
@@ -499,6 +499,7 @@ pub struct DrownTestResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     fn byte_at(data: &[u8], offset: usize) -> Option<u8> {
         data.get(offset).copied()
@@ -643,7 +644,40 @@ mod tests {
         let response = vec![0x80]; // Only 1 byte
         let result = DrownTester::analyze_sslv2_response(&response);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), Sslv2Status::NotSupported);
+        assert_eq!(result.unwrap(), Sslv2Status::Inconclusive);
+    }
+
+    #[tokio::test]
+    async fn test_sslv2_one_byte_response_is_inconclusive() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener");
+        let port = listener.local_addr().expect("local addr").port();
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept");
+            let mut buf = [0u8; 128];
+            let _ = socket.read(&mut buf).await.expect("read client hello");
+            socket
+                .write_all(&[0x80])
+                .await
+                .expect("write partial header");
+        });
+
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+
+        let result = DrownTester::new(target).test().await.unwrap();
+        server.await.expect("server task");
+
+        assert!(!result.vulnerable);
+        assert!(!result.sslv2_supported);
+        assert_eq!(result.sslv2_status, None);
+        assert!(result.details.contains("inconclusive"), "{result:?}");
     }
 
     #[test]
