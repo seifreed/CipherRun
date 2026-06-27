@@ -37,6 +37,199 @@ impl LdapNegotiator {
             0x36, 0x36, 0x2e, 0x32, 0x30, 0x30, 0x33, 0x37,
         ]
     }
+
+    fn read_ber_length(
+        bytes: &[u8],
+        offset: usize,
+        context: &str,
+    ) -> Result<Option<(usize, usize)>> {
+        let Some(&first) = bytes.get(offset) else {
+            return Ok(None);
+        };
+
+        if first & 0x80 == 0 {
+            return Ok(Some((first as usize, 1)));
+        }
+
+        let len_bytes = (first & 0x7f) as usize;
+        if len_bytes == 0 {
+            return Err(crate::error::TlsError::ParseError {
+                message: format!("{context} uses indefinite length"),
+            });
+        }
+
+        let end = offset
+            .checked_add(1)
+            .and_then(|value| value.checked_add(len_bytes))
+            .ok_or_else(|| crate::error::TlsError::ParseError {
+                message: format!("{context} length overflow"),
+            })?;
+        let Some(length_bytes) = bytes.get(offset + 1..end) else {
+            return Ok(None);
+        };
+
+        let mut len = 0usize;
+        for &byte in length_bytes {
+            len = len
+                .checked_mul(256)
+                .and_then(|value| value.checked_add(byte as usize))
+                .ok_or_else(|| crate::error::TlsError::ParseError {
+                    message: format!("{context} length overflow"),
+                })?;
+        }
+
+        Ok(Some((len, 1 + len_bytes)))
+    }
+
+    fn parse_starttls_response(bytes: &[u8]) -> Result<Option<bool>> {
+        if bytes.len() < 2 {
+            return Ok(None);
+        }
+
+        if bytes[0] != 0x30 {
+            return Err(crate::error::TlsError::ParseError {
+                message: "LDAP STARTTLS response is not a sequence".to_string(),
+            });
+        }
+
+        let Some((seq_len, seq_len_bytes)) = Self::read_ber_length(bytes, 1, "LDAP sequence length")? else {
+            return Ok(None);
+        };
+        let content_start = 1 + seq_len_bytes;
+        let seq_end = content_start
+            .checked_add(seq_len)
+            .ok_or_else(|| crate::error::TlsError::ParseError {
+                message: "LDAP sequence length overflow".to_string(),
+            })?;
+
+        if bytes.len() < seq_end {
+            return Ok(None);
+        }
+        if bytes.len() > seq_end {
+            return Err(crate::error::TlsError::ParseError {
+                message: "LDAP STARTTLS response contains trailing bytes".to_string(),
+            });
+        }
+
+        let mut offset = content_start;
+        if bytes.get(offset) != Some(&0x02) {
+            return Err(crate::error::TlsError::ParseError {
+                message: "LDAP STARTTLS response is missing messageID".to_string(),
+            });
+        }
+        offset += 1;
+
+        let Some((msg_len, msg_len_bytes)) = Self::read_ber_length(bytes, offset, "LDAP messageID length")? else {
+            return Ok(None);
+        };
+        if msg_len == 0 {
+            return Err(crate::error::TlsError::ParseError {
+                message: "LDAP messageID has zero length".to_string(),
+            });
+        }
+        offset += msg_len_bytes;
+        offset = offset
+            .checked_add(msg_len)
+            .ok_or_else(|| crate::error::TlsError::ParseError {
+                message: "LDAP messageID length overflow".to_string(),
+            })?;
+        if offset > seq_end {
+            return Ok(None);
+        }
+
+        if bytes.get(offset) != Some(&0x78) {
+            return Err(crate::error::TlsError::ParseError {
+                message: "LDAP STARTTLS response is not an extended response".to_string(),
+            });
+        }
+        offset += 1;
+
+        let Some((ext_len, ext_len_bytes)) = Self::read_ber_length(bytes, offset, "LDAP extended response length")? else {
+            return Ok(None);
+        };
+        offset += ext_len_bytes;
+        let ext_end = offset
+            .checked_add(ext_len)
+            .ok_or_else(|| crate::error::TlsError::ParseError {
+                message: "LDAP extended response length overflow".to_string(),
+            })?;
+        if ext_end > seq_end {
+            return Ok(None);
+        }
+
+        if bytes.get(offset) != Some(&0x0a) {
+            return Err(crate::error::TlsError::ParseError {
+                message: "LDAP STARTTLS response is missing resultCode".to_string(),
+            });
+        }
+        offset += 1;
+
+        let Some((result_len, result_len_bytes)) = Self::read_ber_length(bytes, offset, "LDAP resultCode length")? else {
+            return Ok(None);
+        };
+        if result_len == 0 {
+            return Err(crate::error::TlsError::ParseError {
+                message: "LDAP resultCode has zero length".to_string(),
+            });
+        }
+        offset += result_len_bytes;
+        let result_end = offset
+            .checked_add(result_len)
+            .ok_or_else(|| crate::error::TlsError::ParseError {
+                message: "LDAP resultCode length overflow".to_string(),
+            })?;
+        if result_end > ext_end {
+            return Ok(None);
+        }
+        let result_code = bytes[offset];
+        offset = result_end;
+
+        if bytes.get(offset) != Some(&0x04) {
+            return Err(crate::error::TlsError::ParseError {
+                message: "LDAP STARTTLS response is missing matchedDN".to_string(),
+            });
+        }
+        offset += 1;
+
+        let Some((dn_len, dn_len_bytes)) = Self::read_ber_length(bytes, offset, "LDAP matchedDN length")? else {
+            return Ok(None);
+        };
+        offset += dn_len_bytes;
+        offset = offset
+            .checked_add(dn_len)
+            .ok_or_else(|| crate::error::TlsError::ParseError {
+                message: "LDAP matchedDN length overflow".to_string(),
+            })?;
+        if offset > ext_end {
+            return Ok(None);
+        }
+
+        if bytes.get(offset) != Some(&0x04) {
+            return Err(crate::error::TlsError::ParseError {
+                message: "LDAP STARTTLS response is missing diagnosticMessage".to_string(),
+            });
+        }
+        offset += 1;
+
+        let Some((diag_len, diag_len_bytes)) = Self::read_ber_length(bytes, offset, "LDAP diagnosticMessage length")? else {
+            return Ok(None);
+        };
+        offset += diag_len_bytes;
+        offset = offset
+            .checked_add(diag_len)
+            .ok_or_else(|| crate::error::TlsError::ParseError {
+                message: "LDAP diagnosticMessage length overflow".to_string(),
+            })?;
+        if offset > ext_end {
+            return Ok(None);
+        }
+
+        if result_code == 0 {
+            Ok(Some(true))
+        } else {
+            Ok(Some(false))
+        }
+    }
 }
 
 #[async_trait]
@@ -47,32 +240,29 @@ impl StarttlsNegotiator for LdapNegotiator {
         stream.write_all(&starttls_request).await?;
         stream.flush().await?;
 
-        // Read response
-        let mut response = vec![0u8; 1024];
-        let n = stream.read(&mut response).await?;
+        let mut response = Vec::with_capacity(64);
+        let mut chunk = [0u8; 256];
+        const MAX_RESPONSE_LEN: usize = 4096;
 
-        if n == 0 {
-            return Err(crate::error::TlsError::ConnectionClosed {
-                details: "LDAP server closed connection".to_string(),
-            });
-        }
+        loop {
+            let n = stream.read(&mut chunk).await?;
+            if n == 0 {
+                return Err(crate::error::TlsError::ConnectionClosed {
+                    details: "LDAP server closed connection".to_string(),
+                });
+            }
 
-        // Check for successful response
-        // LDAP response should contain resultCode = success (0)
-        // Simplified check: look for success indicator in response
-        if n >= 10 {
-            let response = response
-                .get(..n)
-                .ok_or_else(|| crate::error::TlsError::ParseError {
-                    message: "LDAP STARTTLS response read length exceeded buffer".to_string(),
-                })?;
-            // Check if response contains ExtendedResponse (tag 0x78)
-            // and resultCode = 0 (success)
-            // LDAP ExtendedResponse structure:
-            // [0x30, len, 0x02, 0x01, msgid, 0x78, len, 0x0a, 0x01, resultCode]
-            // resultCode (success = 0x00) is at offset 9
-            if response.get(5) == Some(&0x78) && response.get(9) == Some(&0x00) {
-                return Ok(());
+            response.extend_from_slice(&chunk[..n]);
+            if response.len() > MAX_RESPONSE_LEN {
+                return Err(crate::error::TlsError::ParseError {
+                    message: "LDAP STARTTLS response exceeds maximum length".to_string(),
+                });
+            }
+
+            match Self::parse_starttls_response(&response)? {
+                Some(true) => return Ok(()),
+                Some(false) => break,
+                None => continue,
             }
         }
 
@@ -121,12 +311,11 @@ mod tests {
             let mut buf = vec![0u8; 64];
             let _ = stream.read(&mut buf).await.unwrap();
 
-            // LDAP ExtendedResponse with resultCode=0 (success)
-            // SEQUENCE, length=10
-            // messageID=1
-            // ExtendedResponse (0x78), length=5
-            // resultCode=0 (success)
-            let response = [0x30, 0x0a, 0x02, 0x01, 0x01, 0x78, 0x05, 0x0a, 0x01, 0x00];
+            // LDAP ExtendedResponse with resultCode=0 (success), empty matchedDN,
+            // and empty diagnosticMessage.
+            let response = [
+                0x30, 0x0c, 0x02, 0x01, 0x01, 0x78, 0x07, 0x0a, 0x01, 0x00, 0x04, 0x00, 0x04, 0x00,
+            ];
             stream.write_all(&response).await.unwrap();
             // Ensure all data is sent before the socket is closed
             let _ = stream.flush().await;
@@ -134,21 +323,61 @@ mod tests {
 
         let mut client = TcpStream::connect(addr).await.unwrap();
         let negotiator = LdapNegotiator::new();
+        negotiator.negotiate_starttls(&mut client).await.unwrap();
+
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_ldap_negotiate_starttls_rejects_malformed_success_shape() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut buf = vec![0u8; 64];
+            let _ = stream.read(&mut buf).await.unwrap();
+
+            // This payload had previously been accepted by the fixed-offset check
+            // even though the outer tag is wrong.
+            let response = [
+                0x31, 0x0c, 0x02, 0x01, 0x01, 0x78, 0x07, 0x0a, 0x01, 0x00, 0x04, 0x00, 0x04, 0x00,
+            ];
+            stream.write_all(&response).await.unwrap();
+            let _ = stream.flush().await;
+        });
+
+        let mut client = TcpStream::connect(addr).await.unwrap();
+        let negotiator = LdapNegotiator::new();
         let result = negotiator.negotiate_starttls(&mut client).await;
 
-        // The test may succeed or fail depending on timing, but we check for expected behavior
-        // Either the response was properly received and parsed, or we got an error
-        if let Err(err) = result {
-            // If we got an error, it should be a specific STARTTLS error
-            let err_str = err.to_string();
-            assert!(
-                err_str.contains("STARTTLS")
-                    || err_str.contains("LDAP")
-                    || err_str.contains("connection"),
-                "Unexpected error: {}",
-                err_str
-            );
-        }
+        assert!(result.is_err(), "Expected malformed LDAP response to fail");
+
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_ldap_negotiate_starttls_succeeds_with_fragmented_response() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut buf = vec![0u8; 64];
+            let _ = stream.read(&mut buf).await.unwrap();
+
+            let first_half = [0x30, 0x0c, 0x02, 0x01, 0x01, 0x78];
+            let second_half = [0x07, 0x0a, 0x01, 0x00, 0x04, 0x00, 0x04, 0x00];
+            stream.write_all(&first_half).await.unwrap();
+            stream.flush().await.unwrap();
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            stream.write_all(&second_half).await.unwrap();
+            let _ = stream.flush().await;
+        });
+
+        let mut client = TcpStream::connect(addr).await.unwrap();
+        let negotiator = LdapNegotiator::new();
+        negotiator.negotiate_starttls(&mut client).await.unwrap();
 
         server.await.unwrap();
     }
