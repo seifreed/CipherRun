@@ -401,6 +401,9 @@ impl ClientHelloCapture {
         let Some(list_end) = 2usize.checked_add(list_len) else {
             return vec![];
         };
+        if !list_len.is_multiple_of(2) || list_end != data.len() {
+            return vec![];
+        }
         data.get(2..list_end)
             .map(|groups| {
                 groups
@@ -432,6 +435,9 @@ impl ClientHelloCapture {
         let Some(list_end) = 1usize.checked_add(list_len) else {
             return vec![];
         };
+        if list_end != data.len() {
+            return vec![];
+        }
         data.get(1..list_end).unwrap_or_default().to_vec()
     }
 
@@ -600,10 +606,24 @@ mod tests {
     }
 
     #[test]
+    fn test_supported_groups_rejects_trailing_byte() {
+        let data = vec![0, 3, 0, 23, 0];
+        let groups = ClientHelloCapture::parse_supported_groups(&data);
+        assert!(groups.is_empty());
+    }
+
+    #[test]
     fn test_point_formats_parsing() {
         let data = vec![1, 0]; // Length: 1, Format: 0 (uncompressed)
         let formats = ClientHelloCapture::parse_point_formats(&data);
         assert_eq!(formats, vec![0]);
+    }
+
+    #[test]
+    fn test_point_formats_rejects_trailing_byte() {
+        let data = vec![1, 0, 1];
+        let formats = ClientHelloCapture::parse_point_formats(&data);
+        assert!(formats.is_empty());
     }
 
     #[test]
