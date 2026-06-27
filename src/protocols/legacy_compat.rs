@@ -91,7 +91,14 @@ impl LegacyCompatTester {
                     let connector = builder.build();
                     match connector.connect(&hostname, std_stream) {
                         Ok(_) => Ok(LegacyProbeOutcome::Supported),
-                        Err(_) => Ok(LegacyProbeOutcome::NotSupported),
+                        Err(error) => {
+                            let error = error.to_string();
+                            if crate::utils::network::is_transport_anomaly_error(&error) {
+                                Ok(LegacyProbeOutcome::Inconclusive)
+                            } else {
+                                Ok(LegacyProbeOutcome::NotSupported)
+                            }
+                        }
                     }
                 }
                 Err(_) => Ok(LegacyProbeOutcome::Inconclusive),
@@ -716,5 +723,30 @@ mod tests {
 
         let modern = LegacyCiphers::get_cipher_info("TLS_AES_128_GCM_SHA256");
         assert_eq!(modern.security_level, SecurityConcern::Low);
+    }
+
+    #[tokio::test]
+    async fn test_cipher_support_mid_handshake_close_is_inconclusive() {
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let server = tokio::spawn(async move {
+            let (_socket, _) = listener.accept().await.unwrap();
+        });
+
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .unwrap();
+        let tester = LegacyCompatTester::new(target);
+
+        let outcome = tester.test_cipher_support("DES-CBC-SHA").await.unwrap();
+        server.await.unwrap();
+
+        assert_eq!(outcome, LegacyProbeOutcome::Inconclusive);
     }
 }
