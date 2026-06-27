@@ -99,33 +99,38 @@ impl IntoleranceTester {
         let std_stream =
             crate::utils::network::into_blocking_std_stream(stream, self.read_timeout)?;
 
-        let mut builder = SslConnector::builder(SslMethod::tls())?;
-        // Certificate validity is irrelevant to the negotiated DH prime; a
-        // verifying connector would fail the handshake at cert validation on
-        // bad-cert hosts and leave a weak/known DH prime undetected.
-        builder.set_verify(SslVerifyMode::NONE);
-        builder.set_cipher_list("DHE:EDH:!aNULL:!eNULL")?;
+        let hostname = self.target.hostname.clone();
+        tokio::task::spawn_blocking(move || -> Result<Option<String>> {
+            let mut builder = SslConnector::builder(SslMethod::tls())?;
+            // Certificate validity is irrelevant to the negotiated DH prime; a
+            // verifying connector would fail the handshake at cert validation on
+            // bad-cert hosts and leave a weak/known DH prime undetected.
+            builder.set_verify(SslVerifyMode::NONE);
+            builder.set_cipher_list("DHE:EDH:!aNULL:!eNULL")?;
 
-        let connector = builder.build();
-        match connector.connect(&self.target.hostname, std_stream) {
-            Ok(ssl_stream) => {
-                let cipher = ssl_stream.ssl().current_cipher();
-                if let Some(c) = cipher
-                    && c.name().contains("DHE")
-                {
-                    // Extract the DH prime from the negotiated connection
-                    if let Ok(tmp_key) = ssl_stream.ssl().tmp_key()
-                        && let Ok(dh) = tmp_key.dh()
-                        && let Ok(hex_str) = dh.prime_p().to_hex_str()
+            let connector = builder.build();
+            match connector.connect(&hostname, std_stream) {
+                Ok(ssl_stream) => {
+                    let cipher = ssl_stream.ssl().current_cipher();
+                    if let Some(c) = cipher
+                        && c.name().contains("DHE")
                     {
-                        return Ok(Some(hex_str.to_string().to_uppercase()));
+                        // Extract the DH prime from the negotiated connection
+                        if let Ok(tmp_key) = ssl_stream.ssl().tmp_key()
+                            && let Ok(dh) = tmp_key.dh()
+                            && let Ok(hex_str) = dh.prime_p().to_hex_str()
+                        {
+                            return Ok(Some(hex_str.to_string().to_uppercase()));
+                        }
+                        return Ok(None);
                     }
-                    return Ok(None);
+                    Ok(None)
                 }
-                Ok(None)
+                Err(_) => Ok(None),
             }
-            Err(_) => Ok(None),
-        }
+        })
+        .await
+        .map_err(|e| crate::TlsError::Other(format!("DH prime extraction task failed: {}", e)))?
     }
 
     pub(super) fn load_common_primes() -> Result<Vec<String>> {
