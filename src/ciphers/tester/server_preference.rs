@@ -145,24 +145,16 @@ impl CipherTester {
             .copied()
             .ok_or(crate::TlsError::NoSocketAddresses)?;
 
-        let mut stream = match crate::utils::network::connect_with_timeout(
+        let mut stream = crate::utils::network::connect_with_timeout(
             addr,
             self.connect_timeout,
             self.retry_config.as_ref(),
         )
-        .await
-        {
-            Ok(s) => s,
-            Err(_) => return Ok(None),
-        };
+        .await?;
 
         // Send RDP preamble if needed (same as perform_cipher_handshake)
-        if self.use_rdp
-            && crate::protocols::rdp::RdpPreamble::send(&mut stream)
-                .await
-                .is_err()
-        {
-            return Ok(None);
+        if self.use_rdp {
+            crate::protocols::rdp::RdpPreamble::send(&mut stream).await?;
         }
 
         if let Some(starttls_proto) = self.starttls_protocol {
@@ -170,16 +162,12 @@ impl CipherTester {
                 starttls_proto,
                 self.starttls_negotiation_hostname(),
             );
-            if crate::starttls::protocols::negotiate_starttls_with_timeout(
+            crate::starttls::protocols::negotiate_starttls_with_timeout(
                 negotiator.as_ref(),
                 &mut stream,
                 self.read_timeout,
             )
-            .await
-            .is_err()
-            {
-                return Ok(None);
-            }
+            .await?;
         }
 
         let mut builder = ClientHelloBuilder::new(protocol);
@@ -203,7 +191,9 @@ impl CipherTester {
         .await
         {
             Ok(result) => result?,
-            Err(_) => Ok(None),
+            Err(_) => Err(crate::TlsError::Timeout {
+                duration: Some(self.read_timeout),
+            }),
         }
     }
 

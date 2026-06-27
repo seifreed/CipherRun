@@ -489,6 +489,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_get_server_chosen_cipher_propagates_connect_errors() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("local addr should exist");
+        drop(listener);
+
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            addr.port(),
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .expect("target should build");
+
+        let tester = CipherTester::new(target)
+            .with_connect_timeout(Duration::from_millis(200))
+            .with_read_timeout(Duration::from_millis(200));
+
+        let err = tester
+            .get_server_chosen_cipher(Protocol::TLS12, &[0xc02f, 0xc030])
+            .await
+            .expect_err("connection failure should not be reported as no chosen cipher");
+
+        assert!(err.to_string().contains("I/O error"));
+    }
+
+    #[tokio::test]
     async fn test_get_server_chosen_cipher_propagates_parse_errors() {
         let addr = spawn_fake_tls_server(0xc02f, 33, 1).await;
         let target = Target::with_ips(
