@@ -152,28 +152,29 @@ impl CertificateAdvancedTester {
         let stream =
             crate::utils::network::connect_with_timeout(addr, connect_timeout, None).await?;
 
-        let std_stream = stream.into_std()?;
-        std_stream.set_nonblocking(false)?;
+        let std_stream = crate::utils::network::into_blocking_std_stream(stream, connect_timeout)?;
 
-        let mut builder = SslConnector::builder(SslMethod::tls())?;
-        // The scanner must retrieve and inspect certificates from hosts whose
-        // certificates are expired/self-signed/untrusted — exactly the cases a
-        // verifying connector rejects with a fatal handshake error. Trust is
-        // assessed separately by the certificate validator.
-        builder.set_verify(SslVerifyMode::NONE);
+        let hostname_to_use = sni_hostname.unwrap_or(&self.target.hostname).to_string();
+        tokio::task::spawn_blocking(move || -> Result<CertificateInfo> {
+            let mut builder = SslConnector::builder(SslMethod::tls())?;
+            // The scanner must retrieve and inspect certificates from hosts whose
+            // certificates are expired/self-signed/untrusted — exactly the cases a
+            // verifying connector rejects with a fatal handshake error. Trust is
+            // assessed separately by the certificate validator.
+            builder.set_verify(SslVerifyMode::NONE);
 
-        let connector = builder.build();
+            let connector = builder.build();
+            let ssl_stream = connector.connect(&hostname_to_use, std_stream)?;
 
-        let hostname_to_use = sni_hostname.unwrap_or(&self.target.hostname);
+            let cert = ssl_stream
+                .ssl()
+                .peer_certificate()
+                .ok_or_else(|| crate::error::TlsError::Other("No certificate presented".into()))?;
 
-        let ssl_stream = connector.connect(hostname_to_use, std_stream)?;
-
-        let cert = ssl_stream
-            .ssl()
-            .peer_certificate()
-            .ok_or_else(|| crate::error::TlsError::Other("No certificate presented".into()))?;
-
-        extract_certificate_info(&cert)
+            extract_certificate_info(&cert)
+        })
+        .await
+        .map_err(|e| crate::TlsError::Other(format!("certificate task failed: {}", e)))?
     }
 
     /// Test certificate compression
@@ -192,70 +193,72 @@ impl CertificateAdvancedTester {
         let stream =
             crate::utils::network::connect_with_timeout(addr, connect_timeout, None).await?;
 
-        let std_stream = stream.into_std()?;
-        std_stream.set_nonblocking(false)?;
-        std_stream.set_read_timeout(Some(connect_timeout))?;
-        std_stream.set_write_timeout(Some(connect_timeout))?;
+        let std_stream = crate::utils::network::into_blocking_std_stream(stream, connect_timeout)?;
 
-        let mut builder = SslConnector::builder(SslMethod::tls())?;
-        // Certificate compression is independent of certificate validity; the
-        // scanner must probe it on bad-cert hosts too (trust assessed separately).
-        builder.set_verify(SslVerifyMode::NONE);
+        let hostname = self.target.hostname.clone();
+        tokio::task::spawn_blocking(move || -> Result<CertificateCompressionAnalysis> {
+            let mut builder = SslConnector::builder(SslMethod::tls())?;
+            // Certificate compression is independent of certificate validity; the
+            // scanner must probe it on bad-cert hosts too (trust assessed separately).
+            builder.set_verify(SslVerifyMode::NONE);
 
-        // Try to enable TLS 1.3 for certificate compression
-        builder.set_min_proto_version(Some(SslVersion::TLS1_3))?;
+            // Try to enable TLS 1.3 for certificate compression
+            builder.set_min_proto_version(Some(SslVersion::TLS1_3))?;
 
-        let connector = builder.build();
+            let connector = builder.build();
 
-        match connector.connect(&self.target.hostname, std_stream) {
-            Ok(ssl_stream) => {
-                let cert = ssl_stream.ssl().peer_certificate();
+            match connector.connect(&hostname, std_stream) {
+                Ok(ssl_stream) => {
+                    let cert = ssl_stream.ssl().peer_certificate();
 
-                if let Some(cert) = cert {
-                    // Get certificate size
-                    let cert_der = cert.to_der()?;
-                    let original_size = cert_der.len();
+                    if let Some(cert) = cert {
+                        // Get certificate size
+                        let cert_der = cert.to_der()?;
+                        let original_size = cert_der.len();
 
-                    // Note: OpenSSL doesn't expose certificate compression details directly
-                    // We can only estimate based on certificate chain size
+                        // Note: OpenSSL doesn't expose certificate compression details directly
+                        // We can only estimate based on certificate chain size
 
-                    let details = format!(
-                        "Certificate size: {} bytes. Certificate compression is a TLS 1.3 feature (RFC 8879), \
-                        but OpenSSL doesn't expose compression details directly.",
-                        original_size
-                    );
+                        let details = format!(
+                            "Certificate size: {} bytes. Certificate compression is a TLS 1.3 feature (RFC 8879), \
+                            but OpenSSL doesn't expose compression details directly.",
+                            original_size
+                        );
 
-                    Ok(CertificateCompressionAnalysis {
-                        compression_supported: false,
-                        compression_algorithms: Vec::new(),
-                        original_size: Some(original_size),
-                        compressed_size: None,
-                        compression_ratio: None,
-                        details,
-                        inconclusive: false,
-                    })
-                } else {
-                    Ok(CertificateCompressionAnalysis {
-                        compression_supported: false,
-                        compression_algorithms: Vec::new(),
-                        original_size: None,
-                        compressed_size: None,
-                        compression_ratio: None,
-                        details: "No certificate presented".to_string(),
-                        inconclusive: true,
-                    })
+                        Ok(CertificateCompressionAnalysis {
+                            compression_supported: false,
+                            compression_algorithms: Vec::new(),
+                            original_size: Some(original_size),
+                            compressed_size: None,
+                            compression_ratio: None,
+                            details,
+                            inconclusive: false,
+                        })
+                    } else {
+                        Ok(CertificateCompressionAnalysis {
+                            compression_supported: false,
+                            compression_algorithms: Vec::new(),
+                            original_size: None,
+                            compressed_size: None,
+                            compression_ratio: None,
+                            details: "No certificate presented".to_string(),
+                            inconclusive: true,
+                        })
+                    }
                 }
+                Err(e) => Ok(CertificateCompressionAnalysis {
+                    compression_supported: false,
+                    compression_algorithms: Vec::new(),
+                    original_size: None,
+                    compressed_size: None,
+                    compression_ratio: None,
+                    details: format!("TLS 1.3 connection failed: {}", e),
+                    inconclusive: true,
+                }),
             }
-            Err(e) => Ok(CertificateCompressionAnalysis {
-                compression_supported: false,
-                compression_algorithms: Vec::new(),
-                original_size: None,
-                compressed_size: None,
-                compression_ratio: None,
-                details: format!("TLS 1.3 connection failed: {}", e),
-                inconclusive: true,
-            }),
-        }
+        })
+        .await
+        .map_err(|e| crate::TlsError::Other(format!("certificate compression task failed: {}", e)))?
     }
 
     /// Test cipher order enforcement (detailed)
@@ -386,35 +389,39 @@ impl CertificateAdvancedTester {
         let stream =
             crate::utils::network::connect_with_timeout(addr, connect_timeout, None).await?;
 
-        let std_stream = stream.into_std()?;
-        std_stream.set_nonblocking(false)?;
+        let std_stream = crate::utils::network::into_blocking_std_stream(stream, connect_timeout)?;
 
-        let mut builder = SslConnector::builder(SslMethod::tls())?;
-        // Cipher negotiation is independent of certificate validity; the scanner
-        // must probe it on bad-cert hosts too (trust assessed separately).
-        builder.set_verify(SslVerifyMode::NONE);
-
-        // Set cipher list
+        let hostname = self.target.hostname.clone();
         let cipher_string = cipher_list.join(":");
-        builder.set_cipher_list(&cipher_string)?;
+        tokio::task::spawn_blocking(move || -> Result<String> {
+            let mut builder = SslConnector::builder(SslMethod::tls())?;
+            // Cipher negotiation is independent of certificate validity; the scanner
+            // must probe it on bad-cert hosts too (trust assessed separately).
+            builder.set_verify(SslVerifyMode::NONE);
 
-        let connector = builder.build();
+            // Set cipher list
+            builder.set_cipher_list(&cipher_string)?;
 
-        match connector.connect(&self.target.hostname, std_stream) {
-            Ok(ssl_stream) => {
-                let cipher = ssl_stream.ssl().current_cipher().ok_or_else(|| {
-                    crate::error::TlsError::InvalidHandshake {
-                        details: "No cipher negotiated".into(),
-                    }
-                })?;
+            let connector = builder.build();
 
-                Ok(cipher.name().to_string())
+            match connector.connect(&hostname, std_stream) {
+                Ok(ssl_stream) => {
+                    let cipher = ssl_stream.ssl().current_cipher().ok_or_else(|| {
+                        crate::error::TlsError::InvalidHandshake {
+                            details: "No cipher negotiated".into(),
+                        }
+                    })?;
+
+                    Ok(cipher.name().to_string())
+                }
+                Err(e) => Err(crate::error::TlsError::Other(format!(
+                    "Connection failed: {}",
+                    e
+                ))),
             }
-            Err(e) => Err(crate::error::TlsError::Other(format!(
-                "Connection failed: {}",
-                e
-            ))),
-        }
+        })
+        .await
+        .map_err(|e| crate::TlsError::Other(format!("cipher selection task failed: {}", e)))?
     }
 }
 
