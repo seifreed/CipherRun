@@ -171,7 +171,7 @@ impl Scanner {
                         error.to_string(),
                         ErrorType::from_tls_error(&error),
                     ),
-                    start_time.elapsed().as_millis() as u64,
+                    u64::try_from(start_time.elapsed().as_millis()).unwrap_or(u64::MAX),
                     false,
                 ));
             }
@@ -227,7 +227,7 @@ impl Scanner {
             });
         }
 
-        results.scan_time_ms = start_time.elapsed().as_millis() as u64;
+        results.scan_time_ms = u64::try_from(start_time.elapsed().as_millis()).unwrap_or(u64::MAX);
         if let Some(preflight) = preflight {
             results.scan_metadata.probe_status =
                 self.reconcile_probe_status(&preflight.probe_status, &results);

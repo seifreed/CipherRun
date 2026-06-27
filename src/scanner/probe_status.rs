@@ -14,11 +14,12 @@ pub struct ProbeStatus {
 
 impl ProbeStatus {
     pub fn success(duration: Duration) -> Self {
+        let connection_time_ms = u64::try_from(duration.as_millis()).unwrap_or(u64::MAX);
         Self {
             success: true,
             error: None,
             error_type: None,
-            connection_time_ms: Some(duration.as_millis() as u64),
+            connection_time_ms: Some(connection_time_ms),
             attempts: 1,
         }
     }
@@ -46,11 +47,12 @@ impl ProbeStatus {
     }
 
     pub fn partial_success(duration: Duration, warning: String) -> Self {
+        let connection_time_ms = u64::try_from(duration.as_millis()).unwrap_or(u64::MAX);
         Self {
             success: true,
             error: Some(warning),
             error_type: Some(ErrorType::Warning),
-            connection_time_ms: Some(duration.as_millis() as u64),
+            connection_time_ms: Some(connection_time_ms),
             attempts: 1,
         }
     }

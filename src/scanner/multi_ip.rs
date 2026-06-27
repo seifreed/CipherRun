@@ -168,7 +168,8 @@ impl MultiIpScanner {
             per_ip_results.insert(result.ip, result);
         }
 
-        let total_duration_ms = total_start.elapsed().as_millis() as u64;
+        let total_duration_ms =
+            u64::try_from(total_start.elapsed().as_millis()).unwrap_or(u64::MAX);
         let successful_scans = per_ip_results
             .values()
             .filter(|r| r.error.is_none())
@@ -241,7 +242,8 @@ impl MultiIpScanner {
                 return SingleIpScanResult {
                     ip,
                     scan_result: ScanResults::default(),
-                    scan_duration_ms: start.elapsed().as_millis() as u64,
+                    scan_duration_ms: u64::try_from(start.elapsed().as_millis())
+                        .unwrap_or(u64::MAX),
                     error: Some(format!("Failed to create scanner: {}", e)),
                 };
             }
@@ -255,13 +257,13 @@ impl MultiIpScanner {
             Ok(scan_result) => SingleIpScanResult {
                 ip,
                 scan_result,
-                scan_duration_ms: start.elapsed().as_millis() as u64,
+                scan_duration_ms: u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX),
                 error: None,
             },
             Err(e) => SingleIpScanResult {
                 ip,
                 scan_result: ScanResults::default(),
-                scan_duration_ms: start.elapsed().as_millis() as u64,
+                scan_duration_ms: u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX),
                 error: Some(e.to_string()),
             },
         }

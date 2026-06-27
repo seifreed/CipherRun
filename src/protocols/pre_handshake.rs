@@ -80,7 +80,7 @@ impl PreHandshakeScanner {
             certificate_data: parse_result.certificate_data,
             server_hello_data: parse_result.server_hello_data,
             handshake_data: response_data.to_vec(),
-            handshake_time_ms: elapsed.as_millis() as u64,
+            handshake_time_ms: u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
             protocol_version: parse_result.protocol_version,
             cipher_suite: parse_result.cipher_suite,
             compression_method: parse_result.compression_method,

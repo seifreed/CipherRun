@@ -76,7 +76,7 @@ impl ProtocolTester {
         let inconclusive = outcome.is_inconclusive();
 
         let handshake_time_ms = if supported {
-            Some(start.elapsed().as_millis() as u64)
+            Some(u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX))
         } else {
             None
         };
@@ -260,7 +260,7 @@ impl ProtocolTester {
                     }
                 }
 
-                let client_hello = self.build_sslv2_client_hello();
+                let client_hello = self.build_sslv2_client_hello()?;
                 let mut response = vec![0u8; 1024];
 
                 match timeout(self.read_timeout, async {
@@ -321,7 +321,7 @@ impl ProtocolTester {
         }
     }
 
-    pub(super) fn build_sslv2_client_hello(&self) -> Vec<u8> {
+    pub(super) fn build_sslv2_client_hello(&self) -> crate::Result<Vec<u8>> {
         let mut body = vec![0x01, 0x00, 0x02];
         body.push(0x00);
         body.push(0x09); // cipher_spec_length: 9 bytes (3 ciphers × 3 bytes each)
@@ -337,9 +337,11 @@ impl ProtocolTester {
             0x0f, 0x10,
         ]);
         let len = body.len();
-        let mut hello = vec![0x80, len as u8];
+        let len = u8::try_from(len)
+            .map_err(|_| crate::TlsError::Other("SSLv2 ClientHello too long".to_string()))?;
+        let mut hello = vec![0x80, len];
         hello.extend_from_slice(&body);
-        hello
+        Ok(hello)
     }
 
     /// Probe SSLv3/TLS1.0/TLS1.1 support with a raw ClientHello.

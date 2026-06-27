@@ -201,7 +201,9 @@ mod tests {
     #[test]
     fn test_build_sslv2_client_hello_structure() {
         let tester = ProtocolTester::new(dummy_target());
-        let hello = tester.build_sslv2_client_hello();
+        let hello = tester
+            .build_sslv2_client_hello()
+            .expect("SSLv2 ClientHello should build");
 
         assert_eq!(hello[0] & 0x80, 0x80);
         assert_eq!(hello[2], 0x01);
@@ -364,7 +366,9 @@ mod tests {
         .expect("target should build");
 
         let tester = ProtocolTester::new(target);
-        let hello = tester.build_sslv2_client_hello();
+        let hello = tester
+            .build_sslv2_client_hello()
+            .expect("SSLv2 ClientHello should build");
 
         assert!(hello.len() > 30);
         assert_eq!(hello[0], 0x80);
