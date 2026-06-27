@@ -230,6 +230,22 @@ impl<'a> HeartbleedTester<'a> {
             return Ok(false);
         }
 
+        let Some(record_len) = read_u16_at(data, 3).map(usize::from) else {
+            return Err(crate::TlsError::ParseError {
+                message: "ServerHello truncated before record length".to_string(),
+            });
+        };
+        let Some(record_end) = 5usize.checked_add(record_len) else {
+            return Err(crate::TlsError::ParseError {
+                message: "ServerHello record length overflow".to_string(),
+            });
+        };
+        if record_end > data.len() {
+            return Err(crate::TlsError::ParseError {
+                message: "ServerHello record length extends beyond buffer".to_string(),
+            });
+        }
+
         // Session ID length at offset 43
         let Some(sid_len) = data.get(43).copied().map(usize::from) else {
             return Ok(false);
@@ -250,7 +266,7 @@ impl<'a> HeartbleedTester<'a> {
         let Some(ext_start) = ext_offset.checked_add(2) else {
             return Ok(false);
         };
-        if ext_start > data.len() {
+        if ext_start > record_end {
             return Ok(false);
         }
 
@@ -262,7 +278,7 @@ impl<'a> HeartbleedTester<'a> {
                 message: "ServerHello extension block length overflow".to_string(),
             });
         };
-        if ext_end > data.len() {
+        if ext_end > record_end {
             return Err(crate::TlsError::ParseError {
                 message: "ServerHello extension block extends beyond declared length".to_string(),
             });
@@ -646,6 +662,21 @@ mod tests {
         let hs_len = data_without_ext.len() - 9;
         write_u24_at(&mut data_without_ext, 6, hs_len);
         assert!(!tester.check_heartbeat_extension(&data_without_ext).unwrap());
+
+        // Extra bytes after the declared TLS record must not be parsed as
+        // ServerHello extensions.
+        let mut data_with_trailing_ext = data_without_ext;
+        data_with_trailing_ext.extend_from_slice(&[
+            0x00, 0x05, // extensions total length
+            0x00, 0x0f, // heartbeat extension type
+            0x00, 0x01, // extension length
+            0x01, // heartbeat mode
+        ]);
+        assert!(
+            !tester
+                .check_heartbeat_extension(&data_with_trailing_ext)
+                .unwrap()
+        );
     }
 
     #[test]
