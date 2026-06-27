@@ -37,9 +37,7 @@ pub(super) fn has_server_hello_done(buf: &[u8]) -> bool {
             let mut hs_start = header_end;
             while let Some(hs_header_end) = hs_start.checked_add(4).filter(|&end| end <= record_end)
             {
-                if buf.get(hs_start) == Some(&0x0e) {
-                    return true;
-                }
+                let is_server_hello_done = buf.get(hs_start) == Some(&0x0e);
                 let Some(len_bytes) = buf.get(hs_start + 1..hs_header_end) else {
                     break;
                 };
@@ -51,6 +49,9 @@ pub(super) fn has_server_hello_done(buf: &[u8]) -> bool {
                 };
                 if hs_end > record_end {
                     break;
+                }
+                if is_server_hello_done {
+                    return true;
                 }
                 hs_start = hs_end;
             }
@@ -152,6 +153,15 @@ mod tests {
             full.get(..6)
                 .expect("test record should have partial prefix")
         ));
+    }
+
+    #[test]
+    fn returns_false_when_server_hello_done_body_truncated() {
+        let record = vec![
+            0x16, 0x03, 0x03, 0x00, 0x04, // record length: handshake header only
+            0x0e, 0x00, 0x00, 0x01, // ServerHelloDone declares one body byte
+        ];
+        assert!(!has_server_hello_done(&record));
     }
 
     #[test]
