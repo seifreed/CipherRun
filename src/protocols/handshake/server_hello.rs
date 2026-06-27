@@ -161,6 +161,11 @@ impl ServerHelloParser {
         // 0x0303 (TLS 1.2). Track the real negotiated version here.
         let mut negotiated_version = None;
 
+        let remaining = record.len().saturating_sub(offset);
+        if remaining == 1 {
+            crate::tls_bail!("ServerHello truncated before extensions length");
+        }
+
         if let Some(ext_len_end) = offset.checked_add(2).filter(|&end| end <= record.len()) {
             let ext_len =
                 Self::read_u16_at(record, offset, "ServerHello extensions length")? as usize;
@@ -175,10 +180,13 @@ impl ServerHelloParser {
             if ext_end > record.len() {
                 crate::tls_bail!("ServerHello extension block extends beyond declared length");
             }
+            if ext_end != record.len() {
+                crate::tls_bail!("ServerHello extension block contains trailing bytes");
+            }
             while offset < ext_end {
                 let Some(ext_header_end) = offset.checked_add(4).filter(|&end| end <= ext_end)
                 else {
-                    break;
+                    crate::tls_bail!("ServerHello truncated before extension header");
                 };
                 let ext_type = Self::read_u16_at(record, offset, "ServerHello extension type")?;
                 offset = offset
@@ -385,6 +393,54 @@ mod tests {
     }
 
     #[test]
+    fn test_server_hello_rejects_truncated_extensions_length() {
+        let mut server_hello = vec![
+            0x16, 0x03, 0x03, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x03, 0x03,
+        ];
+        server_hello.extend_from_slice(&[0u8; 32]);
+        server_hello.push(0x00);
+        server_hello.extend_from_slice(&[0xc0, 0x2f]);
+        server_hello.push(0x00);
+        server_hello.push(0x00);
+        patch_lengths(&mut server_hello);
+
+        let err = ServerHelloParser::parse(&server_hello).expect_err("parser should reject");
+        assert!(err.to_string().contains("extensions length"));
+    }
+
+    #[test]
+    fn test_server_hello_rejects_truncated_extension_header() {
+        let mut server_hello = vec![
+            0x16, 0x03, 0x03, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x03, 0x03,
+        ];
+        server_hello.extend_from_slice(&[0u8; 32]);
+        server_hello.push(0x00);
+        server_hello.extend_from_slice(&[0xc0, 0x2f]);
+        server_hello.push(0x00);
+        server_hello.extend_from_slice(&[0x00, 0x03, 0x00, 0x05, 0x00]);
+        patch_lengths(&mut server_hello);
+
+        let err = ServerHelloParser::parse(&server_hello).expect_err("parser should reject");
+        assert!(err.to_string().contains("extension header"));
+    }
+
+    #[test]
+    fn test_server_hello_rejects_extension_block_trailing_bytes() {
+        let mut server_hello = vec![
+            0x16, 0x03, 0x03, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x03, 0x03,
+        ];
+        server_hello.extend_from_slice(&[0u8; 32]);
+        server_hello.push(0x00);
+        server_hello.extend_from_slice(&[0xc0, 0x2f]);
+        server_hello.push(0x00);
+        server_hello.extend_from_slice(&[0x00, 0x00, 0x00]);
+        patch_lengths(&mut server_hello);
+
+        let err = ServerHelloParser::parse(&server_hello).expect_err("parser should reject");
+        assert!(err.to_string().contains("trailing bytes"));
+    }
+
+    #[test]
     fn test_server_hello_heartbeat_detected() {
         let mut server_hello = vec![
             0x16, 0x03, 0x03, 0x00, 0x4A, 0x02, 0x00, 0x00, 0x46, 0x03, 0x03,
@@ -475,7 +531,7 @@ mod tests {
         server_hello.push(0x00);
         server_hello.extend_from_slice(&[0xc0, 0x2f]);
         server_hello.push(0x00);
-        server_hello.extend_from_slice(&[0x00, 0x04, 0x00, 0x05, 0x00, 0x02, 0x01]);
+        server_hello.extend_from_slice(&[0x00, 0x05, 0x00, 0x05, 0x00, 0x02, 0x01]);
         patch_lengths(&mut server_hello);
 
         let err = ServerHelloParser::parse(&server_hello).unwrap_err();
