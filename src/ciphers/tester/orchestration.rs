@@ -283,7 +283,7 @@ impl CipherTester {
             }
 
             use rand::RngExt;
-            let error_level = batch_enetdown.min(10) as u32;
+            let error_level = u32::try_from(batch_enetdown.min(10)).unwrap_or(10);
             let base_delay_ms =
                 BACKOFF_BASE_DELAY_MS * 2u64.pow(error_level.min(BACKOFF_MAX_EXPONENT));
             let jitter = rand::rng().random_range(0..=(base_delay_ms / 4));

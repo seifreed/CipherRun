@@ -184,7 +184,7 @@ impl ComplianceChecker {
             // Check RSA key size
             if key_algo.contains("rsa")
                 && let Some(min_rsa_bits) = rule.min_rsa_bits
-                && (key_size as u32) < min_rsa_bits
+                && u32::try_from(key_size).unwrap_or(u32::MAX) < min_rsa_bits
             {
                 violations.push(Violation {
                     violation_type: "Insufficient Key Size".to_string(),
@@ -200,7 +200,7 @@ impl ComplianceChecker {
             // Check ECC key size
             if (key_algo.starts_with("ec") || key_algo.contains("ecdsa"))
                 && let Some(min_ecc_bits) = rule.min_ecc_bits
-                && (key_size as u32) < min_ecc_bits
+                && u32::try_from(key_size).unwrap_or(u32::MAX) < min_ecc_bits
             {
                 violations.push(Violation {
                     violation_type: "Insufficient Key Size".to_string(),

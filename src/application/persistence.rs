@@ -12,6 +12,12 @@ fn parse_persisted_cert_date(raw: &str, field: &str) -> crate::Result<DateTime<U
     })
 }
 
+fn usize_to_i32(value: usize, field: &str) -> crate::Result<i32> {
+    i32::try_from(value).map_err(|_| crate::TlsError::ParseError {
+        message: format!("{field} value exceeds persistence range: {value}"),
+    })
+}
+
 #[derive(Debug, Clone)]
 pub struct PersistedScan {
     pub target_hostname: String,
@@ -209,13 +215,16 @@ impl PersistedScan {
                             not_after: parse_persisted_cert_date(&cert.not_after, "not_after")?,
                             signature_algorithm: Some(cert.signature_algorithm.clone()),
                             public_key_algorithm: Some(cert.public_key_algorithm.clone()),
-                            public_key_size: cert.public_key_size.map(|s| s as i32),
+                            public_key_size: cert
+                                .public_key_size
+                                .map(|s| usize_to_i32(s, "certificate public_key_size"))
+                                .transpose()?,
                             san_domains: cert.san.clone(),
                             is_ca: cert.is_ca,
                             key_usage: cert.key_usage.clone(),
                             extended_key_usage: cert.extended_key_usage.clone(),
                             der_bytes: Some(cert.der_bytes.clone()),
-                            chain_position: position as i32,
+                            chain_position: usize_to_i32(position, "certificate chain_position")?,
                         })
                     })
                     .collect()
