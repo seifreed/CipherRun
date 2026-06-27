@@ -115,19 +115,34 @@ impl SignatureTester {
 
             let probe = timeout(read_timeout, async {
                 stream.write_all(&client_hello).await?;
-                let mut response = vec![0u8; 4096];
-                let n = stream.read(&mut response).await?;
-                response.truncate(n);
-                Ok::<Vec<u8>, std::io::Error>(response)
+                let mut header = [0u8; 5];
+                if stream.read_exact(&mut header).await.is_err() {
+                    return Ok::<Option<Vec<u8>>, std::io::Error>(None);
+                }
+
+                let record_len = u16::from_be_bytes([header[3], header[4]]) as usize;
+                let total_len = 5usize.checked_add(record_len).ok_or_else(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "signature record length overflow",
+                    )
+                })?;
+                let mut response = vec![0u8; total_len];
+                response[..5].copy_from_slice(&header);
+                if stream.read_exact(&mut response[5..]).await.is_err() {
+                    return Ok::<Option<Vec<u8>>, std::io::Error>(None);
+                }
+
+                Ok::<Option<Vec<u8>>, std::io::Error>(Some(response))
             })
             .await;
 
             match probe {
-                Ok(Ok(response)) if ServerHelloParser::parse(&response).is_ok() => {
+                Ok(Ok(Some(response))) if ServerHelloParser::parse(&response).is_ok() => {
                     saw_conclusive_probe = true;
                     detected_sigs.push(iana_value);
                 }
-                Ok(Ok(response)) if response.first() == Some(&0x15) => {
+                Ok(Ok(Some(response))) if response.first() == Some(&0x15) => {
                     saw_conclusive_probe = true;
                 }
                 Ok(Ok(_)) | Ok(Err(_)) | Err(_) => {
@@ -205,6 +220,7 @@ impl SignatureTester {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
     #[tokio::test]
@@ -254,6 +270,57 @@ mod tests {
 
         assert!(result.algorithms.iter().all(|a| !a.supported));
         assert!(result.inconclusive);
+    }
+
+    #[tokio::test]
+    async fn test_signature_enumeration_fragmented_server_hello_is_supported() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test assertion should succeed");
+        let addr = listener
+            .local_addr()
+            .expect("test assertion should succeed");
+
+        tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let mut buf = vec![0u8; 512];
+                let _ = socket.read(&mut buf).await;
+
+                let mut response = vec![
+                    0x16, 0x03, 0x03, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x03, 0x03,
+                ];
+                response.extend_from_slice(&[0u8; 32]);
+                response.push(0x00);
+                response.extend_from_slice(&[0x00, 0x9c]);
+                response.push(0x00);
+                response.extend_from_slice(&[0x00, 0x00]);
+                let hs_len = (response.len() - 9) as u32;
+                response[6] = ((hs_len >> 16) & 0xff) as u8;
+                response[7] = ((hs_len >> 8) & 0xff) as u8;
+                response[8] = (hs_len & 0xff) as u8;
+                let rec_len = (response.len() - 5) as u16;
+                response[3] = (rec_len >> 8) as u8;
+                response[4] = (rec_len & 0xff) as u8;
+
+                socket.write_all(&response[..8]).await.unwrap();
+                socket.flush().await.unwrap();
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                socket.write_all(&response[8..]).await.unwrap();
+                socket.flush().await.unwrap();
+            }
+        });
+
+        let target = Target::with_ips("localhost".to_string(), addr.port(), vec![addr.ip()])
+            .expect("test assertion should succeed");
+        let tester = SignatureTester::new(target);
+
+        let result = tester
+            .enumerate_signatures()
+            .await
+            .expect("test assertion should succeed");
+
+        assert!(result.algorithms.iter().any(|a| a.supported));
+        assert!(!result.inconclusive);
     }
 
     #[test]
