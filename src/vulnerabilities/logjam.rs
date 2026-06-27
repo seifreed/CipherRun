@@ -343,7 +343,7 @@ impl LogjamTester {
                     .set_min_proto_version(Some(SslVersion::SSL3))
                     .is_err()
             {
-                return Ok(LogjamProbeStatus::NotSupported);
+                return Ok(LogjamProbeStatus::Inconclusive);
             }
 
             // Try to set the specific cipher
@@ -355,7 +355,7 @@ impl LogjamTester {
                         Err(_) => Ok(LogjamProbeStatus::NotSupported),
                     }
                 }
-                Err(_) => Ok(LogjamProbeStatus::NotSupported),
+                Err(_) => Ok(LogjamProbeStatus::Inconclusive),
             }
         })
         .await
@@ -492,5 +492,21 @@ mod tests {
             "inactive target must not be reported as a clean LOGJAM pass: {}",
             result.details
         );
+    }
+
+    #[tokio::test]
+    async fn test_logjam_local_cipher_setup_failure_is_inconclusive() {
+        let addr = spawn_dummy_server(1).await;
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            addr.port(),
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .unwrap();
+
+        let tester = LogjamTester::new(target);
+        let result = tester.test_cipher("not-a-real-cipher").await.unwrap();
+
+        assert_eq!(result, LogjamProbeStatus::Inconclusive);
     }
 }
