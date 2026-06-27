@@ -448,8 +448,9 @@ fn extract_extension_type(ext: &[u8], etypes: &[[u8; 2]], evals: &[Vec<u8>]) -> 
                 if proto_end <= list_end
                     && list_end <= eval.len()
                     && let Some(proto) = eval.get(3..proto_end)
+                    && let Ok(proto) = std::str::from_utf8(proto)
                 {
-                    return String::from_utf8_lossy(proto).to_string();
+                    return proto.to_string();
                 }
             }
 
@@ -705,6 +706,14 @@ mod tests {
         let evals = vec![vec![0x00, 0x01, 0x02, b'h', b'2']];
         let alpn = extract_extension_type(&[0x00, 0x10], &etypes, &evals);
         assert_eq!(alpn, "0001026832");
+    }
+
+    #[test]
+    fn test_extract_extension_type_alpn_rejects_invalid_utf8() {
+        let etypes = vec![[0x00, 0x10]];
+        let evals = vec![vec![0x00, 0x02, 0x01, 0xff]];
+        let alpn = extract_extension_type(&[0x00, 0x10], &etypes, &evals);
+        assert_eq!(alpn, "000201ff");
     }
 
     #[test]
