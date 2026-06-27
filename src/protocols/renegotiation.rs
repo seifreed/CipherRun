@@ -606,6 +606,9 @@ impl<'a> RenegotiationTester<'a> {
             .ok_or_else(|| crate::TlsError::ParseError {
                 message: "ServerHello extensions offset overflow".to_string(),
             })?;
+        if ext_len_offset == handshake_end {
+            return Ok(false);
+        }
         let ext_start =
             ext_len_offset
                 .checked_add(2)
@@ -896,13 +899,7 @@ mod tests {
         .expect("test ServerHello should contain record length placeholder");
         response[6..9].copy_from_slice(&handshake_len);
 
-        let err = tester
-            .has_renegotiation_info_extension(&response)
-            .expect_err("bytes outside handshake must not be parsed as extensions");
-        assert!(
-            err.to_string()
-                .contains("ServerHello truncated before extensions length")
-        );
+        assert!(!tester.has_renegotiation_info_extension(&response).unwrap());
     }
 
     #[test]
