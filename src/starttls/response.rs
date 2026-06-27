@@ -17,9 +17,43 @@ pub async fn read_line<S>(reader: &mut BufReader<&mut S>) -> Result<String>
 where
     S: AsyncRead + Unpin,
 {
-    let mut line = String::new();
-    reader.read_line(&mut line).await?;
-    Ok(line)
+    let mut bytes = Vec::new();
+    loop {
+        let (take, done) = {
+            let available = reader.fill_buf().await?;
+            if available.is_empty() {
+                break;
+            }
+
+            let newline_pos = available.iter().position(|&byte| byte == b'\n');
+            let take = newline_pos.map_or(available.len(), |pos| pos + 1);
+            let next_len = bytes.len().checked_add(take).ok_or_else(|| {
+                crate::error::TlsError::ParseError {
+                    message: "STARTTLS response line length overflow".to_string(),
+                }
+            })?;
+            if next_len > MAX_LINE_LENGTH {
+                return Err(crate::error::TlsError::ParseError {
+                    message: format!(
+                        "STARTTLS response line too long: exceeds {} bytes",
+                        MAX_LINE_LENGTH
+                    ),
+                });
+            }
+
+            bytes.extend_from_slice(&available[..take]);
+            (take, newline_pos.is_some())
+        };
+
+        reader.consume(take);
+        if done {
+            break;
+        }
+    }
+
+    String::from_utf8(bytes).map_err(|error| crate::error::TlsError::ParseError {
+        message: format!("STARTTLS response line is not valid UTF-8: {error}"),
+    })
 }
 
 /// Read a single line and parse a 3-digit status code from its prefix.
@@ -37,17 +71,6 @@ where
     S: AsyncRead + Unpin,
 {
     let line = read_line(reader).await?;
-
-    if line.len() > MAX_LINE_LENGTH {
-        return Err(crate::error::TlsError::ParseError {
-            message: format!(
-                "{} response line too long: {} bytes (max {})",
-                protocol_name,
-                line.len(),
-                MAX_LINE_LENGTH
-            ),
-        });
-    }
 
     if line.len() < 3 {
         return Err(crate::error::TlsError::ParseError {
@@ -131,6 +154,21 @@ mod tests {
             .await
             .expect("read_line should succeed");
         assert_eq!(line, "hello world\r\n");
+    }
+
+    #[tokio::test]
+    async fn test_read_line_rejects_line_over_limit_without_newline() {
+        let (mut client, mut server) = tokio::io::duplex(MAX_LINE_LENGTH + 8);
+        tokio::spawn(async move {
+            server
+                .write_all(&vec![b'a'; MAX_LINE_LENGTH + 1])
+                .await
+                .expect("test should write data");
+        });
+
+        let mut reader = BufReader::new(&mut client);
+        let err = read_line(&mut reader).await.unwrap_err();
+        assert!(format!("{err}").contains("too long"));
     }
 
     #[tokio::test]

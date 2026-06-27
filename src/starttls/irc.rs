@@ -2,9 +2,10 @@
 // RFC 2812 + STARTTLS extension
 
 use super::protocols::{StarttlsNegotiator, StarttlsProtocol};
+use super::response;
 use crate::Result;
 use async_trait::async_trait;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 
 /// IRC STARTTLS negotiator
@@ -22,9 +23,7 @@ impl IrcNegotiator {
     }
 
     async fn read_response(reader: &mut BufReader<&mut TcpStream>) -> Result<String> {
-        let mut response = String::new();
-        reader.read_line(&mut response).await?;
-        Ok(response)
+        response::read_line(reader).await
     }
 }
 
@@ -163,6 +162,7 @@ impl StarttlsNegotiator for IrcsNegotiator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::AsyncBufReadExt;
     use tokio::net::TcpListener;
     use tokio::task::JoinHandle;
 
