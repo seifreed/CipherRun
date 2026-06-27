@@ -100,6 +100,11 @@ impl ClientCAsTester {
             )?);
             pos = record_end;
         }
+        if pos != data.len() {
+            return Err(crate::TlsError::ParseError {
+                message: "TLS record header truncated".to_string(),
+            });
+        }
 
         let mut msg_pos = 0usize;
         while let Some(msg_body_start) = msg_pos
@@ -139,6 +144,11 @@ impl ClientCAsTester {
             }
 
             msg_pos = msg_end;
+        }
+        if cert_request.is_none() && msg_pos != handshake_bytes.len() {
+            return Err(crate::TlsError::ParseError {
+                message: "Handshake message header truncated".to_string(),
+            });
         }
 
         Ok(cert_request)

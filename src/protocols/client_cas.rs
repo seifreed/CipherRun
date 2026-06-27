@@ -497,6 +497,45 @@ mod tests {
     }
 
     #[test]
+    fn test_find_certificate_request_rejects_truncated_record_header() {
+        let tester = ClientCAsTester::new(
+            Target::with_ips(
+                "example.test".to_string(),
+                443,
+                vec!["127.0.0.1".parse().expect("valid IP")],
+            )
+            .expect("test assertion should succeed"),
+        );
+
+        let record = vec![0x16, 0x03, 0x03, 0x00];
+        let err = tester
+            .find_certificate_request(&record)
+            .expect_err("truncated TLS record header should fail");
+        assert!(err.to_string().contains("TLS record header truncated"));
+    }
+
+    #[test]
+    fn test_find_certificate_request_rejects_truncated_handshake_header() {
+        let tester = ClientCAsTester::new(
+            Target::with_ips(
+                "example.test".to_string(),
+                443,
+                vec!["127.0.0.1".parse().expect("valid IP")],
+            )
+            .expect("test assertion should succeed"),
+        );
+
+        let record = vec![0x16, 0x03, 0x03, 0x00, 0x03, 13, 0, 0];
+        let err = tester
+            .find_certificate_request(&record)
+            .expect_err("truncated handshake header should fail");
+        assert!(
+            err.to_string()
+                .contains("Handshake message header truncated")
+        );
+    }
+
+    #[test]
     fn test_parse_ca_list_empty_returns_none() {
         let tester = ClientCAsTester::new(
             Target::with_ips(
