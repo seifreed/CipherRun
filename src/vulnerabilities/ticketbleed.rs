@@ -396,51 +396,94 @@ impl TicketbleedTester {
     ///
     /// Walks TLS records looking for a Handshake record whose first message is a
     /// ServerHello (handshake type `0x02`) and returns its `session_id` field.
-    /// Every offset is bounds-checked against both the declared record length and
-    /// the buffer, so a malformed/truncated response yields `None` rather than a
-    /// panic or a read of unrelated bytes.
-    fn extract_serverhello_session_id(response: &[u8]) -> Option<&[u8]> {
+    /// Every offset is bounds-checked against both the declared record length
+    /// and the buffer, so a malformed/truncated TLS response is returned as an
+    /// error rather than being reported as "not vulnerable".
+    fn extract_serverhello_session_id(response: &[u8]) -> Result<Option<&[u8]>> {
         let mut offset = 0usize;
         while let Some(header_end) = offset.checked_add(5).filter(|&end| end <= response.len()) {
-            let Some(record_len_offset) = offset.checked_add(3) else {
-                break;
-            };
-            let Some(record_len) = read_u16_at(response, record_len_offset).map(usize::from) else {
-                break;
-            };
-            let Some(record_end) = header_end.checked_add(record_len) else {
-                break;
-            };
+            let record_len_offset =
+                offset
+                    .checked_add(3)
+                    .ok_or_else(|| crate::TlsError::ParseError {
+                        message: "Ticketbleed ServerHello record length offset overflow"
+                            .to_string(),
+                    })?;
+            let record_len = read_u16_at(response, record_len_offset)
+                .map(usize::from)
+                .ok_or_else(|| crate::TlsError::ParseError {
+                    message: "Ticketbleed ServerHello record length truncated".to_string(),
+                })?;
+            let record_end =
+                header_end
+                    .checked_add(record_len)
+                    .ok_or_else(|| crate::TlsError::ParseError {
+                        message: "Ticketbleed ServerHello record length overflow".to_string(),
+                    })?;
             if record_end > response.len() {
-                break;
+                return Err(crate::TlsError::ParseError {
+                    message: "Ticketbleed ServerHello record length exceeds available data"
+                        .to_string(),
+                });
             }
             if response.get(offset) == Some(&CONTENT_TYPE_HANDSHAKE) {
                 let hs_start = header_end;
                 // ServerHello body: type(1) + length(3) + version(2) + random(32)
                 // + session_id_length(1) + session_id(..)
-                let Some(session_id_len_pos) = hs_start.checked_add(4 + 2 + 32) else {
-                    break;
-                };
-                if response.get(hs_start) == Some(&0x02) && session_id_len_pos < record_end {
-                    let Some(session_id_len) =
-                        response.get(session_id_len_pos).copied().map(usize::from)
-                    else {
-                        break;
-                    };
-                    let Some(session_id_start) = session_id_len_pos.checked_add(1) else {
-                        break;
-                    };
-                    let Some(session_id_end) = session_id_start.checked_add(session_id_len) else {
-                        break;
-                    };
-                    if session_id_end <= record_end {
-                        return response.get(session_id_start..session_id_end);
+                let session_id_len_pos = hs_start.checked_add(4 + 2 + 32).ok_or_else(|| {
+                    crate::TlsError::ParseError {
+                        message: "Ticketbleed ServerHello session ID offset overflow".to_string(),
                     }
+                })?;
+                if response.get(hs_start) == Some(&0x02) && session_id_len_pos < record_end {
+                    let session_id_len = response
+                        .get(session_id_len_pos)
+                        .copied()
+                        .map(usize::from)
+                        .ok_or_else(|| crate::TlsError::ParseError {
+                            message: "Ticketbleed ServerHello session ID length truncated"
+                                .to_string(),
+                        })?;
+                    let session_id_start = session_id_len_pos.checked_add(1).ok_or_else(|| {
+                        crate::TlsError::ParseError {
+                            message: "Ticketbleed ServerHello session ID start overflow"
+                                .to_string(),
+                        }
+                    })?;
+                    let session_id_end =
+                        session_id_start
+                            .checked_add(session_id_len)
+                            .ok_or_else(|| crate::TlsError::ParseError {
+                                message: "Ticketbleed ServerHello session ID length overflow"
+                                    .to_string(),
+                            })?;
+                    if session_id_end <= record_end {
+                        return response.get(session_id_start..session_id_end).map_or_else(
+                            || {
+                                Err(crate::TlsError::ParseError {
+                                    message: "Ticketbleed ServerHello session ID truncated"
+                                        .to_string(),
+                                })
+                            },
+                            |session_id| Ok(Some(session_id)),
+                        );
+                    }
+                    return Err(crate::TlsError::ParseError {
+                        message: "Ticketbleed ServerHello session ID exceeds record".to_string(),
+                    });
                 }
             }
             offset = record_end;
         }
-        None
+        if offset != response.len() {
+            if offset == 0 && response.first() != Some(&CONTENT_TYPE_HANDSHAKE) {
+                return Ok(None);
+            }
+            return Err(crate::TlsError::ParseError {
+                message: "Ticketbleed ServerHello record header truncated".to_string(),
+            });
+        }
+        Ok(None)
     }
 
     /// Detect a Ticketbleed memory leak in the server's resumption response.
@@ -457,7 +500,7 @@ impl TicketbleedTester {
     /// prefix match has probability 2^-128).
     fn detect_memory_leak(&self, response: &[u8]) -> Result<bool> {
         Ok(
-            Self::extract_serverhello_session_id(response).is_some_and(|session_id| {
+            Self::extract_serverhello_session_id(response)?.is_some_and(|session_id| {
                 session_id.len() > TICKETBLEED_SESSION_ID_MARKER.len()
                     && session_id.starts_with(&TICKETBLEED_SESSION_ID_MARKER)
             }),
@@ -603,7 +646,7 @@ mod tests {
     }
 
     #[test]
-    fn test_detect_memory_leak_ignores_truncated_record() {
+    fn test_detect_memory_leak_rejects_truncated_record() {
         // A record claiming more bytes than are present must not be parsed.
         let tester = TicketbleedTester::new(ticketbleed_test_target());
         let mut session_id = TICKETBLEED_SESSION_ID_MARKER.to_vec();
@@ -613,8 +656,12 @@ mod tests {
             .get_mut(4)
             .expect("test response should contain record length byte") = 0xff; // inflate the record length past the buffer
         assert!(
-            !tester.detect_memory_leak(&response).unwrap(),
-            "a record longer than the buffer must be rejected, not parsed"
+            tester
+                .detect_memory_leak(&response)
+                .expect_err("truncated record should fail")
+                .to_string()
+                .contains("record length exceeds available data"),
+            "a record longer than the buffer must be rejected"
         );
     }
 
