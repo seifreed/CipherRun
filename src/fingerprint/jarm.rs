@@ -440,10 +440,15 @@ fn extract_extension_type(ext: &[u8], etypes: &[[u8; 2]], evals: &[Vec<u8>]) -> 
         if etype == ext {
             // ALPN extension (0x0010)
             // Format: [2-byte list_len][1-byte proto_len][proto_name...]...
-            if ext == [0x00, 0x10] && eval.len() >= 4 {
-                let proto_len = eval.get(2).copied().unwrap_or_default() as usize;
-                let proto_end = 3 + proto_len;
-                if let Some(proto) = eval.get(3..proto_end) {
+            if ext == [0x00, 0x10] && eval.len() >= 3 {
+                let list_len = u16::from_be_bytes([eval[0], eval[1]]) as usize;
+                let proto_len = eval[2] as usize;
+                let list_end = 2usize.saturating_add(list_len);
+                let proto_end = 3usize.saturating_add(proto_len);
+                if proto_end <= list_end
+                    && list_end <= eval.len()
+                    && let Some(proto) = eval.get(3..proto_end)
+                {
                     return String::from_utf8_lossy(proto).to_string();
                 }
             }
@@ -692,6 +697,14 @@ mod tests {
         let evals = vec![vec![0x00, 0x03, 0x02, b'h', b'2']];
         let alpn = extract_extension_type(&[0x00, 0x10], &etypes, &evals);
         assert_eq!(alpn, "h2");
+    }
+
+    #[test]
+    fn test_extract_extension_type_alpn_rejects_truncated_list() {
+        let etypes = vec![[0x00, 0x10]];
+        let evals = vec![vec![0x00, 0x01, 0x02, b'h', b'2']];
+        let alpn = extract_extension_type(&[0x00, 0x10], &etypes, &evals);
+        assert_eq!(alpn, "0001026832");
     }
 
     #[test]
