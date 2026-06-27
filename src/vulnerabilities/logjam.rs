@@ -246,7 +246,7 @@ impl LogjamTester {
                             Ok(WeakDhStatus::Strong)
                         }
                     }
-                    Err(_) => Ok(WeakDhStatus::Strong),
+                    Err(_) => Ok(WeakDhStatus::Inconclusive),
                 },
                 Err(e) => {
                     // OpenSSL enforces a hard minimum DH modulus (e.g. 512-bit
@@ -254,12 +254,12 @@ impl LogjamTester {
                     // handshake fails with "dh key too small". That refusal is
                     // itself positive evidence of a dangerously weak group —
                     // report it as weak (exact size unknown, hence bits 0).
-                    // Any other handshake failure means no usable DHE group was
-                    // negotiated, which is not a weak-DH finding.
+                    // Any other handshake failure means the DHE measurement did
+                    // not complete; do not report it as a clean strong result.
                     if e.to_string().contains("dh key too small") {
                         Ok(WeakDhStatus::Weak { bits: 0 })
                     } else {
-                        Ok(WeakDhStatus::Strong)
+                        Ok(WeakDhStatus::Inconclusive)
                     }
                 }
             }
