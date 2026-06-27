@@ -43,7 +43,7 @@ impl ScanRecord {
 
     /// Set scan duration (capped to i64::MAX to prevent truncation)
     pub fn with_duration(mut self, duration_ms: u64) -> Self {
-        self.scan_duration_ms = Some(duration_ms.min(i64::MAX as u64) as i64);
+        self.scan_duration_ms = Some(i64::try_from(duration_ms).unwrap_or(i64::MAX));
         self
     }
 }

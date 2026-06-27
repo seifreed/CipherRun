@@ -44,7 +44,7 @@ async fn fetch_history_postgres(
     )
     .bind(&query.hostname)
     .bind(query.port as i32)
-    .bind(query.limit as i64)
+    .bind(i64::try_from(query.limit).unwrap_or(i64::MAX))
     .fetch_all(pool)
     .await
     .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to query scan history: {}", e)))?;
@@ -69,7 +69,7 @@ async fn fetch_history_sqlite(
     )
     .bind(&query.hostname)
     .bind(query.port as i32)
-    .bind(query.limit as i64)
+    .bind(i64::try_from(query.limit).unwrap_or(i64::MAX))
     .fetch_all(pool)
     .await
     .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to query scan history: {}", e)))?;
@@ -90,7 +90,7 @@ fn normalize_scan_id(id: i64) -> crate::Result<u64> {
             id
         )));
     }
-    Ok(id as u64)
+    u64::try_from(id).map_err(|e| scan_history_field_error("scan_id", e))
 }
 
 fn normalize_score(score: i32) -> crate::Result<u8> {
@@ -100,7 +100,7 @@ fn normalize_score(score: i32) -> crate::Result<u8> {
             score
         )));
     }
-    Ok(score as u8)
+    u8::try_from(score).map_err(|e| scan_history_field_error("overall_score", e))
 }
 
 fn normalize_duration(duration_ms: i64) -> crate::Result<u64> {
@@ -110,7 +110,7 @@ fn normalize_duration(duration_ms: i64) -> crate::Result<u64> {
             duration_ms
         )));
     }
-    Ok(duration_ms as u64)
+    u64::try_from(duration_ms).map_err(|e| scan_history_field_error("scan_duration_ms", e))
 }
 
 fn scan_history_entry_from_pg_row(row: PgRow) -> crate::Result<ScanHistoryEntry> {
