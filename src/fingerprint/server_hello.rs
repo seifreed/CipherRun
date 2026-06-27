@@ -62,6 +62,17 @@ impl ServerHelloCapture {
             })?;
 
         let content_type = record_header[0];
+        let record_len = u16::from_be_bytes([record_header[3], record_header[4]]) as usize;
+        let record_end = 5usize
+            .checked_add(record_len)
+            .ok_or_else(|| TlsError::ParseError {
+                message: "ServerHello record length overflow".to_string(),
+            })?;
+        if record_end > data.len() {
+            return Err(TlsError::ParseError {
+                message: "ServerHello record length exceeds available data".to_string(),
+            });
+        }
 
         // Check for TLS Alert (0x15) before expecting handshake
         if content_type == 0x15 {
@@ -109,6 +120,20 @@ impl ServerHelloCapture {
                     "Invalid handshake type: expected 0x02 (ServerHello), got 0x{:02x}",
                     handshake_type
                 ),
+            });
+        }
+        let handshake_len = ((handshake_header[1] as usize) << 16)
+            | ((handshake_header[2] as usize) << 8)
+            | handshake_header[3] as usize;
+        let handshake_end =
+            9usize
+                .checked_add(handshake_len)
+                .ok_or_else(|| TlsError::ParseError {
+                    message: "ServerHello handshake length overflow".to_string(),
+                })?;
+        if handshake_end > record_end {
+            return Err(TlsError::ParseError {
+                message: "ServerHello handshake length exceeds record length".to_string(),
             });
         }
 
@@ -170,7 +195,7 @@ impl ServerHelloCapture {
 
         // Check if there are extensions (need at least 2 bytes for extensions length)
         let position = Self::cursor_position(&cursor, "ServerHello")?;
-        if data.len().saturating_sub(position) >= 2 {
+        if handshake_end.saturating_sub(position) >= 2 {
             // Read extensions length
             let mut ext_len_bytes = [0u8; 2];
             if cursor.read_exact(&mut ext_len_bytes).is_ok() {
@@ -184,7 +209,7 @@ impl ServerHelloCapture {
                         }
                     })?;
 
-                    if ext_end > data.len() {
+                    if ext_end > handshake_end {
                         return Err(TlsError::ParseError {
                             message: "Extensions exceed ServerHello length".to_string(),
                         });
@@ -210,6 +235,16 @@ impl ServerHelloCapture {
                         let ext_data_len = usize::from(u16::from_be_bytes(ext_data_len_bytes));
 
                         // Parse extension data
+                        let ext_data_end = Self::cursor_position(&cursor, "Extension data")?
+                            .checked_add(ext_data_len)
+                            .ok_or_else(|| TlsError::ParseError {
+                                message: "Extension data length overflow".to_string(),
+                            })?;
+                        if ext_data_end > ext_end {
+                            return Err(TlsError::ParseError {
+                                message: "Failed to read extension data".to_string(),
+                            });
+                        }
                         let mut ext_data = vec![0u8; ext_data_len];
                         if ext_data_len > 0 && cursor.read_exact(&mut ext_data).is_err() {
                             return Err(TlsError::ParseError {
@@ -333,9 +368,9 @@ mod tests {
         // Minimal ServerHello: TLS 1.2, no session ID, TLS_RSA_WITH_AES_128_CBC_SHA, no compression, no extensions
         let data = vec![
             // Record layer
-            0x16, 0x03, 0x03, 0x00, 0x31, // Handshake, TLS 1.2, length 49
+            0x16, 0x03, 0x03, 0x00, 0x2A, // Handshake, TLS 1.2, length 42
             // Handshake header
-            0x02, 0x00, 0x00, 0x2D, // ServerHello, length 45
+            0x02, 0x00, 0x00, 0x26, // ServerHello, length 38
             // ServerHello
             0x03, 0x03, // TLS 1.2 (0x0303)
             // Random (32 bytes of zeros for simplicity)
@@ -364,9 +399,9 @@ mod tests {
         // ServerHello with one extension
         let data = vec![
             // Record layer
-            0x16, 0x03, 0x03, 0x00, 0x3B, // Handshake, TLS 1.2, length 59
+            0x16, 0x03, 0x03, 0x00, 0x35, // Handshake, TLS 1.2, length 53
             // Handshake header
-            0x02, 0x00, 0x00, 0x37, // ServerHello, length 55
+            0x02, 0x00, 0x00, 0x31, // ServerHello, length 49
             // ServerHello
             0x03, 0x03, // TLS 1.2
             // Random
@@ -377,7 +412,7 @@ mod tests {
             0xC0, 0x2F, // TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
             // Compression
             0x00, // Extensions
-            0x00, 0x08, // Extensions length: 8 bytes
+            0x00, 0x09, // Extensions length: 9 bytes
             // Extension 1: renegotiation_info (0xFF01)
             0xFF, 0x01, // Type
             0x00, 0x01, // Length: 1
@@ -401,8 +436,8 @@ mod tests {
     #[test]
     fn test_parse_serverhello_rejects_truncated_extension_data() {
         let data = vec![
-            0x16, 0x03, 0x03, 0x00, 0x3B, // Handshake, TLS 1.2, length 59
-            0x02, 0x00, 0x00, 0x37, // ServerHello, length 55
+            0x16, 0x03, 0x03, 0x00, 0x31, // Handshake, TLS 1.2, length 49
+            0x02, 0x00, 0x00, 0x2D, // ServerHello, length 45
             0x03, 0x03, // TLS 1.2
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -418,6 +453,26 @@ mod tests {
 
         let err = ServerHelloCapture::parse(&data).unwrap_err();
         assert!(err.to_string().contains("Failed to read extension data"));
+    }
+
+    #[test]
+    fn test_parse_serverhello_ignores_extension_after_handshake_end() {
+        let data = vec![
+            0x16, 0x03, 0x03, 0x00, 0x30, // record includes trailing bytes
+            0x02, 0x00, 0x00, 0x26, // ServerHello ends before extensions
+            0x03, 0x03, // TLS 1.2
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, // random
+            0x00, // session id length
+            0x00, 0x2F, // cipher suite
+            0x00, // compression
+            0x00, 0x04, // trailing extension block outside handshake
+            0x00, 0x0f, 0x00, 0x00,
+        ];
+
+        let parsed = ServerHelloCapture::parse(&data).expect("trailing bytes must be ignored");
+        assert!(parsed.extensions.is_empty());
     }
 
     #[test]
