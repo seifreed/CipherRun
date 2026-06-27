@@ -213,12 +213,7 @@ impl Impact {
 /// decimal place using integer scaling, so floating-point representation error
 /// in the formula does not push an exact tenth up to the next one.
 fn roundup_one_decimal(input: f64) -> f64 {
-    let int_input = (input * 100_000.0).round() as i64;
-    if int_input % 10_000 == 0 {
-        int_input as f64 / 100_000.0
-    } else {
-        ((int_input as f64 / 10_000.0).floor() + 1.0) / 10.0
-    }
+    ((input * 10.0) - 1e-10).ceil() / 10.0
 }
 
 /// CVSS Calculator
