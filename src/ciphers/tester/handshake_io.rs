@@ -134,7 +134,14 @@ impl CipherTester {
                 starttls_proto,
                 self.starttls_negotiation_hostname(),
             );
-            if negotiator.negotiate_starttls(stream).await.is_err() {
+            if crate::starttls::protocols::negotiate_starttls_with_timeout(
+                negotiator.as_ref(),
+                stream,
+                self.read_timeout,
+            )
+            .await
+            .is_err()
+            {
                 return Err(crate::TlsError::StarttlsError {
                     protocol: starttls_proto.to_string(),
                     details: "STARTTLS negotiation failed before cipher probe".to_string(),

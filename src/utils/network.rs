@@ -460,13 +460,16 @@ pub async fn connect_with_starttls(
     let mut stream = connect_with_timeout(addr, connect_timeout, None).await?;
     if let Some(protocol) = starttls {
         let negotiator = crate::starttls::protocols::get_negotiator(protocol, hostname.to_string());
-        negotiator
-            .negotiate_starttls(&mut stream)
-            .await
-            .map_err(|e| TlsError::StarttlsError {
-                protocol: protocol.to_string(),
-                details: format!("STARTTLS negotiation failed: {e}"),
-            })?;
+        crate::starttls::protocols::negotiate_starttls_with_timeout(
+            negotiator.as_ref(),
+            &mut stream,
+            connect_timeout,
+        )
+        .await
+        .map_err(|e| TlsError::StarttlsError {
+            protocol: protocol.to_string(),
+            details: format!("STARTTLS negotiation failed: {e}"),
+        })?;
     }
     Ok(stream)
 }

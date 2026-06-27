@@ -136,7 +136,21 @@ pub trait StarttlsNegotiator: Send + Sync {
     }
 }
 
+use std::time::Duration;
 use tokio::net::TcpStream;
+use tokio::time::timeout;
+
+pub async fn negotiate_starttls_with_timeout(
+    negotiator: &dyn StarttlsNegotiator,
+    stream: &mut TcpStream,
+    duration: Duration,
+) -> Result<()> {
+    timeout(duration, negotiator.negotiate_starttls(stream))
+        .await
+        .map_err(|_| crate::TlsError::Timeout {
+            duration: Some(duration),
+        })?
+}
 
 /// Get a negotiator instance for the given protocol and hostname
 pub fn get_negotiator(protocol: StarttlsProtocol, hostname: String) -> Box<dyn StarttlsNegotiator> {

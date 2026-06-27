@@ -255,7 +255,14 @@ impl ProtocolTester {
                         starttls_proto,
                         self.starttls_negotiation_hostname(),
                     );
-                    if negotiator.negotiate_starttls(&mut stream).await.is_err() {
+                    if crate::starttls::protocols::negotiate_starttls_with_timeout(
+                        negotiator.as_ref(),
+                        &mut stream,
+                        self.read_timeout,
+                    )
+                    .await
+                    .is_err()
+                    {
                         return Ok(ProtocolProbeOutcome::Inconclusive);
                     }
                 }
@@ -379,7 +386,14 @@ impl ProtocolTester {
                 starttls_proto,
                 self.starttls_negotiation_hostname(),
             );
-            if negotiator.negotiate_starttls(&mut stream).await.is_err() {
+            if crate::starttls::protocols::negotiate_starttls_with_timeout(
+                negotiator.as_ref(),
+                &mut stream,
+                self.read_timeout,
+            )
+            .await
+            .is_err()
+            {
                 return Ok(ProtocolProbeOutcome::Inconclusive);
             }
         }
@@ -442,7 +456,14 @@ impl ProtocolTester {
                 starttls_proto,
                 self.starttls_negotiation_hostname(),
             );
-            if negotiator.negotiate_starttls(&mut stream).await.is_err() {
+            if crate::starttls::protocols::negotiate_starttls_with_timeout(
+                negotiator.as_ref(),
+                &mut stream,
+                self.read_timeout,
+            )
+            .await
+            .is_err()
+            {
                 return Ok(ProtocolProbeOutcome::Inconclusive);
             }
         }
@@ -500,7 +521,14 @@ impl ProtocolTester {
                 starttls_proto,
                 self.starttls_negotiation_hostname(),
             );
-            if negotiator.negotiate_starttls(&mut stream).await.is_err() {
+            if crate::starttls::protocols::negotiate_starttls_with_timeout(
+                negotiator.as_ref(),
+                &mut stream,
+                self.read_timeout,
+            )
+            .await
+            .is_err()
+            {
                 return Ok(ProtocolProbeOutcome::Inconclusive);
             }
         }

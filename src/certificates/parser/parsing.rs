@@ -137,13 +137,16 @@ impl CertificateParser {
                 .clone()
                 .unwrap_or_else(|| self.target.hostname.clone());
             let negotiator = crate::starttls::protocols::get_negotiator(starttls_proto, hostname);
-            negotiator
-                .negotiate_starttls(&mut stream)
-                .await
-                .map_err(|e| crate::TlsError::StarttlsError {
-                    protocol: starttls_proto.to_string(),
-                    details: format!("STARTTLS negotiation failed before certificate fetch: {e}"),
-                })?;
+            crate::starttls::protocols::negotiate_starttls_with_timeout(
+                negotiator.as_ref(),
+                &mut stream,
+                self.read_timeout,
+            )
+            .await
+            .map_err(|e| crate::TlsError::StarttlsError {
+                protocol: starttls_proto.to_string(),
+                details: format!("STARTTLS negotiation failed before certificate fetch: {e}"),
+            })?;
         }
 
         // Build TLS connector with or without client auth.

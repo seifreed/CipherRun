@@ -76,7 +76,12 @@ impl StarttlsTester {
             crate::utils::network::connect_with_timeout(addr, self.connect_timeout, None).await?;
 
         // Negotiate STARTTLS
-        negotiator.negotiate_starttls(&mut stream).await?;
+        super::protocols::negotiate_starttls_with_timeout(
+            negotiator.as_ref(),
+            &mut stream,
+            self.connect_timeout,
+        )
+        .await?;
 
         Ok(())
     }
