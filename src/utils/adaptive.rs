@@ -209,8 +209,7 @@ impl AdaptiveController {
 
 fn add_duration(a: Duration, b: Duration) -> Duration {
     let sum = a.as_millis().saturating_add(b.as_millis());
-    let capped = sum.min(u64::MAX as u128);
-    Duration::from_millis(capped as u64)
+    Duration::from_millis(u128_to_u64_saturated(sum))
 }
 
 fn sub_duration(a: Duration, b: Duration) -> Duration {
@@ -219,7 +218,9 @@ fn sub_duration(a: Duration, b: Duration) -> Duration {
     // either direction because the millisecond conversion rounded both operands
     // down to 0.
     if a > b {
-        Duration::from_nanos(a.as_nanos().saturating_sub(b.as_nanos()) as u64)
+        Duration::from_nanos(u128_to_u64_saturated(
+            a.as_nanos().saturating_sub(b.as_nanos()),
+        ))
     } else {
         Duration::from_nanos(0)
     }
@@ -229,8 +230,7 @@ fn mul_duration(a: Duration, factor: u64) -> Duration {
     // Use nanosecond precision to stay consistent with sub/div helpers.
     let nanos = a.as_nanos();
     let result = nanos.saturating_mul(factor as u128);
-    let capped = result.min(u64::MAX as u128);
-    Duration::from_nanos(capped as u64)
+    Duration::from_nanos(u128_to_u64_saturated(result))
 }
 
 fn div_duration(a: Duration, divisor: u64) -> Duration {
@@ -240,7 +240,11 @@ fn div_duration(a: Duration, divisor: u64) -> Duration {
     // I3 fix: divide in nanoseconds so bases under 4 ms don't collapse to 0.
     // Previously `div_duration(3ms, 4)` returned 0ms, making `on_success`
     // never converge `max_backoff` back to the base after a doubling sequence.
-    Duration::from_nanos((a.as_nanos() / divisor as u128) as u64)
+    Duration::from_nanos(u128_to_u64_saturated(a.as_nanos() / divisor as u128))
+}
+
+fn u128_to_u64_saturated(value: u128) -> u64 {
+    u64::try_from(value).unwrap_or(u64::MAX)
 }
 
 fn min_duration(a: Duration, b: Duration) -> Duration {
