@@ -30,7 +30,7 @@ impl<'a> ScannerFormatter<'a> {
 
         println!(
             "  {} {} - {} / {}{}",
-            "Y".green(),
+            "✓".green(),
             result.client_name.cyan(),
             result
                 .protocol
@@ -46,7 +46,7 @@ impl<'a> ScannerFormatter<'a> {
     fn display_failed_client_sim(&self, result: &ClientSimulationResult) {
         println!(
             "  {} {} - {}",
-            "X".red(),
+            "✗".red(),
             result.client_name.cyan(),
             result
                 .error
@@ -69,10 +69,10 @@ impl<'a> ScannerFormatter<'a> {
         if successful == total {
             println!(
                 "\n{}",
-                "  Y All clients can connect successfully!".green().bold()
+                "  ✓ All clients can connect successfully!".green().bold()
             );
         } else if failed == total {
-            println!("\n{}", "  X No clients can connect!".red().bold());
+            println!("\n{}", "  ✗ No clients can connect!".red().bold());
         }
     }
 }
