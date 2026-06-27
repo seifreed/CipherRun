@@ -217,7 +217,7 @@ impl TicketbleedTester {
     /// uninitialized memory by padding its echoed Session ID back out to 32 bytes.
     fn build_client_hello_with_received_ticket(&self, server_response: &[u8]) -> Result<Vec<u8>> {
         // Extract the session ticket from the server's NewSessionTicket message
-        let ticket = self.extract_session_ticket(server_response);
+        let ticket = self.extract_session_ticket(server_response)?;
 
         let mut builder = ClientHelloBuilder::new(Protocol::TLS12);
         builder.for_vulnerability_testing();
@@ -237,85 +237,124 @@ impl TicketbleedTester {
     }
 
     /// Extract session ticket data from server's NewSessionTicket message
-    fn extract_session_ticket(&self, response: &[u8]) -> Option<Vec<u8>> {
+    fn extract_session_ticket(&self, response: &[u8]) -> Result<Option<Vec<u8>>> {
         let mut offset = 0usize;
         while let Some(header_end) = offset.checked_add(5).filter(|&end| end <= response.len()) {
-            let Some(header) = response
+            let header = response
                 .get(offset..header_end)
                 .and_then(|header| <&[u8; 5]>::try_from(header).ok())
-            else {
-                break;
-            };
+                .ok_or_else(|| crate::TlsError::ParseError {
+                    message: "Ticketbleed ticket TLS record header truncated".to_string(),
+                })?;
             let [content_type, _, _, len_high, len_low] = *header;
             let record_len = u16::from_be_bytes([len_high, len_low]) as usize;
-            let Some(record_end) = header_end.checked_add(record_len) else {
-                break;
-            };
+            let record_end =
+                header_end
+                    .checked_add(record_len)
+                    .ok_or_else(|| crate::TlsError::ParseError {
+                        message: "Ticketbleed ticket TLS record length overflow".to_string(),
+                    })?;
             if record_end > response.len() {
-                break;
+                return Err(crate::TlsError::ParseError {
+                    message: "Ticketbleed ticket TLS record length exceeds available data"
+                        .to_string(),
+                });
             }
             if content_type == 0x16 {
                 let hs_start = header_end;
                 if hs_start < record_end && response.get(hs_start) == Some(&0x04) {
                     // NewSessionTicket: type(1) + length(3) + lifetime(4) + ticket_length(2) + ticket
-                    let Some(hs_body_start) = hs_start.checked_add(4) else {
-                        offset = record_end;
-                        continue;
-                    };
-                    if hs_body_start > response.len() {
-                        offset = record_end;
-                        continue;
-                    };
-                    let Some(hs_len_offset) = hs_start.checked_add(1) else {
-                        offset = record_end;
-                        continue;
-                    };
-                    let Some(hs_len) = read_u24_at(response, hs_len_offset) else {
-                        offset = record_end;
-                        continue;
-                    };
-                    let Some(hs_end) = hs_body_start.checked_add(hs_len) else {
-                        offset = record_end;
-                        continue;
-                    };
+                    let hs_body_start =
+                        hs_start
+                            .checked_add(4)
+                            .ok_or_else(|| crate::TlsError::ParseError {
+                                message: "Ticketbleed ticket handshake header overflow".to_string(),
+                            })?;
+                    if hs_body_start > record_end {
+                        return Err(crate::TlsError::ParseError {
+                            message: "Ticketbleed ticket handshake header truncated".to_string(),
+                        });
+                    }
+                    let hs_len_offset =
+                        hs_start
+                            .checked_add(1)
+                            .ok_or_else(|| crate::TlsError::ParseError {
+                                message: "Ticketbleed ticket handshake length offset overflow"
+                                    .to_string(),
+                            })?;
+                    let hs_len = read_u24_at(response, hs_len_offset).ok_or_else(|| {
+                        crate::TlsError::ParseError {
+                            message: "Ticketbleed ticket handshake length truncated".to_string(),
+                        }
+                    })?;
+                    let hs_end = hs_body_start.checked_add(hs_len).ok_or_else(|| {
+                        crate::TlsError::ParseError {
+                            message: "Ticketbleed ticket handshake length overflow".to_string(),
+                        }
+                    })?;
                     if hs_end > record_end {
-                        offset = record_end;
-                        continue;
+                        return Err(crate::TlsError::ParseError {
+                            message: "Ticketbleed ticket handshake length exceeds record"
+                                .to_string(),
+                        });
                     }
 
-                    let Some(ticket_len_offset) = hs_body_start.checked_add(4) else {
-                        offset = record_end;
-                        continue;
-                    }; // skip lifetime
-                    let Some(ticket_len_end) = ticket_len_offset.checked_add(2) else {
-                        offset = record_end;
-                        continue;
-                    };
+                    let ticket_len_offset = hs_body_start.checked_add(4).ok_or_else(|| {
+                        crate::TlsError::ParseError {
+                            message: "Ticketbleed ticket lifetime offset overflow".to_string(),
+                        }
+                    })?; // skip lifetime
+                    let ticket_len_end = ticket_len_offset.checked_add(2).ok_or_else(|| {
+                        crate::TlsError::ParseError {
+                            message: "Ticketbleed ticket length offset overflow".to_string(),
+                        }
+                    })?;
                     if ticket_len_end > hs_end {
-                        offset = record_end;
-                        continue;
+                        return Err(crate::TlsError::ParseError {
+                            message: "Ticketbleed ticket length truncated".to_string(),
+                        });
                     }
-                    let Some(ticket_len) =
-                        read_u16_at(response, ticket_len_offset).map(usize::from)
-                    else {
-                        offset = record_end;
-                        continue;
-                    };
+                    let ticket_len = read_u16_at(response, ticket_len_offset)
+                        .map(usize::from)
+                        .ok_or_else(|| crate::TlsError::ParseError {
+                            message: "Ticketbleed ticket length truncated".to_string(),
+                        })?;
 
                     let ticket_start = ticket_len_end;
-                    let ticket_end = ticket_start
-                        .checked_add(ticket_len)
-                        .filter(|&end| end <= response.len())
-                        .filter(|&end| end <= hs_end && end <= record_end)
-                        .filter(|_| ticket_len > 0 && ticket_len <= hs_len)?;
+                    let ticket_end = ticket_start.checked_add(ticket_len).ok_or_else(|| {
+                        crate::TlsError::ParseError {
+                            message: "Ticketbleed ticket length overflow".to_string(),
+                        }
+                    })?;
+                    if ticket_len == 0 {
+                        return Ok(None);
+                    }
+                    if ticket_end > hs_end || ticket_end > record_end {
+                        return Err(crate::TlsError::ParseError {
+                            message: "Ticketbleed ticket data exceeds handshake".to_string(),
+                        });
+                    }
                     return response
                         .get(ticket_start..ticket_end)
-                        .map(|ticket| ticket.to_vec());
+                        .map(|ticket| Ok(Some(ticket.to_vec())))
+                        .unwrap_or_else(|| {
+                            Err(crate::TlsError::ParseError {
+                                message: "Ticketbleed ticket data truncated".to_string(),
+                            })
+                        });
                 }
             }
             offset = record_end;
         }
-        None
+        if offset != response.len() {
+            if offset == 0 && response.first() != Some(&0x16) {
+                return Ok(None);
+            }
+            return Err(crate::TlsError::ParseError {
+                message: "Ticketbleed ticket TLS record header truncated".to_string(),
+            });
+        }
+        Ok(None)
     }
 
     /// Parse NewSessionTicket message from server response
@@ -702,7 +741,7 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_session_ticket_ignores_trailing_bytes_after_truncated_ticket() {
+    fn test_extract_session_ticket_rejects_truncated_ticket() {
         let tester = TicketbleedTester::new(ticketbleed_test_target());
         let mut response = vec![
             CONTENT_TYPE_HANDSHAKE,
@@ -725,7 +764,15 @@ mod tests {
         ];
         response.extend_from_slice(&[0xcc; 16]); // trailing record bytes
 
-        assert!(tester.extract_session_ticket(&response).is_none());
+        let err = tester
+            .extract_session_ticket(&response)
+            .expect_err("truncated ticket should fail");
+        let err = err.to_string();
+        assert!(
+            err.contains("Ticketbleed ticket length truncated")
+                || err.contains("Ticketbleed ticket data exceeds handshake")
+                || err.contains("Ticketbleed ticket TLS record length exceeds available data")
+        );
     }
 
     #[test]
