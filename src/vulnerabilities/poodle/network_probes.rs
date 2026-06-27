@@ -48,9 +48,9 @@ fn find_alert_description(response: &[u8], n: usize) -> Result<Option<u8>> {
                     message: "TLS alert record length overflow".to_string(),
                 });
             };
-            if record_end != response.len() {
+            if record_end > response.len() {
                 return Err(crate::TlsError::ParseError {
-                    message: "TLS alert record length does not match buffer length".to_string(),
+                    message: "Truncated TLS alert record".to_string(),
                 });
             }
             return Ok(response.get(description_offset).copied()); // level at i+5, description at i+6
@@ -206,13 +206,24 @@ mod tests {
     }
 
     #[test]
-    fn test_find_alert_description_rejects_trailing_bytes() {
-        let response = [CONTENT_TYPE_ALERT, 0x03, 0x03, 0x00, 0x02, 0x02, 0x46, 0x00];
-        let err = find_alert_description(&response, response.len())
-            .expect_err("alert with trailing bytes should fail");
-        assert!(
-            err.to_string()
-                .contains("TLS alert record length does not match buffer length")
+    fn test_find_alert_description_accepts_following_record() {
+        let response = [
+            CONTENT_TYPE_ALERT,
+            0x03,
+            0x03,
+            0x00,
+            0x02,
+            0x02,
+            0x46,
+            0x16,
+            0x03,
+            0x03,
+            0x00,
+            0x00,
+        ];
+        assert_eq!(
+            find_alert_description(&response, response.len()).expect("alert should parse"),
+            Some(0x46)
         );
     }
 }
