@@ -202,68 +202,82 @@ impl ServerHelloCapture {
 
         // Check if there are extensions (need at least 2 bytes for extensions length)
         let position = Self::cursor_position(&cursor, "ServerHello")?;
-        if data.len().saturating_sub(position) >= 2 {
+        let remaining = data.len().saturating_sub(position);
+        if remaining == 1 {
+            return Err(TlsError::ParseError {
+                message: "ServerHello truncated before extensions length".to_string(),
+            });
+        }
+        if remaining >= 2 {
             // Read extensions length
             let mut ext_len_bytes = [0u8; 2];
-            if cursor.read_exact(&mut ext_len_bytes).is_ok() {
-                let extensions_length = usize::from(u16::from_be_bytes(ext_len_bytes));
-
-                if extensions_length > 0 {
-                    let ext_start = Self::cursor_position(&cursor, "Extensions")?;
-                    let ext_end = ext_start.checked_add(extensions_length).ok_or_else(|| {
-                        TlsError::ParseError {
-                            message: "Extensions length overflow".to_string(),
-                        }
+            cursor
+                .read_exact(&mut ext_len_bytes)
+                .map_err(|e| TlsError::ParseError {
+                    message: format!("Failed to read extensions length: {}", e),
+                })?;
+            let extensions_length = usize::from(u16::from_be_bytes(ext_len_bytes));
+            let ext_start = Self::cursor_position(&cursor, "Extensions")?;
+            let ext_end =
+                ext_start
+                    .checked_add(extensions_length)
+                    .ok_or_else(|| TlsError::ParseError {
+                        message: "Extensions length overflow".to_string(),
                     })?;
 
-                    if ext_end > data.len() {
+            if ext_end > data.len() {
+                return Err(TlsError::ParseError {
+                    message: "Extensions exceed ServerHello length".to_string(),
+                });
+            }
+            if ext_end != data.len() {
+                return Err(TlsError::ParseError {
+                    message: "ServerHello extension block contains trailing bytes".to_string(),
+                });
+            }
+
+            if extensions_length > 0 {
+                while Self::cursor_position(&cursor, "Extension")? < ext_end {
+                    // Parse extension type (2 bytes)
+                    let mut ext_type_bytes = [0u8; 2];
+                    if cursor.read_exact(&mut ext_type_bytes).is_err() {
                         return Err(TlsError::ParseError {
-                            message: "Extensions exceed ServerHello length".to_string(),
+                            message: "Failed to read extension type".to_string(),
+                        });
+                    }
+                    let ext_type = u16::from_be_bytes(ext_type_bytes);
+
+                    // Parse extension length (2 bytes)
+                    let mut ext_data_len_bytes = [0u8; 2];
+                    if cursor.read_exact(&mut ext_data_len_bytes).is_err() {
+                        return Err(TlsError::ParseError {
+                            message: "Failed to read extension length".to_string(),
+                        });
+                    }
+                    let ext_data_len = usize::from(u16::from_be_bytes(ext_data_len_bytes));
+
+                    // Parse extension data
+                    let ext_data_end = Self::cursor_position(&cursor, "Extension data")?
+                        .checked_add(ext_data_len)
+                        .ok_or_else(|| TlsError::ParseError {
+                            message: "Extension data length overflow".to_string(),
+                        })?;
+                    if ext_data_end > ext_end {
+                        return Err(TlsError::ParseError {
+                            message: "Failed to read extension data".to_string(),
+                        });
+                    }
+                    let mut ext_data = vec![0u8; ext_data_len];
+                    if ext_data_len > 0 && cursor.read_exact(&mut ext_data).is_err() {
+                        return Err(TlsError::ParseError {
+                            message: "Failed to read extension data".to_string(),
                         });
                     }
 
-                    while Self::cursor_position(&cursor, "Extension")? < ext_end {
-                        // Parse extension type (2 bytes)
-                        let mut ext_type_bytes = [0u8; 2];
-                        if cursor.read_exact(&mut ext_type_bytes).is_err() {
-                            return Err(TlsError::ParseError {
-                                message: "Failed to read extension type".to_string(),
-                            });
-                        }
-                        let ext_type = u16::from_be_bytes(ext_type_bytes);
-
-                        // Parse extension length (2 bytes)
-                        let mut ext_data_len_bytes = [0u8; 2];
-                        if cursor.read_exact(&mut ext_data_len_bytes).is_err() {
-                            return Err(TlsError::ParseError {
-                                message: "Failed to read extension length".to_string(),
-                            });
-                        }
-                        let ext_data_len = usize::from(u16::from_be_bytes(ext_data_len_bytes));
-
-                        // Parse extension data
-                        let ext_data_end = Self::cursor_position(&cursor, "Extension data")?
-                            .checked_add(ext_data_len)
-                            .ok_or_else(|| TlsError::ParseError {
-                                message: "Extension data length overflow".to_string(),
-                            })?;
-                        if ext_data_end > ext_end {
-                            return Err(TlsError::ParseError {
-                                message: "Failed to read extension data".to_string(),
-                            });
-                        }
-                        let mut ext_data = vec![0u8; ext_data_len];
-                        if ext_data_len > 0 && cursor.read_exact(&mut ext_data).is_err() {
-                            return Err(TlsError::ParseError {
-                                message: "Failed to read extension data".to_string(),
-                            });
-                        }
-
-                        extensions.push(Extension {
-                            extension_type: ext_type,
-                            data: ext_data,
-                        });
-                    }
+                    extensions.push(Extension {
+                        extension_type: ext_type,
+                        data: ext_data,
+                    });
                 }
             }
         }
@@ -480,6 +494,45 @@ mod tests {
 
         let parsed = ServerHelloCapture::parse(&data).expect("trailing bytes must be ignored");
         assert!(parsed.extensions.is_empty());
+    }
+
+    #[test]
+    fn test_parse_serverhello_rejects_truncated_extensions_length() {
+        let data = vec![
+            0x16, 0x03, 0x03, 0x00, 0x2B, // Handshake, TLS 1.2, length 43
+            0x02, 0x00, 0x00, 0x27, // ServerHello, length 39
+            0x03, 0x03, // TLS 1.2
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, // random
+            0x00, // session id length
+            0x00, 0x2F, // cipher suite
+            0x00, // compression
+            0x00, // truncated extensions length
+        ];
+
+        let err = ServerHelloCapture::parse(&data).expect_err("parser should reject");
+        assert!(err.to_string().contains("extensions length"));
+    }
+
+    #[test]
+    fn test_parse_serverhello_rejects_extension_block_trailing_bytes() {
+        let data = vec![
+            0x16, 0x03, 0x03, 0x00, 0x2D, // Handshake, TLS 1.2, length 45
+            0x02, 0x00, 0x00, 0x29, // ServerHello, length 41
+            0x03, 0x03, // TLS 1.2
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, // random
+            0x00, // session id length
+            0x00, 0x2F, // cipher suite
+            0x00, // compression
+            0x00, 0x00, // zero-length extension block
+            0x00, // trailing byte inside handshake
+        ];
+
+        let err = ServerHelloCapture::parse(&data).expect_err("parser should reject");
+        assert!(err.to_string().contains("trailing bytes"));
     }
 
     #[test]
