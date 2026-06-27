@@ -333,11 +333,9 @@ impl MassScanner {
         // Filter results based on certificate status
         results
             .into_iter()
-            .filter(|(_, result)| {
-                match result {
-                    Ok(scan_result) => Self::should_include_result(filters, scan_result),
-                    Err(_) => false, // Filter out failed scans when filters are active
-                }
+            .filter(|(_, result)| match result {
+                Ok(scan_result) => Self::should_include_result(filters, scan_result),
+                Err(_) => true,
             })
             .collect()
     }
@@ -683,8 +681,10 @@ mod tests {
             ),
         ];
         let filtered = MassScanner::filter_results(&filters, results);
-        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered.len(), 2);
         assert_eq!(filtered[0].0, "expired");
+        assert_eq!(filtered[1].0, "error");
+        assert!(filtered[1].1.is_err());
     }
 
     #[test]
