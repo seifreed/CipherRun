@@ -29,8 +29,28 @@ fn read_u24_at(data: &[u8], offset: usize) -> Option<usize> {
         .and_then(|bytes| <&[u8; 3]>::try_from(bytes).ok())
         .map(|bytes| {
             let [high, mid, low] = *bytes;
-            u32::from_be_bytes([0, high, mid, low]) as usize
+            let value = u32::from_be_bytes([0, high, mid, low]);
+            usize::try_from(value).expect("u24 length must fit in usize")
         })
+}
+
+fn length_error(context: &str) -> crate::TlsError {
+    crate::TlsError::InvalidInput {
+        message: format!("{context} exceeds maximum length"),
+    }
+}
+
+fn u16_len(len: usize, context: &str) -> Result<u16> {
+    u16::try_from(len).map_err(|_| length_error(context))
+}
+
+fn u24_len(len: usize, context: &str) -> Result<[u8; 3]> {
+    let len = u32::try_from(len).map_err(|_| length_error(context))?;
+    if len > 0x00ff_ffff {
+        return Err(length_error(context));
+    }
+    let bytes = len.to_be_bytes();
+    Ok([bytes[1], bytes[2], bytes[3]])
 }
 
 /// Return true once a ServerHelloDone record (handshake type 0x0e) is present in `buf`.
@@ -44,7 +64,7 @@ fn has_server_hello_done(buf: &[u8]) -> bool {
             break;
         };
         let [content_type, _, _, len_high, len_low] = *header;
-        let record_len = u16::from_be_bytes([len_high, len_low]) as usize;
+        let record_len = usize::from(u16::from_be_bytes([len_high, len_low]));
         let record_end = offset + 5 + record_len;
         if record_end > buf.len() {
             break;
@@ -72,7 +92,7 @@ fn extract_rsa_key_len(buffer: &[u8]) -> Result<usize> {
             break;
         };
         let [record_type, _, _, len_high, len_low] = *header;
-        let record_len = u16::from_be_bytes([len_high, len_low]) as usize;
+        let record_len = usize::from(u16::from_be_bytes([len_high, len_low]));
         let record_end = offset + 5 + record_len;
         if record_end > buffer.len() {
             break;
@@ -103,7 +123,11 @@ fn extract_rsa_key_len(buffer: &[u8]) -> Result<usize> {
                         && let Ok(pkey) = cert.public_key()
                         && let Ok(rsa) = pkey.rsa()
                     {
-                        return Ok(rsa.n().num_bytes() as usize);
+                        return usize::try_from(rsa.n().num_bytes()).map_err(|_| {
+                            crate::TlsError::ParseError {
+                                message: "RSA key length does not fit in usize".to_string(),
+                            }
+                        });
                     }
                 }
                 hoff = hs_end;
@@ -120,7 +144,7 @@ fn extract_rsa_key_len(buffer: &[u8]) -> Result<usize> {
 /// structurally complete.
 fn alert_description_code(response: &[u8]) -> Option<u8> {
     if response.len() >= 7 && response.first() == Some(&0x15) {
-        let record_len = read_u16_at(response, 3)? as usize;
+        let record_len = usize::from(read_u16_at(response, 3)?);
         if record_len == 2 && response.len() == 5 + record_len {
             return response.get(6).copied();
         }
@@ -214,7 +238,10 @@ impl RobotTester {
             for (i, vector_responses) in per_vector.iter_mut().enumerate() {
                 // A transient error is recorded as a missing sample rather than
                 // aborting the whole probe set (MIN_SAMPLES gates the verdict).
-                match self.send_invalid_rsa_ciphertext(i as u8).await {
+                let variant = u8::try_from(i).map_err(|_| crate::TlsError::InvalidInput {
+                    message: "ROBOT test vector index exceeds u8".to_string(),
+                })?;
+                match self.send_invalid_rsa_ciphertext(variant).await {
                     Ok(Some(response)) => {
                         vector_responses.push(response.clone());
                         responses.push(Some(response));
@@ -319,7 +346,7 @@ impl RobotTester {
                     let diff: usize = (0..min_len)
                         .filter(|&k| left.get(k) != right.get(k))
                         .count()
-                        + (left.len() as isize - right.len() as isize).unsigned_abs();
+                        + left.len().abs_diff(right.len());
                     if diff > best_diff {
                         best_diff = diff;
                         p1 = left;
@@ -337,7 +364,7 @@ impl RobotTester {
                 }
             }
             // Add length difference as additional divergence
-            let len_difference = (p1.len() as isize - p2.len() as isize).unsigned_abs();
+            let len_difference = p1.len().abs_diff(p2.len());
             let byte_differences = content_differences + len_difference;
 
             // Pure length-only differences (no content divergence) are TCP segmentation noise,
@@ -355,9 +382,9 @@ impl RobotTester {
             const MIN_BYTE_DIFFERENCES: usize = 4;
             const MIN_RELATIVE_DIFFERENCE: f64 = 0.1; // 10% of pattern length
 
-            let pattern_len = p1.len().max(p2.len()) as f64;
-            let relative_diff = if pattern_len > 0.0 {
-                byte_differences as f64 / pattern_len
+            let pattern_len = p1.len().max(p2.len());
+            let relative_diff = if pattern_len > 0 {
+                byte_differences as f64 / pattern_len as f64
             } else {
                 0.0
             };
@@ -371,7 +398,7 @@ impl RobotTester {
                     "ROBOT: Weak oracle detected - {} byte differences ({:.1}% of {} bytes)",
                     byte_differences,
                     relative_diff * 100.0,
-                    pattern_len as usize
+                    pattern_len
                 );
                 return Ok(RobotStatus::WeakOracle);
             }
@@ -458,7 +485,7 @@ impl RobotTester {
         let rsa_key_len = extract_rsa_key_len(&buffer)?;
 
         // Send ClientKeyExchange with invalid padding
-        let client_key_exchange = self.build_invalid_client_key_exchange(variant, rsa_key_len);
+        let client_key_exchange = self.build_invalid_client_key_exchange(variant, rsa_key_len)?;
         stream.write_all(&client_key_exchange).await?;
 
         // Send ChangeCipherSpec
@@ -495,55 +522,67 @@ impl RobotTester {
     }
 
     /// Build ClientKeyExchange with invalid RSA padding, sized for the server's actual key length.
-    fn build_invalid_client_key_exchange(&self, variant: u8, key_len: usize) -> Vec<u8> {
+    fn build_invalid_client_key_exchange(&self, variant: u8, key_len: usize) -> Result<Vec<u8>> {
         // record_body = handshake_header(4) + encrypted_pms_len_field(2) + encrypted_pms(key_len)
-        let record_body_len = 6 + key_len;
-        let handshake_body_len = 2 + key_len; // encrypted_pms_len_field + encrypted_pms
+        let record_body_len =
+            key_len
+                .checked_add(6)
+                .ok_or_else(|| crate::TlsError::InvalidInput {
+                    message: "ROBOT ClientKeyExchange record length exceeds maximum".to_string(),
+                })?;
+        let handshake_body_len =
+            key_len
+                .checked_add(2)
+                .ok_or_else(|| crate::TlsError::InvalidInput {
+                    message: "ROBOT ClientKeyExchange handshake length exceeds maximum".to_string(),
+                })?; // encrypted_pms_len_field + encrypted_pms
+        let record_body_len = u16_len(record_body_len, "ROBOT ClientKeyExchange record")?;
+        let handshake_body_len = u24_len(handshake_body_len, "ROBOT ClientKeyExchange handshake")?;
+        let key_len = u16_len(key_len, "ROBOT RSA ciphertext")?;
+        let key_len_usize = usize::from(key_len);
 
-        let mut msg = vec![
-            CONTENT_TYPE_HANDSHAKE,             // TLS Record: Handshake (0x16)
-            (VERSION_TLS_1_0 >> 8) as u8,       // 0x03
-            (VERSION_TLS_1_0 & 0xff) as u8,     // 0x01
-            (record_body_len >> 8) as u8,       // record length hi
-            (record_body_len & 0xff) as u8,     // record length lo
-            HANDSHAKE_TYPE_CLIENT_KEY_EXCHANGE, // ClientKeyExchange (0x10)
-            0x00,                               // handshake length (3 bytes)
-            (handshake_body_len >> 8) as u8,
-            (handshake_body_len & 0xff) as u8,
-            (key_len >> 8) as u8,   // encrypted PMS length hi
-            (key_len & 0xff) as u8, // encrypted PMS length lo
-        ];
+        let mut msg = Vec::new();
+        msg.push(CONTENT_TYPE_HANDSHAKE); // TLS Record: Handshake (0x16)
+        msg.extend_from_slice(&VERSION_TLS_1_0.to_be_bytes());
+        msg.extend_from_slice(&record_body_len.to_be_bytes());
+        msg.push(HANDSHAKE_TYPE_CLIENT_KEY_EXCHANGE); // ClientKeyExchange (0x10)
+        msg.extend_from_slice(&handshake_body_len);
+        msg.extend_from_slice(&key_len.to_be_bytes());
 
         // Invalid RSA ciphertext (different variants for oracle detection)
         match variant {
-            0 => msg.extend(std::iter::repeat_n(0x00u8, key_len)),
-            1 => msg.extend(std::iter::repeat_n(0xffu8, key_len)),
+            0 => msg.extend(std::iter::repeat_n(0x00u8, key_len_usize)),
+            1 => msg.extend(std::iter::repeat_n(0xffu8, key_len_usize)),
             2 => {
-                for i in 0..key_len {
-                    msg.push((i & 0xff) as u8);
+                let mut byte = 0_u8;
+                for _ in 0..key_len_usize {
+                    msg.push(byte);
+                    byte = byte.wrapping_add(1);
                 }
             }
             3 => {
-                for i in 0..key_len {
+                for i in 0..key_len_usize {
                     msg.push(if i % 2 == 0 { 0xAA } else { 0x55 });
                 }
             }
             _ => {
-                for i in 0..key_len {
-                    msg.push(((i as u16 * 179 + variant as u16 * 37) & 0xff) as u8);
+                let mut byte = variant.wrapping_mul(37);
+                for _ in 0..key_len_usize {
+                    msg.push(byte);
+                    byte = byte.wrapping_add(179);
                 }
             }
         }
 
-        msg
+        Ok(msg)
     }
 
     /// Build Finished message
     fn build_finished(&self) -> Vec<u8> {
         vec![
-            CONTENT_TYPE_HANDSHAKE,         // Record header (0x16)
-            (VERSION_TLS_1_0 >> 8) as u8,   // 0x03
-            (VERSION_TLS_1_0 & 0xff) as u8, // 0x01
+            CONTENT_TYPE_HANDSHAKE,           // Record header (0x16)
+            VERSION_TLS_1_0.to_be_bytes()[0], // 0x03
+            VERSION_TLS_1_0.to_be_bytes()[1], // 0x01
             0x00,
             0x10,                    // Length
             HANDSHAKE_TYPE_FINISHED, // Finished (0x14)
@@ -614,9 +653,15 @@ mod tests {
         .unwrap();
         let tester = RobotTester::new(target);
 
-        let msg0 = tester.build_invalid_client_key_exchange(0, 256);
-        let msg1 = tester.build_invalid_client_key_exchange(1, 256);
-        let msg2 = tester.build_invalid_client_key_exchange(2, 256);
+        let msg0 = tester
+            .build_invalid_client_key_exchange(0, 256)
+            .expect("ClientKeyExchange should build");
+        let msg1 = tester
+            .build_invalid_client_key_exchange(1, 256)
+            .expect("ClientKeyExchange should build");
+        let msg2 = tester
+            .build_invalid_client_key_exchange(2, 256)
+            .expect("ClientKeyExchange should build");
 
         assert_eq!(msg0.len(), msg1.len());
         assert_eq!(msg1.len(), msg2.len());
@@ -664,9 +709,15 @@ mod tests {
         .unwrap();
         let tester = RobotTester::new(target);
 
-        let msg0 = tester.build_invalid_client_key_exchange(0, 128);
-        let msg1 = tester.build_invalid_client_key_exchange(1, 128);
-        let msg2 = tester.build_invalid_client_key_exchange(2, 128);
+        let msg0 = tester
+            .build_invalid_client_key_exchange(0, 128)
+            .expect("ClientKeyExchange should build");
+        let msg1 = tester
+            .build_invalid_client_key_exchange(1, 128)
+            .expect("ClientKeyExchange should build");
+        let msg2 = tester
+            .build_invalid_client_key_exchange(2, 128)
+            .expect("ClientKeyExchange should build");
 
         let payload0 = msg0
             .get(msg0.len() - 128..)
