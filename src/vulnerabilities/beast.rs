@@ -45,6 +45,10 @@ fn classify_handshake_error(error: &str) -> BeastProbeStatus {
     }
 }
 
+fn ssl3_setup_inconclusive() -> BeastProbeStatus {
+    BeastProbeStatus::Inconclusive
+}
+
 /// BEAST vulnerability tester
 pub struct BeastTester {
     target: Target,
@@ -201,7 +205,7 @@ impl BeastTester {
                 tracing::debug!(
                     "SSL 3.0 not supported by OpenSSL - cannot test for BEAST on SSL 3.0"
                 );
-                return Ok(BeastProbeStatus::Inconclusive);
+                return Ok(ssl3_setup_inconclusive());
             }
 
             if builder
@@ -211,7 +215,7 @@ impl BeastTester {
                 tracing::debug!(
                     "SSL 3.0 not supported by OpenSSL - cannot test for BEAST on SSL 3.0"
                 );
-                return Ok(BeastProbeStatus::NotSupported);
+                return Ok(ssl3_setup_inconclusive());
             }
 
             builder.set_cipher_list("AES128-SHA:AES256-SHA:DES-CBC3-SHA")?;
@@ -325,5 +329,10 @@ mod tests {
         };
         assert!(result.details.contains("Not vulnerable"));
         assert!(!result.vulnerable);
+    }
+
+    #[test]
+    fn test_ssl3_setup_failure_is_inconclusive() {
+        assert_eq!(ssl3_setup_inconclusive(), BeastProbeStatus::Inconclusive);
     }
 }
