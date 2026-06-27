@@ -407,15 +407,31 @@ impl ProtocolTester {
 
         match timeout(self.read_timeout, async {
             stream.write_all(&client_hello).await?;
-            let mut resp = vec![0u8; BUFFER_SIZE_MAX_TLS_RECORD];
-            let n = stream.read(&mut resp).await?;
-            resp.truncate(n);
-            Ok::<Vec<u8>, std::io::Error>(resp)
+            let mut header = [0u8; 5];
+            if stream.read_exact(&mut header).await.is_err() {
+                return Ok::<Option<Vec<u8>>, std::io::Error>(None);
+            }
+
+            let record_len = u16::from_be_bytes([header[3], header[4]]) as usize;
+            let total_len = 5usize
+                .checked_add(record_len)
+                .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "TLS record length overflow"))?;
+            if total_len > BUFFER_SIZE_MAX_TLS_RECORD {
+                return Ok::<Option<Vec<u8>>, std::io::Error>(None);
+            }
+
+            let mut resp = vec![0u8; total_len];
+            resp[..5].copy_from_slice(&header);
+            if stream.read_exact(&mut resp[5..]).await.is_err() {
+                return Ok::<Option<Vec<u8>>, std::io::Error>(None);
+            }
+
+            Ok::<Option<Vec<u8>>, std::io::Error>(Some(resp))
         })
         .await
         {
             // Server answered: classify the ServerHello/alert by wire bytes.
-            Ok(Ok(resp)) if !resp.is_empty() => Ok(classify_legacy_probe_response(&resp, protocol)),
+            Ok(Ok(Some(resp))) => Ok(classify_legacy_probe_response(&resp, protocol)),
             // TCP connected and the ClientHello was sent, but the server closed
             // (clean EOF) or reset the connection without any TLS response.
             // Accepting the connection and then refusing the handshake for a
@@ -755,6 +771,46 @@ mod legacy_probe_tests {
             classify_legacy_probe_response(&[], Protocol::TLS10),
             ProtocolProbeOutcome::Inconclusive
         );
+    }
+
+    #[tokio::test]
+    async fn test_tls_legacy_raw_probe_handles_fragmented_server_hello() {
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("local addr should exist");
+
+        tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let mut buffer = vec![0u8; 64];
+                let _ = socket.read(&mut buffer).await.unwrap();
+
+                let record = server_hello_record(0x0301);
+                socket.write_all(&record[..6]).await.expect("write first fragment");
+                socket.flush().await.expect("flush first fragment");
+                tokio::time::sleep(Duration::from_millis(20)).await;
+                socket
+                    .write_all(&record[6..])
+                    .await
+                    .expect("write second fragment");
+                socket.flush().await.expect("flush second fragment");
+            }
+        });
+
+        let target = Target::with_ips("example.test".to_string(), addr.port(), vec![addr.ip()])
+            .expect("target should build");
+        let tester = ProtocolTester::new(target)
+            .with_connect_timeout(Duration::from_millis(100))
+            .with_read_timeout(Duration::from_millis(100));
+
+        let outcome = tester
+            .test_tls_legacy_raw_on_ip(Protocol::TLS10, addr)
+            .await
+            .expect("fragmented ServerHello should be classified");
+
+        assert_eq!(outcome, ProtocolProbeOutcome::Supported);
     }
 
     #[test]
