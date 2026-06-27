@@ -41,7 +41,13 @@ where
                 });
             }
 
-            bytes.extend_from_slice(&available[..take]);
+            let chunk =
+                available
+                    .get(..take)
+                    .ok_or_else(|| crate::error::TlsError::ParseError {
+                        message: "STARTTLS response chunk exceeded buffer".to_string(),
+                    })?;
+            bytes.extend_from_slice(chunk);
             (take, newline_pos.is_some())
         };
 
