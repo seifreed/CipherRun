@@ -245,8 +245,10 @@ impl TicketbleedTester {
             let Some(accumulated) = buffer.get(..total) else {
                 break;
             };
-            if self.parse_new_session_ticket(accumulated).unwrap_or(false) {
-                break;
+            match self.parse_new_session_ticket(accumulated) {
+                Ok(true) => break,
+                Ok(false) => {}
+                Err(_) => {}
             }
         }
         total
@@ -1034,5 +1036,53 @@ mod tests {
         assert!(!result.vulnerable);
         assert!(result.inconclusive);
         assert!(result.details.contains("Malformed session ticket response"));
+    }
+
+    #[tokio::test]
+    async fn test_ticketbleed_fragmented_new_session_ticket_is_reassembled() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener");
+        let port = listener.local_addr().expect("local addr").port();
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept");
+            let mut buf = vec![0u8; 4096];
+            let _ = socket.read(&mut buf).await.expect("read initial hello");
+
+            let ticket = handshake_record(&[new_session_ticket_message(b"ticket")]);
+            let split = 6;
+            socket
+                .write_all(&ticket[..split])
+                .await
+                .expect("write first ticket chunk");
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            socket
+                .write_all(&ticket[split..])
+                .await
+                .expect("write second ticket chunk");
+
+            let _ = socket.read(&mut buf).await.expect("read follow-up hello");
+            socket
+                .write_all(&server_hello_record_with_session_id(
+                    &TICKETBLEED_SESSION_ID_MARKER,
+                ))
+                .await
+                .expect("write follow-up server hello");
+        });
+
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+
+        let result = TicketbleedTester::new(target).test().await.unwrap();
+        server.await.expect("server task");
+
+        assert!(!result.vulnerable);
+        assert!(!result.inconclusive);
+        assert!(result.details.contains("No memory leak detected"));
     }
 }
