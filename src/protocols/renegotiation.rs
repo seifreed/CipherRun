@@ -633,7 +633,9 @@ impl<'a> RenegotiationTester<'a> {
                 message: "ServerHello extensions offset overflow".to_string(),
             })?;
         if ext_len_offset == handshake_end {
-            return Ok(false);
+            return Err(crate::TlsError::ParseError {
+                message: "ServerHello truncated before extensions length".to_string(),
+            });
         }
         let ext_start =
             ext_len_offset
@@ -940,11 +942,12 @@ mod tests {
         response.push(0x00);
         response.extend_from_slice(&[0x00, 0x9c]);
         response.push(0x00);
+        response.extend_from_slice(&[0x00, 0x00]); // empty extensions
         patch_test_server_hello_lengths(&mut response);
 
         let handshake_len = [response[6], response[7], response[8]];
         response.extend_from_slice(&[0x00, 0x05, 0xff, 0x01, 0x00, 0x01, 0x00]);
-        let rec_len = u16::try_from(response.len() - 5)
+        let rec_len = u16::try_from(response.len() - 5 - 7)
             .expect("test ServerHello record length must fit in u16");
         RenegotiationTester::write_u16_at(
             &mut response,
@@ -1157,5 +1160,43 @@ mod tests {
             .has_renegotiation_info_extension(&[0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28])
             .expect_err("alert responses must be rejected");
         assert!(err.to_string().contains("handshake type"));
+    }
+
+    #[test]
+    fn test_has_renegotiation_info_extension_rejects_truncation_before_extensions_length() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["93.184.216.34".parse().unwrap()],
+        )
+        .unwrap();
+        let tester = RenegotiationTester::new(&target);
+
+        let mut response = vec![
+            0x16, 0x03, 0x03, 0x00, 0x00, // record
+            0x02, 0x00, 0x00, 0x00, // ServerHello
+            0x03, 0x03,
+        ];
+        response.extend_from_slice(&[0x00; 32]);
+        response.push(0x00);
+        response.extend_from_slice(&[0x00, 0x9c]);
+        response.push(0x00);
+        let record_len = (response.len() - 5) as u16;
+        RenegotiationTester::write_u16_at(
+            &mut response,
+            3,
+            record_len,
+            "test ServerHello record length placeholder",
+        )
+        .expect("test ServerHello should contain record length placeholder");
+        let handshake_len = (response.len() - 9) as u32;
+        response[6] = ((handshake_len >> 16) & 0xff) as u8;
+        response[7] = ((handshake_len >> 8) & 0xff) as u8;
+        response[8] = (handshake_len & 0xff) as u8;
+
+        let err = tester
+            .has_renegotiation_info_extension(&response)
+            .expect_err("truncated extensions length must fail");
+        assert!(err.to_string().contains("truncated before extensions length"));
     }
 }
