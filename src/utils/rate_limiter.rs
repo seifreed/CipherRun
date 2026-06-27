@@ -192,8 +192,9 @@ pub fn parse_delay(s: &str) -> Result<Duration> {
                 message: format!("Invalid delay value: {s}"),
             });
         }
-        let millis = (seconds * 1000.0) as u64;
-        return Ok(Duration::from_millis(millis));
+        return Duration::try_from_secs_f64(seconds).map_err(|_| TlsError::InvalidInput {
+            message: format!("Invalid delay value: {s}"),
+        });
     }
 
     // Default to milliseconds if no suffix
