@@ -267,7 +267,7 @@ impl RevocationChecker {
 
                             // Certificate Status structure: status_type (1 byte) + response_length (3 bytes) + response
                             // Total overhead is 4 bytes, so check response_len + 4 <= msg_len
-                            if response_len > 0 && response_len + 4 <= msg_len {
+                            if response_len > 0 && response_len + 4 == msg_len {
                                 result.stapled_response_valid = Some(true);
                                 result.details.push_str(&format!(
                                     "OCSP response length: {} bytes. ",
@@ -551,6 +551,23 @@ mod tests {
             err.to_string()
                 .contains("TLS record length exceeds available data")
         );
+    }
+
+    #[test]
+    fn test_check_ocsp_stapling_rejects_trailing_certificate_status_bytes() {
+        let checker = RevocationChecker::new(true);
+        let data = vec![
+            0x16, 0x03, 0x03, 0x00, 0x0a, // TLS record, length 10
+            0x16, 0x00, 0x00, 0x06, // CertificateStatus, length 6
+            0x01, // status_type: ocsp
+            0x00, 0x00, 0x01, // response length: 1
+            0xaa, // response byte
+            0xbb, // trailing byte not covered by response length
+        ];
+
+        let result = checker.check_ocsp_stapling(&data).unwrap();
+        assert!(result.stapled_response_present);
+        assert_eq!(result.stapled_response_valid, Some(false));
     }
 
     #[test]
