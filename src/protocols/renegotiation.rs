@@ -5,7 +5,7 @@
 use crate::Result;
 use crate::constants::{
     CONTENT_TYPE_HANDSHAKE, DEFAULT_READ_TIMEOUT, EXTENSION_RENEGOTIATION_INFO,
-    HANDSHAKE_TYPE_CLIENT_HELLO, SHORT_TIMEOUT, VERSION_TLS_1_2, VULNERABILITY_CHECK_BUFFER_SIZE,
+    HANDSHAKE_TYPE_CLIENT_HELLO, SHORT_TIMEOUT, VERSION_TLS_1_2,
 };
 use crate::utils::network::Target;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -73,19 +73,6 @@ impl<'a> RenegotiationTester<'a> {
         let bytes: [u8; 3] = bytes.try_into().map_err(|_| Self::parse_error(context))?;
         let [high, mid, low] = bytes;
         Ok(u32::from_be_bytes([0, high, mid, low]) as usize)
-    }
-
-    fn slice_range<'b>(
-        data: &'b [u8],
-        start: usize,
-        len: usize,
-        context: &str,
-    ) -> Result<&'b [u8]> {
-        let end = start
-            .checked_add(len)
-            .ok_or_else(|| Self::parse_error(context))?;
-        data.get(start..end)
-            .ok_or_else(|| Self::parse_error(context))
     }
 
     fn write_u16_at(data: &mut [u8], offset: usize, value: u16, context: &str) -> Result<()> {
@@ -332,18 +319,16 @@ impl<'a> RenegotiationTester<'a> {
                 let client_hello = self.build_client_hello_without_reneg_info()?;
                 stream.write_all(&client_hello).await?;
 
-                // Read ServerHello
-                let mut buffer = vec![0u8; VULNERABILITY_CHECK_BUFFER_SIZE];
-                match timeout(SHORT_TIMEOUT, stream.read(&mut buffer)).await {
-                    Ok(Ok(n)) if n > 0 => {
-                        let response = Self::slice_range(&buffer, 0, n, "renegotiation response")?;
+                // Read ServerHello as a complete TLS record before parsing.
+                match timeout(SHORT_TIMEOUT, Self::read_tls_record(&mut stream)).await {
+                    Ok(Ok(Some(response))) => {
                         // Check if server responded with a valid ServerHello
                         // If server responds but WITHOUT renegotiation_info,
                         // it may be vulnerable
                         if response.first() == Some(&CONTENT_TYPE_HANDSHAKE) && response.len() > 5 {
                             // Check if server's ServerHello includes renegotiation_info
                             let has_reneg_info =
-                                match self.has_renegotiation_info_extension(response) {
+                                match self.has_renegotiation_info_extension(&response) {
                                     Ok(value) => value,
                                     Err(_) => return Ok(InsecureRenegotiationResult::Inconclusive),
                                 };
@@ -401,13 +386,11 @@ impl<'a> RenegotiationTester<'a> {
                 let client_hello = self.build_client_hello()?;
                 stream.write_all(&client_hello).await?;
 
-                // Read ServerHello
-                let mut buffer = vec![0u8; VULNERABILITY_CHECK_BUFFER_SIZE];
-                match timeout(SHORT_TIMEOUT, stream.read(&mut buffer)).await {
-                    Ok(Ok(n)) if n > 0 => {
+                // Read ServerHello as a complete TLS record before parsing.
+                match timeout(SHORT_TIMEOUT, Self::read_tls_record(&mut stream)).await {
+                    Ok(Ok(Some(buffer))) => {
                         // Look for renegotiation_info extension (0xff01)
-                        let response = Self::slice_range(&buffer, 0, n, "renegotiation response")?;
-                        let has_extension = match self.has_renegotiation_info_extension(response) {
+                        let has_extension = match self.has_renegotiation_info_extension(&buffer) {
                             Ok(value) => value,
                             Err(_) => return Ok(None),
                         };
@@ -506,6 +489,26 @@ impl<'a> RenegotiationTester<'a> {
         )?;
 
         Ok(hello)
+    }
+
+    async fn read_tls_record(stream: &mut tokio::net::TcpStream) -> std::io::Result<Option<Vec<u8>>> {
+        let mut header = [0u8; 5];
+        if stream.read_exact(&mut header).await.is_err() {
+            return Ok(None);
+        }
+
+        let record_len = u16::from_be_bytes([header[3], header[4]]) as usize;
+        let total_len = match 5usize.checked_add(record_len) {
+            Some(len) => len,
+            None => return Ok(None),
+        };
+        let mut response = vec![0u8; total_len];
+        response[..5].copy_from_slice(&header);
+        if stream.read_exact(&mut response[5..]).await.is_err() {
+            return Ok(None);
+        }
+
+        Ok(Some(response))
     }
 
     /// Build ClientHello WITHOUT renegotiation_info extension
@@ -1271,5 +1274,53 @@ mod tests {
                 .details
                 .contains("secure extension probe did not complete")
         );
+    }
+
+    #[tokio::test]
+    async fn test_secure_renegotiation_extension_handles_fragmented_server_hello() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener");
+        let addr = listener.local_addr().expect("local addr");
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept");
+            let mut buf = vec![0u8; 4096];
+            let _ = socket.read(&mut buf).await.expect("read client hello");
+
+            let mut response = vec![
+                0x16, 0x03, 0x03, 0x00, 0x00, // record
+                0x02, 0x00, 0x00, 0x00, // ServerHello
+                0x03, 0x03,
+            ];
+            response.extend_from_slice(&[0x00; 32]);
+            response.push(0x00);
+            response.extend_from_slice(&[0x00, 0x9c]);
+            response.push(0x00);
+            response.extend_from_slice(&[0x00, 0x05, 0xff, 0x01, 0x00, 0x01, 0x00]);
+            patch_test_server_hello_lengths(&mut response);
+
+            socket.write_all(&response[..8]).await.expect("write first fragment");
+            socket.flush().await.expect("flush first fragment");
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            socket.write_all(&response[8..]).await.expect("write second fragment");
+            socket.flush().await.expect("flush second fragment");
+        });
+
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            addr.port(),
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+        let tester = RenegotiationTester::new(&target);
+
+        let secure = tester
+            .test_secure_renegotiation_extension()
+            .await
+            .expect("probe should succeed");
+
+        assert_eq!(secure, Some(true));
+        server.await.expect("server task should complete");
     }
 }
