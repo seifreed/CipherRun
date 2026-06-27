@@ -777,7 +777,11 @@ pub async fn test_vuln_ssl_connection_outcome(
     if result.is_inconclusive() {
         Ok(None)
     } else {
-        Ok(Some(result.is_connected()))
+        Ok(match result {
+            VulnSslResult::Connected(_) => Some(true),
+            VulnSslResult::Failed => None,
+            VulnSslResult::Inconclusive => None,
+        })
     }
 }
 

@@ -274,6 +274,35 @@ async fn test_vuln_ssl_connection_outcome_closed_port_is_inconclusive() {
 }
 
 #[tokio::test]
+async fn test_vuln_ssl_connection_outcome_handshake_failure_is_inconclusive() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("test assertion should succeed");
+    let port = listener
+        .local_addr()
+        .expect("test assertion should succeed")
+        .port();
+    let accept_task = tokio::spawn(async move {
+        let _ = listener.accept().await;
+    });
+
+    let target = Target::with_ips(
+        "localhost".to_string(),
+        port,
+        vec!["127.0.0.1".parse().expect("valid IP")],
+    )
+    .expect("test assertion should succeed");
+
+    let outcome =
+        test_vuln_ssl_connection_outcome(&target, VulnSslConfig::ssl3_only().with_timeout(1))
+            .await
+            .expect("test assertion should succeed");
+    accept_task.await.expect("test assertion should succeed");
+
+    assert_eq!(outcome, None);
+}
+
+#[tokio::test]
 async fn test_resolve_hostname_short_circuit_ip() {
     // Use a public IP address (Google DNS) to avoid SSRF validation
     let ips = resolve_hostname("8.8.8.8")
