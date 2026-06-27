@@ -134,6 +134,9 @@ fn extract_rsa_key_len(buffer: &[u8]) -> Result<usize> {
                     let Some(cert_end) = cert_start.checked_add(cert_len) else {
                         break;
                     };
+                    if cert_end > hs_end || cert_end > record_end {
+                        break;
+                    }
                     if let Some(cert_der) = buffer.get(cert_start..cert_end)
                         && let Ok(cert) = X509::from_der(cert_der)
                         && let Ok(pkey) = cert.public_key()
@@ -641,6 +644,11 @@ pub struct RobotTestResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use openssl::asn1::Asn1Time;
+    use openssl::hash::MessageDigest;
+    use openssl::pkey::PKey;
+    use openssl::rsa::Rsa;
+    use openssl::x509::{X509Builder, X509NameBuilder};
     use std::net::IpAddr;
 
     #[test]
@@ -775,6 +783,62 @@ mod tests {
     #[test]
     fn test_extract_rsa_key_len_rejects_missing_certificate() {
         let err = extract_rsa_key_len(&[]).expect_err("missing handshake should fail");
+        assert!(
+            err.to_string()
+                .contains("Unable to determine RSA key length")
+        );
+    }
+
+    #[test]
+    fn test_extract_rsa_key_len_rejects_certificate_beyond_handshake() {
+        let rsa = Rsa::generate(2048).expect("RSA key should generate");
+        let pkey = PKey::from_rsa(rsa).expect("PKey should build");
+        let mut name = X509NameBuilder::new().expect("name builder should build");
+        name.append_entry_by_text("CN", "robot.test")
+            .expect("CN should set");
+        let name = name.build();
+
+        let mut builder = X509Builder::new().expect("X509 builder should build");
+        builder.set_version(2).expect("version should set");
+        builder.set_subject_name(&name).expect("subject should set");
+        builder.set_issuer_name(&name).expect("issuer should set");
+        builder.set_pubkey(&pkey).expect("pubkey should set");
+        builder
+            .set_not_before(&Asn1Time::days_from_now(0).expect("not_before should build"))
+            .expect("not_before should set");
+        builder
+            .set_not_after(&Asn1Time::days_from_now(30).expect("not_after should build"))
+            .expect("not_after should set");
+        builder
+            .sign(&pkey, MessageDigest::sha256())
+            .expect("cert should sign");
+        let cert_der = builder.build().to_der().expect("cert DER should serialize");
+
+        let cert_len = cert_der.len();
+        let mut record = vec![
+            0x16,
+            0x03,
+            0x03,
+            0x00,
+            0x00, // record header
+            0x0b,
+            0x00,
+            0x00,
+            0x06, // Certificate hs_len excludes DER
+            0x00,
+            0x00,
+            0x00, // certificate_list length placeholder
+            ((cert_len >> 16) & 0xff) as u8,
+            ((cert_len >> 8) & 0xff) as u8,
+            (cert_len & 0xff) as u8,
+        ];
+        record.extend_from_slice(&cert_der);
+        let record_len = record.len() - 5;
+        record[3] = ((record_len >> 8) & 0xff) as u8;
+        record[4] = (record_len & 0xff) as u8;
+
+        let err = extract_rsa_key_len(&record)
+            .expect_err("certificate bytes outside hs_len must be ignored");
         assert!(
             err.to_string()
                 .contains("Unable to determine RSA key length")
