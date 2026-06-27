@@ -96,10 +96,14 @@ fn extract_rsa_key_len(buffer: &[u8]) -> Result<usize> {
         let [record_type, _, _, len_high, len_low] = *header;
         let record_len = usize::from(u16::from_be_bytes([len_high, len_low]));
         let Some(record_end) = header_end.checked_add(record_len) else {
-            break;
+            return Err(crate::TlsError::ParseError {
+                message: "ROBOT TLS record length overflow".to_string(),
+            });
         };
         if record_end > buffer.len() {
-            break;
+            return Err(crate::TlsError::ParseError {
+                message: "ROBOT TLS record length exceeds available data".to_string(),
+            });
         }
         if record_type == 0x16 {
             // Handshake record — scan for Certificate message (type 0x0b)
@@ -115,41 +119,92 @@ fn extract_rsa_key_len(buffer: &[u8]) -> Result<usize> {
                     break;
                 };
                 let Some(hs_end) = hs_body_start.checked_add(hs_len) else {
-                    break;
+                    return Err(crate::TlsError::ParseError {
+                        message: "ROBOT handshake length overflow".to_string(),
+                    });
                 };
                 if hs_end > record_end {
-                    break;
+                    return Err(crate::TlsError::ParseError {
+                        message: "ROBOT handshake length exceeds record".to_string(),
+                    });
                 }
                 // Certificate message: type=0x0b, body=[3:list_len][3:cert_len][der...]
-                let Some(cert_start) = hoff.checked_add(10) else {
-                    break;
-                };
-                if hs_type == 0x0b && cert_start <= hs_end {
-                    let Some(cert_len_offset) = hoff.checked_add(7) else {
-                        break;
-                    };
-                    let Some(cert_len) = read_u24_at(buffer, cert_len_offset) else {
-                        break;
-                    };
-                    let Some(cert_end) = cert_start.checked_add(cert_len) else {
-                        break;
-                    };
-                    if cert_end > hs_end || cert_end > record_end {
-                        break;
-                    }
-                    if let Some(cert_der) = buffer.get(cert_start..cert_end)
-                        && let Ok(cert) = X509::from_der(cert_der)
-                        && let Ok(pkey) = cert.public_key()
-                        && let Ok(rsa) = pkey.rsa()
-                    {
-                        return usize::try_from(rsa.n().num_bytes()).map_err(|_| {
-                            crate::TlsError::ParseError {
-                                message: "RSA key length does not fit in usize".to_string(),
-                            }
+                if hs_type == 0x0b {
+                    if hs_len < 6 {
+                        return Err(crate::TlsError::ParseError {
+                            message: "ROBOT Certificate message too short".to_string(),
                         });
                     }
+                    let cert_list_len = read_u24_at(buffer, hs_body_start).ok_or_else(|| {
+                        crate::TlsError::ParseError {
+                            message: "ROBOT Certificate list length truncated".to_string(),
+                        }
+                    })?;
+                    let cert_list_start = hs_body_start.checked_add(3).ok_or_else(|| {
+                        crate::TlsError::ParseError {
+                            message: "ROBOT Certificate list offset overflow".to_string(),
+                        }
+                    })?;
+                    let cert_list_end =
+                        cert_list_start.checked_add(cert_list_len).ok_or_else(|| {
+                            crate::TlsError::ParseError {
+                                message: "ROBOT Certificate list length overflow".to_string(),
+                            }
+                        })?;
+                    if cert_list_end != hs_end {
+                        return Err(crate::TlsError::ParseError {
+                            message: "ROBOT Certificate list length mismatch".to_string(),
+                        });
+                    }
+                    let cert_len = read_u24_at(buffer, cert_list_start).ok_or_else(|| {
+                        crate::TlsError::ParseError {
+                            message: "ROBOT Certificate entry length truncated".to_string(),
+                        }
+                    })?;
+                    let cert_start = cert_list_start.checked_add(3).ok_or_else(|| {
+                        crate::TlsError::ParseError {
+                            message: "ROBOT Certificate entry offset overflow".to_string(),
+                        }
+                    })?;
+                    let cert_end = cert_start.checked_add(cert_len).ok_or_else(|| {
+                        crate::TlsError::ParseError {
+                            message: "ROBOT Certificate length overflow".to_string(),
+                        }
+                    })?;
+                    if cert_end > cert_list_end {
+                        return Err(crate::TlsError::ParseError {
+                            message: "ROBOT Certificate length exceeds list".to_string(),
+                        });
+                    }
+                    let cert_der = buffer.get(cert_start..cert_end).ok_or_else(|| {
+                        crate::TlsError::ParseError {
+                            message: "ROBOT Certificate DER truncated".to_string(),
+                        }
+                    })?;
+                    let cert =
+                        X509::from_der(cert_der).map_err(|error| crate::TlsError::ParseError {
+                            message: format!("ROBOT Certificate DER parse failed: {error}"),
+                        })?;
+                    let pkey = cert
+                        .public_key()
+                        .map_err(|error| crate::TlsError::ParseError {
+                            message: format!("ROBOT Certificate public key parse failed: {error}"),
+                        })?;
+                    let rsa = pkey.rsa().map_err(|error| crate::TlsError::ParseError {
+                        message: format!("ROBOT Certificate RSA key parse failed: {error}"),
+                    })?;
+                    return usize::try_from(rsa.n().num_bytes()).map_err(|_| {
+                        crate::TlsError::ParseError {
+                            message: "RSA key length does not fit in usize".to_string(),
+                        }
+                    });
                 }
                 hoff = hs_end;
+            }
+            if hoff != record_end {
+                return Err(crate::TlsError::ParseError {
+                    message: "ROBOT handshake header truncated".to_string(),
+                });
             }
         }
         offset = record_end;
@@ -841,7 +896,23 @@ mod tests {
             .expect_err("certificate bytes outside hs_len must be ignored");
         assert!(
             err.to_string()
-                .contains("Unable to determine RSA key length")
+                .contains("ROBOT Certificate list length mismatch")
+        );
+    }
+
+    #[test]
+    fn test_extract_rsa_key_len_rejects_certificate_list_mismatch() {
+        let record = [
+            0x16, 0x03, 0x03, 0x00, 0x0a, // record header
+            0x0b, 0x00, 0x00, 0x06, // Certificate handshake
+            0x00, 0x00, 0x02, // list claims 2 bytes, but body has 3 bytes after list len
+            0x00, 0x00, 0x00,
+        ];
+
+        let err = extract_rsa_key_len(&record).expect_err("mismatched list should fail");
+        assert!(
+            err.to_string()
+                .contains("ROBOT Certificate list length mismatch")
         );
     }
 
