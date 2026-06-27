@@ -207,7 +207,7 @@ impl DrownTester {
             }
             Ok(Ok(_)) => {
                 // Zero bytes - connection closed
-                Ok(Sslv2Status::NotSupported)
+                Ok(Sslv2Status::Inconclusive)
             }
             Ok(Err(_)) | Err(_) => {
                 // Read error or timeout
@@ -662,6 +662,33 @@ mod tests {
                 .write_all(&[0x80])
                 .await
                 .expect("write partial header");
+        });
+
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+
+        let result = DrownTester::new(target).test().await.unwrap();
+        server.await.expect("server task");
+
+        assert!(!result.vulnerable);
+        assert!(!result.sslv2_supported);
+        assert_eq!(result.sslv2_status, None);
+        assert!(result.details.contains("inconclusive"), "{result:?}");
+    }
+
+    #[tokio::test]
+    async fn test_sslv2_zero_byte_response_is_inconclusive() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener");
+        let port = listener.local_addr().expect("local addr").port();
+
+        let server = tokio::spawn(async move {
+            let (_socket, _) = listener.accept().await.expect("accept");
         });
 
         let target = Target::with_ips(
