@@ -62,6 +62,18 @@ impl<'a> RenegotiationTester<'a> {
         Ok(u16::from_be_bytes(bytes))
     }
 
+    fn read_u24_at(data: &[u8], offset: usize, context: &str) -> Result<usize> {
+        let end = offset
+            .checked_add(3)
+            .ok_or_else(|| Self::parse_error(context))?;
+        let bytes = data
+            .get(offset..end)
+            .ok_or_else(|| Self::parse_error(context))?;
+        let bytes: [u8; 3] = bytes.try_into().map_err(|_| Self::parse_error(context))?;
+        let [high, mid, low] = bytes;
+        Ok(u32::from_be_bytes([0, high, mid, low]) as usize)
+    }
+
     fn slice_range<'b>(
         data: &'b [u8],
         start: usize,
@@ -562,11 +574,23 @@ impl<'a> RenegotiationTester<'a> {
                 message: "TLS record length exceeds available data".to_string(),
             });
         }
+        let handshake_len = Self::read_u24_at(response, 6, "ServerHello handshake length")?;
+        let handshake_end =
+            9usize
+                .checked_add(handshake_len)
+                .ok_or_else(|| crate::TlsError::ParseError {
+                    message: "ServerHello handshake length overflow".to_string(),
+                })?;
+        if handshake_end > record_end {
+            return Err(crate::TlsError::ParseError {
+                message: "ServerHello handshake length exceeds record length".to_string(),
+            });
+        }
 
         // Skip TLS record header (5 bytes) + handshake header (4 bytes)
         // ServerHello: version(2) + random(32) + session_id_length(1)
         let sid_len_offset = 5 + 4 + 2 + 32;
-        if sid_len_offset >= record_end {
+        if sid_len_offset >= handshake_end {
             return Err(crate::TlsError::ParseError {
                 message: "ServerHello truncated before session_id_len".to_string(),
             });
@@ -588,7 +612,7 @@ impl<'a> RenegotiationTester<'a> {
                 .ok_or_else(|| crate::TlsError::ParseError {
                     message: "ServerHello extensions length overflow".to_string(),
                 })?;
-        if ext_start > record_end {
+        if ext_start > handshake_end {
             return Err(crate::TlsError::ParseError {
                 message: "ServerHello truncated before extensions length".to_string(),
             });
@@ -603,12 +627,12 @@ impl<'a> RenegotiationTester<'a> {
                 .ok_or_else(|| crate::TlsError::ParseError {
                     message: "ServerHello extension block length overflow".to_string(),
                 })?;
-        if ext_end > record_end {
+        if ext_end > handshake_end {
             return Err(crate::TlsError::ParseError {
                 message: "ServerHello extension block extends beyond declared length".to_string(),
             });
         }
-        if ext_end != record_end {
+        if ext_end != handshake_end {
             return Err(crate::TlsError::ParseError {
                 message: "ServerHello extension block contains trailing bytes".to_string(),
             });
@@ -836,6 +860,49 @@ mod tests {
         patch_test_server_hello_lengths(&mut response);
 
         assert!(tester.has_renegotiation_info_extension(&response).unwrap());
+    }
+
+    #[test]
+    fn test_has_renegotiation_info_extension_ignores_bytes_after_handshake() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["93.184.216.34".parse().unwrap()],
+        )
+        .unwrap();
+        let tester = RenegotiationTester::new(&target);
+
+        let mut response = vec![
+            0x16, 0x03, 0x03, 0x00, 0x00, // record
+            0x02, 0x00, 0x00, 0x00, // ServerHello
+            0x03, 0x03,
+        ];
+        response.extend_from_slice(&[0x00; 32]);
+        response.push(0x00);
+        response.extend_from_slice(&[0x00, 0x9c]);
+        response.push(0x00);
+        patch_test_server_hello_lengths(&mut response);
+
+        let handshake_len = [response[6], response[7], response[8]];
+        response.extend_from_slice(&[0x00, 0x05, 0xff, 0x01, 0x00, 0x01, 0x00]);
+        let rec_len = u16::try_from(response.len() - 5)
+            .expect("test ServerHello record length must fit in u16");
+        RenegotiationTester::write_u16_at(
+            &mut response,
+            3,
+            rec_len,
+            "test ServerHello record length placeholder",
+        )
+        .expect("test ServerHello should contain record length placeholder");
+        response[6..9].copy_from_slice(&handshake_len);
+
+        let err = tester
+            .has_renegotiation_info_extension(&response)
+            .expect_err("bytes outside handshake must not be parsed as extensions");
+        assert!(
+            err.to_string()
+                .contains("ServerHello truncated before extensions length")
+        );
     }
 
     #[test]
