@@ -34,9 +34,25 @@ pub(super) fn has_server_hello_done(buf: &[u8]) -> bool {
             break;
         }
         if content_type == 0x16 {
-            let hs_start = header_end;
-            if hs_start < record_end && buf.get(hs_start) == Some(&0x0e) {
-                return true;
+            let mut hs_start = header_end;
+            while let Some(hs_header_end) = hs_start.checked_add(4).filter(|&end| end <= record_end)
+            {
+                if buf.get(hs_start) == Some(&0x0e) {
+                    return true;
+                }
+                let Some(len_bytes) = buf.get(hs_start + 1..hs_header_end) else {
+                    break;
+                };
+                let hs_len = ((len_bytes[0] as usize) << 16)
+                    | ((len_bytes[1] as usize) << 8)
+                    | len_bytes[2] as usize;
+                let Some(hs_end) = hs_header_end.checked_add(hs_len) else {
+                    break;
+                };
+                if hs_end > record_end {
+                    break;
+                }
+                hs_start = hs_end;
             }
         }
         offset = record_end;
@@ -113,6 +129,19 @@ mod tests {
         buf.extend_from_slice(&handshake_record(0x0b, &[0u8; 64])); // Certificate
         buf.extend_from_slice(&handshake_record(0x0e, &[])); // ServerHelloDone
         assert!(has_server_hello_done(&buf));
+    }
+
+    #[test]
+    fn detects_server_hello_done_inside_combined_record() {
+        let mut messages = Vec::new();
+        messages.extend_from_slice(&handshake_record(0x02, &[0u8; 38])[5..]);
+        messages.extend_from_slice(&handshake_record(0x0e, &[])[5..]);
+
+        let mut record = vec![0x16, 0x03, 0x03];
+        record.extend_from_slice(&(messages.len() as u16).to_be_bytes());
+        record.extend_from_slice(&messages);
+
+        assert!(has_server_hello_done(&record));
     }
 
     #[test]
