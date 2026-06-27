@@ -179,7 +179,7 @@ impl WinshockTester {
                         Ok(SchannelDetectionStatus::NotDetected)
                     }
                 }
-                Err(_) => Ok(SchannelDetectionStatus::NotDetected),
+                Err(_) => Ok(SchannelDetectionStatus::Inconclusive),
             }
         })
         .await
@@ -419,6 +419,31 @@ mod tests {
 
         let tester = WinshockTester::new(target);
         let result = tester.test().await.unwrap();
+
+        assert!(!result.vulnerable);
+        assert!(!result.schannel_detected);
+        assert!(result.inconclusive, "{result:?}");
+        assert!(result.details.contains("inconclusive"), "{result:?}");
+    }
+
+    #[tokio::test]
+    async fn test_winshock_tls_handshake_failure_is_inconclusive() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let accept_task = tokio::spawn(async move {
+            let _ = listener.accept().await;
+        });
+
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+
+        let tester = WinshockTester::new(target);
+        let result = tester.test().await.unwrap();
+        accept_task.await.unwrap();
 
         assert!(!result.vulnerable);
         assert!(!result.schannel_detected);
