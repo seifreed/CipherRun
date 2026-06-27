@@ -3,6 +3,21 @@ use crate::Result;
 use crate::certificates::parser::CertificateInfo;
 use tokio::time::timeout;
 use x509_parser::prelude::*;
+use x509_parser::revocation_list::CertificateRevocationList;
+
+fn parse_crl_der_exact(der: &[u8]) -> Result<CertificateRevocationList<'_>> {
+    let (rest, crl) = CertificateRevocationList::from_der(der).map_err(|e| {
+        crate::error::TlsError::ParseError {
+            message: format!("Failed to parse CRL: {:?}", e),
+        }
+    })?;
+    if !rest.is_empty() {
+        return Err(crate::error::TlsError::ParseError {
+            message: format!("CRL DER contains {} trailing byte(s)", rest.len()),
+        });
+    }
+    Ok(crl)
+}
 
 impl RevocationChecker {
     /// Extract CRL distribution point URL from certificate
@@ -80,12 +95,7 @@ impl RevocationChecker {
             crate::utils::http::read_response_body_capped(response, MAX_CRL_BYTES, "CRL").await?;
 
         // Parse CRL
-        let (_, crl) = x509_parser::revocation_list::CertificateRevocationList::from_der(
-            &crl_bytes,
-        )
-        .map_err(|e| crate::error::TlsError::ParseError {
-            message: format!("Failed to parse CRL: {:?}", e),
-        })?;
+        let crl = parse_crl_der_exact(&crl_bytes)?;
 
         // SECURITY: verify the CRL signature against the issuing CA before trusting
         // its revoked-serial list. Over the plain-HTTP CRL distribution point a
@@ -208,5 +218,20 @@ mod tests {
 
         let err = checker.extract_crl_url(&cert).unwrap_err();
         assert!(format!("{err}").contains("CRL Distribution Points extension"));
+    }
+
+    #[test]
+    fn test_parse_crl_der_exact_rejects_trailing_bytes() {
+        let mut crl = vec![
+            0x30, 0x35, 0x30, 0x20, 0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d,
+            0x01, 0x01, 0x0b, 0x05, 0x00, 0x30, 0x00, 0x17, 0x0d, b'2', b'5', b'0', b'1', b'0',
+            b'1', b'0', b'0', b'0', b'0', b'0', b'0', b'Z', 0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86,
+            0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0b, 0x05, 0x00, 0x03, 0x02, 0x00, 0x00,
+        ];
+        assert!(parse_crl_der_exact(&crl).is_ok());
+
+        crl.push(0x00);
+        let err = parse_crl_der_exact(&crl).expect_err("trailing CRL bytes should fail");
+        assert!(format!("{err}").contains("trailing byte"));
     }
 }
