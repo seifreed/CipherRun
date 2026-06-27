@@ -155,8 +155,9 @@ pub fn split_target_host_port(input: &str) -> Result<(String, Option<u16>)> {
 
     if let Some(rest) = input.strip_prefix('[') {
         if let Some(bracket_end) = rest.find(']') {
-            let hostname = rest[..bracket_end].to_string();
-            let suffix = &rest[bracket_end + 1..];
+            let (hostname, suffix) = rest.split_at(bracket_end);
+            let hostname = hostname.to_string();
+            let suffix = suffix.strip_prefix(']').unwrap_or(suffix);
             if suffix.is_empty() {
                 return Ok((hostname, None));
             }

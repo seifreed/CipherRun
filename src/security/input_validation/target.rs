@@ -64,9 +64,11 @@ fn normalize_target_hostname(hostname: String) -> String {
 fn parse_bracketed_ipv6(
     target: &str,
 ) -> std::result::Result<(String, Option<u16>), ValidationError> {
-    if let Some(bracket_end) = target.find(']') {
-        let hostname = &target[1..bracket_end];
-        let rest = &target[bracket_end + 1..];
+    if let Some(target) = target.strip_prefix('[')
+        && let Some(bracket_end) = target.find(']')
+    {
+        let (hostname, rest) = target.split_at(bracket_end);
+        let rest = rest.strip_prefix(']').unwrap_or(rest);
         let port = if let Some(port_str) = rest.strip_prefix(':') {
             Some(
                 port_str
@@ -104,21 +106,20 @@ fn parse_unbracketed_ipv6(
         // the user likely meant [host]:port rather than an IPv6 hextet.
         // Single-digit segments are treated as part of the address (port < 10 is extremely rare).
         if let Some(last_colon) = target.rfind(':') {
-            let last_segment = &target[last_colon + 1..];
+            let (potential_host, last_segment) = target.split_at(last_colon);
+            let last_segment = last_segment.strip_prefix(':').unwrap_or(last_segment);
             if !last_segment.is_empty()
                 && last_segment.len() >= 2
                 && last_segment.bytes().all(|b| b.is_ascii_digit())
                 && last_segment.parse::<u16>().is_ok()
+                && potential_host.parse::<Ipv6Addr>().is_ok()
             {
-                let potential_host = &target[..last_colon];
-                if potential_host.parse::<Ipv6Addr>().is_ok() {
-                    return Err(ValidationError::InvalidHostname(format!(
-                        "Ambiguous IPv6 address with port: '{}'. \
-                         IPv6 addresses with ports must use bracketed notation. \
-                         Use '[{}]:{}' instead.",
-                        target, potential_host, last_segment
-                    )));
-                }
+                return Err(ValidationError::InvalidHostname(format!(
+                    "Ambiguous IPv6 address with port: '{}'. \
+                     IPv6 addresses with ports must use bracketed notation. \
+                     Use '[{}]:{}' instead.",
+                    target, potential_host, last_segment
+                )));
             }
         }
         return Ok((target.to_string(), None));
@@ -127,9 +128,9 @@ fn parse_unbracketed_ipv6(
     // Check if this looks like an IPv6 address with a port appended
     // (e.g., "::1:443" or "2001:db8::1:8080")
     if let Some(last_colon) = target.rfind(':') {
-        let potential_port = &target[last_colon + 1..];
+        let (potential_host, potential_port) = target.split_at(last_colon);
+        let potential_port = potential_port.strip_prefix(':').unwrap_or(potential_port);
         if let Ok(port) = potential_port.parse::<u16>() {
-            let potential_host = &target[..last_colon];
             // The host part must be a valid IPv6 address
             if potential_host.parse::<Ipv6Addr>().is_ok() {
                 // AMBIGUOUS: This could be:

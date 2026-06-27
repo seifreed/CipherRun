@@ -29,10 +29,12 @@ impl AsnCidrParser {
         // raw bytes rather than `to_uppercase().starts_with("AS")`: uppercasing
         // can change byte layout (e.g. 'ſ' -> "S"), so the old check could pass
         // while `asn_str[2..]` sliced inside a multi-byte character and panicked.
-        let num_str = match asn_str.as_bytes() {
-            [b'A' | b'a', b'S' | b's', ..] => &asn_str[2..],
-            _ => asn_str,
-        };
+        let num_str = asn_str
+            .strip_prefix("AS")
+            .or_else(|| asn_str.strip_prefix("as"))
+            .or_else(|| asn_str.strip_prefix("As"))
+            .or_else(|| asn_str.strip_prefix("aS"))
+            .unwrap_or(asn_str);
 
         num_str.parse::<u32>().map_err(|e| TlsError::InvalidInput {
             message: format!("Invalid ASN format '{}': {}", asn, e),
