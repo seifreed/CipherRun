@@ -116,7 +116,7 @@ impl FingerprintPhase {
         // Store raw ClientHello when requested for JSON inclusion or --export-hello.
         if context.args.fingerprint.client_hello || context.args.fingerprint.export_hello.is_some()
         {
-            context.results.fingerprints_mut().client_hello_raw = Some(client_hello.to_bytes());
+            context.results.fingerprints_mut().client_hello_raw = Some(client_hello.to_bytes()?);
         }
 
         Ok(())

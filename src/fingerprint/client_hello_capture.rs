@@ -74,6 +74,31 @@ impl ClientHelloCapture {
         })
     }
 
+    fn u8_len(len: usize, context: &str) -> Result<u8> {
+        u8::try_from(len).map_err(|_| TlsError::ParseError {
+            message: format!("{context} length is too large"),
+        })
+    }
+
+    fn u16_len(len: usize, context: &str) -> Result<u16> {
+        u16::try_from(len).map_err(|_| TlsError::ParseError {
+            message: format!("{context} length is too large"),
+        })
+    }
+
+    fn u24_len(len: usize, context: &str) -> Result<[u8; 3]> {
+        let len = u32::try_from(len).map_err(|_| TlsError::ParseError {
+            message: format!("{context} length is too large"),
+        })?;
+        if len > 0x00FF_FFFF {
+            return Err(TlsError::ParseError {
+                message: format!("{context} length is too large"),
+            });
+        }
+        let bytes = len.to_be_bytes();
+        Ok([bytes[1], bytes[2], bytes[3]])
+    }
+
     /// Parse ClientHello from raw TLS record
     pub fn parse(data: &[u8]) -> Result<Self> {
         let mut cursor = 0;
@@ -359,7 +384,7 @@ impl ClientHelloCapture {
     }
 
     /// Convert ClientHello to bytes (for storage/transmission)
-    pub fn to_bytes(&self) -> Vec<u8> {
+    pub fn to_bytes(&self) -> Result<Vec<u8>> {
         let mut bytes = Vec::new();
 
         // TLS Record Header — always use TLS 1.0 (0x0301) for record layer compatibility
@@ -384,54 +409,59 @@ impl ClientHelloCapture {
         bytes.extend_from_slice(&self.random);
 
         // Session ID
-        bytes.push(self.session_id.len() as u8);
+        bytes.push(Self::u8_len(self.session_id.len(), "Session ID")?);
         bytes.extend_from_slice(&self.session_id);
 
         // Cipher Suites
-        let cipher_suites_len = (self.cipher_suites.len() * 2) as u16;
+        let cipher_suites_len = self
+            .cipher_suites
+            .len()
+            .checked_mul(2)
+            .and_then(|len| Self::u16_len(len, "Cipher suites").ok())
+            .ok_or_else(|| TlsError::ParseError {
+                message: "Cipher suites length is too large".to_string(),
+            })?;
         bytes.extend_from_slice(&cipher_suites_len.to_be_bytes());
         for cipher in &self.cipher_suites {
             bytes.extend_from_slice(&cipher.to_be_bytes());
         }
 
         // Compression Methods
-        bytes.push(self.compression_methods.len() as u8);
+        bytes.push(Self::u8_len(
+            self.compression_methods.len(),
+            "Compression methods",
+        )?);
         bytes.extend_from_slice(&self.compression_methods);
 
         // Extensions
         if !self.extensions.is_empty() {
-            let _extensions_start = bytes.len() + 2;
             let mut extensions_bytes = Vec::new();
 
             for ext in &self.extensions {
                 extensions_bytes.extend_from_slice(&ext.extension_type.to_be_bytes());
-                extensions_bytes.extend_from_slice(&(ext.data.len() as u16).to_be_bytes());
+                let ext_data_len = Self::u16_len(ext.data.len(), "Extension data")?;
+                extensions_bytes.extend_from_slice(&ext_data_len.to_be_bytes());
                 extensions_bytes.extend_from_slice(&ext.data);
             }
 
-            let extensions_len = extensions_bytes.len() as u16;
+            let extensions_len = Self::u16_len(extensions_bytes.len(), "Extensions")?;
             bytes.extend_from_slice(&extensions_len.to_be_bytes());
             bytes.extend_from_slice(&extensions_bytes);
         }
 
         // Update handshake length
-        let handshake_len = (bytes.len() - handshake_len_pos - 3) as u32;
+        let handshake_len = Self::u24_len(bytes.len() - handshake_len_pos - 3, "Handshake")?;
         if let Some(len_bytes) = bytes.get_mut(handshake_len_pos..handshake_len_pos + 3) {
-            len_bytes.copy_from_slice(&[
-                ((handshake_len >> 16) & 0xff) as u8,
-                ((handshake_len >> 8) & 0xff) as u8,
-                (handshake_len & 0xff) as u8,
-            ]);
+            len_bytes.copy_from_slice(&handshake_len);
         }
 
         // Update record length
-        let record_len = (bytes.len() - record_len_pos - 2) as u16;
+        let record_len = Self::u16_len(bytes.len() - record_len_pos - 2, "TLS record")?;
         if let Some(len_bytes) = bytes.get_mut(record_len_pos..record_len_pos + 2) {
-            len_bytes
-                .copy_from_slice(&[((record_len >> 8) & 0xff) as u8, (record_len & 0xff) as u8]);
+            len_bytes.copy_from_slice(&record_len.to_be_bytes());
         }
 
-        bytes
+        Ok(bytes)
     }
 
     /// Get SNI (Server Name Indication) from extensions
@@ -527,7 +557,7 @@ mod tests {
     #[test]
     fn test_parse_rejects_malformed_extension_length() {
         let capture = ClientHelloCapture::synthetic(0x0303, vec![0x1301], vec![(0x0000, vec![])]);
-        let mut bytes = capture.to_bytes();
+        let mut bytes = capture.to_bytes().expect("ClientHello should serialize");
 
         let ext_len_pos = bytes.len() - 2;
         bytes[ext_len_pos] = 0x00;
@@ -578,7 +608,9 @@ mod tests {
             vec![(10, vec![0, 2, 0, 23])],
         );
 
-        let bytes = client_hello.to_bytes();
+        let bytes = client_hello
+            .to_bytes()
+            .expect("ClientHello should serialize");
         assert!(!bytes.is_empty());
 
         // Should be able to parse back
