@@ -82,13 +82,13 @@ impl DnsOnlyMode {
         let mut normalized = domain.to_lowercase().trim().to_string();
 
         // Remove "DNS:" prefix if present (from SAN parsing)
-        if normalized.starts_with("dns:") {
-            normalized = normalized[4..].to_string();
+        if let Some(stripped) = normalized.strip_prefix("dns:") {
+            normalized = stripped.to_string();
         }
 
         // Remove wildcard prefix
-        if normalized.starts_with("*.") {
-            normalized = normalized[2..].to_string();
+        if let Some(stripped) = normalized.strip_prefix("*.") {
+            normalized = stripped.to_string();
         }
 
         normalized.trim().to_string()

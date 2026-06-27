@@ -372,7 +372,9 @@ impl ClientDatabase {
         self.clients
             .iter()
             .filter(|client| client.current && client.short_id.starts_with(&prefix))
-            .max_by_key(|client| Self::leading_version(&client.short_id[prefix.len()..]))
+            .max_by_key(|client| {
+                Self::leading_version(client.short_id.strip_prefix(&prefix).unwrap_or_default())
+            })
     }
 
     /// Parse the leading integer of `rest` (digits up to the first non-digit).

@@ -174,15 +174,17 @@ impl HstsPreloadChecker {
         let mut normalized = domain.to_lowercase();
 
         // Remove www. prefix (ensure we don't create empty string)
-        if normalized.starts_with("www.") && normalized.len() > 4 {
-            normalized = normalized[4..].to_string();
+        if let Some(stripped) = normalized.strip_prefix("www.")
+            && !stripped.is_empty()
+        {
+            normalized = stripped.to_string();
         }
 
         // Remove port if present
         if let Some(idx) = normalized.find(':')
             && idx > 0
         {
-            normalized = normalized[..idx].to_string();
+            normalized = normalized.get(..idx).unwrap_or_default().to_string();
         }
 
         // Remove trailing dot

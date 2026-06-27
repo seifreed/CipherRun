@@ -98,8 +98,7 @@ impl ResponseOnlyFormatter {
     /// Also trims any leading/trailing whitespace from the result.
     fn strip_line_prefix(line: &str, patterns: &[String]) -> String {
         for pattern in patterns {
-            if line.starts_with(pattern) {
-                let remainder = &line[pattern.len()..];
+            if let Some(remainder) = line.strip_prefix(pattern) {
                 if !Self::has_valid_prefix_boundary(pattern, remainder) {
                     continue;
                 }

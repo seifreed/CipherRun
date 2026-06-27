@@ -22,7 +22,7 @@ pub(crate) fn truncate_with_ellipsis(s: &str, max_len: usize) -> String {
                 .take_while(|&i| i <= target)
                 .last()
                 .unwrap_or(0);
-            format!("{}...", &s[..boundary])
+            format!("{}...", s.get(..boundary).unwrap_or_default())
         } else {
             // max_len <= 3: truncate without ellipsis to respect contract
             s.chars().take(max_len).collect()

@@ -72,11 +72,9 @@ impl ExceptionMatcher {
             }
 
             // Match single-level subdomain
-            if hostname.ends_with(&format!(".{}", suffix)) {
+            let suffix_with_dot = format!(".{}", suffix);
+            if let Some(prefix) = hostname.strip_suffix(&suffix_with_dot) {
                 // Extract the prefix (what comes before .suffix)
-                let prefix_end = hostname.len() - suffix.len() - 1;
-                let prefix = &hostname[..prefix_end];
-
                 // Prefix should not contain dots (single level subdomain only)
                 if !prefix.contains('.') {
                     return true;

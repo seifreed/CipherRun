@@ -154,7 +154,7 @@ fn truncate_to_boundary(s: &str, max_bytes: usize) -> &str {
         .last()
         .unwrap_or(0);
 
-    &s[..boundary]
+    s.get(..boundary).unwrap_or_default()
 }
 
 #[cfg(test)]

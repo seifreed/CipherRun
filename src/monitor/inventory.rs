@@ -352,7 +352,7 @@ fn parse_interval(interval_str: &str) -> Result<u64> {
             message: format!("Invalid interval format: {interval_str}"),
         });
     };
-    let value_str = &interval_str[..unit_start];
+    let value_str = interval_str.get(..unit_start).unwrap_or_default();
     if value_str.is_empty() {
         return Err(TlsError::InvalidInput {
             message: format!("Invalid interval format: {interval_str}"),
