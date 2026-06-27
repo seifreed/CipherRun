@@ -228,10 +228,10 @@ impl CcsInjectionTester {
                                         reads_remaining = reads_remaining.saturating_sub(1);
                                         if reads_remaining == 0 {
                                             tracing::debug!(
-                                                "Reached max handshake message limit ({}), assuming not vulnerable",
+                                                "Reached max handshake message limit ({}), treating probe as inconclusive",
                                                 MAX_HANDSHAKE_MESSAGES
                                             );
-                                            result = Some(TestStatus::NotVulnerable);
+                                            result = Some(TestStatus::Inconclusive);
                                             break;
                                         }
                                         offset = record_end;
@@ -352,6 +352,8 @@ mod tests {
     use super::*;
     use crate::constants::{CONTENT_TYPE_HANDSHAKE, HANDSHAKE_TYPE_CLIENT_HELLO};
     use std::net::TcpListener;
+    use std::time::Duration;
+    use tokio::net::TcpListener as TokioTcpListener;
 
     #[test]
     fn test_client_hello_build() {
@@ -509,5 +511,38 @@ mod tests {
         // Connection to inactive port should be marked as connection failed
         assert!(result.status.is_inconclusive());
         assert!(matches!(result.status, TestStatus::ConnectionFailed));
+    }
+
+    #[tokio::test]
+    async fn test_ccs_injection_handshake_limit_is_inconclusive() {
+        let listener = TokioTcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = socket.read(&mut buf).await.unwrap();
+
+            let record = [0x16, 0x03, 0x03, 0x00, 0x04, 0x0e, 0x00, 0x00, 0x00];
+            for _ in 0..16 {
+                socket.write_all(&record).await.unwrap();
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        });
+
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            addr.port(),
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+
+        let tester = CcsInjectionTester::new(target);
+        let result = tester.test().await.unwrap();
+        server.await.unwrap();
+
+        assert!(result.status.is_inconclusive(), "{result:?}");
+        assert!(!result.vulnerable);
+        assert!(matches!(result.status, TestStatus::Inconclusive));
     }
 }
