@@ -52,9 +52,11 @@ impl SniGenerator {
     fn random_alphanum_char() -> char {
         let mut rng = rand::rng();
         const CHARSET: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";
-        *CHARSET
+        CHARSET
             .get(rng.random_range(0..CHARSET.len()))
-            .expect("SNI charset must not be empty") as char
+            .copied()
+            .map(char::from)
+            .unwrap_or('a')
     }
 
     /// Choose random realistic TLD
@@ -66,7 +68,7 @@ impl SniGenerator {
         ];
         TLDS.get(rng.random_range(0..TLDS.len()))
             .copied()
-            .expect("SNI TLD list must not be empty")
+            .unwrap_or("com")
     }
 
     /// Generate random SNI with custom pattern
