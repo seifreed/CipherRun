@@ -116,17 +116,26 @@ impl IntoleranceTester {
                         && c.name().contains("DHE")
                     {
                         // Extract the DH prime from the negotiated connection
-                        if let Ok(tmp_key) = ssl_stream.ssl().tmp_key()
-                            && let Ok(dh) = tmp_key.dh()
-                            && let Ok(hex_str) = dh.prime_p().to_hex_str()
-                        {
-                            return Ok(Some(hex_str.to_string().to_uppercase()));
-                        }
-                        return Ok(None);
+                        let tmp_key = ssl_stream.ssl().tmp_key().map_err(|error| {
+                            crate::TlsError::Other(format!(
+                                "failed to extract temporary key: {error}"
+                            ))
+                        })?;
+                        let dh = tmp_key.dh().map_err(|error| {
+                            crate::TlsError::Other(format!(
+                                "failed to interpret temporary key as DH: {error}"
+                            ))
+                        })?;
+                        let hex_str = dh.prime_p().to_hex_str().map_err(|error| {
+                            crate::TlsError::Other(format!("failed to encode DH prime: {error}"))
+                        })?;
+                        return Ok(Some(hex_str.to_string().to_uppercase()));
                     }
                     Ok(None)
                 }
-                Err(_) => Ok(None),
+                Err(error) => Err(crate::TlsError::Other(format!(
+                    "DH prime extraction handshake failed: {error}"
+                ))),
             }
         })
         .await
@@ -153,6 +162,7 @@ impl IntoleranceTester {
 mod tests {
     use super::*;
     use crate::utils::network::Target;
+    use std::time::Duration;
     use tokio::io::AsyncWriteExt;
 
     #[tokio::test]
@@ -246,5 +256,32 @@ mod tests {
             err.to_string()
                 .contains("TLS alert record length does not match buffer length")
         );
+    }
+
+    #[tokio::test]
+    async fn test_extract_dh_prime_handshake_failure_is_error() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("local addr should exist");
+
+        tokio::spawn(async move {
+            if let Ok((socket, _)) = listener.accept().await {
+                drop(socket);
+            }
+        });
+
+        let target = Target::with_ips("example.test".to_string(), addr.port(), vec![addr.ip()])
+            .expect("target should build");
+        let mut tester = IntoleranceTester::new(target).with_sni(Some("example.test".to_string()));
+        tester.connect_timeout = Duration::from_secs(1);
+        tester.read_timeout = Duration::from_secs(1);
+
+        let err = tester
+            .extract_dh_prime()
+            .await
+            .expect_err("handshake failure should not be reported as no DH prime");
+
+        assert!(err.to_string().contains("handshake failed"));
     }
 }
