@@ -26,7 +26,7 @@ mod tests {
 
     #[test]
     fn test_get_probes_includes_hostname_and_port() {
-        let probes = get_probes("example.com", 443);
+        let probes = get_probes("example.com", 443).expect("JARM probes should build");
         assert_eq!(probes.len(), 10);
         assert_eq!(probes[0].options.hostname, "example.com");
         assert_eq!(probes[0].options.port, 443);

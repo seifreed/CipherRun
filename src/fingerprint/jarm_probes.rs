@@ -7,6 +7,7 @@
 // - Different ALPN configurations
 // - Different extension orders
 
+use crate::{Result, TlsError};
 use rand::RngExt;
 
 /// JARM probe options
@@ -82,8 +83,8 @@ pub enum ExtensionOrder {
 }
 
 /// Get the standard 10 JARM probes
-pub fn get_probes(hostname: &str, port: u16) -> Vec<JarmProbe> {
-    vec![
+pub fn get_probes(hostname: &str, port: u16) -> Result<Vec<JarmProbe>> {
+    Ok(vec![
         // Probe 1: TLS 1.2, ALL ciphers, FORWARD order, NO_GREASE, ALPN, 1.2 support, REVERSE extensions
         build_probe(JarmProbeOptions {
             hostname: hostname.to_string(),
@@ -95,7 +96,7 @@ pub fn get_probes(hostname: &str, port: u16) -> Vec<JarmProbe> {
             alpn: AlpnMode::Alpn,
             v13_mode: V13Mode::Support12Only,
             extension_order: ExtensionOrder::Reverse,
-        }),
+        })?,
         // Probe 2: TLS 1.2, ALL ciphers, REVERSE order, NO_GREASE, ALPN, 1.2 support, FORWARD extensions
         build_probe(JarmProbeOptions {
             hostname: hostname.to_string(),
@@ -107,7 +108,7 @@ pub fn get_probes(hostname: &str, port: u16) -> Vec<JarmProbe> {
             alpn: AlpnMode::Alpn,
             v13_mode: V13Mode::Support12Only,
             extension_order: ExtensionOrder::Forward,
-        }),
+        })?,
         // Probe 3: TLS 1.2, ALL ciphers, TOP_HALF order, NO_GREASE, NO_ALPN, NO 1.3, FORWARD extensions
         build_probe(JarmProbeOptions {
             hostname: hostname.to_string(),
@@ -119,7 +120,7 @@ pub fn get_probes(hostname: &str, port: u16) -> Vec<JarmProbe> {
             alpn: AlpnMode::NoSupport,
             v13_mode: V13Mode::NoSupport,
             extension_order: ExtensionOrder::Forward,
-        }),
+        })?,
         // Probe 4: TLS 1.2, ALL ciphers, BOTTOM_HALF order, NO_GREASE, RARE_ALPN, NO 1.3, FORWARD extensions
         build_probe(JarmProbeOptions {
             hostname: hostname.to_string(),
@@ -131,7 +132,7 @@ pub fn get_probes(hostname: &str, port: u16) -> Vec<JarmProbe> {
             alpn: AlpnMode::RareAlpn,
             v13_mode: V13Mode::NoSupport,
             extension_order: ExtensionOrder::Forward,
-        }),
+        })?,
         // Probe 5: TLS 1.2, ALL ciphers, MIDDLE_OUT order, GREASE, RARE_ALPN, NO 1.3, REVERSE extensions
         build_probe(JarmProbeOptions {
             hostname: hostname.to_string(),
@@ -143,7 +144,7 @@ pub fn get_probes(hostname: &str, port: u16) -> Vec<JarmProbe> {
             alpn: AlpnMode::RareAlpn,
             v13_mode: V13Mode::NoSupport,
             extension_order: ExtensionOrder::Reverse,
-        }),
+        })?,
         // Probe 6: TLS 1.1, ALL ciphers, FORWARD order, NO_GREASE, ALPN, NO 1.3, FORWARD extensions
         build_probe(JarmProbeOptions {
             hostname: hostname.to_string(),
@@ -155,7 +156,7 @@ pub fn get_probes(hostname: &str, port: u16) -> Vec<JarmProbe> {
             alpn: AlpnMode::Alpn,
             v13_mode: V13Mode::NoSupport,
             extension_order: ExtensionOrder::Forward,
-        }),
+        })?,
         // Probe 7: TLS 1.3, ALL ciphers, FORWARD order, NO_GREASE, ALPN, 1.3 support, REVERSE extensions
         build_probe(JarmProbeOptions {
             hostname: hostname.to_string(),
@@ -167,7 +168,7 @@ pub fn get_probes(hostname: &str, port: u16) -> Vec<JarmProbe> {
             alpn: AlpnMode::Alpn,
             v13_mode: V13Mode::Support13,
             extension_order: ExtensionOrder::Reverse,
-        }),
+        })?,
         // Probe 8: TLS 1.3, ALL ciphers, REVERSE order, NO_GREASE, ALPN, 1.3 support, FORWARD extensions
         build_probe(JarmProbeOptions {
             hostname: hostname.to_string(),
@@ -179,7 +180,7 @@ pub fn get_probes(hostname: &str, port: u16) -> Vec<JarmProbe> {
             alpn: AlpnMode::Alpn,
             v13_mode: V13Mode::Support13,
             extension_order: ExtensionOrder::Forward,
-        }),
+        })?,
         // Probe 9: TLS 1.3, NO 1.3 ciphers, FORWARD order, NO_GREASE, ALPN, 1.3 support, FORWARD extensions
         build_probe(JarmProbeOptions {
             hostname: hostname.to_string(),
@@ -191,7 +192,7 @@ pub fn get_probes(hostname: &str, port: u16) -> Vec<JarmProbe> {
             alpn: AlpnMode::Alpn,
             v13_mode: V13Mode::Support13,
             extension_order: ExtensionOrder::Forward,
-        }),
+        })?,
         // Probe 10: TLS 1.3, ALL ciphers, MIDDLE_OUT order, GREASE, ALPN, 1.3 support, REVERSE extensions
         build_probe(JarmProbeOptions {
             hostname: hostname.to_string(),
@@ -203,8 +204,8 @@ pub fn get_probes(hostname: &str, port: u16) -> Vec<JarmProbe> {
             alpn: AlpnMode::Alpn,
             v13_mode: V13Mode::Support13,
             extension_order: ExtensionOrder::Reverse,
-        }),
-    ]
+        })?,
+    ])
 }
 
 #[cfg(test)]
@@ -213,7 +214,7 @@ mod tests_extra {
 
     #[test]
     fn test_get_probes_configuration_basics() {
-        let probes = get_probes("example.com", 443);
+        let probes = get_probes("example.com", 443).expect("JARM probes should build");
         assert_eq!(probes.len(), 10);
 
         let first = &probes[0].options;
@@ -227,13 +228,13 @@ mod tests_extra {
 }
 
 /// Build a single JARM probe
-fn build_probe(options: JarmProbeOptions) -> JarmProbe {
-    let packet = build_client_hello(&options);
-    JarmProbe { options, packet }
+fn build_probe(options: JarmProbeOptions) -> Result<JarmProbe> {
+    let packet = build_client_hello(&options)?;
+    Ok(JarmProbe { options, packet })
 }
 
 /// Build TLS Client Hello packet
-fn build_client_hello(opts: &JarmProbeOptions) -> Vec<u8> {
+fn build_client_hello(opts: &JarmProbeOptions) -> Result<Vec<u8>> {
     let mut payload = vec![0x16]; // Handshake content type
     let mut hello = Vec::new();
 
@@ -267,32 +268,31 @@ fn build_client_hello(opts: &JarmProbeOptions) -> Vec<u8> {
 
     // Session ID
     let session_id = random_bytes(32);
-    hello.push(session_id.len() as u8);
+    hello.push(u8_len(session_id.len(), "session ID")?);
     hello.extend_from_slice(&session_id);
 
     // Cipher suites
     let ciphers = get_ciphers(opts);
-    hello.extend_from_slice(&u16_to_bytes(ciphers.len() as u16));
+    hello.extend_from_slice(&u16_to_bytes(u16_len(ciphers.len(), "cipher suites")?));
     hello.extend_from_slice(&ciphers);
 
     // Compression methods (1 = NULL)
     hello.extend_from_slice(&[0x01, 0x00]);
 
     // Extensions
-    let extensions = get_extensions(opts);
+    let extensions = get_extensions(opts)?;
     hello.extend_from_slice(&extensions);
 
     // Build handshake protocol
     let mut handshake = vec![0x01]; // ClientHello type
-    handshake.push(0x00); // Length (3 bytes, big-endian)
-    handshake.extend_from_slice(&u16_to_bytes(hello.len() as u16));
+    handshake.extend_from_slice(&u24_len(hello.len(), "ClientHello handshake")?);
     handshake.extend_from_slice(&hello);
 
     // Add length to payload
-    payload.extend_from_slice(&u16_to_bytes(handshake.len() as u16));
+    payload.extend_from_slice(&u16_to_bytes(u16_len(handshake.len(), "TLS record")?));
     payload.extend_from_slice(&handshake);
 
-    payload
+    Ok(payload)
 }
 
 /// Full JARM cipher list including TLS 1.3 suites.
@@ -461,7 +461,7 @@ fn reorder_ciphers(mut ciphers: Vec<[u8; 2]>, order: CipherOrder) -> Vec<[u8; 2]
 }
 
 /// Get extensions
-fn get_extensions(opts: &JarmProbeOptions) -> Vec<u8> {
+fn get_extensions(opts: &JarmProbeOptions) -> Result<Vec<u8>> {
     let mut all_extensions = Vec::new();
 
     // GREASE extension
@@ -471,7 +471,7 @@ fn get_extensions(opts: &JarmProbeOptions) -> Vec<u8> {
     }
 
     // Server Name Indication (SNI)
-    all_extensions.extend_from_slice(&ext_server_name(&opts.hostname));
+    all_extensions.extend_from_slice(&ext_server_name(&opts.hostname)?);
 
     // Extended Master Secret
     all_extensions.extend_from_slice(&[0x00, 0x17, 0x00, 0x00]);
@@ -495,7 +495,7 @@ fn get_extensions(opts: &JarmProbeOptions) -> Vec<u8> {
 
     // ALPN
     if opts.alpn != AlpnMode::NoSupport {
-        all_extensions.extend_from_slice(&ext_alpn(opts));
+        all_extensions.extend_from_slice(&ext_alpn(opts)?);
     }
 
     // Signature Algorithms
@@ -505,44 +505,44 @@ fn get_extensions(opts: &JarmProbeOptions) -> Vec<u8> {
     ]);
 
     // Key Share
-    all_extensions.extend_from_slice(&ext_key_share(opts.grease));
+    all_extensions.extend_from_slice(&ext_key_share(opts.grease)?);
 
     // PSK Key Exchange Modes
     all_extensions.extend_from_slice(&[0x00, 0x2d, 0x00, 0x02, 0x01, 0x01]);
 
     // Supported Versions
     if opts.version == TlsVersion::TLS13 || opts.v13_mode == V13Mode::Support12Only {
-        all_extensions.extend_from_slice(&ext_supported_versions(opts));
+        all_extensions.extend_from_slice(&ext_supported_versions(opts)?);
     }
 
     // Wrap extensions with length
-    let mut result = u16_to_bytes(all_extensions.len() as u16).to_vec();
+    let mut result = u16_to_bytes(u16_len(all_extensions.len(), "extensions")?).to_vec();
     result.extend_from_slice(&all_extensions);
 
-    result
+    Ok(result)
 }
 
 /// Server Name Indication extension
-fn ext_server_name(name: &str) -> Vec<u8> {
+fn ext_server_name(name: &str) -> Result<Vec<u8>> {
     let mut ext = vec![0x00, 0x00]; // Extension type
 
     let mut list = Vec::new();
     list.push(0x00); // Name type: hostname
-    list.extend_from_slice(&u16_to_bytes(name.len() as u16));
+    list.extend_from_slice(&u16_to_bytes(u16_len(name.len(), "SNI hostname")?));
     list.extend_from_slice(name.as_bytes());
 
     let mut data = Vec::new();
-    data.extend_from_slice(&u16_to_bytes(list.len() as u16));
+    data.extend_from_slice(&u16_to_bytes(u16_len(list.len(), "SNI server name list")?));
     data.extend_from_slice(&list);
 
-    ext.extend_from_slice(&u16_to_bytes(data.len() as u16));
+    ext.extend_from_slice(&u16_to_bytes(u16_len(data.len(), "SNI extension")?));
     ext.extend_from_slice(&data);
 
-    ext
+    Ok(ext)
 }
 
 /// ALPN extension
-fn ext_alpn(opts: &JarmProbeOptions) -> Vec<u8> {
+fn ext_alpn(opts: &JarmProbeOptions) -> Result<Vec<u8>> {
     let mut ext = vec![0x00, 0x10]; // Extension type
 
     let alpn_list: Vec<&[u8]> = match opts.alpn {
@@ -566,7 +566,7 @@ fn ext_alpn(opts: &JarmProbeOptions) -> Vec<u8> {
             b"\x03h2c",
             b"\x02hq",
         ],
-        AlpnMode::NoSupport => return Vec::new(),
+        AlpnMode::NoSupport => return Ok(Vec::new()),
     };
 
     // Reorder ALPN if requested
@@ -580,15 +580,19 @@ fn ext_alpn(opts: &JarmProbeOptions) -> Vec<u8> {
         all_alpn.extend_from_slice(alpn);
     }
 
-    ext.extend_from_slice(&u16_to_bytes((all_alpn.len() + 2) as u16));
-    ext.extend_from_slice(&u16_to_bytes(all_alpn.len() as u16));
+    ext.extend_from_slice(&u16_to_bytes(u16_len_plus(
+        all_alpn.len(),
+        2,
+        "ALPN extension",
+    )?));
+    ext.extend_from_slice(&u16_to_bytes(u16_len(all_alpn.len(), "ALPN list")?));
     ext.extend_from_slice(&all_alpn);
 
-    ext
+    Ok(ext)
 }
 
 /// Key Share extension
-fn ext_key_share(grease: bool) -> Vec<u8> {
+fn ext_key_share(grease: bool) -> Result<Vec<u8>> {
     let mut ext = vec![0x00, 0x33]; // Extension type
     let mut share_ext = Vec::new();
 
@@ -605,15 +609,15 @@ fn ext_key_share(grease: bool) -> Vec<u8> {
     let first_length = share_ext.len() + 2;
     let second_length = share_ext.len();
 
-    ext.extend_from_slice(&u16_to_bytes(first_length as u16));
-    ext.extend_from_slice(&u16_to_bytes(second_length as u16));
+    ext.extend_from_slice(&u16_to_bytes(u16_len(first_length, "key share extension")?));
+    ext.extend_from_slice(&u16_to_bytes(u16_len(second_length, "key share entries")?));
     ext.extend_from_slice(&share_ext);
 
-    ext
+    Ok(ext)
 }
 
 /// Supported Versions extension
-fn ext_supported_versions(opts: &JarmProbeOptions) -> Vec<u8> {
+fn ext_supported_versions(opts: &JarmProbeOptions) -> Result<Vec<u8>> {
     let mut ext = vec![0x00, 0x2b]; // Extension type
 
     let mut versions: Vec<[u8; 2]> = match opts.v13_mode {
@@ -635,11 +639,15 @@ fn ext_supported_versions(opts: &JarmProbeOptions) -> Vec<u8> {
         ver.extend_from_slice(&v);
     }
 
-    ext.extend_from_slice(&u16_to_bytes((ver.len() + 1) as u16));
-    ext.push(ver.len() as u8);
+    ext.extend_from_slice(&u16_to_bytes(u16_len_plus(
+        ver.len(),
+        1,
+        "supported versions extension",
+    )?));
+    ext.push(u8_len(ver.len(), "supported versions list")?);
     ext.extend_from_slice(&ver);
 
-    ext
+    Ok(ext)
 }
 
 /// Generate random bytes
@@ -664,13 +672,41 @@ fn u16_to_bytes(val: u16) -> [u8; 2] {
     val.to_be_bytes()
 }
 
+fn length_error(context: &str) -> TlsError {
+    TlsError::InvalidInput {
+        message: format!("{context} exceeds maximum length"),
+    }
+}
+
+fn u8_len(len: usize, context: &str) -> Result<u8> {
+    u8::try_from(len).map_err(|_| length_error(context))
+}
+
+fn u16_len(len: usize, context: &str) -> Result<u16> {
+    u16::try_from(len).map_err(|_| length_error(context))
+}
+
+fn u16_len_plus(len: usize, add: usize, context: &str) -> Result<u16> {
+    let len = len.checked_add(add).ok_or_else(|| length_error(context))?;
+    u16_len(len, context)
+}
+
+fn u24_len(len: usize, context: &str) -> Result<[u8; 3]> {
+    let len = u32::try_from(len).map_err(|_| length_error(context))?;
+    if len > 0x00ff_ffff {
+        return Err(length_error(context));
+    }
+    let bytes = len.to_be_bytes();
+    Ok([bytes[1], bytes[2], bytes[3]])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn test_get_probes() {
-        let probes = get_probes("example.com", 443);
+        let probes = get_probes("example.com", 443).expect("JARM probes should build");
         assert_eq!(probes.len(), 10);
 
         // Verify probe 1
@@ -746,7 +782,7 @@ mod tests {
             extension_order: ExtensionOrder::Forward,
         };
 
-        let packet = build_client_hello(&opts);
+        let packet = build_client_hello(&opts).expect("ClientHello should build");
 
         // Should start with handshake content type (0x16)
         assert_eq!(packet[0], 0x16);

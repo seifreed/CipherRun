@@ -167,7 +167,7 @@ impl JarmFingerprinter {
 
     /// Fingerprint a target
     pub async fn fingerprint(&self, addr: SocketAddr, hostname: &str) -> Result<JarmFingerprint> {
-        let probes = get_probes(hostname, addr.port());
+        let probes = get_probes(hostname, addr.port())?;
         let mut raw_responses = Vec::new();
 
         for probe in &probes {
@@ -687,7 +687,8 @@ mod tests {
 
     #[test]
     fn test_parse_server_hello_rejects_truncated_extension() {
-        let probe = &get_probes("example.com", 443)[0];
+        let probes = get_probes("example.com", 443).expect("JARM probes should build");
+        let probe = &probes[0];
         let response = vec![
             0x16, 0x03, 0x03, 0x00, 0x3b, // TLS record
             0x02, 0x00, 0x00, 0x37, // ServerHello handshake

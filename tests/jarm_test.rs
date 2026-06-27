@@ -13,7 +13,7 @@ use std::time::Duration;
 
 #[test]
 fn test_jarm_probe_generation() {
-    let probes = get_probes("example.com", 443);
+    let probes = get_probes("example.com", 443).expect("JARM probes should build");
 
     // JARM uses exactly 10 probes
     assert_eq!(probes.len(), 10);
@@ -304,7 +304,7 @@ async fn test_jarm_custom_database() {
 
 #[test]
 fn test_jarm_probe_packet_structure() {
-    let probes = get_probes("test.example.com", 443);
+    let probes = get_probes("test.example.com", 443).expect("JARM probes should build");
 
     for (i, probe) in probes.iter().enumerate() {
         let packet = probe.build();
