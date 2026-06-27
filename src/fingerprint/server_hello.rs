@@ -240,20 +240,20 @@ impl ServerHelloCapture {
                 while Self::cursor_position(&cursor, "Extension")? < ext_end {
                     // Parse extension type (2 bytes)
                     let mut ext_type_bytes = [0u8; 2];
-                    if cursor.read_exact(&mut ext_type_bytes).is_err() {
-                        return Err(TlsError::ParseError {
-                            message: "Failed to read extension type".to_string(),
-                        });
-                    }
+                    cursor
+                        .read_exact(&mut ext_type_bytes)
+                        .map_err(|e| TlsError::ParseError {
+                            message: format!("Failed to read extension type: {}", e),
+                        })?;
                     let ext_type = u16::from_be_bytes(ext_type_bytes);
 
                     // Parse extension length (2 bytes)
                     let mut ext_data_len_bytes = [0u8; 2];
-                    if cursor.read_exact(&mut ext_data_len_bytes).is_err() {
-                        return Err(TlsError::ParseError {
-                            message: "Failed to read extension length".to_string(),
-                        });
-                    }
+                    cursor.read_exact(&mut ext_data_len_bytes).map_err(|e| {
+                        TlsError::ParseError {
+                            message: format!("Failed to read extension length: {}", e),
+                        }
+                    })?;
                     let ext_data_len = usize::from(u16::from_be_bytes(ext_data_len_bytes));
 
                     // Parse extension data
@@ -268,10 +268,12 @@ impl ServerHelloCapture {
                         });
                     }
                     let mut ext_data = vec![0u8; ext_data_len];
-                    if ext_data_len > 0 && cursor.read_exact(&mut ext_data).is_err() {
-                        return Err(TlsError::ParseError {
-                            message: "Failed to read extension data".to_string(),
-                        });
+                    if ext_data_len > 0 {
+                        cursor
+                            .read_exact(&mut ext_data)
+                            .map_err(|e| TlsError::ParseError {
+                                message: format!("Failed to read extension data: {}", e),
+                            })?;
                     }
 
                     extensions.push(Extension {
