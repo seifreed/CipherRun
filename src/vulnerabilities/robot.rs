@@ -27,10 +27,10 @@ fn read_u16_at(data: &[u8], offset: usize) -> Option<u16> {
 fn read_u24_at(data: &[u8], offset: usize) -> Option<usize> {
     data.get(offset..offset.checked_add(3)?)
         .and_then(|bytes| <&[u8; 3]>::try_from(bytes).ok())
-        .map(|bytes| {
+        .and_then(|bytes| {
             let [high, mid, low] = *bytes;
             let value = u32::from_be_bytes([0, high, mid, low]);
-            usize::try_from(value).expect("u24 length must fit in usize")
+            usize::try_from(value).ok()
         })
 }
 
