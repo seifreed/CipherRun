@@ -33,7 +33,7 @@ impl CipherTester {
         };
 
         let handshake_time_ms = if supported {
-            Some(start.elapsed().as_millis() as u64)
+            Some(u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX))
         } else {
             None
         };

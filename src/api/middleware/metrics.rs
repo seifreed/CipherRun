@@ -12,7 +12,7 @@ pub async fn metrics(
     state.record_request().await;
     let response = next.run(request).await;
     state
-        .record_response(start.elapsed().as_millis() as u64)
+        .record_response(u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX))
         .await;
     response
 }

@@ -116,7 +116,7 @@ impl StatsTracker {
             source_stats.successful_fetches += 1;
 
             // Update average fetch time using running sum for accuracy
-            let new_fetch_ms = fetch_time.as_millis() as u64;
+            let new_fetch_ms = u64::try_from(fetch_time.as_millis()).unwrap_or(u64::MAX);
             source_stats.total_fetch_time_ms = source_stats
                 .total_fetch_time_ms
                 .saturating_add(new_fetch_ms);

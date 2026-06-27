@@ -119,7 +119,9 @@ impl ClientSimulator {
                     protocol: Some(handshake_info.protocol),
                     cipher: handshake_info.cipher,
                     error: None,
-                    handshake_time_ms: Some(start.elapsed().as_millis() as u64),
+                    handshake_time_ms: Some(
+                        u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX),
+                    ),
                     alpn: handshake_info.alpn,
                     key_exchange: handshake_info.key_exchange,
                     forward_secrecy: has_fs,
