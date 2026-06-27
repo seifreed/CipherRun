@@ -116,9 +116,7 @@ impl CaaChecker {
                 continue;
             }
 
-            if let Some(record) = Self::parse_caa_record_fields(line) {
-                records.push(record);
-            }
+            records.push(Self::parse_caa_record_fields(line)?);
         }
 
         Ok(records)
@@ -130,31 +128,42 @@ impl CaaChecker {
         let mut records = Vec::new();
 
         for line in output_str.lines() {
-            if let Some(record_part) = Self::split_after_case_insensitive(line, "has CAA record")
-                && let Some(record) = Self::parse_caa_record_fields(record_part)
-            {
-                records.push(record);
+            if let Some(record_part) = Self::split_after_case_insensitive(line, "has CAA record") {
+                records.push(Self::parse_caa_record_fields(record_part)?);
             }
         }
 
         Ok(records)
     }
 
-    fn parse_caa_record_fields(record: &str) -> Option<CaaRecord> {
+    fn parse_caa_record_fields(record: &str) -> Result<CaaRecord> {
         let mut parts = record.split_whitespace();
-        let flags = parts.next()?.parse::<u8>().ok()?;
-        let tag = parts.next()?.to_ascii_lowercase();
+        let flags = parts
+            .next()
+            .ok_or_else(|| Self::parse_error("CAA record missing flags"))?
+            .parse::<u8>()
+            .map_err(|_| Self::parse_error("CAA record has invalid flags"))?;
+        let tag = parts
+            .next()
+            .ok_or_else(|| Self::parse_error("CAA record missing tag"))?
+            .to_ascii_lowercase();
         let value = parts.collect::<Vec<_>>().join(" ");
 
         if value.is_empty() {
-            return None;
+            return Err(Self::parse_error("CAA record missing value"));
         }
 
-        Some(CaaRecord {
+        Ok(CaaRecord {
             flags,
             tag,
             value: Self::normalize_caa_value(&value),
         })
+    }
+
+    fn parse_error(message: &str) -> crate::TlsError {
+        crate::TlsError::ParseError {
+            message: message.to_string(),
+        }
     }
 
     fn normalize_caa_value(value: &str) -> String {
@@ -296,14 +305,13 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_dig_caa_output_skips_invalid_lines() {
+    fn test_parse_dig_caa_output_rejects_invalid_lines() {
         let checker = CaaChecker::new("example.com".to_string());
         let output = b"bad line\n0 issue \"letsencrypt.org\"";
-        let records = checker
+        let err = checker
             .parse_dig_caa_output(output)
-            .expect("parse should succeed");
-        assert_eq!(records.len(), 1);
-        assert_eq!(records[0].tag, "issue");
+            .expect_err("invalid CAA output should fail");
+        assert!(err.to_string().contains("invalid flags"));
     }
 
     #[test]
@@ -317,15 +325,13 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_dig_caa_output_skips_short_records() {
+    fn test_parse_dig_caa_output_rejects_short_records() {
         let checker = CaaChecker::new("example.com".to_string());
         let output = b"0\n0 issue\n0 issue \"letsencrypt.org\"";
-        let records = checker
+        let err = checker
             .parse_dig_caa_output(output)
-            .expect("parse should succeed");
-
-        assert_eq!(records.len(), 1);
-        assert_eq!(records[0].value, "letsencrypt.org");
+            .expect_err("short CAA output should fail");
+        assert!(err.to_string().contains("missing tag"));
     }
 
     #[test]
