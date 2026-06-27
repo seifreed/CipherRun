@@ -239,10 +239,13 @@ impl PreHandshakeScanner {
                                 });
                             }
 
-                            if cert_offset
-                                .checked_add(3)
-                                .is_some_and(|end| end <= certs_end)
-                            {
+                            let mut parse_leaf = certificate_data.is_none();
+                            while cert_offset < certs_end {
+                                if cert_offset.checked_add(3).is_none_or(|end| end > certs_end) {
+                                    return Err(TlsError::ParseError {
+                                        message: "Certificate entry header truncated".to_string(),
+                                    });
+                                }
                                 let cert_length =
                                     Self::read_u24_at(data, cert_offset, "Certificate length")?;
                                 cert_offset = cert_offset.checked_add(3).ok_or_else(|| {
@@ -268,11 +271,11 @@ impl PreHandshakeScanner {
                                     cert_length,
                                     "Certificate DER",
                                 )?;
-                                certificate_data = Some(self.parse_certificate(cert_der)?);
-                            } else if cert_offset != certs_end {
-                                return Err(TlsError::ParseError {
-                                    message: "Certificate entry header truncated".to_string(),
-                                });
+                                if parse_leaf {
+                                    certificate_data = Some(self.parse_certificate(cert_der)?);
+                                    parse_leaf = false;
+                                }
+                                cert_offset = cert_end;
                             }
                         }
                     }
@@ -479,6 +482,37 @@ mod tests {
             error
                 .to_string()
                 .contains("Certificate message contains trailing bytes")
+        );
+    }
+
+    #[test]
+    fn test_parse_handshake_rejects_trailing_bytes_after_first_certificate() {
+        let scanner = test_scanner();
+        let cert = cert_with_raw_extension_der("1.2.3.4", b"\x05\x00");
+        let cert_len = cert.len() as u32;
+        let list_len = cert.len() as u32 + 4;
+        let mut body = Vec::new();
+        body.extend_from_slice(&[
+            ((list_len >> 16) & 0xff) as u8,
+            ((list_len >> 8) & 0xff) as u8,
+            (list_len & 0xff) as u8,
+            ((cert_len >> 16) & 0xff) as u8,
+            ((cert_len >> 8) & 0xff) as u8,
+            (cert_len & 0xff) as u8,
+        ]);
+        body.extend_from_slice(&cert);
+        body.push(0xff);
+        let record = handshake_record(0x0b, &body);
+
+        let error = match scanner.parse_handshake_response(&record) {
+            Ok(_) => panic!("certificate list trailing bytes should fail"),
+            Err(error) => error,
+        };
+
+        assert!(
+            error
+                .to_string()
+                .contains("Certificate entry header truncated")
         );
     }
 }
