@@ -342,15 +342,11 @@ impl StarttlsInjectionTester {
         if ok_responses.len() >= 2 {
             // Verify the second +OK is related to USER command processing
             // by checking if it mentions user/authentication
-            let has_user_response = response
-                .lines()
-                .skip_while(|line| !Self::line_has_ascii_token(line, "STLS"))
-                .any(|line| {
-                    line.contains("+OK")
-                        && (line.to_lowercase().contains("user")
-                            || line.to_lowercase().contains("auth")
-                            || line.to_lowercase().contains("login"))
-                });
+            let has_user_response = ok_responses.iter().skip(1).any(|line| {
+                line.to_lowercase().contains("user")
+                    || line.to_lowercase().contains("auth")
+                    || line.to_lowercase().contains("login")
+            });
 
             return Ok(if has_user_response {
                 StarttlsInjectionStatus::Vulnerable
@@ -642,6 +638,32 @@ mod tests {
         let port = start_scripted_server(
             b"+OK POP3 server\r\n",
             vec![b"+OK CAPA\r\nSTLS\r\n.\r\n", b"+OK STLS\r\n+OK USER\r\n"],
+        )
+        .await;
+
+        let target = Target::with_ips(
+            "127.0.0.1".to_string(),
+            port,
+            vec!["127.0.0.1".parse().expect("valid IP")],
+        )
+        .expect("test assertion should succeed");
+        let tester = StarttlsInjectionTester::new(target);
+
+        let vulnerable = tester
+            .test_pop3_injection()
+            .await
+            .expect("test assertion should succeed");
+        assert!(vulnerable);
+    }
+
+    #[tokio::test]
+    async fn test_pop3_injection_vulnerable_when_stls_response_omits_stls_token() {
+        let port = start_scripted_server(
+            b"+OK POP3 server\r\n",
+            vec![
+                b"+OK CAPA\r\nSTLS\r\n.\r\n",
+                b"+OK Begin TLS negotiation now\r\n+OK user accepted\r\n",
+            ],
         )
         .await;
 
