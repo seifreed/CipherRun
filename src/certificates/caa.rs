@@ -87,7 +87,6 @@ impl CaaChecker {
 
         if let Ok(output) = output
             && output.status.success()
-            && !output.stdout.is_empty()
         {
             return self.parse_dig_caa_output(&output.stdout);
         }
@@ -308,6 +307,16 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_dig_caa_output_empty_means_no_records() {
+        let checker = CaaChecker::new("example.com".to_string());
+        let records = checker
+            .parse_dig_caa_output(b"")
+            .expect("empty successful dig output should parse");
+
+        assert!(records.is_empty());
+    }
+
+    #[test]
     fn test_parse_dig_caa_output_skips_short_records() {
         let checker = CaaChecker::new("example.com".to_string());
         let output = b"0\n0 issue\n0 issue \"letsencrypt.org\"";
@@ -458,7 +467,7 @@ mod tests {
     }
 
     #[test]
-    fn test_check_reports_query_failure_instead_of_no_records() {
+    fn test_check_reports_no_records_for_empty_successful_lookup() {
         let checker = CaaChecker::new("invalid.invalid".to_string());
         let result = checker.check().expect("check should return a result");
 
@@ -466,7 +475,7 @@ mod tests {
             result
                 .issues
                 .iter()
-                .any(|issue| issue.contains("Failed to query CAA records"))
+                .any(|issue| issue.contains("No CAA records found"))
         );
         assert!(!result.has_caa_records);
     }
