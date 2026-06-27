@@ -109,16 +109,25 @@ impl MxTester {
         let mut records = Vec::new();
 
         for line in output_str.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
             let mut parts = line.split_whitespace();
             let Some(priority_str) = parts.next() else {
                 continue;
             };
             let Some(hostname_raw) = parts.next() else {
-                continue;
+                return Err(crate::error::TlsError::ParseError {
+                    message: format!("Malformed dig MX line: {line}"),
+                });
             };
-            let Ok(priority) = priority_str.parse::<u16>() else {
-                continue;
-            };
+            let priority =
+                priority_str
+                    .parse::<u16>()
+                    .map_err(|_| crate::error::TlsError::ParseError {
+                        message: format!("Invalid dig MX priority: {priority_str}"),
+                    })?;
 
             let hostname = hostname_raw.trim_end_matches('.').to_string();
             records.push(MxRecord { priority, hostname });
@@ -133,21 +142,29 @@ impl MxTester {
         let mut records = Vec::new();
 
         for line in output_str.lines() {
-            if line.to_ascii_lowercase().contains("mail exchanger") {
+            if line.to_ascii_lowercase().contains("mail exchanger =") {
                 // Format: "example.com    mail exchanger = 10 mx.example.com."
                 let Some((_, right_side)) = line.split_once('=') else {
-                    continue;
+                    return Err(crate::error::TlsError::ParseError {
+                        message: format!("Malformed nslookup MX line: {line}"),
+                    });
                 };
                 let mut mx_parts = right_side.split_whitespace();
                 let Some(priority_str) = mx_parts.next() else {
-                    continue;
+                    return Err(crate::error::TlsError::ParseError {
+                        message: format!("Malformed nslookup MX line: {line}"),
+                    });
                 };
                 let Some(hostname_raw) = mx_parts.next() else {
-                    continue;
+                    return Err(crate::error::TlsError::ParseError {
+                        message: format!("Malformed nslookup MX line: {line}"),
+                    });
                 };
-                let Ok(priority) = priority_str.parse::<u16>() else {
-                    continue;
-                };
+                let priority = priority_str.parse::<u16>().map_err(|_| {
+                    crate::error::TlsError::ParseError {
+                        message: format!("Invalid nslookup MX priority: {priority_str}"),
+                    }
+                })?;
 
                 let hostname = hostname_raw.trim_end_matches('.').to_string();
                 records.push(MxRecord { priority, hostname });

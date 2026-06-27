@@ -111,29 +111,25 @@ fn test_generate_mx_summary() {
 }
 
 #[test]
-fn test_parse_dig_output_skips_invalid_lines() {
+fn test_parse_dig_output_rejects_invalid_priority() {
     let tester = MxTester::new("example.com".to_string());
-    let output = b"invalid\n10 mx.example.com.\nmx.only.\n";
+    let output = b"x mx.example.com.\n";
 
-    let records = tester
+    let err = tester
         .parse_dig_output(output)
-        .expect("test assertion should succeed");
-    assert_eq!(records.len(), 1);
-    assert_eq!(records[0].priority, 10);
-    assert_eq!(records[0].hostname, "mx.example.com");
+        .expect_err("invalid MX priority should fail");
+    assert!(err.to_string().contains("Invalid dig MX priority"));
 }
 
 #[test]
-fn test_parse_nslookup_output_skips_invalid_lines() {
+fn test_parse_nslookup_output_rejects_invalid_priority() {
     let tester = MxTester::new("example.com".to_string());
-    let output = b"example.com no mail exchanger\nexample.com mail exchanger = x mx.example.com.\nexample.com\tmail exchanger = 20 mx20.example.com.\n";
+    let output = b"example.com mail exchanger = x mx.example.com.\n";
 
-    let records = tester
+    let err = tester
         .parse_nslookup_output(output)
-        .expect("test assertion should succeed");
-    assert_eq!(records.len(), 1);
-    assert_eq!(records[0].priority, 20);
-    assert_eq!(records[0].hostname, "mx20.example.com");
+        .expect_err("invalid MX priority should fail");
+    assert!(err.to_string().contains("Invalid nslookup MX priority"));
 }
 
 #[test]
