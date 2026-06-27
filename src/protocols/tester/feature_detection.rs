@@ -98,14 +98,30 @@ impl ProtocolTester {
 
         let response = match timeout(self.read_timeout, async {
             stream.write_all(&client_hello).await?;
-            let mut resp = vec![0u8; BUFFER_SIZE_MAX_TLS_RECORD];
-            let n = stream.read(&mut resp).await?;
-            resp.truncate(n);
-            Ok::<Vec<u8>, std::io::Error>(resp)
+            let mut header = [0u8; 5];
+            if stream.read_exact(&mut header).await.is_err() {
+                return Ok::<Option<Vec<u8>>, std::io::Error>(None);
+            }
+
+            let record_len = u16::from_be_bytes([header[3], header[4]]) as usize;
+            let total_len = 5usize
+                .checked_add(record_len)
+                .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "TLS record length overflow"))?;
+            if total_len > BUFFER_SIZE_MAX_TLS_RECORD {
+                return Ok::<Option<Vec<u8>>, std::io::Error>(None);
+            }
+
+            let mut resp = vec![0u8; total_len];
+            resp[..5].copy_from_slice(&header);
+            if stream.read_exact(&mut resp[5..]).await.is_err() {
+                return Ok::<Option<Vec<u8>>, std::io::Error>(None);
+            }
+
+            Ok::<Option<Vec<u8>>, std::io::Error>(Some(resp))
         })
         .await
         {
-            Ok(Ok(resp)) if !resp.is_empty() => resp,
+            Ok(Ok(Some(resp))) => resp,
             _ => return Ok(None),
         };
 

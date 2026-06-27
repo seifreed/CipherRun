@@ -515,6 +515,60 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_detect_heartbeat_extension_handles_fragmented_server_hello() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("local addr should exist");
+
+        fn patch_lengths(server_hello: &mut [u8]) {
+            let record_len = (server_hello.len() - 5) as u16;
+            server_hello[3] = (record_len >> 8) as u8;
+            server_hello[4] = (record_len & 0xff) as u8;
+            let hs_len = (server_hello.len() - 9) as u32;
+            server_hello[6] = ((hs_len >> 16) & 0xff) as u8;
+            server_hello[7] = ((hs_len >> 8) & 0xff) as u8;
+            server_hello[8] = (hs_len & 0xff) as u8;
+        }
+
+        tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let mut hello = vec![
+                    0x16, 0x03, 0x03, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x03, 0x03,
+                ];
+                hello.extend_from_slice(&[0u8; 32]);
+                hello.push(0x00);
+                hello.extend_from_slice(&[0xc0, 0x2f]);
+                hello.push(0x00);
+                hello.extend_from_slice(&[0x00, 0x05, 0x00, 0x0f, 0x00, 0x01, 0x01]);
+                patch_lengths(&mut hello);
+
+                socket.write_all(&hello[..8]).await.expect("write first fragment");
+                socket.flush().await.expect("flush first fragment");
+                tokio::time::sleep(Duration::from_millis(20)).await;
+                socket
+                    .write_all(&hello[8..])
+                    .await
+                    .expect("write second fragment");
+                socket.flush().await.expect("flush second fragment");
+            }
+        });
+
+        let target = Target::with_ips("example.test".to_string(), addr.port(), vec![addr.ip()])
+            .expect("target should build");
+        let tester = ProtocolTester::new(target)
+            .with_connect_timeout(Duration::from_millis(100))
+            .with_read_timeout(Duration::from_millis(100));
+
+        let supported = tester
+            .detect_heartbeat_extension(Protocol::TLS12)
+            .await
+            .expect("fragmented ServerHello should be parsed");
+
+        assert_eq!(supported, Some(true));
+    }
+
+    #[tokio::test]
     async fn test_target_accepts_tcp_open_port_true() {
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
