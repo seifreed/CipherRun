@@ -18,7 +18,6 @@ pub struct Lucky13Tester {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CbcCipherSupportStatus {
     Supported,
-    NotSupported,
     Inconclusive,
 }
 
@@ -78,13 +77,6 @@ impl Lucky13Tester {
                 details: "Lucky13 assessment inconclusive - unable to determine CBC cipher support"
                     .to_string(),
             }),
-            CbcCipherSupportStatus::NotSupported => Ok(Lucky13TestResult {
-                vulnerable: false,
-                partially_vulnerable: false,
-                cbc_supported: false,
-                inconclusive: false,
-                details: "Not vulnerable - server does not support CBC cipher suites".to_string(),
-            }),
             CbcCipherSupportStatus::Supported => Ok(Lucky13TestResult {
                 vulnerable: false,
                 partially_vulnerable: true,
@@ -117,21 +109,26 @@ impl Lucky13Tester {
 
         match self.starttls_connect(addr, TLS_HANDSHAKE_TIMEOUT).await {
             Ok(stream) => {
-                let std_stream = stream.into_std()?;
-                std_stream.set_nonblocking(false)?;
+                let std_stream =
+                    crate::utils::network::into_blocking_std_stream(stream, TLS_HANDSHAKE_TIMEOUT)?;
 
-                let mut builder = SslConnector::builder(SslMethod::tls())?;
-                // The scanner must determine cipher support even on hosts with
-                // expired/self-signed/untrusted certificates; certificate
-                // validity is assessed separately.
-                builder.set_verify(SslVerifyMode::NONE);
-                builder.set_cipher_list(cbc_ciphers)?;
+                let hostname = self.target.hostname.clone();
+                tokio::task::spawn_blocking(move || -> Result<CbcCipherSupportStatus> {
+                    let mut builder = SslConnector::builder(SslMethod::tls())?;
+                    // The scanner must determine cipher support even on hosts with
+                    // expired/self-signed/untrusted certificates; certificate
+                    // validity is assessed separately.
+                    builder.set_verify(SslVerifyMode::NONE);
+                    builder.set_cipher_list(cbc_ciphers)?;
 
-                let connector = builder.build();
-                match connector.connect(&self.target.hostname, std_stream) {
-                    Ok(_) => Ok(CbcCipherSupportStatus::Supported),
-                    Err(_) => Ok(CbcCipherSupportStatus::NotSupported),
-                }
+                    let connector = builder.build();
+                    match connector.connect(&hostname, std_stream) {
+                        Ok(_) => Ok(CbcCipherSupportStatus::Supported),
+                        Err(_) => Ok(CbcCipherSupportStatus::Inconclusive),
+                    }
+                })
+                .await
+                .map_err(|e| crate::TlsError::Other(format!("Spawn blocking failed: {e}")))?
             }
             _ => Ok(CbcCipherSupportStatus::Inconclusive),
         }
@@ -203,5 +200,29 @@ mod tests {
             result.details.to_ascii_lowercase().contains("inconclusive"),
             "{result:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn test_lucky13_closed_handshake_is_inconclusive() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            if let Ok((socket, _)) = listener.accept().await {
+                drop(socket);
+            }
+        });
+
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .unwrap();
+
+        let tester = Lucky13Tester::new(target);
+        let result = tester.test().await.unwrap();
+
+        assert!(!result.cbc_supported);
+        assert!(result.inconclusive, "{result:?}");
     }
 }
