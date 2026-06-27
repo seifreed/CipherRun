@@ -219,11 +219,16 @@ impl CertificateParser {
 
     /// Parse a single certificate from DER bytes
     pub fn parse_certificate(der_bytes: &[u8]) -> Result<CertificateInfo> {
-        let (_, cert) = X509Certificate::from_der(der_bytes).map_err(|e| {
+        let (rest, cert) = X509Certificate::from_der(der_bytes).map_err(|e| {
             crate::error::TlsError::ParseError {
                 message: format!("Failed to parse certificate: {:?}", e),
             }
         })?;
+        if !rest.is_empty() {
+            return Err(crate::error::TlsError::ParseError {
+                message: "Certificate DER contains trailing bytes".to_string(),
+            });
+        }
 
         // Extract Subject Alternative Names
         let mut san = Vec::new();
@@ -623,6 +628,39 @@ mod tests {
         assert!(info.san.iter().any(|s| s.contains("example.com")));
         assert_eq!(info.rsa_exponent.as_deref(), Some("e 65537"));
         assert!(info.fingerprint_sha256.is_some());
+    }
+
+    #[test]
+    fn test_parse_certificate_rejects_trailing_der_bytes() {
+        use openssl::asn1::Asn1Time;
+        use openssl::hash::MessageDigest as OpensslMessageDigest;
+        use openssl::pkey::PKey;
+        use openssl::rsa::Rsa;
+        use openssl::x509::{X509Builder, X509NameBuilder};
+
+        let rsa = Rsa::generate(2048).unwrap();
+        let pkey = PKey::from_rsa(rsa).unwrap();
+        let mut name = X509NameBuilder::new().unwrap();
+        name.append_entry_by_text("CN", "example.com").unwrap();
+        let name = name.build();
+
+        let mut builder = X509Builder::new().unwrap();
+        builder.set_subject_name(&name).unwrap();
+        builder.set_issuer_name(&name).unwrap();
+        builder.set_pubkey(&pkey).unwrap();
+        builder
+            .set_not_before(&Asn1Time::days_from_now(0).unwrap())
+            .unwrap();
+        builder
+            .set_not_after(&Asn1Time::days_from_now(30).unwrap())
+            .unwrap();
+        builder.sign(&pkey, OpensslMessageDigest::sha256()).unwrap();
+        let mut der = builder.build().to_der().unwrap();
+        der.push(0xff);
+
+        let error = CertificateParser::parse_certificate(&der)
+            .expect_err("certificate DER with trailing bytes should fail");
+        assert!(error.to_string().contains("trailing bytes"));
     }
 
     #[test]
