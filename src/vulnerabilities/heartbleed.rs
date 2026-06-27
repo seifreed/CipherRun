@@ -1,11 +1,11 @@
 // Heartbleed (CVE-2014-0160) vulnerability checker
 
-use crate::Result;
 use crate::constants::{
     CONTENT_TYPE_HEARTBEAT, HEARTBEAT_REQUEST, TLS_HANDSHAKE_TIMEOUT, VERSION_TLS_1_2,
 };
 use crate::protocols::{Protocol, handshake::ClientHelloBuilder};
 use crate::utils::network::Target;
+use crate::{Result, TlsError};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -398,15 +398,21 @@ impl<'a> HeartbleedTester<'a> {
         // A vulnerable server reads past the 3-byte heartbeat header into process memory.
         let claimed_payload_length: u16 = 0x4000; // 16384 bytes — the malicious claim
         let heartbeat_msg_len = 3 + claimed_payload_length as usize; // type(1) + length(2) + payload
+        let heartbeat_msg_len =
+            u16::try_from(heartbeat_msg_len).map_err(|_| TlsError::ParseError {
+                message: "Heartbleed heartbeat message length too large".to_string(),
+            })?;
+        let version = VERSION_TLS_1_2.to_be_bytes();
+        let heartbeat_msg_len = heartbeat_msg_len.to_be_bytes();
         let heartbeat = vec![
-            CONTENT_TYPE_HEARTBEAT,                  // Content Type: Heartbeat (0x18)
-            (VERSION_TLS_1_2 >> 8) as u8,            // Version: TLS 1.2 (0x0303)
-            (VERSION_TLS_1_2 & 0xff) as u8,          // Version low byte
-            ((heartbeat_msg_len >> 8) & 0xff) as u8, // Record length high byte
-            (heartbeat_msg_len & 0xff) as u8,        // Record length low byte
-            HEARTBEAT_REQUEST,                       // Heartbeat request type (0x01)
-            (claimed_payload_length >> 8) as u8,     // Payload length high byte
-            (claimed_payload_length & 0xff) as u8,   // Payload length low byte
+            CONTENT_TYPE_HEARTBEAT,                // Content Type: Heartbeat (0x18)
+            version[0],                            // Version: TLS 1.2 (0x0303)
+            version[1],                            // Version low byte
+            heartbeat_msg_len[0],                  // Record length high byte
+            heartbeat_msg_len[1],                  // Record length low byte
+            HEARTBEAT_REQUEST,                     // Heartbeat request type (0x01)
+            (claimed_payload_length >> 8) as u8,   // Payload length high byte
+            (claimed_payload_length & 0xff) as u8, // Payload length low byte
         ];
 
         // Send heartbeat request
