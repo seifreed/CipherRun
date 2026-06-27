@@ -115,70 +115,19 @@ impl FallbackScsvTester<'_> {
                             .collect();
                         tracing::debug!("SCSV test: full response bytes: {}", bytes_hex.join(" "));
 
-                        if response.first() == Some(&CONTENT_TYPE_ALERT) {
-                            if n < 7 {
-                                tracing::debug!(
-                                    "SCSV test: Truncated alert response ({} bytes) - inconclusive",
-                                    n
-                                );
-                                return Ok(ScsvSupport::inconclusive());
-                            }
-                            let Some(alert_record_len) = response
-                                .get(3..5)
-                                .and_then(|bytes| <[u8; 2]>::try_from(bytes).ok())
-                                .map(u16::from_be_bytes)
-                            else {
-                                return Ok(ScsvSupport::inconclusive());
-                            };
-                            let alert_record_len = alert_record_len as usize;
-                            if alert_record_len != 2 {
-                                tracing::debug!(
-                                    "SCSV test: Malformed alert record length {} - inconclusive",
-                                    alert_record_len
-                                );
-                                return Ok(ScsvSupport::inconclusive());
-                            }
-                            if n != 5 + alert_record_len {
-                                tracing::debug!(
-                                    "SCSV test: Alert record length {} does not match buffer length {} - inconclusive",
-                                    alert_record_len,
-                                    n
-                                );
-                                return Ok(ScsvSupport::inconclusive());
-                            }
-                            let Some([alert_level, alert_desc]) = response
-                                .get(5..7)
-                                .and_then(|bytes| <&[u8; 2]>::try_from(bytes).ok())
-                            else {
-                                return Ok(ScsvSupport::inconclusive());
-                            };
-
-                            tracing::debug!(
-                                "SCSV test: Alert level: 0x{:02x}, description: 0x{:02x}",
-                                alert_level,
-                                alert_desc
+                        let support = classify_scsv_response(response);
+                        if support.supported {
+                            tracing::info!(
+                                "✓ Server correctly rejected inappropriate fallback with alert 0x56 (inappropriate_fallback)"
                             );
-
-                            if *alert_desc == 0x56 {
-                                tracing::info!(
-                                    "✓ Server correctly rejected inappropriate fallback with alert 0x56 (inappropriate_fallback)"
-                                );
-                                Ok(ScsvSupport::supported())
-                            } else {
-                                tracing::debug!(
-                                    "Server sent alert 0x{:02x} (not inappropriate_fallback)",
-                                    alert_desc
-                                );
-                                Ok(ScsvSupport::not_supported())
-                            }
-                        } else {
+                        } else if support.vulnerable {
                             tracing::warn!(
                                 "✗ Server at IP {} accepted fallback (version 0x{:04x}) - NOT protected by SCSV",
                                 addr.ip(),
                                 test_version
                             );
-                            Ok(ScsvSupport::not_supported())
                         }
+                        Ok(support)
                     }
                     Ok(Ok(_)) => {
                         tracing::debug!(
@@ -221,6 +170,36 @@ fn aggregate_scsv_support(all_support: bool, inconclusive: bool) -> ScsvSupport 
         ScsvSupport::not_supported()
     } else {
         ScsvSupport::supported()
+    }
+}
+
+fn classify_scsv_response(response: &[u8]) -> ScsvSupport {
+    if response.len() < 5 {
+        return ScsvSupport::inconclusive();
+    }
+
+    let Some(record_len) = response
+        .get(3..5)
+        .and_then(|bytes| <[u8; 2]>::try_from(bytes).ok())
+        .map(u16::from_be_bytes)
+        .map(usize::from)
+    else {
+        return ScsvSupport::inconclusive();
+    };
+    if response.len() != 5 + record_len {
+        return ScsvSupport::inconclusive();
+    }
+
+    if response.first() != Some(&CONTENT_TYPE_ALERT) {
+        return ScsvSupport::not_supported();
+    }
+    if record_len != 2 {
+        return ScsvSupport::inconclusive();
+    }
+    match response.get(6).copied() {
+        Some(0x56) => ScsvSupport::supported(),
+        Some(_) => ScsvSupport::not_supported(),
+        None => ScsvSupport::inconclusive(),
     }
 }
 
@@ -289,6 +268,22 @@ mod tests {
         assert!(!result.supported);
         assert!(result.vulnerable);
         assert!(result.accepts_downgrade);
+    }
+
+    #[test]
+    fn test_classify_scsv_response_rejects_truncated_non_alert_record() {
+        let response = [0x16, 0x03, 0x03, 0x00, 0x10, 0x02];
+        let result = classify_scsv_response(&response);
+        assert!(result.inconclusive);
+        assert!(!result.vulnerable);
+    }
+
+    #[test]
+    fn test_classify_scsv_response_accepts_complete_non_alert_record() {
+        let response = [0x16, 0x03, 0x03, 0x00, 0x01, 0x02];
+        let result = classify_scsv_response(&response);
+        assert!(result.vulnerable);
+        assert!(!result.inconclusive);
     }
 
     #[test]
