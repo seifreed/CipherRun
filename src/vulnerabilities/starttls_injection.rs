@@ -3,8 +3,9 @@
 
 use crate::Result;
 use crate::constants::TLS_HANDSHAKE_TIMEOUT;
+use crate::starttls::response;
 use crate::utils::network::Target;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::time::{Duration, timeout};
 
@@ -127,37 +128,57 @@ impl StarttlsInjectionTester {
         &self,
         mut stream: TcpStream,
     ) -> Result<StarttlsInjectionStatus> {
-        let mut buf = vec![0u8; 4096];
+        let mut reader = BufReader::new(&mut stream);
 
-        // Read server greeting
-        let n = match timeout(Duration::from_secs(2), stream.read(&mut buf)).await {
-            Ok(Ok(n)) if n > 0 => n,
+        let (code, _greeting) = match timeout(
+            Duration::from_secs(2),
+            response::read_multiline_status(&mut reader, "SMTP", 100),
+        )
+        .await
+        {
+            Ok(Ok(result)) => result,
             _ => return Ok(StarttlsInjectionStatus::Inconclusive),
         };
-        let response = response_text(&buf, n, "SMTP greeting")?;
 
-        if !response.starts_with("220") {
+        if code != 220 {
             return Ok(StarttlsInjectionStatus::NotVulnerable);
         }
 
         // Send EHLO
-        stream.write_all(b"EHLO test.local\r\n").await?;
-        match timeout(Duration::from_secs(2), stream.read(&mut buf)).await {
-            Ok(Ok(n)) if n > 0 => {}
+        reader.get_mut().write_all(b"EHLO test.local\r\n").await?;
+        let _ = match timeout(
+            Duration::from_secs(2),
+            response::read_multiline_status(&mut reader, "SMTP", 100),
+        )
+        .await
+        {
+            Ok(Ok(result)) => result,
             _ => return Ok(StarttlsInjectionStatus::Inconclusive),
-        }
+        };
 
         // Send STARTTLS followed immediately by injected command
         // A vulnerable server will execute the injected command before TLS upgrade
         let injection_payload = b"STARTTLS\r\nMAIL FROM:<injection@test.com>\r\n";
-        stream.write_all(injection_payload).await?;
+        reader.get_mut().write_all(injection_payload).await?;
 
-        // Read response
-        let n = match timeout(Duration::from_secs(2), stream.read(&mut buf)).await {
-            Ok(Ok(n)) if n > 0 => n,
-            _ => return Ok(StarttlsInjectionStatus::Inconclusive),
-        };
-        let response = response_text(&buf, n, "SMTP injection")?;
+        // Read the full STARTTLS response burst, including a follow-up injected
+        // command reply that may arrive in a separate TCP packet.
+        let mut response = String::new();
+        for _ in 0..8 {
+            match timeout(
+                Duration::from_secs(2),
+                response::read_status_line(&mut reader, "SMTP"),
+            )
+            .await
+            {
+                Ok(Ok((_code, line))) => response.push_str(&line),
+                Ok(Err(_)) if response.is_empty() => {
+                    return Ok(StarttlsInjectionStatus::Inconclusive);
+                }
+                Ok(Err(_)) => break,
+                Err(_) => break,
+            }
+        }
 
         // If server accepts the injected MAIL FROM before TLS, it's vulnerable.
         // Expected: Only "220 Ready to start TLS" (no "250" at all)
@@ -556,6 +577,52 @@ mod tests {
             .await
             .expect("test assertion should succeed");
         assert!(vulnerable);
+    }
+
+    #[tokio::test]
+    async fn test_smtp_injection_reads_split_multiline_response() {
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            socket
+                .write_all(b"220-mail.example.com ESMTP Postfix\r\n")
+                .await
+                .unwrap();
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            socket.write_all(b"220 ready\r\n").await.unwrap();
+
+            let mut buf = vec![0u8; 128];
+            let _ = socket.read(&mut buf).await.unwrap();
+
+            socket.write_all(b"250-mail.example.com\r\n").await.unwrap();
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            socket.write_all(b"250 STARTTLS\r\n").await.unwrap();
+
+            let _ = socket.read(&mut buf).await.unwrap();
+            socket
+                .write_all(b"220 Ready to start TLS\r\n")
+                .await
+                .unwrap();
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            socket.write_all(b"250 OK\r\n").await.unwrap();
+        });
+
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+        let tester = StarttlsInjectionTester::new(target);
+
+        let status = tester.test_smtp_injection_status().await.unwrap();
+        server.await.unwrap();
+
+        assert_eq!(status, StarttlsInjectionStatus::Vulnerable);
     }
 
     #[tokio::test]
