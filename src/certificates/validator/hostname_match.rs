@@ -4,19 +4,18 @@ use super::*;
 /// Returns the CN value without leading/trailing whitespace, or None if not found.
 fn extract_cn_value(subject_lower: &str) -> Option<&str> {
     for (pos, _) in subject_lower.match_indices("cn=") {
-        let before_ok = pos == 0
-            || subject_lower[..pos].ends_with(", ")
-            || subject_lower[..pos].ends_with(',')
-            || subject_lower[..pos].ends_with('/');
+        let before = subject_lower.get(..pos).unwrap_or_default();
+        let before_ok =
+            pos == 0 || before.ends_with(", ") || before.ends_with(',') || before.ends_with('/');
         if !before_ok {
             continue;
         }
         let value_start = pos + "cn=".len();
-        let rest = &subject_lower[value_start..];
+        let rest = subject_lower.get(value_start..)?;
         // Use ", " (comma-space) as the RDN separator to avoid cutting
         // CNs that legitimately contain commas inside the value.
         let value_end = rest.find(", ").unwrap_or(rest.len());
-        return Some(rest[..value_end].trim());
+        return Some(rest.get(..value_end)?.trim());
     }
     None
 }
@@ -58,10 +57,7 @@ impl CertificateValidator {
                 }
                 // Check if hostname ends with the domain part (e.g., ".example.com")
                 let domain_suffix = format!(".{}", san_domain);
-                if hostname_lower.ends_with(&domain_suffix) {
-                    // Extract the label before the domain suffix
-                    // e.g., for "www.example.com" and ".example.com", we get "www"
-                    let prefix = &hostname_lower[..hostname_lower.len() - domain_suffix.len()];
+                if let Some(prefix) = hostname_lower.strip_suffix(&domain_suffix) {
                     // Wildcard matches exactly one label (no dots in prefix)
                     if !prefix.is_empty() && !prefix.contains('.') {
                         return true;
@@ -87,11 +83,11 @@ impl CertificateValidator {
                 .filter(|d| !d.is_empty() && d.contains('.'))
             {
                 let domain_suffix = format!(".{}", wildcard_domain);
-                if hostname_lower.ends_with(&domain_suffix) {
-                    let prefix = &hostname_lower[..hostname_lower.len() - domain_suffix.len()];
-                    if !prefix.is_empty() && !prefix.contains('.') {
-                        return true;
-                    }
+                if let Some(prefix) = hostname_lower.strip_suffix(&domain_suffix)
+                    && !prefix.is_empty()
+                    && !prefix.contains('.')
+                {
+                    return true;
                 }
             }
         }

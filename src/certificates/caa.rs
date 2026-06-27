@@ -166,7 +166,7 @@ impl CaaChecker {
         let line_lower = line.to_ascii_lowercase();
         let marker_lower = marker.to_ascii_lowercase();
         let index = line_lower.find(&marker_lower)?;
-        Some(&line[index + marker.len()..])
+        line.get(index + marker.len()..)
     }
 
     /// Analyze CAA records for security issues
