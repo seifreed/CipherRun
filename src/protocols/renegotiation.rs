@@ -36,6 +36,7 @@ pub enum RenegotiationSupport {
     InsecureRenegotiation,   // Renegotiation without RFC 5746
     ClientInitiatedDisabled, // Server doesn't allow client-initiated
     NotSupported,            // Renegotiation not supported
+    Inconclusive,            // Transport/handshake failure prevented a conclusion
 }
 
 impl<'a> RenegotiationTester<'a> {
@@ -164,7 +165,7 @@ impl<'a> RenegotiationTester<'a> {
             && matches!(insecure_result, InsecureRenegotiationResult::Inconclusive)
         {
             return Ok(RenegotiationTestResult {
-                support: RenegotiationSupport::NotSupported,
+                support: RenegotiationSupport::Inconclusive,
                 secure_extension: false,
                 vulnerable: false,
                 needs_verification: true,
@@ -175,10 +176,6 @@ impl<'a> RenegotiationTester<'a> {
         }
 
         let secure_extension = secure_extension_probe.unwrap_or(false);
-
-        // Determine if manual verification is needed
-        let needs_verification =
-            matches!(insecure_result, InsecureRenegotiationResult::Inconclusive);
 
         // Determine support level
         let support = if secure_extension {
@@ -196,6 +193,11 @@ impl<'a> RenegotiationTester<'a> {
                 other => other,
             }
         };
+
+        // Determine if manual verification is needed
+        let needs_verification =
+            matches!(insecure_result, InsecureRenegotiationResult::Inconclusive)
+                || matches!(support, RenegotiationSupport::Inconclusive);
 
         let vulnerable = matches!(support, RenegotiationSupport::InsecureRenegotiation);
 
@@ -216,6 +218,9 @@ impl<'a> RenegotiationTester<'a> {
                 } else {
                     "Renegotiation not supported".to_string()
                 }
+            }
+            RenegotiationSupport::Inconclusive => {
+                "Renegotiation support inconclusive - transport or handshake failures prevented a reliable result".to_string()
             }
         };
 
@@ -278,13 +283,19 @@ impl<'a> RenegotiationTester<'a> {
                             // Server supports secure renegotiation
                             Ok(RenegotiationSupport::SecureRenegotiation)
                         }
-                        Err(_) => Ok(RenegotiationSupport::NotSupported),
+                        Err(err) => {
+                            if crate::utils::network::is_transport_anomaly_error(&err.to_string()) {
+                                Ok(RenegotiationSupport::Inconclusive)
+                            } else {
+                                Ok(RenegotiationSupport::NotSupported)
+                            }
+                        }
                     }
                 })
                 .await
                 .map_err(|e| crate::TlsError::Other(format!("renegotiation task failed: {}", e)))?
             }
-            _ => Ok(RenegotiationSupport::NotSupported),
+            _ => Ok(RenegotiationSupport::Inconclusive),
         }
     }
 
@@ -794,6 +805,36 @@ mod tests {
         assert!(!result.vulnerable);
         assert!(result.inconclusive);
         assert!(result.needs_verification);
+    }
+
+    #[tokio::test]
+    async fn test_renegotiation_support_transport_anomaly_is_inconclusive() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test assertion should succeed");
+        let addr = listener
+            .local_addr()
+            .expect("test assertion should succeed");
+        tokio::spawn(async move {
+            if let Ok((socket, _)) = listener.accept().await {
+                drop(socket);
+            }
+        });
+
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            addr.port(),
+            vec!["127.0.0.1".parse().expect("valid IP")],
+        )
+        .expect("test assertion should succeed");
+
+        let tester = RenegotiationTester::new(&target);
+        let support = tester
+            .test_renegotiation_support()
+            .await
+            .expect("test assertion should succeed");
+
+        assert_eq!(support, RenegotiationSupport::Inconclusive);
     }
 
     #[test]
