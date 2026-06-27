@@ -581,7 +581,9 @@ impl<'a> RenegotiationTester<'a> {
             || Self::read_u8_at(response, 5, "ServerHello handshake type")?
                 != HANDSHAKE_TYPE_SERVER_HELLO
         {
-            return Ok(false);
+            return Err(crate::TlsError::ParseError {
+                message: "ServerHello handshake type missing or invalid".to_string(),
+            });
         }
 
         if response.len() < 44 {
@@ -880,7 +882,7 @@ mod tests {
         .unwrap();
         let tester = RenegotiationTester::new(&target);
         let response = vec![0x01, 0x02, 0x03, 0x04];
-        assert!(!tester.has_renegotiation_info_extension(&response).unwrap());
+        assert!(tester.has_renegotiation_info_extension(&response).is_err());
     }
 
     #[test]
@@ -985,7 +987,7 @@ mod tests {
         .unwrap();
         let tester = RenegotiationTester::new(&target);
         let response = vec![0xff];
-        assert!(!tester.has_renegotiation_info_extension(&response).unwrap());
+        assert!(tester.has_renegotiation_info_extension(&response).is_err());
     }
 
     #[test]
@@ -1139,5 +1141,21 @@ mod tests {
             err.to_string()
                 .contains("ServerHello extension block contains trailing bytes")
         );
+    }
+
+    #[test]
+    fn test_has_renegotiation_info_extension_rejects_non_serverhello() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["93.184.216.34".parse().unwrap()],
+        )
+        .unwrap();
+        let tester = RenegotiationTester::new(&target);
+
+        let err = tester
+            .has_renegotiation_info_extension(&[0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28])
+            .expect_err("alert responses must be rejected");
+        assert!(err.to_string().contains("handshake type"));
     }
 }
