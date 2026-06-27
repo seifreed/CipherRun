@@ -246,26 +246,31 @@ impl<'a> RenegotiationTester<'a> {
 
         match self.starttls_connect(addr, DEFAULT_READ_TIMEOUT).await {
             Ok(stream) => {
-                let std_stream = stream.into_std()?;
-                std_stream.set_nonblocking(false)?;
+                let std_stream =
+                    crate::utils::network::into_blocking_std_stream(stream, DEFAULT_READ_TIMEOUT)?;
 
-                let mut builder = SslConnector::builder(SslMethod::tls())?;
-                // Certificate validity is irrelevant to RFC 5746 secure
-                // renegotiation support; a verifying connector would fail the
-                // handshake at cert validation on bad-cert hosts and falsely
-                // report NotSupported.
-                builder.set_verify(SslVerifyMode::NONE);
+                let hostname = self.target.hostname.clone();
+                tokio::task::spawn_blocking(move || -> Result<RenegotiationSupport> {
+                    let mut builder = SslConnector::builder(SslMethod::tls())?;
+                    // Certificate validity is irrelevant to RFC 5746 secure
+                    // renegotiation support; a verifying connector would fail the
+                    // handshake at cert validation on bad-cert hosts and falsely
+                    // report NotSupported.
+                    builder.set_verify(SslVerifyMode::NONE);
 
-                let connector = builder.build();
+                    let connector = builder.build();
 
-                match connector.connect(&self.target.hostname, std_stream) {
-                    Ok(_ssl_stream) => {
-                        // OpenSSL client with RFC 5746 connected successfully
-                        // Server supports secure renegotiation
-                        Ok(RenegotiationSupport::SecureRenegotiation)
+                    match connector.connect(&hostname, std_stream) {
+                        Ok(_ssl_stream) => {
+                            // OpenSSL client with RFC 5746 connected successfully
+                            // Server supports secure renegotiation
+                            Ok(RenegotiationSupport::SecureRenegotiation)
+                        }
+                        Err(_) => Ok(RenegotiationSupport::NotSupported),
                     }
-                    Err(_) => Ok(RenegotiationSupport::NotSupported),
-                }
+                })
+                .await
+                .map_err(|e| crate::TlsError::Other(format!("renegotiation task failed: {}", e)))?
             }
             _ => Ok(RenegotiationSupport::NotSupported),
         }
