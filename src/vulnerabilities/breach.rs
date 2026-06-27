@@ -170,8 +170,8 @@ impl BreachTester {
                 Err(_) => return Ok(None),
             };
 
-        let std_stream = stream.into_std()?;
-        std_stream.set_nonblocking(false)?;
+        let std_stream =
+            crate::utils::network::into_blocking_std_stream(stream, TLS_HANDSHAKE_TIMEOUT)?;
 
         let hostname = self.target.hostname.clone();
         tokio::task::spawn_blocking(move || {
