@@ -220,7 +220,7 @@ mod tests {
             .await
             .expect("test assertion should succeed");
         assert!(!result.supported);
-        assert!(!result.inconclusive);
+        assert!(result.inconclusive);
     }
 
     #[tokio::test]

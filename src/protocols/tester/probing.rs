@@ -583,7 +583,7 @@ impl ProtocolTester {
         &self,
         _addr: std::net::SocketAddr,
     ) -> Result<ProtocolProbeOutcome> {
-        Ok(ProtocolProbeOutcome::NotSupported)
+        Ok(ProtocolProbeOutcome::Inconclusive)
     }
 }
 
