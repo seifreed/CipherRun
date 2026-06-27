@@ -136,6 +136,13 @@ impl ServerHelloCapture {
                 message: "ServerHello handshake length exceeds record length".to_string(),
             });
         }
+        let data = data
+            .get(..handshake_end)
+            .ok_or_else(|| TlsError::ParseError {
+                message: "ServerHello handshake length exceeds available data".to_string(),
+            })?;
+        cursor = Cursor::new(data);
+        cursor.set_position(9);
 
         // Parse ServerHello version (2 bytes)
         let mut version_bytes = [0u8; 2];
@@ -195,7 +202,7 @@ impl ServerHelloCapture {
 
         // Check if there are extensions (need at least 2 bytes for extensions length)
         let position = Self::cursor_position(&cursor, "ServerHello")?;
-        if handshake_end.saturating_sub(position) >= 2 {
+        if data.len().saturating_sub(position) >= 2 {
             // Read extensions length
             let mut ext_len_bytes = [0u8; 2];
             if cursor.read_exact(&mut ext_len_bytes).is_ok() {
@@ -209,7 +216,7 @@ impl ServerHelloCapture {
                         }
                     })?;
 
-                    if ext_end > handshake_end {
+                    if ext_end > data.len() {
                         return Err(TlsError::ParseError {
                             message: "Extensions exceed ServerHello length".to_string(),
                         });
@@ -473,6 +480,24 @@ mod tests {
 
         let parsed = ServerHelloCapture::parse(&data).expect("trailing bytes must be ignored");
         assert!(parsed.extensions.is_empty());
+    }
+
+    #[test]
+    fn test_parse_serverhello_rejects_body_after_handshake_end() {
+        let data = vec![
+            0x16, 0x03, 0x03, 0x00, 0x2A, // record contains a complete body
+            0x02, 0x00, 0x00, 0x00, // ServerHello declares an empty body
+            0x03, 0x03, // trailing bytes must not satisfy required fields
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // random
+            0x00, // session id length
+            0x00, 0x2F, // cipher suite
+            0x00, // compression
+        ];
+
+        let err = ServerHelloCapture::parse(&data).expect_err("truncated handshake body must fail");
+        assert!(err.to_string().contains("Failed to read version"));
     }
 
     #[test]
