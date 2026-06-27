@@ -332,7 +332,11 @@ impl<'a> RenegotiationTester<'a> {
                         // it may be vulnerable
                         if response.first() == Some(&CONTENT_TYPE_HANDSHAKE) && response.len() > 5 {
                             // Check if server's ServerHello includes renegotiation_info
-                            let has_reneg_info = self.has_renegotiation_info_extension(response)?;
+                            let has_reneg_info =
+                                match self.has_renegotiation_info_extension(response) {
+                                    Ok(value) => value,
+                                    Err(_) => return Ok(InsecureRenegotiationResult::Inconclusive),
+                                };
 
                             // Detection analysis:
                             // - Server sends ServerHello WITHOUT renegotiation_info extension:
@@ -393,7 +397,10 @@ impl<'a> RenegotiationTester<'a> {
                     Ok(Ok(n)) if n > 0 => {
                         // Look for renegotiation_info extension (0xff01)
                         let response = Self::slice_range(&buffer, 0, n, "renegotiation response")?;
-                        let has_extension = self.has_renegotiation_info_extension(response)?;
+                        let has_extension = match self.has_renegotiation_info_extension(response) {
+                            Ok(value) => value,
+                            Err(_) => return Ok(None),
+                        };
                         Ok(Some(has_extension))
                     }
                     _ => Ok(None),
@@ -570,12 +577,18 @@ impl<'a> RenegotiationTester<'a> {
         const HANDSHAKE_TYPE_SERVER_HELLO: u8 = 0x02;
 
         // Minimum ServerHello: 5 (record) + 4 (handshake) + 2 (version) + 32 (random) + 1 (sid len) = 44
-        if response.len() < 44
-            || response.first() != Some(&CONTENT_TYPE_HANDSHAKE)
+        if response.first() != Some(&CONTENT_TYPE_HANDSHAKE)
             || Self::read_u8_at(response, 5, "ServerHello handshake type")?
                 != HANDSHAKE_TYPE_SERVER_HELLO
         {
             return Ok(false);
+        }
+
+        if response.len() < 44 {
+            return Err(crate::TlsError::ParseError {
+                message: "ServerHello truncated before minimum renegotiation extension length"
+                    .to_string(),
+            });
         }
 
         let record_len = Self::read_u16_at(response, 3, "TLS record length")? as usize;
@@ -973,6 +986,32 @@ mod tests {
         let tester = RenegotiationTester::new(&target);
         let response = vec![0xff];
         assert!(!tester.has_renegotiation_info_extension(&response).unwrap());
+    }
+
+    #[test]
+    fn test_has_renegotiation_info_extension_rejects_truncated_serverhello() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["93.184.216.34".parse().unwrap()],
+        )
+        .unwrap();
+        let tester = RenegotiationTester::new(&target);
+
+        let response = vec![
+            0x16, 0x03, 0x03, 0x00, 0x1a, // handshake record claims 26 bytes
+            0x02, 0x00, 0x00, 0x16, // ServerHello, handshake length 22
+            0x03, 0x03, // version
+            0x00, 0x00, 0x00, 0x00, // truncated before random/session_id
+        ];
+
+        let err = tester
+            .has_renegotiation_info_extension(&response)
+            .expect_err("truncated ServerHello should fail");
+        assert!(
+            err.to_string()
+                .contains("truncated before minimum renegotiation extension length")
+        );
     }
 
     #[test]
