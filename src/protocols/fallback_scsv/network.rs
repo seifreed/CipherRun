@@ -69,9 +69,8 @@ impl FallbackScsvTester<'_> {
 
                 stream.write_all(&client_hello_no_scsv).await?;
 
-                let mut buffer = vec![0u8; 8192];
-                let baseline = timeout(Duration::from_secs(3), stream.read(&mut buffer)).await;
-                if !self.baseline_fallback_accepted(baseline, &buffer) {
+                let baseline = timeout(Duration::from_secs(3), Self::read_tls_record(&mut stream)).await;
+                if !self.baseline_fallback_accepted_record(baseline) {
                     tracing::debug!(
                         "SCSV test: baseline fallback without SCSV did not complete cleanly"
                     );
@@ -94,20 +93,13 @@ impl FallbackScsvTester<'_> {
 
                 stream.write_all(&client_hello_scsv).await?;
 
-                let mut buffer = vec![0u8; 8192];
-                match timeout(Duration::from_secs(3), stream.read(&mut buffer)).await {
-                    Ok(Ok(n)) if n > 0 => {
+                match timeout(Duration::from_secs(3), Self::read_tls_record(&mut stream)).await {
+                    Ok(Ok(Some(response))) => {
                         tracing::debug!(
                             "SCSV test: received {} bytes, first byte: 0x{:02x}",
-                            n,
-                            buffer.first().copied().unwrap_or_default()
+                            response.len(),
+                            response.first().copied().unwrap_or_default()
                         );
-
-                        let Some(response) = buffer.get(..n) else {
-                            return Err(crate::TlsError::ParseError {
-                                message: "SCSV response read length exceeded buffer".to_string(),
-                            });
-                        };
 
                         let bytes_hex: Vec<String> = response
                             .iter()
@@ -115,7 +107,7 @@ impl FallbackScsvTester<'_> {
                             .collect();
                         tracing::debug!("SCSV test: full response bytes: {}", bytes_hex.join(" "));
 
-                        let support = classify_scsv_response(response);
+                        let support = classify_scsv_response(&response);
                         if support.supported {
                             tracing::info!(
                                 "✓ Server correctly rejected inappropriate fallback with alert 0x56 (inappropriate_fallback)"
@@ -129,9 +121,9 @@ impl FallbackScsvTester<'_> {
                         }
                         Ok(support)
                     }
-                    Ok(Ok(_)) => {
+                    Ok(Ok(None)) => {
                         tracing::debug!(
-                            "SCSV test: Empty response - server may have rejected connection"
+                            "SCSV test: Empty or truncated response - server may have rejected connection"
                         );
                         Ok(ScsvSupport::inconclusive())
                     }
@@ -204,6 +196,28 @@ fn classify_scsv_response(response: &[u8]) -> ScsvSupport {
 }
 
 impl FallbackScsvTester<'_> {
+    async fn read_tls_record(
+        stream: &mut tokio::net::TcpStream,
+    ) -> std::io::Result<Option<Vec<u8>>> {
+        let mut header = [0u8; 5];
+        if stream.read_exact(&mut header).await.is_err() {
+            return Ok(None);
+        }
+
+        let record_len = u16::from_be_bytes([header[3], header[4]]) as usize;
+        let total_len = match 5usize.checked_add(record_len) {
+            Some(len) => len,
+            None => return Ok(None),
+        };
+        let mut response = vec![0u8; total_len];
+        response[..5].copy_from_slice(&header);
+        if stream.read_exact(&mut response[5..]).await.is_err() {
+            return Ok(None);
+        }
+
+        Ok(Some(response))
+    }
+
     pub(super) fn baseline_fallback_accepted(
         &self,
         read_result: std::result::Result<
@@ -230,6 +244,19 @@ impl FallbackScsvTester<'_> {
                 }
                 5 + record_len <= n
             }
+            _ => false,
+        }
+    }
+
+    pub(super) fn baseline_fallback_accepted_record(
+        &self,
+        read_result: std::result::Result<
+            std::result::Result<Option<Vec<u8>>, std::io::Error>,
+            tokio::time::error::Elapsed,
+        >,
+    ) -> bool {
+        match read_result {
+            Ok(Ok(Some(buffer))) => self.baseline_fallback_accepted(Ok(Ok(buffer.len())), &buffer),
             _ => false,
         }
     }
@@ -362,4 +389,32 @@ mod tests {
             .expect("probe should return a result");
         assert!(result.inconclusive);
     }
+
+    #[tokio::test]
+    async fn test_read_tls_record_handles_fragmented_alert() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("local addr should exist");
+
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept should succeed");
+            let alert = [0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x56];
+            let _ = socket.write_all(&alert[..4]).await;
+            socket.flush().await.expect("flush first fragment");
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            let _ = socket.write_all(&alert[4..]).await;
+            socket.flush().await.expect("flush second fragment");
+        });
+
+        let mut stream = tokio::net::TcpStream::connect(addr)
+            .await
+            .expect("connect should succeed");
+        let record = FallbackScsvTester::read_tls_record(&mut stream)
+            .await
+            .expect("read should succeed")
+            .expect("record should be complete");
+        assert_eq!(record, vec![0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x56]);
+    }
+
 }
