@@ -116,6 +116,7 @@ where
 {
     let mut full_response = String::new();
     let mut first_code = 0u16;
+    let mut saw_final_line = false;
 
     for line_count in 0..max_lines {
         let (code, line) = read_status_line(reader, protocol_name).await?;
@@ -133,8 +134,18 @@ where
         // Final line: "NNN " (space after code, not dash). Compare the 4th byte
         // directly so a multi-byte char at that position cannot panic the slice.
         if line.as_bytes().get(3) == Some(&b' ') {
+            saw_final_line = true;
             break;
         }
+    }
+
+    if !saw_final_line {
+        return Err(crate::error::TlsError::ParseError {
+            message: format!(
+                "{} multi-line response exceeded {} lines without a final line",
+                protocol_name, max_lines
+            ),
+        });
     }
 
     Ok((first_code, full_response))
@@ -298,5 +309,22 @@ mod tests {
             .expect("read_multiline_status should succeed");
         assert_eq!(code, 220);
         assert!(response.contains("Ready"));
+    }
+
+    #[tokio::test]
+    async fn test_read_multiline_status_rejects_missing_final_line() {
+        let (mut client, mut server) = tokio::io::duplex(128);
+        tokio::spawn(async move {
+            server
+                .write_all(b"220-First line\r\n220-Second line\r\n")
+                .await
+                .expect("test should write data");
+        });
+
+        let mut reader = BufReader::new(&mut client);
+        let err = read_multiline_status(&mut reader, "TEST", 2)
+            .await
+            .expect_err("unterminated multi-line response should fail");
+        assert!(format!("{err}").contains("without a final line"));
     }
 }
