@@ -209,19 +209,7 @@ impl BreachTester {
                                 .to_string(),
                         })?;
                         let response = String::from_utf8_lossy(bytes);
-                        // Require a 2xx response: 404/error pages that echo the URL in their
-                        // body would otherwise trigger a false positive for dynamic content.
-                        let is_success =
-                            response.strip_prefix("HTTP/").is_some_and(|status_line| {
-                                status_line
-                                    .split_once(' ')
-                                    .map(|x| x.1)
-                                    .and_then(|rest| rest.split_whitespace().next())
-                                    .and_then(|code| code.parse::<u16>().ok())
-                                    .map(|code| (200..300).contains(&code))
-                                    .unwrap_or(false)
-                            });
-                        Ok(Some(is_success && response.contains(marker)))
+                        Ok(Self::classify_dynamic_content_response(&response, marker))
                     } else {
                         Ok(None)
                     }
@@ -353,6 +341,21 @@ impl BreachTester {
 
         false
     }
+
+    fn classify_dynamic_content_response(response: &str, marker: &str) -> Option<bool> {
+        let status_line = response.strip_prefix("HTTP/")?;
+        let status_code = status_line
+            .split_once(' ')
+            .map(|x| x.1)
+            .and_then(|rest| rest.split_whitespace().next())
+            .and_then(|code| code.parse::<u16>().ok())?;
+
+        if (200..300).contains(&status_code) {
+            Some(response.contains(marker))
+        } else {
+            Some(false)
+        }
+    }
 }
 
 /// BREACH test result
@@ -459,6 +462,25 @@ mod tests {
             result.inconclusive,
             "unreachable target must yield inconclusive BREACH verdict; got details={}",
             result.details
+        );
+    }
+
+    #[test]
+    fn test_dynamic_content_response_requires_http_status() {
+        assert_eq!(
+            BreachTester::classify_dynamic_content_response("not http", "marker"),
+            None
+        );
+        assert_eq!(
+            BreachTester::classify_dynamic_content_response("HTTP/1.1 404 Not Found\r\n\r\n", "marker"),
+            Some(false)
+        );
+        assert_eq!(
+            BreachTester::classify_dynamic_content_response(
+                "HTTP/1.1 200 OK\r\n\r\nmarker",
+                "marker"
+            ),
+            Some(true)
         );
     }
 }
