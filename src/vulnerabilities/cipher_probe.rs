@@ -196,9 +196,10 @@ fn classify_probe_response(response: &[u8], n: usize) -> CipherProbeStatus {
         else {
             return CipherProbeStatus::Inconclusive;
         };
+        let record_end = record_len + 5;
         if response.get(5) == Some(&HANDSHAKE_TYPE_SERVER_HELLO)
-            && record_len + 5 <= n
-            && handshake_len + 9 <= n
+            && record_end <= n
+            && handshake_len + 9 <= record_end
         {
             return CipherProbeStatus::Supported;
         }
@@ -324,6 +325,19 @@ mod tests {
         let mut response = vec![0u8; 16];
         set_byte(&mut response, 0, CONTENT_TYPE_HANDSHAKE);
         set_byte(&mut response, 5, HANDSHAKE_TYPE_SERVER_HELLO);
+        assert_eq!(
+            classify_probe_response(&response, response.len()),
+            CipherProbeStatus::Inconclusive
+        );
+    }
+
+    #[test]
+    fn test_classify_serverhello_rejects_handshake_length_past_record() {
+        let mut response = vec![0u8; MIN_SERVER_HELLO_LEN + 32];
+        set_byte(&mut response, 0, CONTENT_TYPE_HANDSHAKE);
+        set_u16_be(&mut response, 3, (MIN_SERVER_HELLO_LEN - 5) as u16);
+        set_byte(&mut response, 5, HANDSHAKE_TYPE_SERVER_HELLO);
+        set_u24_be(&mut response, 6, MIN_SERVER_HELLO_LEN);
         assert_eq!(
             classify_probe_response(&response, response.len()),
             CipherProbeStatus::Inconclusive
