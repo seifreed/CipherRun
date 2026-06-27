@@ -261,20 +261,11 @@ impl TicketbleedTester {
                 });
             }
             if content_type == 0x16 {
-                let hs_start = header_end;
-                if hs_start < record_end && response.get(hs_start) == Some(&0x04) {
+                let mut hs_start = header_end;
+                while let Some(hs_body_start) =
+                    hs_start.checked_add(4).filter(|&end| end <= record_end)
+                {
                     // NewSessionTicket: type(1) + length(3) + lifetime(4) + ticket_length(2) + ticket
-                    let hs_body_start =
-                        hs_start
-                            .checked_add(4)
-                            .ok_or_else(|| crate::TlsError::ParseError {
-                                message: "Ticketbleed ticket handshake header overflow".to_string(),
-                            })?;
-                    if hs_body_start > record_end {
-                        return Err(crate::TlsError::ParseError {
-                            message: "Ticketbleed ticket handshake header truncated".to_string(),
-                        });
-                    }
                     let hs_len_offset =
                         hs_start
                             .checked_add(1)
@@ -297,6 +288,10 @@ impl TicketbleedTester {
                             message: "Ticketbleed ticket handshake length exceeds record"
                                 .to_string(),
                         });
+                    }
+                    if response.get(hs_start) != Some(&0x04) {
+                        hs_start = hs_end;
+                        continue;
                     }
 
                     let ticket_len_offset = hs_body_start.checked_add(4).ok_or_else(|| {
@@ -343,6 +338,11 @@ impl TicketbleedTester {
                             })
                         });
                 }
+                if hs_start != record_end {
+                    return Err(crate::TlsError::ParseError {
+                        message: "Ticketbleed ticket handshake header truncated".to_string(),
+                    });
+                }
             }
             offset = record_end;
         }
@@ -381,19 +381,10 @@ impl TicketbleedTester {
                 });
             }
             if content_type == 0x16 {
-                let hs_start = header_end;
-                if hs_start < record_end && response.get(hs_start) == Some(&0x04) {
-                    let hs_body_start =
-                        hs_start
-                            .checked_add(4)
-                            .ok_or_else(|| crate::TlsError::ParseError {
-                                message: "Ticketbleed handshake header overflow".to_string(),
-                            })?;
-                    if hs_body_start > record_end {
-                        return Err(crate::TlsError::ParseError {
-                            message: "Ticketbleed NewSessionTicket header truncated".to_string(),
-                        });
-                    }
+                let mut hs_start = header_end;
+                while let Some(hs_body_start) =
+                    hs_start.checked_add(4).filter(|&end| end <= record_end)
+                {
                     let hs_len_offset =
                         hs_start
                             .checked_add(1)
@@ -415,7 +406,15 @@ impl TicketbleedTester {
                             message: "Ticketbleed handshake length exceeds record".to_string(),
                         });
                     }
-                    return Ok(true);
+                    if response.get(hs_start) == Some(&0x04) {
+                        return Ok(true);
+                    }
+                    hs_start = hs_end;
+                }
+                if hs_start != record_end {
+                    return Err(crate::TlsError::ParseError {
+                        message: "Ticketbleed NewSessionTicket header truncated".to_string(),
+                    });
                 }
             }
             offset = record_end;
@@ -629,6 +628,31 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_parse_new_session_ticket_inside_combined_record() {
+        let tester = TicketbleedTester::new(ticketbleed_test_target());
+        let response = handshake_record(&[
+            handshake_message(0x0b, &[]),
+            new_session_ticket_message(b"ticket"),
+        ]);
+
+        assert!(tester.parse_new_session_ticket(&response).unwrap());
+    }
+
+    #[test]
+    fn test_extract_session_ticket_inside_combined_record() {
+        let tester = TicketbleedTester::new(ticketbleed_test_target());
+        let response = handshake_record(&[
+            handshake_message(0x0b, &[]),
+            new_session_ticket_message(b"ticket"),
+        ]);
+
+        assert_eq!(
+            tester.extract_session_ticket(&response).unwrap().as_deref(),
+            Some(&b"ticket"[..])
+        );
+    }
+
     fn ticketbleed_test_target() -> Target {
         Target::with_ips(
             "example.com".to_string(),
@@ -636,6 +660,30 @@ mod tests {
             vec!["93.184.216.34".parse().unwrap()],
         )
         .unwrap()
+    }
+
+    fn handshake_message(handshake_type: u8, body: &[u8]) -> Vec<u8> {
+        let mut message = vec![handshake_type, 0, 0, 0];
+        message.extend_from_slice(body);
+        write_u24_at(&mut message, 1, body.len());
+        message
+    }
+
+    fn handshake_record(messages: &[Vec<u8>]) -> Vec<u8> {
+        let body_len: usize = messages.iter().map(Vec::len).sum();
+        let mut record = vec![CONTENT_TYPE_HANDSHAKE, 0x03, 0x03];
+        record.extend_from_slice(&(body_len as u16).to_be_bytes());
+        for message in messages {
+            record.extend_from_slice(message);
+        }
+        record
+    }
+
+    fn new_session_ticket_message(ticket: &[u8]) -> Vec<u8> {
+        let mut body = vec![0, 0, 0, 0];
+        body.extend_from_slice(&(ticket.len() as u16).to_be_bytes());
+        body.extend_from_slice(ticket);
+        handshake_message(0x04, &body)
     }
 
     /// Build a ServerHello TLS record echoing `session_id`.
