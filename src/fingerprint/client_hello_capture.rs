@@ -305,13 +305,22 @@ impl ClientHelloCapture {
             let extensions_len = Self::read_u16_at(data, cursor, "Extensions length")? as usize;
             cursor += 2;
 
-            if data.len() < cursor + extensions_len {
+            let extensions_end =
+                cursor
+                    .checked_add(extensions_len)
+                    .ok_or_else(|| TlsError::ParseError {
+                        message: "Extensions length overflow".to_string(),
+                    })?;
+            if data.len() < extensions_end {
                 return Err(TlsError::ParseError {
                     message: "Data too short for extensions".to_string(),
                 });
             }
-
-            let extensions_end = cursor + extensions_len;
+            if extensions_end != data.len() {
+                return Err(TlsError::ParseError {
+                    message: "ClientHello extension block contains trailing bytes".to_string(),
+                });
+            }
 
             while cursor < extensions_end {
                 if cursor + 4 > extensions_end {
@@ -639,6 +648,22 @@ mod tests {
         assert!(
             err.to_string()
                 .contains("Data too short for extension data")
+        );
+    }
+
+    #[test]
+    fn test_parse_rejects_extension_block_trailing_bytes() {
+        let capture = ClientHelloCapture::synthetic(0x0303, vec![0x1301], vec![(0x0000, vec![])]);
+        let mut bytes = capture.to_bytes().expect("ClientHello should serialize");
+
+        let ext_block_len_pos = bytes.len() - 6;
+        bytes[ext_block_len_pos..ext_block_len_pos + 2].copy_from_slice(&[0x00, 0x00]);
+
+        let err =
+            ClientHelloCapture::parse(&bytes).expect_err("trailing extension bytes should fail");
+        assert!(
+            err.to_string()
+                .contains("ClientHello extension block contains trailing bytes")
         );
     }
 
