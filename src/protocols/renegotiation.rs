@@ -81,13 +81,17 @@ impl<'a> RenegotiationTester<'a> {
         Ok(())
     }
 
+    fn u16_len(value: usize, context: &str) -> Result<u16> {
+        u16::try_from(value).map_err(|_| Self::parse_error(context))
+    }
+
     fn write_u24_at(data: &mut [u8], offset: usize, value: usize, context: &str) -> Result<()> {
-        let bytes = [
-            ((value >> 16) & 0xff) as u8,
-            ((value >> 8) & 0xff) as u8,
-            (value & 0xff) as u8,
-        ];
-        Self::slice_range_mut(data, offset, 3, context)?.copy_from_slice(&bytes);
+        let value = u32::try_from(value).map_err(|_| Self::parse_error(context))?;
+        if value > 0x00ff_ffff {
+            return Err(Self::parse_error(context));
+        }
+        let bytes = value.to_be_bytes();
+        Self::slice_range_mut(data, offset, 3, context)?.copy_from_slice(&bytes[1..]);
         Ok(())
     }
 
@@ -377,8 +381,7 @@ impl<'a> RenegotiationTester<'a> {
 
         // TLS Record: Handshake
         hello.push(CONTENT_TYPE_HANDSHAKE);
-        hello.push((VERSION_TLS_1_2 >> 8) as u8);
-        hello.push((VERSION_TLS_1_2 & 0xff) as u8);
+        hello.extend_from_slice(&VERSION_TLS_1_2.to_be_bytes());
 
         // Length placeholder
         let len_pos = hello.len();
@@ -395,12 +398,13 @@ impl<'a> RenegotiationTester<'a> {
         hello.push(0x00);
 
         // Client Version: TLS 1.2
-        hello.push((VERSION_TLS_1_2 >> 8) as u8);
-        hello.push((VERSION_TLS_1_2 & 0xff) as u8);
+        hello.extend_from_slice(&VERSION_TLS_1_2.to_be_bytes());
 
         // Random (32 bytes)
-        for i in 0..32 {
-            hello.push((i * 13) as u8);
+        let mut random_byte = 0_u8;
+        for _ in 0..32 {
+            hello.push(random_byte);
+            random_byte = random_byte.wrapping_add(13);
         }
 
         // Session ID (empty)
@@ -424,8 +428,7 @@ impl<'a> RenegotiationTester<'a> {
         hello.push(0x00); // Extensions length placeholder
 
         // Renegotiation Info Extension
-        hello.push((EXTENSION_RENEGOTIATION_INFO >> 8) as u8);
-        hello.push((EXTENSION_RENEGOTIATION_INFO & 0xff) as u8);
+        hello.extend_from_slice(&EXTENSION_RENEGOTIATION_INFO.to_be_bytes());
         hello.push(0x00);
         hello.push(0x01); // Length: 1 byte
         hello.push(0x00); // Empty renegotiation info
@@ -435,7 +438,7 @@ impl<'a> RenegotiationTester<'a> {
         Self::write_u16_at(
             &mut hello,
             ext_pos,
-            ext_len as u16,
+            Self::u16_len(ext_len, "ClientHello extensions length")?,
             "ClientHello extensions length placeholder",
         )?;
 
@@ -453,7 +456,7 @@ impl<'a> RenegotiationTester<'a> {
         Self::write_u16_at(
             &mut hello,
             len_pos,
-            rec_len as u16,
+            Self::u16_len(rec_len, "ClientHello record length")?,
             "ClientHello record length placeholder",
         )?;
 
@@ -467,8 +470,7 @@ impl<'a> RenegotiationTester<'a> {
 
         // TLS Record: Handshake
         hello.push(CONTENT_TYPE_HANDSHAKE);
-        hello.push((VERSION_TLS_1_2 >> 8) as u8);
-        hello.push((VERSION_TLS_1_2 & 0xff) as u8);
+        hello.extend_from_slice(&VERSION_TLS_1_2.to_be_bytes());
 
         // Length placeholder
         let len_pos = hello.len();
@@ -485,12 +487,13 @@ impl<'a> RenegotiationTester<'a> {
         hello.push(0x00);
 
         // Client Version: TLS 1.2
-        hello.push((VERSION_TLS_1_2 >> 8) as u8);
-        hello.push((VERSION_TLS_1_2 & 0xff) as u8);
+        hello.extend_from_slice(&VERSION_TLS_1_2.to_be_bytes());
 
         // Random (32 bytes)
-        for i in 0..32 {
-            hello.push((i * 13) as u8);
+        let mut random_byte = 0_u8;
+        for _ in 0..32 {
+            hello.push(random_byte);
+            random_byte = random_byte.wrapping_add(13);
         }
 
         // Session ID (empty)
@@ -524,7 +527,7 @@ impl<'a> RenegotiationTester<'a> {
         Self::write_u16_at(
             &mut hello,
             len_pos,
-            rec_len as u16,
+            Self::u16_len(rec_len, "ClientHello record length")?,
             "ClientHello record length placeholder",
         )?;
 
@@ -640,7 +643,8 @@ mod tests {
     use super::*;
 
     fn patch_test_server_hello_lengths(response: &mut [u8]) {
-        let rec_len = (response.len() - 5) as u16;
+        let rec_len = u16::try_from(response.len() - 5)
+            .expect("test ServerHello record length must fit in u16");
         RenegotiationTester::write_u16_at(
             response,
             3,
