@@ -28,6 +28,22 @@ impl ServerHelloParser {
         Ok(u16::from_be_bytes(bytes))
     }
 
+    fn read_u24_at(data: &[u8], offset: usize, context: &str) -> Result<usize> {
+        let end = offset
+            .checked_add(3)
+            .ok_or_else(|| crate::TlsError::ParseError {
+                message: format!("{context} length overflow"),
+            })?;
+        let bytes = data
+            .get(offset..end)
+            .and_then(|bytes| <[u8; 3]>::try_from(bytes).ok())
+            .ok_or_else(|| crate::TlsError::ParseError {
+                message: format!("{context} truncated"),
+            })?;
+        let [high, mid, low] = bytes;
+        Ok(u32::from_be_bytes([0, high, mid, low]) as usize)
+    }
+
     fn slice_range<'a>(
         data: &'a [u8],
         start: usize,
@@ -70,8 +86,23 @@ impl ServerHelloParser {
         {
             crate::tls_bail!("Not a ServerHello");
         }
-        offset += 1;
-        offset += 3;
+        let hs_len = Self::read_u24_at(record, offset + 1, "Handshake message length")?;
+        let hs_body_start = offset
+            .checked_add(4)
+            .ok_or_else(|| crate::TlsError::ParseError {
+                message: "Handshake body offset overflow".to_string(),
+            })?;
+        let hs_end =
+            hs_body_start
+                .checked_add(hs_len)
+                .ok_or_else(|| crate::TlsError::ParseError {
+                    message: "Handshake message length overflow".to_string(),
+                })?;
+        if hs_end > record.len() {
+            crate::tls_bail!("ServerHello handshake length exceeds record length");
+        }
+        let record = Self::slice_range(record, 0, hs_end, "ServerHello handshake")?;
+        offset = hs_body_start;
 
         let version = Self::read_u16_at(record, offset, "ServerHello version")?;
         offset += 2;
@@ -327,6 +358,30 @@ mod tests {
         assert!(parsed.supports_ocsp_stapling().is_none());
         assert_eq!(parsed.heartbeat_enabled, None);
         assert!(parsed.supports_heartbeat().is_none());
+    }
+
+    #[test]
+    fn test_server_hello_ignores_extensions_after_handshake_end() {
+        let mut server_hello = vec![
+            0x16, 0x03, 0x03, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x03, 0x03,
+        ];
+        server_hello.extend_from_slice(&[0u8; 32]);
+        server_hello.push(0x00);
+        server_hello.extend_from_slice(&[0xc0, 0x2f]);
+        server_hello.push(0x00);
+        patch_lengths(&mut server_hello);
+
+        let handshake_len = [server_hello[6], server_hello[7], server_hello[8]];
+        server_hello.extend_from_slice(&[0x00, 0x05, 0x00, 0x0f, 0x00, 0x01, 0x01]);
+        let record_len = (server_hello.len() - 5) as u16;
+        server_hello[3] = (record_len >> 8) as u8;
+        server_hello[4] = (record_len & 0xff) as u8;
+        server_hello[6..9].copy_from_slice(&handshake_len);
+
+        let parsed =
+            ServerHelloParser::parse(&server_hello).expect("test assertion should succeed");
+        assert_eq!(parsed.heartbeat_enabled, None);
+        assert!(!parsed.has_extension(0x000f));
     }
 
     #[test]
