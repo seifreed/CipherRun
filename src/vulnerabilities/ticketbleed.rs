@@ -465,15 +465,41 @@ impl TicketbleedTester {
                 });
             }
             if response.get(offset) == Some(&CONTENT_TYPE_HANDSHAKE) {
-                let hs_start = header_end;
-                // ServerHello body: type(1) + length(3) + version(2) + random(32)
-                // + session_id_length(1) + session_id(..)
-                let session_id_len_pos = hs_start.checked_add(4 + 2 + 32).ok_or_else(|| {
-                    crate::TlsError::ParseError {
-                        message: "Ticketbleed ServerHello session ID offset overflow".to_string(),
+                let mut hs_start = header_end;
+                while let Some(hs_body_start) =
+                    hs_start.checked_add(4).filter(|&end| end <= record_end)
+                {
+                    let hs_len = read_u24_at(response, hs_start + 1).ok_or_else(|| {
+                        crate::TlsError::ParseError {
+                            message: "Ticketbleed ServerHello handshake length truncated"
+                                .to_string(),
+                        }
+                    })?;
+                    let hs_end = hs_body_start.checked_add(hs_len).ok_or_else(|| {
+                        crate::TlsError::ParseError {
+                            message: "Ticketbleed ServerHello handshake length overflow"
+                                .to_string(),
+                        }
+                    })?;
+                    if hs_end > record_end {
+                        return Err(crate::TlsError::ParseError {
+                            message: "Ticketbleed ServerHello handshake length exceeds record"
+                                .to_string(),
+                        });
                     }
-                })?;
-                if response.get(hs_start) == Some(&0x02) && session_id_len_pos < record_end {
+                    if response.get(hs_start) != Some(&0x02) {
+                        hs_start = hs_end;
+                        continue;
+                    }
+
+                    // ServerHello body: version(2) + random(32) + session_id_length(1) + session_id(..)
+                    let session_id_len_pos =
+                        hs_body_start.checked_add(2 + 32).ok_or_else(|| {
+                            crate::TlsError::ParseError {
+                                message: "Ticketbleed ServerHello session ID offset overflow"
+                                    .to_string(),
+                            }
+                        })?;
                     let session_id_len = response
                         .get(session_id_len_pos)
                         .copied()
@@ -495,7 +521,7 @@ impl TicketbleedTester {
                                 message: "Ticketbleed ServerHello session ID length overflow"
                                     .to_string(),
                             })?;
-                    if session_id_end <= record_end {
+                    if session_id_end <= hs_end {
                         return response.get(session_id_start..session_id_end).map_or_else(
                             || {
                                 Err(crate::TlsError::ParseError {
@@ -507,7 +533,12 @@ impl TicketbleedTester {
                         );
                     }
                     return Err(crate::TlsError::ParseError {
-                        message: "Ticketbleed ServerHello session ID exceeds record".to_string(),
+                        message: "Ticketbleed ServerHello session ID exceeds handshake".to_string(),
+                    });
+                }
+                if hs_start != record_end {
+                    return Err(crate::TlsError::ParseError {
+                        message: "Ticketbleed ServerHello handshake header truncated".to_string(),
                     });
                 }
             }
@@ -688,20 +719,14 @@ mod tests {
 
     /// Build a ServerHello TLS record echoing `session_id`.
     fn server_hello_record_with_session_id(session_id: &[u8]) -> Vec<u8> {
-        let mut body = vec![0x02, 0, 0, 0]; // ServerHello type + 3-byte length placeholder
+        let mut body = Vec::new();
         body.extend_from_slice(&[0x03, 0x03]); // version TLS 1.2
         body.extend_from_slice(&[0u8; 32]); // random
         body.push(session_id.len() as u8);
         body.extend_from_slice(session_id);
         body.extend_from_slice(&[0xc0, 0x2f]); // cipher suite
         body.push(0x00); // compression method
-        let hs_len = body.len() - 4;
-        write_u24_at(&mut body, 1, hs_len);
-
-        let mut record = vec![CONTENT_TYPE_HANDSHAKE, 0x03, 0x03];
-        record.extend_from_slice(&(body.len() as u16).to_be_bytes());
-        record.extend_from_slice(&body);
-        record
+        handshake_record(&[handshake_message(0x02, &body)])
     }
 
     #[test]
@@ -712,6 +737,27 @@ mod tests {
         let mut session_id = TICKETBLEED_SESSION_ID_MARKER.to_vec();
         session_id.extend_from_slice(&[0x77u8; 16]);
         let response = server_hello_record_with_session_id(&session_id);
+        assert!(tester.detect_memory_leak(&response).unwrap());
+    }
+
+    #[test]
+    fn test_detect_memory_leak_finds_serverhello_inside_combined_record() {
+        let tester = TicketbleedTester::new(ticketbleed_test_target());
+        let mut session_id = TICKETBLEED_SESSION_ID_MARKER.to_vec();
+        session_id.extend_from_slice(&[0x77u8; 16]);
+
+        let mut server_hello = Vec::new();
+        server_hello.extend_from_slice(&[0x03, 0x03]);
+        server_hello.extend_from_slice(&[0u8; 32]);
+        server_hello.push(session_id.len() as u8);
+        server_hello.extend_from_slice(&session_id);
+        server_hello.extend_from_slice(&[0xc0, 0x2f, 0x00]);
+
+        let response = handshake_record(&[
+            handshake_message(0x0b, &[]),
+            handshake_message(0x02, &server_hello),
+        ]);
+
         assert!(tester.detect_memory_leak(&response).unwrap());
     }
 
