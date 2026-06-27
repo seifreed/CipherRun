@@ -38,8 +38,8 @@ pub(super) fn build_record_invalid_padding_valid_mac() -> Vec<u8> {
     record.extend_from_slice(&[0x00; 16]);
 
     // Invalid padding: inconsistent bytes (should all be same value)
-    for i in 0..7 {
-        record.push((i * 3) as u8);
+    for i in 0_u8..7 {
+        record.push(i * 3);
     }
 
     record
@@ -72,8 +72,8 @@ pub(super) fn build_record_invalid_padding_invalid_mac() -> Vec<u8> {
     record.extend_from_slice(&[0xff; 16]);
 
     // Invalid padding
-    for i in 0..7 {
-        record.push((i * 5) as u8);
+    for i in 0_u8..7 {
+        record.push(i * 5);
     }
 
     record
@@ -86,10 +86,11 @@ pub(super) fn build_zero_length_record() -> Vec<u8> {
 
 /// Construct the common TLS Application Data record header
 fn tls_app_data_header(length_lsb: u8) -> Vec<u8> {
+    let version = VERSION_TLS_1_2.to_be_bytes();
     vec![
-        CONTENT_TYPE_APPLICATION_DATA,  // Application Data (0x17)
-        (VERSION_TLS_1_2 >> 8) as u8,   // TLS 1.2 (0x03)
-        (VERSION_TLS_1_2 & 0xff) as u8, // (0x03)
+        CONTENT_TYPE_APPLICATION_DATA, // Application Data (0x17)
+        version[0],                    // TLS 1.2 (0x03)
+        version[1],                    // (0x03)
         0x00,
         length_lsb,
     ]
