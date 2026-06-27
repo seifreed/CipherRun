@@ -405,7 +405,7 @@ impl ServerDefaultsAdvancedTester {
                 .is_err()
                 || builder.set_groups_list(&group_name).is_err()
             {
-                return Ok(CurveProbeOutcome::NotSupported);
+                return Ok(CurveProbeOutcome::Inconclusive);
             }
 
             let connector = builder.build();
@@ -795,5 +795,36 @@ mod tests {
         let key_exchange = tester.analyze_key_exchange().await.unwrap();
         assert!(key_exchange.inconclusive);
         assert_eq!(key_exchange.algorithm, "Unknown");
+    }
+
+    #[tokio::test]
+    async fn test_ecdh_local_group_setup_failure_is_inconclusive() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test assertion should succeed");
+        let port = listener
+            .local_addr()
+            .expect("test assertion should succeed")
+            .port();
+        tokio::spawn(async move {
+            if let Ok((socket, _)) = listener.accept().await {
+                drop(socket);
+            }
+        });
+
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .expect("test assertion should succeed");
+        let tester = ServerDefaultsAdvancedTester::new(target);
+
+        let result = tester
+            .test_ecdh_curve("not-a-real-group")
+            .await
+            .expect("test assertion should succeed");
+
+        assert_eq!(result, CurveProbeOutcome::Inconclusive);
     }
 }
