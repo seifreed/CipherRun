@@ -8,9 +8,10 @@ pub use model::{ClientCA, ClientCAsResult};
 use crate::Result;
 use crate::utils::network::Target;
 use std::time::Duration;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::time::timeout;
+
+const MAX_CLIENT_CA_HANDSHAKE_BYTES: usize = 32 * 1024;
 
 pub struct ClientCAsTester {
     target: Target,
@@ -115,11 +116,14 @@ impl ClientCAsTester {
         data.len() >= 5 + record_len
     }
 
-    async fn read_tls_handshake_bytes(
+    async fn read_tls_handshake_bytes<S>(
         &self,
-        stream: &mut TcpStream,
+        stream: &mut S,
         read_timeout: Duration,
-    ) -> Result<Vec<u8>> {
+    ) -> Result<Vec<u8>>
+    where
+        S: AsyncRead + Unpin,
+    {
         let mut response = Vec::new();
         let mut chunk = vec![0u8; 4096];
 
@@ -132,6 +136,15 @@ impl ClientCAsTester {
                             message: "TLS handshake read length exceeded buffer".to_string(),
                         });
                     };
+                    if response
+                        .len()
+                        .checked_add(read_bytes.len())
+                        .is_none_or(|len| len > MAX_CLIENT_CA_HANDSHAKE_BYTES)
+                    {
+                        return Err(crate::TlsError::ParseError {
+                            message: "TLS handshake response exceeded maximum size".to_string(),
+                        });
+                    }
                     response.extend_from_slice(read_bytes);
                     if self
                         .find_certificate_request(&response)
@@ -582,5 +595,30 @@ mod tests {
 
         assert!(result.inconclusive);
         assert!(!result.requires_client_auth);
+    }
+
+    #[tokio::test]
+    async fn test_read_tls_handshake_bytes_rejects_oversized_response() {
+        let (mut client, mut server) = tokio::io::duplex(MAX_CLIENT_CA_HANDSHAKE_BYTES + 16);
+        tokio::spawn(async move {
+            let _ = server
+                .write_all(&vec![0x16; MAX_CLIENT_CA_HANDSHAKE_BYTES + 1])
+                .await;
+        });
+
+        let tester = ClientCAsTester::new(
+            Target::with_ips(
+                "localhost".to_string(),
+                443,
+                vec!["127.0.0.1".parse().expect("valid loopback")],
+            )
+            .expect("target should build"),
+        );
+        let err = tester
+            .read_tls_handshake_bytes(&mut client, Duration::from_secs(1))
+            .await
+            .expect_err("oversized response must fail");
+
+        assert!(err.to_string().contains("exceeded maximum size"));
     }
 }
