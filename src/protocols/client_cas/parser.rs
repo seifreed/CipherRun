@@ -287,7 +287,7 @@ impl ClientCAsTester {
 
             if dn_data
                 .get(i..)
-                .is_some_and(|remaining| remaining.len() >= 9)
+                .is_some_and(|remaining| remaining.len() >= 7)
                 && oid_prefix == Some(&[0x06, 0x03, 0x55])
                 && (oid_type == Some(&[0x04, 0x03, 0x0c]) || oid_type == Some(&[0x04, 0x03, 0x13]))
             {
@@ -296,20 +296,28 @@ impl ClientCAsTester {
                 let Some(value_start) = oid_end.checked_add(1) else {
                     break;
                 };
-                let value_end = value_start.checked_add(len);
-                if let Some(value_bytes) = value_end.and_then(|end| dn_data.get(value_start..end)) {
-                    let value = std::str::from_utf8(value_bytes).map_err(|error| {
-                        crate::TlsError::ParseError {
-                            message: format!("Invalid certificate request DN UTF-8: {error}"),
-                        }
-                    })?;
-                    cn = Some(value.to_string());
-                }
+                let value_end =
+                    value_start
+                        .checked_add(len)
+                        .ok_or_else(|| crate::TlsError::ParseError {
+                            message: "CertificateRequest DN value length overflow".to_string(),
+                        })?;
+                let value_bytes = dn_data.get(value_start..value_end).ok_or_else(|| {
+                    crate::TlsError::ParseError {
+                        message: "CertificateRequest DN value length exceeds data".to_string(),
+                    }
+                })?;
+                let value = std::str::from_utf8(value_bytes).map_err(|error| {
+                    crate::TlsError::ParseError {
+                        message: format!("Invalid certificate request DN UTF-8: {error}"),
+                    }
+                })?;
+                cn = Some(value.to_string());
             }
 
             if dn_data
                 .get(i..)
-                .is_some_and(|remaining| remaining.len() >= 9)
+                .is_some_and(|remaining| remaining.len() >= 7)
                 && oid_prefix == Some(&[0x06, 0x03, 0x55])
                 && (oid_type == Some(&[0x04, 0x0a, 0x0c]) || oid_type == Some(&[0x04, 0x0a, 0x13]))
             {
@@ -318,15 +326,23 @@ impl ClientCAsTester {
                 let Some(value_start) = oid_end.checked_add(1) else {
                     break;
                 };
-                let value_end = value_start.checked_add(len);
-                if let Some(value_bytes) = value_end.and_then(|end| dn_data.get(value_start..end)) {
-                    let value = std::str::from_utf8(value_bytes).map_err(|error| {
-                        crate::TlsError::ParseError {
-                            message: format!("Invalid certificate request DN UTF-8: {error}"),
-                        }
-                    })?;
-                    org = Some(value.to_string());
-                }
+                let value_end =
+                    value_start
+                        .checked_add(len)
+                        .ok_or_else(|| crate::TlsError::ParseError {
+                            message: "CertificateRequest DN value length overflow".to_string(),
+                        })?;
+                let value_bytes = dn_data.get(value_start..value_end).ok_or_else(|| {
+                    crate::TlsError::ParseError {
+                        message: "CertificateRequest DN value length exceeds data".to_string(),
+                    }
+                })?;
+                let value = std::str::from_utf8(value_bytes).map_err(|error| {
+                    crate::TlsError::ParseError {
+                        message: format!("Invalid certificate request DN UTF-8: {error}"),
+                    }
+                })?;
+                org = Some(value.to_string());
             }
         }
 

@@ -296,6 +296,27 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_dn_fields_rejects_truncated_value() {
+        let tester = ClientCAsTester::new(
+            Target::with_ips(
+                "example.test".to_string(),
+                443,
+                vec!["127.0.0.1".parse().expect("valid IP")],
+            )
+            .expect("test assertion should succeed"),
+        );
+
+        let dn = vec![0x06, 0x03, 0x55, 0x04, 0x03, 0x0c, 0x05, b'A'];
+        let err = tester
+            .extract_dn_fields(&dn)
+            .expect_err("truncated DN value should fail");
+        assert!(
+            err.to_string()
+                .contains("CertificateRequest DN value length exceeds data")
+        );
+    }
+
+    #[test]
     fn test_parse_certificate_request() {
         let tester = ClientCAsTester::new(
             Target::with_ips(
