@@ -285,8 +285,18 @@ impl RevocationChecker {
 
                 msg_offset = msg_end;
             }
+            if msg_offset != handshake_data.len() {
+                return Err(crate::TlsError::ParseError {
+                    message: "Handshake message header truncated".to_string(),
+                });
+            }
 
             offset = handshake_end;
+        }
+        if offset != tls_handshake_data.len() {
+            return Err(crate::TlsError::ParseError {
+                message: "TLS record header truncated".to_string(),
+            });
         }
 
         // Finalize result
@@ -392,6 +402,10 @@ impl RevocationChecker {
         }
         offset = end;
 
+        if offset == server_hello.len() {
+            return Ok(Some(false));
+        }
+
         // Extensions length (2 bytes)
         end = offset
             .checked_add(2)
@@ -417,6 +431,11 @@ impl RevocationChecker {
         if extensions_end > server_hello.len() {
             return Err(crate::TlsError::ParseError {
                 message: "ServerHello truncated in extensions".to_string(),
+            });
+        }
+        if extensions_end != server_hello.len() {
+            return Err(crate::TlsError::ParseError {
+                message: "ServerHello extension block contains trailing bytes".to_string(),
             });
         }
 
@@ -449,6 +468,11 @@ impl RevocationChecker {
                 });
             }
             offset = ext_end;
+        }
+        if offset != extensions_end {
+            return Err(crate::TlsError::ParseError {
+                message: "ServerHello extension block contains truncated header".to_string(),
+            });
         }
 
         Ok(Some(false))
@@ -523,6 +547,45 @@ mod tests {
 
         let err = checker.check_ocsp_stapling(&data).unwrap_err();
         assert!(err.to_string().contains("truncated"));
+    }
+
+    #[test]
+    fn test_check_ocsp_stapling_accepts_server_hello_without_extensions() {
+        let checker = RevocationChecker::new(true);
+        let mut data = vec![
+            0x16, 0x03, 0x03, 0x00, 0x2a, // TLS record, length 42
+            0x02, 0x00, 0x00, 0x26, // ServerHello, length 38
+            0x03, 0x03, // version
+        ];
+        data.extend_from_slice(&[0x00; 32]);
+        data.push(0x00);
+        data.extend_from_slice(&[0x00, 0x9c]);
+        data.push(0x00);
+
+        let result = checker.check_ocsp_stapling(&data).unwrap();
+        assert!(!result.stapling_supported);
+        assert!(!result.stapled_response_present);
+    }
+
+    #[test]
+    fn test_check_ocsp_stapling_rejects_server_hello_extension_trailing_bytes() {
+        let checker = RevocationChecker::new(true);
+        let mut data = vec![
+            0x16, 0x03, 0x03, 0x00, 0x2d, // TLS record, length 45
+            0x02, 0x00, 0x00, 0x29, // ServerHello, length 41
+            0x03, 0x03, // version
+        ];
+        data.extend_from_slice(&[0x00; 32]);
+        data.push(0x00);
+        data.extend_from_slice(&[0x00, 0x9c]);
+        data.push(0x00);
+        data.extend_from_slice(&[0x00, 0x00, 0xff]);
+
+        let err = checker.check_ocsp_stapling(&data).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("ServerHello extension block contains trailing bytes")
+        );
     }
 
     #[test]
