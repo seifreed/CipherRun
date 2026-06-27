@@ -53,7 +53,7 @@ impl<'a> CertificateRule<'a> {
         // Check minimum key size
         if let Some(min_key_size) = self.policy.min_key_size
             && let Some(key_size) = leaf_cert.public_key_size
-            && (key_size as u32) < min_key_size
+            && key_size_below_minimum(key_size, min_key_size)
         {
             violations.push(
                 PolicyViolation::new(
@@ -215,6 +215,10 @@ impl<'a> CertificateRule<'a> {
 
         Ok(violations)
     }
+}
+
+fn key_size_below_minimum(key_size: usize, min_key_size: u32) -> bool {
+    usize::try_from(min_key_size).map_or(true, |min_key_size| key_size < min_key_size)
 }
 
 fn normalize_signature_algorithm_name(value: &str) -> String {

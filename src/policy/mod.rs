@@ -233,7 +233,9 @@ impl Policy {
 }
 
 fn count_items<T>(items: &Option<Vec<T>>) -> u32 {
-    items.as_ref().map_or(0, |items| items.len() as u32)
+    items
+        .as_ref()
+        .map_or(0, |items| u32::try_from(items.len()).unwrap_or(u32::MAX))
 }
 
 impl PolicyResult {

@@ -81,7 +81,7 @@ impl SchedulingEngine {
     /// Internal method to schedule next scan with jitter
     fn schedule_next_scan_internal(&mut self, identifier: &str, interval_seconds: u64) {
         let identifier = canonical_schedule_key(identifier);
-        let clamped_seconds = interval_seconds.min(i64::MAX as u64) as i64;
+        let clamped_seconds = i64::try_from(interval_seconds).unwrap_or(i64::MAX);
         let interval_with_jitter = self.add_jitter(Duration::seconds(clamped_seconds));
         let next_scan = Utc::now() + interval_with_jitter;
 
