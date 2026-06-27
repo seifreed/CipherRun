@@ -54,13 +54,20 @@ impl MysqlNegotiator {
 
     /// Send MySQL packet
     async fn send_packet(stream: &mut TcpStream, payload: &[u8], sequence: u8) -> Result<()> {
-        let length = payload.len() as u32;
-        let header = [
-            (length & 0xFF) as u8,
-            ((length >> 8) & 0xFF) as u8,
-            ((length >> 16) & 0xFF) as u8,
-            sequence,
-        ];
+        const MAX_MYSQL_PACKET_SIZE: usize = 0x00ff_ffff;
+        if payload.len() > MAX_MYSQL_PACKET_SIZE {
+            return Err(crate::error::TlsError::StarttlsError {
+                protocol: "MySQL".to_string(),
+                details: format!("Packet too large to send: {} bytes", payload.len()),
+            });
+        }
+        let length =
+            u32::try_from(payload.len()).map_err(|_| crate::error::TlsError::StarttlsError {
+                protocol: "MySQL".to_string(),
+                details: format!("Packet too large to send: {} bytes", payload.len()),
+            })?;
+        let length = length.to_le_bytes();
+        let header = [length[0], length[1], length[2], sequence];
 
         stream.write_all(&header).await?;
         stream.write_all(payload).await?;
