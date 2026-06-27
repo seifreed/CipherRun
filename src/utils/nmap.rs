@@ -1,8 +1,8 @@
 // Nmap Greppable Format Parser
 // Parses nmap -oG output format
 
-use crate::Result;
 use crate::utils::network::canonical_target;
+use crate::{Result, TlsError};
 
 /// Nmap target from greppable output
 #[derive(Debug, Clone)]
@@ -32,7 +32,7 @@ impl NmapParser {
             // Format: Host: IP (HOSTNAME) Status: STATE
             // Ports: PORT/STATE/PROTOCOL/OWNER/SERVICE/RPC/VERSION
             if line.starts_with("Host:")
-                && let Some(parsed_targets) = Self::parse_host_line(line)
+                && let Some(parsed_targets) = Self::parse_host_line(line)?
             {
                 targets.extend(parsed_targets);
             }
@@ -42,11 +42,18 @@ impl NmapParser {
     }
 
     /// Parse a single host line
-    fn parse_host_line(line: &str) -> Option<Vec<NmapTarget>> {
+    fn parse_host_line(line: &str) -> Result<Option<Vec<NmapTarget>>> {
         // Extract IP and hostname
         let mut parts = line.split_whitespace();
-        parts.next()?;
-        let ip = parts.next()?.to_string();
+        parts.next().ok_or_else(|| TlsError::ParseError {
+            message: "Nmap host line missing Host marker".to_string(),
+        })?;
+        let ip = parts
+            .next()
+            .ok_or_else(|| TlsError::ParseError {
+                message: "Nmap host line missing IP address".to_string(),
+            })?
+            .to_string();
 
         let hostname = if let Some(host_part) = parts.next().filter(|part| part.starts_with('(')) {
             let parsed_hostname = host_part.trim_matches(|c| c == '(' || c == ')');
@@ -60,7 +67,9 @@ impl NmapParser {
         };
 
         // Find Ports: section
-        let ports_section = line.split("Ports:").nth(1)?;
+        let Some(ports_section) = line.split("Ports:").nth(1) else {
+            return Ok(None);
+        };
 
         // Parse each port entry
         let mut targets = Vec::new();
@@ -69,9 +78,9 @@ impl NmapParser {
             if let (Some(port), Some(state), Some(protocol)) =
                 (port_parts.next(), port_parts.next(), port_parts.next())
             {
-                let Ok(port) = port.parse::<u16>() else {
-                    continue;
-                };
+                let port = port.parse::<u16>().map_err(|_| TlsError::ParseError {
+                    message: format!("Invalid Nmap port value: {port}"),
+                })?;
                 let state = state.to_string();
                 let protocol = protocol.to_string();
 
@@ -88,7 +97,7 @@ impl NmapParser {
             }
         }
 
-        Some(targets)
+        Ok(Some(targets))
     }
 
     /// Convert nmap targets to target strings for CipherRun
@@ -213,7 +222,9 @@ Host: 192.168.1.1 (example.com)	Ports: 443/open/tcp//https///	Ignored State: clo
     #[test]
     fn test_parse_host_line_uses_ip_when_hostname_missing() {
         let line = "Host: 10.0.0.1 Ports: 443/open/tcp//https///";
-        let targets = NmapParser::parse_host_line(line).expect("should parse");
+        let targets = NmapParser::parse_host_line(line)
+            .expect("should parse")
+            .expect("host line should contain ports");
         assert_eq!(targets.len(), 1);
         assert_eq!(targets[0].hostname, "10.0.0.1");
     }
@@ -221,7 +232,9 @@ Host: 192.168.1.1 (example.com)	Ports: 443/open/tcp//https///	Ignored State: clo
     #[test]
     fn test_parse_host_line_uses_ip_when_hostname_is_empty_parentheses() {
         let line = "Host: 10.0.0.1 () Ports: 443/open/tcp//https///";
-        let targets = NmapParser::parse_host_line(line).expect("should parse");
+        let targets = NmapParser::parse_host_line(line)
+            .expect("should parse")
+            .expect("host line should contain ports");
         assert_eq!(targets.len(), 1);
         assert_eq!(targets[0].hostname, "10.0.0.1");
     }
@@ -229,32 +242,32 @@ Host: 192.168.1.1 (example.com)	Ports: 443/open/tcp//https///	Ignored State: clo
     #[test]
     fn test_parse_host_line_skips_closed_ports() {
         let line = "Host: 10.0.0.2 Ports: 443/closed/tcp//https///";
-        let targets = NmapParser::parse_host_line(line).expect("should parse");
+        let targets = NmapParser::parse_host_line(line)
+            .expect("should parse")
+            .expect("host line should contain ports");
         assert!(targets.is_empty());
     }
 
     #[test]
     fn test_parse_host_line_missing_ports_section() {
         let line = "Host: 10.0.0.3 (example.com) Status: Up";
-        let targets = NmapParser::parse_host_line(line);
+        let targets = NmapParser::parse_host_line(line).expect("status line should parse");
         assert!(targets.is_none());
     }
 
     #[test]
-    fn test_parse_host_line_invalid_port_returns_none() {
+    fn test_parse_host_line_invalid_port_returns_error() {
         let line = "Host: 10.0.0.4 (example.com) Ports: abc/open/tcp//https///";
-        let targets = NmapParser::parse_host_line(line).expect("should parse host line");
-        assert!(targets.is_empty());
+        let err = NmapParser::parse_host_line(line).expect_err("invalid port should fail");
+        assert!(err.to_string().contains("Invalid Nmap port value"));
     }
 
     #[test]
-    fn test_parse_host_line_skips_invalid_port_entries_without_dropping_valid_ports() {
+    fn test_parse_host_line_invalid_port_entry_fails() {
         let line =
             "Host: 10.0.0.4 (example.com) Ports: abc/open/tcp//bad///, 443/open/tcp//https///";
-        let targets = NmapParser::parse_host_line(line).expect("should parse valid ports");
-        assert_eq!(targets.len(), 1);
-        assert_eq!(targets[0].port, 443);
-        assert_eq!(targets[0].protocol, "tcp");
+        let err = NmapParser::parse_host_line(line).expect_err("invalid port should fail");
+        assert!(err.to_string().contains("Invalid Nmap port value"));
     }
 
     #[test]
