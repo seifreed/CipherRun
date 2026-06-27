@@ -296,8 +296,13 @@ fn classify_grease_response(response: &[u8]) -> GreaseTestOutcome {
         };
     }
 
-    if response.len() >= 6 && response.first() == Some(&0x16) && response.get(5) == Some(&0x02) {
-        return GreaseTestOutcome::Tolerated;
+    if response.first() == Some(&0x16) {
+        return match crate::protocols::handshake::ServerHelloParser::parse(response) {
+            Ok(_) => GreaseTestOutcome::Tolerated,
+            Err(_) => {
+                GreaseTestOutcome::Inconclusive("Truncated or malformed ServerHello".to_string())
+            }
+        };
     }
 
     GreaseTestOutcome::Inconclusive(format!(
@@ -327,6 +332,17 @@ mod tests {
         match classify_grease_response(&response) {
             GreaseTestOutcome::Inconclusive(reason) => {
                 assert!(reason.contains("record length does not match buffer length"));
+            }
+            _ => panic!("expected inconclusive"),
+        }
+    }
+
+    #[test]
+    fn test_classify_grease_response_rejects_truncated_serverhello() {
+        let response = [0x16, 0x03, 0x03, 0x00, 0x01, 0x02];
+        match classify_grease_response(&response) {
+            GreaseTestOutcome::Inconclusive(reason) => {
+                assert!(reason.contains("ServerHello"));
             }
             _ => panic!("expected inconclusive"),
         }
