@@ -161,16 +161,26 @@ impl<'a> RenegotiationTester<'a> {
         // Test for insecure renegotiation (CVE-2009-3555)
         let insecure_result = self.test_insecure_renegotiation().await?;
 
-        if secure_extension_probe.is_none()
-            && matches!(insecure_result, InsecureRenegotiationResult::Inconclusive)
-        {
+        if secure_extension_probe.is_none() {
+            if matches!(insecure_result, InsecureRenegotiationResult::Detected) {
+                return Ok(RenegotiationTestResult {
+                    support: RenegotiationSupport::InsecureRenegotiation,
+                    secure_extension: false,
+                    vulnerable: true,
+                    needs_verification: false,
+                    inconclusive: false,
+                    details: "VULNERABLE: Insecure renegotiation enabled (CVE-2009-3555)"
+                        .to_string(),
+                });
+            }
+
             return Ok(RenegotiationTestResult {
                 support: RenegotiationSupport::Inconclusive,
                 secure_extension: false,
                 vulnerable: false,
                 needs_verification: true,
                 inconclusive: true,
-                details: "Renegotiation support unclear - baseline TLS probes inconclusive"
+                details: "Renegotiation support unclear - secure extension probe did not complete"
                     .to_string(),
             });
         }
@@ -1198,5 +1208,68 @@ mod tests {
             .has_renegotiation_info_extension(&response)
             .expect_err("truncated extensions length must fail");
         assert!(err.to_string().contains("truncated before extensions length"));
+    }
+
+    #[tokio::test]
+    async fn test_renegotiation_probe_inconclusive_when_secure_extension_probe_fails() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener");
+        let port = listener.local_addr().expect("local addr").port();
+
+        let server = tokio::spawn(async move {
+            let (mut socket1, _) = listener.accept().await.expect("accept first");
+            let mut buf = vec![0u8; 4096];
+            let _ = socket1.read(&mut buf).await.expect("read first hello");
+            let malformed = [0x16, 0x03, 0x03, 0x00, 0x01, 0x02];
+            socket1.write_all(&malformed).await.expect("write malformed");
+
+            let (mut socket2, _) = listener.accept().await.expect("accept second");
+            let _ = socket2.read(&mut buf).await.expect("read second hello");
+
+            let mut response = vec![
+                0x16, 0x03, 0x03, 0x00, 0x00, // record
+                0x02, 0x00, 0x00, 0x00, // ServerHello
+                0x03, 0x03,
+            ];
+            response.extend_from_slice(&[0x00; 32]);
+            response.push(0x00);
+            response.extend_from_slice(&[0x00, 0x9c]);
+            response.push(0x00);
+            response.extend_from_slice(&[0x00, 0x00]); // no extensions
+            let rec_len = u16::try_from(response.len() - 5).expect("record length");
+            RenegotiationTester::write_u16_at(
+                &mut response,
+                3,
+                rec_len,
+                "test ServerHello record length placeholder",
+            )
+            .expect("record length placeholder");
+            let hs_len = (response.len() - 9) as u32;
+            response[6] = ((hs_len >> 16) & 0xff) as u8;
+            response[7] = ((hs_len >> 8) & 0xff) as u8;
+            response[8] = (hs_len & 0xff) as u8;
+            socket2.write_all(&response).await.expect("write server hello");
+        });
+
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+        let tester = RenegotiationTester::new(&target);
+
+        let result = tester.test().await.expect("probe should succeed");
+        server.await.expect("server task");
+
+        assert!(!result.vulnerable);
+        assert!(result.inconclusive);
+        assert!(matches!(result.support, RenegotiationSupport::Inconclusive));
+        assert!(
+            result
+                .details
+                .contains("secure extension probe did not complete")
+        );
     }
 }
