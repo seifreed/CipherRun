@@ -277,7 +277,7 @@ async fn test_grease_tester_baseline_failure_path() {
         result
             .issues
             .iter()
-            .any(|issue| issue.contains("Baseline connection failed"))
+            .any(|issue| issue.contains("Baseline connection error"))
     );
 }
 

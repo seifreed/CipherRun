@@ -242,12 +242,7 @@ impl GreaseTester {
             .ok_or(crate::TlsError::NoSocketAddresses)?;
 
         let stream =
-            match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None)
-                .await
-            {
-                Ok(s) => s,
-                Err(_) => return Ok(false),
-            };
+            crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None).await?;
 
         let config = rustls::ClientConfig::builder()
             .dangerous()
@@ -270,7 +265,12 @@ impl GreaseTester {
         .await
         {
             Ok(Ok(_)) => Ok(true),
-            _ => Ok(false),
+            Ok(Err(error)) => Err(crate::TlsError::InvalidHandshake {
+                details: format!("GREASE baseline TLS handshake failed: {}", error),
+            }),
+            Err(_) => Err(crate::TlsError::Timeout {
+                duration: Some(Duration::from_secs(10)),
+            }),
         }
     }
 
