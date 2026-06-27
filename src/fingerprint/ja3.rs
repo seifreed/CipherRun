@@ -34,7 +34,7 @@ pub struct Ja3Fingerprint {
 
 impl Ja3Fingerprint {
     /// Generate JA3 fingerprint from ClientHello
-    pub fn from_client_hello(client_hello: &ClientHelloCapture) -> Self {
+    pub fn from_client_hello(client_hello: &ClientHelloCapture) -> Result<Self> {
         // 1. Extract SSL version
         let ssl_version = client_hello.version;
 
@@ -55,7 +55,7 @@ impl Ja3Fingerprint {
             .collect();
 
         // 4. Extract supported groups/curves from extensions
-        let curves = client_hello.get_supported_groups();
+        let curves = client_hello.get_supported_groups()?;
         let curves_filtered: Vec<u16> = curves
             .iter()
             .copied()
@@ -63,7 +63,7 @@ impl Ja3Fingerprint {
             .collect();
 
         // 5. Extract EC point formats from extensions
-        let point_formats = client_hello.get_point_formats();
+        let point_formats = client_hello.get_point_formats()?;
 
         // 6. Build JA3 string
         let ja3_string = Self::build_ja3_string(
@@ -77,7 +77,7 @@ impl Ja3Fingerprint {
         // 7. Calculate MD5 hash
         let ja3_hash = Self::calculate_md5(&ja3_string);
 
-        Self {
+        Ok(Self {
             ja3_string,
             ja3_hash,
             ssl_version,
@@ -85,7 +85,7 @@ impl Ja3Fingerprint {
             extensions,
             curves: curves_filtered,
             point_formats,
-        }
+        })
     }
 
     /// Check if a value is GREASE (RFC 8701)

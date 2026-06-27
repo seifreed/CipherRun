@@ -1,31 +1,33 @@
 // JA3 Fingerprinting Demo
 // Demonstrates JA3 TLS client fingerprinting capabilities
 
+use cipherrun::Result;
 use cipherrun::fingerprint::{ClientHelloCapture, Ja3Database, Ja3Fingerprint};
 
-fn main() {
+fn main() -> Result<()> {
     println!("=== JA3 TLS Client Fingerprinting Demo ===\n");
 
     // Demo 1: Chrome-like fingerprint
-    demo_chrome_fingerprint();
+    demo_chrome_fingerprint()?;
 
     println!("\n{}", "=".repeat(60));
 
     // Demo 2: Firefox-like fingerprint
-    demo_firefox_fingerprint();
+    demo_firefox_fingerprint()?;
 
     println!("\n{}", "=".repeat(60));
 
     // Demo 3: GREASE filtering
-    demo_grease_filtering();
+    demo_grease_filtering()?;
 
     println!("\n{}", "=".repeat(60));
 
     // Demo 4: Database matching
     demo_database_matching();
+    Ok(())
 }
 
-fn demo_chrome_fingerprint() {
+fn demo_chrome_fingerprint() -> Result<()> {
     println!("Demo 1: Chrome-like TLS Fingerprint\n");
 
     let client_hello = ClientHelloCapture::synthetic(
@@ -43,7 +45,7 @@ fn demo_chrome_fingerprint() {
         ],
     );
 
-    let ja3 = Ja3Fingerprint::from_client_hello(&client_hello);
+    let ja3 = Ja3Fingerprint::from_client_hello(&client_hello)?;
 
     println!("  JA3 Hash:       {}", ja3.ja3_hash);
     println!(
@@ -56,9 +58,10 @@ fn demo_chrome_fingerprint() {
     println!("  Curves:         {} curves", ja3.curves.len());
     println!("\n  JA3 String:");
     println!("  {}", ja3.ja3_string);
+    Ok(())
 }
 
-fn demo_firefox_fingerprint() {
+fn demo_firefox_fingerprint() -> Result<()> {
     println!("Demo 2: Firefox-like TLS Fingerprint\n");
 
     let client_hello = ClientHelloCapture::synthetic(
@@ -76,7 +79,7 @@ fn demo_firefox_fingerprint() {
         ],
     );
 
-    let ja3 = Ja3Fingerprint::from_client_hello(&client_hello);
+    let ja3 = Ja3Fingerprint::from_client_hello(&client_hello)?;
 
     println!("  JA3 Hash:       {}", ja3.ja3_hash);
     println!(
@@ -88,9 +91,10 @@ fn demo_firefox_fingerprint() {
     println!("\n  JA3 String:");
     println!("  {}", ja3.ja3_string);
     println!("\n  Note: Different cipher/curve order produces different hash!");
+    Ok(())
 }
 
-fn demo_grease_filtering() {
+fn demo_grease_filtering() -> Result<()> {
     println!("Demo 3: GREASE Value Filtering\n");
 
     println!("  GREASE values are random placeholders used by some clients");
@@ -125,7 +129,7 @@ fn demo_grease_filtering() {
     println!("    Extensions: 0x0a0a (GREASE), 0, 10, 11");
     println!("    Curves:     0x0a0a (GREASE), 0x001d, 0x1a1a (GREASE), 0x0017");
 
-    let ja3 = Ja3Fingerprint::from_client_hello(&client_hello);
+    let ja3 = Ja3Fingerprint::from_client_hello(&client_hello)?;
 
     println!("\n  After GREASE filtering:");
     println!(
@@ -145,6 +149,7 @@ fn demo_grease_filtering() {
     );
 
     println!("\n  JA3 Hash: {}", ja3.ja3_hash);
+    Ok(())
 }
 
 fn demo_database_matching() {

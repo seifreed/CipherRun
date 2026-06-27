@@ -27,7 +27,7 @@ impl ClientHelloNetworkCapture {
     /// extension layout matches what would be sent to this host.
     pub async fn capture_and_fingerprint(&self) -> Result<(ClientHelloCapture, Ja3Fingerprint)> {
         let client_hello = self.build_client_hello()?;
-        let ja3 = Ja3Fingerprint::from_client_hello(&client_hello);
+        let ja3 = Ja3Fingerprint::from_client_hello(&client_hello)?;
 
         Ok((client_hello, ja3))
     }
@@ -234,12 +234,15 @@ mod tests {
         assert_eq!(sni.unwrap(), "example.com");
 
         // Verify supported groups
-        let groups = client_hello.get_supported_groups();
+        let groups = client_hello
+            .get_supported_groups()
+            .expect("supported groups should parse");
         assert!(!groups.is_empty());
         assert!(groups.contains(&29)); // X25519
 
         // Generate JA3
-        let ja3 = Ja3Fingerprint::from_client_hello(&client_hello);
+        let ja3 =
+            Ja3Fingerprint::from_client_hello(&client_hello).expect("ClientHello JA3 should parse");
         assert!(!ja3.ja3_hash.is_empty());
         assert_eq!(ja3.ja3_hash.len(), 32); // MD5 is 32 hex chars
     }

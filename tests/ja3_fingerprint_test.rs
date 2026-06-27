@@ -21,7 +21,7 @@ fn test_ja3_chrome_fingerprint() {
         ],
     );
 
-    let ja3 = Ja3Fingerprint::from_client_hello(&client_hello);
+    let ja3 = Ja3Fingerprint::from_client_hello(&client_hello).expect("JA3 should parse");
 
     // Verify JA3 structure
     assert_eq!(ja3.ssl_version, 0x0303);
@@ -55,7 +55,7 @@ fn test_ja3_firefox_fingerprint() {
         ],
     );
 
-    let ja3 = Ja3Fingerprint::from_client_hello(&client_hello);
+    let ja3 = Ja3Fingerprint::from_client_hello(&client_hello).expect("JA3 should parse");
 
     // Different cipher order should produce different hash
     assert_eq!(ja3.ssl_version, 0x0303);
@@ -89,7 +89,7 @@ fn test_ja3_grease_filtering() {
         ],
     );
 
-    let ja3 = Ja3Fingerprint::from_client_hello(&client_hello);
+    let ja3 = Ja3Fingerprint::from_client_hello(&client_hello).expect("JA3 should parse");
 
     // GREASE values should be filtered
     assert_eq!(ja3.ciphers.len(), 2); // Only 2 real ciphers
@@ -119,7 +119,7 @@ fn test_ja3_padding_extension_filtering() {
         ],
     );
 
-    let ja3 = Ja3Fingerprint::from_client_hello(&client_hello);
+    let ja3 = Ja3Fingerprint::from_client_hello(&client_hello).expect("JA3 should parse");
 
     // Padding extension (21) must be included per JA3 specification
     assert!(ja3.extensions.contains(&21));
@@ -134,7 +134,7 @@ fn test_ja3_string_format() {
         vec![(0, vec![]), (10, build_groups(&[29, 23])), (11, vec![1, 0])],
     );
 
-    let ja3 = Ja3Fingerprint::from_client_hello(&client_hello);
+    let ja3 = Ja3Fingerprint::from_client_hello(&client_hello).expect("JA3 should parse");
 
     // Parse JA3 string parts
     let parts: Vec<&str> = ja3.ja3_string.split(',').collect();
@@ -198,7 +198,7 @@ fn test_ja3_ssl_version_names() {
 
     for (version_id, version_name) in versions {
         let client_hello = ClientHelloCapture::synthetic(version_id, vec![0xc02f], vec![]);
-        let ja3 = Ja3Fingerprint::from_client_hello(&client_hello);
+        let ja3 = Ja3Fingerprint::from_client_hello(&client_hello).expect("JA3 should parse");
         assert_eq!(ja3.ssl_version_name(), version_name);
     }
 }
@@ -211,7 +211,7 @@ fn test_ja3_curve_names() {
         vec![(10, build_groups(&[29, 23, 24, 25]))], // X25519, secp256r1, secp384r1, secp521r1
     );
 
-    let ja3 = Ja3Fingerprint::from_client_hello(&client_hello);
+    let ja3 = Ja3Fingerprint::from_client_hello(&client_hello).expect("JA3 should parse");
     let curve_names = ja3.curve_names();
 
     assert!(curve_names.contains(&"X25519".to_string()));
@@ -225,7 +225,7 @@ fn test_ja3_empty_extensions() {
     // Test ClientHello with no extensions
     let client_hello = ClientHelloCapture::synthetic(0x0303, vec![0xc02f, 0xc030], vec![]);
 
-    let ja3 = Ja3Fingerprint::from_client_hello(&client_hello);
+    let ja3 = Ja3Fingerprint::from_client_hello(&client_hello).expect("JA3 should parse");
 
     assert!(ja3.extensions.is_empty());
     assert!(ja3.curves.is_empty());
@@ -251,8 +251,8 @@ fn test_ja3_deterministic() {
         vec![(0, vec![]), (10, build_groups(&[29, 23])), (11, vec![1, 0])],
     );
 
-    let ja3_1 = Ja3Fingerprint::from_client_hello(&client_hello1);
-    let ja3_2 = Ja3Fingerprint::from_client_hello(&client_hello2);
+    let ja3_1 = Ja3Fingerprint::from_client_hello(&client_hello1).expect("JA3 should parse");
+    let ja3_2 = Ja3Fingerprint::from_client_hello(&client_hello2).expect("JA3 should parse");
 
     assert_eq!(ja3_1.ja3_string, ja3_2.ja3_string);
     assert_eq!(ja3_1.ja3_hash, ja3_2.ja3_hash);
@@ -273,11 +273,31 @@ fn test_ja3_different_order_different_hash() {
         vec![(10, build_groups(&[29, 23]))],
     );
 
-    let ja3_1 = Ja3Fingerprint::from_client_hello(&client_hello1);
-    let ja3_2 = Ja3Fingerprint::from_client_hello(&client_hello2);
+    let ja3_1 = Ja3Fingerprint::from_client_hello(&client_hello1).expect("JA3 should parse");
+    let ja3_2 = Ja3Fingerprint::from_client_hello(&client_hello2).expect("JA3 should parse");
 
     assert_ne!(ja3_1.ja3_string, ja3_2.ja3_string);
     assert_ne!(ja3_1.ja3_hash, ja3_2.ja3_hash);
+}
+
+#[test]
+fn test_ja3_rejects_malformed_supported_groups() {
+    let client_hello =
+        ClientHelloCapture::synthetic(0x0303, vec![0xc02f], vec![(10, vec![0, 3, 0, 23, 0])]);
+
+    let err = Ja3Fingerprint::from_client_hello(&client_hello)
+        .expect_err("malformed supported_groups should fail");
+    assert!(err.to_string().contains("Invalid supported groups length"));
+}
+
+#[test]
+fn test_ja3_rejects_malformed_point_formats() {
+    let client_hello =
+        ClientHelloCapture::synthetic(0x0303, vec![0xc02f], vec![(11, vec![1, 0, 1])]);
+
+    let err = Ja3Fingerprint::from_client_hello(&client_hello)
+        .expect_err("malformed ec_point_formats should fail");
+    assert!(err.to_string().contains("Invalid EC point formats length"));
 }
 
 #[test]

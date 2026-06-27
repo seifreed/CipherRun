@@ -391,63 +391,71 @@ impl ClientHelloCapture {
     }
 
     /// Get supported groups (curves) from extensions
-    pub fn get_supported_groups(&self) -> Vec<u16> {
+    pub fn get_supported_groups(&self) -> Result<Vec<u16>> {
         for ext in &self.extensions {
             if ext.extension_type == EXTENSION_SUPPORTED_GROUPS {
                 return Self::parse_supported_groups(&ext.data);
             }
         }
-        vec![]
+        Ok(vec![])
     }
 
     /// Parse supported groups extension data
-    fn parse_supported_groups(data: &[u8]) -> Vec<u16> {
-        let Ok(list_len) = Self::read_u16_at(data, 0, "Supported groups length") else {
-            return vec![];
-        };
-        let list_len = list_len as usize;
+    fn parse_supported_groups(data: &[u8]) -> Result<Vec<u16>> {
+        let list_len = Self::read_u16_at(data, 0, "Supported groups length")? as usize;
 
-        let Some(list_end) = 2usize.checked_add(list_len) else {
-            return vec![];
-        };
+        let list_end = 2usize
+            .checked_add(list_len)
+            .ok_or_else(|| TlsError::ParseError {
+                message: "Supported groups length overflow".to_string(),
+            })?;
         if !list_len.is_multiple_of(2) || list_end != data.len() {
-            return vec![];
+            return Err(TlsError::ParseError {
+                message: "Invalid supported groups length".to_string(),
+            });
         }
-        data.get(2..list_end)
-            .map(|groups| {
-                groups
-                    .chunks_exact(2)
-                    .filter_map(|chunk| <[u8; 2]>::try_from(chunk).ok())
-                    .map(u16::from_be_bytes)
-                    .collect()
+        let groups = Self::slice_range(data, 2, list_len, "Supported groups")?
+            .chunks_exact(2)
+            .map(|chunk| {
+                let bytes = <[u8; 2]>::try_from(chunk).map_err(|_| TlsError::ParseError {
+                    message: "Invalid supported group width".to_string(),
+                })?;
+                Ok(u16::from_be_bytes(bytes))
             })
-            .unwrap_or_default()
+            .collect::<Result<Vec<_>>>()?;
+        Ok(groups)
     }
 
     /// Get EC point formats from extensions
-    pub fn get_point_formats(&self) -> Vec<u8> {
+    pub fn get_point_formats(&self) -> Result<Vec<u8>> {
         for ext in &self.extensions {
             if ext.extension_type == EXTENSION_EC_POINT_FORMATS {
                 return Self::parse_point_formats(&ext.data);
             }
         }
-        vec![]
+        Ok(vec![])
     }
 
     /// Parse EC point formats extension data
-    fn parse_point_formats(data: &[u8]) -> Vec<u8> {
+    fn parse_point_formats(data: &[u8]) -> Result<Vec<u8>> {
         if data.is_empty() {
-            return vec![];
+            return Err(TlsError::ParseError {
+                message: "EC point formats length too short".to_string(),
+            });
         }
 
-        let list_len = data.first().copied().unwrap_or_default() as usize;
-        let Some(list_end) = 1usize.checked_add(list_len) else {
-            return vec![];
-        };
+        let list_len = Self::read_u8_at(data, 0, "EC point formats length")? as usize;
+        let list_end = 1usize
+            .checked_add(list_len)
+            .ok_or_else(|| TlsError::ParseError {
+                message: "EC point formats length overflow".to_string(),
+            })?;
         if list_end != data.len() {
-            return vec![];
+            return Err(TlsError::ParseError {
+                message: "Invalid EC point formats length".to_string(),
+            });
         }
-        data.get(1..list_end).unwrap_or_default().to_vec()
+        Ok(Self::slice_range(data, 1, list_len, "EC point formats")?.to_vec())
     }
 
     /// Convert ClientHello to bytes (for storage/transmission)
@@ -600,39 +608,47 @@ mod tests {
         assert_eq!(client_hello.cipher_suites.len(), 4);
         assert_eq!(client_hello.extensions.len(), 3);
 
-        let groups = client_hello.get_supported_groups();
+        let groups = client_hello
+            .get_supported_groups()
+            .expect("supported groups should parse");
         assert_eq!(groups, vec![23, 24]);
 
-        let formats = client_hello.get_point_formats();
+        let formats = client_hello
+            .get_point_formats()
+            .expect("point formats should parse");
         assert_eq!(formats, vec![0]);
     }
 
     #[test]
     fn test_supported_groups_parsing() {
         let data = vec![0, 4, 0, 23, 0, 24]; // Length: 4, Groups: 23, 24
-        let groups = ClientHelloCapture::parse_supported_groups(&data);
+        let groups = ClientHelloCapture::parse_supported_groups(&data)
+            .expect("supported groups should parse");
         assert_eq!(groups, vec![23, 24]);
     }
 
     #[test]
     fn test_supported_groups_rejects_trailing_byte() {
         let data = vec![0, 3, 0, 23, 0];
-        let groups = ClientHelloCapture::parse_supported_groups(&data);
-        assert!(groups.is_empty());
+        let err = ClientHelloCapture::parse_supported_groups(&data)
+            .expect_err("trailing byte should fail");
+        assert!(err.to_string().contains("Invalid supported groups length"));
     }
 
     #[test]
     fn test_point_formats_parsing() {
         let data = vec![1, 0]; // Length: 1, Format: 0 (uncompressed)
-        let formats = ClientHelloCapture::parse_point_formats(&data);
+        let formats =
+            ClientHelloCapture::parse_point_formats(&data).expect("point formats should parse");
         assert_eq!(formats, vec![0]);
     }
 
     #[test]
     fn test_point_formats_rejects_trailing_byte() {
         let data = vec![1, 0, 1];
-        let formats = ClientHelloCapture::parse_point_formats(&data);
-        assert!(formats.is_empty());
+        let err =
+            ClientHelloCapture::parse_point_formats(&data).expect_err("trailing byte should fail");
+        assert!(err.to_string().contains("Invalid EC point formats length"));
     }
 
     #[test]
