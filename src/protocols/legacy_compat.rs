@@ -82,8 +82,12 @@ impl LegacyCompatTester {
             // NotSupported (a false negative).
             builder.set_verify(SslVerifyMode::NONE);
 
-            if cipher.starts_with("EXP") || cipher.starts_with("SSL_CK") {
-                let _ = builder.set_min_proto_version(Some(SslVersion::SSL3));
+            if (cipher.starts_with("EXP") || cipher.starts_with("SSL_CK"))
+                && builder
+                    .set_min_proto_version(Some(SslVersion::SSL3))
+                    .is_err()
+            {
+                return Ok(LegacyProbeOutcome::Inconclusive);
             }
 
             match builder.set_cipher_list(&cipher) {
@@ -541,6 +545,7 @@ impl LegacyCompatTester {
 mod tests {
     use super::*;
     use std::net::IpAddr;
+    use tokio::net::TcpListener as TokioTcpListener;
 
     #[test]
     fn test_security_concern_display() {
@@ -727,9 +732,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_cipher_support_mid_handshake_close_is_inconclusive() {
-        use tokio::net::TcpListener;
-
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let listener = TokioTcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
 
         let server = tokio::spawn(async move {
@@ -745,6 +748,29 @@ mod tests {
         let tester = LegacyCompatTester::new(target);
 
         let outcome = tester.test_cipher_support("DES-CBC-SHA").await.unwrap();
+        server.await.unwrap();
+
+        assert_eq!(outcome, LegacyProbeOutcome::Inconclusive);
+    }
+
+    #[tokio::test]
+    async fn test_export_cipher_ssl3_setup_failure_is_inconclusive() {
+        let listener = TokioTcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let _ = listener.accept().await.unwrap();
+        });
+
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            addr.port(),
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .unwrap();
+        let tester = LegacyCompatTester::new(target);
+
+        let outcome = tester.test_cipher_support("EXP-RC4-MD5").await.unwrap();
         server.await.unwrap();
 
         assert_eq!(outcome, LegacyProbeOutcome::Inconclusive);
