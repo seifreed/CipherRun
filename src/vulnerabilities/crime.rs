@@ -305,9 +305,13 @@ impl<'a> CrimeTester<'a> {
                 if ext_end > record_end {
                     return Ok(CompressionProbeStatus::Inconclusive);
                 }
+                if ext_end != record_end {
+                    return Ok(CompressionProbeStatus::Inconclusive);
+                }
 
                 // Walk extensions structurally looking for NPN (0x3374)
                 let mut pos = ext_start;
+                let mut spdy_detected = false;
                 while let Some(ext_header_end) = pos.checked_add(4).filter(|&end| end <= ext_end) {
                     let Some(ext_type) = read_u16_at(data, pos) else {
                         return Ok(CompressionProbeStatus::Inconclusive);
@@ -351,18 +355,24 @@ impl<'a> CrimeTester<'a> {
                                 // Only flag SPDY protocols as CRIME-vulnerable
                                 // HTTP/2 (h2, h2c) uses HPACK which is CRIME-resistant
                                 if proto.starts_with("spdy/") {
-                                    return Ok(CompressionProbeStatus::Enabled);
+                                    spdy_detected = true;
                                 }
                             }
                             proto_pos = next_proto_pos;
                         }
-                        break;
                     }
 
                     pos = next_pos;
                 }
+                if pos != ext_end {
+                    return Ok(CompressionProbeStatus::Inconclusive);
+                }
 
-                Ok(CompressionProbeStatus::Disabled)
+                Ok(if spdy_detected {
+                    CompressionProbeStatus::Enabled
+                } else {
+                    CompressionProbeStatus::Disabled
+                })
             }
             _ => Ok(CompressionProbeStatus::Inconclusive),
         }
@@ -496,6 +506,57 @@ mod tests {
             response.extend_from_slice(&[0x33, 0x74, 0x00, 0x02]); // NPN ext header
             response.push(0x01); // truncated protocol list
 
+            let rec_len = (response.len() - 5) as u16;
+            write_u16_at(&mut response, 3, rec_len);
+            let hs_len = response.len() - 9;
+            write_u24_at(&mut response, 6, hs_len);
+
+            socket.write_all(&response).await.unwrap();
+        });
+
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+        let tester = CrimeTester::new(&target);
+
+        let status = tester
+            .test_spdy_compression()
+            .await
+            .expect("probe should return a status");
+        assert_eq!(status, CompressionProbeStatus::Inconclusive);
+
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_spdy_probe_rejects_trailing_extension_after_spdy() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = vec![0u8; 4096];
+            let _ = socket.read(&mut buf).await.unwrap();
+
+            let mut response = vec![
+                0x16, 0x03, 0x03, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x03, 0x03,
+            ];
+            response.extend_from_slice(&[0xAA; 32]);
+            response.push(0x00);
+            response.extend_from_slice(&[0x00, 0x9c]);
+            response.push(0x00);
+            response.extend_from_slice(&[0x00, 0x00]);
+            let ext_len_pos = response.len() - 2;
+            response.extend_from_slice(&[0x33, 0x74, 0x00, 0x07]);
+            response.push(0x06);
+            response.extend_from_slice(b"spdy/3");
+            response.push(0xff); // trailing partial extension header
+
+            let ext_len = (response.len() - ext_len_pos - 2) as u16;
+            write_u16_at(&mut response, ext_len_pos, ext_len);
             let rec_len = (response.len() - 5) as u16;
             write_u16_at(&mut response, 3, rec_len);
             let hs_len = response.len() - 9;
