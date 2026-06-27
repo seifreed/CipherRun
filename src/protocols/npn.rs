@@ -359,6 +359,11 @@ impl NpnTester {
                 message: "NPN extension block extends beyond handshake length".to_string(),
             });
         }
+        if ext_end != handshake_end {
+            return Err(crate::TlsError::ParseError {
+                message: "NPN extension block contains trailing bytes".to_string(),
+            });
+        }
 
         // Walk extensions structurally
         let mut pos = ext_start;
@@ -419,10 +424,14 @@ impl NpnTester {
                     protocols.push(proto);
                     npn_pos = proto_end;
                 }
-                break;
             }
 
             pos = ext_data_end;
+        }
+        if pos != ext_end {
+            return Err(crate::TlsError::ParseError {
+                message: "NPN extension block contains truncated header".to_string(),
+            });
         }
 
         Ok(protocols)
@@ -723,6 +732,78 @@ mod tests {
         assert!(
             err.to_string()
                 .contains("NPN extension block extends beyond handshake length")
+        );
+    }
+
+    #[test]
+    fn test_parse_npn_response_rejects_extension_block_trailing_bytes() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["93.184.216.34".parse().unwrap()],
+        )
+        .unwrap();
+        let tester = NpnTester::new(target);
+
+        let mut response = Vec::new();
+        response.extend_from_slice(&[0x16, 0x03, 0x03, 0x00, 0x00]);
+        response.extend_from_slice(&[0x02, 0x00, 0x00, 0x00]);
+        response.extend_from_slice(&[0x03, 0x03]);
+        response.extend_from_slice(&[0x00; 32]);
+        response.push(0x00);
+        response.extend_from_slice(&[0x00, 0x9c]);
+        response.push(0x00);
+        response.extend_from_slice(&[0x00, 0x00, 0xff]);
+        let rec_len = (response.len() - 5) as u16;
+        response[3] = (rec_len >> 8) as u8;
+        response[4] = (rec_len & 0xff) as u8;
+        let hs_len = (response.len() - 9) as u32;
+        response[6] = ((hs_len >> 16) & 0xff) as u8;
+        response[7] = ((hs_len >> 8) & 0xff) as u8;
+        response[8] = (hs_len & 0xff) as u8;
+
+        let err = tester
+            .parse_npn_response(&response)
+            .expect_err("trailing extension bytes should fail");
+        assert!(
+            err.to_string()
+                .contains("NPN extension block contains trailing bytes")
+        );
+    }
+
+    #[test]
+    fn test_parse_npn_response_rejects_truncated_extension_header() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["93.184.216.34".parse().unwrap()],
+        )
+        .unwrap();
+        let tester = NpnTester::new(target);
+
+        let mut response = Vec::new();
+        response.extend_from_slice(&[0x16, 0x03, 0x03, 0x00, 0x00]);
+        response.extend_from_slice(&[0x02, 0x00, 0x00, 0x00]);
+        response.extend_from_slice(&[0x03, 0x03]);
+        response.extend_from_slice(&[0x00; 32]);
+        response.push(0x00);
+        response.extend_from_slice(&[0x00, 0x9c]);
+        response.push(0x00);
+        response.extend_from_slice(&[0x00, 0x03, 0x33, 0x74, 0x00]);
+        let rec_len = (response.len() - 5) as u16;
+        response[3] = (rec_len >> 8) as u8;
+        response[4] = (rec_len & 0xff) as u8;
+        let hs_len = (response.len() - 9) as u32;
+        response[6] = ((hs_len >> 16) & 0xff) as u8;
+        response[7] = ((hs_len >> 8) & 0xff) as u8;
+        response[8] = (hs_len & 0xff) as u8;
+
+        let err = tester
+            .parse_npn_response(&response)
+            .expect_err("truncated extension header should fail");
+        assert!(
+            err.to_string()
+                .contains("NPN extension block contains truncated header")
         );
     }
 
