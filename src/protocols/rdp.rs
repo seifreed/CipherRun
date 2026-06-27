@@ -31,39 +31,33 @@ impl RdpPreamble {
         stream.write_all(&connection_request).await?;
         stream.flush().await?;
 
-        // Read RDP Connection Confirm
-        let mut response = vec![0u8; 1024];
-        let n = stream.read(&mut response).await?;
-
-        if n < 11 {
+        // Read the fixed TPKT header first, then drain the rest of the declared frame.
+        let mut header = [0u8; 4];
+        if stream.read_exact(&mut header).await.is_err() {
             tls_bail!("RDP response too short");
         }
-
-        let response = response
-            .get(..n)
-            .ok_or_else(|| crate::TlsError::ParseError {
-                message: "RDP response read length exceeded buffer".to_string(),
-            })?;
-
-        let declared_len = response
+        let declared_len = header
             .get(2..4)
             .and_then(|bytes| <[u8; 2]>::try_from(bytes).ok())
             .map(u16::from_be_bytes)
             .ok_or_else(|| crate::TlsError::ParseError {
                 message: "RDP response length field truncated".to_string(),
             })? as usize;
-        if declared_len != n {
-            tls_bail!(
-                "Invalid RDP response: declared length {} does not match received {}",
-                declared_len,
-                n
-            );
+        if declared_len < 11 {
+            tls_bail!("RDP response too short");
         }
-
-        // Verify TPKT header
-        if response.first() != Some(&0x03) {
+        if header[0] != 0x03 {
             tls_bail!("Invalid RDP response: not a TPKT packet");
         }
+
+        let mut body = vec![0u8; declared_len - header.len()];
+        if stream.read_exact(&mut body).await.is_err() {
+            tls_bail!("RDP response too short");
+        }
+
+        let mut response = Vec::with_capacity(declared_len);
+        response.extend_from_slice(&header);
+        response.extend_from_slice(&body);
 
         // Check for CC_TPDU (Connection Confirm)
         if response.get(5) != Some(&0xD0) {
@@ -182,7 +176,40 @@ mod tests {
             .await
             .expect("test assertion should succeed");
         let err = RdpPreamble::send(&mut stream).await.unwrap_err();
-        assert!(err.to_string().contains("declared length"));
+        assert!(err.to_string().contains("RDP response too short"));
+
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_rdp_preamble_fragmented_response() {
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test assertion should succeed");
+        let addr = listener
+            .local_addr()
+            .expect("test assertion should succeed");
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buffer = vec![0u8; 64];
+            let _ = socket.read(&mut buffer).await.unwrap();
+            socket.write_all(&[0x03, 0x00, 0x00, 0x0b]).await.unwrap();
+            socket.flush().await.unwrap();
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            let mut response = vec![0u8; 7];
+            response[1] = 0xD0;
+            socket.write_all(&response).await.unwrap();
+        });
+
+        let mut stream = TcpStream::connect(addr)
+            .await
+            .expect("test assertion should succeed");
+        RdpPreamble::send(&mut stream)
+            .await
+            .expect("test assertion should succeed");
 
         server.await.unwrap();
     }
