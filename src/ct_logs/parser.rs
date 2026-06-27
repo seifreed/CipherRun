@@ -232,6 +232,11 @@ impl Parser {
                 ),
             });
         }
+        if cert_end != leaf_bytes.len() {
+            return Err(TlsError::ParseError {
+                message: "CT leaf contains trailing bytes after certificate".to_string(),
+            });
+        }
 
         let cert_der = leaf_bytes
             .get(cert_start..cert_end)
@@ -612,6 +617,24 @@ mod tests {
 
         let parser = Parser::new("test-log".to_string());
         assert!(parser.parse_entry(&entry, 0).is_err());
+    }
+
+    #[test]
+    fn test_parse_entry_rejects_trailing_leaf_bytes() {
+        let mut leaf = vec![0u8, 0u8];
+        leaf.extend_from_slice(&0u64.to_be_bytes());
+        leaf.extend_from_slice(&0u16.to_be_bytes());
+        leaf.extend_from_slice(&[0x00, 0x00, 0x01]); // length 1
+        leaf.push(0x30); // declared certificate byte
+        leaf.push(0xff); // trailing byte outside declared certificate
+        let entry = CtLogEntryResponse {
+            leaf_input: base64::engine::general_purpose::STANDARD.encode(leaf),
+            extra_data: String::new(),
+        };
+
+        let parser = Parser::new("test-log".to_string());
+        let err = parser.parse_entry(&entry, 0).unwrap_err();
+        assert!(format!("{err}").contains("trailing bytes"));
     }
 
     #[test]
