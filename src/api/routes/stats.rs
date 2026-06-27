@@ -74,7 +74,7 @@ async fn get_top_domains_from_db(
         .into_iter()
         .map(|(domain, count, last_scan)| DomainStats {
             domain,
-            scan_count: count as u64,
+            scan_count: u64::try_from(count).unwrap_or_default(),
             last_scan,
         })
         .collect())

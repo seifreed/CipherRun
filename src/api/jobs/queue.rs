@@ -95,7 +95,7 @@ impl ScanJob {
                 return;
             }
 
-            let elapsed = elapsed_signed as u64;
+            let elapsed = u64::try_from(elapsed_signed).unwrap_or_default();
 
             // Use checked arithmetic to prevent overflow
             // elapsed * 100 could overflow for very large values (unreachable in practice)
@@ -113,8 +113,10 @@ impl ScanJob {
 
             let remaining = total_estimated.saturating_sub(elapsed);
             self.eta_seconds = Some(remaining);
-            self.estimated_completion =
-                Some(Utc::now() + chrono::Duration::seconds(remaining as i64));
+            self.estimated_completion = Some(
+                Utc::now()
+                    + chrono::Duration::seconds(i64::try_from(remaining).unwrap_or(i64::MAX)),
+            );
         }
     }
 

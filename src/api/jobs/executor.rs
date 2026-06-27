@@ -204,8 +204,12 @@ impl ScanExecutor {
                                 let duration_ms = job
                                     .started_at
                                     .map(|started| {
-                                        (chrono::Utc::now() - started).num_milliseconds().max(0)
-                                            as u64
+                                        u64::try_from(
+                                            (chrono::Utc::now() - started)
+                                                .num_milliseconds()
+                                                .max(0),
+                                        )
+                                        .unwrap_or_default()
                                     })
                                     .unwrap_or_default();
                                 job = current;
@@ -248,7 +252,10 @@ impl ScanExecutor {
                 info!("Scan job {} completed successfully", job.id);
                 let duration_ms = job
                     .started_at
-                    .map(|started| (chrono::Utc::now() - started).num_milliseconds().max(0) as u64)
+                    .map(|started| {
+                        u64::try_from((chrono::Utc::now() - started).num_milliseconds().max(0))
+                            .unwrap_or_default()
+                    })
                     .unwrap_or_default();
                 let mut cancelled = false;
 
