@@ -73,8 +73,12 @@ fn datetime_from_millis(timestamp_ms: u64, field: &str) -> Result<DateTime<Utc>>
     }
 
     datetime_from_unix(
-        secs as i64,
-        ((timestamp_ms % 1000) * 1_000_000) as u32,
+        i64::try_from(secs).map_err(|_| TlsError::ParseError {
+            message: format!("Invalid {field} timestamp: {timestamp_ms}ms"),
+        })?,
+        u32::try_from((timestamp_ms % 1000) * 1_000_000).map_err(|_| TlsError::ParseError {
+            message: format!("Invalid {field} timestamp nanos: {timestamp_ms}ms"),
+        })?,
         field,
     )
 }
