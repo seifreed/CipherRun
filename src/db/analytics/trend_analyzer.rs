@@ -290,7 +290,12 @@ impl TrendAnalyzer {
             sum_x2 += x * x;
         }
 
-        let slope = (n * sum_xy - sum_x * sum_y) / (n * sum_x2 - sum_x * sum_x);
+        let numerator = n * sum_xy - sum_x * sum_y;
+        let denominator = n * sum_x2 - sum_x * sum_x;
+        if denominator == 0.0 || !denominator.is_finite() {
+            return TrendDirection::Stable;
+        }
+        let slope = numerator / denominator;
 
         if slope > 0.5 {
             TrendDirection::Improving
@@ -325,7 +330,12 @@ impl TrendAnalyzer {
             sum_x2 += x * x;
         }
 
-        Some((n * sum_xy - sum_x * sum_y) / (n * sum_x2 - sum_x * sum_x))
+        let numerator = n * sum_xy - sum_x * sum_y;
+        let denominator = n * sum_x2 - sum_x * sum_x;
+        if denominator == 0.0 || !denominator.is_finite() {
+            return None;
+        }
+        Some(numerator / denominator)
     }
 
     /// Trend direction for counts where *fewer is better* (vulnerabilities, weak ciphers):
@@ -387,7 +397,12 @@ impl TrendAnalyzer {
             sum_x2 += x * x;
         }
 
-        let slope = (n * sum_xy - sum_x * sum_y) / (n * sum_x2 - sum_x * sum_x);
+        let numerator = n * sum_xy - sum_x * sum_y;
+        let denominator = n * sum_x2 - sum_x * sum_x;
+        if denominator == 0.0 || !denominator.is_finite() {
+            return None;
+        }
+        let slope = numerator / denominator;
         let intercept = (sum_y - slope * sum_x) / n;
 
         // Forecast next point
