@@ -540,7 +540,7 @@ impl<'a> EarlyDataTester<'a> {
                     Ok(Tls13SupportStatus::NotSupported)
                 }
             }
-            Ok(Err(_)) => Ok(Tls13SupportStatus::NotSupported),
+            Ok(Err(_)) => Ok(Tls13SupportStatus::Inconclusive),
             Err(_) => Ok(Tls13SupportStatus::Inconclusive),
         }
     }
@@ -735,6 +735,32 @@ mod tests {
         let tester = EarlyDataTester::new(&target);
         let err = tester.connect_tls13().await.unwrap_err();
         assert!(err.to_string().contains("Invalid DNS name"));
+    }
+
+    #[tokio::test]
+    async fn test_connect_tls13_transport_anomaly_is_inconclusive() {
+        install_crypto_provider();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let mut buf = [0u8; 512];
+                let _ = socket.read(&mut buf).await;
+            }
+        });
+
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            addr.port(),
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .unwrap();
+
+        let tester = EarlyDataTester::new(&target);
+        let status = tester.connect_tls13().await.unwrap();
+
+        assert!(matches!(status, Tls13SupportStatus::Inconclusive));
     }
 
     #[tokio::test]
