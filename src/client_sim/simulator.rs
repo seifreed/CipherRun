@@ -461,7 +461,7 @@ impl ClientSimulationResult {
     pub fn summary(&self) -> String {
         if self.success {
             format!(
-                "{} -  {} / {}",
+                "{} - ✓ {} / {}",
                 self.client_name,
                 self.protocol
                     .as_ref()
@@ -471,7 +471,7 @@ impl ClientSimulationResult {
             )
         } else {
             format!(
-                "{} -  {}",
+                "{} - ✗ {}",
                 self.client_name,
                 self.error
                     .as_ref()
@@ -539,7 +539,7 @@ mod tests {
 
         let summary = result.summary();
         assert!(summary.contains("Chrome 120"));
-        assert!(summary.contains(""));
+        assert!(summary.contains("✓"));
     }
 
     #[test]
@@ -559,7 +559,7 @@ mod tests {
         };
 
         let summary = result.summary();
-        assert!(summary.contains(""));
+        assert!(summary.contains("✗"));
         assert!(summary.contains("TLS version not supported"));
     }
 
