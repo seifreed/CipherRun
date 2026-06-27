@@ -150,51 +150,57 @@ impl PreHandshakeScanner {
                             // session_id(sid_len) + cipher(2) + compression(1).
                             // Cipher lives at `offset + 35 + session_id_len`, not the
                             // fixed `offset + 34` (which skips the sid_len byte).
-                            let Some(sid_len_at) = offset.checked_add(34) else {
-                                offset = handshake_end;
-                                continue;
-                            };
-                            if sid_len_at < handshake_end {
-                                let session_id_len =
-                                    Self::read_u8_at(data, sid_len_at, "ServerHello session ID")?
-                                        as usize;
-                                let Some(cipher_offset) = offset
-                                    .checked_add(35)
-                                    .and_then(|base| base.checked_add(session_id_len))
-                                else {
-                                    offset = handshake_end;
-                                    continue;
-                                };
-                                let Some(cipher_end) = cipher_offset.checked_add(2) else {
-                                    offset = handshake_end;
-                                    continue;
-                                };
-                                if cipher_end <= handshake_end {
-                                    let cipher = Self::read_u16_at(
-                                        data,
-                                        cipher_offset,
-                                        "ServerHello cipher",
-                                    )?;
-                                    cipher_suite = Some(format!("0x{:04x}", cipher));
-
-                                    let Some(compression_offset) = cipher_offset.checked_add(2)
-                                    else {
-                                        offset = handshake_end;
-                                        continue;
-                                    };
-                                    let Some(compression_end) = cipher_offset.checked_add(3) else {
-                                        offset = handshake_end;
-                                        continue;
-                                    };
-                                    if compression_end <= handshake_end {
-                                        compression_method = Some(Self::read_u8_at(
-                                            data,
-                                            compression_offset,
-                                            "ServerHello compression",
-                                        )?);
-                                    }
-                                }
+                            let sid_len_at =
+                                offset.checked_add(34).ok_or_else(|| TlsError::ParseError {
+                                    message: "ServerHello session ID offset overflow".to_string(),
+                                })?;
+                            if sid_len_at >= handshake_end {
+                                return Err(TlsError::ParseError {
+                                    message: "ServerHello truncated before session_id_len"
+                                        .to_string(),
+                                });
                             }
+                            let session_id_len =
+                                Self::read_u8_at(data, sid_len_at, "ServerHello session ID")?
+                                    as usize;
+                            let cipher_offset = offset
+                                .checked_add(35)
+                                .and_then(|base| base.checked_add(session_id_len))
+                                .ok_or_else(|| TlsError::ParseError {
+                                    message: "ServerHello cipher offset overflow".to_string(),
+                                })?;
+                            let cipher_end = cipher_offset.checked_add(2).ok_or_else(|| {
+                                TlsError::ParseError {
+                                    message: "ServerHello cipher length overflow".to_string(),
+                                }
+                            })?;
+                            if cipher_end > handshake_end {
+                                return Err(TlsError::ParseError {
+                                    message: "ServerHello session ID extends beyond handshake"
+                                        .to_string(),
+                                });
+                            }
+                            let cipher =
+                                Self::read_u16_at(data, cipher_offset, "ServerHello cipher")?;
+                            cipher_suite = Some(format!("0x{:04x}", cipher));
+
+                            let compression_offset =
+                                cipher_offset.checked_add(2).ok_or_else(|| {
+                                    TlsError::ParseError {
+                                        message: "ServerHello compression offset overflow"
+                                            .to_string(),
+                                    }
+                                })?;
+                            if compression_offset >= handshake_end {
+                                return Err(TlsError::ParseError {
+                                    message: "ServerHello truncated before compression".to_string(),
+                                });
+                            }
+                            compression_method = Some(Self::read_u8_at(
+                                data,
+                                compression_offset,
+                                "ServerHello compression",
+                            )?);
 
                             server_hello_data = Some(
                                 Self::slice_range(

@@ -294,6 +294,31 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_handshake_response_rejects_oversized_server_hello_session_id() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["93.184.216.34".parse().expect("valid IP")],
+        )
+        .expect("target should build");
+
+        let scanner = PreHandshakeScanner::new(target);
+        let mut server_hello_body = build_server_hello_body(0x03, 0x03, 0, 0x1301, 0x00);
+        server_hello_body[34] = 32;
+        let server_hello = build_handshake_message(0x02, &server_hello_body);
+        let record = build_handshake_record(&[server_hello]);
+
+        let err = match scanner.parse_handshake_response(&record) {
+            Ok(_) => panic!("oversized ServerHello session ID should fail"),
+            Err(err) => err,
+        };
+        assert!(
+            err.to_string()
+                .contains("ServerHello session ID extends beyond handshake")
+        );
+    }
+
+    #[test]
     fn test_parse_handshake_response_low_version_byte_does_not_panic() {
         // Regression test for S1: if a malformed or non-standard ServerHello
         // arrives with major version byte < 0x02 (legitimately SSLv2-era or
