@@ -174,10 +174,8 @@ impl<'a> PoodleTester<'a> {
             .with_starttls(self.starttls);
         let connected = test_vuln_ssl_connection_outcome(self.target, config).await?;
 
-        match connected {
-            Some(true) => {}
-            Some(false) => return Ok(Some(false)),
-            None => return Ok(None),
+        if connected != Some(true) {
+            return Ok(None);
         }
 
         let zombie = self.test_zombie_poodle().await?;
