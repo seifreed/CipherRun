@@ -1,5 +1,5 @@
 use super::PreHandshakeScanner;
-use crate::Result;
+use crate::{Result, TlsError};
 
 impl PreHandshakeScanner {
     pub(super) fn build_client_hello(&self) -> Result<Vec<u8>> {
@@ -26,7 +26,7 @@ impl PreHandshakeScanner {
         client_hello.push(0x00);
 
         let cipher_suites = self.get_cipher_suites();
-        let cipher_suites_len = (cipher_suites.len() * 2) as u16;
+        let cipher_suites_len = Self::u16_byte_len(cipher_suites.len(), "cipher suites")?;
         client_hello.extend_from_slice(&cipher_suites_len.to_be_bytes());
         for cipher in cipher_suites {
             client_hello.extend_from_slice(&cipher.to_be_bytes());
@@ -36,7 +36,7 @@ impl PreHandshakeScanner {
         client_hello.push(0x00);
 
         let extensions = self.build_extensions()?;
-        let extensions_len = extensions.len() as u16;
+        let extensions_len = Self::u16_len(extensions.len(), "extensions")?;
         client_hello.extend_from_slice(&extensions_len.to_be_bytes());
         client_hello.extend_from_slice(&extensions);
 
@@ -44,19 +44,12 @@ impl PreHandshakeScanner {
         if let Some(len_bytes) =
             client_hello.get_mut(handshake_length_pos..handshake_length_pos + 3)
         {
-            len_bytes.copy_from_slice(&[
-                ((handshake_body_len >> 16) & 0xFF) as u8,
-                ((handshake_body_len >> 8) & 0xFF) as u8,
-                (handshake_body_len & 0xFF) as u8,
-            ]);
+            len_bytes.copy_from_slice(&Self::u24_len(handshake_body_len, "handshake")?);
         }
 
         let record_body_len = client_hello.len() - record_length_pos - 2;
         if let Some(len_bytes) = client_hello.get_mut(record_length_pos..record_length_pos + 2) {
-            len_bytes.copy_from_slice(&[
-                ((record_body_len >> 8) & 0xFF) as u8,
-                (record_body_len & 0xFF) as u8,
-            ]);
+            len_bytes.copy_from_slice(&Self::u16_len(record_body_len, "record")?.to_be_bytes());
         }
 
         Ok(client_hello)
@@ -78,7 +71,7 @@ impl PreHandshakeScanner {
 
     fn build_extensions(&self) -> Result<Vec<u8>> {
         let mut extensions = Vec::new();
-        let sni_ext = self.build_sni_extension();
+        let sni_ext = self.build_sni_extension()?;
         extensions.extend_from_slice(&sni_ext);
 
         extensions.extend_from_slice(&[
@@ -101,11 +94,15 @@ impl PreHandshakeScanner {
         Ok(extensions)
     }
 
-    pub(super) fn build_sni_extension(&self) -> Vec<u8> {
+    pub(super) fn build_sni_extension(&self) -> Result<Vec<u8>> {
         let hostname = self.target.hostname.as_bytes();
-        let hostname_len = hostname.len() as u16;
-        let list_len = hostname_len + 3;
-        let ext_len = list_len + 2;
+        let hostname_len = Self::u16_len(hostname.len(), "SNI hostname")?;
+        let list_len = hostname_len
+            .checked_add(3)
+            .ok_or_else(|| TlsError::Other("SNI hostname exceeds maximum length".to_string()))?;
+        let ext_len = list_len
+            .checked_add(2)
+            .ok_or_else(|| TlsError::Other("SNI extension exceeds maximum length".to_string()))?;
 
         let mut sni = Vec::new();
         sni.extend_from_slice(&[0x00, 0x00]);
@@ -115,6 +112,27 @@ impl PreHandshakeScanner {
         sni.extend_from_slice(&hostname_len.to_be_bytes());
         sni.extend_from_slice(hostname);
 
-        sni
+        Ok(sni)
+    }
+
+    fn u16_len(len: usize, context: &str) -> Result<u16> {
+        u16::try_from(len).map_err(|_| TlsError::Other(format!("{context} exceeds maximum length")))
+    }
+
+    fn u16_byte_len(items: usize, context: &str) -> Result<u16> {
+        let bytes = items
+            .checked_mul(2)
+            .ok_or_else(|| TlsError::Other(format!("{context} exceeds maximum length")))?;
+        Self::u16_len(bytes, context)
+    }
+
+    fn u24_len(len: usize, context: &str) -> Result<[u8; 3]> {
+        let len = u32::try_from(len)
+            .map_err(|_| TlsError::Other(format!("{context} exceeds maximum length")))?;
+        if len > 0x00ff_ffff {
+            return Err(TlsError::Other(format!("{context} exceeds maximum length")));
+        }
+        let bytes = len.to_be_bytes();
+        Ok([bytes[1], bytes[2], bytes[3]])
     }
 }

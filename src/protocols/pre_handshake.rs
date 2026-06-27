@@ -233,7 +233,9 @@ mod tests {
         .expect("target should build");
 
         let scanner = PreHandshakeScanner::new(target);
-        let sni = scanner.build_sni_extension();
+        let sni = scanner
+            .build_sni_extension()
+            .expect("SNI extension should build");
 
         assert_eq!(sni[0], 0x00);
         assert_eq!(sni[1], 0x00);
