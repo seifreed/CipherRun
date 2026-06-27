@@ -222,6 +222,11 @@ impl<'a> HeartbleedTester<'a> {
     fn check_heartbeat_extension(&self, data: &[u8]) -> Result<bool> {
         // TLS ServerHello minimum: 5 (record) + 4 (handshake) + 2 (version) + 32 (random) + 1 (sid len) = 44
         if data.len() < 44 {
+            if data.first() == Some(&0x16) && data.get(5) == Some(&0x02) {
+                return Err(crate::TlsError::ParseError {
+                    message: "ServerHello truncated before session_id_len".to_string(),
+                });
+            }
             return Ok(false);
         }
 
@@ -248,30 +253,45 @@ impl<'a> HeartbleedTester<'a> {
 
         // Session ID length at offset 43
         let Some(sid_len) = data.get(43).copied().map(usize::from) else {
-            return Ok(false);
+            return Err(crate::TlsError::ParseError {
+                message: "ServerHello truncated before session_id_len".to_string(),
+            });
         };
         if sid_len > 32 {
             // Malformed ServerHello: session_id_length exceeds TLS maximum
-            return Ok(false);
+            return Err(crate::TlsError::ParseError {
+                message: "ServerHello session_id_length exceeds TLS maximum".to_string(),
+            });
         }
         // After session ID: cipher suite (2 bytes) + compression method (1 byte)
         let Some(ext_offset) = 44usize
             .checked_add(sid_len)
             .and_then(|offset| offset.checked_add(2 + 1))
         else {
-            return Ok(false);
+            return Err(crate::TlsError::ParseError {
+                message: "ServerHello extensions offset overflow".to_string(),
+            });
         };
-
-        // Check we have room for extensions length (2 bytes)
-        let Some(ext_start) = ext_offset.checked_add(2) else {
-            return Ok(false);
-        };
-        if ext_start > record_end {
+        if ext_offset == record_end {
             return Ok(false);
         }
 
+        // Check we have room for extensions length (2 bytes)
+        let Some(ext_start) = ext_offset.checked_add(2) else {
+            return Err(crate::TlsError::ParseError {
+                message: "ServerHello extensions length overflow".to_string(),
+            });
+        };
+        if ext_start > record_end {
+            return Err(crate::TlsError::ParseError {
+                message: "ServerHello truncated before extensions length".to_string(),
+            });
+        }
+
         let Some(ext_total_len) = read_u16_at(data, ext_offset).map(usize::from) else {
-            return Ok(false);
+            return Err(crate::TlsError::ParseError {
+                message: "ServerHello truncated before extensions length".to_string(),
+            });
         };
         let Some(ext_end) = ext_start.checked_add(ext_total_len) else {
             return Err(crate::TlsError::ParseError {
@@ -288,13 +308,19 @@ impl<'a> HeartbleedTester<'a> {
         let mut pos = ext_start;
         while let Some(ext_header_end) = pos.checked_add(4).filter(|&end| end <= ext_end) {
             let Some(ext_type) = read_u16_at(data, pos) else {
-                return Ok(false);
+                return Err(crate::TlsError::ParseError {
+                    message: "ServerHello extension type truncated".to_string(),
+                });
             };
             let Some(ext_len_offset) = pos.checked_add(2) else {
-                return Ok(false);
+                return Err(crate::TlsError::ParseError {
+                    message: "ServerHello extension length offset overflow".to_string(),
+                });
             };
             let Some(ext_len) = read_u16_at(data, ext_len_offset).map(usize::from) else {
-                return Ok(false);
+                return Err(crate::TlsError::ParseError {
+                    message: "ServerHello extension length truncated".to_string(),
+                });
             };
             pos = ext_header_end;
 
@@ -313,6 +339,11 @@ impl<'a> HeartbleedTester<'a> {
                 return Ok(true);
             }
             pos = next_pos;
+        }
+        if pos != ext_end {
+            return Err(crate::TlsError::ParseError {
+                message: "ServerHello extension block contains trailing bytes".to_string(),
+            });
         }
 
         Ok(false)
@@ -696,6 +727,62 @@ mod tests {
         };
 
         assert!(!tester.check_heartbeat_extension(&[0x00]).unwrap());
+    }
+
+    #[test]
+    fn test_heartbeat_extension_rejects_truncated_serverhello() {
+        let target = Target::with_ips(
+            "test.com".to_string(),
+            443,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+        let tester = HeartbleedTester {
+            target: &target,
+            sni_hostname: None,
+            connect_timeout: Duration::from_secs(5),
+            read_timeout: Duration::from_secs(5),
+            starttls: None,
+            starttls_hostname: None,
+        };
+
+        let err = tester
+            .check_heartbeat_extension(&[0x16, 0x03, 0x03, 0x00, 0x01, 0x02])
+            .expect_err("truncated ServerHello should fail");
+        assert!(err.to_string().contains("session_id_len"));
+    }
+
+    #[test]
+    fn test_heartbeat_extension_rejects_oversized_session_id() {
+        let target = Target::with_ips(
+            "test.com".to_string(),
+            443,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+        let tester = HeartbleedTester {
+            target: &target,
+            sni_hostname: None,
+            connect_timeout: Duration::from_secs(5),
+            read_timeout: Duration::from_secs(5),
+            starttls: None,
+            starttls_hostname: None,
+        };
+
+        let mut data = vec![
+            0x16, 0x03, 0x03, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x03, 0x03,
+        ];
+        data.extend_from_slice(&[0u8; 32]);
+        data.push(33);
+        let record_len = (data.len() - 5) as u16;
+        write_u16_at(&mut data, 3, record_len);
+        let hs_len = data.len() - 9;
+        write_u24_at(&mut data, 6, hs_len);
+
+        let err = tester
+            .check_heartbeat_extension(&data)
+            .expect_err("oversized session id should fail");
+        assert!(err.to_string().contains("session_id_length"));
     }
 
     #[test]
