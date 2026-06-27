@@ -53,35 +53,6 @@ fn u24_len(len: usize, context: &str) -> Result<[u8; 3]> {
     Ok([bytes[1], bytes[2], bytes[3]])
 }
 
-/// Return true once a ServerHelloDone record (handshake type 0x0e) is present in `buf`.
-fn has_server_hello_done(buf: &[u8]) -> bool {
-    let mut offset = 0usize;
-    while let Some(header_end) = offset.checked_add(5).filter(|&end| end <= buf.len()) {
-        let Some(header) = buf
-            .get(offset..header_end)
-            .and_then(|header| <&[u8; 5]>::try_from(header).ok())
-        else {
-            break;
-        };
-        let [content_type, _, _, len_high, len_low] = *header;
-        let record_len = usize::from(u16::from_be_bytes([len_high, len_low]));
-        let Some(record_end) = header_end.checked_add(record_len) else {
-            break;
-        };
-        if record_end > buf.len() {
-            break;
-        }
-        if content_type == 0x16 {
-            let hs_start = header_end;
-            if hs_start < record_end && buf.get(hs_start) == Some(&0x0e) {
-                return true;
-            }
-        }
-        offset = record_end;
-    }
-    false
-}
-
 /// Parse the server handshake buffer to find the Certificate message and return the RSA
 /// modulus length in bytes.
 fn extract_rsa_key_len(buffer: &[u8]) -> Result<usize> {
@@ -545,7 +516,7 @@ impl RobotTester {
             let Some(accumulated) = buffer.get(..total) else {
                 break;
             };
-            if has_server_hello_done(accumulated) || total >= buffer.len() {
+            if super::handshake_read::has_server_hello_done(accumulated) || total >= buffer.len() {
                 break;
             }
         }
