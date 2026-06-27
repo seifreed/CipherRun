@@ -54,7 +54,9 @@ impl MxTester {
                 .args(["+short", "MX", &self.domain])
                 .output();
 
-            if let Ok(output) = output {
+            if let Ok(output) = output
+                && output.status.success()
+            {
                 self.parse_dig_output(&output.stdout)?
             } else {
                 // Fallback to nslookup if dig is not available
