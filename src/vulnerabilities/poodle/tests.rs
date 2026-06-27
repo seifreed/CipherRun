@@ -361,3 +361,26 @@ async fn test_all_variants_modern_server() {
         );
     }
 }
+
+#[tokio::test]
+async fn test_poodle_inactive_target_is_inconclusive() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("listener");
+    let port = listener.local_addr().expect("local addr").port();
+    drop(listener);
+
+    let target = crate::utils::network::Target::with_ips(
+        "localhost".to_string(),
+        port,
+        vec!["127.0.0.1".parse().unwrap()],
+    )
+    .unwrap();
+    let tester = PoodleTester::new(&target);
+    let result = tester.test().await.expect("test should succeed");
+
+    assert!(!result.vulnerable);
+    assert_eq!(result.ssl3_supported, None);
+    assert_eq!(result.tls_poodle, None);
+    assert!(result.details.contains("inconclusive"), "{result:?}");
+}

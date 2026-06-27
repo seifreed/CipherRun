@@ -25,7 +25,7 @@ mod record_builder;
 use crate::Result;
 use crate::utils::network::Target;
 use crate::utils::timing::{TimingOracleConfig, TimingSampleSet, detect_timing_oracle};
-use crate::utils::{VulnSslConfig, test_vuln_ssl_connection, test_vuln_ssl_connection_outcome};
+use crate::utils::{VulnSslConfig, test_vuln_ssl_connection_outcome};
 use std::time::Duration;
 
 /// POODLE vulnerability tester
@@ -172,10 +172,12 @@ impl<'a> PoodleTester<'a> {
     async fn test_tls_poodle(&self) -> Result<Option<bool>> {
         let config = VulnSslConfig::tls10_with_ciphers("AES128-SHA:AES256-SHA:DES-CBC3-SHA")
             .with_starttls(self.starttls);
-        let connected = test_vuln_ssl_connection(self.target, config).await?;
+        let connected = test_vuln_ssl_connection_outcome(self.target, config).await?;
 
-        if !connected {
-            return Ok(None);
+        match connected {
+            Some(true) => {}
+            Some(false) => return Ok(Some(false)),
+            None => return Ok(None),
         }
 
         let zombie = self.test_zombie_poodle().await?;
