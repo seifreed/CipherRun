@@ -144,7 +144,7 @@ impl FingerprintPhase {
         // Capture ServerHello and generate JA3S fingerprint
         let capturer = ServerHelloNetworkCapture::new(target);
         let server_hello = capturer.capture()?;
-        let server_hello_raw = server_hello.to_bytes();
+        let server_hello_raw = server_hello.to_bytes()?;
         let ja3s = Ja3sFingerprint::from_server_hello(&server_hello);
 
         // Match against signature database

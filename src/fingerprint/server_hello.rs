@@ -26,6 +26,24 @@ pub struct ServerHelloCapture {
 }
 
 impl ServerHelloCapture {
+    fn cursor_position(cursor: &Cursor<&[u8]>, context: &str) -> Result<usize> {
+        usize::try_from(cursor.position()).map_err(|_| TlsError::ParseError {
+            message: format!("{context} position is too large"),
+        })
+    }
+
+    fn u8_len(len: usize, context: &str) -> Result<u8> {
+        u8::try_from(len).map_err(|_| TlsError::ParseError {
+            message: format!("{context} length is too large"),
+        })
+    }
+
+    fn u16_len(len: usize, context: &str) -> Result<u16> {
+        u16::try_from(len).map_err(|_| TlsError::ParseError {
+            message: format!("{context} length is too large"),
+        })
+    }
+
     /// Parse ServerHello from raw TLS record bytes
     ///
     /// Expected format:
@@ -151,50 +169,58 @@ impl ServerHelloCapture {
         let mut extensions = Vec::new();
 
         // Check if there are extensions (need at least 2 bytes for extensions length)
-        let position = cursor.position() as usize;
-        if position + 1 < data.len() {
+        let position = Self::cursor_position(&cursor, "ServerHello")?;
+        if data.len().saturating_sub(position) >= 2 {
             // Read extensions length
             let mut ext_len_bytes = [0u8; 2];
             if cursor.read_exact(&mut ext_len_bytes).is_ok() {
-                let extensions_length = u16::from_be_bytes(ext_len_bytes) as usize;
+                let extensions_length = usize::from(u16::from_be_bytes(ext_len_bytes));
 
                 if extensions_length > 0 {
-                    let ext_start = cursor.position() as usize;
-                    let ext_end = ext_start + extensions_length;
+                    let ext_start = Self::cursor_position(&cursor, "Extensions")?;
+                    let ext_end = ext_start.checked_add(extensions_length).ok_or_else(|| {
+                        TlsError::ParseError {
+                            message: "Extensions length overflow".to_string(),
+                        }
+                    })?;
 
-                    if ext_end <= data.len() {
-                        while (cursor.position() as usize) < ext_end {
-                            // Parse extension type (2 bytes)
-                            let mut ext_type_bytes = [0u8; 2];
-                            if cursor.read_exact(&mut ext_type_bytes).is_err() {
-                                return Err(TlsError::ParseError {
-                                    message: "Failed to read extension type".to_string(),
-                                });
-                            }
-                            let ext_type = u16::from_be_bytes(ext_type_bytes);
+                    if ext_end > data.len() {
+                        return Err(TlsError::ParseError {
+                            message: "Extensions exceed ServerHello length".to_string(),
+                        });
+                    }
 
-                            // Parse extension length (2 bytes)
-                            let mut ext_data_len_bytes = [0u8; 2];
-                            if cursor.read_exact(&mut ext_data_len_bytes).is_err() {
-                                return Err(TlsError::ParseError {
-                                    message: "Failed to read extension length".to_string(),
-                                });
-                            }
-                            let ext_data_len = u16::from_be_bytes(ext_data_len_bytes) as usize;
-
-                            // Parse extension data
-                            let mut ext_data = vec![0u8; ext_data_len];
-                            if ext_data_len > 0 && cursor.read_exact(&mut ext_data).is_err() {
-                                return Err(TlsError::ParseError {
-                                    message: "Failed to read extension data".to_string(),
-                                });
-                            }
-
-                            extensions.push(Extension {
-                                extension_type: ext_type,
-                                data: ext_data,
+                    while Self::cursor_position(&cursor, "Extension")? < ext_end {
+                        // Parse extension type (2 bytes)
+                        let mut ext_type_bytes = [0u8; 2];
+                        if cursor.read_exact(&mut ext_type_bytes).is_err() {
+                            return Err(TlsError::ParseError {
+                                message: "Failed to read extension type".to_string(),
                             });
                         }
+                        let ext_type = u16::from_be_bytes(ext_type_bytes);
+
+                        // Parse extension length (2 bytes)
+                        let mut ext_data_len_bytes = [0u8; 2];
+                        if cursor.read_exact(&mut ext_data_len_bytes).is_err() {
+                            return Err(TlsError::ParseError {
+                                message: "Failed to read extension length".to_string(),
+                            });
+                        }
+                        let ext_data_len = usize::from(u16::from_be_bytes(ext_data_len_bytes));
+
+                        // Parse extension data
+                        let mut ext_data = vec![0u8; ext_data_len];
+                        if ext_data_len > 0 && cursor.read_exact(&mut ext_data).is_err() {
+                            return Err(TlsError::ParseError {
+                                message: "Failed to read extension data".to_string(),
+                            });
+                        }
+
+                        extensions.push(Extension {
+                            extension_type: ext_type,
+                            data: ext_data,
+                        });
                     }
                 }
             }
@@ -219,7 +245,7 @@ impl ServerHelloCapture {
     }
 
     /// Convert to bytes for storage
-    pub fn to_bytes(&self) -> Vec<u8> {
+    pub fn to_bytes(&self) -> Result<Vec<u8>> {
         let mut bytes = Vec::new();
 
         // Version
@@ -229,7 +255,7 @@ impl ServerHelloCapture {
         bytes.extend_from_slice(&self.random);
 
         // Session ID
-        bytes.push(self.session_id.len() as u8);
+        bytes.push(Self::u8_len(self.session_id.len(), "Session ID")?);
         bytes.extend_from_slice(&self.session_id);
 
         // Cipher suite
@@ -240,21 +266,20 @@ impl ServerHelloCapture {
 
         // Extensions
         if !self.extensions.is_empty() {
-            let ext_total_len: u16 = self
-                .extensions
-                .iter()
-                .map(|e| 4 + e.data.len() as u16)
-                .sum();
-            bytes.extend_from_slice(&ext_total_len.to_be_bytes());
-
+            let mut extensions_bytes = Vec::new();
             for ext in &self.extensions {
-                bytes.extend_from_slice(&ext.extension_type.to_be_bytes());
-                bytes.extend_from_slice(&(ext.data.len() as u16).to_be_bytes());
-                bytes.extend_from_slice(&ext.data);
+                extensions_bytes.extend_from_slice(&ext.extension_type.to_be_bytes());
+                let ext_len = Self::u16_len(ext.data.len(), "Extension data")?;
+                extensions_bytes.extend_from_slice(&ext_len.to_be_bytes());
+                extensions_bytes.extend_from_slice(&ext.data);
             }
+
+            let ext_total_len = Self::u16_len(extensions_bytes.len(), "Extensions")?;
+            bytes.extend_from_slice(&ext_total_len.to_be_bytes());
+            bytes.extend_from_slice(&extensions_bytes);
         }
 
-        bytes
+        Ok(bytes)
     }
 
     /// Get human-readable TLS alert description
