@@ -473,8 +473,10 @@ impl MxTester {
 }
 
 fn synthetic_backend_ip(index: usize) -> IpAddr {
-    let high = ((index >> 16) & 0xffff) as u16;
-    let low = ((index & 0xffff) as u16).saturating_add(1);
+    let bytes = index.to_be_bytes();
+    let high = u16::from_be_bytes([bytes[bytes.len() - 4], bytes[bytes.len() - 3]]);
+    let low =
+        u16::from_be_bytes([bytes[bytes.len() - 2], bytes[bytes.len() - 1]]).saturating_add(1);
     IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, high, low))
 }
 
