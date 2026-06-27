@@ -91,62 +91,66 @@ impl BreachTester {
                 Err(_) => return Ok(None),
             };
 
-        let std_stream = stream.into_std()?;
-        std_stream.set_nonblocking(false)?;
+        let std_stream =
+            crate::utils::network::into_blocking_std_stream(stream, TLS_HANDSHAKE_TIMEOUT)?;
 
-        // Establish TLS
-        use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
-        // Certificate validity is irrelevant to whether the server enables HTTP
-        // response compression; a verifying connector would fail the handshake
-        // on bad-cert hosts and leave BREACH undetectable.
-        let mut builder = SslConnector::builder(SslMethod::tls())?;
-        builder.set_verify(SslVerifyMode::NONE);
-        let connector = builder.build();
+        let hostname = self.target.hostname.clone();
+        tokio::task::spawn_blocking(move || -> Result<Option<bool>> {
+            use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
+            use std::io::{Read, Write};
 
-        match connector.connect(&self.target.hostname, std_stream) {
-            Ok(mut ssl_stream) => {
-                use std::io::{Read, Write};
+            // Certificate validity is irrelevant to whether the server enables HTTP
+            // response compression; a verifying connector would fail the handshake
+            // on bad-cert hosts and leave BREACH undetectable.
+            let mut builder = SslConnector::builder(SslMethod::tls())?;
+            builder.set_verify(SslVerifyMode::NONE);
+            let connector = builder.build();
 
-                // Send HTTP request with Accept-Encoding header
-                let request = format!(
-                    "GET / HTTP/1.1\r\n\
-                     Host: {}\r\n\
-                     Accept-Encoding: gzip, deflate\r\n\
-                     User-Agent: Mozilla/5.0\r\n\
-                     Connection: close\r\n\
-                     \r\n",
-                    self.target.hostname
-                );
+            match connector.connect(&hostname, std_stream) {
+                Ok(mut ssl_stream) => {
+                    // Send HTTP request with Accept-Encoding header
+                    let request = format!(
+                        "GET / HTTP/1.1\r\n\
+                         Host: {}\r\n\
+                         Accept-Encoding: gzip, deflate\r\n\
+                         User-Agent: Mozilla/5.0\r\n\
+                         Connection: close\r\n\
+                         \r\n",
+                        hostname
+                    );
 
-                ssl_stream.write_all(request.as_bytes())?;
+                    ssl_stream.write_all(request.as_bytes())?;
 
-                // Read response headers
-                let mut buffer = vec![0u8; 8192];
-                let n = ssl_stream.read(&mut buffer)?;
+                    // Read response headers
+                    let mut buffer = vec![0u8; 8192];
+                    let n = ssl_stream.read(&mut buffer)?;
 
-                if n > 0 {
-                    let bytes = buffer.get(..n).ok_or_else(|| crate::TlsError::ParseError {
-                        message: "BREACH compression response read length exceeded buffer"
-                            .to_string(),
-                    })?;
-                    let response = String::from_utf8_lossy(bytes);
-                    // Check for Content-Encoding header
-                    let compressed = response.lines().any(|line| {
-                        let lower = line.to_lowercase();
-                        lower.starts_with("content-encoding:")
-                            && (lower.contains("gzip")
-                                || lower.contains("deflate")
-                                || lower.contains("br")
-                                || lower.contains("zstd")
-                                || lower.contains("compress"))
-                    });
-                    Ok(Some(compressed))
-                } else {
-                    Ok(None)
+                    if n > 0 {
+                        let bytes = buffer.get(..n).ok_or_else(|| crate::TlsError::ParseError {
+                            message: "BREACH compression response read length exceeded buffer"
+                                .to_string(),
+                        })?;
+                        let response = String::from_utf8_lossy(bytes);
+                        // Check for Content-Encoding header
+                        let compressed = response.lines().any(|line| {
+                            let lower = line.to_lowercase();
+                            lower.starts_with("content-encoding:")
+                                && (lower.contains("gzip")
+                                    || lower.contains("deflate")
+                                    || lower.contains("br")
+                                    || lower.contains("zstd")
+                                    || lower.contains("compress"))
+                        });
+                        Ok(Some(compressed))
+                    } else {
+                        Ok(None)
+                    }
                 }
+                Err(_) => Ok(None),
             }
-            Err(_) => Ok(None),
-        }
+        })
+        .await
+        .map_err(|e| crate::TlsError::Other(format!("BREACH test blocking task failed: {}", e)))?
     }
 
     /// Test if server reflects user input (dynamic content)
@@ -246,53 +250,58 @@ impl BreachTester {
                 Err(_) => return Ok(None),
             };
 
-        let std_stream = stream.into_std()?;
-        std_stream.set_nonblocking(false)?;
+        let std_stream =
+            crate::utils::network::into_blocking_std_stream(stream, TLS_HANDSHAKE_TIMEOUT)?;
 
-        use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
-        // Certificate validity is irrelevant to whether the server enables HTTP
-        // response compression; a verifying connector would fail the handshake
-        // on bad-cert hosts and leave BREACH undetectable.
-        let mut builder = SslConnector::builder(SslMethod::tls())?;
-        builder.set_verify(SslVerifyMode::NONE);
-        let connector = builder.build();
+        let hostname = self.target.hostname.clone();
+        tokio::task::spawn_blocking(move || -> Result<Option<bool>> {
+            use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
+            use std::io::{Read, Write};
 
-        match connector.connect(&self.target.hostname, std_stream) {
-            Ok(mut ssl_stream) => {
-                use std::io::{Read, Write};
+            // Certificate validity is irrelevant to whether the server enables HTTP
+            // response compression; a verifying connector would fail the handshake
+            // on bad-cert hosts and leave BREACH undetectable.
+            let mut builder = SslConnector::builder(SslMethod::tls())?;
+            builder.set_verify(SslVerifyMode::NONE);
+            let connector = builder.build();
 
-                // Send request with Cookie header
-                let request = format!(
-                    "GET / HTTP/1.1\r\n\
-                     Host: {}\r\n\
-                     Cookie: sessionid=test123; csrftoken=abc456\r\n\
-                     Accept-Encoding: gzip, deflate\r\n\
-                     Connection: close\r\n\
-                     \r\n",
-                    self.target.hostname
-                );
+            match connector.connect(&hostname, std_stream) {
+                Ok(mut ssl_stream) => {
+                    // Send request with Cookie header
+                    let request = format!(
+                        "GET / HTTP/1.1\r\n\
+                         Host: {}\r\n\
+                         Cookie: sessionid=test123; csrftoken=abc456\r\n\
+                         Accept-Encoding: gzip, deflate\r\n\
+                         Connection: close\r\n\
+                         \r\n",
+                        hostname
+                    );
 
-                ssl_stream.write_all(request.as_bytes())?;
+                    ssl_stream.write_all(request.as_bytes())?;
 
-                // Read response
-                let mut buffer = vec![0u8; 16384];
-                let n = ssl_stream.read(&mut buffer)?;
+                    // Read response
+                    let mut buffer = vec![0u8; 16384];
+                    let n = ssl_stream.read(&mut buffer)?;
 
-                if n > 0 {
-                    let bytes = buffer.get(..n).ok_or_else(|| crate::TlsError::ParseError {
-                        message: "BREACH sensitive response read length exceeded buffer"
-                            .to_string(),
-                    })?;
-                    let response = String::from_utf8_lossy(bytes);
-                    // Check for sensitive data with more precise matching
-                    let has_sensitive = Self::detect_sensitive_patterns(&response);
-                    Ok(Some(has_sensitive))
-                } else {
-                    Ok(None)
+                    if n > 0 {
+                        let bytes = buffer.get(..n).ok_or_else(|| crate::TlsError::ParseError {
+                            message: "BREACH sensitive response read length exceeded buffer"
+                                .to_string(),
+                        })?;
+                        let response = String::from_utf8_lossy(bytes);
+                        // Check for sensitive data with more precise matching
+                        let has_sensitive = Self::detect_sensitive_patterns(&response);
+                        Ok(Some(has_sensitive))
+                    } else {
+                        Ok(None)
+                    }
                 }
+                Err(_) => Ok(None),
             }
-            Err(_) => Ok(None),
-        }
+        })
+        .await
+        .map_err(|e| crate::TlsError::Other(format!("BREACH test blocking task failed: {}", e)))?
     }
 
     /// Detect sensitive data patterns in HTTP response
