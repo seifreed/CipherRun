@@ -157,11 +157,26 @@ impl TicketbleedTester {
                                 message: "Ticketbleed ticket response read length exceeded buffer"
                                     .to_string(),
                             })?;
-                        let has_new_ticket = self.parse_new_session_ticket(server_response)?;
+                        let has_new_ticket = match self.parse_new_session_ticket(server_response) {
+                            Ok(value) => value,
+                            Err(_) => {
+                                return Ok(TicketbleedProbeOutcome::Inconclusive(
+                                    "Malformed session ticket response",
+                                ));
+                            }
+                        };
 
                         if has_new_ticket {
-                            let client_hello2 =
-                                self.build_client_hello_with_received_ticket(server_response)?;
+                            let client_hello2 = match self
+                                .build_client_hello_with_received_ticket(server_response)
+                            {
+                                Ok(value) => value,
+                                Err(_) => {
+                                    return Ok(TicketbleedProbeOutcome::Inconclusive(
+                                        "Malformed session ticket response",
+                                    ));
+                                }
+                            };
                             stream.write_all(&client_hello2).await?;
 
                             let mut response = vec![0u8; 16384];
@@ -985,5 +1000,39 @@ mod tests {
             "delayed NewSessionTicket must be consumed before the follow-up probe; got {result:?}"
         );
         assert!(result.details.contains("follow-up ClientHello"));
+    }
+
+    #[tokio::test]
+    async fn test_ticketbleed_malformed_ticket_response_is_inconclusive() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener");
+        let port = listener.local_addr().expect("local addr").port();
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept");
+            let mut buf = vec![0u8; 4096];
+            let _ = socket.read(&mut buf).await.expect("read initial hello");
+
+            let malformed_ticket = vec![CONTENT_TYPE_HANDSHAKE, 0x03, 0x03, 0x00, 0x01, 0x04];
+            socket
+                .write_all(&malformed_ticket)
+                .await
+                .expect("write malformed ticket");
+        });
+
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+
+        let result = TicketbleedTester::new(target).test().await.unwrap();
+        server.await.expect("server task");
+
+        assert!(!result.vulnerable);
+        assert!(result.inconclusive);
+        assert!(result.details.contains("Malformed session ticket response"));
     }
 }
