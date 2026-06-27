@@ -15,14 +15,12 @@ static CA_STORES_INNER: std::sync::OnceLock<Arc<CAStores>> = std::sync::OnceLock
 /// Initialization errors are logged and an empty store is used as fallback.
 pub fn ca_stores() -> Arc<CAStores> {
     CA_STORES_INNER
-        .get_or_init(|| match CAStores::load() {
-            Ok(stores) => Arc::new(stores),
-            Err(e) => {
-                tracing::error!("Failed to load CA stores: {}. Using empty stores.", e);
-                Arc::new(CAStores::empty())
-            }
-        })
+        .get_or_init(|| ca_stores_from_load_result(CAStores::load()))
         .clone()
+}
+
+fn ca_stores_from_load_result(result: Result<CAStores>) -> Arc<CAStores> {
+    Arc::new(result.unwrap_or_else(|e| panic!("Failed to load CA stores: {e}")))
 }
 
 /// Legacy static for backward compatibility
@@ -252,5 +250,11 @@ mod tests {
 
         let err = CAStore::from_pem("Test", &pem).expect_err("trailing DER should fail");
         assert!(format!("{err}").contains("trailing byte"));
+    }
+
+    #[test]
+    #[should_panic(expected = "Failed to load CA stores")]
+    fn test_ca_stores_load_error_is_not_suppressed() {
+        let _ = ca_stores_from_load_result(Err(crate::TlsError::Other("broken store".into())));
     }
 }
