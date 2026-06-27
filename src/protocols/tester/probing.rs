@@ -558,7 +558,7 @@ impl ProtocolTester {
                     Ok(ProtocolProbeOutcome::NotSupported)
                 }
             }
-            Ok(Err(_)) => Ok(ProtocolProbeOutcome::NotSupported),
+            Ok(Err(_)) => Ok(ProtocolProbeOutcome::Inconclusive),
             Err(_) => Ok(ProtocolProbeOutcome::Inconclusive),
         }
     }
@@ -665,6 +665,7 @@ mod legacy_probe_tests {
     use rustls_pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
     use std::net::Ipv4Addr;
     use std::time::Duration;
+    use tokio::io::AsyncReadExt;
 
     /// Build a minimal ServerHello record advertising `version` in the legacy
     /// version field (no supported_versions extension, so the parser reports the
@@ -806,5 +807,39 @@ mod legacy_probe_tests {
         accept_task.abort();
 
         assert!(matches!(err, crate::error::TlsError::MtlsError { .. }));
+    }
+
+    #[tokio::test]
+    async fn test_tls13_transport_anomaly_is_inconclusive() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("test listener should bind");
+        let addr = listener
+            .local_addr()
+            .expect("test listener should have addr");
+
+        let accept_task = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("test server should accept");
+            let mut buf = [0u8; 512];
+            let _ = socket
+                .read(&mut buf)
+                .await
+                .expect("test server should observe client hello");
+        });
+
+        let target = Target::with_ips("localhost".to_string(), addr.port(), vec![addr.ip()])
+            .expect("test target should be valid");
+        let tester = ProtocolTester::new(target)
+            .with_connect_timeout(Duration::from_secs(1))
+            .with_read_timeout(Duration::from_secs(1));
+
+        let outcome = tester
+            .test_tls13_on_ip(addr)
+            .await
+            .expect("test should not error");
+        accept_task.await.expect("test server task should complete");
+
+        assert_eq!(outcome, ProtocolProbeOutcome::Inconclusive);
     }
 }
