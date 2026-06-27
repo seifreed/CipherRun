@@ -208,39 +208,44 @@ impl<'a> PaddingOracle2016Tester<'a> {
         let std_stream =
             crate::utils::network::into_blocking_std_stream(stream, self.connect_timeout)?;
 
-        let mut builder = SslConnector::builder(SslMethod::tls())?;
-        // Certificate validity is irrelevant to CBC cipher support; a verifying
-        // connector would surface a "certificate verify failed" handshake error
-        // that the classifier treats as NotSupported, false-negativing bad-cert
-        // hosts.
-        builder.set_verify(SslVerifyMode::NONE);
+        let hostname = self.target.hostname.clone();
+        tokio::task::spawn_blocking(move || -> Result<CbcSupportStatus> {
+            let mut builder = SslConnector::builder(SslMethod::tls())?;
+            // Certificate validity is irrelevant to CBC cipher support; a verifying
+            // connector would surface a "certificate verify failed" handshake error
+            // that the classifier treats as NotSupported, false-negativing bad-cert
+            // hosts.
+            builder.set_verify(SslVerifyMode::NONE);
 
-        // Set cipher list to only CBC mode
-        builder.set_cipher_list(aes_cbc_ciphers)?;
+            // Set cipher list to only CBC mode
+            builder.set_cipher_list(aes_cbc_ciphers)?;
 
-        // Try TLS 1.0, 1.1, 1.2 (CVE affects these versions)
-        if builder
-            .set_min_proto_version(Some(SslVersion::TLS1))
-            .is_err()
-        {
-            return Ok(CbcSupportStatus::Inconclusive);
-        }
-        if builder
-            .set_max_proto_version(Some(SslVersion::TLS1_2))
-            .is_err()
-        {
-            return Ok(CbcSupportStatus::Inconclusive);
-        }
-
-        let connector = builder.build();
-
-        match connector.connect(&self.target.hostname, std_stream) {
-            Ok(_ssl_stream) => {
-                // Successfully connected with AES-CBC cipher
-                Ok(CbcSupportStatus::Supported)
+            // Try TLS 1.0, 1.1, 1.2 (CVE affects these versions)
+            if builder
+                .set_min_proto_version(Some(SslVersion::TLS1))
+                .is_err()
+            {
+                return Ok(CbcSupportStatus::Inconclusive);
             }
-            Err(e) => Ok(classify_cbc_handshake_error(e)),
-        }
+            if builder
+                .set_max_proto_version(Some(SslVersion::TLS1_2))
+                .is_err()
+            {
+                return Ok(CbcSupportStatus::Inconclusive);
+            }
+
+            let connector = builder.build();
+
+            match connector.connect(&hostname, std_stream) {
+                Ok(_ssl_stream) => {
+                    // Successfully connected with AES-CBC cipher
+                    Ok(CbcSupportStatus::Supported)
+                }
+                Err(e) => Ok(classify_cbc_handshake_error(e)),
+            }
+        })
+        .await
+        .map_err(|e| crate::TlsError::Other(format!("Spawn blocking failed: {e}")))?
     }
 
     /// Perform timing analysis to detect padding oracle
