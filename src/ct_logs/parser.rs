@@ -268,16 +268,27 @@ impl Parser {
     fn parse_certificate(&self, der: &[u8], cert_type: CertType) -> Result<Certificate> {
         match cert_type {
             CertType::X509Certificate => {
-                let (_, cert) =
+                let (rest, cert) =
                     X509Certificate::from_der(der).map_err(|e| TlsError::ParseError {
                         message: format!("Failed to parse X.509 certificate: {}", e),
                     })?;
+                if !rest.is_empty() {
+                    return Err(TlsError::ParseError {
+                        message: "X.509 certificate contains trailing bytes".to_string(),
+                    });
+                }
                 Self::metadata_from_tbs(&cert.tbs_certificate, der)
             }
             CertType::PreCertificate => {
-                let (_, tbs) = TbsCertificate::from_der(der).map_err(|e| TlsError::ParseError {
-                    message: format!("Failed to parse precertificate TBS: {}", e),
-                })?;
+                let (rest, tbs) =
+                    TbsCertificate::from_der(der).map_err(|e| TlsError::ParseError {
+                        message: format!("Failed to parse precertificate TBS: {}", e),
+                    })?;
+                if !rest.is_empty() {
+                    return Err(TlsError::ParseError {
+                        message: "PreCertificate TBS contains trailing bytes".to_string(),
+                    });
+                }
                 Self::metadata_from_tbs(&tbs, der)
             }
         }
@@ -586,6 +597,35 @@ mod tests {
         let parser = Parser::new("test-log".to_string());
         let err = parser.parse_entry(&entry, 7).unwrap_err();
         assert!(format!("{err}").contains("Failed to parse subject alternative name"));
+    }
+
+    #[test]
+    fn test_parse_entry_rejects_x509_der_trailing_bytes() {
+        let mut cert_der = cert_with_raw_extension_der("1.2.3.4", b"\x05\x00");
+        cert_der.push(0xff);
+        let entry = CtLogEntryResponse {
+            leaf_input: build_leaf_input(&cert_der),
+            extra_data: String::new(),
+        };
+
+        let parser = Parser::new("test-log".to_string());
+        let err = parser.parse_entry(&entry, 7).unwrap_err();
+        assert!(format!("{err}").contains("trailing bytes"));
+    }
+
+    #[test]
+    fn test_parse_entry_rejects_precertificate_tbs_trailing_bytes() {
+        let cert_der = cert_with_raw_extension_der("1.2.3.4", b"\x05\x00");
+        let mut tbs_der = tbs_der_from_cert(&cert_der);
+        tbs_der.push(0xff);
+        let entry = CtLogEntryResponse {
+            leaf_input: build_precert_leaf_input(&tbs_der),
+            extra_data: String::new(),
+        };
+
+        let parser = Parser::new("test-log".to_string());
+        let err = parser.parse_entry(&entry, 7).unwrap_err();
+        assert!(format!("{err}").contains("trailing bytes"));
     }
 
     #[test]
