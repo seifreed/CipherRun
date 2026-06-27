@@ -352,7 +352,13 @@ impl LogjamTester {
                     let connector = builder.build();
                     match connector.connect(&hostname, std_stream) {
                         Ok(_) => Ok(LogjamProbeStatus::Supported),
-                        Err(_) => Ok(LogjamProbeStatus::NotSupported),
+                        Err(e) => {
+                            if crate::utils::network::is_transport_anomaly_error(&e.to_string()) {
+                                Ok(LogjamProbeStatus::Inconclusive)
+                            } else {
+                                Ok(LogjamProbeStatus::NotSupported)
+                            }
+                        }
                     }
                 }
                 Err(_) => Ok(LogjamProbeStatus::Inconclusive),
@@ -506,6 +512,22 @@ mod tests {
 
         let tester = LogjamTester::new(target);
         let result = tester.test_cipher("not-a-real-cipher").await.unwrap();
+
+        assert_eq!(result, LogjamProbeStatus::Inconclusive);
+    }
+
+    #[tokio::test]
+    async fn test_logjam_transport_anomaly_is_inconclusive() {
+        let addr = spawn_dummy_server(1).await;
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            addr.port(),
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .unwrap();
+
+        let tester = LogjamTester::new(target);
+        let result = tester.test_cipher("DHE-RSA-AES128-SHA").await.unwrap();
 
         assert_eq!(result, LogjamProbeStatus::Inconclusive);
     }
