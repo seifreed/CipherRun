@@ -5,13 +5,13 @@ use crate::constants::{CONTENT_TYPE_APPLICATION_DATA, VERSION_TLS_1_2};
 fn test_poodle_result() {
     let result = PoodleTestResult {
         vulnerable: true,
-        ssl3_supported: true,
+        ssl3_supported: Some(true),
         tls_poodle: Some(false),
         details: "Test".to_string(),
         variants: Vec::new(),
     };
     assert!(result.vulnerable);
-    assert!(result.ssl3_supported);
+    assert_eq!(result.ssl3_supported, Some(true));
 }
 
 #[test]
@@ -86,6 +86,14 @@ fn test_variant_result_without_timing_data() {
 
     assert!(!result.vulnerable);
     assert!(result.timing_data.is_none());
+}
+
+#[test]
+fn test_ssl3_variant_result_inconclusive() {
+    let result = super::PoodleTester::ssl3_variant_result(None);
+    assert!(result.inconclusive);
+    assert!(!result.vulnerable);
+    assert!(result.details.contains("inconclusive"));
 }
 
 #[test]
@@ -325,7 +333,7 @@ async fn test_poodle_ssl3_modern_server() {
 
     let result = tester.test().await.expect("test assertion should succeed");
 
-    assert!(!result.ssl3_supported);
+    assert_eq!(result.ssl3_supported, Some(false));
     assert!(!result.vulnerable);
 }
 

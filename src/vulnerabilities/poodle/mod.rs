@@ -53,14 +53,15 @@ impl<'a> PoodleTester<'a> {
         let ssl3_supported = self.test_ssl3().await?;
         let tls_poodle = self.test_tls_poodle().await?;
 
-        let vulnerable = ssl3_supported || tls_poodle == Some(true);
+        let vulnerable = ssl3_supported == Some(true) || tls_poodle == Some(true);
 
         let details = match (ssl3_supported, tls_poodle) {
-            (true, Some(true)) => "Vulnerable: SSL 3.0 supported (CVE-2014-3566) AND TLS POODLE detected (CVE-2014-8730)".to_string(),
-            (true, _) => "Vulnerable: SSL 3.0 is supported (CVE-2014-3566)".to_string(),
-            (false, Some(true)) => "Vulnerable: TLS implementation vulnerable to POODLE (CVE-2014-8730)".to_string(),
-            (false, None) => "SSL 3.0 disabled. TLS POODLE test inconclusive - no CBC cipher connection could be established to probe for a padding oracle".to_string(),
-            (false, Some(false)) => "Not vulnerable: SSL 3.0 disabled and CBC-based TLS POODLE was not observed".to_string(),
+            (Some(true), Some(true)) => "Vulnerable: SSL 3.0 supported (CVE-2014-3566) AND TLS POODLE detected (CVE-2014-8730)".to_string(),
+            (Some(true), _) => "Vulnerable: SSL 3.0 is supported (CVE-2014-3566)".to_string(),
+            (Some(false), Some(true)) => "Vulnerable: TLS implementation vulnerable to POODLE (CVE-2014-8730)".to_string(),
+            (Some(false), None) => "SSL 3.0 disabled. TLS POODLE test inconclusive - no CBC cipher connection could be established to probe for a padding oracle".to_string(),
+            (Some(false), Some(false)) => "Not vulnerable: SSL 3.0 disabled and CBC-based TLS POODLE was not observed".to_string(),
+            (None, _) => "SSL 3.0 support inconclusive - unable to complete the SSL 3.0 probe".to_string(),
         };
 
         Ok(PoodleTestResult {
@@ -126,13 +127,15 @@ impl<'a> PoodleTester<'a> {
         })
     }
 
-    fn ssl3_variant_result(supported: bool) -> PoodleVariantResult {
+    fn ssl3_variant_result(supported: Option<bool>) -> PoodleVariantResult {
         PoodleVariantResult {
             variant: PoodleVariant::SslV3,
-            vulnerable: supported,
-            inconclusive: false,
-            details: if supported {
+            vulnerable: supported == Some(true),
+            inconclusive: supported.is_none(),
+            details: if supported == Some(true) {
                 "SSL 3.0 is supported - vulnerable to classic POODLE attack".to_string()
+            } else if supported.is_none() {
+                "SSL 3.0 support inconclusive".to_string()
             } else {
                 "SSL 3.0 is not supported".to_string()
             },
@@ -157,8 +160,8 @@ impl<'a> PoodleTester<'a> {
     }
 
     /// Test if SSL 3.0 is supported
-    async fn test_ssl3(&self) -> Result<bool> {
-        test_vuln_ssl_connection(
+    async fn test_ssl3(&self) -> Result<Option<bool>> {
+        test_vuln_ssl_connection_outcome(
             self.target,
             VulnSslConfig::ssl3_only().with_starttls(self.starttls),
         )
@@ -419,7 +422,10 @@ impl<'a> PoodleTester<'a> {
     }
 
     /// Test for OpenSSL 0-Length Fragment vulnerability (CVE-2011-4576)
-    async fn test_openssl_0length(&self, ssl3_supported: bool) -> Result<PoodleVariantResult> {
+    async fn test_openssl_0length(
+        &self,
+        ssl3_supported: Option<bool>,
+    ) -> Result<PoodleVariantResult> {
         // CVE-2011-4576 is specific to SSL 3.0 CBC record processing in old
         // OpenSSL; a server that does not negotiate SSL 3.0 cannot be affected.
         // Accepting a zero-length application-data record over TLS is normal,
@@ -427,12 +433,21 @@ impl<'a> PoodleTester<'a> {
         // previous heuristic keyed on `connection_accepted`, which is set true
         // whenever the handshake completes, so it flagged every CBC-capable
         // server (Cloudflare, Google, ...) as vulnerable.
-        if !ssl3_supported {
+        if ssl3_supported == Some(false) {
             return Ok(PoodleVariantResult {
                 variant: PoodleVariant::OpenSsl0Length,
                 vulnerable: false,
                 inconclusive: false,
                 details: "Not vulnerable to OpenSSL 0-Length Fragment (CVE-2011-4576) - SSL 3.0 is not supported, so the SSL 3.0-only flaw cannot apply".to_string(),
+                timing_data: None,
+            });
+        }
+        if ssl3_supported.is_none() {
+            return Ok(PoodleVariantResult {
+                variant: PoodleVariant::OpenSsl0Length,
+                vulnerable: false,
+                inconclusive: true,
+                details: "OpenSSL 0-Length Fragment (CVE-2011-4576) inconclusive - SSL 3.0 support could not be determined".to_string(),
                 timing_data: None,
             });
         }
@@ -534,7 +549,7 @@ pub(crate) struct ServerResponse {
 #[derive(Debug, Clone)]
 pub struct PoodleTestResult {
     pub vulnerable: bool,
-    pub ssl3_supported: bool,
+    pub ssl3_supported: Option<bool>,
     pub tls_poodle: Option<bool>,
     pub details: String,
     pub variants: Vec<PoodleVariantResult>,
