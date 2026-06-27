@@ -303,9 +303,14 @@ impl PreHandshakeScanner {
     fn parse_certificate(&self, der: &[u8]) -> Result<CertificateInfo> {
         use x509_parser::prelude::*;
 
-        let (_, cert) = X509Certificate::from_der(der).map_err(|e| TlsError::ParseError {
+        let (rest, cert) = X509Certificate::from_der(der).map_err(|e| TlsError::ParseError {
             message: format!("Failed to parse certificate: {:?}", e),
         })?;
+        if !rest.is_empty() {
+            return Err(TlsError::ParseError {
+                message: "Certificate DER contains trailing bytes".to_string(),
+            });
+        }
 
         let subject = cert.subject().to_string();
         let issuer = cert.issuer().to_string();
@@ -514,5 +519,31 @@ mod tests {
                 .to_string()
                 .contains("Certificate entry header truncated")
         );
+    }
+
+    #[test]
+    fn test_parse_handshake_rejects_certificate_der_trailing_bytes() {
+        let scanner = test_scanner();
+        let mut cert = cert_with_raw_extension_der("1.2.3.4", b"\x05\x00");
+        cert.push(0xff);
+        let cert_len = cert.len() as u32;
+        let list_len = cert.len() as u32 + 3;
+        let mut body = Vec::new();
+        body.extend_from_slice(&[
+            ((list_len >> 16) & 0xff) as u8,
+            ((list_len >> 8) & 0xff) as u8,
+            (list_len & 0xff) as u8,
+            ((cert_len >> 16) & 0xff) as u8,
+            ((cert_len >> 8) & 0xff) as u8,
+            (cert_len & 0xff) as u8,
+        ]);
+        body.extend_from_slice(&cert);
+        let record = handshake_record(0x0b, &body);
+
+        let error = match scanner.parse_handshake_response(&record) {
+            Ok(_) => panic!("certificate DER trailing bytes should fail"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("trailing bytes"));
     }
 }
