@@ -31,13 +31,20 @@ impl SessionResumptionTester {
     /// - Silent handshake failures
     /// - False negatives in resumption tests
     fn is_session_valid(session: &SslSession) -> bool {
-        let session_time = session.time() as u64;
-        let timeout = session.timeout() as u64;
-
         let current_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
+        Self::session_times_valid(session.time(), session.timeout(), current_time)
+    }
+
+    fn session_times_valid(session_time: i64, timeout: i64, current_time: u64) -> bool {
+        let Ok(session_time) = u64::try_from(session_time) else {
+            return false;
+        };
+        let Ok(timeout) = u64::try_from(timeout) else {
+            return false;
+        };
 
         // Session is valid if current time is less than session time + timeout
         // Also check that session_time is not in the future (clock skew protection)
@@ -389,6 +396,12 @@ mod tests {
             result.resumption_support,
             ResumptionSupport::SessionIdOnly
         ));
+    }
+
+    #[test]
+    fn test_negative_session_times_are_invalid() {
+        assert!(!SessionResumptionTester::session_times_valid(-1, 60, 10));
+        assert!(!SessionResumptionTester::session_times_valid(1, -60, 10));
     }
 
     fn install_crypto_provider() {
