@@ -147,8 +147,11 @@ impl TicketbleedTester {
                 stream.write_all(&client_hello).await?;
 
                 let mut buffer = vec![0u8; 16384];
-                match timeout(Duration::from_secs(3), stream.read(&mut buffer)).await {
-                    Ok(Ok(n)) if n > 0 => {
+                let n = self
+                    .read_until_new_session_ticket(&mut stream, &mut buffer, Duration::from_secs(3))
+                    .await;
+                match n {
+                    n if n > 0 => {
                         let server_response =
                             buffer.get(..n).ok_or_else(|| crate::TlsError::ParseError {
                                 message: "Ticketbleed ticket response read length exceeded buffer"
@@ -200,6 +203,38 @@ impl TicketbleedTester {
                 "Failed to establish TCP connection to target",
             )),
         }
+    }
+
+    async fn read_until_new_session_ticket(
+        &self,
+        stream: &mut tokio::net::TcpStream,
+        buffer: &mut [u8],
+        per_read_timeout: Duration,
+    ) -> usize {
+        let mut total = 0usize;
+        loop {
+            if total >= buffer.len() {
+                break;
+            }
+            let Some(read_buffer) = buffer.get_mut(total..) else {
+                break;
+            };
+            let n = match timeout(per_read_timeout, stream.read(read_buffer)).await {
+                Ok(Ok(n)) => n,
+                _ => break,
+            };
+            if n == 0 {
+                break;
+            }
+            total += n;
+            let Some(accumulated) = buffer.get(..total) else {
+                break;
+            };
+            if self.parse_new_session_ticket(accumulated).unwrap_or(false) {
+                break;
+            }
+        }
+        total
     }
 
     /// Build ClientHello with SessionTicket extension using ClientHelloBuilder
@@ -591,6 +626,7 @@ pub struct TicketbleedTestResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     #[test]
     fn test_ticketbleed_result() {
@@ -906,5 +942,48 @@ mod tests {
             "connection-level failure must be reported as inconclusive; got details={}",
             result.details
         );
+    }
+
+    #[tokio::test]
+    async fn test_ticketbleed_reads_past_first_record_for_new_session_ticket() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener");
+        let port = listener.local_addr().expect("local addr").port();
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept");
+            let mut buf = vec![0u8; 4096];
+            let _ = socket.read(&mut buf).await.expect("read initial hello");
+
+            socket
+                .write_all(&handshake_record(&[handshake_message(0x0b, &[])]))
+                .await
+                .expect("write first response");
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            socket
+                .write_all(&handshake_record(&[new_session_ticket_message(b"ticket")]))
+                .await
+                .expect("write delayed ticket");
+
+            let _ = socket.read(&mut buf).await.expect("read follow-up hello");
+        });
+
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+
+        let result = TicketbleedTester::new(target).test().await.unwrap();
+        server.await.expect("server task");
+
+        assert!(!result.vulnerable);
+        assert!(
+            result.inconclusive,
+            "delayed NewSessionTicket must be consumed before the follow-up probe; got {result:?}"
+        );
+        assert!(result.details.contains("follow-up ClientHello"));
     }
 }
