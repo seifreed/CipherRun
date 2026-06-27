@@ -194,6 +194,17 @@ impl<'a> HeartbleedTester<'a> {
             }
         };
 
+        if response.first() != Some(&0x16) || response.get(5) != Some(&0x02) {
+            return Ok(HeartbleedResult {
+                vulnerable: false,
+                bytes_received: response.len(),
+                bytes_sent: 0,
+                details: "Unable to test - unexpected TLS response while probing heartbeat extension"
+                    .to_string(),
+                tested: false,
+            });
+        }
+
         // Check if server accepted heartbeat extension
         match self.check_heartbeat_extension(&response) {
             Ok(true) => {}
@@ -710,6 +721,22 @@ mod tests {
         port
     }
 
+    async fn spawn_heartbeat_alert_server() -> u16 {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let mut buffer = [0u8; 4096];
+                let _ = socket.read(&mut buffer).await;
+                let alert = [0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28];
+                let _ = socket.write_all(&alert).await;
+            }
+        });
+
+        port
+    }
+
     #[tokio::test]
     #[ignore] // Requires network access
     async fn test_heartbleed_modern_server() {
@@ -722,6 +749,31 @@ mod tests {
 
         // Google should not be vulnerable
         assert!(!result.vulnerable);
+    }
+
+    #[tokio::test]
+    async fn test_heartbleed_unexpected_response_is_inconclusive() {
+        let port = spawn_heartbeat_alert_server().await;
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+        let tester = HeartbleedTester::new(&target);
+
+        let result = tester
+            .test_protocol(Protocol::TLS12)
+            .await
+            .expect("test assertion should succeed");
+
+        assert!(!result.vulnerable);
+        assert!(!result.tested);
+        assert!(
+            result
+                .details
+                .contains("unexpected TLS response while probing heartbeat extension")
+        );
     }
 
     #[test]
