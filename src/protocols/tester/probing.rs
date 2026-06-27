@@ -530,10 +530,7 @@ impl ProtocolTester {
         }
 
         let connector = if let Some(ref mtls_config) = self.mtls_config {
-            match mtls_config.build_tls_connector() {
-                Ok(c) => c,
-                Err(_) => return Ok(ProtocolProbeOutcome::Inconclusive),
-            }
+            mtls_config.build_tls_connector()?
         } else {
             // The scanner must detect TLS 1.3 support regardless of certificate
             // validity (certificate trust is assessed separately). A verifying
@@ -663,6 +660,11 @@ fn classify_legacy_probe_response(response: &[u8], protocol: Protocol) -> Protoc
 mod legacy_probe_tests {
     use super::*;
     use crate::constants::{CONTENT_TYPE_HANDSHAKE, HANDSHAKE_TYPE_SERVER_HELLO};
+    use crate::utils::mtls::MtlsConfig;
+    use crate::utils::network::Target;
+    use rustls_pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+    use std::net::Ipv4Addr;
+    use std::time::Duration;
 
     /// Build a minimal ServerHello record advertising `version` in the legacy
     /// version field (no supported_versions extension, so the parser reports the
@@ -772,5 +774,37 @@ mod legacy_probe_tests {
         // A read timeout / would-block is ambiguous, not a definitive refusal.
         assert!(!is_handshake_refusal(&Error::from(ErrorKind::TimedOut)));
         assert!(!is_handshake_refusal(&Error::from(ErrorKind::WouldBlock)));
+    }
+
+    #[tokio::test]
+    async fn test_tls13_mtls_connector_error_is_propagated() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("test listener should bind");
+        let addr = listener
+            .local_addr()
+            .expect("test listener should have addr");
+        let accept_task = tokio::spawn(async move {
+            let _ = listener.accept().await;
+        });
+
+        let target = Target::with_ips("localhost".to_string(), addr.port(), vec![addr.ip()])
+            .expect("test target should be valid");
+        let mtls_config = MtlsConfig {
+            cert_chain: vec![CertificateDer::from(vec![0x01, 0x02, 0x03])],
+            private_key: PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(vec![0x04, 0x05, 0x06])),
+        };
+        let tester = ProtocolTester::with_mtls(target, mtls_config)
+            .with_connect_timeout(Duration::from_secs(1))
+            .with_read_timeout(Duration::from_secs(1));
+
+        let err = tester
+            .test_tls13_on_ip(addr)
+            .await
+            .expect_err("invalid local mTLS config should not be inconclusive");
+        accept_task.abort();
+
+        assert!(matches!(err, crate::error::TlsError::MtlsError { .. }));
     }
 }
