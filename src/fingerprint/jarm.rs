@@ -605,10 +605,9 @@ fn extract_version_byte(version_hex: &str) -> String {
 
     // Extract last character and convert to number
     match version_hex.chars().nth(3).and_then(|c| c.to_digit(16)) {
-        Some(val) => {
-            let ch = (0x61 + val) as u8 as char;
-            ch.to_string()
-        }
+        Some(val) => char::from_u32(0x61 + val)
+            .map(|ch| ch.to_string())
+            .unwrap_or_else(|| "0".to_string()),
         None => "0".to_string(),
     }
 }
