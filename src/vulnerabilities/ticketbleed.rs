@@ -473,7 +473,9 @@ impl TicketbleedTester {
         }
         if offset != response.len() {
             if offset == 0 && response.first() != Some(&0x16) {
-                return Ok(false);
+                return Err(crate::TlsError::ParseError {
+                    message: "Ticketbleed response is not a handshake record".to_string(),
+                });
             }
             return Err(crate::TlsError::ParseError {
                 message: "Ticketbleed TLS record header truncated".to_string(),
@@ -706,9 +708,9 @@ mod tests {
 
         assert!(tester.parse_new_session_ticket(&response).unwrap());
         assert!(
-            !tester
+            tester
                 .parse_new_session_ticket(&[0x00, 0x01, 0x02])
-                .unwrap()
+                .is_err()
         );
     }
 
