@@ -81,7 +81,7 @@ impl ClientHelloBuilder {
         };
         buf.put_u16(client_version);
         buf.put_slice(&self.random);
-        buf.put_u8(self.session_id.len() as u8);
+        buf.put_u8(Self::u8_len(self.session_id.len(), "session ID")?);
         if !self.session_id.is_empty() {
             buf.put_slice(&self.session_id);
         }
@@ -99,7 +99,10 @@ impl ClientHelloBuilder {
             buf.put_u16(*cipher);
         }
 
-        buf.put_u8(self.compression_methods.len() as u8);
+        buf.put_u8(Self::u8_len(
+            self.compression_methods.len(),
+            "compression methods",
+        )?);
         buf.put_slice(&self.compression_methods);
         Ok(())
     }
@@ -146,16 +149,15 @@ impl ClientHelloBuilder {
                 "handshake length exceeds maximum length".to_string(),
             ));
         }
-        buf.get_mut(handshake_length_pos..handshake_length_pos + 1)
+        let handshake_len = u32::try_from(handshake_len).map_err(|_| {
+            crate::TlsError::Other("handshake length exceeds maximum length".to_string())
+        })?;
+        let handshake_len = handshake_len.to_be_bytes();
+        buf.get_mut(handshake_length_pos..handshake_length_pos + 3)
             .ok_or_else(|| {
                 crate::TlsError::Other("handshake length placeholder missing".to_string())
             })?
-            .copy_from_slice(&[((handshake_len >> 16) & 0xff) as u8]);
-        buf.get_mut(handshake_length_pos + 1..handshake_length_pos + 3)
-            .ok_or_else(|| {
-                crate::TlsError::Other("handshake length placeholder missing".to_string())
-            })?
-            .copy_from_slice(&((handshake_len & 0xffff) as u16).to_be_bytes());
+            .copy_from_slice(&handshake_len[1..]);
 
         let record_len = buf.len() - handshake_start;
         let record_len = u16::try_from(record_len).map_err(|_| {

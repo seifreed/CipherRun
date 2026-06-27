@@ -81,9 +81,9 @@ impl GreaseTester {
             &self.target.hostname,
             self.sni_hostname.as_deref(),
         ) {
-            builder.add_sni(&hostname);
+            builder.add_sni(&hostname)?;
         }
-        builder.add_supported_groups(&[0x001d, 0x0017, 0x0018]);
+        builder.add_supported_groups(&[0x001d, 0x0017, 0x0018])?;
         builder.add_signature_algorithms(&[
             (0x04, 0x03),
             (0x05, 0x03),
@@ -91,7 +91,7 @@ impl GreaseTester {
             (0x08, 0x04),
             (0x08, 0x05),
             (0x08, 0x06),
-        ]);
+        ])?;
         builder.add_ec_point_formats();
         builder.add_renegotiation_info();
         builder.add_extended_master_secret();
@@ -111,9 +111,9 @@ impl GreaseTester {
             &self.target.hostname,
             self.sni_hostname.as_deref(),
         ) {
-            builder.add_sni(&hostname);
+            builder.add_sni(&hostname)?;
         }
-        builder.add_supported_groups(&[0x001d, 0x0017, 0x0018]);
+        builder.add_supported_groups(&[0x001d, 0x0017, 0x0018])?;
         builder.add_signature_algorithms(&[
             (0x04, 0x03),
             (0x05, 0x03),
@@ -121,7 +121,7 @@ impl GreaseTester {
             (0x08, 0x04),
             (0x08, 0x05),
             (0x08, 0x06),
-        ]);
+        ])?;
         builder.add_ec_point_formats();
         builder.add_renegotiation_info();
         builder.add_extended_master_secret();
@@ -154,7 +154,7 @@ impl GreaseTester {
             &self.target.hostname,
             self.sni_hostname.as_deref(),
         ) {
-            builder.add_sni(&hostname);
+            builder.add_sni(&hostname)?;
         }
 
         // Add valid supported groups interleaved with GREASE values per RFC 8701
@@ -165,7 +165,7 @@ impl GreaseTester {
             groups.push(*valid);
             groups.push(*grease);
         }
-        builder.add_supported_groups(&groups);
+        builder.add_supported_groups(&groups)?;
 
         builder.add_signature_algorithms(&[
             (0x04, 0x03),
@@ -174,7 +174,7 @@ impl GreaseTester {
             (0x08, 0x04),
             (0x08, 0x05),
             (0x08, 0x06),
-        ]);
+        ])?;
         builder.add_ec_point_formats();
         builder.add_renegotiation_info();
         builder.add_extended_master_secret();
@@ -202,15 +202,15 @@ impl GreaseTester {
             &self.target.hostname,
             self.sni_hostname.as_deref(),
         ) {
-            builder.add_sni(&hostname);
+            builder.add_sni(&hostname)?;
         }
 
         // Add supported groups with GREASE
         let mut groups = vec![0x001d, 0x0017];
         groups.extend(GREASE_SUPPORTED_GROUPS.iter().take(2).copied());
-        builder.add_supported_groups(&groups);
+        builder.add_supported_groups(&groups)?;
 
-        builder.add_signature_algorithms(&[(0x04, 0x03), (0x05, 0x03), (0x06, 0x03)]);
+        builder.add_signature_algorithms(&[(0x04, 0x03), (0x05, 0x03), (0x06, 0x03)])?;
         builder.add_ec_point_formats();
         builder.add_renegotiation_info();
         builder.add_extended_master_secret();

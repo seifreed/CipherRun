@@ -52,7 +52,7 @@ impl ClientHelloBuilder {
         if matches!(self.protocol, Protocol::TLS13) {
             self.add_tls13_defaults(hostname)?;
         } else {
-            self.add_legacy_defaults(hostname);
+            self.add_legacy_defaults(hostname)?;
         }
 
         self.build()
@@ -60,30 +60,31 @@ impl ClientHelloBuilder {
 
     fn add_tls13_defaults(&mut self, hostname: Option<&str>) -> Result<()> {
         if let Some(host) = hostname {
-            self.add_sni(host);
+            self.add_sni(host)?;
         }
         self.add_ec_point_formats();
-        self.add_supported_groups(TLS13_SUPPORTED_GROUPS);
+        self.add_supported_groups(TLS13_SUPPORTED_GROUPS)?;
         self.add_session_ticket();
         self.add_encrypt_then_mac();
         self.add_extended_master_secret();
         self.add_status_request();
-        self.add_signature_algorithms(TLS13_SIGNATURE_ALGORITHMS);
-        self.add_supported_versions(&[VERSION_TLS_1_3]);
+        self.add_signature_algorithms(TLS13_SIGNATURE_ALGORITHMS)?;
+        self.add_supported_versions(&[VERSION_TLS_1_3])?;
         self.add_psk_key_exchange_modes();
         self.add_key_share(0x001d)?;
         Ok(())
     }
 
-    fn add_legacy_defaults(&mut self, hostname: Option<&str>) {
+    fn add_legacy_defaults(&mut self, hostname: Option<&str>) -> Result<()> {
         if let Some(host) = hostname {
-            self.add_sni(host);
+            self.add_sni(host)?;
         }
-        self.add_supported_groups(LEGACY_SUPPORTED_GROUPS);
-        self.add_signature_algorithms(LEGACY_SIGNATURE_ALGORITHMS);
+        self.add_supported_groups(LEGACY_SUPPORTED_GROUPS)?;
+        self.add_signature_algorithms(LEGACY_SIGNATURE_ALGORITHMS)?;
         self.add_session_ticket();
         self.add_extended_master_secret();
         self.add_renegotiation_info();
         self.add_status_request();
+        Ok(())
     }
 }

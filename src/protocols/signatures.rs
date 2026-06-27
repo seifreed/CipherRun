@@ -91,11 +91,20 @@ impl SignatureTester {
             // must use a certificate signed with a compatible algorithm or reject.
             let mut builder = ClientHelloBuilder::new(Protocol::TLS12);
             builder.add_cipher(0xc030); // ECDHE-RSA-AES256-GCM-SHA384
-            if let Some(sni) = sni_hostname.as_deref() {
-                builder.add_sni(sni);
+            if let Some(sni) = sni_hostname.as_deref()
+                && builder.add_sni(sni).is_err()
+            {
+                saw_inconclusive_probe = true;
+                continue;
             }
-            builder.add_supported_groups(&[0x001d, 0x0017, 0x0018, 0x0019]);
-            builder.add_signature_algorithms(&[(hash_byte, sig_byte)]);
+            if builder
+                .add_supported_groups(&[0x001d, 0x0017, 0x0018, 0x0019])
+                .and_then(|builder| builder.add_signature_algorithms(&[(hash_byte, sig_byte)]))
+                .is_err()
+            {
+                saw_inconclusive_probe = true;
+                continue;
+            }
             builder.add_session_ticket();
             builder.add_renegotiation_info();
 
