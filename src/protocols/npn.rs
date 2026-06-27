@@ -34,8 +34,13 @@ impl NpnTester {
     }
 
     fn read_u16_at(data: &[u8], offset: usize, context: &str) -> Result<u16> {
+        let end = offset
+            .checked_add(2)
+            .ok_or_else(|| crate::TlsError::ParseError {
+                message: format!("{context} length overflow"),
+            })?;
         let bytes = data
-            .get(offset..offset + 2)
+            .get(offset..end)
             .and_then(|bytes| <[u8; 2]>::try_from(bytes).ok())
             .ok_or_else(|| crate::TlsError::ParseError {
                 message: format!("{context} truncated"),
@@ -265,14 +270,21 @@ impl NpnTester {
         // Parse ServerHello structurally to find extensions
         let sid_len = Self::read_u8_at(response, 43, "NPN ServerHello session ID length")? as usize;
         // cipher suite (2) + compression (1) + extensions_length (2)
-        let ext_len_offset = 44 + sid_len + 2 + 1;
-        if ext_len_offset + 2 > response.len() {
+        let Some(ext_len_offset) = 44usize
+            .checked_add(sid_len)
+            .and_then(|offset| offset.checked_add(2 + 1))
+        else {
+            return Ok(protocols);
+        };
+        let Some(ext_start) = ext_len_offset.checked_add(2) else {
+            return Ok(protocols);
+        };
+        if ext_start > response.len() {
             return Ok(protocols);
         }
 
         let ext_total =
             Self::read_u16_at(response, ext_len_offset, "NPN extensions length")? as usize;
-        let ext_start = ext_len_offset + 2;
         let ext_end =
             ext_start
                 .checked_add(ext_total)
@@ -287,10 +299,16 @@ impl NpnTester {
 
         // Walk extensions structurally
         let mut pos = ext_start;
-        while pos + 4 <= ext_end {
+        while let Some(ext_header_end) = pos.checked_add(4).filter(|&end| end <= ext_end) {
             let ext_type = Self::read_u16_at(response, pos, "NPN extension type")?;
-            let ext_len = Self::read_u16_at(response, pos + 2, "NPN extension length")? as usize;
-            pos += 4;
+            let ext_len_offset = pos
+                .checked_add(2)
+                .ok_or_else(|| crate::TlsError::ParseError {
+                    message: "NPN extension length offset overflow".to_string(),
+                })?;
+            let ext_len =
+                Self::read_u16_at(response, ext_len_offset, "NPN extension length")? as usize;
+            pos = ext_header_end;
             let ext_data_end =
                 pos.checked_add(ext_len)
                     .ok_or_else(|| crate::TlsError::ParseError {
@@ -304,7 +322,7 @@ impl NpnTester {
 
             if ext_type == 0x3374 {
                 // Parse NPN protocol list
-                let npn_end = pos + ext_len;
+                let npn_end = ext_data_end;
                 let mut npn_pos = pos;
                 while npn_pos < npn_end
                     && npn_pos < response.len()
@@ -318,7 +336,12 @@ impl NpnTester {
                             message: "NPN protocol name length cannot be zero".to_string(),
                         });
                     }
-                    if npn_pos + proto_len > npn_end {
+                    let proto_end = npn_pos.checked_add(proto_len).ok_or_else(|| {
+                        crate::TlsError::ParseError {
+                            message: "NPN protocol name length overflow".to_string(),
+                        }
+                    })?;
+                    if proto_end > npn_end {
                         return Err(crate::TlsError::ParseError {
                             message: "NPN protocol name extends beyond extension data".to_string(),
                         });
@@ -331,7 +354,7 @@ impl NpnTester {
                         message: format!("Invalid NPN protocol name UTF-8: {error}"),
                     })?;
                     protocols.push(proto);
-                    npn_pos += proto_len;
+                    npn_pos = proto_end;
                 }
                 break;
             }

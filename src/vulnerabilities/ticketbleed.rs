@@ -238,40 +238,60 @@ impl TicketbleedTester {
 
     /// Extract session ticket data from server's NewSessionTicket message
     fn extract_session_ticket(&self, response: &[u8]) -> Option<Vec<u8>> {
-        let mut offset = 0;
-        while offset + 5 <= response.len() {
+        let mut offset = 0usize;
+        while let Some(header_end) = offset.checked_add(5).filter(|&end| end <= response.len()) {
             let Some(header) = response
-                .get(offset..offset + 5)
+                .get(offset..header_end)
                 .and_then(|header| <&[u8; 5]>::try_from(header).ok())
             else {
                 break;
             };
             let [content_type, _, _, len_high, len_low] = *header;
             let record_len = u16::from_be_bytes([len_high, len_low]) as usize;
-            let record_end = offset + 5 + record_len;
+            let Some(record_end) = header_end.checked_add(record_len) else {
+                break;
+            };
             if record_end > response.len() {
                 break;
             }
             if content_type == 0x16 {
-                let hs_start = offset + 5;
+                let hs_start = header_end;
                 if hs_start < record_end && response.get(hs_start) == Some(&0x04) {
                     // NewSessionTicket: type(1) + length(3) + lifetime(4) + ticket_length(2) + ticket
-                    if hs_start + 4 > response.len() {
-                        offset = record_end;
-                        continue;
-                    }
-                    let Some(hs_len) = read_u24_at(response, hs_start + 1) else {
+                    let Some(hs_body_start) = hs_start.checked_add(4) else {
                         offset = record_end;
                         continue;
                     };
-                    let hs_end = hs_start + 4 + hs_len;
+                    if hs_body_start > response.len() {
+                        offset = record_end;
+                        continue;
+                    };
+                    let Some(hs_len_offset) = hs_start.checked_add(1) else {
+                        offset = record_end;
+                        continue;
+                    };
+                    let Some(hs_len) = read_u24_at(response, hs_len_offset) else {
+                        offset = record_end;
+                        continue;
+                    };
+                    let Some(hs_end) = hs_body_start.checked_add(hs_len) else {
+                        offset = record_end;
+                        continue;
+                    };
                     if hs_end > record_end {
                         offset = record_end;
                         continue;
                     }
 
-                    let ticket_len_offset = hs_start + 4 + 4; // skip type+length+lifetime
-                    if ticket_len_offset + 2 > hs_end {
+                    let Some(ticket_len_offset) = hs_body_start.checked_add(4) else {
+                        offset = record_end;
+                        continue;
+                    }; // skip lifetime
+                    let Some(ticket_len_end) = ticket_len_offset.checked_add(2) else {
+                        offset = record_end;
+                        continue;
+                    };
+                    if ticket_len_end > hs_end {
                         offset = record_end;
                         continue;
                     }
@@ -282,7 +302,7 @@ impl TicketbleedTester {
                         continue;
                     };
 
-                    let ticket_start = ticket_len_offset + 2;
+                    let ticket_start = ticket_len_end;
                     let ticket_end = ticket_start
                         .checked_add(ticket_len)
                         .filter(|&end| end <= response.len())
@@ -300,22 +320,24 @@ impl TicketbleedTester {
 
     /// Parse NewSessionTicket message from server response
     fn parse_new_session_ticket(&self, response: &[u8]) -> Result<bool> {
-        let mut offset = 0;
-        while offset + 5 <= response.len() {
+        let mut offset = 0usize;
+        while let Some(header_end) = offset.checked_add(5).filter(|&end| end <= response.len()) {
             let Some(header) = response
-                .get(offset..offset + 5)
+                .get(offset..header_end)
                 .and_then(|header| <&[u8; 5]>::try_from(header).ok())
             else {
                 break;
             };
             let [content_type, _, _, len_high, len_low] = *header;
             let record_len = u16::from_be_bytes([len_high, len_low]) as usize;
-            let record_end = offset + 5 + record_len;
+            let Some(record_end) = header_end.checked_add(record_len) else {
+                break;
+            };
             if record_end > response.len() {
                 break;
             }
             if content_type == 0x16 {
-                let hs_start = offset + 5;
+                let hs_start = header_end;
                 if hs_start < record_end && response.get(hs_start) == Some(&0x04) {
                     return Ok(true);
                 }
@@ -333,28 +355,39 @@ impl TicketbleedTester {
     /// the buffer, so a malformed/truncated response yields `None` rather than a
     /// panic or a read of unrelated bytes.
     fn extract_serverhello_session_id(response: &[u8]) -> Option<&[u8]> {
-        let mut offset = 0;
-        while offset + 5 <= response.len() {
-            let Some(record_len) = read_u16_at(response, offset + 3).map(usize::from) else {
+        let mut offset = 0usize;
+        while let Some(header_end) = offset.checked_add(5).filter(|&end| end <= response.len()) {
+            let Some(record_len_offset) = offset.checked_add(3) else {
                 break;
             };
-            let record_end = offset + 5 + record_len;
+            let Some(record_len) = read_u16_at(response, record_len_offset).map(usize::from) else {
+                break;
+            };
+            let Some(record_end) = header_end.checked_add(record_len) else {
+                break;
+            };
             if record_end > response.len() {
                 break;
             }
             if response.get(offset) == Some(&CONTENT_TYPE_HANDSHAKE) {
-                let hs_start = offset + 5;
+                let hs_start = header_end;
                 // ServerHello body: type(1) + length(3) + version(2) + random(32)
                 // + session_id_length(1) + session_id(..)
-                let session_id_len_pos = hs_start + 4 + 2 + 32;
+                let Some(session_id_len_pos) = hs_start.checked_add(4 + 2 + 32) else {
+                    break;
+                };
                 if response.get(hs_start) == Some(&0x02) && session_id_len_pos < record_end {
                     let Some(session_id_len) =
                         response.get(session_id_len_pos).copied().map(usize::from)
                     else {
                         break;
                     };
-                    let session_id_start = session_id_len_pos + 1;
-                    let session_id_end = session_id_start + session_id_len;
+                    let Some(session_id_start) = session_id_len_pos.checked_add(1) else {
+                        break;
+                    };
+                    let Some(session_id_end) = session_id_start.checked_add(session_id_len) else {
+                        break;
+                    };
                     if session_id_end <= record_end {
                         return response.get(session_id_start..session_id_end);
                     }

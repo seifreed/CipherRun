@@ -14,8 +14,13 @@ impl RevocationChecker {
     }
 
     fn read_u16_at(data: &[u8], offset: usize, context: &str) -> Result<u16> {
+        let end = offset
+            .checked_add(2)
+            .ok_or_else(|| crate::TlsError::ParseError {
+                message: format!("{context} length overflow"),
+            })?;
         let bytes = data
-            .get(offset..offset + 2)
+            .get(offset..end)
             .and_then(|bytes| <[u8; 2]>::try_from(bytes).ok())
             .ok_or_else(|| crate::TlsError::ParseError {
                 message: format!("{context} truncated"),
@@ -24,8 +29,13 @@ impl RevocationChecker {
     }
 
     fn read_u24_at(data: &[u8], offset: usize, context: &str) -> Result<usize> {
+        let end = offset
+            .checked_add(3)
+            .ok_or_else(|| crate::TlsError::ParseError {
+                message: format!("{context} length overflow"),
+            })?;
         let [high, mid, low] = data
-            .get(offset..offset + 3)
+            .get(offset..end)
             .and_then(|bytes| <[u8; 3]>::try_from(bytes).ok())
             .ok_or_else(|| crate::TlsError::ParseError {
                 message: format!("{context} truncated"),
@@ -134,45 +144,50 @@ impl RevocationChecker {
         const EXTENSION_STATUS_REQUEST: u16 = 0x0005;
 
         // Parse through the handshake data looking for ServerHello
-        let mut offset = 0;
-        while offset + 5 <= tls_handshake_data.len() {
+        let mut offset = 0usize;
+        while let Some(header_end) = offset
+            .checked_add(5)
+            .filter(|&end| end <= tls_handshake_data.len())
+        {
             // TLS record header: type (1) + version (2) + length (2)
             let record_type = Self::read_u8_at(tls_handshake_data, offset, "TLS record header")?;
+            let record_len_offset =
+                offset
+                    .checked_add(3)
+                    .ok_or_else(|| crate::TlsError::ParseError {
+                        message: "TLS record length offset overflow".to_string(),
+                    })?;
+            let record_len =
+                Self::read_u16_at(tls_handshake_data, record_len_offset, "TLS record length")?
+                    as usize;
+            let record_end =
+                header_end
+                    .checked_add(record_len)
+                    .ok_or_else(|| crate::TlsError::ParseError {
+                        message: "TLS record length overflow".to_string(),
+                    })?;
 
             // Skip non-handshake records by reading their full record header and length
             if record_type != 0x16 {
                 // Handshake
                 // Read the 5-byte TLS record header to skip the entire record
-                let record_len =
-                    Self::read_u16_at(tls_handshake_data, offset + 3, "TLS record length")?
-                        as usize;
-                if offset + 5 + record_len > tls_handshake_data.len() {
+                if record_end > tls_handshake_data.len() {
                     return Err(crate::TlsError::ParseError {
                         message: "TLS record length exceeds available data".to_string(),
                     });
                 }
-                offset += 5 + record_len;
+                offset = record_end;
                 continue;
             }
 
-            if offset + 5 > tls_handshake_data.len() {
-                return Err(crate::TlsError::ParseError {
-                    message: "TLS record header truncated".to_string(),
-                });
-            }
-
-            // Get record length
-            let record_len =
-                Self::read_u16_at(tls_handshake_data, offset + 3, "TLS record length")? as usize;
-
-            if offset + 5 + record_len > tls_handshake_data.len() {
+            if record_end > tls_handshake_data.len() {
                 return Err(crate::TlsError::ParseError {
                     message: "TLS record length exceeds available data".to_string(),
                 });
             }
 
-            let handshake_start = offset + 5;
-            let handshake_end = handshake_start + record_len;
+            let handshake_start = header_end;
+            let handshake_end = record_end;
             let handshake_data = Self::slice_range(
                 tls_handshake_data,
                 handshake_start,
@@ -181,14 +196,28 @@ impl RevocationChecker {
             )?;
 
             // Parse handshake messages within this record
-            let mut msg_offset = 0;
-            while msg_offset + 4 <= handshake_data.len() {
+            let mut msg_offset = 0usize;
+            while let Some(msg_body_start) = msg_offset
+                .checked_add(4)
+                .filter(|&end| end <= handshake_data.len())
+            {
                 let msg_type =
                     Self::read_u8_at(handshake_data, msg_offset, "Handshake message type")?;
+                let msg_len_offset =
+                    msg_offset
+                        .checked_add(1)
+                        .ok_or_else(|| crate::TlsError::ParseError {
+                            message: "Handshake length offset overflow".to_string(),
+                        })?;
                 let msg_len =
-                    Self::read_u24_at(handshake_data, msg_offset + 1, "Handshake message length")?;
+                    Self::read_u24_at(handshake_data, msg_len_offset, "Handshake message length")?;
 
-                if msg_offset + 4 + msg_len > handshake_data.len() {
+                let msg_end = msg_body_start.checked_add(msg_len).ok_or_else(|| {
+                    crate::TlsError::ParseError {
+                        message: "Handshake message length overflow".to_string(),
+                    }
+                })?;
+                if msg_end > handshake_data.len() {
                     return Err(crate::TlsError::ParseError {
                         message: "Handshake message length exceeds available data".to_string(),
                     });
@@ -199,7 +228,7 @@ impl RevocationChecker {
                         // Check for status_request extension in ServerHello
                         let body = Self::slice_range(
                             handshake_data,
-                            msg_offset + 4,
+                            msg_body_start,
                             msg_len,
                             "ServerHello body",
                         )?;
@@ -222,11 +251,17 @@ impl RevocationChecker {
                         // Try to validate the response structure
                         // Certificate Status body: status_type (1 byte) + response_length (3 bytes) = 4 bytes minimum
                         // Body starts at msg_offset + 4 (after 4-byte handshake header)
-                        if msg_len >= 4 && msg_offset + 8 <= handshake_data.len() {
+                        if msg_len >= 4 && msg_end <= handshake_data.len() {
                             // Skip status_type (1 byte at msg_offset+4), read response_length (3 bytes at msg_offset+5..8)
+                            let response_len_offset =
+                                msg_offset.checked_add(5).ok_or_else(|| {
+                                    crate::TlsError::ParseError {
+                                        message: "OCSP response length offset overflow".to_string(),
+                                    }
+                                })?;
                             let response_len = Self::read_u24_at(
                                 handshake_data,
-                                msg_offset + 5,
+                                response_len_offset,
                                 "OCSP response length",
                             )?;
 
@@ -252,7 +287,7 @@ impl RevocationChecker {
                     }
                 }
 
-                msg_offset += 4 + msg_len;
+                msg_offset = msg_end;
             }
 
             offset = handshake_end;
@@ -279,92 +314,145 @@ impl RevocationChecker {
         // session_id (variable) + cipher_suites_len (2) + cipher_suites (variable) +
         // compression_method (1) + extensions_len (2) + extensions (variable)
 
-        let mut offset = 0;
+        let mut offset = 0usize;
 
         // Version (2 bytes)
-        if offset + 2 > server_hello.len() {
+        let mut end = offset
+            .checked_add(2)
+            .ok_or_else(|| crate::TlsError::ParseError {
+                message: "ServerHello version offset overflow".to_string(),
+            })?;
+        if end > server_hello.len() {
             return Err(crate::TlsError::ParseError {
                 message: "ServerHello truncated before version".to_string(),
             });
         }
-        offset += 2;
+        offset = end;
 
         // Random (32 bytes)
-        if offset + 32 > server_hello.len() {
+        end = offset
+            .checked_add(32)
+            .ok_or_else(|| crate::TlsError::ParseError {
+                message: "ServerHello random offset overflow".to_string(),
+            })?;
+        if end > server_hello.len() {
             return Err(crate::TlsError::ParseError {
                 message: "ServerHello truncated before random".to_string(),
             });
         }
-        offset += 32;
+        offset = end;
 
         // Session ID length
-        if offset + 1 > server_hello.len() {
+        end = offset
+            .checked_add(1)
+            .ok_or_else(|| crate::TlsError::ParseError {
+                message: "ServerHello session ID length offset overflow".to_string(),
+            })?;
+        if end > server_hello.len() {
             return Err(crate::TlsError::ParseError {
                 message: "ServerHello truncated before session ID length".to_string(),
             });
         }
         let session_id_len =
             Self::read_u8_at(server_hello, offset, "ServerHello session ID length")? as usize;
-        offset += 1;
+        offset = end;
 
         // Session ID
-        if offset + session_id_len > server_hello.len() {
+        end = offset
+            .checked_add(session_id_len)
+            .ok_or_else(|| crate::TlsError::ParseError {
+                message: "ServerHello session ID length overflow".to_string(),
+            })?;
+        if end > server_hello.len() {
             return Err(crate::TlsError::ParseError {
                 message: "ServerHello truncated before session ID".to_string(),
             });
         }
-        offset += session_id_len;
+        offset = end;
 
         // Cipher suite (2 bytes)
-        if offset + 2 > server_hello.len() {
+        end = offset
+            .checked_add(2)
+            .ok_or_else(|| crate::TlsError::ParseError {
+                message: "ServerHello cipher suite offset overflow".to_string(),
+            })?;
+        if end > server_hello.len() {
             return Err(crate::TlsError::ParseError {
                 message: "ServerHello truncated before cipher suite".to_string(),
             });
         }
-        offset += 2;
+        offset = end;
 
         // Compression method (1 byte)
-        if offset + 1 > server_hello.len() {
+        end = offset
+            .checked_add(1)
+            .ok_or_else(|| crate::TlsError::ParseError {
+                message: "ServerHello compression offset overflow".to_string(),
+            })?;
+        if end > server_hello.len() {
             return Err(crate::TlsError::ParseError {
                 message: "ServerHello truncated before compression".to_string(),
             });
         }
-        offset += 1;
+        offset = end;
 
         // Extensions length (2 bytes)
-        if offset + 2 > server_hello.len() {
+        end = offset
+            .checked_add(2)
+            .ok_or_else(|| crate::TlsError::ParseError {
+                message: "ServerHello extensions length offset overflow".to_string(),
+            })?;
+        if end > server_hello.len() {
             return Err(crate::TlsError::ParseError {
                 message: "ServerHello truncated before extensions length".to_string(),
             });
         }
         let extensions_len =
             Self::read_u16_at(server_hello, offset, "ServerHello extensions length")? as usize;
-        offset += 2;
+        offset = end;
 
         // Parse extensions
-        let extensions_end = offset + extensions_len;
+        let extensions_end =
+            offset
+                .checked_add(extensions_len)
+                .ok_or_else(|| crate::TlsError::ParseError {
+                    message: "ServerHello extensions length overflow".to_string(),
+                })?;
         if extensions_end > server_hello.len() {
             return Err(crate::TlsError::ParseError {
                 message: "ServerHello truncated in extensions".to_string(),
             });
         }
 
-        while offset + 4 <= extensions_end {
+        while let Some(ext_header_end) = offset.checked_add(4).filter(|&end| end <= extensions_end)
+        {
             let ext_type = Self::read_u16_at(server_hello, offset, "ServerHello extension type")?;
+            let ext_len_offset =
+                offset
+                    .checked_add(2)
+                    .ok_or_else(|| crate::TlsError::ParseError {
+                        message: "ServerHello extension length offset overflow".to_string(),
+                    })?;
             let ext_len =
-                Self::read_u16_at(server_hello, offset + 2, "ServerHello extension length")?
+                Self::read_u16_at(server_hello, ext_len_offset, "ServerHello extension length")?
                     as usize;
 
             if ext_type == extension_type {
                 return Ok(Some(true));
             }
 
-            if offset + 4 + ext_len > extensions_end {
+            let ext_end =
+                ext_header_end
+                    .checked_add(ext_len)
+                    .ok_or_else(|| crate::TlsError::ParseError {
+                        message: "ServerHello extension data length overflow".to_string(),
+                    })?;
+            if ext_end > extensions_end {
                 return Err(crate::TlsError::ParseError {
                     message: "ServerHello truncated in extension data".to_string(),
                 });
             }
-            offset += 4 + ext_len;
+            offset = ext_end;
         }
 
         Ok(Some(false))

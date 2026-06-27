@@ -190,20 +190,25 @@ impl CtVerifier {
         }
 
         let mut count = 0;
-        let mut pos = 2;
-        let end_pos = 2 + total_len;
+        let mut pos = 2usize;
+        let end_pos =
+            2usize
+                .checked_add(total_len)
+                .ok_or_else(|| crate::error::TlsError::ParseError {
+                    message: "Malformed SCT list: length overflow".to_string(),
+                })?;
 
         // Parse each SCT entry within the declared length
-        while pos + 2 <= end_pos {
+        while let Some(len_end) = pos.checked_add(2).filter(|&end| end <= end_pos) {
             // Each SCT starts with 2-byte length
             let sct_len_bytes = sct_list
-                .get(pos..pos + 2)
+                .get(pos..len_end)
                 .and_then(|bytes| <[u8; 2]>::try_from(bytes).ok())
                 .ok_or_else(|| crate::error::TlsError::ParseError {
                     message: "Malformed SCT entry: missing length".to_string(),
                 })?;
             let sct_len = u16::from_be_bytes(sct_len_bytes) as usize;
-            pos += 2;
+            pos = len_end;
 
             let next_pos =
                 pos.checked_add(sct_len)

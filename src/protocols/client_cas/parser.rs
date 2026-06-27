@@ -10,8 +10,13 @@ impl ClientCAsTester {
     }
 
     fn read_u16_at(data: &[u8], offset: usize, context: &str) -> crate::Result<u16> {
+        let end = offset
+            .checked_add(2)
+            .ok_or_else(|| crate::TlsError::ParseError {
+                message: format!("{context} length overflow"),
+            })?;
         let bytes = data
-            .get(offset..offset + 2)
+            .get(offset..end)
             .and_then(|bytes| <[u8; 2]>::try_from(bytes).ok())
             .ok_or_else(|| crate::TlsError::ParseError {
                 message: format!("{context} truncated"),
@@ -20,8 +25,13 @@ impl ClientCAsTester {
     }
 
     fn read_u24_at(data: &[u8], offset: usize, context: &str) -> crate::Result<usize> {
+        let end = offset
+            .checked_add(3)
+            .ok_or_else(|| crate::TlsError::ParseError {
+                message: format!("{context} length overflow"),
+            })?;
         let [high, mid, low] = data
-            .get(offset..offset + 3)
+            .get(offset..end)
             .and_then(|bytes| <[u8; 3]>::try_from(bytes).ok())
             .ok_or_else(|| crate::TlsError::ParseError {
                 message: format!("{context} truncated"),
@@ -51,12 +61,24 @@ impl ClientCAsTester {
         data: &[u8],
     ) -> crate::Result<Option<Vec<ClientCA>>> {
         let mut cert_request = None;
-        let mut pos = 0;
+        let mut pos = 0usize;
         let mut handshake_bytes = Vec::new();
 
-        while pos + 5 <= data.len() {
-            let record_len = Self::read_u16_at(data, pos + 3, "TLS record length")? as usize;
-            if pos + 5 + record_len > data.len() {
+        while let Some(header_end) = pos.checked_add(5).filter(|&end| end <= data.len()) {
+            let record_len_offset =
+                pos.checked_add(3)
+                    .ok_or_else(|| crate::TlsError::ParseError {
+                        message: "TLS record length offset overflow".to_string(),
+                    })?;
+            let record_len =
+                Self::read_u16_at(data, record_len_offset, "TLS record length")? as usize;
+            let record_end =
+                header_end
+                    .checked_add(record_len)
+                    .ok_or_else(|| crate::TlsError::ParseError {
+                        message: "TLS record length overflow".to_string(),
+                    })?;
+            if record_end > data.len() {
                 return Err(crate::TlsError::ParseError {
                     message: "TLS record length exceeds available data".to_string(),
                 });
@@ -64,11 +86,11 @@ impl ClientCAsTester {
 
             if Self::read_u8_at(data, pos, "TLS record type")? != 0x16 {
                 // Skip non-handshake records by reading the full record header + length
-                pos += 5 + record_len;
+                pos = record_end;
                 continue;
             }
 
-            pos += 5;
+            pos = header_end;
 
             handshake_bytes.extend_from_slice(Self::slice_range(
                 data,
@@ -76,20 +98,29 @@ impl ClientCAsTester {
                 record_len,
                 "TLS handshake record",
             )?);
-            pos += record_len;
+            pos = record_end;
         }
 
-        let mut msg_pos = 0;
-        while msg_pos + 4 <= handshake_bytes.len() {
+        let mut msg_pos = 0usize;
+        while let Some(msg_body_start) = msg_pos
+            .checked_add(4)
+            .filter(|&end| end <= handshake_bytes.len())
+        {
             let msg_type = Self::read_u8_at(&handshake_bytes, msg_pos, "Handshake message type")?;
+            let msg_len_offset =
+                msg_pos
+                    .checked_add(1)
+                    .ok_or_else(|| crate::TlsError::ParseError {
+                        message: "Handshake message length offset overflow".to_string(),
+                    })?;
             let msg_len =
-                Self::read_u24_at(&handshake_bytes, msg_pos + 1, "Handshake message length")?;
-            let msg_end = msg_pos
-                .checked_add(4)
-                .and_then(|start| start.checked_add(msg_len))
-                .ok_or_else(|| crate::TlsError::ParseError {
-                    message: "Handshake message length overflow".to_string(),
-                })?;
+                Self::read_u24_at(&handshake_bytes, msg_len_offset, "Handshake message length")?;
+            let msg_end =
+                msg_body_start
+                    .checked_add(msg_len)
+                    .ok_or_else(|| crate::TlsError::ParseError {
+                        message: "Handshake message length overflow".to_string(),
+                    })?;
 
             if msg_end > handshake_bytes.len() {
                 return Err(crate::TlsError::ParseError {
@@ -196,14 +227,19 @@ impl ClientCAsTester {
 
         let mut cas = Vec::new();
         let ca_data = Self::slice_range(data, pos, ca_list_len, "CertificateRequest CA list")?;
-        let mut ca_pos = 0;
+        let mut ca_pos = 0usize;
 
-        while ca_pos + 2 <= ca_data.len() {
+        while let Some(dn_len_end) = ca_pos.checked_add(2).filter(|&end| end <= ca_data.len()) {
             let dn_len =
                 Self::read_u16_at(ca_data, ca_pos, "CertificateRequest CA DN length")? as usize;
-            ca_pos += 2;
+            ca_pos = dn_len_end;
 
-            if ca_pos + dn_len > ca_data.len() {
+            let dn_end = ca_pos
+                .checked_add(dn_len)
+                .ok_or_else(|| crate::TlsError::ParseError {
+                    message: "CertificateRequest CA distinguished name length overflow".to_string(),
+                })?;
+            if dn_end > ca_data.len() {
                 return Err(crate::TlsError::ParseError {
                     message: "CertificateRequest CA distinguished name length exceeds list"
                         .to_string(),
@@ -220,7 +256,7 @@ impl ClientCAsTester {
                 organization: org,
             });
 
-            ca_pos += dn_len;
+            ca_pos = dn_end;
         }
 
         if ca_pos != ca_data.len() {
@@ -240,8 +276,14 @@ impl ClientCAsTester {
         let mut org = None;
 
         for i in 0..dn_data.len().saturating_sub(6) {
-            let oid_prefix = dn_data.get(i..i + 3);
-            let oid_type = dn_data.get(i + 3..i + 6);
+            let Some(oid_mid) = i.checked_add(3) else {
+                break;
+            };
+            let Some(oid_end) = i.checked_add(6) else {
+                break;
+            };
+            let oid_prefix = dn_data.get(i..oid_mid);
+            let oid_type = dn_data.get(oid_mid..oid_end);
 
             if dn_data
                 .get(i..)
@@ -249,9 +291,11 @@ impl ClientCAsTester {
                 && oid_prefix == Some(&[0x06, 0x03, 0x55])
                 && (oid_type == Some(&[0x04, 0x03, 0x0c]) || oid_type == Some(&[0x04, 0x03, 0x13]))
             {
-                let len = Self::read_u8_at(dn_data, i + 6, "CertificateRequest DN value length")?
+                let len = Self::read_u8_at(dn_data, oid_end, "CertificateRequest DN value length")?
                     as usize;
-                let value_start = i + 7;
+                let Some(value_start) = oid_end.checked_add(1) else {
+                    break;
+                };
                 let value_end = value_start.checked_add(len);
                 if let Some(value_bytes) = value_end.and_then(|end| dn_data.get(value_start..end)) {
                     let value = std::str::from_utf8(value_bytes).map_err(|error| {
@@ -269,9 +313,11 @@ impl ClientCAsTester {
                 && oid_prefix == Some(&[0x06, 0x03, 0x55])
                 && (oid_type == Some(&[0x04, 0x0a, 0x0c]) || oid_type == Some(&[0x04, 0x0a, 0x13]))
             {
-                let len = Self::read_u8_at(dn_data, i + 6, "CertificateRequest DN value length")?
+                let len = Self::read_u8_at(dn_data, oid_end, "CertificateRequest DN value length")?
                     as usize;
-                let value_start = i + 7;
+                let Some(value_start) = oid_end.checked_add(1) else {
+                    break;
+                };
                 let value_end = value_start.checked_add(len);
                 if let Some(value_bytes) = value_end.and_then(|end| dn_data.get(value_start..end)) {
                     let value = std::str::from_utf8(value_bytes).map_err(|error| {

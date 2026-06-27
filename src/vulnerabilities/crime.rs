@@ -186,10 +186,18 @@ impl<'a> CrimeTester<'a> {
                         // Malformed ServerHello — cannot determine compression status
                         return Ok(CompressionProbeStatus::Inconclusive);
                     }
-                    let cipher_offset = 44 + session_id_len;
+                    let Some(cipher_offset) = 44usize.checked_add(session_id_len) else {
+                        return Ok(CompressionProbeStatus::Inconclusive);
+                    };
                     // Ensure cipher_offset is within the first TLS record body (5+record_len)
-                    if cipher_offset + 2 < 5 + record_len && n > cipher_offset + 2 {
-                        let Some(compression_method) = response.get(cipher_offset + 2).copied()
+                    let Some(compression_offset) = cipher_offset.checked_add(2) else {
+                        return Ok(CompressionProbeStatus::Inconclusive);
+                    };
+                    let Some(record_end) = 5usize.checked_add(record_len) else {
+                        return Ok(CompressionProbeStatus::Inconclusive);
+                    };
+                    if compression_offset < record_end && n > compression_offset {
+                        let Some(compression_method) = response.get(compression_offset).copied()
                         else {
                             return Ok(CompressionProbeStatus::Inconclusive);
                         };
@@ -263,8 +271,17 @@ impl<'a> CrimeTester<'a> {
                     return Ok(CompressionProbeStatus::Inconclusive);
                 };
                 // cipher suite (2) + compression (1) + extensions_length (2)
-                let ext_len_offset = sid_offset + 1 + sid_len + 2 + 1;
-                if ext_len_offset + 2 > n {
+                let Some(ext_len_offset) = sid_offset
+                    .checked_add(1)
+                    .and_then(|offset| offset.checked_add(sid_len))
+                    .and_then(|offset| offset.checked_add(2 + 1))
+                else {
+                    return Ok(CompressionProbeStatus::Inconclusive);
+                };
+                let Some(ext_start) = ext_len_offset.checked_add(2) else {
+                    return Ok(CompressionProbeStatus::Inconclusive);
+                };
+                if ext_start > n {
                     return Ok(CompressionProbeStatus::Inconclusive);
                 }
 
@@ -272,45 +289,60 @@ impl<'a> CrimeTester<'a> {
                 let Some(record_len) = read_u16_at(data, 3).map(usize::from) else {
                     return Ok(CompressionProbeStatus::Inconclusive);
                 };
-                if record_len + 5 > n {
+                let Some(record_end) = 5usize.checked_add(record_len) else {
+                    return Ok(CompressionProbeStatus::Inconclusive);
+                };
+                if record_end > n {
                     return Ok(CompressionProbeStatus::Inconclusive);
                 }
-                let record_end = 5 + record_len;
 
                 let Some(ext_total) = read_u16_at(data, ext_len_offset).map(usize::from) else {
                     return Ok(CompressionProbeStatus::Inconclusive);
                 };
-                let ext_start = ext_len_offset + 2;
-                let ext_end = ext_start + ext_total;
+                let Some(ext_end) = ext_start.checked_add(ext_total) else {
+                    return Ok(CompressionProbeStatus::Inconclusive);
+                };
                 if ext_end > record_end {
                     return Ok(CompressionProbeStatus::Inconclusive);
                 }
 
                 // Walk extensions structurally looking for NPN (0x3374)
                 let mut pos = ext_start;
-                while pos + 4 <= ext_end {
+                while let Some(ext_header_end) = pos.checked_add(4).filter(|&end| end <= ext_end) {
                     let Some(ext_type) = read_u16_at(data, pos) else {
                         return Ok(CompressionProbeStatus::Inconclusive);
                     };
-                    let Some(ext_len) = read_u16_at(data, pos + 2).map(usize::from) else {
+                    let Some(ext_len_offset) = pos.checked_add(2) else {
                         return Ok(CompressionProbeStatus::Inconclusive);
                     };
-                    pos += 4;
-                    if pos + ext_len > ext_end {
+                    let Some(ext_len) = read_u16_at(data, ext_len_offset).map(usize::from) else {
+                        return Ok(CompressionProbeStatus::Inconclusive);
+                    };
+                    pos = ext_header_end;
+                    let Some(next_pos) = pos.checked_add(ext_len) else {
+                        return Ok(CompressionProbeStatus::Inconclusive);
+                    };
+                    if next_pos > ext_end {
                         return Ok(CompressionProbeStatus::Inconclusive);
                     }
 
                     if ext_type == 0x3374 {
                         // Parse NPN protocol list within this extension
                         let mut proto_pos = pos;
-                        let proto_end = pos + ext_len;
+                        let proto_end = next_pos;
                         while proto_pos < proto_end {
                             let Some(proto_len) = data.get(proto_pos).copied().map(usize::from)
                             else {
                                 return Ok(CompressionProbeStatus::Inconclusive);
                             };
-                            proto_pos += 1;
-                            if proto_pos + proto_len > proto_end {
+                            let Some(proto_start) = proto_pos.checked_add(1) else {
+                                return Ok(CompressionProbeStatus::Inconclusive);
+                            };
+                            proto_pos = proto_start;
+                            let Some(next_proto_pos) = proto_pos.checked_add(proto_len) else {
+                                return Ok(CompressionProbeStatus::Inconclusive);
+                            };
+                            if next_proto_pos > proto_end {
                                 return Ok(CompressionProbeStatus::Inconclusive);
                             }
                             if let Some(proto_bytes) = slice_range(data, proto_pos, proto_len)
@@ -322,12 +354,12 @@ impl<'a> CrimeTester<'a> {
                                     return Ok(CompressionProbeStatus::Enabled);
                                 }
                             }
-                            proto_pos += proto_len;
+                            proto_pos = next_proto_pos;
                         }
                         break;
                     }
 
-                    pos += ext_len;
+                    pos = next_pos;
                 }
 
                 Ok(CompressionProbeStatus::Disabled)

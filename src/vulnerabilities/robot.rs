@@ -55,22 +55,24 @@ fn u24_len(len: usize, context: &str) -> Result<[u8; 3]> {
 
 /// Return true once a ServerHelloDone record (handshake type 0x0e) is present in `buf`.
 fn has_server_hello_done(buf: &[u8]) -> bool {
-    let mut offset = 0;
-    while offset + 5 <= buf.len() {
+    let mut offset = 0usize;
+    while let Some(header_end) = offset.checked_add(5).filter(|&end| end <= buf.len()) {
         let Some(header) = buf
-            .get(offset..offset + 5)
+            .get(offset..header_end)
             .and_then(|header| <&[u8; 5]>::try_from(header).ok())
         else {
             break;
         };
         let [content_type, _, _, len_high, len_low] = *header;
         let record_len = usize::from(u16::from_be_bytes([len_high, len_low]));
-        let record_end = offset + 5 + record_len;
+        let Some(record_end) = header_end.checked_add(record_len) else {
+            break;
+        };
         if record_end > buf.len() {
             break;
         }
         if content_type == 0x16 {
-            let hs_start = offset + 5;
+            let hs_start = header_end;
             if hs_start < record_end && buf.get(hs_start) == Some(&0x0e) {
                 return true;
             }
@@ -83,41 +85,55 @@ fn has_server_hello_done(buf: &[u8]) -> bool {
 /// Parse the server handshake buffer to find the Certificate message and return the RSA
 /// modulus length in bytes.
 fn extract_rsa_key_len(buffer: &[u8]) -> Result<usize> {
-    let mut offset = 0;
-    while offset + 5 <= buffer.len() {
+    let mut offset = 0usize;
+    while let Some(header_end) = offset.checked_add(5).filter(|&end| end <= buffer.len()) {
         let Some(header) = buffer
-            .get(offset..offset + 5)
+            .get(offset..header_end)
             .and_then(|header| <&[u8; 5]>::try_from(header).ok())
         else {
             break;
         };
         let [record_type, _, _, len_high, len_low] = *header;
         let record_len = usize::from(u16::from_be_bytes([len_high, len_low]));
-        let record_end = offset + 5 + record_len;
+        let Some(record_end) = header_end.checked_add(record_len) else {
+            break;
+        };
         if record_end > buffer.len() {
             break;
         }
         if record_type == 0x16 {
             // Handshake record — scan for Certificate message (type 0x0b)
-            let mut hoff = offset + 5;
-            while hoff + 4 <= record_end {
+            let mut hoff = header_end;
+            while let Some(hs_body_start) = hoff.checked_add(4).filter(|&end| end <= record_end) {
                 let Some(hs_type) = buffer.get(hoff).copied() else {
                     break;
                 };
-                let Some(hs_len) = read_u24_at(buffer, hoff + 1) else {
+                let Some(hs_len_offset) = hoff.checked_add(1) else {
                     break;
                 };
-                let hs_end = hoff + 4 + hs_len;
+                let Some(hs_len) = read_u24_at(buffer, hs_len_offset) else {
+                    break;
+                };
+                let Some(hs_end) = hs_body_start.checked_add(hs_len) else {
+                    break;
+                };
                 if hs_end > record_end {
                     break;
                 }
                 // Certificate message: type=0x0b, body=[3:list_len][3:cert_len][der...]
-                if hs_type == 0x0b && hoff + 10 <= hs_end {
-                    let Some(cert_len) = read_u24_at(buffer, hoff + 7) else {
+                let Some(cert_start) = hoff.checked_add(10) else {
+                    break;
+                };
+                if hs_type == 0x0b && cert_start <= hs_end {
+                    let Some(cert_len_offset) = hoff.checked_add(7) else {
                         break;
                     };
-                    let cert_start = hoff + 10;
-                    let cert_end = cert_start + cert_len;
+                    let Some(cert_len) = read_u24_at(buffer, cert_len_offset) else {
+                        break;
+                    };
+                    let Some(cert_end) = cert_start.checked_add(cert_len) else {
+                        break;
+                    };
                     if let Some(cert_der) = buffer.get(cert_start..cert_end)
                         && let Ok(cert) = X509::from_der(cert_der)
                         && let Ok(pkey) = cert.public_key()

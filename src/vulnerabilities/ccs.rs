@@ -175,9 +175,12 @@ impl CcsInjectionTester {
                             // Scan all complete records; carry forward any partial tail.
                             let mut offset = 0usize;
                             let mut result: Option<TestStatus> = None;
-                            while offset + 5 <= accumulated.len() {
+                            while let Some(header_end) = offset
+                                .checked_add(5)
+                                .filter(|&end| end <= accumulated.len())
+                            {
                                 let Some(record_header) = accumulated
-                                    .get(offset..offset + 5)
+                                    .get(offset..header_end)
                                     .and_then(|header| <&[u8; 5]>::try_from(header).ok())
                                 else {
                                     result = Some(TestStatus::Inconclusive);
@@ -188,10 +191,7 @@ impl CcsInjectionTester {
                                     u16::from_be_bytes([record_header[3], record_header[4]])
                                         as usize;
 
-                                let Some(record_end) = offset
-                                    .checked_add(5)
-                                    .and_then(|v| v.checked_add(record_len))
-                                else {
+                                let Some(record_end) = header_end.checked_add(record_len) else {
                                     result = Some(TestStatus::Inconclusive);
                                     break;
                                 };
@@ -215,9 +215,9 @@ impl CcsInjectionTester {
                                     result = Some(TestStatus::Vulnerable);
                                     break;
                                 } else if record_type == CONTENT_TYPE_HANDSHAKE
-                                    && offset + 6 <= accumulated.len()
+                                    && header_end < accumulated.len()
                                 {
-                                    let Some(&handshake_type) = accumulated.get(offset + 5) else {
+                                    let Some(&handshake_type) = accumulated.get(header_end) else {
                                         result = Some(TestStatus::Inconclusive);
                                         break;
                                     };

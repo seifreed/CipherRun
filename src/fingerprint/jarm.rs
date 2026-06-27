@@ -28,8 +28,9 @@ fn read_u8_at(data: &[u8], offset: usize) -> Option<u8> {
 }
 
 fn read_u16_at(data: &[u8], offset: usize) -> Option<u16> {
+    let end = offset.checked_add(2)?;
     let bytes = data
-        .get(offset..offset + 2)
+        .get(offset..end)
         .and_then(|bytes| <[u8; 2]>::try_from(bytes).ok())?;
     Some(u16::from_be_bytes(bytes))
 }
@@ -264,9 +265,14 @@ fn parse_server_hello(data: &[u8], _probe: &JarmProbe) -> Result<String> {
         return Ok("|||".to_string());
     };
     let counter = counter as usize;
-    let cipher_offset = counter + 44;
+    let Some(cipher_offset) = counter.checked_add(44) else {
+        return Ok("|||".to_string());
+    };
 
-    if data.len() < cipher_offset + 2 {
+    let Some(cipher_end) = cipher_offset.checked_add(2) else {
+        return Ok("|||".to_string());
+    };
+    if data.len() < cipher_end {
         return Ok("|||".to_string());
     }
 
@@ -304,14 +310,20 @@ fn extract_extension_info(
     server_hello_length: usize,
 ) -> Result<String> {
     // Need at least: offset + 49 (extensions length) + 4 (one minimal extension)
-    if data.len() < offset + 53 {
+    let Some(min_end) = offset.checked_add(53) else {
+        return Ok("|".to_string());
+    };
+    if data.len() < min_end {
         return Ok("|".to_string());
     }
 
     // Check if the server sent no extensions by reading the full 2-byte extension length.
     // Previously this only checked data[offset + 47] == 0x0b, which collided with valid
     // extension lengths 0x0B00-0x0BFF (2816-3071 bytes).
-    let Some(potential_ext_len) = read_u16_at(data, offset + 47) else {
+    let Some(ext_len_offset) = offset.checked_add(47) else {
+        return Ok("|".to_string());
+    };
+    let Some(potential_ext_len) = read_u16_at(data, ext_len_offset) else {
         return Ok("|".to_string());
     };
     if potential_ext_len == 0 {
@@ -320,8 +332,11 @@ fn extract_extension_info(
     // If the high byte looks like a Certificate handshake type (0x0b) AND the claimed
     // extension length exceeds available data, the server likely sent no extensions
     // and the next handshake record follows immediately.
-    if read_u8_at(data, offset + 47) == Some(0x0b)
-        && (offset + 49).saturating_add(potential_ext_len as usize) > data.len()
+    let Some(ecnt_start) = offset.checked_add(49) else {
+        return Ok("|".to_string());
+    };
+    if read_u8_at(data, ext_len_offset) == Some(0x0b)
+        && ecnt_start.saturating_add(potential_ext_len as usize) > data.len()
     {
         return Ok("|".to_string());
     }
@@ -334,12 +349,15 @@ fn extract_extension_info(
     // and the `emax` computation below (ecnt_start + elen) already gates the
     // extension-iteration loop against the declared extension length.
     let _ = server_hello_length;
-    if offset + 49 > data.len() {
+    if ecnt_start > data.len() {
         return Ok("|".to_string());
     }
 
     // Check for malformed responses
-    if slice_range(data, offset + 50, 3) == Some(&[0x0e, 0xac, 0x0b]) {
+    let Some(malformed_offset) = offset.checked_add(50) else {
+        return Ok("|".to_string());
+    };
+    if slice_range(data, malformed_offset, 3) == Some(&[0x0e, 0xac, 0x0b]) {
         return Ok("|".to_string());
     }
     // Secondary malformed check at fixed offset (original JARM reference)
@@ -347,7 +365,6 @@ fn extract_extension_info(
         return Ok("|".to_string());
     }
 
-    let ecnt_start = offset + 49;
     let elen = potential_ext_len as usize;
 
     // Check for overflow in emax calculation

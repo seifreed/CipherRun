@@ -575,8 +575,20 @@ impl<'a> RenegotiationTester<'a> {
             Self::read_u8_at(response, sid_len_offset, "ServerHello session_id_len")? as usize;
 
         // After session_id: cipher_suite(2) + compression(1) + extensions_length(2)
-        let ext_len_offset = sid_len_offset + 1 + sid_len + 2 + 1;
-        if ext_len_offset + 2 > record_end {
+        let ext_len_offset = sid_len_offset
+            .checked_add(1)
+            .and_then(|offset| offset.checked_add(sid_len))
+            .and_then(|offset| offset.checked_add(2 + 1))
+            .ok_or_else(|| crate::TlsError::ParseError {
+                message: "ServerHello extensions offset overflow".to_string(),
+            })?;
+        let ext_start =
+            ext_len_offset
+                .checked_add(2)
+                .ok_or_else(|| crate::TlsError::ParseError {
+                    message: "ServerHello extensions length overflow".to_string(),
+                })?;
+        if ext_start > record_end {
             return Err(crate::TlsError::ParseError {
                 message: "ServerHello truncated before extensions length".to_string(),
             });
@@ -585,8 +597,12 @@ impl<'a> RenegotiationTester<'a> {
             Self::read_u16_at(response, ext_len_offset, "ServerHello extensions length")? as usize;
 
         // Search only within the extensions section
-        let ext_start = ext_len_offset + 2;
-        let ext_end = ext_start + ext_total;
+        let ext_end =
+            ext_start
+                .checked_add(ext_total)
+                .ok_or_else(|| crate::TlsError::ParseError {
+                    message: "ServerHello extension block length overflow".to_string(),
+                })?;
         if ext_end > record_end {
             return Err(crate::TlsError::ParseError {
                 message: "ServerHello extension block extends beyond declared length".to_string(),
@@ -604,11 +620,23 @@ impl<'a> RenegotiationTester<'a> {
         // Parse extensions structurally instead of using byte pattern scan
         // to avoid false positives from extension data containing 0xff01
         let mut pos = ext_start;
-        while pos + 4 <= ext_end {
+        while let Some(ext_header_end) = pos.checked_add(4).filter(|&end| end <= ext_end) {
             let ext_type = Self::read_u16_at(response, pos, "ServerHello extension type")?;
+            let ext_len_offset = pos
+                .checked_add(2)
+                .ok_or_else(|| crate::TlsError::ParseError {
+                    message: "ServerHello extension length offset overflow".to_string(),
+                })?;
             let ext_len =
-                Self::read_u16_at(response, pos + 2, "ServerHello extension length")? as usize;
-            if pos + 4 + ext_len > ext_end {
+                Self::read_u16_at(response, ext_len_offset, "ServerHello extension length")?
+                    as usize;
+            let ext_data_end =
+                ext_header_end
+                    .checked_add(ext_len)
+                    .ok_or_else(|| crate::TlsError::ParseError {
+                        message: "ServerHello extension data length overflow".to_string(),
+                    })?;
+            if ext_data_end > ext_end {
                 return Err(crate::TlsError::ParseError {
                     message: "ServerHello truncated in renegotiation extension data".to_string(),
                 });
@@ -616,7 +644,7 @@ impl<'a> RenegotiationTester<'a> {
             if ext_type == EXTENSION_RENEGOTIATION_INFO {
                 return Ok(true);
             }
-            pos += 4 + ext_len;
+            pos = ext_data_end;
         }
         if pos != ext_end {
             return Err(crate::TlsError::ParseError {

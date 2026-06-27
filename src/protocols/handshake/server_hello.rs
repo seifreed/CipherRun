@@ -14,8 +14,13 @@ impl ServerHelloParser {
     }
 
     fn read_u16_at(data: &[u8], offset: usize, context: &str) -> Result<u16> {
+        let end = offset
+            .checked_add(2)
+            .ok_or_else(|| crate::TlsError::ParseError {
+                message: format!("{context} length overflow"),
+            })?;
         let bytes = data
-            .get(offset..offset + 2)
+            .get(offset..end)
             .and_then(|bytes| <[u8; 2]>::try_from(bytes).ok())
             .ok_or_else(|| crate::TlsError::ParseError {
                 message: format!("{context} truncated"),
@@ -84,19 +89,30 @@ impl ServerHelloParser {
         offset += 1;
 
         // Validate session_id_len before using it
-        if offset + session_id_len > record.len() {
+        let session_id_end =
+            offset
+                .checked_add(session_id_len)
+                .ok_or_else(|| crate::TlsError::ParseError {
+                    message: "ServerHello session_id length overflow".to_string(),
+                })?;
+        if session_id_end > record.len() {
             crate::tls_bail!("ServerHello session_id extends beyond data");
         }
         let session_id =
             Self::slice_range(record, offset, session_id_len, "ServerHello session ID")?.to_vec();
-        offset += session_id_len;
+        offset = session_id_end;
 
         // Cipher suite (2 bytes)
-        if offset + 2 > record.len() {
+        let cipher_end = offset
+            .checked_add(2)
+            .ok_or_else(|| crate::TlsError::ParseError {
+                message: "ServerHello cipher_suite offset overflow".to_string(),
+            })?;
+        if cipher_end > record.len() {
             crate::tls_bail!("ServerHello truncated before cipher_suite");
         }
         let cipher_suite = Self::read_u16_at(record, offset, "ServerHello cipher suite")?;
-        offset += 2;
+        offset = cipher_end;
 
         // Compression method (1 byte)
         if offset >= record.len() {
@@ -114,10 +130,10 @@ impl ServerHelloParser {
         // 0x0303 (TLS 1.2). Track the real negotiated version here.
         let mut negotiated_version = None;
 
-        if offset + 2 <= record.len() {
+        if let Some(ext_len_end) = offset.checked_add(2).filter(|&end| end <= record.len()) {
             let ext_len =
                 Self::read_u16_at(record, offset, "ServerHello extensions length")? as usize;
-            offset += 2;
+            offset = ext_len_end;
 
             let ext_end =
                 offset
@@ -128,13 +144,21 @@ impl ServerHelloParser {
             if ext_end > record.len() {
                 crate::tls_bail!("ServerHello extension block extends beyond declared length");
             }
-            while offset < ext_end && offset + 4 <= ext_end {
+            while offset < ext_end {
+                let Some(ext_header_end) = offset.checked_add(4).filter(|&end| end <= ext_end)
+                else {
+                    break;
+                };
                 let ext_type = Self::read_u16_at(record, offset, "ServerHello extension type")?;
-                offset += 2;
+                offset = offset
+                    .checked_add(2)
+                    .ok_or_else(|| crate::TlsError::ParseError {
+                        message: "ServerHello extension type offset overflow".to_string(),
+                    })?;
 
                 let ext_data_len =
                     Self::read_u16_at(record, offset, "ServerHello extension length")? as usize;
-                offset += 2;
+                offset = ext_header_end;
 
                 let ext_data_end = offset.checked_add(ext_data_len).ok_or_else(|| {
                     crate::TlsError::ParseError {

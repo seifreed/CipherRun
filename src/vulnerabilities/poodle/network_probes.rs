@@ -25,10 +25,13 @@ fn find_alert_description(response: &[u8], n: usize) -> Result<Option<u8>> {
         .ok_or_else(|| crate::TlsError::ParseError {
             message: "POODLE response read length exceeded buffer".to_string(),
         })?;
-    let mut i = 0;
-    while i + 7 <= response.len() {
+    let mut i = 0usize;
+    while let Some(description_offset) = i.checked_add(6).filter(|&end| end < response.len()) {
+        let Some(header_end) = i.checked_add(5) else {
+            break;
+        };
         let Some(header) = response
-            .get(i..i + 5)
+            .get(i..header_end)
             .and_then(|header| <&[u8; 5]>::try_from(header).ok())
         else {
             break;
@@ -40,14 +43,21 @@ fn find_alert_description(response: &[u8], n: usize) -> Result<Option<u8>> {
                     message: "Malformed TLS alert record length".to_string(),
                 });
             }
-            if i + 5 + record_len != response.len() {
+            let Some(record_end) = header_end.checked_add(record_len) else {
+                return Err(crate::TlsError::ParseError {
+                    message: "TLS alert record length overflow".to_string(),
+                });
+            };
+            if record_end != response.len() {
                 return Err(crate::TlsError::ParseError {
                     message: "TLS alert record length does not match buffer length".to_string(),
                 });
             }
-            return Ok(response.get(i + 6).copied()); // level at i+5, description at i+6
+            return Ok(response.get(description_offset).copied()); // level at i+5, description at i+6
         }
-        let next = i + 5 + record_len;
+        let Some(next) = header_end.checked_add(record_len) else {
+            break;
+        };
         if record_len == 0 || next > response.len() {
             break;
         }

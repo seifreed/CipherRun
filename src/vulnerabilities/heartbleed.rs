@@ -239,18 +239,29 @@ impl<'a> HeartbleedTester<'a> {
             return Ok(false);
         }
         // After session ID: cipher suite (2 bytes) + compression method (1 byte)
-        let ext_offset = 44 + sid_len + 2 + 1;
+        let Some(ext_offset) = 44usize
+            .checked_add(sid_len)
+            .and_then(|offset| offset.checked_add(2 + 1))
+        else {
+            return Ok(false);
+        };
 
         // Check we have room for extensions length (2 bytes)
-        if ext_offset + 2 > data.len() {
+        let Some(ext_start) = ext_offset.checked_add(2) else {
+            return Ok(false);
+        };
+        if ext_start > data.len() {
             return Ok(false);
         }
 
         let Some(ext_total_len) = read_u16_at(data, ext_offset).map(usize::from) else {
             return Ok(false);
         };
-        let ext_start = ext_offset + 2;
-        let ext_end = ext_start + ext_total_len;
+        let Some(ext_end) = ext_start.checked_add(ext_total_len) else {
+            return Err(crate::TlsError::ParseError {
+                message: "ServerHello extension block length overflow".to_string(),
+            });
+        };
         if ext_end > data.len() {
             return Err(crate::TlsError::ParseError {
                 message: "ServerHello extension block extends beyond declared length".to_string(),
@@ -259,26 +270,34 @@ impl<'a> HeartbleedTester<'a> {
 
         // Walk extensions looking for heartbeat (type 0x000f)
         let mut pos = ext_start;
-        while pos + 4 <= ext_end {
+        while let Some(ext_header_end) = pos.checked_add(4).filter(|&end| end <= ext_end) {
             let Some(ext_type) = read_u16_at(data, pos) else {
                 return Ok(false);
             };
-            let Some(ext_len) = read_u16_at(data, pos + 2).map(usize::from) else {
+            let Some(ext_len_offset) = pos.checked_add(2) else {
                 return Ok(false);
             };
-            pos += 4;
+            let Some(ext_len) = read_u16_at(data, ext_len_offset).map(usize::from) else {
+                return Ok(false);
+            };
+            pos = ext_header_end;
 
             if ext_type == 0x000f {
                 return Ok(true);
             }
 
-            if pos + ext_len > ext_end {
+            let Some(next_pos) = pos.checked_add(ext_len) else {
+                return Err(crate::TlsError::ParseError {
+                    message: "ServerHello extension data length overflow".to_string(),
+                });
+            };
+            if next_pos > ext_end {
                 return Err(crate::TlsError::ParseError {
                     message: "ServerHello extension data extends beyond declared length"
                         .to_string(),
                 });
             }
-            pos += ext_len;
+            pos = next_pos;
         }
 
         Ok(false)

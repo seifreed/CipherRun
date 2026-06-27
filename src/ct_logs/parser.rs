@@ -92,8 +92,11 @@ fn read_u8_at(data: &[u8], offset: usize, context: &str) -> Result<u8> {
 }
 
 fn read_u16_at(data: &[u8], offset: usize, context: &str) -> Result<u16> {
+    let end = offset.checked_add(2).ok_or_else(|| TlsError::ParseError {
+        message: format!("{context} length overflow"),
+    })?;
     let bytes = data
-        .get(offset..offset + 2)
+        .get(offset..end)
         .and_then(|bytes| <[u8; 2]>::try_from(bytes).ok())
         .ok_or_else(|| TlsError::ParseError {
             message: format!("{context} truncated"),
@@ -102,8 +105,11 @@ fn read_u16_at(data: &[u8], offset: usize, context: &str) -> Result<u16> {
 }
 
 fn read_u24_at(data: &[u8], offset: usize, context: &str) -> Result<u32> {
+    let end = offset.checked_add(3).ok_or_else(|| TlsError::ParseError {
+        message: format!("{context} length overflow"),
+    })?;
     let [high, mid, low] = data
-        .get(offset..offset + 3)
+        .get(offset..end)
         .and_then(|bytes| <[u8; 3]>::try_from(bytes).ok())
         .ok_or_else(|| TlsError::ParseError {
             message: format!("{context} truncated"),
@@ -112,8 +118,11 @@ fn read_u24_at(data: &[u8], offset: usize, context: &str) -> Result<u32> {
 }
 
 fn read_u64_at(data: &[u8], offset: usize, context: &str) -> Result<u64> {
+    let end = offset.checked_add(8).ok_or_else(|| TlsError::ParseError {
+        message: format!("{context} length overflow"),
+    })?;
     let bytes = data
-        .get(offset..offset + 8)
+        .get(offset..end)
         .and_then(|bytes| <[u8; 8]>::try_from(bytes).ok())
         .ok_or_else(|| TlsError::ParseError {
             message: format!("{context} truncated"),

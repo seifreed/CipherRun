@@ -17,22 +17,24 @@ use tokio::time::timeout;
 /// Return true once a ServerHelloDone record (handshake type 0x0e) is present
 /// anywhere in the buffer.
 pub(super) fn has_server_hello_done(buf: &[u8]) -> bool {
-    let mut offset = 0;
-    while offset + 5 <= buf.len() {
+    let mut offset = 0usize;
+    while let Some(header_end) = offset.checked_add(5).filter(|&end| end <= buf.len()) {
         let Some(record_header) = buf
-            .get(offset..offset + 5)
+            .get(offset..header_end)
             .and_then(|header| <&[u8; 5]>::try_from(header).ok())
         else {
             break;
         };
         let content_type = record_header[0];
         let record_len = u16::from_be_bytes([record_header[3], record_header[4]]) as usize;
-        let record_end = offset + 5 + record_len;
+        let Some(record_end) = header_end.checked_add(record_len) else {
+            break;
+        };
         if record_end > buf.len() {
             break;
         }
         if content_type == 0x16 {
-            let hs_start = offset + 5;
+            let hs_start = header_end;
             if hs_start < record_end && buf.get(hs_start) == Some(&0x0e) {
                 return true;
             }

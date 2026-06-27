@@ -14,8 +14,11 @@ impl PreHandshakeScanner {
     }
 
     fn read_u16_at(data: &[u8], offset: usize, context: &str) -> Result<u16> {
+        let end = offset.checked_add(2).ok_or_else(|| TlsError::ParseError {
+            message: format!("{context} length overflow"),
+        })?;
         let bytes = data
-            .get(offset..offset + 2)
+            .get(offset..end)
             .and_then(|bytes| <[u8; 2]>::try_from(bytes).ok())
             .ok_or_else(|| TlsError::ParseError {
                 message: format!("{context} truncated"),
@@ -24,8 +27,11 @@ impl PreHandshakeScanner {
     }
 
     fn read_u24_at(data: &[u8], offset: usize, context: &str) -> Result<usize> {
+        let end = offset.checked_add(3).ok_or_else(|| TlsError::ParseError {
+            message: format!("{context} length overflow"),
+        })?;
         let [high, mid, low] = data
-            .get(offset..offset + 3)
+            .get(offset..end)
             .and_then(|bytes| <[u8; 3]>::try_from(bytes).ok())
             .ok_or_else(|| TlsError::ParseError {
                 message: format!("{context} truncated"),
@@ -48,7 +54,7 @@ impl PreHandshakeScanner {
     }
 
     pub(super) fn parse_handshake_response(&self, data: &[u8]) -> Result<HandshakeParseResult> {
-        let mut offset = 0;
+        let mut offset = 0usize;
         let mut certificate_data = None;
         let mut server_hello_data = None;
         let mut protocol_version = None;
@@ -56,17 +62,30 @@ impl PreHandshakeScanner {
         let mut compression_method = None;
 
         while offset < data.len() {
-            if offset + 5 > data.len() {
+            let header_end = offset.checked_add(5).ok_or_else(|| TlsError::ParseError {
+                message: "TLS record header length overflow".to_string(),
+            })?;
+            if header_end > data.len() {
                 return Err(TlsError::ParseError {
                     message: "TLS record header truncated".to_string(),
                 });
             }
 
             let content_type = Self::read_u8_at(data, offset, "TLS record type")?;
-            let record_length = Self::read_u16_at(data, offset + 3, "TLS record length")? as usize;
-            offset += 5;
+            let record_len_offset = offset.checked_add(3).ok_or_else(|| TlsError::ParseError {
+                message: "TLS record length offset overflow".to_string(),
+            })?;
+            let record_length =
+                Self::read_u16_at(data, record_len_offset, "TLS record length")? as usize;
+            offset = header_end;
 
-            if offset + record_length > data.len() {
+            let record_end =
+                offset
+                    .checked_add(record_length)
+                    .ok_or_else(|| TlsError::ParseError {
+                        message: "TLS record length overflow".to_string(),
+                    })?;
+            if record_end > data.len() {
                 return Err(TlsError::ParseError {
                     message: "TLS record length exceeds available data".to_string(),
                 });
@@ -77,19 +96,33 @@ impl PreHandshakeScanner {
                 continue;
             }
 
-            let record_end = offset + record_length;
             while offset < record_end {
-                if offset + 4 > record_end {
+                let handshake_body_start =
+                    offset.checked_add(4).ok_or_else(|| TlsError::ParseError {
+                        message: "Handshake header length overflow".to_string(),
+                    })?;
+                if handshake_body_start > record_end {
                     return Err(TlsError::ParseError {
                         message: "Handshake header truncated".to_string(),
                     });
                 }
 
                 let handshake_type = Self::read_u8_at(data, offset, "Handshake type")?;
-                let handshake_length = Self::read_u24_at(data, offset + 1, "Handshake length")?;
+                let handshake_len_offset =
+                    offset.checked_add(1).ok_or_else(|| TlsError::ParseError {
+                        message: "Handshake length offset overflow".to_string(),
+                    })?;
+                let handshake_length =
+                    Self::read_u24_at(data, handshake_len_offset, "Handshake length")?;
 
-                offset += 4;
-                if offset + handshake_length > record_end {
+                offset = handshake_body_start;
+                let handshake_end =
+                    offset
+                        .checked_add(handshake_length)
+                        .ok_or_else(|| TlsError::ParseError {
+                            message: "Handshake length overflow".to_string(),
+                        })?;
+                if handshake_end > record_end {
                     return Err(TlsError::ParseError {
                         message: "Handshake length exceeds available data".to_string(),
                     });
@@ -117,13 +150,26 @@ impl PreHandshakeScanner {
                             // session_id(sid_len) + cipher(2) + compression(1).
                             // Cipher lives at `offset + 35 + session_id_len`, not the
                             // fixed `offset + 34` (which skips the sid_len byte).
-                            let sid_len_at = offset + 34;
-                            if sid_len_at < offset + handshake_length {
+                            let Some(sid_len_at) = offset.checked_add(34) else {
+                                offset = handshake_end;
+                                continue;
+                            };
+                            if sid_len_at < handshake_end {
                                 let session_id_len =
                                     Self::read_u8_at(data, sid_len_at, "ServerHello session ID")?
                                         as usize;
-                                let cipher_offset = offset + 35 + session_id_len;
-                                if cipher_offset + 2 <= offset + handshake_length {
+                                let Some(cipher_offset) = offset
+                                    .checked_add(35)
+                                    .and_then(|base| base.checked_add(session_id_len))
+                                else {
+                                    offset = handshake_end;
+                                    continue;
+                                };
+                                let Some(cipher_end) = cipher_offset.checked_add(2) else {
+                                    offset = handshake_end;
+                                    continue;
+                                };
+                                if cipher_end <= handshake_end {
                                     let cipher = Self::read_u16_at(
                                         data,
                                         cipher_offset,
@@ -131,10 +177,19 @@ impl PreHandshakeScanner {
                                     )?;
                                     cipher_suite = Some(format!("0x{:04x}", cipher));
 
-                                    if cipher_offset + 3 <= offset + handshake_length {
+                                    let Some(compression_offset) = cipher_offset.checked_add(2)
+                                    else {
+                                        offset = handshake_end;
+                                        continue;
+                                    };
+                                    let Some(compression_end) = cipher_offset.checked_add(3) else {
+                                        offset = handshake_end;
+                                        continue;
+                                    };
+                                    if compression_end <= handshake_end {
                                         compression_method = Some(Self::read_u8_at(
                                             data,
-                                            cipher_offset + 2,
+                                            compression_offset,
                                             "ServerHello compression",
                                         )?);
                                     }
@@ -165,16 +220,33 @@ impl PreHandshakeScanner {
                                 });
                             }
 
-                            let mut cert_offset = offset + 3;
-                            let certs_end = offset + 3 + certs_length;
+                            let certs_start =
+                                offset.checked_add(3).ok_or_else(|| TlsError::ParseError {
+                                    message: "Certificate list offset overflow".to_string(),
+                                })?;
+                            let mut cert_offset = certs_start;
+                            let certs_end =
+                                certs_start.checked_add(certs_length).ok_or_else(|| {
+                                    TlsError::ParseError {
+                                        message: "Certificate list length overflow".to_string(),
+                                    }
+                                })?;
 
-                            if cert_offset + 3 <= certs_end && cert_offset + 3 <= record_end {
+                            if cert_offset
+                                .checked_add(3)
+                                .is_some_and(|end| end <= certs_end && end <= record_end)
+                            {
                                 let cert_length =
                                     Self::read_u24_at(data, cert_offset, "Certificate length")?;
-                                cert_offset += 3;
+                                cert_offset = cert_offset.checked_add(3).ok_or_else(|| {
+                                    TlsError::ParseError {
+                                        message: "Certificate offset overflow".to_string(),
+                                    }
+                                })?;
 
-                                if cert_offset + cert_length <= certs_end
-                                    && cert_offset + cert_length <= record_end
+                                if cert_offset
+                                    .checked_add(cert_length)
+                                    .is_some_and(|end| end <= certs_end && end <= record_end)
                                 {
                                     let cert_der = Self::slice_range(
                                         data,
@@ -195,7 +267,7 @@ impl PreHandshakeScanner {
                     }
                 }
 
-                offset += handshake_length;
+                offset = handshake_end;
             }
         }
 

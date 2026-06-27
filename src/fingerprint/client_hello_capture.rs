@@ -51,8 +51,11 @@ impl ClientHelloCapture {
     }
 
     fn read_u16_at(data: &[u8], offset: usize, context: &str) -> Result<u16> {
+        let end = offset.checked_add(2).ok_or_else(|| TlsError::ParseError {
+            message: format!("{context} length overflow"),
+        })?;
         let bytes = data
-            .get(offset..offset + 2)
+            .get(offset..end)
             .and_then(|bytes| <[u8; 2]>::try_from(bytes).ok())
             .ok_or_else(|| TlsError::ParseError {
                 message: format!("{context} too short"),
@@ -352,7 +355,10 @@ impl ClientHelloCapture {
         };
         let list_len = list_len as usize;
 
-        data.get(2..2 + list_len)
+        let Some(list_end) = 2usize.checked_add(list_len) else {
+            return vec![];
+        };
+        data.get(2..list_end)
             .map(|groups| {
                 groups
                     .chunks_exact(2)
@@ -380,7 +386,10 @@ impl ClientHelloCapture {
         }
 
         let list_len = data.first().copied().unwrap_or_default() as usize;
-        data.get(1..1 + list_len).unwrap_or_default().to_vec()
+        let Some(list_end) = 1usize.checked_add(list_len) else {
+            return vec![];
+        };
+        data.get(1..list_end).unwrap_or_default().to_vec()
     }
 
     /// Convert ClientHello to bytes (for storage/transmission)
