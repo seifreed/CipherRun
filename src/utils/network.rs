@@ -845,8 +845,12 @@ pub async fn test_cipher_support_outcome(
         // hosts by failing the handshake at cert validation.
         builder.set_verify(SslVerifyMode::NONE);
 
-        if allow_ssl3 {
-            builder.set_min_proto_version(Some(SslVersion::SSL3))?;
+        if allow_ssl3
+            && builder
+                .set_min_proto_version(Some(SslVersion::SSL3))
+                .is_err()
+        {
+            return Ok(CipherSupportOutcome::Inconclusive);
         }
 
         // A `set_cipher_list` failure means the local OpenSSL build cannot offer

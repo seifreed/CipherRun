@@ -227,6 +227,34 @@ async fn test_cipher_support_outcome_closed_handshake_is_inconclusive() {
 }
 
 #[tokio::test]
+async fn test_cipher_support_outcome_ssl3_setup_failure_is_inconclusive() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("test assertion should succeed");
+    let port = listener
+        .local_addr()
+        .expect("test assertion should succeed")
+        .port();
+    let accept_task = tokio::spawn(async move {
+        let _ = listener.accept().await;
+    });
+
+    let target = Target::with_ips(
+        "localhost".to_string(),
+        port,
+        vec!["127.0.0.1".parse().expect("valid IP")],
+    )
+    .expect("test assertion should succeed");
+
+    let outcome = test_cipher_support_outcome(&target, "EXP-RC4-MD5", true, 1)
+        .await
+        .expect("test assertion should succeed");
+    accept_task.await.expect("test assertion should succeed");
+
+    assert_eq!(outcome, CipherSupportOutcome::Inconclusive);
+}
+
+#[tokio::test]
 async fn test_vuln_ssl_connection_outcome_closed_port_is_inconclusive() {
     let target = Target::with_ips(
         "example.com".to_string(),
