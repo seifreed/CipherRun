@@ -103,7 +103,7 @@ impl NpnTester {
         {
             Ok(mut stream) => {
                 // Send ClientHello with NPN extension
-                let client_hello = self.build_client_hello_with_npn();
+                let client_hello = self.build_client_hello_with_npn()?;
                 stream.write_all(&client_hello).await?;
 
                 // Read ServerHello
@@ -156,7 +156,7 @@ impl NpnTester {
     }
 
     /// Build ClientHello with NPN extension
-    fn build_client_hello_with_npn(&self) -> Vec<u8> {
+    fn build_client_hello_with_npn(&self) -> Result<Vec<u8>> {
         let mut hello = Vec::new();
 
         // TLS Record: Handshake
@@ -183,8 +183,8 @@ impl NpnTester {
         hello.push(0x03);
 
         // Random (32 bytes)
-        for i in 0..32 {
-            hello.push((i * 7) as u8);
+        for i in 0_u8..32 {
+            hello.push(i.wrapping_mul(7));
         }
 
         // Session ID (empty)
@@ -216,26 +216,39 @@ impl NpnTester {
         // Update extensions length
         let ext_len = hello.len() - ext_pos - 2;
         if let Some(len_bytes) = hello.get_mut(ext_pos..ext_pos + 2) {
-            len_bytes.copy_from_slice(&[((ext_len >> 8) & 0xff) as u8, (ext_len & 0xff) as u8]);
+            len_bytes.copy_from_slice(&Self::u16_len(ext_len, "NPN extensions")?.to_be_bytes());
         }
 
         // Update handshake length
         let hs_len = hello.len() - hs_len_pos - 3;
         if let Some(len_bytes) = hello.get_mut(hs_len_pos..hs_len_pos + 3) {
-            len_bytes.copy_from_slice(&[
-                ((hs_len >> 16) & 0xff) as u8,
-                ((hs_len >> 8) & 0xff) as u8,
-                (hs_len & 0xff) as u8,
-            ]);
+            len_bytes.copy_from_slice(&Self::u24_len(hs_len, "NPN handshake")?);
         }
 
         // Update record length
         let rec_len = hello.len() - len_pos - 2;
         if let Some(len_bytes) = hello.get_mut(len_pos..len_pos + 2) {
-            len_bytes.copy_from_slice(&[((rec_len >> 8) & 0xff) as u8, (rec_len & 0xff) as u8]);
+            len_bytes.copy_from_slice(&Self::u16_len(rec_len, "NPN record")?.to_be_bytes());
         }
 
-        hello
+        Ok(hello)
+    }
+
+    fn u16_len(len: usize, context: &str) -> Result<u16> {
+        u16::try_from(len)
+            .map_err(|_| crate::TlsError::Other(format!("{context} exceeds maximum length")))
+    }
+
+    fn u24_len(len: usize, context: &str) -> Result<[u8; 3]> {
+        let len = u32::try_from(len)
+            .map_err(|_| crate::TlsError::Other(format!("{context} exceeds maximum length")))?;
+        if len > 0x00ff_ffff {
+            return Err(crate::TlsError::Other(format!(
+                "{context} exceeds maximum length"
+            )));
+        }
+        let bytes = len.to_be_bytes();
+        Ok([bytes[1], bytes[2], bytes[3]])
     }
 
     /// Parse NPN protocols from ServerHello using structured TLS extension parsing
@@ -377,7 +390,9 @@ mod tests {
         .unwrap();
 
         let tester = NpnTester::new(target);
-        let hello = tester.build_client_hello_with_npn();
+        let hello = tester
+            .build_client_hello_with_npn()
+            .expect("NPN ClientHello should build");
 
         assert!(hello.len() > 50);
         assert_eq!(hello[0], 0x16); // Handshake
