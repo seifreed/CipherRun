@@ -58,28 +58,35 @@ impl CAStore {
     fn from_pem(name: &str, data: &str) -> Result<Self> {
         let mut certificates = Vec::new();
 
-        // Use x509-parser's built-in PEM parsing
         for pem_result in Pem::iter_from_buffer(data.as_bytes()) {
-            match pem_result {
-                Ok(pem) => {
-                    if pem.label == "CERTIFICATE"
-                        && let Ok((_, cert)) = X509Certificate::from_der(&pem.contents)
-                    {
-                        let ca_cert = CACertificate {
-                            subject: cert.subject().to_string(),
-                            issuer: cert.issuer().to_string(),
-                            serial: format!("{:x}", cert.serial),
-                            not_before: cert.validity().not_before.to_string(),
-                            not_after: cert.validity().not_after.to_string(),
-                            der: pem.contents.to_vec(),
-                        };
-                        certificates.push(ca_cert);
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to parse PEM certificate in {}: {:?}", name, e);
-                }
+            let pem = pem_result.map_err(|e| crate::TlsError::ParseError {
+                message: format!("Failed to parse PEM certificate in {name}: {e:?}"),
+            })?;
+            if pem.label != "CERTIFICATE" {
+                continue;
             }
+            let (rest, cert) = X509Certificate::from_der(&pem.contents).map_err(|e| {
+                crate::TlsError::ParseError {
+                    message: format!("Failed to parse CA certificate in {name}: {e:?}"),
+                }
+            })?;
+            if !rest.is_empty() {
+                return Err(crate::TlsError::ParseError {
+                    message: format!(
+                        "CA certificate in {name} contains {} trailing byte(s)",
+                        rest.len()
+                    ),
+                });
+            }
+            let ca_cert = CACertificate {
+                subject: cert.subject().to_string(),
+                issuer: cert.issuer().to_string(),
+                serial: format!("{:x}", cert.serial),
+                not_before: cert.validity().not_before.to_string(),
+                not_after: cert.validity().not_after.to_string(),
+                der: pem.contents.to_vec(),
+            };
+            certificates.push(ca_cert);
         }
 
         Ok(Self {
@@ -230,5 +237,20 @@ mod tests {
 
         let summed: usize = all.iter().map(|store| store.certificates.len()).sum();
         assert_eq!(stores.total_certificates(), summed);
+    }
+
+    #[test]
+    fn test_ca_store_rejects_trailing_certificate_der() {
+        let first_cert = ::pem::parse_many(include_str!("../../data/Mozilla.pem").as_bytes())
+            .expect("embedded Mozilla store should parse")
+            .into_iter()
+            .find(|pem| pem.tag() == "CERTIFICATE")
+            .expect("embedded Mozilla store should contain certificates");
+        let mut der = first_cert.into_contents();
+        der.push(0x00);
+        let pem = ::pem::encode(&::pem::Pem::new("CERTIFICATE", der));
+
+        let err = CAStore::from_pem("Test", &pem).expect_err("trailing DER should fail");
+        assert!(format!("{err}").contains("trailing byte"));
     }
 }
