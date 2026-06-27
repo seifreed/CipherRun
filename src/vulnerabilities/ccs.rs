@@ -214,23 +214,16 @@ impl CcsInjectionTester {
                                 } else if record_type == CONTENT_TYPE_CHANGE_CIPHER_SPEC {
                                     result = Some(TestStatus::Vulnerable);
                                     break;
-                                } else if record_type == CONTENT_TYPE_HANDSHAKE
-                                    && header_end < accumulated.len()
-                                {
-                                    let Some(&handshake_type) = accumulated.get(header_end) else {
-                                        result = Some(TestStatus::Inconclusive);
-                                        break;
-                                    };
+                                } else if record_type == CONTENT_TYPE_HANDSHAKE {
                                     // ServerHello(0x02), Certificate(0x0B),
                                     // ServerKeyExchange(0x0C), CertificateRequest(0x0D),
                                     // ServerHelloDone(0x0E), CertificateStatus(0x16, OCSP
                                     // stapling). Omitting CertificateStatus made
                                     // stapling servers fall through to Inconclusive
                                     // instead of a conclusive not-vulnerable verdict.
-                                    if matches!(
-                                        handshake_type,
-                                        0x02 | 0x0B | 0x0C | 0x0D | 0x0E | 0x16
-                                    ) {
+                                    if accumulated.get(offset..record_end).is_some_and(|record| {
+                                        handshake_record_is_normal_continuation(record, record_len)
+                                    }) {
                                         // Normal handshake continuation — skip this record
                                         reads_remaining = reads_remaining.saturating_sub(1);
                                         if reads_remaining == 0 {
@@ -301,6 +294,19 @@ fn alert_record_is_complete(buffer: &[u8], n: usize) -> bool {
         return false;
     };
     alert_record_len == 2 && n == 5 + alert_record_len
+}
+
+fn handshake_record_is_normal_continuation(record: &[u8], record_len: usize) -> bool {
+    if record.first() != Some(&CONTENT_TYPE_HANDSHAKE) || record.len() != 5 + record_len {
+        return false;
+    }
+    if record_len < 4 {
+        return false;
+    }
+    matches!(
+        record.get(5).copied(),
+        Some(0x02 | 0x0B | 0x0C | 0x0D | 0x0E | 0x16)
+    )
 }
 
 /// CCS test status with detailed failure reasons
@@ -460,6 +466,28 @@ mod tests {
     fn test_alert_record_is_complete_rejects_trailing_bytes() {
         let alert = [0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x46, 0x00];
         assert!(!alert_record_is_complete(&alert, alert.len()));
+    }
+
+    #[test]
+    fn test_handshake_continuation_rejects_empty_record() {
+        let record = [CONTENT_TYPE_HANDSHAKE, 0x03, 0x03, 0x00, 0x00];
+        assert!(!handshake_record_is_normal_continuation(&record, 0));
+    }
+
+    #[test]
+    fn test_handshake_continuation_accepts_server_hello_done() {
+        let record = [
+            CONTENT_TYPE_HANDSHAKE,
+            0x03,
+            0x03,
+            0x00,
+            0x04,
+            0x0e,
+            0x00,
+            0x00,
+            0x00,
+        ];
+        assert!(handshake_record_is_normal_continuation(&record, 4));
     }
 
     #[tokio::test]
