@@ -505,26 +505,16 @@ impl<'a> HeartbleedTester<'a> {
             (claimed_payload_length & 0xff) as u8, // Payload length low byte
         ];
 
-        // Send heartbeat request
-        let result = match timeout(self.read_timeout, async {
-            stream.write_all(&heartbeat).await?;
-
-            // Read response
-            let mut response = vec![0u8; 65535];
-            let n = stream.read(&mut response).await?;
-            response.truncate(n);
-            Ok::<Vec<u8>, std::io::Error>(response)
-        })
-        .await
-        {
-            Ok(Ok(response)) => response,
-            Ok(Err(_)) => {
+        stream.write_all(&heartbeat).await?;
+        let result = match self.read_complete_tls_record(stream, 65535).await {
+            Ok(response) => response,
+            Err(error) if error.kind() == std::io::ErrorKind::TimedOut => {
                 return Ok(HeartbleedResult {
                     vulnerable: false,
                     bytes_received: 0,
                     bytes_sent: HEARTBEAT_BYTES_SENT,
                     details:
-                        "Connection error during heartbeat test - server may have closed connection"
+                        "Timeout waiting for heartbeat response - server may have closed connection"
                             .to_string(),
                     tested: false,
                 });
@@ -535,7 +525,7 @@ impl<'a> HeartbleedTester<'a> {
                     bytes_received: 0,
                     bytes_sent: HEARTBEAT_BYTES_SENT,
                     details:
-                        "Timeout waiting for heartbeat response - server may have closed connection"
+                        "Connection error during heartbeat test - server may have closed connection"
                             .to_string(),
                     tested: false,
                 });
@@ -592,6 +582,47 @@ impl<'a> HeartbleedTester<'a> {
             tested: n == 0 || n >= MIN_SUSPICIOUS_RESPONSE,
         })
     }
+
+    async fn read_complete_tls_record(
+        &self,
+        stream: &mut TcpStream,
+        max_len: usize,
+    ) -> std::io::Result<Vec<u8>> {
+        let mut response = vec![0u8; max_len];
+        let mut total = 0usize;
+        loop {
+            if total >= response.len() {
+                break;
+            }
+            let read_buf = response.get_mut(total..).ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "heartbeat response read offset exceeded buffer",
+                )
+            })?;
+            let n = match timeout(self.read_timeout, stream.read(read_buf)).await {
+                Ok(read) => read?,
+                Err(_) => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "heartbeat response read timed out",
+                    ));
+                }
+            };
+            if n == 0 {
+                break;
+            }
+            total += n;
+            if total >= 5 {
+                let record_len = u16::from_be_bytes([response[3], response[4]]) as usize;
+                if total >= 5 + record_len {
+                    break;
+                }
+            }
+        }
+        response.truncate(total);
+        Ok(response)
+    }
 }
 
 #[cfg(test)]
@@ -640,6 +671,39 @@ mod tests {
                 response.extend(vec![0u8; payload_len]);
 
                 let _ = socket.write_all(&response).await;
+            }
+        });
+
+        port
+    }
+
+    async fn spawn_split_heartbeat_server(response_size: usize, first_chunk_len: usize) -> u16 {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let mut buffer = [0u8; 4096];
+                let _ = socket.read(&mut buffer).await;
+
+                let payload_len = response_size.saturating_sub(3);
+                let record_len = 3 + payload_len;
+                let mut response = vec![
+                    0x18,
+                    0x03,
+                    0x03,
+                    (record_len >> 8) as u8,
+                    (record_len & 0xff) as u8,
+                    0x02,
+                    (payload_len >> 8) as u8,
+                    (payload_len & 0xff) as u8,
+                ];
+                response.extend(vec![0u8; payload_len]);
+
+                let split = first_chunk_len.min(response.len());
+                let _ = socket.write_all(&response[..split]).await;
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                let _ = socket.write_all(&response[split..]).await;
             }
         });
 
@@ -957,6 +1021,29 @@ mod tests {
         let result = tester.send_malicious_heartbeat(&mut stream).await.unwrap();
         assert!(result.vulnerable);
         assert!(result.bytes_received > 16); // Above the threshold for vulnerability detection
+    }
+
+    #[tokio::test]
+    async fn test_send_malicious_heartbeat_reads_split_record() {
+        let port = spawn_split_heartbeat_server(256, 12).await;
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
+        )
+        .unwrap();
+        let tester = HeartbleedTester::new(&target);
+        let addr = target
+            .socket_addrs()
+            .first()
+            .copied()
+            .expect("test target should have socket address");
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+
+        let result = tester.send_malicious_heartbeat(&mut stream).await.unwrap();
+
+        assert!(result.vulnerable, "{result:?}");
+        assert_eq!(result.bytes_received, 5 + 256);
     }
 
     #[tokio::test]
