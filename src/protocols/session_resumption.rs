@@ -153,6 +153,8 @@ impl SessionResumptionTester {
             .ok_or(crate::TlsError::NoSocketAddresses)?;
         let stream = StdTcpStream::connect_timeout(&addr, Duration::from_secs(10))?;
         stream.set_nonblocking(false)?;
+        stream.set_read_timeout(Some(Duration::from_secs(10)))?;
+        stream.set_write_timeout(Some(Duration::from_secs(10)))?;
 
         let connector = self.build_connector()?;
         let ssl_stream = connector.connect(&self.target.hostname, stream)?;
@@ -178,6 +180,8 @@ impl SessionResumptionTester {
             .ok_or(crate::TlsError::NoSocketAddresses)?;
         let stream = StdTcpStream::connect_timeout(&addr, Duration::from_secs(10))?;
         stream.set_nonblocking(false)?;
+        stream.set_read_timeout(Some(Duration::from_secs(10)))?;
+        stream.set_write_timeout(Some(Duration::from_secs(10)))?;
 
         let connector = self.build_connector()?;
         let mut ssl = connector.configure()?.into_ssl(&self.target.hostname)?;
