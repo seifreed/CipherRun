@@ -70,8 +70,7 @@ impl LegacyCompatTester {
                 Err(_) => return Ok(LegacyProbeOutcome::Inconclusive),
             };
 
-        let std_stream = stream.into_std()?;
-        std_stream.set_nonblocking(false)?;
+        let std_stream = crate::utils::network::into_blocking_std_stream(stream, CIPHER_TIMEOUT)?;
 
         let result = tokio::task::spawn_blocking(move || -> Result<LegacyProbeOutcome> {
             let mut builder = SslConnector::builder(SslMethod::tls())?;
@@ -119,8 +118,7 @@ impl LegacyCompatTester {
                 Err(_) => return Ok(false),
             };
 
-        let std_stream = stream.into_std()?;
-        std_stream.set_nonblocking(false)?;
+        let std_stream = crate::utils::network::into_blocking_std_stream(stream, CIPHER_TIMEOUT)?;
 
         tokio::task::spawn_blocking(move || -> Result<bool> {
             let mut builder = SslConnector::builder(SslMethod::tls())?;
