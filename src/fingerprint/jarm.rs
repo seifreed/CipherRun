@@ -309,25 +309,31 @@ fn extract_extension_info(
     offset: usize,
     server_hello_length: usize,
 ) -> Result<String> {
-    // Need at least: offset + 49 (extensions length) + 4 (one minimal extension)
-    let Some(min_end) = offset.checked_add(53) else {
-        return Ok("|".to_string());
-    };
-    if data.len() < min_end {
-        return Ok("|".to_string());
-    }
-
     // Check if the server sent no extensions by reading the full 2-byte extension length.
     // Previously this only checked data[offset + 47] == 0x0b, which collided with valid
     // extension lengths 0x0B00-0x0BFF (2816-3071 bytes).
     let Some(ext_len_offset) = offset.checked_add(47) else {
         return Ok("|".to_string());
     };
+    let Some(ext_len_end) = ext_len_offset.checked_add(2) else {
+        return Ok("|".to_string());
+    };
+    if data.len() < ext_len_end {
+        return Ok("|".to_string());
+    }
     let Some(potential_ext_len) = read_u16_at(data, ext_len_offset) else {
         return Ok("|".to_string());
     };
     if potential_ext_len == 0 {
         return Ok("|".to_string());
+    }
+    if potential_ext_len < 4 {
+        return Err(TlsError::ParseError {
+            message: format!(
+                "Truncated JARM extension list: declared length {} is shorter than an extension header",
+                potential_ext_len
+            ),
+        });
     }
     // If the high byte looks like a Certificate handshake type (0x0b) AND the claimed
     // extension length exceeds available data, the server likely sent no extensions
@@ -423,6 +429,14 @@ fn extract_extension_info(
             evals.push(value.to_vec());
         }
         ecnt = next_cnt;
+    }
+    if ecnt != emax {
+        return Err(TlsError::ParseError {
+            message: format!(
+                "Truncated JARM extension list: stopped at offset {} before declared end {}",
+                ecnt, emax
+            ),
+        });
     }
 
     // Extract ALPN (extension type 0x0010)
@@ -746,5 +760,27 @@ mod tests {
 
         let err = parse_server_hello(&response, probe).unwrap_err();
         assert!(err.to_string().contains("Truncated JARM extension"));
+    }
+
+    #[test]
+    fn test_parse_server_hello_rejects_truncated_extension_header() {
+        let probes = get_probes("example.com", 443).expect("JARM probes should build");
+        let probe = &probes[0];
+        let response = vec![
+            0x16, 0x03, 0x03, 0x00, 0x3a, // TLS record
+            0x02, 0x00, 0x00, 0x36, // ServerHello handshake
+            0x03, 0x03, // version
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, // random
+            0x00, // session id length
+            0x00, 0x9c, // cipher
+            0x00, // compression
+            0x00, 0x03, // extensions length
+            0x00, 0x10, 0x00, // truncated extension header
+        ];
+
+        let err = parse_server_hello(&response, probe).unwrap_err();
+        assert!(err.to_string().contains("Truncated JARM extension list"));
     }
 }
