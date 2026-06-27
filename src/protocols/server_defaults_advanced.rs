@@ -156,20 +156,26 @@ impl ServerDefaultsAdvancedTester {
         let std_stream =
             crate::utils::network::into_blocking_std_stream(stream, handshake_timeout)?;
 
-        let mut builder = SslConnector::builder(SslMethod::tls())?;
-        builder.set_verify(SslVerifyMode::NONE);
-        builder.set_cipher_list(&cipher_list.join(":"))?;
+        let hostname = self.target.hostname.clone();
+        let cipher_string = cipher_list.join(":");
+        tokio::task::spawn_blocking(move || -> Result<String> {
+            let mut builder = SslConnector::builder(SslMethod::tls())?;
+            builder.set_verify(SslVerifyMode::NONE);
+            builder.set_cipher_list(&cipher_string)?;
 
-        let connector = builder.build();
-        let ssl_stream = connector.connect(&self.target.hostname, std_stream)?;
+            let connector = builder.build();
+            let ssl_stream = connector.connect(&hostname, std_stream)?;
 
-        let cipher = ssl_stream.ssl().current_cipher().ok_or_else(|| {
-            crate::error::TlsError::InvalidHandshake {
-                details: "No cipher negotiated".into(),
-            }
-        })?;
+            let cipher = ssl_stream.ssl().current_cipher().ok_or_else(|| {
+                crate::error::TlsError::InvalidHandshake {
+                    details: "No cipher negotiated".into(),
+                }
+            })?;
 
-        Ok(cipher.name().to_string())
+            Ok(cipher.name().to_string())
+        })
+        .await
+        .map_err(|e| crate::error::TlsError::Other(format!("cipher order task failed: {e}")))?
     }
 
     /// Analyze DH parameter strength
@@ -221,81 +227,86 @@ impl ServerDefaultsAdvancedTester {
                 }
             };
 
-        let mut builder = SslConnector::builder(SslMethod::tls())?;
-        builder.set_verify(SslVerifyMode::NONE);
-        if let Err(error) =
-            builder.set_cipher_list("DHE-RSA-AES256-SHA:DHE-RSA-AES128-SHA:EDH-RSA-DES-CBC3-SHA")
-        {
-            return Ok(DhParameterAnalysis {
-                dh_supported: false,
-                dh_size_bits: None,
-                dh_prime: None,
-                generator: None,
-                strength: DhStrength::Weak,
-                inconclusive: true,
-                details: format!(
-                    "DH parameter analysis inconclusive - OpenSSL could not configure DHE cipher probes: {}",
-                    error
-                ),
-            });
-        }
+        let hostname = self.target.hostname.clone();
+        tokio::task::spawn_blocking(move || -> Result<DhParameterAnalysis> {
+            let mut builder = SslConnector::builder(SslMethod::tls())?;
+            builder.set_verify(SslVerifyMode::NONE);
+            if let Err(error) = builder
+                .set_cipher_list("DHE-RSA-AES256-SHA:DHE-RSA-AES128-SHA:EDH-RSA-DES-CBC3-SHA")
+            {
+                return Ok(DhParameterAnalysis {
+                    dh_supported: false,
+                    dh_size_bits: None,
+                    dh_prime: None,
+                    generator: None,
+                    strength: DhStrength::Weak,
+                    inconclusive: true,
+                    details: format!(
+                        "DH parameter analysis inconclusive - OpenSSL could not configure DHE cipher probes: {}",
+                        error
+                    ),
+                });
+            }
 
-        let connector = builder.build();
+            let connector = builder.build();
 
-        match connector.connect(&self.target.hostname, std_stream) {
-            Ok(ssl_stream) => {
-                if let Some(cipher) = ssl_stream.ssl().current_cipher() {
-                    let cipher_name = cipher.name();
+            match connector.connect(&hostname, std_stream) {
+                Ok(ssl_stream) => {
+                    if let Some(cipher) = ssl_stream.ssl().current_cipher() {
+                        let cipher_name = cipher.name();
 
-                    if cipher_name.contains("DHE") || cipher_name.contains("EDH") {
-                        let estimated_size = estimate_dh_size(cipher_name);
-                        let strength = classify_dh_strength(estimated_size);
+                        if cipher_name.contains("DHE") || cipher_name.contains("EDH") {
+                            let estimated_size = estimate_dh_size(cipher_name);
+                            let strength = classify_dh_strength(estimated_size);
 
-                        let details = format!(
-                            "DH cipher negotiated: {} (estimated DH parameter size: {} bits)",
-                            cipher_name, estimated_size
-                        );
+                            let details = format!(
+                                "DH cipher negotiated: {} (estimated DH parameter size: {} bits)",
+                                cipher_name, estimated_size
+                            );
 
-                        return Ok(DhParameterAnalysis {
-                            dh_supported: true,
-                            dh_size_bits: Some(estimated_size),
-                            dh_prime: None,
-                            generator: None,
-                            strength,
-                            inconclusive: false,
-                            details,
-                        });
+                            return Ok(DhParameterAnalysis {
+                                dh_supported: true,
+                                dh_size_bits: Some(estimated_size),
+                                dh_prime: None,
+                                generator: None,
+                                strength,
+                                inconclusive: false,
+                                details,
+                            });
+                        }
                     }
-                }
 
-                Ok(DhParameterAnalysis {
-                    dh_supported: false,
-                    dh_size_bits: None,
-                    dh_prime: None,
-                    generator: None,
-                    strength: DhStrength::Weak,
-                    inconclusive: false,
-                    details: "DH ciphers not supported or not negotiated".to_string(),
-                })
+                    Ok(DhParameterAnalysis {
+                        dh_supported: false,
+                        dh_size_bits: None,
+                        dh_prime: None,
+                        generator: None,
+                        strength: DhStrength::Weak,
+                        inconclusive: false,
+                        details: "DH ciphers not supported or not negotiated".to_string(),
+                    })
+                }
+                Err(error) => {
+                    let error = error.to_string();
+                    let inconclusive = is_operational_tls_error(&error);
+                    Ok(DhParameterAnalysis {
+                        dh_supported: false,
+                        dh_size_bits: None,
+                        dh_prime: None,
+                        generator: None,
+                        strength: DhStrength::Weak,
+                        inconclusive,
+                        details: if inconclusive {
+                            format!("DH parameter analysis inconclusive - handshake failed: {error}")
+                        } else {
+                            format!("DH ciphers not supported or not negotiated: {error}")
+                        },
+                    })
+                }
             }
-            Err(error) => {
-                let error = error.to_string();
-                let inconclusive = is_operational_tls_error(&error);
-                Ok(DhParameterAnalysis {
-                    dh_supported: false,
-                    dh_size_bits: None,
-                    dh_prime: None,
-                    generator: None,
-                    strength: DhStrength::Weak,
-                    inconclusive,
-                    details: if inconclusive {
-                        format!("DH parameter analysis inconclusive - handshake failed: {error}")
-                    } else {
-                        format!("DH ciphers not supported or not negotiated: {error}")
-                    },
-                })
-            }
-        }
+        })
+        .await
+        .map_err(|e| crate::error::TlsError::Other(format!("DH analysis task failed: {e}")))?
     }
 
     /// Analyze ECDH curves preference
@@ -384,39 +395,45 @@ impl ServerDefaultsAdvancedTester {
                 Err(_) => return Ok(CurveProbeOutcome::Inconclusive),
             };
 
-        let mut builder = SslConnector::builder(SslMethod::tls())?;
-        builder.set_verify(SslVerifyMode::NONE);
-        if builder
-            .set_cipher_list("ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256")
-            .is_err()
-            || builder.set_groups_list(group_name).is_err()
-        {
-            return Ok(CurveProbeOutcome::NotSupported);
-        }
-
-        let connector = builder.build();
-        let ssl_stream = match connector.connect(&self.target.hostname, std_stream) {
-            Ok(stream) => stream,
-            Err(error) => {
-                let error = error.to_string();
-                return Ok(if is_operational_tls_error(&error) {
-                    CurveProbeOutcome::Inconclusive
-                } else {
-                    CurveProbeOutcome::NotSupported
-                });
+        let hostname = self.target.hostname.clone();
+        let group_name = group_name.to_string();
+        tokio::task::spawn_blocking(move || -> Result<CurveProbeOutcome> {
+            let mut builder = SslConnector::builder(SslMethod::tls())?;
+            builder.set_verify(SslVerifyMode::NONE);
+            if builder
+                .set_cipher_list("ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256")
+                .is_err()
+                || builder.set_groups_list(&group_name).is_err()
+            {
+                return Ok(CurveProbeOutcome::NotSupported);
             }
-        };
 
-        let cipher = ssl_stream
-            .ssl()
-            .current_cipher()
-            .ok_or_else(|| crate::error::TlsError::Other("No cipher negotiated".to_string()))?;
+            let connector = builder.build();
+            let ssl_stream = match connector.connect(&hostname, std_stream) {
+                Ok(stream) => stream,
+                Err(error) => {
+                    let error = error.to_string();
+                    return Ok(if is_operational_tls_error(&error) {
+                        CurveProbeOutcome::Inconclusive
+                    } else {
+                        CurveProbeOutcome::NotSupported
+                    });
+                }
+            };
 
-        if cipher.name().contains("ECDHE") {
-            Ok(CurveProbeOutcome::Supported)
-        } else {
-            Ok(CurveProbeOutcome::NotSupported)
-        }
+            let cipher = ssl_stream
+                .ssl()
+                .current_cipher()
+                .ok_or_else(|| crate::error::TlsError::Other("No cipher negotiated".to_string()))?;
+
+            if cipher.name().contains("ECDHE") {
+                Ok(CurveProbeOutcome::Supported)
+            } else {
+                Ok(CurveProbeOutcome::NotSupported)
+            }
+        })
+        .await
+        .map_err(|e| crate::error::TlsError::Other(format!("ECDH curve task failed: {e}")))?
     }
 
     /// Analyze key exchange in detail
@@ -470,59 +487,64 @@ impl ServerDefaultsAdvancedTester {
                 }
             };
 
-        let mut builder = SslConnector::builder(SslMethod::tls())?;
-        builder.set_verify(SslVerifyMode::NONE);
-        let connector = builder.build();
-        let ssl_stream = match connector.connect(&self.target.hostname, std_stream) {
-            Ok(stream) => stream,
-            Err(error) => {
-                let error = error.to_string();
-                return Ok(KeyExchangeAnalysis {
-                    algorithm: "Unknown".to_string(),
-                    ephemeral: false,
-                    key_size: None,
-                    parameters: KeyExchangeParams::Unknown,
-                    reuse_detected: false,
-                    reuse_detection_measured: false,
-                    inconclusive: true,
-                    details: format!(
-                        "Key exchange analysis inconclusive - handshake failed: {error}"
-                    ),
-                });
-            }
-        };
+        let hostname = self.target.hostname.clone();
+        tokio::task::spawn_blocking(move || -> Result<KeyExchangeAnalysis> {
+            let mut builder = SslConnector::builder(SslMethod::tls())?;
+            builder.set_verify(SslVerifyMode::NONE);
+            let connector = builder.build();
+            let ssl_stream = match connector.connect(&hostname, std_stream) {
+                Ok(stream) => stream,
+                Err(error) => {
+                    let error = error.to_string();
+                    return Ok(KeyExchangeAnalysis {
+                        algorithm: "Unknown".to_string(),
+                        ephemeral: false,
+                        key_size: None,
+                        parameters: KeyExchangeParams::Unknown,
+                        reuse_detected: false,
+                        reuse_detection_measured: false,
+                        inconclusive: true,
+                        details: format!(
+                            "Key exchange analysis inconclusive - handshake failed: {error}"
+                        ),
+                    });
+                }
+            };
 
-        let cipher = ssl_stream.ssl().current_cipher().ok_or_else(|| {
-            crate::error::TlsError::InvalidHandshake {
-                details: "No cipher negotiated".into(),
-            }
-        })?;
+            let cipher = ssl_stream.ssl().current_cipher().ok_or_else(|| {
+                crate::error::TlsError::InvalidHandshake {
+                    details: "No cipher negotiated".into(),
+                }
+            })?;
 
-        let cipher_name = cipher.name().to_string();
-        let (algorithm, ephemeral, parameters) = analyze_cipher_kex(&cipher_name);
-        let key_size = estimate_key_size(&parameters);
-        let reuse_detection_measured = false;
-        let reuse_detected = false;
+            let cipher_name = cipher.name().to_string();
+            let (algorithm, ephemeral, parameters) = analyze_cipher_kex(&cipher_name);
+            let key_size = estimate_key_size(&parameters);
+            let reuse_detection_measured = false;
+            let reuse_detected = false;
 
-        let key_size_label = key_size
-            .map(|size| format!("{size} bits"))
-            .unwrap_or_else(|| "unknown".to_string());
+            let key_size_label = key_size
+                .map(|size| format!("{size} bits"))
+                .unwrap_or_else(|| "unknown".to_string());
 
-        let details = format!(
-            "Algorithm: {}, Ephemeral: {}, Key size: {}, Reuse detected: {}. Ephemeral key reuse was not measured directly.",
-            algorithm, ephemeral, key_size_label, reuse_detected
-        );
+            let details = format!(
+                "Algorithm: {}, Ephemeral: {}, Key size: {}, Reuse detected: {}. Ephemeral key reuse was not measured directly.",
+                algorithm, ephemeral, key_size_label, reuse_detected
+            );
 
-        Ok(KeyExchangeAnalysis {
-            algorithm,
-            ephemeral,
-            key_size,
-            parameters,
-            reuse_detected,
-            reuse_detection_measured,
-            inconclusive: false,
-            details,
+            Ok(KeyExchangeAnalysis {
+                algorithm,
+                ephemeral,
+                key_size,
+                parameters,
+                reuse_detected,
+                reuse_detection_measured,
+                inconclusive: false,
+                details,
+            })
         })
+        .await
+        .map_err(|e| crate::error::TlsError::Other(format!("key exchange task failed: {e}")))?
     }
 }
 
@@ -589,6 +611,14 @@ mod tests {
         let (algo, ephemeral, params) = analyze_cipher_kex("UNKNOWN-CIPHER");
         assert_eq!(algo, "Unknown");
         assert!(!ephemeral);
+        assert!(matches!(params, KeyExchangeParams::Unknown));
+    }
+
+    #[test]
+    fn test_analyze_cipher_kex_tls13_suite() {
+        let (algo, ephemeral, params) = analyze_cipher_kex("TLS_AES_256_GCM_SHA384");
+        assert_eq!(algo, "TLS1.3");
+        assert!(ephemeral);
         assert!(matches!(params, KeyExchangeParams::Unknown));
     }
 
@@ -660,7 +690,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_cipher_order_preference_no_matches() {
+    async fn test_cipher_order_preference_on_local_tls() {
         install_crypto_provider();
         let (addr, cert_path) = spawn_tls_server(10).await;
 
@@ -673,10 +703,13 @@ mod tests {
         let tester = ServerDefaultsAdvancedTester::new(target);
 
         let result = tester.test_cipher_order_preference().await.unwrap();
-        assert!(result.inconclusive);
-        assert!(!result.server_preferred);
-        assert!(!result.client_order_respected);
-        assert!(result.details.contains("inconclusive"));
+        assert!(!result.inconclusive);
+        assert!(!result.test_results.is_empty());
+        assert!(
+            result.details.contains("Server")
+                || result.details.contains("respects")
+                || result.details.contains("Mixed")
+        );
 
         let _ = std::fs::remove_file(cert_path);
     }

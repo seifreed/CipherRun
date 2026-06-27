@@ -58,6 +58,11 @@ pub(super) fn analyze_cipher_kex(cipher_name: &str) -> (String, bool, KeyExchang
             false,
             KeyExchangeParams::Rsa { modulus_size: 2048 },
         )
+    } else if cipher_name.starts_with("TLS_AES_") || cipher_name.starts_with("TLS_CHACHA20_") {
+        // TLS 1.3 cipher suite names intentionally omit the key exchange group.
+        // The handshake still uses ephemeral key agreement, but OpenSSL's current
+        // cipher name alone is not enough to report the exact group here.
+        ("TLS1.3".to_string(), true, KeyExchangeParams::Unknown)
     } else {
         ("Unknown".to_string(), false, KeyExchangeParams::Unknown)
     }
