@@ -126,23 +126,42 @@ impl NpnTester {
                 let client_hello = self.build_client_hello_with_npn()?;
                 stream.write_all(&client_hello).await?;
 
-                // Read ServerHello
-                let mut buffer = vec![0u8; 8192];
-                match timeout(Duration::from_secs(3), stream.read(&mut buffer)).await {
-                    Ok(Ok(n)) if n > 0 => {
-                        let response = Self::slice_range(&buffer, 0, n, "NPN response buffer")?;
-                        if !Self::is_parseable_server_hello(response) {
-                            return Ok(NpnProbeOutcome::Inconclusive);
-                        }
-                        // Parse ServerHello for NPN extension
-                        let protocols = self.parse_npn_response(response)?;
-                        if protocols.is_empty() {
-                            Ok(NpnProbeOutcome::NotSupported)
-                        } else {
-                            Ok(NpnProbeOutcome::Supported(protocols))
-                        }
+                // Read ServerHello as a complete TLS record before parsing.
+                let response = match timeout(Duration::from_secs(3), async {
+                    let mut header = [0u8; 5];
+                    if stream.read_exact(&mut header).await.is_err() {
+                        return Ok::<Option<Vec<u8>>, std::io::Error>(None);
                     }
-                    _ => Ok(NpnProbeOutcome::Inconclusive),
+
+                    let record_len = u16::from_be_bytes([header[3], header[4]]) as usize;
+                    let total_len = 5usize.checked_add(record_len).ok_or_else(|| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "NPN record length overflow",
+                        )
+                    })?;
+                    let mut buffer = vec![0u8; total_len];
+                    buffer[..5].copy_from_slice(&header);
+                    if stream.read_exact(&mut buffer[5..]).await.is_err() {
+                        return Ok::<Option<Vec<u8>>, std::io::Error>(None);
+                    }
+
+                    Ok::<Option<Vec<u8>>, std::io::Error>(Some(buffer))
+                })
+                .await
+                {
+                    Ok(Ok(Some(resp))) => resp,
+                    _ => return Ok(NpnProbeOutcome::Inconclusive),
+                };
+
+                if !Self::is_parseable_server_hello(&response) {
+                    return Ok(NpnProbeOutcome::Inconclusive);
+                }
+                let protocols = self.parse_npn_response(&response)?;
+                if protocols.is_empty() {
+                    Ok(NpnProbeOutcome::NotSupported)
+                } else {
+                    Ok(NpnProbeOutcome::Supported(protocols))
                 }
             }
             _ => Ok(NpnProbeOutcome::Inconclusive),
@@ -882,5 +901,63 @@ mod tests {
 
         assert!(result.inconclusive);
         assert!(!result.details.contains("not supported"));
+    }
+
+    #[tokio::test]
+    async fn test_npn_fragmented_response_is_parsed() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("local addr should exist");
+
+        tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let mut buffer = [0u8; 1024];
+                let _ = socket.read(&mut buffer).await;
+
+                let mut response = Vec::new();
+                response.extend_from_slice(&[0x16, 0x03, 0x03, 0x00, 0x00]);
+                response.extend_from_slice(&[0x02, 0x00, 0x00, 0x00]);
+                response.extend_from_slice(&[0x03, 0x03]);
+                response.extend_from_slice(&[0x00; 32]);
+                response.push(0x00);
+                response.extend_from_slice(&[0x00, 0x9c]);
+                response.push(0x00);
+                let ext_len_pos = response.len();
+                response.extend_from_slice(&[0x00, 0x00]);
+                response.extend_from_slice(&[0x33, 0x74, 0x00, 0x0c]);
+                response.push(0x02);
+                response.extend_from_slice(b"h2");
+                response.push(0x08);
+                response.extend_from_slice(b"http/1.1");
+
+                let ext_len = (response.len() - ext_len_pos - 2) as u16;
+                response[ext_len_pos] = (ext_len >> 8) as u8;
+                response[ext_len_pos + 1] = (ext_len & 0xff) as u8;
+                let hs_len = (response.len() - 9) as u32;
+                response[6] = ((hs_len >> 16) & 0xff) as u8;
+                response[7] = ((hs_len >> 8) & 0xff) as u8;
+                response[8] = (hs_len & 0xff) as u8;
+                let rec_len = (response.len() - 5) as u16;
+                response[3] = (rec_len >> 8) as u8;
+                response[4] = (rec_len & 0xff) as u8;
+
+                socket.write_all(&response[..7]).await.unwrap();
+                socket.flush().await.unwrap();
+                tokio::time::sleep(Duration::from_millis(20)).await;
+                socket.write_all(&response[7..]).await.unwrap();
+                socket.flush().await.unwrap();
+            }
+        });
+
+        let target = Target::with_ips("localhost".to_string(), addr.port(), vec![addr.ip()])
+            .expect("target should build");
+        let tester = NpnTester::new(target);
+
+        let result = tester.test().await.expect("NPN probe should return result");
+
+        assert!(result.supported);
+        assert!(!result.inconclusive);
+        assert_eq!(result.protocols, vec!["h2".to_string(), "http/1.1".to_string()]);
     }
 }
