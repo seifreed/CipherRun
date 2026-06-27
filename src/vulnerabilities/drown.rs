@@ -370,8 +370,9 @@ impl DrownTester {
 
         // SSLv2 record header (2-byte format with high bit set)
         // Length is in the lower 7 bits of first byte and all of second byte
-        let header_byte1 = 0x80 | ((body_len >> 8) & 0x7f) as u8;
-        let header_byte2 = (body_len & 0xff) as u8;
+        let body_len_bytes = body_len.to_be_bytes();
+        let header_byte1 = 0x80 | (body_len_bytes[0] & 0x7f);
+        let header_byte2 = body_len_bytes[1];
         hello.push(header_byte1); // 0x80 (since body_len = 40 < 128)
         hello.push(header_byte2); // 0x28 (40 in hex)
 
@@ -383,16 +384,13 @@ impl DrownTester {
         hello.push(0x02);
 
         // Cipher specs length
-        hello.push((cipher_specs_len >> 8) as u8);
-        hello.push((cipher_specs_len & 0xff) as u8);
+        hello.extend_from_slice(&cipher_specs_len.to_be_bytes());
 
         // Session ID length (always 0 for ClientHello)
-        hello.push((session_id_len >> 8) as u8);
-        hello.push((session_id_len & 0xff) as u8);
+        hello.extend_from_slice(&session_id_len.to_be_bytes());
 
         // Challenge length
-        hello.push((challenge_len >> 8) as u8);
-        hello.push((challenge_len & 0xff) as u8);
+        hello.extend_from_slice(&challenge_len.to_be_bytes());
 
         // Cipher specs (3-byte cipher codes)
         // SSL_CK_DES_192_EDE3_CBC_WITH_MD5 (0x0700C0)
@@ -421,8 +419,8 @@ impl DrownTester {
         hello.push(0x80);
 
         // Challenge (16 bytes)
-        for i in 0..16 {
-            hello.push((i * 13) as u8);
+        for i in 0_u8..16 {
+            hello.push(i * 13);
         }
 
         hello
@@ -443,8 +441,9 @@ impl DrownTester {
         let mut hello = Vec::new();
 
         // SSLv2 record header (2-byte format with high bit set)
-        let header_byte1 = 0x80 | ((body_len >> 8) & 0x7f) as u8;
-        let header_byte2 = (body_len & 0xff) as u8;
+        let body_len_bytes = body_len.to_be_bytes();
+        let header_byte1 = 0x80 | (body_len_bytes[0] & 0x7f);
+        let header_byte2 = body_len_bytes[1];
         hello.push(header_byte1); // 0x80 (since body_len = 31 < 128)
         hello.push(header_byte2); // 0x1f (31 in hex)
 
@@ -456,16 +455,13 @@ impl DrownTester {
         hello.push(0x02);
 
         // Cipher specs length
-        hello.push((cipher_specs_len >> 8) as u8);
-        hello.push((cipher_specs_len & 0xff) as u8);
+        hello.extend_from_slice(&cipher_specs_len.to_be_bytes());
 
         // Session ID length (always 0 for ClientHello)
-        hello.push((session_id_len >> 8) as u8);
-        hello.push((session_id_len & 0xff) as u8);
+        hello.extend_from_slice(&session_id_len.to_be_bytes());
 
         // Challenge length
-        hello.push((challenge_len >> 8) as u8);
-        hello.push((challenge_len & 0xff) as u8);
+        hello.extend_from_slice(&challenge_len.to_be_bytes());
 
         // Export cipher specs
         // SSL_CK_RC4_128_EXPORT40_WITH_MD5 (0x020080)
@@ -479,8 +475,8 @@ impl DrownTester {
         hello.push(0x80);
 
         // Challenge (16 bytes)
-        for i in 0..16 {
-            hello.push((i * 17) as u8);
+        for i in 0_u8..16 {
+            hello.push(i * 17);
         }
 
         hello
