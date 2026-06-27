@@ -861,7 +861,13 @@ pub async fn test_cipher_support_outcome(
 
         match connector.connect(&hostname, std_stream) {
             Ok(_) => Ok(CipherSupportOutcome::Supported),
-            Err(_) => Ok(CipherSupportOutcome::NotSupported),
+            Err(error) => {
+                if is_transport_anomaly_error(&error.to_string()) {
+                    Ok(CipherSupportOutcome::Inconclusive)
+                } else {
+                    Ok(CipherSupportOutcome::NotSupported)
+                }
+            }
         }
     })
     .await
