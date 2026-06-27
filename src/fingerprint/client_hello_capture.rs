@@ -63,6 +63,19 @@ impl ClientHelloCapture {
         Ok(u16::from_be_bytes(bytes))
     }
 
+    fn read_u24_at(data: &[u8], offset: usize, context: &str) -> Result<usize> {
+        let end = offset.checked_add(3).ok_or_else(|| TlsError::ParseError {
+            message: format!("{context} length overflow"),
+        })?;
+        let [high, mid, low] = data
+            .get(offset..end)
+            .and_then(|bytes| <[u8; 3]>::try_from(bytes).ok())
+            .ok_or_else(|| TlsError::ParseError {
+                message: format!("{context} too short"),
+            })?;
+        Ok(((high as usize) << 16) | ((mid as usize) << 8) | low as usize)
+    }
+
     fn slice_range<'a>(
         data: &'a [u8],
         start: usize,
@@ -122,6 +135,18 @@ impl ClientHelloCapture {
             });
         }
 
+        let record_len = Self::read_u16_at(data, 3, "TLS record length")? as usize;
+        let record_end = TLS_RECORD_HEADER_SIZE
+            .checked_add(record_len)
+            .ok_or_else(|| TlsError::ParseError {
+                message: "TLS record length overflow".to_string(),
+            })?;
+        if record_end > data.len() {
+            return Err(TlsError::ParseError {
+                message: "TLS record length exceeds available data".to_string(),
+            });
+        }
+
         // Skip TLS version (2 bytes) and length (2 bytes)
         cursor += 4;
 
@@ -140,6 +165,24 @@ impl ClientHelloCapture {
                 message: format!("Not a ClientHello (type: 0x{:02x})", handshake_type),
             });
         }
+
+        let handshake_len = Self::read_u24_at(data, cursor, "Handshake length")?;
+        let handshake_end = cursor
+            .checked_add(3)
+            .and_then(|body_start| body_start.checked_add(handshake_len))
+            .ok_or_else(|| TlsError::ParseError {
+                message: "Handshake length overflow".to_string(),
+            })?;
+        if handshake_end > record_end {
+            return Err(TlsError::ParseError {
+                message: "Handshake length exceeds record length".to_string(),
+            });
+        }
+        let data = data
+            .get(..handshake_end)
+            .ok_or_else(|| TlsError::ParseError {
+                message: "Handshake length exceeds available data".to_string(),
+            })?;
 
         // Skip handshake length (3 bytes)
         cursor += 3;
@@ -577,6 +620,30 @@ mod tests {
             err.to_string()
                 .contains("Data too short for extension data")
         );
+    }
+
+    #[test]
+    fn test_parse_rejects_body_after_handshake_end() {
+        let capture = ClientHelloCapture::synthetic(0x0303, vec![0x1301], vec![]);
+        let mut bytes = capture.to_bytes().expect("ClientHello should serialize");
+        bytes[6..9].copy_from_slice(&[0x00, 0x00, 0x00]);
+
+        let err =
+            ClientHelloCapture::parse(&bytes).expect_err("truncated handshake body must fail");
+        assert!(
+            err.to_string()
+                .contains("Data too short for ClientHello version")
+        );
+    }
+
+    #[test]
+    fn test_parse_ignores_extensions_after_handshake_end() {
+        let capture = ClientHelloCapture::synthetic(0x0303, vec![0x1301], vec![(0x0000, vec![])]);
+        let mut bytes = capture.to_bytes().expect("ClientHello should serialize");
+        bytes[6..9].copy_from_slice(&[0x00, 0x00, 0x29]);
+
+        let parsed = ClientHelloCapture::parse(&bytes).expect("ClientHello body should parse");
+        assert!(parsed.extensions.is_empty());
     }
 
     #[test]
