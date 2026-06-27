@@ -1,10 +1,10 @@
 // ClientHello network capture
 // Captures ClientHello during actual TLS handshake
 
-use crate::Result;
 use crate::fingerprint::Ja3Fingerprint;
 use crate::fingerprint::client_hello_capture::ClientHelloCapture;
 use crate::utils::network::Target;
+use crate::{Result, TlsError};
 
 /// Build the canonical CipherRun ClientHello and derive its JA3 fingerprint.
 pub struct ClientHelloNetworkCapture {
@@ -26,7 +26,7 @@ impl ClientHelloNetworkCapture {
     /// requiring a network round-trip. The SNI is filled from the target so the
     /// extension layout matches what would be sent to this host.
     pub async fn capture_and_fingerprint(&self) -> Result<(ClientHelloCapture, Ja3Fingerprint)> {
-        let client_hello = self.build_client_hello();
+        let client_hello = self.build_client_hello()?;
         let ja3 = Ja3Fingerprint::from_client_hello(&client_hello);
 
         Ok((client_hello, ja3))
@@ -34,7 +34,7 @@ impl ClientHelloNetworkCapture {
 
     /// Build CipherRun's canonical ClientHello (a representative modern rustls
     /// client profile) used as the basis for the JA3 fingerprint.
-    fn build_client_hello(&self) -> ClientHelloCapture {
+    fn build_client_hello(&self) -> Result<ClientHelloCapture> {
         // TLS 1.2 version (rustls supports both 1.2 and 1.3)
         let version = 0x0303;
 
@@ -57,7 +57,7 @@ impl ClientHelloNetworkCapture {
         let mut extensions = Vec::new();
 
         // SNI (server_name) - Extension 0
-        let sni_data = self.build_sni_extension();
+        let sni_data = self.build_sni_extension()?;
         extensions.push((0, sni_data));
 
         // supported_groups - Extension 10
@@ -66,7 +66,10 @@ impl ClientHelloNetworkCapture {
             23, // secp256r1
             24, // secp384r1
         ];
-        extensions.push((10, self.build_supported_groups_extension(&supported_groups)));
+        extensions.push((
+            10,
+            Self::build_supported_groups_extension(&supported_groups)?,
+        ));
 
         // ec_point_formats - Extension 11
         extensions.push((11, vec![1, 0])); // uncompressed
@@ -83,13 +86,13 @@ impl ClientHelloNetworkCapture {
             0x0501, // rsa_pkcs1_sha384
             0x0601, // rsa_pkcs1_sha512
         ];
-        extensions.push((13, self.build_signature_algorithms_extension(&sig_algs)));
+        extensions.push((13, Self::build_signature_algorithms_extension(&sig_algs)?));
 
         // status_request (OCSP) - Extension 5
         extensions.push((5, vec![1, 0, 0, 0, 0]));
 
         // application_layer_protocol_negotiation - Extension 16
-        extensions.push((16, self.build_alpn_extension(&["h2", "http/1.1"])));
+        extensions.push((16, Self::build_alpn_extension(&["h2", "http/1.1"])?));
 
         // supported_versions - Extension 43 (for TLS 1.3)
         extensions.push((43, vec![2, 0x03, 0x04])); // TLS 1.3
@@ -100,73 +103,105 @@ impl ClientHelloNetworkCapture {
         // never transmitted, it exists solely to derive the fingerprint.
         extensions.push((51, vec![0, 33, 0, 29, 0, 32]));
 
-        ClientHelloCapture::synthetic(version, cipher_suites, extensions)
+        Ok(ClientHelloCapture::synthetic(
+            version,
+            cipher_suites,
+            extensions,
+        ))
     }
 
     /// Build SNI extension data
-    fn build_sni_extension(&self) -> Vec<u8> {
+    fn build_sni_extension(&self) -> Result<Vec<u8>> {
         let hostname = self.target.hostname.as_bytes();
         let mut data = Vec::new();
+        let hostname_len = u16::try_from(hostname.len()).map_err(|_| TlsError::ParseError {
+            message: "SNI hostname is too long".to_string(),
+        })?;
+        let list_len = hostname_len
+            .checked_add(3)
+            .ok_or_else(|| TlsError::ParseError {
+                message: "SNI hostname is too long".to_string(),
+            })?;
 
         // Server name list length
-        data.extend_from_slice(&((hostname.len() + 3).min(u16::MAX as usize) as u16).to_be_bytes());
+        data.extend_from_slice(&list_len.to_be_bytes());
 
         // Server name type (0 = hostname)
         data.push(0);
 
         // Server name length
-        data.extend_from_slice(&(hostname.len().min(u16::MAX as usize) as u16).to_be_bytes());
+        data.extend_from_slice(&hostname_len.to_be_bytes());
 
         // Server name
         data.extend_from_slice(hostname);
 
-        data
+        Ok(data)
     }
 
     /// Build supported_groups extension data
-    fn build_supported_groups_extension(&self, groups: &[u16]) -> Vec<u8> {
+    fn build_supported_groups_extension(groups: &[u16]) -> Result<Vec<u8>> {
         let mut data = Vec::new();
+        let byte_len = groups
+            .len()
+            .checked_mul(2)
+            .and_then(|len| u16::try_from(len).ok())
+            .ok_or_else(|| TlsError::ParseError {
+                message: "supported_groups list is too long".to_string(),
+            })?;
 
         // List length
-        data.extend_from_slice(&((groups.len() * 2) as u16).to_be_bytes());
+        data.extend_from_slice(&byte_len.to_be_bytes());
 
         // Groups
         for &group in groups {
             data.extend_from_slice(&group.to_be_bytes());
         }
 
-        data
+        Ok(data)
     }
 
     /// Build signature_algorithms extension data
-    fn build_signature_algorithms_extension(&self, algorithms: &[u16]) -> Vec<u8> {
+    fn build_signature_algorithms_extension(algorithms: &[u16]) -> Result<Vec<u8>> {
         let mut data = Vec::new();
+        let byte_len = algorithms
+            .len()
+            .checked_mul(2)
+            .and_then(|len| u16::try_from(len).ok())
+            .ok_or_else(|| TlsError::ParseError {
+                message: "signature_algorithms list is too long".to_string(),
+            })?;
 
         // List length
-        data.extend_from_slice(&((algorithms.len() * 2) as u16).to_be_bytes());
+        data.extend_from_slice(&byte_len.to_be_bytes());
 
         // Algorithms
         for &alg in algorithms {
             data.extend_from_slice(&alg.to_be_bytes());
         }
 
-        data
+        Ok(data)
     }
 
     /// Build ALPN extension data
-    fn build_alpn_extension(&self, protocols: &[&str]) -> Vec<u8> {
+    fn build_alpn_extension(protocols: &[&str]) -> Result<Vec<u8>> {
         let mut proto_bytes = Vec::new();
 
         for proto in protocols {
-            proto_bytes.push(proto.len() as u8);
+            let proto_len = u8::try_from(proto.len()).map_err(|_| TlsError::ParseError {
+                message: "ALPN protocol name is too long".to_string(),
+            })?;
+            proto_bytes.push(proto_len);
             proto_bytes.extend_from_slice(proto.as_bytes());
         }
 
         let mut data = Vec::new();
-        data.extend_from_slice(&(proto_bytes.len() as u16).to_be_bytes());
+        let protocols_len = u16::try_from(proto_bytes.len()).map_err(|_| TlsError::ParseError {
+            message: "ALPN protocol list is too long".to_string(),
+        })?;
+        data.extend_from_slice(&protocols_len.to_be_bytes());
         data.extend_from_slice(&proto_bytes);
 
-        data
+        Ok(data)
     }
 }
 
@@ -184,7 +219,9 @@ mod tests {
         .unwrap();
 
         let capture = ClientHelloNetworkCapture::new(target);
-        let client_hello = capture.build_client_hello();
+        let client_hello = capture
+            .build_client_hello()
+            .expect("ClientHello should build");
 
         // Verify basic structure
         assert_eq!(client_hello.version, 0x0303);

@@ -64,8 +64,7 @@ pub struct CtStreamer {
 }
 
 impl CtStreamer {
-    /// Create a new CT log streamer
-    pub async fn new(config: CtConfig) -> Result<Self> {
+    fn normalized_config(mut config: CtConfig) -> CtConfig {
         // Validate and clamp batch size with warning
         let batch_size = if config.batch_size > MAX_BATCH_SIZE {
             tracing::warn!(
@@ -81,8 +80,13 @@ impl CtStreamer {
         } else {
             config.batch_size
         };
-        let mut config = config;
         config.batch_size = batch_size;
+        config
+    }
+
+    /// Create a new CT log streamer
+    pub async fn new(config: CtConfig) -> Result<Self> {
+        let config = Self::normalized_config(config);
 
         // Initialize source manager and fetch log sources
         let mut source_manager = SourceManager::new();
@@ -432,16 +436,15 @@ mod tests {
         assert!(config.custom_indices.is_empty());
     }
 
-    #[tokio::test]
-    async fn test_config_batch_size_validation() {
+    #[test]
+    fn test_config_batch_size_validation() {
         let config = CtConfig {
             batch_size: 5000, // Too large
             ..Default::default()
         };
 
-        // Should be clamped to MAX_BATCH_SIZE during CtStreamer::new
-        let streamer = CtStreamer::new(config).await.unwrap();
-        assert_eq!(streamer.config.batch_size, MAX_BATCH_SIZE);
+        let config = CtStreamer::normalized_config(config);
+        assert_eq!(config.batch_size, MAX_BATCH_SIZE);
     }
 
     #[tokio::test]
