@@ -59,7 +59,7 @@ impl ServerHelloNetworkCapture {
             .map_err(|e| TlsError::IoError { source: e })?;
 
         // Send ClientHello
-        let client_hello = self.build_client_hello();
+        let client_hello = self.build_client_hello()?;
         stream
             .write_all(&client_hello)
             .map_err(|e| TlsError::IoError { source: e })?;
@@ -92,7 +92,7 @@ impl ServerHelloNetworkCapture {
     }
 
     /// Build a ClientHello supporting TLS 1.2 and TLS 1.3
-    fn build_client_hello(&self) -> Vec<u8> {
+    fn build_client_hello(&self) -> Result<Vec<u8>> {
         let mut client_hello = Vec::new();
 
         // TLS Record Layer
@@ -139,7 +139,8 @@ impl ServerHelloNetworkCapture {
             0xC0, 0x2D, // TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256
             0xC0, 0x2E, // TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA384
         ];
-        client_hello.extend_from_slice(&((cipher_suites.len() as u16).to_be_bytes()));
+        let cipher_suites_len = Self::u16_len(cipher_suites.len(), "cipher suites")?;
+        client_hello.extend_from_slice(&cipher_suites_len.to_be_bytes());
         client_hello.extend_from_slice(&cipher_suites);
 
         // Compression Methods
@@ -149,41 +150,41 @@ impl ServerHelloNetworkCapture {
         // Extensions
         let extensions_start = client_hello.len();
         client_hello.extend_from_slice(&[0x00, 0x00]); // Placeholder for extensions length
-        Self::build_extensions(&mut client_hello, &self.target.hostname);
+        Self::build_extensions(&mut client_hello, &self.target.hostname)?;
 
         // Update extensions length
-        let extensions_len = (client_hello.len() - extensions_start - 2) as u16;
+        let extensions_len =
+            Self::u16_len(client_hello.len() - extensions_start - 2, "extensions")?;
         if let Some(len_bytes) = client_hello.get_mut(extensions_start..extensions_start + 2) {
             len_bytes.copy_from_slice(&extensions_len.to_be_bytes());
         }
 
         // Update handshake length (3 bytes, big-endian, excludes handshake header)
-        let handshake_body_len = (client_hello.len() - handshake_length_pos - 3) as u32;
+        let handshake_body_len = Self::u24_len(
+            client_hello.len() - handshake_length_pos - 3,
+            "handshake body",
+        )?;
         if let Some(len_bytes) =
             client_hello.get_mut(handshake_length_pos..handshake_length_pos + 3)
         {
-            len_bytes.copy_from_slice(&[
-                ((handshake_body_len >> 16) & 0xFF) as u8,
-                ((handshake_body_len >> 8) & 0xFF) as u8,
-                (handshake_body_len & 0xFF) as u8,
-            ]);
+            len_bytes.copy_from_slice(&handshake_body_len);
         }
 
         // Update record length
-        let record_len = (client_hello.len() - length_pos - 2) as u16;
+        let record_len = Self::u16_len(client_hello.len() - length_pos - 2, "TLS record")?;
         if let Some(len_bytes) = client_hello.get_mut(length_pos..length_pos + 2) {
             len_bytes.copy_from_slice(&record_len.to_be_bytes());
         }
 
-        client_hello
+        Ok(client_hello)
     }
 
     /// Append all TLS extensions to the ClientHello buffer.
-    fn build_extensions(client_hello: &mut Vec<u8>, hostname: &str) {
+    fn build_extensions(client_hello: &mut Vec<u8>, hostname: &str) -> Result<()> {
         use rand::Rng;
 
         // SNI
-        let sni_extension = Self::build_sni_extension(hostname.as_bytes());
+        let sni_extension = Self::build_sni_extension(hostname.as_bytes())?;
         client_hello.extend_from_slice(&sni_extension);
 
         // supported_groups
@@ -256,10 +257,12 @@ impl ServerHelloNetworkCapture {
             0x00, 0x17, // Extension type
             0x00, 0x00, // Extension length: 0
         ]);
+
+        Ok(())
     }
 
     /// Build SNI extension
-    fn build_sni_extension(server_name: &[u8]) -> Vec<u8> {
+    fn build_sni_extension(server_name: &[u8]) -> Result<Vec<u8>> {
         let mut extension = Vec::new();
 
         // Extension type: server_name (0x0000)
@@ -277,24 +280,44 @@ impl ServerHelloNetworkCapture {
         extension.push(0x00);
 
         // Server Name Length
-        extension.extend_from_slice(&(server_name.len() as u16).to_be_bytes());
+        let server_name_len = Self::u16_len(server_name.len(), "SNI server name")?;
+        extension.extend_from_slice(&server_name_len.to_be_bytes());
 
         // Server Name
         extension.extend_from_slice(server_name);
 
         // Update Server Name List Length
-        let list_len = (extension.len() - list_len_pos - 2) as u16;
+        let list_len = Self::u16_len(extension.len() - list_len_pos - 2, "SNI server name list")?;
         if let Some(len_bytes) = extension.get_mut(list_len_pos..list_len_pos + 2) {
             len_bytes.copy_from_slice(&list_len.to_be_bytes());
         }
 
         // Update Extension Length
-        let ext_len = (extension.len() - ext_len_pos - 2) as u16;
+        let ext_len = Self::u16_len(extension.len() - ext_len_pos - 2, "SNI extension")?;
         if let Some(len_bytes) = extension.get_mut(ext_len_pos..ext_len_pos + 2) {
             len_bytes.copy_from_slice(&ext_len.to_be_bytes());
         }
 
-        extension
+        Ok(extension)
+    }
+
+    fn u16_len(len: usize, field: &str) -> Result<u16> {
+        u16::try_from(len).map_err(|_| TlsError::ParseError {
+            message: format!("{field} length is too large"),
+        })
+    }
+
+    fn u24_len(len: usize, field: &str) -> Result<[u8; 3]> {
+        let len = u32::try_from(len).map_err(|_| TlsError::ParseError {
+            message: format!("{field} length is too large"),
+        })?;
+        if len > 0x00FF_FFFF {
+            return Err(TlsError::ParseError {
+                message: format!("{field} length is too large"),
+            });
+        }
+        let bytes = len.to_be_bytes();
+        Ok([bytes[1], bytes[2], bytes[3]])
     }
 }
 
@@ -312,7 +335,9 @@ mod tests {
         .unwrap();
 
         let capture = ServerHelloNetworkCapture::new(target);
-        let client_hello = capture.build_client_hello();
+        let client_hello = capture
+            .build_client_hello()
+            .expect("ClientHello should build");
 
         // Should be a valid TLS record
         assert_eq!(client_hello[0], 0x16); // Handshake
@@ -327,7 +352,8 @@ mod tests {
     #[test]
     fn test_build_sni_extension() {
         let server_name = b"example.com";
-        let extension = ServerHelloNetworkCapture::build_sni_extension(server_name);
+        let extension =
+            ServerHelloNetworkCapture::build_sni_extension(server_name).expect("SNI should build");
 
         // Extension type should be 0x0000
         assert_eq!(extension[0], 0x00);
