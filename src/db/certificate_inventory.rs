@@ -181,7 +181,7 @@ async fn fetch_certificate_count_postgres(
             crate::TlsError::DatabaseError(format!("Failed to count certificates: {}", e))
         })?
         .get("count");
-    Ok(total as usize)
+    non_negative_count(total, "certificate count")
 }
 
 async fn fetch_certificate_count_sqlite(
@@ -204,11 +204,19 @@ async fn fetch_certificate_count_sqlite(
             crate::TlsError::DatabaseError(format!("Failed to count certificates: {}", e))
         })?
         .get("count");
-    Ok(total as usize)
+    non_negative_count(total, "certificate count")
 }
 
 fn certificate_field_error(field: &str, error: impl std::fmt::Display) -> crate::TlsError {
     crate::TlsError::DatabaseError(format!("Invalid certificate field {}: {}", field, error))
+}
+
+fn non_negative_count(value: i64, field: &str) -> crate::Result<usize> {
+    usize::try_from(value).map_err(|error| certificate_field_error(field, error))
+}
+
+fn usize_to_i64(value: usize, field: &str) -> crate::Result<i64> {
+    i64::try_from(value).map_err(|error| certificate_field_error(field, error))
 }
 
 fn certificate_record_from_pg_row(row: PgRow) -> crate::Result<CertificateInventoryRecord> {
@@ -314,8 +322,8 @@ async fn fetch_certificate_list_postgres(
         stmt = stmt.bind(param);
     }
     let rows = stmt
-        .bind(query.limit as i64)
-        .bind(query.offset as i64)
+        .bind(usize_to_i64(query.limit, "certificate query limit")?)
+        .bind(usize_to_i64(query.offset, "certificate query offset")?)
         .fetch_all(pool)
         .await
         .map_err(|e| {
@@ -358,8 +366,8 @@ async fn fetch_certificate_list_sqlite(
         stmt = stmt.bind(param);
     }
     let rows = stmt
-        .bind(query.limit as i64)
-        .bind(query.offset as i64)
+        .bind(usize_to_i64(query.limit, "certificate query limit")?)
+        .bind(usize_to_i64(query.offset, "certificate query offset")?)
         .fetch_all(pool)
         .await
         .map_err(|e| {
