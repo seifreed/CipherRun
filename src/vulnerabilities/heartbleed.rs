@@ -18,6 +18,11 @@ fn read_u16_at(data: &[u8], offset: usize) -> Option<u16> {
         .map(u16::from_be_bytes)
 }
 
+fn read_u24_at(data: &[u8], offset: usize) -> Option<usize> {
+    let bytes = data.get(offset..offset.checked_add(3)?)?;
+    Some(((bytes[0] as usize) << 16) | ((bytes[1] as usize) << 8) | bytes[2] as usize)
+}
+
 #[cfg(test)]
 fn write_u16_at(data: &mut [u8], offset: usize, value: u16) {
     data.get_mut(offset..offset + 2)
@@ -250,6 +255,21 @@ impl<'a> HeartbleedTester<'a> {
                 message: "ServerHello record length extends beyond buffer".to_string(),
             });
         }
+        let Some(hs_len) = read_u24_at(data, 6) else {
+            return Err(crate::TlsError::ParseError {
+                message: "ServerHello truncated before handshake length".to_string(),
+            });
+        };
+        let Some(hs_end) = 9usize.checked_add(hs_len) else {
+            return Err(crate::TlsError::ParseError {
+                message: "ServerHello handshake length overflow".to_string(),
+            });
+        };
+        if hs_end > record_end {
+            return Err(crate::TlsError::ParseError {
+                message: "ServerHello handshake length exceeds record length".to_string(),
+            });
+        }
 
         // Session ID length at offset 43
         let Some(sid_len) = data.get(43).copied().map(usize::from) else {
@@ -272,7 +292,7 @@ impl<'a> HeartbleedTester<'a> {
                 message: "ServerHello extensions offset overflow".to_string(),
             });
         };
-        if ext_offset == record_end {
+        if ext_offset == hs_end {
             return Ok(false);
         }
 
@@ -282,7 +302,7 @@ impl<'a> HeartbleedTester<'a> {
                 message: "ServerHello extensions length overflow".to_string(),
             });
         };
-        if ext_start > record_end {
+        if ext_start > hs_end {
             return Err(crate::TlsError::ParseError {
                 message: "ServerHello truncated before extensions length".to_string(),
             });
@@ -298,9 +318,14 @@ impl<'a> HeartbleedTester<'a> {
                 message: "ServerHello extension block length overflow".to_string(),
             });
         };
-        if ext_end > record_end {
+        if ext_end > hs_end {
             return Err(crate::TlsError::ParseError {
                 message: "ServerHello extension block extends beyond declared length".to_string(),
+            });
+        }
+        if ext_end != hs_end {
+            return Err(crate::TlsError::ParseError {
+                message: "ServerHello extension block contains trailing bytes".to_string(),
             });
         }
 
@@ -707,6 +732,50 @@ mod tests {
                 .check_heartbeat_extension(&data_with_trailing_ext)
                 .unwrap()
         );
+    }
+
+    #[test]
+    fn test_heartbeat_extension_in_combined_handshake_record() {
+        let target = Target::with_ips(
+            "test.com".to_string(),
+            443,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+        let tester = HeartbleedTester {
+            target: &target,
+            sni_hostname: None,
+            connect_timeout: Duration::from_secs(5),
+            read_timeout: Duration::from_secs(5),
+            starttls: None,
+            starttls_hostname: None,
+        };
+
+        let mut data = vec![
+            0x16, 0x03, 0x03, 0x00, 0x00, // TLS record header (length placeholder)
+            0x02, 0x00, 0x00, 0x00, // ServerHello header (length placeholder)
+            0x03, 0x03, // ServerHello version TLS 1.2
+        ];
+        data.extend_from_slice(&[0xAA; 32]);
+        data.push(0x00);
+        data.extend_from_slice(&[0x13, 0x01]);
+        data.push(0x00);
+        data.extend_from_slice(&[
+            0x00, 0x05, // extensions total length
+            0x00, 0x0f, // heartbeat extension type
+            0x00, 0x01, // extension length
+            0x01, // heartbeat mode
+        ]);
+        let hs_len = data.len() - 9;
+        write_u24_at(&mut data, 6, hs_len);
+
+        data.extend_from_slice(&[
+            0x0b, 0x00, 0x00, 0x00, // next handshake message in the same record
+        ]);
+        let record_len = (data.len() - 5) as u16;
+        write_u16_at(&mut data, 3, record_len);
+
+        assert!(tester.check_heartbeat_extension(&data).unwrap());
     }
 
     #[test]
