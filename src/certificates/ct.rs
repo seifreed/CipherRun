@@ -123,11 +123,16 @@ impl CtVerifier {
         const SCT_EXTENSION_OID: &str = "1.3.6.1.4.1.11129.2.4.2";
 
         // Parse the raw certificate to check extensions
-        let (_rem, parsed_cert) = X509Certificate::from_der(&cert.der_bytes).map_err(|_| {
+        let (rest, parsed_cert) = X509Certificate::from_der(&cert.der_bytes).map_err(|_| {
             crate::error::TlsError::ParseError {
                 message: "Failed to parse certificate".into(),
             }
         })?;
+        if !rest.is_empty() {
+            return Err(crate::error::TlsError::ParseError {
+                message: "Certificate DER contains trailing bytes".to_string(),
+            });
+        }
 
         // Look for SCT extension
         for ext in parsed_cert.extensions() {
@@ -469,6 +474,25 @@ mod tests {
         assert_eq!(result.sct_count, 0);
         assert!(!result.compliant);
         assert!(!result.log_lookup_inconclusive);
+    }
+
+    #[test]
+    fn test_check_x509_sct_extension_rejects_trailing_der_bytes() {
+        let verifier = CtVerifier::new(false);
+        let cert = rcgen::generate_simple_self_signed(["example.com".to_string()])
+            .expect("test assertion should succeed");
+        let mut der_bytes = cert.cert.der().as_ref().to_vec();
+        der_bytes.push(0xff);
+
+        let cert_info = CertificateInfo {
+            der_bytes,
+            ..Default::default()
+        };
+
+        let err = verifier
+            .check_x509_sct_extension(&cert_info)
+            .expect_err("trailing DER bytes should fail");
+        assert!(err.to_string().contains("trailing bytes"));
     }
 
     #[tokio::test]
