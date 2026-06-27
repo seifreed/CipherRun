@@ -231,7 +231,7 @@ impl TrendAnalyzer {
         if values.len().is_multiple_of(2) {
             let lower = values.get(mid - 1).copied().unwrap_or_default() as u16;
             let upper = values.get(mid).copied().unwrap_or_default() as u16;
-            ((lower + upper) / 2) as u8
+            u8::try_from((lower + upper) / 2).unwrap_or(u8::MAX)
         } else {
             values.get(mid).copied().unwrap_or_default()
         }
@@ -393,8 +393,12 @@ impl TrendAnalyzer {
         // Forecast next point
         let next_x = data_points.len() as f64;
         let forecast = slope * next_x + intercept;
+        if !forecast.is_finite() {
+            return None;
+        }
 
-        Some(forecast.clamp(0.0, 100.0).round() as u8)
+        let forecast = forecast.clamp(0.0, 100.0).round();
+        (0..=100).find(|value| f64::from(*value) >= forecast)
     }
 
     // Database helper methods

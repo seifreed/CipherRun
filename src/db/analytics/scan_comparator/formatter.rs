@@ -80,7 +80,10 @@ impl ScanComparator {
         ));
         output.push_str(&format!(
             "Target: {}\n\n",
-            canonical_target(&comp.scan_1.target_hostname, comp.scan_1.target_port as u16)
+            canonical_target(
+                &comp.scan_1.target_hostname,
+                u16::try_from(comp.scan_1.target_port).unwrap_or_default(),
+            )
         ));
 
         // Summary

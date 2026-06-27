@@ -24,7 +24,7 @@ impl TrendAnalyzer {
 
         for scan in &scans {
             if let Some(score) = scan.overall_score {
-                let score_u8 = score.clamp(0, 100) as u8;
+                let score_u8 = u8::try_from(score.clamp(0, 100)).unwrap_or_default();
                 data_points.push((scan.scan_timestamp, score_u8));
                 scores.push(score_u8);
             }
