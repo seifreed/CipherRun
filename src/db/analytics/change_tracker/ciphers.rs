@@ -86,7 +86,7 @@ impl ChangeTracker {
                         timestamp,
                     });
                 }
-                (None, None) => unreachable!("cipher identity set should cover both sides"),
+                (None, None) => continue,
             }
         }
 
