@@ -8,6 +8,20 @@ use super::parser::CertificateInfo;
 use crate::Result;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
+use x509_parser::prelude::{FromDer, X509Certificate};
+
+fn parse_x509_der_exact<'a>(der: &'a [u8], context: &str) -> Result<X509Certificate<'a>> {
+    let (rest, cert) =
+        X509Certificate::from_der(der).map_err(|e| crate::error::TlsError::ParseError {
+            message: format!("Failed to parse {context}: {:?}", e),
+        })?;
+    if !rest.is_empty() {
+        return Err(crate::error::TlsError::ParseError {
+            message: format!("{context} contains trailing bytes"),
+        });
+    }
+    Ok(cert)
+}
 
 /// Revocation check result
 #[derive(Debug, Clone, Serialize, Deserialize)]

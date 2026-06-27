@@ -1,4 +1,4 @@
-use super::{RevocationChecker, RevocationStatus};
+use super::{RevocationChecker, RevocationStatus, parse_x509_der_exact};
 use crate::Result;
 use crate::certificates::parser::CertificateInfo;
 use tokio::time::timeout;
@@ -12,11 +12,7 @@ impl RevocationChecker {
             return Ok(None);
         }
 
-        let (_, parsed_cert) = X509Certificate::from_der(&cert.der_bytes).map_err(|e| {
-            crate::error::TlsError::ParseError {
-                message: format!("Failed to parse certificate: {:?}", e),
-            }
-        })?;
+        let parsed_cert = parse_x509_der_exact(&cert.der_bytes, "certificate")?;
 
         // Look for CRL Distribution Points extension
         if let Some(ext) = parsed_cert
@@ -99,11 +95,7 @@ impl RevocationChecker {
                 "Issuer certificate required to verify CRL signature".into(),
             )
         })?;
-        let (_, issuer_cert) = X509Certificate::from_der(&issuer.der_bytes).map_err(|e| {
-            crate::error::TlsError::ParseError {
-                message: format!("Failed to parse issuer certificate: {:?}", e),
-            }
-        })?;
+        let issuer_cert = parse_x509_der_exact(&issuer.der_bytes, "issuer certificate")?;
         if crl.verify_signature(issuer_cert.public_key()).is_err() {
             tracing::warn!(
                 "CRL signature verification failed for {}; not trusting it",
@@ -131,11 +123,7 @@ impl RevocationChecker {
         }
 
         // Check if certificate serial number is in revoked list
-        let (_, parsed_cert) = X509Certificate::from_der(&cert.der_bytes).map_err(|e| {
-            crate::error::TlsError::ParseError {
-                message: format!("Failed to parse certificate: {:?}", e),
-            }
-        })?;
+        let parsed_cert = parse_x509_der_exact(&cert.der_bytes, "certificate")?;
 
         let cert_serial = &parsed_cert.serial;
 

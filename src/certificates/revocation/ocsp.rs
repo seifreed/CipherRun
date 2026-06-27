@@ -1,4 +1,4 @@
-use super::{RevocationChecker, RevocationStatus};
+use super::{RevocationChecker, RevocationStatus, parse_x509_der_exact};
 use crate::Result;
 use crate::certificates::parser::CertificateInfo;
 use openssl::hash::MessageDigest;
@@ -23,11 +23,7 @@ impl RevocationChecker {
             return Ok(None);
         }
 
-        let (_, parsed_cert) = X509Certificate::from_der(&cert.der_bytes).map_err(|e| {
-            crate::error::TlsError::ParseError {
-                message: format!("Failed to parse certificate: {:?}", e),
-            }
-        })?;
+        let parsed_cert = parse_x509_der_exact(&cert.der_bytes, "certificate")?;
 
         // Look for Authority Information Access extension
         if let Some(ext) = parsed_cert
@@ -422,6 +418,16 @@ mod tests {
 
         let err = checker.extract_ocsp_url(&cert).unwrap_err();
         assert!(format!("{err}").contains("Failed to parse certificate"));
+    }
+
+    #[test]
+    fn test_extract_ocsp_url_rejects_trailing_der_bytes() {
+        let checker = RevocationChecker::new(false);
+        let mut cert = cert_with_raw_extension_der("1.2.3.4", b"\x05\x00");
+        cert.der_bytes.push(0xff);
+
+        let err = checker.extract_ocsp_url(&cert).unwrap_err();
+        assert!(format!("{err}").contains("trailing bytes"));
     }
 
     #[test]

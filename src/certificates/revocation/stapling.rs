@@ -1,4 +1,4 @@
-use super::{OcspStaplingResult, RevocationChecker};
+use super::{OcspStaplingResult, RevocationChecker, parse_x509_der_exact};
 use crate::Result;
 use crate::certificates::parser::CertificateInfo;
 use tracing::trace;
@@ -67,11 +67,7 @@ impl RevocationChecker {
             return Ok(false);
         }
 
-        let (_, parsed_cert) = X509Certificate::from_der(&cert.der_bytes).map_err(|e| {
-            crate::error::TlsError::ParseError {
-                message: format!("Failed to parse certificate: {:?}", e),
-            }
-        })?;
+        let parsed_cert = parse_x509_der_exact(&cert.der_bytes, "certificate")?;
 
         // Look for TLS Feature extension (OCSP Must-Staple)
         // OID: 1.3.6.1.5.5.7.1.24
