@@ -58,7 +58,8 @@ impl FallbackScsvTester<'_> {
     ) -> Result<ScsvSupport> {
         match self.starttls_connect(addr, Duration::from_secs(5)).await {
             Ok(mut stream) => {
-                let client_hello_no_scsv = self.build_client_hello_with_scsv(test_version, false);
+                let client_hello_no_scsv =
+                    self.build_client_hello_with_scsv(test_version, false)?;
 
                 tracing::debug!(
                     "Sending ClientHello with version 0x{:04x} (no SCSV) to IP {}",
@@ -83,7 +84,7 @@ impl FallbackScsvTester<'_> {
                     return Ok(ScsvSupport::inconclusive());
                 };
 
-                let client_hello_scsv = self.build_client_hello_with_scsv(test_version, true);
+                let client_hello_scsv = self.build_client_hello_with_scsv(test_version, true)?;
 
                 tracing::debug!(
                     "Sending ClientHello with version 0x{:04x} + TLS_FALLBACK_SCSV to IP {}",

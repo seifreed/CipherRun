@@ -142,7 +142,9 @@ mod tests {
         .unwrap();
 
         let tester = FallbackScsvTester::new(&target);
-        let hello = tester.build_client_hello_with_scsv(0x0303, true);
+        let hello = tester
+            .build_client_hello_with_scsv(0x0303, true)
+            .expect("ClientHello should build");
 
         assert!(hello.len() > 50);
         let has_scsv = hello.windows(2).any(|window| window == [0x56, 0x00]);
@@ -159,7 +161,9 @@ mod tests {
         .unwrap();
 
         let tester = FallbackScsvTester::new(&target);
-        let hello = tester.build_client_hello_with_scsv(0x0303, false);
+        let hello = tester
+            .build_client_hello_with_scsv(0x0303, false)
+            .expect("ClientHello should build");
 
         let has_scsv = hello.windows(2).any(|window| window == [0x56, 0x00]);
         assert!(!has_scsv);
@@ -359,7 +363,9 @@ mod tests {
         .unwrap();
 
         let tester = FallbackScsvTester::new(&target);
-        let hello = tester.build_client_hello_with_scsv(VERSION_TLS_1_2, true);
+        let hello = tester
+            .build_client_hello_with_scsv(VERSION_TLS_1_2, true)
+            .expect("ClientHello should build");
 
         let record_len = u16::from_be_bytes([hello[3], hello[4]]) as usize;
         assert_eq!(record_len, hello.len() - 5);
@@ -378,7 +384,9 @@ mod tests {
         .unwrap();
 
         let tester = FallbackScsvTester::new(&target);
-        let hello = tester.build_client_hello_with_scsv(VERSION_TLS_1_2, false);
+        let hello = tester
+            .build_client_hello_with_scsv(VERSION_TLS_1_2, false)
+            .expect("ClientHello should build");
 
         let record_len = u16::from_be_bytes([hello[3], hello[4]]) as usize;
         assert_eq!(record_len, hello.len() - 5);
@@ -397,7 +405,9 @@ mod tests {
         .unwrap();
 
         let tester = FallbackScsvTester::new(&target);
-        let hello = tester.build_client_hello_with_scsv(VERSION_TLS_1_2, true);
+        let hello = tester
+            .build_client_hello_with_scsv(VERSION_TLS_1_2, true)
+            .expect("ClientHello should build");
         assert!(hello.contains(&COMPRESSION_NULL));
     }
 
@@ -412,7 +422,9 @@ mod tests {
         .unwrap();
 
         let tester = FallbackScsvTester::new(&target);
-        let hello = tester.build_client_hello_with_scsv(VERSION_TLS_1_2, true);
+        let hello = tester
+            .build_client_hello_with_scsv(VERSION_TLS_1_2, true)
+            .expect("ClientHello should build");
 
         let cipher_count = 3usize;
         let ext_len_pos = 5 + 1 + 3 + 2 + 32 + 1 + 2 + cipher_count * 2 + 1 + 1;
