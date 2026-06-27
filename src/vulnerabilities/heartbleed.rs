@@ -298,10 +298,6 @@ impl<'a> HeartbleedTester<'a> {
             };
             pos = ext_header_end;
 
-            if ext_type == 0x000f {
-                return Ok(true);
-            }
-
             let Some(next_pos) = pos.checked_add(ext_len) else {
                 return Err(crate::TlsError::ParseError {
                     message: "ServerHello extension data length overflow".to_string(),
@@ -312,6 +308,9 @@ impl<'a> HeartbleedTester<'a> {
                     message: "ServerHello extension data extends beyond declared length"
                         .to_string(),
                 });
+            }
+            if ext_type == 0x000f {
+                return Ok(true);
             }
             pos = next_pos;
         }
