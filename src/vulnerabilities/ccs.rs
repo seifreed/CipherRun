@@ -101,7 +101,12 @@ impl CcsInjectionTester {
 
                 // Read ServerHello
                 let mut buffer = vec![0u8; 4096];
-                let _n = match timeout(Duration::from_secs(3), stream.read(&mut buffer)).await {
+                let _n = match timeout(
+                    Duration::from_secs(3),
+                    read_complete_tls_record(&mut stream, &mut buffer),
+                )
+                .await
+                {
                     Ok(Ok(n)) if n > 0 => n,
                     Ok(Ok(_)) => {
                         // Zero bytes read - connection closed by server
@@ -309,6 +314,30 @@ fn handshake_record_is_normal_continuation(record: &[u8], record_len: usize) -> 
     )
 }
 
+async fn read_complete_tls_record(
+    stream: &mut tokio::net::TcpStream,
+    buffer: &mut [u8],
+) -> Result<usize> {
+    let mut header = [0u8; 5];
+    stream.read_exact(&mut header).await?;
+
+    let record_len = u16::from_be_bytes([header[3], header[4]]) as usize;
+    let total_len = 5usize
+        .checked_add(record_len)
+        .ok_or_else(|| crate::TlsError::ParseError {
+            message: "CCS TLS record length overflow".to_string(),
+        })?;
+    if total_len > buffer.len() {
+        return Err(crate::TlsError::ParseError {
+            message: "CCS TLS record length exceeds buffer".to_string(),
+        });
+    }
+
+    buffer[..5].copy_from_slice(&header);
+    stream.read_exact(&mut buffer[5..total_len]).await?;
+    Ok(total_len)
+}
+
 /// CCS test status with detailed failure reasons
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TestStatus {
@@ -490,6 +519,33 @@ mod tests {
             0x00,
         ];
         assert!(handshake_record_is_normal_continuation(&record, 4));
+    }
+
+    #[tokio::test]
+    async fn test_read_complete_tls_record_handles_fragmented_header_and_body() {
+        let listener = TokioTcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let record = [0x16, 0x03, 0x03, 0x00, 0x04, 0x0e, 0x00, 0x00, 0x00];
+            socket.write_all(&record[..3]).await.unwrap();
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            socket.write_all(&record[3..6]).await.unwrap();
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            socket.write_all(&record[6..]).await.unwrap();
+        });
+
+        let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let mut buffer = vec![0u8; 32];
+        let n = read_complete_tls_record(&mut stream, &mut buffer)
+            .await
+            .unwrap();
+
+        assert_eq!(n, 9);
+        assert_eq!(&buffer[..n], &[0x16, 0x03, 0x03, 0x00, 0x04, 0x0e, 0x00, 0x00, 0x00]);
+
+        server.await.unwrap();
     }
 
     #[tokio::test]
