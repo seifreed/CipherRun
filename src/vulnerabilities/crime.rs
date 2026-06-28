@@ -168,9 +168,15 @@ impl<'a> CrimeTester<'a> {
         let client_hello = self.build_client_hello_with_compression()?;
         stream.write_all(&client_hello).await?;
 
-        // Read ServerHello
+        // Read the full ServerHello record so a fragmented response is not
+        // misclassified as inconclusive.
         let mut buffer = vec![0u8; 4096];
-        match timeout(Duration::from_secs(3), stream.read(&mut buffer)).await {
+        match timeout(
+            Duration::from_secs(3),
+            Self::read_complete_tls_record(&mut stream, &mut buffer),
+        )
+        .await
+        {
             Ok(Ok(n)) if n > 11 => {
                 let Some(response) = buffer.get(..n) else {
                     return Ok(CompressionProbeStatus::Inconclusive);
@@ -252,9 +258,15 @@ impl<'a> CrimeTester<'a> {
         let client_hello = self.build_client_hello_with_npn()?;
         stream.write_all(&client_hello).await?;
 
-        // Read ServerHello
+        // Read the full ServerHello record so a fragmented response is not
+        // misclassified as inconclusive.
         let mut buffer = vec![0u8; 8192];
-        match timeout(Duration::from_secs(3), stream.read(&mut buffer)).await {
+        match timeout(
+            Duration::from_secs(3),
+            Self::read_complete_tls_record(&mut stream, &mut buffer),
+        )
+        .await
+        {
             Ok(Ok(n)) if n > 43 => {
                 // Parse ServerHello structurally to find NPN extension
                 let Some(data) = buffer.get(..n) else {
@@ -407,6 +419,55 @@ impl<'a> CrimeTester<'a> {
             .add_npn(); // Add NPN extension for SPDY
         builder.build()
     }
+
+    async fn read_complete_tls_record(
+        stream: &mut tokio::net::TcpStream,
+        buffer: &mut [u8],
+    ) -> std::io::Result<usize> {
+        use std::io::ErrorKind;
+        use tokio::time::timeout;
+
+        let mut total = 0;
+        while total < buffer.len() {
+            match timeout(Duration::from_secs(3), stream.read(&mut buffer[total..])).await {
+                Ok(Ok(0)) => break,
+                Ok(Ok(n)) => {
+                    total += n;
+                    if total >= 5 {
+                        let record_len =
+                            u16::from_be_bytes([buffer[3], buffer[4]]) as usize;
+                        let record_total = 5usize.saturating_add(record_len);
+                        if total >= record_total {
+                            break;
+                        }
+                    }
+                }
+                Ok(Err(err))
+                    if total == 0
+                        && matches!(err.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock) =>
+                {
+                    return Ok(0);
+                }
+                Ok(Err(err))
+                    if total > 0
+                        && matches!(
+                            err.kind(),
+                            ErrorKind::TimedOut
+                                | ErrorKind::WouldBlock
+                                | ErrorKind::UnexpectedEof
+                                | ErrorKind::ConnectionReset
+                        ) =>
+                {
+                    break;
+                }
+                Ok(Err(err)) => return Err(err),
+                Err(_) if total > 0 => break,
+                Err(_) => return Ok(0),
+            }
+        }
+
+        Ok(total)
+    }
 }
 
 /// CRIME test result
@@ -423,6 +484,8 @@ pub struct CrimeTestResult {
 mod tests {
     use super::*;
     use std::net::TcpListener;
+    use tokio::io::AsyncWriteExt;
+    use tokio::time::{sleep, Duration};
 
     #[test]
     fn test_crime_result_creation() {
@@ -647,6 +710,53 @@ mod tests {
 
         let status = tester
             .test_spdy_compression()
+            .await
+            .expect("probe should return a status");
+        assert_eq!(status, CompressionProbeStatus::Enabled);
+
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_tls_compression_reads_fragmented_server_hello_record() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = vec![0u8; 4096];
+            let _ = socket.read(&mut buf).await.unwrap();
+
+            let mut response = vec![
+                0x16, 0x03, 0x03, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x03, 0x03,
+            ];
+            response.extend_from_slice(&[0xAA; 32]);
+            response.push(0x00);
+            response.extend_from_slice(&[0x00, 0x9c]);
+            response.push(0x01);
+            response.extend_from_slice(&[0x00, 0x00]);
+
+            let rec_len = (response.len() - 5) as u16;
+            write_u16_at(&mut response, 3, rec_len);
+            let hs_len = response.len() - 9;
+            write_u24_at(&mut response, 6, hs_len);
+
+            let split = response.len() / 2;
+            let _ = socket.write_all(&response[..split]).await;
+            sleep(Duration::from_millis(50)).await;
+            let _ = socket.write_all(&response[split..]).await;
+        });
+
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+        let tester = CrimeTester::new(&target);
+
+        let status = tester
+            .test_tls_compression()
             .await
             .expect("probe should return a status");
         assert_eq!(status, CompressionProbeStatus::Enabled);
