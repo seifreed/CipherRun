@@ -209,14 +209,11 @@ impl JarmFingerprinter {
             return Ok("|||".to_string());
         }
 
-        // Read ServerHello response (max 1484 bytes)
+        // Read the full response so fragmented ServerHello records do not get
+        // misclassified as empty or truncated.
         let mut buffer = vec![0u8; 1484];
-        let n = match timeout(self.timeout, stream.read(&mut buffer)).await {
-            Ok(Ok(n)) => n,
-            Ok(Err(_)) => {
-                let _ = stream.shutdown().await;
-                return Ok("|||".to_string());
-            }
+        let n = match Self::read_complete_response(&mut stream, &mut buffer, self.timeout).await {
+            Ok(n) => n,
             Err(_) => {
                 let _ = stream.shutdown().await;
                 return Ok("|||".to_string());
@@ -230,6 +227,45 @@ impl JarmFingerprinter {
 
         // Parse ServerHello
         parse_server_hello(&buffer, probe)
+    }
+
+    async fn read_complete_response(
+        stream: &mut TcpStream,
+        buffer: &mut [u8],
+        timeout_duration: Duration,
+    ) -> std::io::Result<usize> {
+        use std::io::ErrorKind;
+
+        let mut total = 0;
+        while total < buffer.len() {
+            match timeout(timeout_duration, stream.read(&mut buffer[total..])).await {
+                Ok(Ok(0)) => break,
+                Ok(Ok(n)) => total += n,
+                Ok(Err(err))
+                    if total == 0
+                        && matches!(err.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock) =>
+                {
+                    return Ok(0);
+                }
+                Ok(Err(err))
+                    if total > 0
+                        && matches!(
+                            err.kind(),
+                            ErrorKind::TimedOut
+                                | ErrorKind::WouldBlock
+                                | ErrorKind::UnexpectedEof
+                                | ErrorKind::ConnectionReset
+                        ) =>
+                {
+                    break;
+                }
+                Ok(Err(err)) => return Err(err),
+                Err(_) if total > 0 => break,
+                Err(_) => return Ok(0),
+            }
+        }
+
+        Ok(total)
     }
 }
 
@@ -652,6 +688,9 @@ fn extract_version_byte(version_hex: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+    use tokio::time::{Duration, sleep};
 
     #[test]
     fn test_zero_hash() {
@@ -790,5 +829,56 @@ mod tests {
 
         let err = parse_server_hello(&response, probe).unwrap_err();
         assert!(err.to_string().contains("Truncated JARM extension list"));
+    }
+
+    fn build_server_hello_response() -> Vec<u8> {
+        let mut response = vec![
+            0x16, 0x03, 0x03, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x36, 0x03, 0x03,
+        ];
+        response.extend_from_slice(&[0xAA; 32]);
+        response.push(0x00);
+        response.extend_from_slice(&[0x00, 0x9c]);
+        response.push(0x00);
+        response.extend_from_slice(&[0x00, 0x04]);
+        response.extend_from_slice(&[0x00, 0x10, 0x00, 0x00]);
+        let rec_len = (response.len() - 5) as u16;
+        response[3..5].copy_from_slice(&rec_len.to_be_bytes());
+        let hs_len = (response.len() - 9) as u32;
+        response[6..9].copy_from_slice(&[(hs_len >> 16) as u8, (hs_len >> 8) as u8, hs_len as u8]);
+        response
+    }
+
+    #[tokio::test]
+    async fn test_read_complete_response_handles_fragmented_server_hello() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let probe = get_probes("example.com", 443).unwrap().remove(0);
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = socket.read(&mut buf).await.unwrap();
+            let response = build_server_hello_response();
+            let split = 19;
+            let _ = socket.write_all(&response[..split]).await;
+            sleep(Duration::from_millis(50)).await;
+            let _ = socket.write_all(&response[split..]).await;
+        });
+
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        stream.write_all(&probe.build()).await.unwrap();
+
+        let mut buffer = vec![0u8; 1484];
+        let n = JarmFingerprinter::read_complete_response(
+            &mut stream,
+            &mut buffer,
+            Duration::from_secs(2),
+        )
+        .await
+        .expect("read should succeed");
+
+        assert_eq!(n, build_server_hello_response().len());
+
+        server.await.unwrap();
     }
 }
