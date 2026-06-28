@@ -60,6 +60,7 @@ impl Protocol {
             Protocol::TLS11,
             Protocol::TLS12,
             Protocol::TLS13,
+            Protocol::QUIC,
         ]
     }
 }
@@ -238,10 +239,10 @@ mod tests {
     }
 
     #[test]
-    fn test_protocol_all_excludes_quic() {
+    fn test_protocol_all_includes_quic() {
         let all = Protocol::all();
         assert!(all.contains(&Protocol::TLS12));
-        assert!(!all.contains(&Protocol::QUIC));
+        assert!(all.contains(&Protocol::QUIC));
     }
 
     #[test]

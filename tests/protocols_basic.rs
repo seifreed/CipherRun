@@ -21,10 +21,10 @@ fn test_protocol_is_deprecated() {
 }
 
 #[test]
-fn test_protocol_all_excludes_quic() {
+fn test_protocol_all_includes_quic() {
     let all = Protocol::all();
     assert!(all.contains(&Protocol::TLS12));
-    assert!(!all.contains(&Protocol::QUIC));
+    assert!(all.contains(&Protocol::QUIC));
 }
 
 #[test]
