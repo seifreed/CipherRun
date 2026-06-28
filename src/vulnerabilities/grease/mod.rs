@@ -244,6 +244,7 @@ impl GreaseTester {
         let stream =
             crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None).await?;
 
+        crate::utils::insecure_tls::ensure_ring_provider();
         let config = rustls::ClientConfig::builder()
             .dangerous()
             .with_custom_certificate_verifier(Arc::new(GreaseNoVerifier))

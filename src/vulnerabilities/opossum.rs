@@ -150,6 +150,7 @@ impl OpossumTester {
         let mut root_store = RootCertStore::empty();
         root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
 
+        crate::utils::insecure_tls::ensure_ring_provider();
         let config = ClientConfig::builder()
             .with_root_certificates(root_store)
             .with_no_client_auth();
@@ -197,6 +198,7 @@ impl OpossumTester {
         root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
 
         // Use a permissive config that doesn't verify certificates
+        crate::utils::insecure_tls::ensure_ring_provider();
         let config = ClientConfig::builder()
             .dangerous()
             .with_custom_certificate_verifier(Arc::new(NoVerifier))
@@ -253,6 +255,7 @@ impl OpossumTester {
 
         let mut root_store = RootCertStore::empty();
         root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+        crate::utils::insecure_tls::ensure_ring_provider();
         let config = ClientConfig::builder()
             .with_root_certificates(root_store)
             .with_no_client_auth();

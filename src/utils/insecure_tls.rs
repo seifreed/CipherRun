@@ -16,7 +16,21 @@ use std::sync::Arc;
 /// This must only be used for inspection paths. It deliberately bypasses trust
 /// validation — the retrieved certificate is analysed, never trusted for a
 /// secure channel.
+/// Ensure the rustls `ring` crypto provider is installed as the process default.
+///
+/// rustls 0.23 does not auto-select a crypto provider: building a `ClientConfig`
+/// with the default `ClientConfig::builder()` panics with
+/// "Could not automatically determine the process-level CryptoProvider" if no
+/// provider has been installed. The binary installs it in `main`, but library
+/// consumers (and integration tests that bypass `main`) hit the panic. Call
+/// this from every config builder so the library is self-contained.
+/// `install_default()` is idempotent — a no-op once a provider is installed.
+pub(crate) fn ensure_ring_provider() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+}
+
 pub fn insecure_client_config() -> ClientConfig {
+    ensure_ring_provider();
     ClientConfig::builder()
         .dangerous()
         .with_custom_certificate_verifier(Arc::new(NoCertVerifier))
@@ -32,6 +46,7 @@ pub fn insecure_client_config() -> ClientConfig {
 pub fn insecure_client_config_with_versions(
     versions: &[&'static rustls::SupportedProtocolVersion],
 ) -> ClientConfig {
+    ensure_ring_provider();
     ClientConfig::builder_with_protocol_versions(versions)
         .dangerous()
         .with_custom_certificate_verifier(Arc::new(NoCertVerifier))
@@ -51,6 +66,7 @@ pub fn insecure_client_config_with_client_auth(
     cert_chain: Vec<rustls::pki_types::CertificateDer<'static>>,
     key: rustls::pki_types::PrivateKeyDer<'static>,
 ) -> std::result::Result<ClientConfig, rustls::Error> {
+    ensure_ring_provider();
     ClientConfig::builder()
         .dangerous()
         .with_custom_certificate_verifier(Arc::new(NoCertVerifier))
