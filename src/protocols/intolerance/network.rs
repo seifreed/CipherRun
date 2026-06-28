@@ -23,15 +23,47 @@ impl IntoleranceTester {
         writer.flush().await?;
 
         let mut response = vec![0u8; BUFFER_SIZE_MAX_TLS_RECORD];
-        match timeout(self.read_timeout, reader.read(&mut response)).await {
-            Ok(Ok(n)) if n > 0 => {
-                response.truncate(n);
-                Ok(response)
+        let mut total = 0usize;
+        loop {
+            if total >= response.len() {
+                break;
             }
-            _ => Err(TlsError::Timeout {
-                duration: Some(self.read_timeout),
-            }),
+            let n = match timeout(self.read_timeout, reader.read(&mut response[total..])).await {
+                Ok(Ok(n)) => n,
+                Ok(Err(source))
+                    if total > 0
+                        && matches!(
+                            source.kind(),
+                            std::io::ErrorKind::ConnectionReset
+                                | std::io::ErrorKind::ConnectionAborted
+                                | std::io::ErrorKind::BrokenPipe
+                                | std::io::ErrorKind::UnexpectedEof
+                        ) =>
+                {
+                    break;
+                }
+                Ok(Err(source)) => return Err(TlsError::IoError { source }),
+                Err(_) if total == 0 => {
+                    return Err(TlsError::Timeout {
+                        duration: Some(self.read_timeout),
+                    })
+                }
+                Err(_) => break,
+            };
+            if n == 0 {
+                break;
+            }
+            total += n;
         }
+
+        if total == 0 {
+            return Err(TlsError::Timeout {
+                duration: Some(self.read_timeout),
+            });
+        }
+
+        response.truncate(total);
+        Ok(response)
     }
 
     pub(super) async fn send_and_read_alert(&self, client_hello: &[u8]) -> Result<Option<u8>> {
@@ -256,6 +288,43 @@ mod tests {
             err.to_string()
                 .contains("TLS alert record length does not match buffer length")
         );
+    }
+
+    #[tokio::test]
+    async fn test_send_and_read_alert_handles_fragmented_alert() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("local addr should exist");
+
+        tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let mut buf = vec![0u8; 256];
+                let _ = socket.read(&mut buf).await;
+                socket
+                    .write_all(&[0x15, 0x03, 0x03])
+                    .await
+                    .expect("write alert prefix");
+                tokio::time::sleep(Duration::from_millis(20)).await;
+                socket
+                    .write_all(&[0x00, 0x02, 0x02, 0x46])
+                    .await
+                    .expect("write alert body");
+            }
+        });
+
+        let target = Target::with_ips("example.test".to_string(), addr.port(), vec![addr.ip()])
+            .expect("target should build");
+        let tester = IntoleranceTester::new(target).with_sni(Some("example.test".to_string()));
+
+        let client_hello = tester
+            .build_invalid_sni_client_hello()
+            .expect("hello should build");
+        let alert = tester
+            .send_and_read_alert(&client_hello)
+            .await
+            .expect("fragmented alert should parse");
+        assert_eq!(alert, Some(0x46));
     }
 
     #[tokio::test]
