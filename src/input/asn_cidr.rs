@@ -308,10 +308,20 @@ pub enum ExpandedInput {
 }
 
 impl ExpandedInput {
-    /// Get total target count
+    /// Get total target count.
+    ///
+    /// For ASN input the per-network sizes are summed with `saturating_add`:
+    /// IPv6 prefixes /64 and larger are represented by the `u64::MAX` sentinel
+    /// (the real count exceeds `u64`), and summing two or more of those with a
+    /// plain `Iterator::sum` overflowed and panicked in debug builds. The
+    /// saturated sum keeps the "uncountably many" sentinel meaning and never
+    /// overflows.
     pub fn target_count(&self) -> u64 {
         match self {
-            ExpandedInput::Asn { networks, .. } => networks.iter().map(Self::network_size).sum(),
+            ExpandedInput::Asn { networks, .. } => networks
+                .iter()
+                .map(Self::network_size)
+                .fold(0u64, |acc, n| acc.saturating_add(n)),
             ExpandedInput::Cidr { expansion, .. } => expansion.total_ips(),
             ExpandedInput::Ip { .. } => 1,
             ExpandedInput::Hostname { .. } => 1,
@@ -494,6 +504,33 @@ mod tests {
         let expanded = ExpandedInput::Asn {
             asn: "AS64496".to_string(),
             networks: vec![network],
+        };
+        assert_eq!(expanded.target_count(), u64::MAX);
+    }
+
+    #[test]
+    fn test_expanded_input_target_count_multiple_large_ipv6_does_not_overflow() {
+        // Two IPv6 /64 prefixes each report the u64::MAX "uncountably many"
+        // sentinel. A plain `Iterator::sum` over them overflowed and panicked in
+        // debug builds; the saturated sum must stay at u64::MAX instead.
+        let net1: IpNetwork = "2001:db8::/64".parse().expect("valid network");
+        let net2: IpNetwork = "2001:db9::/64".parse().expect("valid network");
+        let expanded = ExpandedInput::Asn {
+            asn: "AS64496".to_string(),
+            networks: vec![net1, net2],
+        };
+        assert_eq!(expanded.target_count(), u64::MAX);
+    }
+
+    #[test]
+    fn test_expanded_input_target_count_asn_saturates_across_networks() {
+        // A /64 sentinel plus a real /120 (256 addresses) must saturate to
+        // u64::MAX, not overflow.
+        let big: IpNetwork = "2001:db8::/64".parse().expect("valid network");
+        let small: IpNetwork = "2001:db8:1::/120".parse().expect("valid network");
+        let expanded = ExpandedInput::Asn {
+            asn: "AS64496".to_string(),
+            networks: vec![big, small],
         };
         assert_eq!(expanded.target_count(), u64::MAX);
     }
