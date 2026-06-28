@@ -146,17 +146,33 @@ impl CipherTester {
             cipher_db()?.get_recommended_ciphers()
         };
 
-        let compatible_ciphers: Vec<CipherSuite> = ciphers
-            .into_iter()
-            .filter(|c| self.is_cipher_compatible_with_protocol(c, protocol))
-            .collect();
-
-        for cipher in &compatible_ciphers {
-            u16::from_str_radix(&cipher.hexcode, 16).map_err(|error| {
-                crate::TlsError::ParseError {
-                    message: format!("Invalid cipher hexcode '{}': {}", cipher.hexcode, error),
+        let mut compatible_ciphers: Vec<CipherSuite> = Vec::new();
+        for cipher in ciphers {
+            if !self.is_cipher_compatible_with_protocol(&cipher, protocol) {
+                continue;
+            }
+            match u16::from_str_radix(&cipher.hexcode, 16) {
+                Ok(_) => compatible_ciphers.push(cipher),
+                Err(_) if u64::from_str_radix(&cipher.hexcode, 16).is_ok() => {
+                    // Valid hex but wider than u16: an SSLv2 24-bit cipher "kind"
+                    // value (e.g. 0x06,0x00,0x40). TLS ClientHello cipher suites are
+                    // 16-bit (RFC 5246), so such suites cannot be offered here and
+                    // are not enumerable by the TLS-probing path. SSLv2 cipher
+                    // support is detected by the dedicated DROWN/Sweet32 testers,
+                    // so skip the entry instead of letting the u16 conversion
+                    // abort the entire cipher batch (which broke full cipher
+                    // enumeration via `--each-cipher` / `test_all_protocols`).
+                    continue;
                 }
-            })?;
+                Err(error) => {
+                    return Err(crate::TlsError::ParseError {
+                        message: format!(
+                            "Invalid cipher hexcode '{}': {}",
+                            cipher.hexcode, error
+                        ),
+                    });
+                }
+            }
         }
 
         let mut max_concurrent_tests = self.max_concurrent_tests.max(1);

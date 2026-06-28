@@ -169,7 +169,10 @@ async fn test_rc4_cipher_detection() {
         .await
         .expect("Failed to parse target");
 
-    let tester = CipherTester::new(target);
+    // RC4 is excluded from the recommended cipher set, so the default
+    // (recommended-only) tester never offers it and could never detect it.
+    // Enable all-ciphers mode so RC4 suites are actually probed.
+    let tester = CipherTester::new(target).test_all(true);
 
     // Test all protocols to see which support RC4
     let result = tester.test_all_protocols().await;
@@ -207,7 +210,10 @@ async fn test_3des_cipher_detection() {
         .await
         .expect("Failed to parse target");
 
-    let tester = CipherTester::new(target);
+    // 3DES is excluded from the recommended cipher set, so the default
+    // (recommended-only) tester never offers it and could never detect it.
+    // Enable all-ciphers mode so 3DES suites are actually probed.
+    let tester = CipherTester::new(target).test_all(true);
     let result = tester.test_all_protocols().await;
 
     match result {

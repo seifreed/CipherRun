@@ -774,6 +774,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_all_protocols_all_ciphers_does_not_error_on_sslv2_kind_values() {
+        // Regression: with `test_all(true)` the cipher DB includes SSLv2 suites
+        // whose 24-bit "kind" hexcodes (e.g. 0x060040) do not fit a u16. The TLS
+        // ClientHello cipher list is 16-bit, so those suites are not TLS-offerable
+        // and must be skipped (not errored) — otherwise full cipher enumeration
+        // (`--each-cipher` / `test_all_protocols`) aborted with
+        // "Invalid cipher hexcode '060040': number too large to fit in target type".
+        let addr = spawn_fake_tls_server(0xc02f, 0, 600).await;
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            addr.port(),
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .expect("target should build");
+
+        let tester = CipherTester::new(target)
+            .test_all(true)
+            .with_connect_timeout(Duration::from_millis(200))
+            .with_read_timeout(Duration::from_millis(200))
+            .with_max_concurrent_tests(4)
+            .with_connection_pool_size(0);
+
+        let results = tester
+            .test_all_protocols()
+            .await
+            .expect("all-ciphers enumeration must not abort on SSLv2 kind values");
+
+        // The fake server answers every TLS probe with a ServerHello, so at
+        // least one TLS protocol must report supported ciphers.
+        assert!(!results.is_empty());
+    }
+
+    #[tokio::test]
     async fn test_cipher_handshake_only_invalid_hexcode() {
         let tester = CipherTester::new(dummy_target());
         let mut cipher = make_cipher("TLSv1.2", "0001", "RSA", "AES", 128, false);
