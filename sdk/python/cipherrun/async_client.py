@@ -4,34 +4,79 @@ This module provides an async client for the CipherRun API using aiohttp.
 """
 
 import asyncio
-from typing import Optional, Dict, Any
+from typing import Any, Dict, Optional
 from urllib.parse import quote, urljoin
 
 import aiohttp
 from aiohttp import ClientTimeout
 
+from .exceptions import (
+    APIError,
+    handle_http_error,
+)
+from .exceptions import (
+    ConnectionError as SDKConnectionError,
+)
+from .exceptions import (
+    TimeoutError as SDKTimeoutError,
+)
 from .models import (
-    ScanRequest,
-    ScanResponse,
-    ScanStatusResponse,
-    ScanResults,
-    ScanOptions,
     CertificateListResponse,
     CertificateSummary,
     ComplianceReport,
-    PolicyRequest,
-    PolicyResponse,
+    HealthResponse,
     PolicyEvaluationRequest,
     PolicyEvaluationResponse,
+    PolicyRequest,
+    PolicyResponse,
     ScanHistoryResponse,
+    ScanOptions,
+    ScanRequest,
+    ScanResponse,
+    ScanResults,
+    ScanStatusResponse,
     StatsResponse,
-    HealthResponse,
 )
-from .exceptions import (
-    handle_http_error,
-    TimeoutError as SDKTimeoutError,
-    ConnectionError as SDKConnectionError,
-)
+
+
+def _parse_retry_after(value: Optional[str], default: int = 5) -> int:
+    """Parse a Retry-After header value into a whole number of seconds.
+
+    RFC 7231 allows Retry-After to be either a delta-seconds value or an
+    HTTP-date. A bare ``int(...)`` raises ``ValueError`` on the date form,
+    which is not an ``aiohttp`` exception and so would escape the SDK's error
+    contract as a raw exception. Parse defensively and fall back to
+    ``default`` for anything non-numeric or out of range.
+    """
+    if value is None:
+        return default
+    text = value.strip()
+    if not text:
+        return default
+    try:
+        seconds = int(text)
+    except (TypeError, ValueError):
+        return default
+    return seconds if seconds > 0 else default
+
+
+async def _safe_error_data(response: "aiohttp.ClientResponse") -> Dict[str, Any]:
+    """Best-effort extraction of a JSON error body from an aiohttp response.
+
+    ``response.content_length`` is ``None`` for chunked transfers, so gating on
+    it drops the error body entirely for chunked responses. Worse, a non-JSON
+    error body (e.g. an HTML 500 page from a proxy) makes ``response.json()``
+    raise ``aiohttp.ContentTypeError`` (a ``ClientError``), which the outer
+    ``except aiohttp.ClientError`` then re-raised as a generic connection
+    error — masking the real HTTP status. Read the body defensively and fall
+    back to an empty dict so ``handle_http_error`` still reports the correct
+    status code.
+    """
+    try:
+        return await response.json()
+    except (aiohttp.ClientError, ValueError, asyncio.TimeoutError):
+        return {}
+
 
 
 class AsyncCipherRunClient:
@@ -132,34 +177,34 @@ class AsyncCipherRunClient:
                 ) as response:
                     if response.status == 429 and retry_on_rate_limit:
                         if rate_limit_retries >= max_rate_limit_retries:
-                            error_data = await response.json() if response.content_length else {}
+                            error_data = await _safe_error_data(response)
                             raise handle_http_error(response.status, error_data)
 
-                        retry_after = int(response.headers.get("Retry-After", 5))
+                        retry_after = _parse_retry_after(response.headers.get("Retry-After"), 5)
                         rate_limit_retries += 1
                         await asyncio.sleep(retry_after)
                         continue
 
                     if response.status >= 400:
-                        error_data = await response.json() if response.content_length else {}
+                        error_data = await _safe_error_data(response)
                         raise handle_http_error(response.status, error_data)
 
                     return await response.json()
 
             except asyncio.TimeoutError as e:
                 if retry_count >= self.max_retries:
-                    raise SDKTimeoutError(f"Request timed out after {timeout or self.timeout}s: {str(e)}")
+                    raise SDKTimeoutError(f"Request timed out after {timeout or self.timeout}s: {str(e)}") from e
                 retry_count += 1
                 await asyncio.sleep(self.retry_backoff ** retry_count)
 
             except aiohttp.ClientConnectionError as e:
                 if retry_count >= self.max_retries:
-                    raise SDKConnectionError(f"Connection failed: {str(e)}")
+                    raise SDKConnectionError(f"Connection failed: {str(e)}") from e
                 retry_count += 1
                 await asyncio.sleep(self.retry_backoff ** retry_count)
 
             except aiohttp.ClientError as e:
-                raise SDKConnectionError(f"Request failed: {str(e)}")
+                raise SDKConnectionError(f"Request failed: {str(e)}") from e
 
     async def create_scan(
         self,
@@ -275,9 +320,9 @@ class AsyncCipherRunClient:
             if status.status == "completed":
                 return await self.get_scan_results(scan_id)
             elif status.status == "failed":
-                raise Exception(f"Scan failed: {status.error}")
+                raise APIError(f"Scan failed: {status.error}")
             elif status.status == "cancelled":
-                raise Exception("Scan was cancelled")
+                raise APIError("Scan was cancelled")
 
             await asyncio.sleep(poll_interval)
 

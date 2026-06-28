@@ -4,36 +4,80 @@ This module provides the main synchronous client for the CipherRun API.
 """
 
 import time
-from typing import Optional, List, Dict, Any, Iterator
+from typing import Any, Dict, Optional
 from urllib.parse import quote, urljoin
 
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+from .exceptions import (
+    APIError,
+    handle_http_error,
+)
+from .exceptions import (
+    ConnectionError as SDKConnectionError,
+)
+from .exceptions import (
+    TimeoutError as SDKTimeoutError,
+)
 from .models import (
-    ScanRequest,
-    ScanResponse,
-    ScanStatusResponse,
-    ScanResults,
-    ScanOptions,
     CertificateListResponse,
     CertificateSummary,
     ComplianceReport,
-    PolicyRequest,
-    PolicyResponse,
+    HealthResponse,
     PolicyEvaluationRequest,
     PolicyEvaluationResponse,
+    PolicyRequest,
+    PolicyResponse,
     ScanHistoryResponse,
+    ScanOptions,
+    ScanRequest,
+    ScanResponse,
+    ScanResults,
+    ScanStatusResponse,
     StatsResponse,
-    HealthResponse,
 )
-from .exceptions import (
-    handle_http_error,
-    RateLimitError,
-    TimeoutError as SDKTimeoutError,
-    ConnectionError as SDKConnectionError,
-)
+
+
+def _parse_retry_after(value: Optional[str], default: int = 5) -> int:
+    """Parse a Retry-After header value into a whole number of seconds.
+
+    RFC 7231 allows Retry-After to be either a delta-seconds value or an
+    HTTP-date. A bare ``int(...)`` raises ``ValueError`` on the date form,
+    which is not a ``requests``/``aiohttp`` exception and so would escape the
+    SDK's error contract as a raw exception. Parse defensively and fall back
+    to ``default`` for anything non-numeric or out of range.
+    """
+    if value is None:
+        return default
+    text = value.strip()
+    if not text:
+        return default
+    try:
+        seconds = int(text)
+    except (TypeError, ValueError):
+        return default
+    return seconds if seconds > 0 else default
+
+
+def _safe_error_data(response: "requests.Response") -> Dict[str, Any]:
+    """Best-effort extraction of a JSON error body.
+
+    A non-JSON error body (e.g. an HTML 500 page from a proxy) used to make
+    ``response.json()`` raise ``JSONDecodeError`` inside the error branch,
+    which the outer ``except RequestException`` then re-raised as a generic
+    connection error — masking the real HTTP status. Parse defensively and
+    fall back to an empty dict so ``handle_http_error`` still reports the
+    correct status code.
+    """
+    if not response.content:
+        return {}
+    try:
+        return response.json()
+    except ValueError:
+        return {}
+
 
 
 class CipherRunClient:
@@ -128,26 +172,26 @@ class CipherRunClient:
 
                 if response.status_code == 429 and retry_on_rate_limit:
                     if rate_limit_retries >= max_rate_limit_retries:
-                        error_data = response.json() if response.content else {}
+                        error_data = _safe_error_data(response)
                         raise handle_http_error(response.status_code, error_data)
 
-                    retry_after = int(response.headers.get("Retry-After", 5))
+                    retry_after = _parse_retry_after(response.headers.get("Retry-After"), 5)
                     rate_limit_retries += 1
                     time.sleep(retry_after)
                     continue
 
                 if not response.ok:
-                    error_data = response.json() if response.content else {}
+                    error_data = _safe_error_data(response)
                     raise handle_http_error(response.status_code, error_data)
 
                 return response
 
             except requests.exceptions.Timeout as e:
-                raise SDKTimeoutError(f"Request timed out after {timeout}s: {str(e)}")
+                raise SDKTimeoutError(f"Request timed out after {timeout}s: {str(e)}") from e
             except requests.exceptions.ConnectionError as e:
-                raise SDKConnectionError(f"Connection failed: {str(e)}")
+                raise SDKConnectionError(f"Connection failed: {str(e)}") from e
             except requests.exceptions.RequestException as e:
-                raise SDKConnectionError(f"Request failed: {str(e)}")
+                raise SDKConnectionError(f"Request failed: {str(e)}") from e
 
     def create_scan(
         self,
@@ -264,9 +308,9 @@ class CipherRunClient:
             if status.status == "completed":
                 return self.get_scan_results(scan_id)
             elif status.status == "failed":
-                raise Exception(f"Scan failed: {status.error}")
+                raise APIError(f"Scan failed: {status.error}")
             elif status.status == "cancelled":
-                raise Exception("Scan was cancelled")
+                raise APIError("Scan was cancelled")
 
             time.sleep(poll_interval)
 

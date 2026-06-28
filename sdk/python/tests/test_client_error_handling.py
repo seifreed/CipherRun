@@ -1,0 +1,209 @@
+"""Tests for CipherRun SDK error-handling robustness.
+
+These cover bugs fixed in client.py / async_client.py:
+
+1. ``Retry-After`` parsing must not raise on the HTTP-date form (RFC 7231
+   permits delta-seconds OR HTTP-date). Previously a bare ``int(...)`` raised
+   an uncaught ``ValueError`` that escaped the SDK's ``CipherRunError``
+   contract.
+2. ``wait_for_scan`` must raise a ``CipherRunError`` subclass (``APIError``)
+   on failed/cancelled scans, not a bare ``Exception`` (its docstring claims
+   ``BadRequestError``/``CipherRunError``).
+3. A non-JSON error body (e.g. an HTML 500 page) must not mask the real HTTP
+   status as a generic connection error.
+"""
+
+import asyncio
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+from cipherrun.async_client import (
+    AsyncCipherRunClient,
+)
+from cipherrun.async_client import (
+    _parse_retry_after as async_parse_retry_after,
+)
+from cipherrun.async_client import (
+    _safe_error_data as async_safe_error_data,
+)
+from cipherrun.client import (
+    CipherRunClient,
+    _parse_retry_after,
+    _safe_error_data,
+)
+from cipherrun.exceptions import APIError, CipherRunError, RateLimitError
+from cipherrun.models import ScanStatusResponse
+
+
+def test_parse_retry_after_accepts_delta_seconds():
+    assert _parse_retry_after("10") == 10
+    assert _parse_retry_after("0", default=7) == 7  # non-positive falls back
+    assert _parse_retry_after("-3", default=7) == 7
+
+
+def test_parse_retry_after_accepts_http_date():
+    # RFC 7231 allows an HTTP-date. A bare int() would raise ValueError here.
+    assert _parse_retry_after("Wed, 21 Oct 2025 07:28:00 GMT", default=5) == 5
+
+
+def test_parse_retry_after_handles_missing_and_garbage():
+    assert _parse_retry_after(None) == 5
+    assert _parse_retry_after(None, default=9) == 9
+    assert _parse_retry_after("") == 5
+    assert _parse_retry_after("not-a-number") == 5
+    assert async_parse_retry_after("Wed, 21 Oct 2025 07:28:00 GMT") == 5
+
+
+def test_safe_error_data_returns_empty_for_invalid_json():
+    response = MagicMock()
+    response.content = b"<html>Internal Server Error</html>"
+    response.json = MagicMock(side_effect=ValueError("not json"))
+    assert _safe_error_data(response) == {}
+
+
+def test_safe_error_data_parses_valid_json():
+    response = MagicMock()
+    response.content = b'{"message": "boom"}'
+    response.json = MagicMock(return_value={"message": "boom"})
+    assert _safe_error_data(response) == {"message": "boom"}
+
+
+def test_safe_error_data_empty_body():
+    response = MagicMock()
+    response.content = b""
+    response.json = MagicMock(return_value={})
+    assert _safe_error_data(response) == {}
+
+
+def _failed_status(status: str, error: str = "something broke") -> ScanStatusResponse:
+    return ScanStatusResponse(
+        scan_id="scan-1",
+        status=status,
+        progress=100,
+        error=error if status == "failed" else None,
+    )
+
+
+def test_wait_for_scan_failed_raises_api_error_not_bare_exception(monkeypatch):
+    client = CipherRunClient(api_key="k")
+    monkeypatch.setattr(client, "get_scan_status", lambda _sid: _failed_status("failed"))
+    with pytest.raises(APIError) as exc:
+        client.wait_for_scan("scan-1", poll_interval=0, timeout=5)
+    assert "Scan failed" in str(exc.value)
+    # Must be catchable as the base CipherRunError (the SDK contract).
+    with pytest.raises(CipherRunError):
+        client.wait_for_scan("scan-1", poll_interval=0, timeout=5)
+
+
+def test_wait_for_scan_cancelled_raises_api_error(monkeypatch):
+    client = CipherRunClient(api_key="k")
+    monkeypatch.setattr(client, "get_scan_status", lambda _sid: _failed_status("cancelled"))
+    with pytest.raises(APIError):
+        client.wait_for_scan("scan-1", poll_interval=0, timeout=5)
+
+
+def test_rate_limit_retry_does_not_crash_on_http_date_retry_after(monkeypatch):
+    """A 429 with an HTTP-date Retry-After must retry, not raise ValueError."""
+    client = CipherRunClient(api_key="k")
+
+    call_count = {"n": 0}
+
+    class FakeResponse:
+        status_code = 429
+        content = b""
+        headers = {"Retry-After": "Wed, 21 Oct 2025 07:28:00 GMT"}
+
+        def json(self):
+            return {}
+
+    def fake_request(*a, **kw):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            return FakeResponse()
+        # Second call: success.
+        ok = MagicMock()
+        ok.ok = True
+        ok.status_code = 200
+        ok.json = MagicMock(return_value={"scan_id": "x", "status": "queued"})
+        return ok
+
+    monkeypatch.setattr(client.session, "request", fake_request)
+    monkeypatch.setattr("time.sleep", lambda *_a, **_kw: None)
+
+    response = client._make_request("GET", "/api/v1/scan/x")
+    assert response.status_code == 200
+    assert call_count["n"] == 2
+
+
+def test_rate_limit_exhausted_raises_rate_limit_error_not_value_error(monkeypatch):
+    client = CipherRunClient(api_key="k")
+
+    class FakeResponse:
+        status_code = 429
+        content = b""
+        headers = {"Retry-After": "Wed, 21 Oct 2025 07:28:00 GMT"}
+
+        def json(self):
+            return {"message": "slow down"}
+
+    monkeypatch.setattr(client.session, "request", lambda *a, **kw: FakeResponse())
+    monkeypatch.setattr("time.sleep", lambda *_a, **_kw: None)
+
+    with pytest.raises(RateLimitError):
+        client._make_request("GET", "/api/v1/scan/x", max_rate_limit_retries=0)
+
+
+# --- Async variants ---
+
+
+def test_async_safe_error_data_invalid_json():
+    response = AsyncMock()
+    response.json = AsyncMock(side_effect=ValueError("not json"))
+    assert asyncio.run(async_safe_error_data(response)) == {}
+
+
+def test_async_safe_error_data_valid_json():
+    response = AsyncMock()
+    response.json = AsyncMock(return_value={"message": "boom"})
+    assert asyncio.run(async_safe_error_data(response)) == {
+        "message": "boom"
+    }
+
+
+def test_async_wait_for_scan_failed_raises_api_error(monkeypatch):
+    client = AsyncCipherRunClient(api_key="k")
+
+    async def fake_status(_sid):
+        return _failed_status("failed")
+
+    monkeypatch.setattr(client, "get_scan_status", fake_status)
+
+    async def run():
+        await client.wait_for_scan("scan-1", poll_interval=0, timeout=5)
+
+    with pytest.raises(APIError):
+        asyncio.run(run())
+
+
+# --- SecurityGrade / RatingResult Unverified ---
+
+
+def test_rating_result_accepts_unverified_grade():
+    """The Rust API can return grade "Unverified" (cert could not be retrieved).
+
+    The SDK's SecurityGrade enum previously lacked that variant, so parsing a
+    rating with grade "Unverified" raised a pydantic ValidationError.
+    """
+    from cipherrun.models import RatingResult, SecurityGrade
+
+    result = RatingResult(
+        grade="Unverified",
+        score=0,
+        certificate_score=0,
+        protocol_score=0,
+        key_exchange_score=0,
+        cipher_strength_score=0,
+    )
+    assert result.grade == SecurityGrade.UNVERIFIED
+    assert result.grade == "Unverified"

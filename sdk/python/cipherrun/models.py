@@ -42,6 +42,13 @@ class SecurityGrade(str, Enum):
     F = "F"
     T = "T"
     M = "M"
+    # The certificate phase ran but no certificate could be retrieved
+    # (transport/handshake failure), so trust could not be assessed. This
+    # mirrors the Rust `Grade::Unverified` variant (serialized as "Unverified");
+    # omitting it made the SDK raise a ValidationError when the API returned a
+    # rating whose grade was "Unverified" (e.g. a target whose certificate
+    # could not be retrieved).
+    UNVERIFIED = "Unverified"
 
 
 # Request Models
