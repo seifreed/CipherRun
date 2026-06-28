@@ -180,9 +180,15 @@ impl TicketbleedTester {
                             stream.write_all(&client_hello2).await?;
 
                             let mut response = vec![0u8; 16384];
-                            match timeout(Duration::from_secs(3), stream.read(&mut response)).await
+                            match self
+                                .read_complete_tls_record(
+                                    &mut stream,
+                                    &mut response,
+                                    Duration::from_secs(3),
+                                )
+                                .await
                             {
-                                Ok(Ok(m)) if m > 0 => {
+                                Ok(m) if m > 0 => {
                                     let resumed_response = response.get(..m).ok_or_else(|| {
                                         crate::TlsError::ParseError {
                                             message:
@@ -252,6 +258,38 @@ impl TicketbleedTester {
             }
         }
         total
+    }
+
+    async fn read_complete_tls_record(
+        &self,
+        stream: &mut tokio::net::TcpStream,
+        buffer: &mut [u8],
+        per_read_timeout: Duration,
+    ) -> std::io::Result<usize> {
+        let mut total = 0usize;
+        loop {
+            if total >= buffer.len() {
+                break;
+            }
+            let Some(read_buffer) = buffer.get_mut(total..) else {
+                break;
+            };
+            let n = match timeout(per_read_timeout, stream.read(read_buffer)).await {
+                Ok(Ok(n)) => n,
+                _ => break,
+            };
+            if n == 0 {
+                break;
+            }
+            total += n;
+            if total >= 5 {
+                let record_len = u16::from_be_bytes([buffer[3], buffer[4]]) as usize;
+                if total >= 5 + record_len {
+                    break;
+                }
+            }
+        }
+        Ok(total)
     }
 
     /// Build ClientHello with SessionTicket extension using ClientHelloBuilder
@@ -1004,6 +1042,55 @@ mod tests {
             "delayed NewSessionTicket must be consumed before the follow-up probe; got {result:?}"
         );
         assert!(result.details.contains("follow-up ClientHello"));
+    }
+
+    #[tokio::test]
+    async fn test_ticketbleed_reads_split_resumed_response_record() {
+        use tokio::io::AsyncWriteExt;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener");
+        let port = listener.local_addr().expect("local addr").port();
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept");
+            let mut buf = vec![0u8; 4096];
+            let _ = socket.read(&mut buf).await.expect("read request");
+
+            let response = handshake_record(&[
+                server_hello_record_with_session_id(&TICKETBLEED_SESSION_ID_MARKER),
+            ]);
+            socket
+                .write_all(&response[..4])
+                .await
+                .expect("write first chunk");
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            socket
+                .write_all(&response[4..])
+                .await
+                .expect("write second chunk");
+        });
+
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+        let tester = TicketbleedTester::new(target);
+
+        let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .expect("connect");
+        stream.write_all(b"hello").await.expect("write request");
+        let mut buffer = vec![0u8; 64];
+        let n = tester
+            .read_complete_tls_record(&mut stream, &mut buffer, Duration::from_secs(2))
+            .await
+            .expect("record should read");
+        assert!(n >= 5);
+
+        server.await.expect("server task");
     }
 
     #[tokio::test]
