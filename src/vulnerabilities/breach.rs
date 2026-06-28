@@ -97,7 +97,7 @@ impl BreachTester {
         let hostname = self.target.hostname.clone();
         tokio::task::spawn_blocking(move || -> Result<Option<bool>> {
             use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
-            use std::io::{Read, Write};
+            use std::io::Write;
 
             // Certificate validity is irrelevant to whether the server enables HTTP
             // response compression; a verifying connector would fail the handshake
@@ -121,9 +121,10 @@ impl BreachTester {
 
                     ssl_stream.write_all(request.as_bytes())?;
 
-                    // Read response headers
+                    // Read as much of the HTTP response as is available so a
+                    // fragmented header block does not get misclassified.
                     let mut buffer = vec![0u8; 8192];
-                    let n = ssl_stream.read(&mut buffer)?;
+                    let n = Self::read_http_response(&mut ssl_stream, &mut buffer)?;
 
                     if n > 0 {
                         let bytes = buffer.get(..n).ok_or_else(|| crate::TlsError::ParseError {
@@ -184,7 +185,7 @@ impl BreachTester {
 
             match connector.connect(&hostname, std_stream) {
                 Ok(mut ssl_stream) => {
-                    use std::io::{Read, Write};
+                    use std::io::Write;
 
                     // Send request with unique marker in query string
                     let marker = "BREACH_TEST_MARKER_12345";
@@ -199,9 +200,10 @@ impl BreachTester {
 
                     ssl_stream.write_all(request.as_bytes())?;
 
-                    // Read response
+                    // Read as much of the HTTP response as is available so a
+                    // fragmented body does not get misclassified.
                     let mut buffer = vec![0u8; 16384];
-                    let n = ssl_stream.read(&mut buffer)?;
+                    let n = Self::read_http_response(&mut ssl_stream, &mut buffer)?;
 
                     if n > 0 {
                         let bytes = buffer.get(..n).ok_or_else(|| crate::TlsError::ParseError {
@@ -244,7 +246,7 @@ impl BreachTester {
         let hostname = self.target.hostname.clone();
         tokio::task::spawn_blocking(move || -> Result<Option<bool>> {
             use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
-            use std::io::{Read, Write};
+            use std::io::Write;
 
             // Certificate validity is irrelevant to whether the server enables HTTP
             // response compression; a verifying connector would fail the handshake
@@ -268,9 +270,10 @@ impl BreachTester {
 
                     ssl_stream.write_all(request.as_bytes())?;
 
-                    // Read response
+                    // Read as much of the HTTP response as is available so a
+                    // fragmented body does not get misclassified.
                     let mut buffer = vec![0u8; 16384];
-                    let n = ssl_stream.read(&mut buffer)?;
+                    let n = Self::read_http_response(&mut ssl_stream, &mut buffer)?;
 
                     if n > 0 {
                         let bytes = buffer.get(..n).ok_or_else(|| crate::TlsError::ParseError {
@@ -356,6 +359,42 @@ impl BreachTester {
             Some(false)
         }
     }
+
+    fn read_http_response(
+        ssl_stream: &mut openssl::ssl::SslStream<std::net::TcpStream>,
+        buffer: &mut [u8],
+    ) -> std::io::Result<usize> {
+        use std::io::{ErrorKind, Read};
+
+        let mut total = 0;
+        while total < buffer.len() {
+            match ssl_stream.read(&mut buffer[total..]) {
+                Ok(0) => break,
+                Ok(n) => total += n,
+                Err(err)
+                    if total == 0
+                        && matches!(err.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock) =>
+                {
+                    return Ok(0);
+                }
+                Err(err)
+                    if total > 0
+                        && matches!(
+                            err.kind(),
+                            ErrorKind::TimedOut
+                                | ErrorKind::WouldBlock
+                                | ErrorKind::UnexpectedEof
+                                | ErrorKind::ConnectionReset
+                        ) =>
+                {
+                    break;
+                }
+                Err(err) => return Err(err),
+            }
+        }
+
+        Ok(total)
+    }
 }
 
 /// BREACH test result
@@ -375,6 +414,47 @@ pub struct BreachTestResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::{IpAddr, Ipv4Addr};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+    use tokio::time::{sleep, Duration};
+    use tokio_rustls::TlsAcceptor;
+
+    async fn spawn_fragmented_https_server() -> u16 {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
+        let cert_der = rustls_pki_types::CertificateDer::from(cert.cert.der().as_ref().to_vec());
+        let key_der = rustls_pki_types::PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der());
+        let key = rustls_pki_types::PrivateKeyDer::Pkcs8(key_der);
+
+        let config = rustls::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(vec![cert_der], key)
+            .unwrap();
+        let acceptor = TlsAcceptor::from(std::sync::Arc::new(config));
+
+        tokio::spawn(async move {
+            if let Ok((stream, _)) = listener.accept().await
+                && let Ok(mut tls_stream) = acceptor.accept(stream).await
+            {
+                let mut request = [0u8; 4096];
+                let _ = tls_stream.read(&mut request).await;
+                let _ = tls_stream
+                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Encoding: g")
+                    .await;
+                sleep(Duration::from_millis(50)).await;
+                let _ = tls_stream
+                    .write_all(b"zip\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                    .await;
+                let _ = tls_stream.shutdown().await;
+            }
+        });
+
+        port
+    }
 
     #[test]
     fn test_breach_result_creation() {
@@ -482,5 +562,24 @@ mod tests {
             ),
             Some(true)
         );
+    }
+
+    #[tokio::test]
+    async fn test_http_compression_reads_fragmented_header_block() {
+        let port = spawn_fragmented_https_server().await;
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
+        )
+        .expect("target should build");
+
+        let tester = BreachTester::new(target);
+        let compression = tester
+            .test_http_compression()
+            .await
+            .expect("compression probe should not error");
+
+        assert_eq!(compression, Some(true));
     }
 }

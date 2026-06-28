@@ -196,9 +196,15 @@ impl DrownTester {
         let client_hello = self.build_sslv2_client_hello();
         stream.write_all(&client_hello).await?;
 
-        // Read response
+        // Read the full SSLv2 response record so fragmented headers do not get
+        // misclassified as truncation.
         let mut buffer = vec![0u8; 4096];
-        match timeout(Duration::from_secs(3), stream.read(&mut buffer)).await {
+        match timeout(
+            Duration::from_secs(3),
+            Self::read_complete_sslv2_record(&mut stream, &mut buffer),
+        )
+        .await
+        {
             Ok(Ok(n)) if n > 0 => {
                 let response = buffer.get(..n).ok_or_else(|| crate::TlsError::ParseError {
                     message: "DROWN SSLv2 response read length exceeded buffer".to_string(),
@@ -334,9 +340,15 @@ impl DrownTester {
         let client_hello = self.build_sslv2_client_hello_export();
         stream.write_all(&client_hello).await?;
 
-        // Read response
+        // Read the full SSLv2 response record so fragmented headers do not get
+        // misclassified as truncation.
         let mut buffer = vec![0u8; 4096];
-        match timeout(Duration::from_secs(3), stream.read(&mut buffer)).await {
+        match timeout(
+            Duration::from_secs(3),
+            Self::read_complete_sslv2_record(&mut stream, &mut buffer),
+        )
+        .await
+        {
             Ok(Ok(n)) if n >= 2 => {
                 let response = buffer.get(..n).ok_or_else(|| crate::TlsError::ParseError {
                     message: "DROWN export response read length exceeded buffer".to_string(),
@@ -481,6 +493,54 @@ impl DrownTester {
 
         hello
     }
+
+    async fn read_complete_sslv2_record(
+        stream: &mut tokio::net::TcpStream,
+        buffer: &mut [u8],
+    ) -> std::io::Result<usize> {
+        use std::io::ErrorKind;
+        use tokio::time::timeout;
+
+        let mut total = 0;
+        while total < buffer.len() {
+            match timeout(Duration::from_secs(3), stream.read(&mut buffer[total..])).await {
+                Ok(Ok(0)) => break,
+                Ok(Ok(n)) => {
+                    total += n;
+                    if total >= 2 {
+                        let record_len = (((buffer[0] & 0x7f) as usize) << 8) | buffer[1] as usize;
+                        let record_total = 2usize.saturating_add(record_len);
+                        if total >= record_total {
+                            break;
+                        }
+                    }
+                }
+                Ok(Err(err))
+                    if total == 0
+                        && matches!(err.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock) =>
+                {
+                    return Ok(0);
+                }
+                Ok(Err(err))
+                    if total > 0
+                        && matches!(
+                            err.kind(),
+                            ErrorKind::TimedOut
+                                | ErrorKind::WouldBlock
+                                | ErrorKind::UnexpectedEof
+                                | ErrorKind::ConnectionReset
+                        ) =>
+                {
+                    break;
+                }
+                Ok(Err(err)) => return Err(err),
+                Err(_) if total > 0 => break,
+                Err(_) => return Ok(0),
+            }
+        }
+
+        Ok(total)
+    }
 }
 
 /// DROWN test result
@@ -500,6 +560,7 @@ pub struct DrownTestResult {
 mod tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::time::{sleep, Duration};
 
     fn byte_at(data: &[u8], offset: usize) -> Option<u8> {
         data.get(offset).copied()
@@ -705,6 +766,40 @@ mod tests {
         assert!(!result.sslv2_supported);
         assert_eq!(result.sslv2_status, None);
         assert!(result.details.contains("inconclusive"), "{result:?}");
+    }
+
+    #[tokio::test]
+    async fn test_sslv2_reads_fragmented_response_record() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener");
+        let port = listener.local_addr().expect("local addr").port();
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept");
+            let mut buf = [0u8; 128];
+            let _ = socket.read(&mut buf).await.expect("read client hello");
+            let mut response = vec![0x80, 0x40, 0x04];
+            response.extend(vec![0u8; 63]);
+            let _ = socket.write_all(&response[..1]).await;
+            sleep(Duration::from_millis(50)).await;
+            let _ = socket.write_all(&response[1..]).await;
+        });
+
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+
+        let result = DrownTester::new(target)
+            .test_sslv2()
+            .await
+            .expect("sslv2 probe should not error");
+        server.await.expect("server task");
+
+        assert_eq!(result, Sslv2Status::Confirmed);
     }
 
     #[test]
