@@ -139,12 +139,15 @@ pub(super) async fn send_malformed_record(
             let start_time = Instant::now();
             stream.write_all(&malformed).await?;
 
-            // Try to read response
+            // Try to read the full response so a fragmented alert record does
+            // not get misclassified as absent.
             let mut response = vec![0u8; 1024];
-            let alert_type = match timeout(Duration::from_secs(2), stream.read(&mut response)).await
-            {
-                Ok(Ok(n)) if n > 0 => find_alert_description(&response, n)?,
-                _ => None,
+            let bytes_read =
+                super::PoodleTester::read_response_bytes(&mut stream, &mut response).await?;
+            let alert_type = if bytes_read > 0 {
+                find_alert_description(&response, bytes_read)?
+            } else {
+                None
             };
 
             Ok(ServerResponse {
@@ -163,6 +166,46 @@ pub(super) async fn send_malformed_record(
     }
 }
 
+impl<'a> super::PoodleTester<'a> {
+    async fn read_response_bytes(
+        stream: &mut tokio::net::TcpStream,
+        buffer: &mut [u8],
+    ) -> std::io::Result<usize> {
+        use std::io::ErrorKind;
+
+        let mut total = 0;
+        while total < buffer.len() {
+            match timeout(Duration::from_secs(2), stream.read(&mut buffer[total..])).await {
+                Ok(Ok(0)) => break,
+                Ok(Ok(n)) => total += n,
+                Ok(Err(err))
+                    if total == 0
+                        && matches!(err.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock) =>
+                {
+                    return Ok(0);
+                }
+                Ok(Err(err))
+                    if total > 0
+                        && matches!(
+                            err.kind(),
+                            ErrorKind::TimedOut
+                                | ErrorKind::WouldBlock
+                                | ErrorKind::UnexpectedEof
+                                | ErrorKind::ConnectionReset
+                        ) =>
+                {
+                    break;
+                }
+                Ok(Err(err)) => return Err(err),
+                Err(_) if total > 0 => break,
+                Err(_) => return Ok(0),
+            }
+        }
+
+        Ok(total)
+    }
+}
+
 /// Measure response time for a specific record type
 pub(super) async fn measure_response_time(
     target: &Target,
@@ -176,6 +219,9 @@ pub(super) async fn measure_response_time(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+    use tokio::time::{sleep, Duration};
 
     #[test]
     fn test_find_alert_description_rejects_truncated_alert() {
@@ -225,5 +271,38 @@ mod tests {
             find_alert_description(&response, response.len()).expect("alert should parse"),
             Some(0x46)
         );
+    }
+
+    #[tokio::test]
+    async fn test_read_response_bytes_handles_fragmented_alert_record() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 1024];
+            let _ = socket.read(&mut buf).await.unwrap();
+            let alert = [CONTENT_TYPE_ALERT, 0x03, 0x03, 0x00, 0x02, 0x02, 0x46];
+            let _ = socket.write_all(&alert[..3]).await;
+            sleep(Duration::from_millis(50)).await;
+            let _ = socket.write_all(&alert[3..]).await;
+        });
+
+        let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .unwrap();
+        stream.write_all(b"hello").await.unwrap();
+
+        let mut response = [0u8; 32];
+        let n = super::super::PoodleTester::read_response_bytes(&mut stream, &mut response)
+            .await
+            .expect("read should succeed");
+        assert_eq!(n, 7);
+        assert_eq!(
+            find_alert_description(&response, n).expect("alert should parse"),
+            Some(0x46)
+        );
+
+        server.await.unwrap();
     }
 }
