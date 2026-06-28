@@ -5,7 +5,7 @@ use crate::Result;
 use crate::constants::TLS_HANDSHAKE_TIMEOUT;
 use crate::starttls::response;
 use crate::utils::network::Target;
-use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::time::{Duration, timeout};
 
@@ -33,13 +33,6 @@ enum StarttlsInjectionProtocol {
     Smtp,
     Imap,
     Pop3,
-}
-
-fn response_text(buffer: &[u8], n: usize, context: &str) -> Result<String> {
-    let bytes = buffer.get(..n).ok_or_else(|| crate::TlsError::ParseError {
-        message: format!("STARTTLS injection {} read length exceeded buffer", context),
-    })?;
-    Ok(String::from_utf8_lossy(bytes).into_owned())
 }
 
 impl StarttlsInjectionProtocol {
@@ -231,26 +224,23 @@ impl StarttlsInjectionTester {
         &self,
         mut stream: TcpStream,
     ) -> Result<StarttlsInjectionStatus> {
-        let mut buf = vec![0u8; 4096];
-
         // Read server greeting
-        let n = match timeout(Duration::from_secs(2), stream.read(&mut buf)).await {
-            Ok(Ok(n)) if n > 0 => n,
+        let mut reader = BufReader::new(&mut stream);
+        let response = match timeout(Duration::from_secs(2), response::read_line(&mut reader)).await {
+            Ok(Ok(line)) if !line.is_empty() => line,
             _ => return Ok(StarttlsInjectionStatus::Inconclusive),
         };
-        let response = response_text(&buf, n, "IMAP greeting")?;
 
         if !response.starts_with("* OK") {
             return Ok(StarttlsInjectionStatus::NotVulnerable);
         }
 
         // Send CAPABILITY to check STARTTLS support
-        stream.write_all(b"a001 CAPABILITY\r\n").await?;
-        let n = match timeout(Duration::from_secs(2), stream.read(&mut buf)).await {
-            Ok(Ok(n)) if n > 0 => n,
+        reader.get_mut().write_all(b"a001 CAPABILITY\r\n").await?;
+        let response = match timeout(Duration::from_secs(2), response::read_line(&mut reader)).await {
+            Ok(Ok(line)) if !line.is_empty() => line,
             _ => return Ok(StarttlsInjectionStatus::Inconclusive),
         };
-        let response = response_text(&buf, n, "IMAP capability")?;
 
         if !Self::response_has_ascii_token(&response, "STARTTLS") {
             return Ok(StarttlsInjectionStatus::NotVulnerable);
@@ -258,13 +248,25 @@ impl StarttlsInjectionTester {
 
         // Attempt injection: STARTTLS followed by LOGIN command
         let injection_payload = b"a002 STARTTLS\r\na003 LOGIN test test\r\n";
-        stream.write_all(injection_payload).await?;
+        reader.get_mut().write_all(injection_payload).await?;
 
-        let n = match timeout(Duration::from_secs(2), stream.read(&mut buf)).await {
-            Ok(Ok(n)) if n > 0 => n,
-            _ => return Ok(StarttlsInjectionStatus::Inconclusive),
-        };
-        let response = response_text(&buf, n, "IMAP injection")?;
+        let mut response = String::new();
+        for _ in 0..4 {
+            let line = match timeout(Duration::from_secs(2), response::read_line(&mut reader)).await
+            {
+                Ok(Ok(line)) if !line.is_empty() => line,
+                Ok(Err(_)) if response.is_empty() => {
+                    return Ok(StarttlsInjectionStatus::Inconclusive);
+                }
+                Ok(Err(_)) => break,
+                Err(_) if response.is_empty() => {
+                    return Ok(StarttlsInjectionStatus::Inconclusive);
+                }
+                Err(_) => break,
+                _ => break,
+            };
+            response.push_str(&line);
+        }
 
         // Vulnerable if server processes LOGIN before TLS upgrade
         // IMAP responses are tagged with the command tag at the start of the line
@@ -309,26 +311,39 @@ impl StarttlsInjectionTester {
         &self,
         mut stream: TcpStream,
     ) -> Result<StarttlsInjectionStatus> {
-        let mut buf = vec![0u8; 4096];
-
         // Read server greeting
-        let n = match timeout(Duration::from_secs(2), stream.read(&mut buf)).await {
-            Ok(Ok(n)) if n > 0 => n,
+        let mut reader = BufReader::new(&mut stream);
+        let response = match timeout(Duration::from_secs(2), response::read_line(&mut reader)).await {
+            Ok(Ok(line)) if !line.is_empty() => line,
             _ => return Ok(StarttlsInjectionStatus::Inconclusive),
         };
-        let response = response_text(&buf, n, "POP3 greeting")?;
 
         if !response.starts_with("+OK") {
             return Ok(StarttlsInjectionStatus::NotVulnerable);
         }
 
         // Check STLS support
-        stream.write_all(b"CAPA\r\n").await?;
-        let n = match timeout(Duration::from_secs(2), stream.read(&mut buf)).await {
-            Ok(Ok(n)) if n > 0 => n,
-            _ => return Ok(StarttlsInjectionStatus::Inconclusive),
-        };
-        let response = response_text(&buf, n, "POP3 capability")?;
+        reader.get_mut().write_all(b"CAPA\r\n").await?;
+        let mut response = String::new();
+        for _ in 0..8 {
+            let line = match timeout(Duration::from_secs(2), response::read_line(&mut reader)).await
+            {
+                Ok(Ok(line)) if !line.is_empty() => line,
+                Ok(Err(_)) if response.is_empty() => {
+                    return Ok(StarttlsInjectionStatus::Inconclusive);
+                }
+                Ok(Err(_)) => break,
+                Err(_) if response.is_empty() => {
+                    return Ok(StarttlsInjectionStatus::Inconclusive);
+                }
+                Err(_) => break,
+                _ => break,
+            };
+            response.push_str(&line);
+            if line.trim() == "." {
+                break;
+            }
+        }
 
         if !Self::response_has_ascii_token(&response, "STLS") {
             return Ok(StarttlsInjectionStatus::NotVulnerable);
@@ -336,13 +351,25 @@ impl StarttlsInjectionTester {
 
         // Attempt injection: STLS followed by USER command
         let injection_payload = b"STLS\r\nUSER injection\r\n";
-        stream.write_all(injection_payload).await?;
+        reader.get_mut().write_all(injection_payload).await?;
 
-        let n = match timeout(Duration::from_secs(2), stream.read(&mut buf)).await {
-            Ok(Ok(n)) if n > 0 => n,
-            _ => return Ok(StarttlsInjectionStatus::Inconclusive),
-        };
-        let response = response_text(&buf, n, "POP3 injection")?;
+        let mut response = String::new();
+        for _ in 0..4 {
+            let line = match timeout(Duration::from_secs(2), response::read_line(&mut reader)).await
+            {
+                Ok(Ok(line)) if !line.is_empty() => line,
+                Ok(Err(_)) if response.is_empty() => {
+                    return Ok(StarttlsInjectionStatus::Inconclusive);
+                }
+                Ok(Err(_)) => break,
+                Err(_) if response.is_empty() => {
+                    return Ok(StarttlsInjectionStatus::Inconclusive);
+                }
+                Err(_) => break,
+                _ => break,
+            };
+            response.push_str(&line);
+        }
 
         // Vulnerable if USER command is processed before TLS
         // Improved detection: Check for specific response patterns
@@ -496,8 +523,8 @@ pub struct StarttlsInjectionResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::AsyncReadExt;
     use tokio::net::TcpListener;
-    use tokio::time::timeout;
 
     #[test]
     fn test_starttls_injection_struct() {
@@ -544,7 +571,7 @@ mod tests {
                 let mut buf = [0u8; 4096];
 
                 for response in responses {
-                    let _ = timeout(Duration::from_secs(2), socket.read(&mut buf)).await;
+                    let _ = socket.read(&mut buf).await;
                     let _ = socket.write_all(response).await;
                 }
             }
@@ -620,6 +647,70 @@ mod tests {
         let tester = StarttlsInjectionTester::new(target);
 
         let status = tester.test_smtp_injection_status().await.unwrap();
+        server.await.unwrap();
+
+        assert_eq!(status, StarttlsInjectionStatus::Vulnerable);
+    }
+
+    #[tokio::test]
+    async fn test_imap_injection_reads_split_capability_response() {
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            socket.write_all(b"* OK IMAP4rev1\r\n").await.unwrap();
+            let mut buf = [0u8; 128];
+            let _ = socket.read(&mut buf).await.unwrap();
+            socket.write_all(b"* CAPABILITY IMAP4rev1 ").await.unwrap();
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            socket.write_all(b"STARTTLS\r\na001 OK\r\n").await.unwrap();
+            let _ = socket.read(&mut buf).await.unwrap();
+            socket.write_all(b"a002 OK Begin TLS\r\na003 OK LOGIN\r\n").await.unwrap();
+        });
+
+        let target = Target::with_ips(
+            "127.0.0.1".to_string(),
+            port,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+        let tester = StarttlsInjectionTester::new(target);
+        let status = tester.test_imap_injection_status().await.unwrap();
+        server.await.unwrap();
+
+        assert_eq!(status, StarttlsInjectionStatus::Vulnerable);
+    }
+
+    #[tokio::test]
+    async fn test_pop3_injection_reads_split_capability_response() {
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            socket.write_all(b"+OK POP3 server\r\n").await.unwrap();
+            let mut buf = [0u8; 128];
+            let _ = socket.read(&mut buf).await.unwrap();
+            socket.write_all(b"+OK CAPA\r\nST").await.unwrap();
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            socket.write_all(b"LS\r\n.\r\n").await.unwrap();
+            let _ = socket.read(&mut buf).await.unwrap();
+            socket.write_all(b"+OK STLS\r\n+OK USER\r\n").await.unwrap();
+        });
+
+        let target = Target::with_ips(
+            "127.0.0.1".to_string(),
+            port,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+        let tester = StarttlsInjectionTester::new(target);
+        let status = tester.test_pop3_injection_status().await.unwrap();
         server.await.unwrap();
 
         assert_eq!(status, StarttlsInjectionStatus::Vulnerable);
