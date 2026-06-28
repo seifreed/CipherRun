@@ -56,11 +56,18 @@ impl ProtocolDetector {
             .map_err(|_| crate::TlsError::Other("Connection timeout".to_string()))??;
 
         let mut banner = vec![0u8; 1024];
-        let n = timeout(read_timeout, stream.read(&mut banner))
-            .await
-            .map_err(|_| crate::TlsError::Timeout {
-                duration: Some(read_timeout),
-            })??;
+        let n = match timeout(read_timeout, stream.read(&mut banner)).await {
+            Ok(Ok(n)) => n,
+            Ok(Err(error)) => return Err(error.into()),
+            Err(_) if port == 80 || port == 443 || port == 8080 => {
+                return Self::detect_http(&mut stream).await;
+            }
+            Err(_) => {
+                return Err(crate::TlsError::Timeout {
+                    duration: Some(read_timeout),
+                });
+            }
+        };
 
         let banner_bytes = banner.get(..n).ok_or_else(|| crate::TlsError::ParseError {
             message: "Protocol banner read length exceeded buffer".to_string(),
@@ -325,6 +332,36 @@ mod tests {
             .await
             .expect("test assertion should succeed");
         let detected = ProtocolDetector::detect_http(&mut stream)
+            .await
+            .expect("test assertion should succeed");
+
+        assert_eq!(detected.protocol, ApplicationProtocol::Http);
+        assert!(
+            detected
+                .version
+                .as_deref()
+                .unwrap_or("")
+                .starts_with("HTTP/")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_detect_by_banner_http_port_without_banner_falls_back_to_http() {
+        let listener = TcpListener::bind(("127.0.0.1", 8080)).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        tokio::spawn(async move {
+            if let Ok((mut stream, _)) = listener.accept().await {
+                let mut buf = [0u8; 256];
+                let _ = stream.read(&mut buf).await;
+                stream
+                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+                    .await
+                    .unwrap();
+            }
+        });
+
+        let detected = ProtocolDetector::detect_by_banner("127.0.0.1", port)
             .await
             .expect("test assertion should succeed");
 
