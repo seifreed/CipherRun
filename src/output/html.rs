@@ -23,7 +23,7 @@ const HTML_TEMPLATE: &str = r#"<!DOCTYPE html>
         .grade-A-plus, .grade-A { background: #27ae60; color: white; }
         .grade-A-minus, .grade-B-plus, .grade-B { background: #3498db; color: white; }
         .grade-B-minus, .grade-C { background: #f39c12; color: white; }
-        .grade-D, .grade-E, .grade-F { background: #e74c3c; color: white; }
+        .grade-D, .grade-E, .grade-F, .grade-T, .grade-M { background: #e74c3c; color: white; }
         .grade-Unverified { background: #95a5a6; color: white; font-size: 1.5em; }
         .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; margin: 20px 0; }
         .summary-card { background: #f8f9fa; padding: 20px; border-radius: 8px; border-left: 4px solid #3498db; }
@@ -227,6 +227,41 @@ mod tests {
         let html = generate_html_report(&results).expect("test assertion should succeed");
         assert!(html.contains("CipherRun Security Scan Report"));
         assert!(html.contains("example.com:443"));
+    }
+
+    #[test]
+    fn test_html_grade_class_red_for_trust_and_mismatch_grades() {
+        // Grades T (certificate not trusted) and M (hostname mismatch) are failure
+        // grades and must render with a red grade-box class, matching Grade::color()
+        // (F/T/M -> red). Previously the CSS only coloured F, leaving T/M unstyled.
+        for grade in [Grade::T, Grade::M] {
+            let results = ScanResults {
+                target: "example.com:443".to_string(),
+                rating: Some(RatingResults {
+                    ssl_rating: Some(RatingResult {
+                        grade,
+                        score: 0,
+                        certificate_score: 0,
+                        protocol_score: 0,
+                        key_exchange_score: 0,
+                        cipher_strength_score: 0,
+                        warnings: Vec::new(),
+                    }),
+                }),
+                ..Default::default()
+            };
+            let html = generate_html_report(&results).expect("test assertion should succeed");
+            // The grade-box must carry the matching red class.
+            let expected_class = match grade {
+                Grade::T => "grade-T",
+                Grade::M => "grade-M",
+                _ => unreachable!(),
+            };
+            assert!(
+                html.contains(expected_class),
+                "grade {grade:?} must emit class {expected_class}"
+            );
+        }
     }
 
     #[test]
