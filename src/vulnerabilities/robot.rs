@@ -548,15 +548,8 @@ impl RobotTester {
         let finished = self.build_finished();
         stream.write_all(&finished).await?;
 
-        // Read server's response
-        let mut response = vec![0u8; 1024];
-        match timeout(Duration::from_secs(2), stream.read(&mut response)).await {
-            Ok(Ok(n)) if n > 0 => {
-                response.truncate(n);
-                Ok(Some(response))
-            }
-            _ => Ok(None),
-        }
+        self.read_first_response_record(&mut stream, Duration::from_secs(2))
+            .await
     }
 
     /// Build ClientHello with RSA key exchange using ClientHelloBuilder
@@ -647,6 +640,31 @@ impl RobotTester {
             0x00,
             0x00, // Verify data (invalid)
         ]
+    }
+
+    async fn read_first_response_record(
+        &self,
+        stream: &mut tokio::net::TcpStream,
+        timeout_duration: Duration,
+    ) -> Result<Option<Vec<u8>>> {
+        let mut header = [0u8; 5];
+        match timeout(timeout_duration, stream.read_exact(&mut header)).await {
+            Ok(Ok(_)) => {}
+            _ => return Ok(None),
+        }
+
+        let record_len = u16::from_be_bytes([header[3], header[4]]) as usize;
+        let total_len = match 5usize.checked_add(record_len) {
+            Some(len) if len <= 1024 => len,
+            _ => return Ok(None),
+        };
+
+        let mut response = vec![0u8; total_len];
+        response[..5].copy_from_slice(&header);
+        match timeout(timeout_duration, stream.read_exact(&mut response[5..])).await {
+            Ok(Ok(_)) => Ok(Some(response)),
+            _ => Ok(None),
+        }
     }
 }
 
@@ -891,5 +909,32 @@ mod tests {
     fn test_alert_description_code_rejects_trailing_bytes() {
         let response = [0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x46, 0x00];
         assert_eq!(alert_description_code(&response), None);
+    }
+
+    #[tokio::test]
+    async fn test_robot_reads_fragmented_final_alert_record() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let (mut client, mut server) = tokio::io::duplex(64);
+        let writer = tokio::spawn(async move {
+            server.write_all(&[0x15, 0x03, 0x03]).await.unwrap();
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            server.write_all(&[0x00, 0x02, 0x02, 0x46]).await.unwrap();
+        });
+
+        let mut header = [0u8; 5];
+        timeout(Duration::from_secs(2), client.read_exact(&mut header))
+            .await
+            .unwrap()
+            .unwrap();
+        let record_len = u16::from_be_bytes([header[3], header[4]]) as usize;
+        let mut response = vec![0u8; 5 + record_len];
+        response[..5].copy_from_slice(&header);
+        timeout(Duration::from_secs(2), client.read_exact(&mut response[5..]))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(&response, &[0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x46]);
+
+        writer.await.unwrap();
     }
 }
