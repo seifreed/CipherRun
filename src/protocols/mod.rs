@@ -105,6 +105,7 @@ impl From<u16> for Protocol {
             0x0302 => Protocol::TLS11,
             0x0303 => Protocol::TLS12,
             0x0304 => Protocol::TLS13,
+            0x0305 => Protocol::QUIC,
             _ => {
                 tracing::warn!(
                     "Unknown protocol version 0x{:04x}, defaulting to TLS 1.2",
@@ -251,5 +252,10 @@ mod tests {
         assert_eq!(protocol, Protocol::TLS12);
         let protocol: Protocol = "SSLv3".parse().expect("should parse");
         assert_eq!(protocol, Protocol::SSLv3);
+    }
+
+    #[test]
+    fn test_protocol_from_hex_includes_quic() {
+        assert_eq!(Protocol::from(0x0305), Protocol::QUIC);
     }
 }
