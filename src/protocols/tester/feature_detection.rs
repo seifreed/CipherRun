@@ -125,6 +125,24 @@ impl ProtocolTester {
             _ => return Ok(None),
         };
 
-        ServerHelloParser::parse(&response).map(Some)
+        // A successfully-read record that is not a parseable ServerHello (e.g. a
+        // TLS alert refusing the offered ciphers, or a truncated/odd handshake)
+        // means the feature (heartbeat / secure renegotiation) status is simply
+        // unknown for this probe — it must NOT propagate as a fatal error. Earlier
+        // this returned `ServerHelloParser::parse(..).map(Some)`, so an alert
+        // response (<43 bytes) surfaced as "ServerHello too short" and, via
+        // detect_heartbeat_extension -> test_protocol -> test_all_protocols
+        // (which propagates the first error), aborted the ENTIRE protocol
+        // enumeration and the whole vulnerability phase (0 results).
+        match ServerHelloParser::parse(&response) {
+            Ok(server_hello) => Ok(Some(server_hello)),
+            Err(error) => {
+                tracing::debug!(
+                    "non-ServerHello response during feature detection ({});                      reporting feature status as unknown",
+                    error
+                );
+                Ok(None)
+            }
+        }
     }
 }

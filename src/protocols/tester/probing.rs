@@ -47,13 +47,43 @@ impl ProtocolTester {
 
         let protocols_to_test = self.protocol_filter.clone().unwrap_or_else(Protocol::all);
 
+        // Isolate per-protocol probe failures: a single protocol erroring
+        // (e.g. a connection reset or an unparseable handshake on one version)
+        // must not discard the results already collected for the others or
+        // abort the whole enumeration. This mirrors the cipher phase's
+        // per-protocol isolation. Previously `.collect::<Result<Vec<_>>>()?`
+        // propagated the first error, which — combined with feature-detection
+        // probe errors — could fail the entire protocol phase and, via the
+        // vulnerability scanner's `detect_protocols`, the whole vulnerability
+        // phase (0 results). An errored protocol is reported as inconclusive.
         let results: Vec<ProtocolTestResult> = stream::iter(protocols_to_test)
-            .map(|protocol| async move { self.test_protocol(protocol).await })
+            .map(|protocol| async move {
+                match self.test_protocol(protocol).await {
+                    Ok(result) => result,
+                    Err(error) => {
+                        tracing::warn!(
+                            "Protocol {:?} probe failed; marking inconclusive so                              other protocols' results are preserved: {}",
+                            protocol,
+                            error
+                        );
+                        ProtocolTestResult {
+                            protocol,
+                            supported: false,
+                            inconclusive: true,
+                            preferred: false,
+                            ciphers_count: 0,
+                            handshake_time_ms: None,
+                            heartbeat_enabled: None,
+                            session_resumption_caching: None,
+                            session_resumption_tickets: None,
+                            secure_renegotiation: None,
+                        }
+                    }
+                }
+            })
             .buffer_unordered(6)
             .collect::<Vec<_>>()
-            .await
-            .into_iter()
-            .collect::<Result<Vec<_>>>()?;
+            .await;
 
         Ok(results)
     }

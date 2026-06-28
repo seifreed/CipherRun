@@ -487,7 +487,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_detect_heartbeat_extension_propagates_parse_errors() {
+    async fn test_detect_heartbeat_extension_returns_none_on_unparseable_server_hello() {
+        // A successfully-read record that is not a parseable ServerHello (here a
+        // 7-byte handshake record, <43 bytes) must NOT propagate as a fatal error.
+        // Earlier it surfaced as "ServerHello too short" and, via test_all_protocols
+        // propagating the first error, aborted the entire protocol enumeration and
+        // the whole vulnerability phase. Feature detection now degrades to
+        // "unknown" (Ok(None)) so a single malformed probe response cannot take down
+        // the rest of the scan.
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("listener should bind");
@@ -507,11 +514,11 @@ mod tests {
             .with_connect_timeout(Duration::from_millis(100))
             .with_read_timeout(Duration::from_millis(100));
 
-        let err = tester
+        let result = tester
             .detect_heartbeat_extension(Protocol::TLS12)
             .await
-            .expect_err("malformed ServerHello should fail");
-        assert!(err.to_string().contains("ServerHello too short"));
+            .expect("unparseable ServerHello must not propagate as an error");
+        assert!(result.is_none(), "heartbeat status should be unknown (None)");
     }
 
     #[tokio::test]
