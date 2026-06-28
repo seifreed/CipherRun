@@ -157,9 +157,27 @@ async fn probe_cipher_at_protocol(
 
     let exchange = tokio::time::timeout(PROBE_READ_TIMEOUT, async {
         stream.write_all(&client_hello).await?;
-        let mut response = vec![0u8; PROBE_BUFFER_SIZE];
-        let n = stream.read(&mut response).await?;
-        Ok::<_, crate::TlsError>((response, n))
+        let mut header = [0u8; 5];
+        if stream.read_exact(&mut header).await.is_err() {
+            return Ok::<_, crate::TlsError>((Vec::new(), 0));
+        }
+
+        let record_len = u16::from_be_bytes([header[3], header[4]]) as usize;
+        let total_len = 5usize.checked_add(record_len).ok_or_else(|| {
+            crate::TlsError::ParseError {
+                message: "Cipher probe record length overflow".to_string(),
+            }
+        })?;
+        if total_len > PROBE_BUFFER_SIZE {
+            return Ok::<_, crate::TlsError>((Vec::new(), 0));
+        }
+
+        let mut response = vec![0u8; total_len];
+        response[..5].copy_from_slice(&header);
+        if stream.read_exact(&mut response[5..]).await.is_err() {
+            return Ok::<_, crate::TlsError>((Vec::new(), 0));
+        }
+        Ok::<_, crate::TlsError>((response, total_len))
     })
     .await;
 
@@ -229,6 +247,9 @@ fn classify_probe_response(response: &[u8], n: usize) -> CipherProbeStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::utils::network::Target;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
 
     fn set_byte(response: &mut [u8], offset: usize, value: u8) {
         *response
@@ -252,6 +273,16 @@ mod tests {
                 ((value >> 8) & 0xff) as u8,
                 (value & 0xff) as u8,
             ]);
+    }
+
+    fn server_hello_record(protocol: Protocol) -> Vec<u8> {
+        let mut response = vec![0u8; MIN_SERVER_HELLO_LEN];
+        set_byte(&mut response, 0, CONTENT_TYPE_HANDSHAKE);
+        set_u16_be(&mut response, 3, (MIN_SERVER_HELLO_LEN - 5) as u16);
+        set_byte(&mut response, 5, HANDSHAKE_TYPE_SERVER_HELLO);
+        set_u24_be(&mut response, 6, MIN_SERVER_HELLO_LEN - 9);
+        set_u16_be(&mut response, 9, protocol.as_hex());
+        response
     }
 
     #[test]
@@ -350,5 +381,35 @@ mod tests {
             classify_probe_response(&[], 0),
             CipherProbeStatus::Inconclusive
         );
+    }
+
+    #[tokio::test]
+    async fn test_probe_cipher_at_protocol_reads_fragmented_serverhello() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = socket.read(&mut buf).await.unwrap();
+
+            let response = server_hello_record(Protocol::TLS12);
+            let split = 6;
+            socket.write_all(&response[..split]).await.unwrap();
+            socket.write_all(&response[split..]).await.unwrap();
+        });
+
+        let target = Target::with_ips(
+            "example.test".to_string(),
+            addr.port(),
+            vec![addr.ip()],
+        )
+        .unwrap();
+
+        let status = probe_cipher_at_protocol(&target, 0x1301, Protocol::TLS12, None, None, None)
+            .await;
+
+        assert_eq!(status, CipherProbeStatus::Supported);
+        server.await.unwrap();
     }
 }
