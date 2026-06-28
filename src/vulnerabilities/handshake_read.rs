@@ -68,7 +68,7 @@ pub(super) fn has_server_hello_done(buf: &[u8]) -> bool {
 ///
 /// Returns the number of bytes actually written into the buffer. Returns 0 if
 /// the stream was closed or timed out before any data arrived.
-pub(super) async fn read_until_server_hello_done(
+pub(crate) async fn read_until_server_hello_done(
     stream: &mut TcpStream,
     buffer: &mut [u8],
     per_read_timeout: Duration,
