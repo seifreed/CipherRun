@@ -207,28 +207,42 @@ impl WinshockTester {
         }
         stream.write_all(&client_hello).await?;
 
-        // Read ServerHello
+        // Read the full ServerHello record so a fragmented handshake does not
+        // get misclassified as inconclusive.
         let mut buffer = vec![0u8; 8192];
-        match timeout(Duration::from_secs(3), stream.read(&mut buffer)).await {
-            Ok(Ok(n)) if n > 0 => {
+        match self
+            .read_complete_tls_record(&mut stream, &mut buffer, Duration::from_secs(3))
+            .await
+        {
+            Ok(n) if n > 0 => {
                 // Send malformed ClientKeyExchange that triggers Winshock
                 let malformed_cke = self.build_malformed_client_key_exchange();
                 stream.write_all(&malformed_cke).await?;
 
                 // Try to read response
                 let mut response = vec![0u8; 1024];
-                match timeout(Duration::from_secs(2), stream.read(&mut response)).await {
-                    Ok(Ok(n)) if n > 0 => {
+                match self
+                    .read_complete_tls_record(&mut stream, &mut response, Duration::from_secs(2))
+                    .await
+                {
+                    Ok(n) if n > 0 => {
                         // Any server response (TLS alert 0x15 or other) means it handled
                         // the malformed CKE without crashing. TCP RST (below) is the
                         // primary Winshock indicator.
                         Ok(MalformedHandshakeStatus::Handled)
                     }
-                    Ok(Ok(_)) => {
+                    Ok(_) => {
                         // Empty response - connection closed without error
                         Ok(MalformedHandshakeStatus::Handled)
                     }
-                    Ok(Err(_)) => {
+                    Err(err)
+                        if matches!(
+                            err.kind(),
+                            std::io::ErrorKind::ConnectionReset
+                                | std::io::ErrorKind::ConnectionAborted
+                                | std::io::ErrorKind::BrokenPipe
+                        ) =>
+                    {
                         // A TCP reset after a deliberately malformed ClientKeyExchange
                         // is the NORMAL response of essentially every TLS stack
                         // (patched Schannel, OpenSSL, BoringSSL, nginx, IIS) and is
@@ -269,6 +283,39 @@ impl WinshockTester {
 
         msg
     }
+
+    async fn read_complete_tls_record(
+        &self,
+        stream: &mut tokio::net::TcpStream,
+        buffer: &mut [u8],
+        timeout_duration: Duration,
+    ) -> std::io::Result<usize> {
+        let mut total = 0usize;
+        loop {
+            if total >= buffer.len() {
+                break;
+            }
+            let Some(read_buf) = buffer.get_mut(total..) else {
+                break;
+            };
+            let n = match timeout(timeout_duration, stream.read(read_buf)).await {
+                Ok(Ok(n)) => n,
+                Ok(Err(err)) => return Err(err),
+                Err(_) => break,
+            };
+            if n == 0 {
+                break;
+            }
+            total += n;
+            if total >= 5 {
+                let record_len = u16::from_be_bytes([buffer[3], buffer[4]]) as usize;
+                if total >= 5 + record_len {
+                    break;
+                }
+            }
+        }
+        Ok(total)
+    }
 }
 
 /// Winshock test result
@@ -283,6 +330,8 @@ pub struct WinshockTestResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::AsyncWriteExt;
+    use tokio::net::TcpListener;
 
     #[test]
     fn test_winshock_result() {
@@ -449,5 +498,36 @@ mod tests {
         assert!(!result.schannel_detected);
         assert!(result.inconclusive, "{result:?}");
         assert!(result.details.contains("inconclusive"), "{result:?}");
+    }
+
+    #[tokio::test]
+    async fn test_winshock_read_complete_tls_record_handles_fragmented_response() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let response = [0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28];
+            let _ = socket.write_all(&response[..2]).await;
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            let _ = socket.write_all(&response[2..]).await;
+        });
+
+        let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .unwrap();
+        let tester = WinshockTester::new(
+            Target::with_ips("localhost".to_string(), port, vec!["127.0.0.1".parse().unwrap()])
+                .unwrap(),
+        );
+        stream.write_all(b"ping").await.unwrap();
+        let mut buffer = [0u8; 32];
+        let n = tester
+            .read_complete_tls_record(&mut stream, &mut buffer, Duration::from_secs(1))
+            .await
+            .unwrap();
+        assert_eq!(n, 7);
+
+        server.await.unwrap();
     }
 }
