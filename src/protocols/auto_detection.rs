@@ -8,7 +8,7 @@ pub use model::{ApplicationProtocol, DetectedProtocol};
 
 use crate::Result;
 use heuristics::{analyze_banner, extract_version, protocol_from_port, requires_starttls};
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::time::{Duration, timeout};
 
@@ -55,27 +55,41 @@ impl ProtocolDetector {
             .await
             .map_err(|_| crate::TlsError::Other("Connection timeout".to_string()))??;
 
-        let mut banner = vec![0u8; 1024];
-        let n = match timeout(read_timeout, stream.read(&mut banner)).await {
-            Ok(Ok(n)) => n,
+        let mut reader = BufReader::new(&mut stream);
+        let mut banner = Vec::new();
+        match timeout(read_timeout, reader.read_until(b'\n', &mut banner)).await {
+            Ok(Ok(0)) if port == 80 || port == 443 || port == 8080 => {
+                return Self::detect_http(reader.into_inner()).await;
+            }
+            Ok(Ok(0)) => {
+                return Ok(DetectedProtocol {
+                    protocol: ApplicationProtocol::Unknown,
+                    version: None,
+                    banner: None,
+                    requires_starttls: false,
+                    confidence: 0.0,
+                });
+            }
+            Ok(Ok(_)) => {}
             Ok(Err(error)) => return Err(error.into()),
             Err(_) if port == 80 || port == 443 || port == 8080 => {
-                return Self::detect_http(&mut stream).await;
+                return Self::detect_http(reader.into_inner()).await;
             }
             Err(_) => {
                 return Err(crate::TlsError::Timeout {
                     duration: Some(read_timeout),
                 });
             }
-        };
+        }
 
-        let banner_bytes = banner.get(..n).ok_or_else(|| crate::TlsError::ParseError {
-            message: "Protocol banner read length exceeded buffer".to_string(),
+        let banner = String::from_utf8(banner).map_err(|error| crate::TlsError::ParseError {
+            message: format!("Invalid protocol banner UTF-8: {error}"),
         })?;
+        let banner_bytes = banner.as_bytes();
         let (protocol, confidence) = analyze_banner(banner_bytes);
 
         if protocol == ApplicationProtocol::Unknown && (port == 80 || port == 443 || port == 8080) {
-            return Self::detect_http(&mut stream).await;
+            return Self::detect_http(reader.into_inner()).await;
         }
 
         Ok(DetectedProtocol {
@@ -343,6 +357,28 @@ mod tests {
                 .unwrap_or("")
                 .starts_with("HTTP/")
         );
+    }
+
+    #[tokio::test]
+    async fn test_detect_by_banner_fragmented_smtp_banner() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        tokio::spawn(async move {
+            if let Ok((mut stream, _)) = listener.accept().await {
+                stream.write_all(b"220 mail.example.com").await.unwrap();
+                stream.flush().await.unwrap();
+                tokio::time::sleep(Duration::from_millis(20)).await;
+                stream.write_all(b" ESMTP Postfix\r\n").await.unwrap();
+            }
+        });
+
+        let detected = ProtocolDetector::detect_by_banner("127.0.0.1", port)
+            .await
+            .expect("test assertion should succeed");
+
+        assert_eq!(detected.protocol, ApplicationProtocol::SmtpStartTls);
+        assert!(detected.banner.as_deref().unwrap_or("").contains("Postfix"));
     }
 
     #[tokio::test]
