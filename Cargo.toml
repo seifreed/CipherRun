@@ -41,6 +41,13 @@ include = [
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
 
+[features]
+# Swagger UI is optional: enabling it requires network access at build time to
+# download the Swagger UI bundle. Keep it off by default so the project builds
+# and tests fully offline.
+swagger = ["dep:utoipa-swagger-ui"]
+default = []
+
 [dependencies]
 # Async runtime
 tokio = { version = "1.52", features = ["full"] }
@@ -77,7 +84,7 @@ axum = { version = "0.8.9", features = ["ws", "macros"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["cors", "compression-full", "trace"] }
 utoipa = { version = "5.2", features = ["axum_extras", "chrono", "uuid"] }
-utoipa-swagger-ui = { version = "9.0", features = ["axum"] }
+utoipa-swagger-ui = { version = "9.0", features = ["axum"], optional = true }
 uuid = { version = "1.23", features = ["v4", "serde"] }
 
 # Rate limiting

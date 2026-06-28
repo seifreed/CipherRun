@@ -138,18 +138,34 @@ impl ApiServer {
             .with_state(self.state.clone())
     }
 
-    /// Build Swagger UI routes
+    /// Build Swagger UI routes.
+    ///
+    /// Swagger UI is only available when the `swagger` cargo feature is enabled
+    /// (it requires downloading the Swagger UI bundle at build time). When the
+    /// feature is disabled, this is a no-op even if `enable_swagger` is set, so
+    /// the rest of the API server builds and runs fully offline.
     fn swagger_routes(&self) -> Router<Arc<AppState>> {
-        if self.config.enable_swagger {
-            use utoipa::OpenApi;
-            use utoipa_swagger_ui::SwaggerUi;
+        #[cfg(feature = "swagger")]
+        {
+            if self.config.enable_swagger {
+                use utoipa::OpenApi;
+                use utoipa_swagger_ui::SwaggerUi;
 
-            let openapi = crate::api::openapi::ApiDoc::openapi();
+                let openapi = crate::api::openapi::ApiDoc::openapi();
 
-            Router::new().merge(SwaggerUi::new("/api/docs").url("/api/docs/openapi.json", openapi))
-        } else {
-            Router::new()
+                return Router::new()
+                    .merge(SwaggerUi::new("/api/docs").url("/api/docs/openapi.json", openapi));
+            }
         }
+        #[cfg(not(feature = "swagger"))]
+        {
+            if self.config.enable_swagger {
+                tracing::warn!(
+                    "Swagger UI requested via config but the `swagger` cargo feature is                      not enabled; build with `--features swagger` to serve it."
+                );
+            }
+        }
+        Router::new()
     }
 
     /// Run the server
