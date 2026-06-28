@@ -264,29 +264,20 @@ impl ProtocolTester {
                 }
 
                 let client_hello = self.build_sslv2_client_hello()?;
-                let mut response = vec![0u8; 1024];
 
                 match timeout(self.read_timeout, async {
                     stream.write_all(&client_hello).await?;
-                    stream.read(&mut response).await
+                    self.read_complete_sslv2_record(&mut stream, 1024).await
                 })
                 .await
                 {
-                    Ok(Ok(n)) if n >= 3 => {
-                        let response =
-                            response
-                                .get(..n)
-                                .ok_or_else(|| crate::TlsError::ParseError {
-                                    message: "SSLv2 probe response read length exceeded buffer"
-                                        .to_string(),
-                                })?;
-                        let header =
-                            response
-                                .get(..3)
-                                .ok_or_else(|| crate::TlsError::ParseError {
-                                    message: "SSLv2 probe response truncated before header"
-                                        .to_string(),
-                                })?;
+                    Ok(Ok(response)) if response.len() >= 3 => {
+                        let header = response
+                            .get(..3)
+                            .ok_or_else(|| crate::TlsError::ParseError {
+                                message: "SSLv2 probe response truncated before header"
+                                    .to_string(),
+                            })?;
                         let header: [u8; 3] =
                             header.try_into().map_err(|_| crate::TlsError::ParseError {
                                 message: "SSLv2 probe response truncated before header".to_string(),
@@ -310,13 +301,14 @@ impl ProtocolTester {
                     // legacy-TLS probe's rationale and keeps the verdict
                     // deterministic (a modern server may either send a TLS alert
                     // or just close in response to an SSLv2 hello).
-                    Ok(Ok(0)) => Ok(ProtocolProbeOutcome::NotSupported),
+                    Ok(Ok(response)) if response.is_empty() => {
+                        Ok(ProtocolProbeOutcome::NotSupported)
+                    }
                     // A reset/abort after the ClientHello is an active refusal.
                     Ok(Err(ref e)) if is_handshake_refusal(e) => {
                         Ok(ProtocolProbeOutcome::NotSupported)
                     }
-                    // 1-2 byte partial reads, read timeouts, or other I/O errors
-                    // are genuinely ambiguous transport states.
+                    // 1-2 byte partial reads are genuinely ambiguous transport states.
                     Ok(Ok(_)) | Ok(Err(_)) | Err(_) => Ok(ProtocolProbeOutcome::Inconclusive),
                 }
             }
@@ -345,6 +337,42 @@ impl ProtocolTester {
         let mut hello = vec![0x80, len];
         hello.extend_from_slice(&body);
         Ok(hello)
+    }
+
+    async fn read_complete_sslv2_record(
+        &self,
+        stream: &mut tokio::net::TcpStream,
+        max_len: usize,
+    ) -> std::io::Result<Vec<u8>> {
+        let mut response = vec![0u8; max_len];
+        let mut total = 0usize;
+
+        loop {
+            if total >= response.len() {
+                break;
+            }
+            let Some(read_buf) = response.get_mut(total..) else {
+                break;
+            };
+            let n = match timeout(self.read_timeout, stream.read(read_buf)).await {
+                Ok(Ok(n)) => n,
+                Ok(Err(err)) => return Err(err),
+                Err(_) => break,
+            };
+            if n == 0 {
+                break;
+            }
+            total += n;
+            if total >= 2 {
+                let record_len = (((response[0] & 0x7f) as usize) << 8) | response[1] as usize;
+                if total >= 2 + record_len {
+                    break;
+                }
+            }
+        }
+
+        response.truncate(total);
+        Ok(response)
     }
 
     /// Probe SSLv3/TLS1.0/TLS1.1 support with a raw ClientHello.
@@ -809,6 +837,47 @@ mod legacy_probe_tests {
             .test_tls_legacy_raw_on_ip(Protocol::TLS10, addr)
             .await
             .expect("fragmented ServerHello should be classified");
+
+        assert_eq!(outcome, ProtocolProbeOutcome::Supported);
+    }
+
+    #[tokio::test]
+    async fn test_sslv2_probe_handles_fragmented_server_hello() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("local addr should exist");
+
+        tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let mut buffer = vec![0u8; 64];
+                let _ = socket.read(&mut buffer).await.unwrap();
+
+                let record = [0x80, 0x06, 0x02, 0x00, 0x00, 0x00];
+                socket.write_all(&record[..2]).await.expect("write first fragment");
+                socket.flush().await.expect("flush first fragment");
+                tokio::time::sleep(Duration::from_millis(20)).await;
+                socket
+                    .write_all(&record[2..])
+                    .await
+                    .expect("write second fragment");
+                socket.flush().await.expect("flush second fragment");
+            }
+        });
+
+        let target = Target::with_ips("example.test".to_string(), addr.port(), vec![addr.ip()])
+            .expect("target should build");
+        let tester = ProtocolTester::new(target)
+            .with_connect_timeout(Duration::from_millis(100))
+            .with_read_timeout(Duration::from_millis(100));
+
+        let outcome = tester
+            .test_sslv2_on_ip(addr)
+            .await
+            .expect("fragmented SSLv2 response should be classified");
 
         assert_eq!(outcome, ProtocolProbeOutcome::Supported);
     }
