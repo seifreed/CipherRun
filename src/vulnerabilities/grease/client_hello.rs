@@ -34,17 +34,12 @@ impl GreaseTester {
             return Err(TlsError::IoError { source: e.into() });
         }
 
-        // Read response
+        // Read the full response so fragmented ServerHello/alert records do
+        // not get misclassified as inconclusive.
         let mut buffer = vec![0u8; 4096];
-        let n = match timeout(Duration::from_secs(10), stream.read(&mut buffer)).await {
-            Ok(Ok(n)) => n,
-            Ok(Err(e)) => return Err(TlsError::IoError { source: e }),
-            Err(_) => {
-                // Timeout could mean the server is silently dropping the connection
-                return Ok(GreaseTestOutcome::Inconclusive(
-                    "Connection timeout after sending ClientHello".to_string(),
-                ));
-            }
+        let n = match Self::read_complete_response(&mut stream, &mut buffer).await {
+            Ok(n) => n,
+            Err(e) => return Err(TlsError::IoError { source: e }),
         };
 
         if n == 0 {
@@ -229,6 +224,44 @@ impl GreaseTester {
             .map_err(|e| crate::TlsError::Other(format!("GREASE ClientHello build failed: {}", e)))
     }
 
+    async fn read_complete_response(
+        stream: &mut tokio::net::TcpStream,
+        buffer: &mut [u8],
+    ) -> std::io::Result<usize> {
+        use std::io::ErrorKind;
+
+        let mut total = 0;
+        while total < buffer.len() {
+            match timeout(Duration::from_secs(10), stream.read(&mut buffer[total..])).await {
+                Ok(Ok(0)) => break,
+                Ok(Ok(n)) => total += n,
+                Ok(Err(err))
+                    if total == 0
+                        && matches!(err.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock) =>
+                {
+                    return Ok(0);
+                }
+                Ok(Err(err))
+                    if total > 0
+                        && matches!(
+                            err.kind(),
+                            ErrorKind::TimedOut
+                                | ErrorKind::WouldBlock
+                                | ErrorKind::UnexpectedEof
+                                | ErrorKind::ConnectionReset
+                        ) =>
+                {
+                    break;
+                }
+                Ok(Err(err)) => return Err(err),
+                Err(_) if total > 0 => break,
+                Err(_) => return Ok(0),
+            }
+        }
+
+        Ok(total)
+    }
+
     /// Test with GREASE cipher suites
     pub(super) async fn test_grease_cipher_suites(&self) -> Result<GreaseTestOutcome> {
         let client_hello = self.build_client_hello_with_grease_ciphers()?;
@@ -314,6 +347,9 @@ fn classify_grease_response(response: &[u8]) -> GreaseTestOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+    use tokio::time::{sleep, Duration};
 
     #[test]
     fn test_classify_grease_response_rejects_malformed_alert_length() {
@@ -346,5 +382,38 @@ mod tests {
             }
             _ => panic!("expected inconclusive"),
         }
+    }
+
+    #[tokio::test]
+    async fn test_read_complete_response_handles_fragmented_alert() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = socket.read(&mut buf).await.unwrap();
+            let response = [0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x46];
+            let _ = socket.write_all(&response[..2]).await;
+            sleep(Duration::from_millis(50)).await;
+            let _ = socket.write_all(&response[2..]).await;
+        });
+
+        let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .unwrap();
+        stream.write_all(b"hello").await.unwrap();
+
+        let mut buffer = [0u8; 32];
+        let n = GreaseTester::read_complete_response(&mut stream, &mut buffer)
+            .await
+            .expect("read should succeed");
+        assert_eq!(n, 7);
+        match classify_grease_response(&buffer[..n]) {
+            GreaseTestOutcome::Rejected => {}
+            other => panic!("expected rejected, got {other:?}"),
+        }
+
+        server.await.unwrap();
     }
 }
