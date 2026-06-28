@@ -50,6 +50,41 @@ impl XmppNegotiator {
             }
         }
     }
+
+    /// Read the STARTTLS response until we see either `<proceed` or `<failure`.
+    async fn read_until_starttls_response<S>(stream: &mut S) -> Result<String>
+    where
+        S: AsyncRead + Unpin,
+    {
+        let mut buffer = vec![0u8; 4096];
+        let mut accumulated = String::new();
+
+        loop {
+            let n = stream.read(&mut buffer).await?;
+            if n == 0 {
+                return Err(crate::error::TlsError::ConnectionClosed {
+                    details: "Connection closed while reading".to_string(),
+                });
+            }
+
+            let bytes = buffer
+                .get(..n)
+                .ok_or_else(|| crate::error::TlsError::ParseError {
+                    message: "XMPP STARTTLS response read length exceeded buffer".to_string(),
+                })?;
+            accumulated.push_str(&String::from_utf8_lossy(bytes));
+
+            if accumulated.contains("<proceed") || accumulated.contains("<failure") {
+                return Ok(accumulated);
+            }
+
+            if accumulated.len() > 65536 {
+                return Err(crate::error::TlsError::Other(
+                    "Response too large".to_string(),
+                ));
+            }
+        }
+    }
 }
 
 #[async_trait]
@@ -88,7 +123,7 @@ impl StarttlsNegotiator for XmppNegotiator {
         stream.flush().await?;
 
         // 4. Read STARTTLS response
-        let response = Self::read_until_tag(stream, "/>").await?;
+        let response = Self::read_until_starttls_response(stream).await?;
 
         if response.contains("<proceed") {
             // STARTTLS negotiation successful
@@ -232,6 +267,38 @@ mod tests {
         let negotiator = XmppNegotiator::new("example.com".to_string());
         let result = negotiator.negotiate_starttls(&mut client).await;
         assert!(result.is_err());
+
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_xmpp_negotiate_starttls_ignores_unrelated_self_closing_tags() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut buffer = vec![0u8; 2048];
+            let _ = stream.read(&mut buffer).await.unwrap();
+
+            stream
+                .write_all(
+                    b"<stream:features><starttls xmlns='urn:ietf:params:xml:ns:xmpp-tls'/></stream:features>",
+                )
+                .await
+                .unwrap();
+
+            let _ = stream.read(&mut buffer).await.unwrap();
+            stream
+                .write_all(b"<stream:error/><proceed xmlns='urn:ietf:params:xml:ns:xmpp-tls'/>")
+                .await
+                .unwrap();
+        });
+
+        let mut client = TcpStream::connect(addr).await.unwrap();
+        let negotiator = XmppNegotiator::new("example.com".to_string());
+        let result = negotiator.negotiate_starttls(&mut client).await;
+        assert!(result.is_ok());
 
         server.await.unwrap();
     }
