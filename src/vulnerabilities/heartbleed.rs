@@ -173,12 +173,7 @@ impl<'a> HeartbleedTester<'a> {
         // Send ClientHello
         let response = match timeout(self.read_timeout, async {
             stream.write_all(&client_hello).await?;
-
-            // Read ServerHello
-            let mut resp = vec![0u8; 16384];
-            let n = stream.read(&mut resp).await?;
-            resp.truncate(n);
-            Ok::<Vec<u8>, std::io::Error>(resp)
+            self.read_complete_tls_record(&mut stream, 16384).await
         })
         .await
         {
@@ -737,6 +732,25 @@ mod tests {
         port
     }
 
+    fn server_hello_with_heartbeat() -> Vec<u8> {
+        let mut data = vec![
+            0x16, 0x03, 0x03, 0x00, 0x00, // TLS record header
+            0x02, 0x00, 0x00, 0x00, // ServerHello header
+            0x03, 0x03, // ServerHello version
+        ];
+        data.extend_from_slice(&[0xAA; 32]);
+        data.push(0x00);
+        data.extend_from_slice(&[0x13, 0x01]);
+        data.push(0x00);
+        data.extend_from_slice(&[0x00, 0x05]);
+        data.extend_from_slice(&[0x00, 0x0f, 0x00, 0x01, 0x01]);
+        let record_len = (data.len() - 5) as u16;
+        write_u16_at(&mut data, 3, record_len);
+        let hs_len = data.len() - 9;
+        write_u24_at(&mut data, 6, hs_len);
+        data
+    }
+
     #[tokio::test]
     #[ignore] // Requires network access
     async fn test_heartbleed_modern_server() {
@@ -774,6 +788,45 @@ mod tests {
                 .details
                 .contains("unexpected TLS response while probing heartbeat extension")
         );
+    }
+
+    #[tokio::test]
+    async fn test_heartbleed_reads_split_initial_serverhello() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buffer = [0u8; 4096];
+            let _ = socket.read(&mut buffer).await;
+            let response = server_hello_with_heartbeat();
+            let split = 12;
+            let _ = socket.write_all(&response[..split]).await;
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            let _ = socket.write_all(&response[split..]).await;
+            let _ = timeout(Duration::from_millis(500), socket.read(&mut buffer)).await;
+        });
+
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
+        )
+        .unwrap();
+        let tester = HeartbleedTester {
+            target: &target,
+            sni_hostname: None,
+            connect_timeout: Duration::from_millis(200),
+            read_timeout: Duration::from_millis(200),
+            starttls: None,
+            starttls_hostname: None,
+        };
+        let result = tester.test_protocol(Protocol::TLS12).await.unwrap();
+
+        assert!(result.bytes_sent > 0, "{result:?}");
+        assert!(!result.vulnerable);
+
+        server.await.unwrap();
     }
 
     #[test]
