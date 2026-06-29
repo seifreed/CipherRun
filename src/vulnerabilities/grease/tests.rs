@@ -72,6 +72,27 @@ fn test_generate_recommendations_variants() {
             .iter()
             .any(|r| r.contains("Address the identified issues"))
     );
+
+    let inconclusive_result = GreaseResult {
+        tolerates_grease: false,
+        inconclusive: true,
+        direct_grease_test_performed: true,
+        issues: vec![],
+        details: vec!["GREASE extensions test inconclusive: timeout".to_string()],
+        tests_performed: vec!["GREASE extensions".to_string()],
+    };
+    let inconclusive_recs = tester.generate_recommendations(&inconclusive_result);
+    assert!(
+        inconclusive_recs
+            .iter()
+            .any(|r| r.contains("could not be determined"))
+    );
+    assert!(
+        !inconclusive_recs
+            .iter()
+            .any(|r| r.contains("handle GREASE values")),
+        "inconclusive GREASE results must not be reported as confirmed intolerance"
+    );
 }
 
 #[test]

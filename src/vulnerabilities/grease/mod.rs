@@ -290,7 +290,11 @@ impl GreaseTester {
     fn generate_recommendations(&self, result: &GreaseResult) -> Vec<String> {
         let mut recommendations = Vec::new();
 
-        if result.direct_grease_test_performed && result.tolerates_grease {
+        if result.inconclusive {
+            recommendations.push(
+                "GREASE tolerance could not be determined; results are inconclusive".to_string(),
+            );
+        } else if result.direct_grease_test_performed && result.tolerates_grease {
             recommendations.push(
                 "✓ Server properly implements TLS extensibility (RFC 8701 compliant)".to_string(),
             );
@@ -299,10 +303,6 @@ impl GreaseTester {
                 .push("Server should properly handle GREASE values per RFC 8701".to_string());
             recommendations.push(
                 "Update TLS implementation to ignore unknown cipher suites, extensions, and supported groups".to_string(),
-            );
-        } else if result.inconclusive {
-            recommendations.push(
-                "GREASE tolerance could not be determined; results are inconclusive".to_string(),
             );
         }
 
