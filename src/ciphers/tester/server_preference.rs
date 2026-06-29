@@ -1,12 +1,12 @@
-use super::{
-    BUFFER_SIZE_DEFAULT, CONTENT_TYPE_HANDSHAKE, CipherTester, HANDSHAKE_TYPE_SERVER_HELLO, Result,
-    TlsConnectionPool, timeout,
-};
 use super::{CIPHER_SUITE_BASE_OFFSET, SERVER_HELLO_MIN_SIZE, SESSION_ID_LENGTH_OFFSET};
+use super::{
+    CONTENT_TYPE_HANDSHAKE, CipherTester, HANDSHAKE_TYPE_SERVER_HELLO, Result, TlsConnectionPool,
+    timeout,
+};
 use crate::ciphers::CipherSuite;
 use crate::protocols::{Protocol, handshake::ClientHelloBuilder};
 use std::sync::Arc;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 
 impl CipherTester {
     pub(super) async fn test_cipher_handshake_only(
@@ -180,17 +180,12 @@ impl CipherTester {
 
         match timeout(self.read_timeout, async {
             stream.write_all(&client_hello).await?;
-
-            let mut response = vec![0u8; BUFFER_SIZE_DEFAULT];
-            let bytes_read = stream.read(&mut response).await?;
-
-            Ok::<Result<Option<u16>>, std::io::Error>(Self::parse_server_hello_cipher(
-                &response, bytes_read,
-            ))
+            let response = Self::read_cipher_probe_response(&mut stream).await?;
+            Self::parse_server_hello_cipher(&response, response.len())
         })
         .await
         {
-            Ok(result) => result?,
+            Ok(result) => result,
             Err(_) => Err(crate::TlsError::Timeout {
                 duration: Some(self.read_timeout),
             }),

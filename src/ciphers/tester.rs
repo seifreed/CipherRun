@@ -266,6 +266,28 @@ mod tests {
         addr
     }
 
+    async fn spawn_fragmented_fake_tls_server(cipher: u16) -> SocketAddr {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("local addr should exist");
+
+        tokio::spawn(async move {
+            let response = build_fake_server_hello(cipher, 0);
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let mut buf = [0u8; 1024];
+                let _ = socket.read(&mut buf).await;
+                let _ = socket.write_all(&response[..7]).await;
+                let _ = socket.flush().await;
+                tokio::time::sleep(Duration::from_millis(20)).await;
+                let _ = socket.write_all(&response[7..]).await;
+                let _ = socket.flush().await;
+            }
+        });
+
+        addr
+    }
+
     fn make_cipher(
         protocol: &str,
         hexcode: &str,
@@ -616,6 +638,32 @@ mod tests {
             .perform_cipher_handshake(&mut stream, Protocol::TLS12, 0xc02f)
             .await
             .expect("test assertion should succeed");
+
+        assert!(ok);
+    }
+
+    #[tokio::test]
+    async fn test_perform_cipher_handshake_reads_fragmented_server_hello() {
+        let addr = spawn_fragmented_fake_tls_server(0xc02f).await;
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            addr.port(),
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .expect("target should build");
+
+        let tester = CipherTester::new(target)
+            .with_connect_timeout(Duration::from_millis(200))
+            .with_read_timeout(Duration::from_millis(200));
+
+        let mut stream = TcpStream::connect(addr)
+            .await
+            .expect("test assertion should succeed");
+
+        let ok = tester
+            .perform_cipher_handshake(&mut stream, Protocol::TLS12, 0xc02f)
+            .await
+            .expect("fragmented ServerHello should be read fully");
 
         assert!(ok);
     }

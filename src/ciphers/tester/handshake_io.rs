@@ -159,21 +159,7 @@ impl CipherTester {
 
         match timeout(self.read_timeout, async {
             stream.write_all(&client_hello).await?;
-            let mut response = vec![0u8; BUFFER_SIZE_DEFAULT];
-            let n = stream.read(&mut response).await?;
-
-            if n == 0 {
-                return Err(crate::TlsError::ConnectionClosed {
-                    details: "server closed connection before cipher probe response".to_string(),
-                });
-            }
-
-            let received =
-                response
-                    .get(..n)
-                    .ok_or_else(|| crate::TlsError::UnexpectedResponse {
-                        details: "cipher probe read length exceeded response buffer".to_string(),
-                    })?;
+            let received = Self::read_cipher_probe_response(stream).await?;
 
             if received.first() == Some(&CONTENT_TYPE_HANDSHAKE)
                 && received.get(5) == Some(&HANDSHAKE_TYPE_SERVER_HELLO)
@@ -196,6 +182,44 @@ impl CipherTester {
                 duration: Some(self.read_timeout),
             }),
         }
+    }
+
+    pub(super) async fn read_cipher_probe_response(stream: &mut TcpStream) -> Result<Vec<u8>> {
+        let mut response = vec![0u8; BUFFER_SIZE_DEFAULT];
+        let mut total = 0usize;
+
+        loop {
+            let n = stream.read(&mut response[total..]).await?;
+            if n == 0 {
+                if total == 0 {
+                    return Err(crate::TlsError::ConnectionClosed {
+                        details: "server closed connection before cipher probe response"
+                            .to_string(),
+                    });
+                }
+                break;
+            }
+
+            total += n;
+            if total >= 5 {
+                let record_len = u16::from_be_bytes([response[3], response[4]]) as usize + 5;
+                if record_len > response.len() {
+                    return Err(crate::TlsError::UnexpectedResponse {
+                        details: "cipher probe response exceeded buffer".to_string(),
+                    });
+                }
+                if total >= record_len {
+                    break;
+                }
+            }
+
+            if total == response.len() {
+                break;
+            }
+        }
+
+        response.truncate(total);
+        Ok(response)
     }
 
     pub(super) async fn try_cipher_handshake_on_ip_with_pool(
