@@ -90,11 +90,16 @@ impl RevocationChecker {
             // We must verify the extension actually contains feature 5,
             // not just assume any TLS Feature extension means Must-Staple.
             let ext_value = ext.value;
-            let (_, seq) = der_parser::der::parse_der_sequence(ext_value).map_err(|error| {
+            let (rest, seq) = der_parser::der::parse_der_sequence(ext_value).map_err(|error| {
                 crate::TlsError::ParseError {
                     message: format!("Failed to parse TLS Feature extension: {error}"),
                 }
             })?;
+            if !rest.is_empty() {
+                return Err(crate::TlsError::ParseError {
+                    message: "Failed to parse TLS Feature extension: trailing bytes".to_string(),
+                });
+            }
             let items = seq
                 .as_sequence()
                 .map_err(|error| crate::TlsError::ParseError {
@@ -671,5 +676,14 @@ mod tests {
 
         let err = checker.check_must_staple(&cert).unwrap_err();
         assert!(format!("{err}").contains("TLS Feature extension"));
+    }
+
+    #[test]
+    fn test_check_must_staple_rejects_trailing_tls_feature_bytes() {
+        let checker = RevocationChecker::new(false);
+        let cert = cert_with_raw_extension_der("1.3.6.1.5.5.7.1.24", b"\x30\x03\x02\x01\x05\x00");
+
+        let err = checker.check_must_staple(&cert).unwrap_err();
+        assert!(format!("{err}").contains("trailing bytes"));
     }
 }
