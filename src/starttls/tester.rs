@@ -106,7 +106,18 @@ impl StarttlsTester {
 
     /// Test all supported STARTTLS protocols
     pub async fn test_all_protocols(&self) -> Vec<StarttlsTestResult> {
-        let protocols = vec![
+        let protocols = Self::all_starttls_protocols();
+
+        let mut results = Vec::new();
+        for protocol in protocols {
+            results.push(self.test_protocol(protocol).await);
+        }
+
+        results
+    }
+
+    fn all_starttls_protocols() -> Vec<StarttlsProtocol> {
+        vec![
             StarttlsProtocol::SMTP,
             StarttlsProtocol::IMAP,
             StarttlsProtocol::POP3,
@@ -118,14 +129,9 @@ impl StarttlsTester {
             StarttlsProtocol::MYSQL,
             StarttlsProtocol::NNTP,
             StarttlsProtocol::SIEVE,
-        ];
-
-        let mut results = Vec::new();
-        for protocol in protocols {
-            results.push(self.test_protocol(protocol).await);
-        }
-
-        results
+            StarttlsProtocol::LMTP,
+            StarttlsProtocol::Telnet,
+        ]
     }
 }
 
@@ -244,5 +250,13 @@ mod tests {
         let result = tester.test_protocol(StarttlsProtocol::IMAP).await;
         assert!(!result.starttls_supported);
         assert!(result.error.is_some());
+    }
+
+    #[test]
+    fn test_all_protocols_includes_every_explicit_starttls_negotiator() {
+        let protocols = StarttlsTester::all_starttls_protocols();
+        assert!(protocols.contains(&StarttlsProtocol::LMTP));
+        assert!(protocols.contains(&StarttlsProtocol::Telnet));
+        assert!(protocols.iter().all(|protocol| !protocol.is_implicit_tls()));
     }
 }
