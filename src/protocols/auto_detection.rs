@@ -8,7 +8,7 @@ pub use model::{ApplicationProtocol, DetectedProtocol};
 
 use crate::Result;
 use heuristics::{analyze_banner, extract_version, protocol_from_port, requires_starttls};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::time::{Duration, timeout};
 
@@ -55,41 +55,53 @@ impl ProtocolDetector {
             .await
             .map_err(|_| crate::TlsError::Other("Connection timeout".to_string()))??;
 
-        let mut reader = BufReader::new(&mut stream);
         let mut banner = Vec::new();
-        match timeout(read_timeout, reader.read_until(b'\n', &mut banner)).await {
-            Ok(Ok(0)) if port == 80 || port == 443 || port == 8080 => {
-                return Self::detect_http(reader.into_inner()).await;
-            }
-            Ok(Ok(0)) => {
-                return Ok(DetectedProtocol {
-                    protocol: ApplicationProtocol::Unknown,
-                    version: None,
-                    banner: None,
-                    requires_starttls: false,
-                    confidence: 0.0,
-                });
-            }
-            Ok(Ok(_)) => {}
-            Ok(Err(error)) => return Err(error.into()),
-            Err(_) if port == 80 || port == 443 || port == 8080 => {
-                return Self::detect_http(reader.into_inner()).await;
-            }
-            Err(_) => {
-                return Err(crate::TlsError::Timeout {
-                    duration: Some(read_timeout),
-                });
+        let mut chunk = [0u8; 1024];
+        loop {
+            match timeout(read_timeout, stream.read(&mut chunk)).await {
+                Ok(Ok(0)) if (port == 80 || port == 443 || port == 8080) && banner.is_empty() => {
+                    return Self::detect_http(&mut stream).await;
+                }
+                Ok(Ok(0)) if banner.is_empty() => {
+                    return Ok(DetectedProtocol {
+                        protocol: ApplicationProtocol::Unknown,
+                        version: None,
+                        banner: None,
+                        requires_starttls: false,
+                        confidence: 0.0,
+                    });
+                }
+                Ok(Ok(0)) => break,
+                Ok(Ok(n)) => {
+                    banner.extend_from_slice(&chunk[..n]);
+                    let (protocol, _) = analyze_banner(&banner);
+                    if matches!(
+                        protocol,
+                        ApplicationProtocol::Mysql | ApplicationProtocol::MongoDB
+                    ) || banner.contains(&b'\n')
+                        || banner.len() >= 1024
+                    {
+                        break;
+                    }
+                }
+                Ok(Err(error)) => return Err(error.into()),
+                Err(_) if !banner.is_empty() => break,
+                Err(_) if port == 80 || port == 443 || port == 8080 => {
+                    return Self::detect_http(&mut stream).await;
+                }
+                Err(_) => {
+                    return Err(crate::TlsError::Timeout {
+                        duration: Some(read_timeout),
+                    });
+                }
             }
         }
 
-        let banner = String::from_utf8(banner).map_err(|error| crate::TlsError::ParseError {
-            message: format!("Invalid protocol banner UTF-8: {error}"),
-        })?;
-        let banner_bytes = banner.as_bytes();
+        let banner_bytes = banner.as_slice();
         let (protocol, confidence) = analyze_banner(banner_bytes);
 
         if protocol == ApplicationProtocol::Unknown && (port == 80 || port == 443 || port == 8080) {
-            return Self::detect_http(reader.into_inner()).await;
+            return Self::detect_http(&mut stream).await;
         }
 
         Ok(DetectedProtocol {
@@ -293,6 +305,23 @@ mod tests {
         port
     }
 
+    async fn spawn_mysql_banner_without_newline() -> u16 {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let port = listener.local_addr().unwrap().port();
+
+        tokio::spawn(async move {
+            if let Ok((mut stream, _)) = listener.accept().await {
+                let banner = b"\x09\x00\x00\x00\x0a8.0.31\x00";
+                let _ = stream.write_all(banner).await;
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+        });
+
+        port
+    }
+
     #[tokio::test]
     async fn test_detect_by_banner_smtp() {
         let port = spawn_banner_server(b"220 mail.example.com ESMTP Postfix\r\n").await;
@@ -346,7 +375,10 @@ mod tests {
                 stream.write_all(b"HTTP/1.1 200").await.unwrap();
                 stream.flush().await.unwrap();
                 tokio::time::sleep(Duration::from_millis(20)).await;
-                stream.write_all(b" OK\r\nContent-Length: 0\r\n\r\n").await.unwrap();
+                stream
+                    .write_all(b" OK\r\nContent-Length: 0\r\n\r\n")
+                    .await
+                    .unwrap();
             }
         });
 
@@ -387,6 +419,18 @@ mod tests {
 
         assert_eq!(detected.protocol, ApplicationProtocol::SmtpStartTls);
         assert!(detected.banner.as_deref().unwrap_or("").contains("Postfix"));
+    }
+
+    #[tokio::test]
+    async fn test_detect_by_banner_uses_partial_banner_on_timeout() {
+        let port = spawn_mysql_banner_without_newline().await;
+
+        let detected = ProtocolDetector::detect_by_banner("127.0.0.1", port)
+            .await
+            .expect("partial banner should be analyzed after read timeout");
+
+        assert_eq!(detected.protocol, ApplicationProtocol::Mysql);
+        assert!(detected.banner.is_some());
     }
 
     #[tokio::test]
