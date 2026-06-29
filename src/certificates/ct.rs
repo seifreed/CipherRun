@@ -155,6 +155,12 @@ impl CtVerifier {
     fn count_scts_in_extension_value(&self, ext_value: &[u8]) -> Result<usize> {
         let parsed_inner = der_parser::der::parse_der_octetstring(ext_value);
         let sct_list: &[u8] = match &parsed_inner {
+            Ok((rest, _)) if !rest.is_empty() => {
+                return Err(crate::TlsError::ParseError {
+                    message: "Malformed SCT extension: trailing bytes after inner OCTET STRING"
+                        .to_string(),
+                });
+            }
             Ok((_, obj)) => obj.as_slice().unwrap_or(ext_value),
             Err(_) => ext_value,
         };
@@ -391,6 +397,21 @@ mod tests {
             count, 2,
             "must unwrap the inner OCTET STRING before counting"
         );
+    }
+
+    #[test]
+    fn test_count_scts_in_extension_value_rejects_trailing_der_bytes() {
+        let verifier = CtVerifier::new(false);
+        let sct_list = [0x00, 0x00];
+        let mut ext_value = vec![0x04, sct_list.len() as u8];
+        ext_value.extend_from_slice(&sct_list);
+        ext_value.push(0xff);
+
+        let err = verifier
+            .count_scts_in_extension_value(&ext_value)
+            .expect_err("trailing DER bytes should fail");
+
+        assert!(err.to_string().contains("trailing bytes"));
     }
 
     #[test]
