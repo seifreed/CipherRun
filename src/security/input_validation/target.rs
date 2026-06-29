@@ -102,26 +102,6 @@ fn parse_unbracketed_ipv6(
 ) -> std::result::Result<(String, Option<u16>), ValidationError> {
     // First, try parsing as pure IPv6 address (no port)
     if target.parse::<Ipv6Addr>().is_ok() {
-        // Ambiguity check: if the last segment is a multi-digit decimal ≤ 65535,
-        // the user likely meant [host]:port rather than an IPv6 hextet.
-        // Single-digit segments are treated as part of the address (port < 10 is extremely rare).
-        if let Some(last_colon) = target.rfind(':') {
-            let (potential_host, last_segment) = target.split_at(last_colon);
-            let last_segment = last_segment.strip_prefix(':').unwrap_or(last_segment);
-            if !last_segment.is_empty()
-                && last_segment.len() >= 2
-                && last_segment.bytes().all(|b| b.is_ascii_digit())
-                && last_segment.parse::<u16>().is_ok()
-                && potential_host.parse::<Ipv6Addr>().is_ok()
-            {
-                return Err(ValidationError::InvalidHostname(format!(
-                    "Ambiguous IPv6 address with port: '{}'. \
-                     IPv6 addresses with ports must use bracketed notation. \
-                     Use '[{}]:{}' instead.",
-                    target, potential_host, last_segment
-                )));
-            }
-        }
         return Ok((target.to_string(), None));
     }
 
@@ -286,18 +266,13 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_target_rejects_ambiguous_ipv6_with_port() {
+    fn test_validate_target_treats_valid_unbracketed_ipv6_as_host_only() {
         let result = validate_target("::1:443", true);
 
-        assert!(
-            result.is_err(),
-            "Ambiguous IPv6 address with port should be rejected"
-        );
-        let err = result.expect_err("test assertion should succeed");
-        assert!(
-            format!("{}", err).contains("bracketed notation"),
-            "Error should suggest bracketed notation"
-        );
+        assert!(result.is_ok(), "Valid IPv6 should not be rejected as a port");
+        let (host, port) = result.expect("test assertion should succeed");
+        assert_eq!(host, "::1:443");
+        assert!(port.is_none());
     }
 
     #[test]
@@ -308,6 +283,17 @@ mod tests {
         let (host, port) = result.expect("test assertion should succeed");
 
         assert_eq!(host, "2001:db8::1:2");
+        assert!(port.is_none());
+    }
+
+    #[test]
+    fn test_validate_target_allows_ipv6_with_decimal_looking_hextet() {
+        let result = validate_target("2001:db8::443", true);
+
+        assert!(result.is_ok(), "Valid IPv6 hextet should not be treated as a port");
+        let (host, port) = result.expect("test assertion should succeed");
+
+        assert_eq!(host, "2001:db8::443");
         assert!(port.is_none());
     }
 
