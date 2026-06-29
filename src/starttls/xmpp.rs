@@ -15,14 +15,12 @@ impl XmppNegotiator {
         Self { hostname }
     }
 
-    fn append_utf8_chunk(accumulated: &mut String, bytes: &[u8]) -> Result<()> {
-        let chunk = std::str::from_utf8(bytes).map_err(|error| {
+    fn decode_utf8_response(bytes: &[u8]) -> Result<&str> {
+        std::str::from_utf8(bytes).map_err(|error| {
             crate::error::TlsError::ParseError {
                 message: format!("XMPP STARTTLS response is not valid UTF-8: {error}"),
             }
-        })?;
-        accumulated.push_str(chunk);
-        Ok(())
+        })
     }
 
     /// Read until we find a specific XML tag
@@ -31,7 +29,7 @@ impl XmppNegotiator {
         S: AsyncRead + Unpin,
     {
         let mut buffer = vec![0u8; 4096];
-        let mut accumulated = String::new();
+        let mut accumulated = Vec::new();
 
         loop {
             let n = stream.read(&mut buffer).await?;
@@ -46,10 +44,11 @@ impl XmppNegotiator {
                 .ok_or_else(|| crate::error::TlsError::ParseError {
                     message: "XMPP STARTTLS response read length exceeded buffer".to_string(),
                 })?;
-            Self::append_utf8_chunk(&mut accumulated, bytes)?;
+            accumulated.extend_from_slice(bytes);
+            let response = Self::decode_utf8_response(&accumulated)?;
 
-            if accumulated.contains(tag) {
-                return Ok(accumulated);
+            if response.contains(tag) {
+                return Ok(response.to_string());
             }
 
             if accumulated.len() > 65536 {
@@ -66,7 +65,7 @@ impl XmppNegotiator {
         S: AsyncRead + Unpin,
     {
         let mut buffer = vec![0u8; 4096];
-        let mut accumulated = String::new();
+        let mut accumulated = Vec::new();
 
         loop {
             let n = stream.read(&mut buffer).await?;
@@ -81,10 +80,11 @@ impl XmppNegotiator {
                 .ok_or_else(|| crate::error::TlsError::ParseError {
                     message: "XMPP STARTTLS response read length exceeded buffer".to_string(),
                 })?;
-            Self::append_utf8_chunk(&mut accumulated, bytes)?;
+            accumulated.extend_from_slice(bytes);
+            let response = Self::decode_utf8_response(&accumulated)?;
 
-            if accumulated.contains("<proceed") || accumulated.contains("<failure") {
-                return Ok(accumulated);
+            if response.contains("<proceed") || response.contains("<failure") {
+                return Ok(response.to_string());
             }
 
             if accumulated.len() > 65536 {
@@ -212,6 +212,22 @@ mod tests {
             .unwrap_err();
 
         assert!(format!("{err}").contains("not valid UTF-8"));
+        writer.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_read_until_tag_accepts_split_utf8_character() {
+        let (mut client, mut server) = tokio::io::duplex(64);
+        let writer = tokio::spawn(async move {
+            server.write_all(b"<stream:features>\xc3").await.unwrap();
+            server.write_all(b"\xa9</stream:features>").await.unwrap();
+        });
+
+        let response = XmppNegotiator::read_until_tag(&mut client, "</stream:features>")
+            .await
+            .expect("split UTF-8 should decode after the next read");
+
+        assert!(response.contains("\u{00e9}</stream:features>"));
         writer.await.unwrap();
     }
 
