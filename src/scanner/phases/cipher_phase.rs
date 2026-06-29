@@ -42,7 +42,7 @@ use std::collections::HashMap;
 /// - Concurrent cipher testing (default: 10 parallel tests)
 /// - Configurable rate limiting (--sleep)
 /// - Exponential backoff retry for transient failures
-/// - Skips QUIC protocol (not yet supported)
+/// - Skips QUIC because this phase probes TLS-over-TCP cipher suites
 pub struct CipherPhase;
 
 impl CipherPhase {
@@ -126,7 +126,7 @@ impl CipherPhase {
     ///
     /// Filters protocol results to only test protocols that:
     /// 1. Are marked as supported (protocol_result.supported == true)
-    /// 2. Are not QUIC (QUIC cipher testing not yet implemented)
+    /// 2. Are not QUIC (this phase probes TLS-over-TCP cipher suites)
     ///
     /// Returns a HashMap mapping Protocol -> ProtocolCipherSummary
     async fn test_supported_protocols(

@@ -213,7 +213,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_quic_unimplemented_returns_false() {
+    async fn test_quic_explicit_probe_is_inconclusive() {
         let tester = ProtocolTester::new(dummy_target());
         let result = tester
             .test_protocol(Protocol::QUIC)
