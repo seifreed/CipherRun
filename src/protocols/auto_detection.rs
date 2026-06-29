@@ -194,6 +194,14 @@ mod tests {
     }
 
     #[test]
+    fn test_analyze_pop3_banner_without_pop_keyword() {
+        let banner = "+OK Dovecot ready";
+        let (protocol, confidence) = analyze_banner(banner.as_bytes());
+        assert_eq!(protocol, ApplicationProtocol::Pop3StartTls);
+        assert!(confidence > 0.9);
+    }
+
+    #[test]
     fn test_analyze_imap_banner() {
         let banner = "* OK IMAP4rev1 Server ready";
         let (protocol, confidence) = analyze_banner(banner.as_bytes());
