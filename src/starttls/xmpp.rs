@@ -15,6 +15,16 @@ impl XmppNegotiator {
         Self { hostname }
     }
 
+    fn append_utf8_chunk(accumulated: &mut String, bytes: &[u8]) -> Result<()> {
+        let chunk = std::str::from_utf8(bytes).map_err(|error| {
+            crate::error::TlsError::ParseError {
+                message: format!("XMPP STARTTLS response is not valid UTF-8: {error}"),
+            }
+        })?;
+        accumulated.push_str(chunk);
+        Ok(())
+    }
+
     /// Read until we find a specific XML tag
     async fn read_until_tag<S>(stream: &mut S, tag: &str) -> Result<String>
     where
@@ -36,8 +46,7 @@ impl XmppNegotiator {
                 .ok_or_else(|| crate::error::TlsError::ParseError {
                     message: "XMPP STARTTLS response read length exceeded buffer".to_string(),
                 })?;
-            let chunk = String::from_utf8_lossy(bytes);
-            accumulated.push_str(&chunk);
+            Self::append_utf8_chunk(&mut accumulated, bytes)?;
 
             if accumulated.contains(tag) {
                 return Ok(accumulated);
@@ -72,7 +81,7 @@ impl XmppNegotiator {
                 .ok_or_else(|| crate::error::TlsError::ParseError {
                     message: "XMPP STARTTLS response read length exceeded buffer".to_string(),
                 })?;
-            accumulated.push_str(&String::from_utf8_lossy(bytes));
+            Self::append_utf8_chunk(&mut accumulated, bytes)?;
 
             if accumulated.contains("<proceed") || accumulated.contains("<failure") {
                 return Ok(accumulated);
@@ -189,6 +198,21 @@ mod tests {
             .await
             .unwrap_err();
         assert!(format!("{err}").contains("Connection closed"));
+    }
+
+    #[tokio::test]
+    async fn test_read_until_tag_rejects_invalid_utf8() {
+        let (mut client, mut server) = tokio::io::duplex(64);
+        let writer = tokio::spawn(async move {
+            server.write_all(b"<stream:features>\xff").await.unwrap();
+        });
+
+        let err = XmppNegotiator::read_until_tag(&mut client, "</stream:features>")
+            .await
+            .unwrap_err();
+
+        assert!(format!("{err}").contains("not valid UTF-8"));
+        writer.await.unwrap();
     }
 
     #[tokio::test]
