@@ -6,7 +6,7 @@ use crate::error::TlsError;
 use crate::utils::network::canonical_target;
 use std::net::SocketAddr;
 use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::time::timeout;
 
@@ -120,7 +120,7 @@ pub async fn connect_via_proxy(
     let mut reader = BufReader::new(stream);
     let mut status_line = String::new();
 
-    timeout(Duration::from_secs(10), reader.read_line(&mut status_line))
+    timeout(Duration::from_secs(10), read_proxy_line(&mut reader, &mut status_line))
         .await
         .map_err(|_| TlsError::Other("Proxy response timeout".to_string()))??;
 
@@ -154,7 +154,7 @@ pub async fn connect_via_proxy(
     let mut header_count = 0usize;
     loop {
         let mut header = String::new();
-        timeout(Duration::from_secs(10), reader.read_line(&mut header))
+        timeout(Duration::from_secs(10), read_proxy_line(&mut reader, &mut header))
             .await
             .map_err(|_| TlsError::Other("Proxy header read timeout".to_string()))??;
         header_count += 1;
@@ -168,6 +168,45 @@ pub async fn connect_via_proxy(
 
     // Return the underlying stream
     Ok(reader.into_inner())
+}
+
+async fn read_proxy_line<R: AsyncBufRead + Unpin>(
+    reader: &mut R,
+    line: &mut String,
+) -> Result<usize> {
+    const MAX_PROXY_LINE_LEN: usize = 8192;
+    let mut bytes = Vec::new();
+
+    loop {
+        let (take, done) = {
+            let available = reader.fill_buf().await?;
+            if available.is_empty() {
+                break;
+            }
+
+            let newline_pos = available.iter().position(|&byte| byte == b'\n');
+            let take = newline_pos.map_or(available.len(), |pos| pos + 1);
+            if bytes.len().saturating_add(take) > MAX_PROXY_LINE_LEN {
+                return Err(TlsError::UnexpectedResponse {
+                    details: "Proxy response line too long".to_string(),
+                });
+            }
+            bytes.extend_from_slice(&available[..take]);
+            (take, newline_pos.is_some())
+        };
+
+        reader.consume(take);
+        if done {
+            break;
+        }
+    }
+
+    let text = String::from_utf8(bytes).map_err(|error| TlsError::UnexpectedResponse {
+        details: format!("Proxy response line is not valid UTF-8: {error}"),
+    })?;
+    let len = text.len();
+    line.push_str(&text);
+    Ok(len)
 }
 
 async fn connect_to_any_socket_addr(
@@ -417,5 +456,32 @@ mod tests {
             .await
             .expect_err("malformed proxy status code should fail");
         assert!(err.to_string().contains("invalid status code"));
+    }
+
+    #[tokio::test]
+    async fn test_connect_via_proxy_rejects_oversized_status_line() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("listener should expose addr");
+
+        tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let line = vec![b'A'; 9000];
+                let _ = socket.write_all(&line).await;
+            }
+        });
+
+        let proxy = ProxyConfig {
+            host: "127.0.0.1".to_string(),
+            port: addr.port(),
+            username: None,
+            password: None,
+        };
+
+        let err = connect_via_proxy(&proxy, "example.com", 443, Duration::from_secs(1))
+            .await
+            .expect_err("oversized proxy status line should fail");
+        assert!(err.to_string().contains("too long"));
     }
 }
