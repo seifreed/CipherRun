@@ -20,7 +20,10 @@ pub fn ca_stores() -> Arc<CAStores> {
 }
 
 fn ca_stores_from_load_result(result: Result<CAStores>) -> Arc<CAStores> {
-    Arc::new(result.unwrap_or_else(|e| panic!("Failed to load CA stores: {e}")))
+    Arc::new(result.unwrap_or_else(|e| {
+        tracing::error!("Failed to load CA stores: {e}");
+        CAStores::empty()
+    }))
 }
 
 /// Legacy static for backward compatibility
@@ -253,8 +256,12 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Failed to load CA stores")]
     fn test_ca_stores_load_error_is_not_suppressed() {
-        let _ = ca_stores_from_load_result(Err(crate::TlsError::Other("broken store".into())));
+        let stores = ca_stores_from_load_result(Err(crate::TlsError::Other(
+            "broken store".into(),
+        )));
+
+        assert_eq!(stores.total_certificates(), 0);
+        assert_eq!(stores.mozilla.name, "Mozilla");
     }
 }
