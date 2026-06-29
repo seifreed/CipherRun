@@ -1,11 +1,13 @@
 use super::ProtocolTester;
 use crate::Result;
-use crate::constants::BUFFER_SIZE_MAX_TLS_RECORD;
+use crate::constants::{
+    BUFFER_SIZE_MAX_TLS_RECORD, CONTENT_TYPE_HANDSHAKE, HANDSHAKE_TYPE_SERVER_HELLO,
+};
 use crate::protocols::{
     Protocol,
     handshake::{ClientHelloBuilder, ServerHello, ServerHelloParser},
 };
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::time::timeout;
 
 impl ProtocolTester {
@@ -98,26 +100,7 @@ impl ProtocolTester {
 
         let response = match timeout(self.read_timeout, async {
             stream.write_all(&client_hello).await?;
-            let mut header = [0u8; 5];
-            if stream.read_exact(&mut header).await.is_err() {
-                return Ok::<Option<Vec<u8>>, std::io::Error>(None);
-            }
-
-            let record_len = u16::from_be_bytes([header[3], header[4]]) as usize;
-            let total_len = 5usize
-                .checked_add(record_len)
-                .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "TLS record length overflow"))?;
-            if total_len > BUFFER_SIZE_MAX_TLS_RECORD {
-                return Ok::<Option<Vec<u8>>, std::io::Error>(None);
-            }
-
-            let mut resp = vec![0u8; total_len];
-            resp[..5].copy_from_slice(&header);
-            if stream.read_exact(&mut resp[5..]).await.is_err() {
-                return Ok::<Option<Vec<u8>>, std::io::Error>(None);
-            }
-
-            Ok::<Option<Vec<u8>>, std::io::Error>(Some(resp))
+            self.read_server_hello_response(&mut stream).await
         })
         .await
         {
@@ -144,5 +127,94 @@ impl ProtocolTester {
                 Ok(None)
             }
         }
+    }
+
+    async fn read_server_hello_response<S>(
+        &self,
+        stream: &mut S,
+    ) -> std::io::Result<Option<Vec<u8>>>
+    where
+        S: AsyncRead + Unpin,
+    {
+        let Some(first_record) = Self::read_tls_record(stream).await? else {
+            return Ok(None);
+        };
+
+        let Some(server_hello_payload_len) = Self::server_hello_payload_len(&first_record) else {
+            return Ok(Some(first_record));
+        };
+
+        let first_payload = &first_record[5..];
+        if first_payload.len() >= server_hello_payload_len {
+            return Ok(Some(first_record));
+        }
+        if server_hello_payload_len > BUFFER_SIZE_MAX_TLS_RECORD - 5 {
+            return Ok(None);
+        }
+
+        let mut handshake = first_payload.to_vec();
+        while handshake.len() < server_hello_payload_len {
+            let Some(record) = Self::read_tls_record(stream).await? else {
+                return Ok(None);
+            };
+            if record.first() != Some(&CONTENT_TYPE_HANDSHAKE) {
+                return Ok(None);
+            }
+            let remaining = server_hello_payload_len - handshake.len();
+            let payload = &record[5..];
+            handshake.extend_from_slice(&payload[..payload.len().min(remaining)]);
+        }
+
+        let record_len = u16::try_from(handshake.len()).map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "ServerHello handshake length exceeds TLS record size",
+            )
+        })?;
+        let mut response = Vec::with_capacity(5 + handshake.len());
+        response.extend_from_slice(&first_record[..3]);
+        response.extend_from_slice(&record_len.to_be_bytes());
+        response.extend_from_slice(&handshake);
+        Ok(Some(response))
+    }
+
+    async fn read_tls_record<S>(stream: &mut S) -> std::io::Result<Option<Vec<u8>>>
+    where
+        S: AsyncRead + Unpin,
+    {
+        let mut header = [0u8; 5];
+        if stream.read_exact(&mut header).await.is_err() {
+            return Ok(None);
+        }
+
+        let record_len = u16::from_be_bytes([header[3], header[4]]) as usize;
+        let total_len = 5usize.checked_add(record_len).ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "TLS record length overflow",
+            )
+        })?;
+        if total_len > BUFFER_SIZE_MAX_TLS_RECORD {
+            return Ok(None);
+        }
+
+        let mut record = vec![0u8; total_len];
+        record[..5].copy_from_slice(&header);
+        if stream.read_exact(&mut record[5..]).await.is_err() {
+            return Ok(None);
+        }
+        Ok(Some(record))
+    }
+
+    fn server_hello_payload_len(record: &[u8]) -> Option<usize> {
+        if record.first() != Some(&CONTENT_TYPE_HANDSHAKE)
+            || record.get(5) != Some(&HANDSHAKE_TYPE_SERVER_HELLO)
+        {
+            return None;
+        }
+        let bytes: [u8; 3] = record.get(6..9)?.try_into().ok()?;
+        let [high, mid, low] = bytes;
+        let body_len = ((high as usize) << 16) | ((mid as usize) << 8) | low as usize;
+        4usize.checked_add(body_len)
     }
 }
