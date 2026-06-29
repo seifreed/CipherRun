@@ -534,7 +534,7 @@ mod tests {
             .await
             .expect_err("connection failure should not be reported as no chosen cipher");
 
-        assert!(err.to_string().contains("I/O error"));
+        assert!(matches!(err, crate::TlsError::ConnectionRefused { .. }));
     }
 
     #[tokio::test]

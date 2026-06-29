@@ -144,7 +144,8 @@ impl ProtocolTester {
                 drop(stream);
                 Ok(true)
             }
-            Err(_) => Ok(false),
+            Err(crate::TlsError::ConnectionRefused { .. }) => Ok(false),
+            Err(error) => Err(error),
         }
     }
 

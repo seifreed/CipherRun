@@ -501,7 +501,13 @@ async fn connect_once(
             duration: effective_timeout,
             addr,
         })?
-        .map_err(Into::into)
+        .map_err(|source| {
+            if source.kind() == std::io::ErrorKind::ConnectionRefused {
+                TlsError::ConnectionRefused { addr }
+            } else {
+                source.into()
+            }
+        })
 }
 
 /// Convert a Tokio TCP stream into a blocking std stream with socket timeouts.

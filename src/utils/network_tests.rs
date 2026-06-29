@@ -67,6 +67,21 @@ async fn test_parse_target_bracketed_ipv6_with_port() {
     assert_eq!(target.ip_addresses.len(), 1);
 }
 
+#[tokio::test]
+async fn test_connect_with_timeout_maps_connection_refused() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("listener should bind");
+    let addr = listener.local_addr().expect("listener should expose addr");
+    drop(listener);
+
+    let err = connect_with_timeout(addr, std::time::Duration::from_millis(100), None)
+        .await
+        .expect_err("closed port should be refused");
+
+    assert!(matches!(err, crate::TlsError::ConnectionRefused { .. }));
+}
+
 #[test]
 fn test_split_target_host_port_rejects_extra_colons() {
     let err = split_target_host_port("example.com:443:extra")

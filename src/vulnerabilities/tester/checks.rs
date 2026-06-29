@@ -672,13 +672,20 @@ impl VulnerabilityScanner {
             .copied()
             .ok_or(crate::TlsError::NoSocketAddresses)?;
 
-        Ok(crate::utils::network::connect_with_timeout(
+        match crate::utils::network::connect_with_timeout(
             addr,
             crate::constants::DEFAULT_CONNECT_TIMEOUT,
             None,
         )
         .await
-        .is_ok())
+        {
+            Ok(stream) => {
+                drop(stream);
+                Ok(true)
+            }
+            Err(crate::TlsError::ConnectionRefused { .. }) => Ok(false),
+            Err(error) => Err(error),
+        }
     }
 }
 
