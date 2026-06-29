@@ -8,12 +8,14 @@ pub use model::{ApplicationProtocol, DetectedProtocol};
 
 use crate::Result;
 use heuristics::{analyze_banner, extract_version, protocol_from_port, requires_starttls};
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::time::{Duration, timeout};
 
 /// Protocol detector
 pub struct ProtocolDetector;
+
+const MAX_HTTP_STATUS_LINE_LEN: usize = 8192;
 
 #[cfg(test)]
 fn protocol_read_timeout() -> Duration {
@@ -125,7 +127,7 @@ impl ProtocolDetector {
         let read_timeout = protocol_read_timeout();
         let mut reader = BufReader::new(stream);
         let mut response_str = String::new();
-        timeout(read_timeout, reader.read_line(&mut response_str))
+        timeout(read_timeout, Self::read_http_status_line(&mut reader, &mut response_str))
             .await
             .map_err(|_| crate::TlsError::Timeout {
                 duration: Some(read_timeout),
@@ -154,6 +156,45 @@ impl ProtocolDetector {
                 confidence: 0.0,
             })
         }
+    }
+
+    async fn read_http_status_line<R>(reader: &mut R, line: &mut String) -> Result<usize>
+    where
+        R: AsyncBufRead + Unpin,
+    {
+        let mut bytes = Vec::new();
+
+        loop {
+            let (consume, done) = {
+                let available = reader.fill_buf().await?;
+                if available.is_empty() {
+                    break;
+                }
+
+                let newline = available.iter().position(|&byte| byte == b'\n');
+                let consume = newline.map_or(available.len(), |index| index + 1);
+                if bytes.len().saturating_add(consume) > MAX_HTTP_STATUS_LINE_LEN {
+                    return Err(crate::TlsError::UnexpectedResponse {
+                        details: "HTTP status line too long".to_string(),
+                    });
+                }
+
+                bytes.extend_from_slice(&available[..consume]);
+                (consume, newline.is_some())
+            };
+
+            reader.consume(consume);
+            if done {
+                break;
+            }
+        }
+
+        let text = String::from_utf8(bytes).map_err(|error| crate::TlsError::ParseError {
+            message: format!("HTTP status line is not valid UTF-8: {error}"),
+        })?;
+        let len = text.len();
+        line.push_str(&text);
+        Ok(len)
     }
 
     /// Get STARTTLS command for protocol
@@ -397,6 +438,30 @@ mod tests {
                 .unwrap_or("")
                 .starts_with("HTTP/")
         );
+    }
+
+    #[tokio::test]
+    async fn test_detect_http_rejects_oversized_status_line() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        tokio::spawn(async move {
+            if let Ok((mut stream, _)) = listener.accept().await {
+                let mut buf = [0u8; 256];
+                let _ = stream.read(&mut buf).await;
+                let line = vec![b'A'; MAX_HTTP_STATUS_LINE_LEN + 1];
+                let _ = stream.write_all(&line).await;
+            }
+        });
+
+        let mut stream = TcpStream::connect(("127.0.0.1", port))
+            .await
+            .expect("test assertion should succeed");
+        let err = ProtocolDetector::detect_http(&mut stream)
+            .await
+            .expect_err("oversized status line should fail");
+
+        assert!(err.to_string().contains("HTTP status line too long"));
     }
 
     #[tokio::test]
