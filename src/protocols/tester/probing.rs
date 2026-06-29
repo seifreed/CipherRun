@@ -316,11 +316,16 @@ impl ProtocolTester {
                         let is_sslv2_header = (first & 0x80) != 0;
                         let record_len = ((first & 0x7f) as usize) << 8 | second as usize;
                         let reasonable = record_len > 0 && record_len <= 16384;
+                        let complete = 2usize
+                            .checked_add(record_len)
+                            .is_some_and(|record_total| response.len() >= record_total);
                         // Only treat as SSLv2 when the message type is a known SSLv2 *non-error* type;
                         // 0x00 is SSLv2 Error — server rejected the handshake, not supporting SSLv2.
                         let known_type = matches!(msg_type, 0x02..=0x08);
-                        if is_sslv2_header && reasonable && known_type {
+                        if is_sslv2_header && reasonable && known_type && complete {
                             Ok(ProtocolProbeOutcome::Supported)
+                        } else if is_sslv2_header && reasonable && known_type {
+                            Ok(ProtocolProbeOutcome::Inconclusive)
                         } else {
                             Ok(ProtocolProbeOutcome::NotSupported)
                         }
@@ -886,7 +891,7 @@ mod legacy_probe_tests {
                 let mut buffer = vec![0u8; 64];
                 let _ = socket.read(&mut buffer).await.unwrap();
 
-                let record = [0x80, 0x06, 0x02, 0x00, 0x00, 0x00];
+                let record = [0x80, 0x04, 0x02, 0x00, 0x00, 0x00];
                 socket.write_all(&record[..2]).await.expect("write first fragment");
                 socket.flush().await.expect("flush first fragment");
                 tokio::time::sleep(Duration::from_millis(20)).await;
@@ -910,6 +915,43 @@ mod legacy_probe_tests {
             .expect("fragmented SSLv2 response should be classified");
 
         assert_eq!(outcome, ProtocolProbeOutcome::Supported);
+    }
+
+    #[tokio::test]
+    async fn test_sslv2_probe_truncated_known_record_is_inconclusive() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("local addr should exist");
+
+        tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let mut buffer = vec![0u8; 64];
+                let _ = socket.read(&mut buffer).await.unwrap();
+
+                let truncated_record = [0x80, 0x06, 0x02, 0x00, 0x00, 0x00];
+                socket
+                    .write_all(&truncated_record)
+                    .await
+                    .expect("write truncated SSLv2 response");
+            }
+        });
+
+        let target = Target::with_ips("example.test".to_string(), addr.port(), vec![addr.ip()])
+            .expect("target should build");
+        let tester = ProtocolTester::new(target)
+            .with_connect_timeout(Duration::from_millis(100))
+            .with_read_timeout(Duration::from_millis(100));
+
+        let outcome = tester
+            .test_sslv2_on_ip(addr)
+            .await
+            .expect("truncated SSLv2 response should be classified");
+
+        assert_eq!(outcome, ProtocolProbeOutcome::Inconclusive);
     }
 
     #[test]

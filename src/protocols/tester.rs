@@ -385,7 +385,7 @@ mod tests {
             if let Ok((mut stream, _)) = listener.accept().await {
                 let mut buf = [0u8; 256];
                 let _ = stream.read(&mut buf).await;
-                let _ = stream.write_all(&[0x80, 0x02, 0x04]).await;
+                let _ = stream.write_all(&[0x80, 0x01, 0x04]).await;
                 let _ = stream.flush().await;
             }
         });
