@@ -236,12 +236,32 @@ fn test_parse_dig_output_empty() {
 }
 
 #[test]
+fn test_parse_dig_output_skips_null_mx() {
+    let tester = MxTester::new("example.com".to_string());
+    let records = tester
+        .parse_dig_output(b"0 .\n")
+        .expect("null MX should parse");
+
+    assert!(records.is_empty());
+}
+
+#[test]
 fn test_parse_nslookup_output_empty() {
     let tester = MxTester::new("example.com".to_string());
     let output = b"example.com has no mail exchanger\n";
     let records = tester
         .parse_nslookup_output(output)
         .expect("test assertion should succeed");
+    assert!(records.is_empty());
+}
+
+#[test]
+fn test_parse_nslookup_output_skips_null_mx() {
+    let tester = MxTester::new("example.com".to_string());
+    let records = tester
+        .parse_nslookup_output(b"example.com mail exchanger = 0 .\n")
+        .expect("null MX should parse");
+
     assert!(records.is_empty());
 }
 

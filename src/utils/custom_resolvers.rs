@@ -206,10 +206,8 @@ impl CustomResolver {
             .answers()
             .iter()
             .filter_map(|record| match &record.data {
-                RData::MX(mx) => Some((
-                    mx.preference,
-                    mx.exchange.to_utf8().trim_end_matches('.').to_string(),
-                )),
+                RData::MX(mx) => normalize_mx_hostname(&mx.exchange.to_utf8())
+                    .map(|hostname| (mx.preference, hostname)),
                 _ => None,
             })
             .collect();
@@ -274,6 +272,14 @@ impl CustomResolver {
     pub fn delay(&self) -> Duration {
         self.query_timeout
     }
+}
+
+fn normalize_mx_hostname(hostname: &str) -> Option<String> {
+    let hostname = hostname.trim();
+    if hostname == "." {
+        return None;
+    }
+    Some(hostname.trim_end_matches('.').to_string())
 }
 
 #[cfg(test)]
@@ -431,6 +437,15 @@ mod tests {
         let resolver = CustomResolver::new(vec!["8.8.8.8".to_string()])
             .expect("test assertion should succeed");
         assert_eq!(resolver.delay(), Duration::from_secs(5));
+    }
+
+    #[test]
+    fn test_normalize_mx_hostname_skips_null_mx() {
+        assert_eq!(normalize_mx_hostname("."), None);
+        assert_eq!(
+            normalize_mx_hostname("mx.example.com."),
+            Some("mx.example.com".to_string())
+        );
     }
 
     #[test]

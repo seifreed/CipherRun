@@ -129,8 +129,9 @@ impl MxTester {
                         message: format!("Invalid dig MX priority: {priority_str}"),
                     })?;
 
-            let hostname = hostname_raw.trim_end_matches('.').to_string();
-            records.push(MxRecord { priority, hostname });
+            if let Some(hostname) = normalize_mx_hostname(hostname_raw) {
+                records.push(MxRecord { priority, hostname });
+            }
         }
 
         Ok(records)
@@ -166,8 +167,9 @@ impl MxTester {
                     }
                 })?;
 
-                let hostname = hostname_raw.trim_end_matches('.').to_string();
-                records.push(MxRecord { priority, hostname });
+                if let Some(hostname) = normalize_mx_hostname(hostname_raw) {
+                    records.push(MxRecord { priority, hostname });
+                }
             }
         }
 
@@ -489,6 +491,14 @@ impl MxTester {
 
         Ok(aggregate)
     }
+}
+
+fn normalize_mx_hostname(hostname: &str) -> Option<String> {
+    let hostname = hostname.trim();
+    if hostname == "." {
+        return None;
+    }
+    Some(hostname.trim_end_matches('.').to_string())
 }
 
 fn synthetic_backend_ip(index: usize) -> IpAddr {
