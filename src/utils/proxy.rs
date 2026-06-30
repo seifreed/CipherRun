@@ -30,8 +30,14 @@ impl ProxyConfig {
         // Check for user:pass@host:port format
         if let Some((auth, hostport)) = proxy_str.rsplit_once('@') {
             let (username, password) = if let Some((u, p)) = auth.split_once(':') {
+                if u.is_empty() {
+                    crate::tls_bail!("Proxy username cannot be empty");
+                }
                 (Some(u.to_string()), Some(p.to_string()))
             } else {
+                if auth.is_empty() {
+                    crate::tls_bail!("Proxy username cannot be empty");
+                }
                 (Some(auth.to_string()), None)
             };
 
@@ -457,6 +463,15 @@ mod tests {
         assert_eq!(proxy.port, 8080);
         assert_eq!(proxy.username.as_deref(), Some("user"));
         assert!(proxy.password.is_none());
+    }
+
+    #[test]
+    fn test_parse_proxy_rejects_empty_username() {
+        let err = ProxyConfig::parse("@proxy.local").expect_err("empty username should fail");
+        assert!(err.to_string().contains("Proxy username cannot be empty"));
+
+        let err = ProxyConfig::parse(":pass@proxy.local").expect_err("empty username should fail");
+        assert!(err.to_string().contains("Proxy username cannot be empty"));
     }
 
     #[tokio::test]
