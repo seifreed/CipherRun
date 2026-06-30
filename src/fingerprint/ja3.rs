@@ -247,7 +247,7 @@ impl Ja3Database {
     pub fn from_file(path: &std::path::Path) -> Result<Self> {
         let contents = std::fs::read_to_string(path)?;
         let signatures: HashMap<String, Ja3Signature> = serde_json::from_str(&contents)?;
-        Ok(Self { signatures })
+        Self::from_signatures(signatures)
     }
 
     /// Load the default database from the embedded JA3 signature JSON.
@@ -259,7 +259,26 @@ impl Ja3Database {
     pub fn load_default() -> Result<Self> {
         let json = include_str!("../../data/ja3_signatures.json");
         let signatures: HashMap<String, Ja3Signature> = serde_json::from_str(json)?;
+        Self::from_signatures(signatures)
+    }
+
+    fn from_signatures(signatures: HashMap<String, Ja3Signature>) -> Result<Self> {
+        for hash in signatures.keys() {
+            if !Self::is_valid_ja3_hash(hash) {
+                return Err(crate::TlsError::ParseError {
+                    message: format!("Invalid JA3 signature hash: {hash}"),
+                });
+            }
+        }
+
         Ok(Self { signatures })
+    }
+
+    fn is_valid_ja3_hash(hash: &str) -> bool {
+        hash.len() == 32
+            && hash
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
     }
 
     /// Create database with common known signatures
@@ -458,6 +477,25 @@ mod tests {
     fn test_load_default_parses_embedded_json() {
         let db = Ja3Database::load_default().expect("embedded JA3 JSON must parse");
         assert!(!db.signatures().is_empty());
+    }
+
+    #[test]
+    fn test_database_load_rejects_invalid_hash() {
+        let mut signatures = HashMap::new();
+        signatures.insert(
+            "not-a-ja3-hash".to_string(),
+            Ja3Signature {
+                name: "Bad".to_string(),
+                category: "Test".to_string(),
+                description: "Invalid hash".to_string(),
+                threat_level: "none".to_string(),
+            },
+        );
+
+        let err = Ja3Database::from_signatures(signatures)
+            .expect_err("invalid JA3 hash should fail");
+
+        assert!(err.to_string().contains("Invalid JA3 signature hash"));
     }
 
     #[test]
