@@ -117,6 +117,12 @@ pub struct HostPortInput {
 
 impl HostPortInput {
     pub fn parse_with_default_port(raw: &str, default_port: u16) -> Result<Self> {
+        if default_port == 0 {
+            return Err(TlsError::InvalidInput {
+                message: "Default port must be between 1 and 65535".to_string(),
+            });
+        }
+
         let (hostname, port) = split_target_host_port(raw).map_err(|e| TlsError::InvalidInput {
             message: e.to_string(),
         })?;
@@ -245,5 +251,10 @@ mod tests {
     #[test]
     fn rejects_zero_port_host_port_input() {
         assert!(HostPortInput::parse_with_default_port("example.com:0", 443).is_err());
+    }
+
+    #[test]
+    fn rejects_zero_default_port_host_port_input() {
+        assert!(HostPortInput::parse_with_default_port("example.com", 0).is_err());
     }
 }
