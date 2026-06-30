@@ -198,14 +198,14 @@ impl Reporter {
                 .join("; ");
 
             csv.push_str(&format!(
-                "\"{}\",\"{}\",\"{}\",{:?},{},\"{}\",\"{}\"\n",
-                req.requirement_id.replace('"', "\"\""),
-                req.name.replace('"', "\"\""),
-                req.category.replace('"', "\"\""),
+                "{},{},{},{:?},{},{},{}\n",
+                csv_report_cell(&req.requirement_id),
+                csv_report_cell(&req.name),
+                csv_report_cell(&req.category),
                 req.severity,
                 req.status,
-                violations_summary.replace('"', "\"\""),
-                evidence_summary.replace('"', "\"\"")
+                csv_report_cell(&violations_summary),
+                csv_report_cell(&evidence_summary)
             ));
         }
 
@@ -365,10 +365,33 @@ fn escape_html(s: &str) -> String {
     out
 }
 
+/// Quote a compliance CSV cell and neutralize spreadsheet formulas.
+///
+/// Compliance fields can include framework-defined text and server-derived
+/// evidence. If opened in a spreadsheet, cells beginning with formula sigils can
+/// execute as formulas even when correctly CSV-quoted.
+fn csv_report_cell(s: &str) -> String {
+    let trimmed = s.trim();
+    let safe = if trimmed.starts_with('=')
+        || trimmed.starts_with('+')
+        || trimmed.starts_with('-')
+        || trimmed.starts_with('@')
+    {
+        format!("'{trimmed}")
+    } else {
+        trimmed.to_string()
+    };
+
+    format!("\"{}\"", safe.replace('"', "\"\""))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compliance::{ComplianceFramework, ComplianceReport};
+    use crate::compliance::{
+        ComplianceFramework, ComplianceReport, RequirementResult, RequirementStatus, Severity,
+        Violation,
+    };
 
     #[test]
     fn test_to_json() {
@@ -407,6 +430,42 @@ mod tests {
 
         let csv = Reporter::to_csv(&report).expect("test assertion should succeed");
         assert!(csv.contains("Requirement ID,Name,Category"));
+    }
+
+    #[test]
+    fn test_to_csv_neutralizes_formula_cells() {
+        let framework = ComplianceFramework {
+            id: "test".to_string(),
+            name: "Test Framework".to_string(),
+            version: "1.0".to_string(),
+            description: "Test".to_string(),
+            organization: "Test Org".to_string(),
+            effective_date: None,
+            requirements: vec![],
+        };
+
+        let mut report = ComplianceReport::new(&framework, "test.com:443".to_string());
+        report.add_requirement_result(RequirementResult {
+            requirement_id: "=REQ".to_string(),
+            name: "+Name".to_string(),
+            description: String::new(),
+            category: "@Category".to_string(),
+            severity: Severity::High,
+            status: RequirementStatus::Fail,
+            violations: vec![Violation {
+                violation_type: "-Weak Protocol".to_string(),
+                description: String::new(),
+                evidence: "=TLS 1.0 enabled".to_string(),
+                severity: Severity::High,
+            }],
+            remediation: String::new(),
+        });
+        report.finalize();
+
+        let csv = Reporter::to_csv(&report).expect("test assertion should succeed");
+        assert!(csv.contains("\"'=REQ\",\"'+Name\",\"'@Category\""));
+        assert!(csv.contains("\"'-Weak Protocol\""));
+        assert!(csv.contains("\"'=TLS 1.0 enabled\""));
     }
 
     #[test]
