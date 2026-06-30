@@ -88,7 +88,7 @@ impl ConservativeAggregator {
                 aggregated.push(ProtocolTestResult {
                     protocol,
                     supported: true,
-                    inconclusive: false,
+                    inconclusive: protocol_results.iter().any(|result| result.inconclusive),
                     preferred,
                     ciphers_count,
                     handshake_time_ms,
