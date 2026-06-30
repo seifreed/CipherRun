@@ -156,6 +156,9 @@ pub fn split_target_host_port(input: &str) -> Result<(String, Option<u16>)> {
     if let Some(rest) = input.strip_prefix('[') {
         if let Some(bracket_end) = rest.find(']') {
             let (hostname, suffix) = rest.split_at(bracket_end);
+            if hostname.parse::<Ipv6Addr>().is_err() {
+                crate::tls_bail!("Bracketed targets must contain an IPv6 address");
+            }
             let hostname = hostname.to_string();
             let suffix = suffix.strip_prefix(']').unwrap_or(suffix);
             if suffix.is_empty() {

@@ -92,6 +92,26 @@ fn test_split_target_host_port_rejects_extra_colons() {
     );
 }
 
+#[test]
+fn test_split_target_host_port_rejects_bracketed_hostname() {
+    let err = split_target_host_port("[example.com]:443")
+        .expect_err("bracketed syntax should only accept IPv6 literals");
+    assert!(
+        err.to_string()
+            .contains("Bracketed targets must contain an IPv6 address")
+    );
+}
+
+#[test]
+fn test_split_target_host_port_rejects_bracketed_ipv4() {
+    let err = split_target_host_port("[192.0.2.1]:443")
+        .expect_err("bracketed syntax should only accept IPv6 literals");
+    assert!(
+        err.to_string()
+            .contains("Bracketed targets must contain an IPv6 address")
+    );
+}
+
 #[tokio::test]
 async fn test_parse_target_with_explicit_port_override() {
     let target = Target::parse_with_port_override("93.184.216.34:443", Some(8443))
