@@ -73,6 +73,15 @@ struct ResponseMetadata {
     server_hostname: Option<String>,
 }
 
+fn header_value_to_string(name: &str, value: &reqwest::header::HeaderValue) -> Result<String> {
+    value
+        .to_str()
+        .map(str::to_string)
+        .map_err(|error| crate::error::TlsError::ParseError {
+            message: format!("Invalid HTTP response header {name}: {error}"),
+        })
+}
+
 /// HTTP security headers analyzer
 pub struct HeaderAnalyzer {
     target: Target,
@@ -223,8 +232,8 @@ impl HeaderAnalyzer {
             let location = response
                 .headers()
                 .get("location")
-                .and_then(|v| v.to_str().ok())
-                .map(|s| s.to_string());
+                .map(|value| header_value_to_string("location", value))
+                .transpose()?;
 
             if let Some(ref location_str) = location {
                 tracing::info!("Redirect location: {}", location_str);
@@ -239,8 +248,8 @@ impl HeaderAnalyzer {
         let server_hostname = response
             .headers()
             .get("server")
-            .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_string());
+            .map(|value| header_value_to_string("server", value))
+            .transpose()?;
 
         // Collect Set-Cookie headers separately (RFC 7230 prohibits comma-joining them)
         let mut set_cookie_values: Vec<String> = Vec::new();
@@ -248,19 +257,18 @@ impl HeaderAnalyzer {
         // (RFC 7230 Section 3.2.2: multiple values can be combined with commas)
         let mut headers = HashMap::new();
         for (name, value) in response.headers().iter() {
-            if let Ok(value_str) = value.to_str() {
-                if name.as_str().eq_ignore_ascii_case("set-cookie") {
-                    // RFC 7230 §3.2.2 prohibits combining Set-Cookie values with commas.
-                    set_cookie_values.push(value_str.to_string());
-                } else {
-                    headers
-                        .entry(name.to_string())
-                        .and_modify(|existing: &mut String| {
-                            existing.push_str(", ");
-                            existing.push_str(value_str);
-                        })
-                        .or_insert_with(|| value_str.to_string());
-                }
+            let value_str = header_value_to_string(name.as_str(), value)?;
+            if name.as_str().eq_ignore_ascii_case("set-cookie") {
+                // RFC 7230 §3.2.2 prohibits combining Set-Cookie values with commas.
+                set_cookie_values.push(value_str);
+            } else {
+                headers
+                    .entry(name.to_string())
+                    .and_modify(|existing: &mut String| {
+                        existing.push_str(", ");
+                        existing.push_str(&value_str);
+                    })
+                    .or_insert(value_str);
             }
         }
 
@@ -384,6 +392,10 @@ mod tests {
     use tokio_rustls::TlsAcceptor;
 
     async fn spawn_https_server(response: String) -> u16 {
+        spawn_https_server_bytes(response.into_bytes()).await
+    }
+
+    async fn spawn_https_server_bytes(response: Vec<u8>) -> u16 {
         let _ = rustls::crypto::ring::default_provider().install_default();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
@@ -406,7 +418,7 @@ mod tests {
                 use tokio::io::{AsyncReadExt, AsyncWriteExt};
                 let mut buffer = [0u8; 4096];
                 let _ = tls_stream.read(&mut buffer).await;
-                let _ = tls_stream.write_all(response.as_bytes()).await;
+                let _ = tls_stream.write_all(&response).await;
                 let _ = tls_stream.shutdown().await;
             }
         });
@@ -528,6 +540,29 @@ mod tests {
 
         assert_eq!(result.http_status_code, Some(200));
         assert_eq!(result.server_hostname.as_deref(), Some("ResolvedIP"));
+    }
+
+    #[tokio::test]
+    async fn test_analyze_headers_rejects_invalid_header_encoding() {
+        let response = b"HTTP/1.1 200 OK\r\nServer: \xff\r\nContent-Length: 0\r\n\r\n".to_vec();
+        let port = spawn_https_server_bytes(response).await;
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
+        )
+        .unwrap();
+
+        let analyzer = HeaderAnalyzer::new(target);
+        let err = analyzer
+            .analyze()
+            .await
+            .expect_err("invalid header should fail");
+
+        assert!(
+            err.to_string()
+                .contains("Invalid HTTP response header server")
+        );
     }
 
     #[test]
