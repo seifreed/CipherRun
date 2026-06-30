@@ -20,6 +20,19 @@ pub struct AuthExtension {
     pub from_query_param: bool,
 }
 
+fn api_key_from_query(query: &str) -> Result<Option<String>, ApiError> {
+    for param in query.split('&') {
+        if let Some(("api_key", value)) = param.split_once('=') {
+            let decoded = urlencoding::decode(value).map_err(|error| {
+                ApiError::BadRequest(format!("Invalid api_key query parameter encoding: {error}"))
+            })?;
+            return Ok(Some(decoded.to_string()));
+        }
+    }
+
+    Ok(None)
+}
+
 /// Authentication middleware
 pub async fn authenticate(
     State(config): State<Arc<ApiConfig>>,
@@ -42,30 +55,25 @@ pub async fn authenticate(
     // which cannot set custom headers during the WebSocket handshake
     // SECURITY NOTE: Query parameters are logged in server logs, proxy logs,
     // and browser history. Use X-API-Key header when possible.
-    let (api_key, from_query_param) = req
+    let header_api_key = req
         .headers()
         .get("X-API-Key")
         .and_then(|h| h.to_str().ok())
-        .map(|s| (s.to_string(), false))
-        .or_else(|| {
-            req.uri().query().and_then(|query| {
-                query.split('&').find_map(|param| {
-                    if let Some(("api_key", value)) = param.split_once('=') {
-                        let decoded = urlencoding::decode(value)
-                            .map(|s| s.to_string())
-                            .unwrap_or_else(|_| value.to_string());
-                        Some((decoded, true))
-                    } else {
-                        None
-                    }
-                })
-            })
-        })
-        .ok_or_else(|| {
+        .map(str::to_string);
+    let (api_key, from_query_param) = if let Some(api_key) = header_api_key {
+        (api_key, false)
+    } else if let Some(query) = req.uri().query() {
+        let api_key = api_key_from_query(query)?.ok_or_else(|| {
             ApiError::Unauthorized(
                 "Missing API key (use X-API-Key header or api_key query parameter)".to_string(),
             )
         })?;
+        (api_key, true)
+    } else {
+        return Err(ApiError::Unauthorized(
+            "Missing API key (use X-API-Key header or api_key query parameter)".to_string(),
+        ));
+    };
 
     // SECURITY AUDIT: Log when API key is provided via query parameter
     // This is less secure than header-based auth and should be monitored
@@ -178,5 +186,30 @@ mod tests {
             .expect("request build");
         assert!(get_permission(&req).is_none());
         assert!(get_auth_extension(&req).is_none());
+    }
+
+    #[test]
+    fn test_api_key_from_query_decodes_valid_key() {
+        let key = api_key_from_query("foo=bar&api_key=a%2Bb")
+            .expect("valid query should parse")
+            .expect("api key should exist");
+
+        assert_eq!(key, "a+b");
+    }
+
+    #[test]
+    fn test_api_key_from_query_returns_none_when_absent() {
+        assert!(
+            api_key_from_query("foo=bar")
+                .expect("valid query should parse")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn test_api_key_from_query_rejects_invalid_encoding() {
+        let err = api_key_from_query("api_key=%FF").expect_err("invalid encoding should fail");
+
+        assert!(err.to_string().contains("Invalid api_key query parameter encoding"));
     }
 }
