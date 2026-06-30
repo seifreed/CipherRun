@@ -71,7 +71,7 @@ pub(super) fn analyze_banner(banner: &[u8]) -> (ApplicationProtocol, f64) {
             return (ApplicationProtocol::Unknown, 0.0);
         };
         let pkt_len = u32::from_le_bytes([len_low, len_mid, len_high, 0]) as usize;
-        if pkt_len > 0 && pkt_len < 1024 {
+        if pkt_len > 0 && pkt_len <= banner.len().saturating_sub(4) && pkt_len < 1024 {
             let Some(packet) = banner.get(5..) else {
                 return (ApplicationProtocol::Unknown, 0.0);
             };

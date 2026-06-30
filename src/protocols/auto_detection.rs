@@ -131,11 +131,14 @@ impl ProtocolDetector {
         let read_timeout = protocol_read_timeout();
         let mut reader = BufReader::new(stream);
         let mut response_str = String::new();
-        timeout(read_timeout, Self::read_http_status_line(&mut reader, &mut response_str))
-            .await
-            .map_err(|_| crate::TlsError::Timeout {
-                duration: Some(read_timeout),
-            })??;
+        timeout(
+            read_timeout,
+            Self::read_http_status_line(&mut reader, &mut response_str),
+        )
+        .await
+        .map_err(|_| crate::TlsError::Timeout {
+            duration: Some(read_timeout),
+        })??;
 
         if response_str.starts_with("HTTP/") {
             let version = response_str
@@ -298,6 +301,14 @@ mod tests {
     }
 
     #[test]
+    fn test_analyze_mysql_rejects_truncated_declared_packet() {
+        let banner = b"\x09\x00\x00\x00\x0a8.0.31\x00";
+        let (protocol, confidence) = analyze_banner(banner);
+        assert_eq!(protocol, ApplicationProtocol::Unknown);
+        assert_eq!(confidence, 0.0);
+    }
+
+    #[test]
     fn test_analyze_postgres_requires_greeting_at_start() {
         let banner = "NOTICE: PostgreSQL docs are available";
         let (protocol, _confidence) = analyze_banner(banner.as_bytes());
@@ -388,7 +399,7 @@ mod tests {
 
         tokio::spawn(async move {
             if let Ok((mut stream, _)) = listener.accept().await {
-                let banner = b"\x09\x00\x00\x00\x0a8.0.31\x00";
+                let banner = b"\x08\x00\x00\x00\x0a8.0.31\x00";
                 let _ = stream.write_all(banner).await;
                 tokio::time::sleep(Duration::from_secs(1)).await;
             }
