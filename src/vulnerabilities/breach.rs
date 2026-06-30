@@ -342,12 +342,12 @@ impl BreachTester {
     }
 
     fn is_compressed_encoding_header(line: &str) -> bool {
-        let Some(value) = line
-            .strip_prefix("Content-Encoding:")
-            .or_else(|| line.strip_prefix("content-encoding:"))
-        else {
+        let Some((name, value)) = line.split_once(':') else {
             return false;
         };
+        if !name.eq_ignore_ascii_case("Content-Encoding") {
+            return false;
+        }
 
         value.split(',').map(str::trim).any(|token| {
             matches!(
@@ -540,6 +540,9 @@ mod tests {
     fn test_compression_header_requires_exact_encoding_token() {
         assert!(BreachTester::is_compressed_encoding_header(
             "Content-Encoding: gzip, br"
+        ));
+        assert!(BreachTester::is_compressed_encoding_header(
+            "content-Encoding: gzip"
         ));
         assert!(!BreachTester::is_compressed_encoding_header(
             "Content-Encoding: bravo"
