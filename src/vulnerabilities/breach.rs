@@ -299,9 +299,13 @@ impl BreachTester {
     /// Uses precise matching to reduce false positives from comments/irrelevant text
     fn detect_sensitive_patterns(response: &str) -> bool {
         let response_lower = response.to_lowercase();
+        let headers_lower = response_lower
+            .split_once("\r\n\r\n")
+            .or_else(|| response_lower.split_once("\n\n"))
+            .map_or(response_lower.as_str(), |(headers, _)| headers);
 
         // Check Set-Cookie header (definitive indicator)
-        if response_lower.contains("set-cookie:") {
+        if headers_lower.contains("set-cookie:") {
             return true;
         }
 
@@ -331,9 +335,9 @@ impl BreachTester {
         }
 
         // Check for API tokens in headers or meta tags
-        if response_lower.contains("authorization:")
-            || response_lower.contains("x-auth-token:")
-            || response_lower.contains("x-api-key:")
+        if headers_lower.contains("authorization:")
+            || headers_lower.contains("x-auth-token:")
+            || headers_lower.contains("x-api-key:")
             || response_lower.contains("api_key=")
             || response_lower.contains("access_token=")
             || response_lower.contains("name=\"token")
@@ -515,6 +519,13 @@ mod tests {
         assert!(BreachTester::detect_sensitive_patterns(
             "https://example.test/callback?Access_Token=abc"
         ));
+    }
+
+    #[test]
+    fn test_detect_sensitive_patterns_ignores_header_names_in_body_text() {
+        let response =
+            "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nDocs mention Set-Cookie: here";
+        assert!(!BreachTester::detect_sensitive_patterns(response));
     }
 
     #[test]
