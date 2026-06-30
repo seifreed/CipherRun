@@ -29,9 +29,7 @@ impl MonitorCommand {
         use crate::monitor::MonitorConfig;
 
         if let Some(config_path) = &self.args.monitoring.config {
-            let config_str = std::fs::read_to_string(config_path)?;
-            toml::from_str(&config_str)
-                .map_err(|e| TlsError::Other(format!("Failed to parse TOML config: {}", e)))
+            MonitorConfig::from_file(config_path)
         } else {
             Ok(MonitorConfig::default())
         }
@@ -155,5 +153,29 @@ mod tests {
         let args = Args::default();
         let cmd = MonitorCommand::new(args);
         cmd.execute().await.expect("no-op should succeed");
+    }
+
+    #[test]
+    fn test_load_monitor_config_rejects_invalid_file() {
+        let dir = tempfile::tempdir().expect("test assertion should succeed");
+        let path = dir.path().join("monitor.toml");
+        std::fs::write(
+            &path,
+            r#"
+[monitor]
+default_interval_seconds = 0
+max_concurrent_scans = 1
+"#,
+        )
+        .expect("test assertion should succeed");
+
+        let mut args = Args::default();
+        args.monitoring.config = Some(path);
+        let cmd = MonitorCommand::new(args);
+        let err = cmd
+            .load_monitor_config()
+            .expect_err("invalid monitor config should fail");
+
+        assert!(err.to_string().contains("default_interval_seconds"));
     }
 }
