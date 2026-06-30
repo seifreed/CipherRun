@@ -258,17 +258,31 @@ pub struct AlertManager {
 
 impl AlertManager {
     /// Create new alert manager
-    pub fn new(dedup_window_hours: u64) -> Self {
-        Self {
+    pub fn new(dedup_window_hours: u64) -> Result<Self> {
+        if dedup_window_hours == 0 {
+            return Err(crate::TlsError::InvalidInput {
+                message: "dedup_window_hours must be greater than 0".to_string(),
+            });
+        }
+        let hours =
+            i64::try_from(dedup_window_hours).map_err(|error| crate::TlsError::InvalidInput {
+                message: format!("dedup_window_hours is too large: {error}"),
+            })?;
+        let dedup_window =
+            Duration::try_hours(hours).ok_or_else(|| crate::TlsError::InvalidInput {
+                message: "dedup_window_hours is too large".to_string(),
+            })?;
+
+        Ok(Self {
             channels: Vec::new(),
             recent_alerts: Arc::new(Mutex::new(HashMap::new())),
-            dedup_window: Duration::hours(i64::try_from(dedup_window_hours).unwrap_or(i64::MAX)),
-        }
+            dedup_window,
+        })
     }
 
     /// Create from configuration
     pub async fn from_config(config: &MonitorConfig) -> Result<Self> {
-        let mut manager = Self::new(config.monitor.deduplication.window_hours);
+        let mut manager = Self::new(config.monitor.deduplication.window_hours)?;
 
         // Initialize email channel if configured
         if let Some(ref email_config) = config.monitor.alerts.email
@@ -461,7 +475,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_alert_manager_deduplication() {
-        let manager = AlertManager::new(24);
+        let manager = AlertManager::new(24).expect("valid dedup window");
 
         let alert =
             Alert::scan_failure("example.com".to_string(), "Connection refused".to_string());
@@ -478,7 +492,13 @@ mod tests {
 
     #[test]
     fn test_alert_manager_new() {
-        let manager = AlertManager::new(24);
+        let manager = AlertManager::new(24).expect("valid dedup window");
         assert_eq!(manager.channel_count(), 0);
+    }
+
+    #[test]
+    fn test_alert_manager_rejects_invalid_dedup_windows() {
+        assert!(AlertManager::new(0).is_err());
+        assert!(AlertManager::new(u64::MAX).is_err());
     }
 }

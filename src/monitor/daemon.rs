@@ -617,7 +617,7 @@ mod tests {
     async fn test_expiry_warning_treats_recently_expired_certificate_as_expired() {
         let channel = RecordingChannel::default();
         let recorded_alerts = Arc::clone(&channel.alerts);
-        let mut alert_manager = AlertManager::new(0);
+        let mut alert_manager = AlertManager::new(1).expect("valid dedup window");
         alert_manager.add_channel(Box::new(channel));
         let thresholds = crate::monitor::types::AlertThresholds {
             expiry_30d: false,
@@ -652,7 +652,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_unparseable_expiry_propagates_alert_failure() {
-        let mut alert_manager = AlertManager::new(0);
+        let mut alert_manager = AlertManager::new(1).expect("valid dedup window");
         alert_manager.add_channel(Box::new(FailingChannel));
         let thresholds = crate::monitor::types::AlertThresholds {
             expiry_30d: true,
