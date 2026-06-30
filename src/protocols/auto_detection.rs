@@ -276,6 +276,13 @@ mod tests {
     }
 
     #[test]
+    fn test_analyze_imap_requires_greeting_at_start() {
+        let banner = "NOTICE: literal * OK text before imap docs";
+        let (protocol, _confidence) = analyze_banner(banner.as_bytes());
+        assert_eq!(protocol, ApplicationProtocol::Unknown);
+    }
+
+    #[test]
     fn test_analyze_banner_unknown() {
         let banner = "Welcome to custom service";
         let (protocol, confidence) = analyze_banner(banner.as_bytes());

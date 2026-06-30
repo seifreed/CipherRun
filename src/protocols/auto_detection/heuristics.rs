@@ -37,7 +37,7 @@ pub(super) fn analyze_banner(banner: &[u8]) -> (ApplicationProtocol, f64) {
         return (ApplicationProtocol::Pop3StartTls, 0.95);
     }
 
-    if lower.contains("* ok") && lower.contains("imap") {
+    if lower.starts_with("* ok") && lower.contains("imap") {
         return (ApplicationProtocol::ImapStartTls, 0.95);
     }
 
