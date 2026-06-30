@@ -26,18 +26,41 @@ pub(crate) fn display_cipher_strength_distribution(counts: &CipherCounts) {
 }
 
 pub(crate) fn display_cipher_security_features(counts: &CipherCounts) {
-    let total = counts.total.max(1);
     println!("\n  Security Features:");
     println!(
         "    Forward Secrecy: {}/{} ({}%)",
         counts.forward_secrecy,
         counts.total,
-        (counts.forward_secrecy * 100) / total
+        cipher_feature_percentage(counts.forward_secrecy, counts.total)
     );
     println!(
         "    AEAD:            {}/{} ({}%)",
         counts.aead,
         counts.total,
-        (counts.aead * 100) / total
+        cipher_feature_percentage(counts.aead, counts.total)
     );
+}
+
+fn cipher_feature_percentage(feature_count: usize, total: usize) -> usize {
+    if total == 0 {
+        return 0;
+    }
+
+    let percentage = (feature_count as u128)
+        .saturating_mul(100)
+        .checked_div(total as u128)
+        .unwrap_or(0);
+    usize::try_from(percentage.min(100)).expect("percentage is capped at 100")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cipher_feature_percentage_handles_extreme_counts() {
+        assert_eq!(cipher_feature_percentage(2, 5), 40);
+        assert_eq!(cipher_feature_percentage(usize::MAX, usize::MAX), 100);
+        assert_eq!(cipher_feature_percentage(1, 0), 0);
+    }
 }
