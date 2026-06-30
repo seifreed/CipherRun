@@ -61,6 +61,18 @@ impl DatabaseCommand {
         Ok((parsed.hostname, parsed.port))
     }
 
+    fn format_optional_i32(value: Option<i32>) -> String {
+        value
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "N/A".to_string())
+    }
+
+    fn format_optional_i64(value: Option<i64>) -> String {
+        value
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "N/A".to_string())
+    }
+
     fn render_history(&self, hostname: &str, port: u16, scans: &[crate::db::models::ScanRecord]) {
         println!("\nScan History for {}", canonical_target(hostname, port));
         println!("{}", "=".repeat(80));
@@ -75,8 +87,8 @@ impl DatabaseCommand {
                 "  {} - Grade: {} | Score: {} | Duration: {}ms",
                 scan.scan_timestamp.format("%Y-%m-%d %H:%M:%S"),
                 scan.overall_grade.as_deref().unwrap_or("N/A"),
-                scan.overall_score.unwrap_or(0),
-                scan.scan_duration_ms.unwrap_or(0)
+                Self::format_optional_i32(scan.overall_score),
+                Self::format_optional_i64(scan.scan_duration_ms)
             );
         }
     }
@@ -122,5 +134,13 @@ mod tests {
         let args = Args::default();
         let cmd = DatabaseCommand::new(args);
         assert_eq!(cmd.name(), "DatabaseCommand");
+    }
+
+    #[test]
+    fn test_database_history_formats_missing_numbers_as_unknown() {
+        assert_eq!(DatabaseCommand::format_optional_i32(None), "N/A");
+        assert_eq!(DatabaseCommand::format_optional_i64(None), "N/A");
+        assert_eq!(DatabaseCommand::format_optional_i32(Some(90)), "90");
+        assert_eq!(DatabaseCommand::format_optional_i64(Some(1200)), "1200");
     }
 }
