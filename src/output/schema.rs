@@ -126,33 +126,44 @@ impl CipherRunSchema {
                     }
                 },
                 "rating": {
-                    "type": "object",
+                    "type": ["object", "null"],
                     "description": "SSL Labs style rating",
                     "properties": {
-                        "grade": {
-                            "type": "string",
-                            "pattern": "^[A-F]([+-])?|T|M$"
-                        },
-                        "score": { "type": "integer", "minimum": 0, "maximum": 100 },
-                        "certificate_score": { "type": "integer", "minimum": 0, "maximum": 100 },
-                        "protocol_score": { "type": "integer", "minimum": 0, "maximum": 100 },
-                        "key_exchange_score": { "type": "integer", "minimum": 0, "maximum": 100 },
-                        "cipher_strength_score": { "type": "integer", "minimum": 0, "maximum": 100 },
-                        "warnings": {
-                            "type": "array",
-                            "items": { "type": "string" }
+                        "ssl_rating": {
+                            "type": ["object", "null"],
+                            "properties": {
+                                "grade": {
+                                    "type": "string",
+                                    "pattern": "^([A-F]([+-])?|T|M|Unverified)$"
+                                },
+                                "score": { "type": "integer", "minimum": 0, "maximum": 100 },
+                                "certificate_score": { "type": "integer", "minimum": 0, "maximum": 100 },
+                                "protocol_score": { "type": "integer", "minimum": 0, "maximum": 100 },
+                                "key_exchange_score": { "type": "integer", "minimum": 0, "maximum": 100 },
+                                "cipher_strength_score": { "type": "integer", "minimum": 0, "maximum": 100 },
+                                "warnings": {
+                                    "type": "array",
+                                    "items": { "type": "string" }
+                                }
+                            }
                         }
                     }
                 },
-                "http_headers": {
-                    "type": "object",
-                    "description": "HTTP security headers analysis",
+                "http": {
+                    "type": ["object", "null"],
+                    "description": "HTTP analysis",
                     "properties": {
-                        "hsts": { "type": "object" },
-                        "hpkp": { "type": "object" },
-                        "csp": { "type": "object" },
-                        "x_frame_options": { "type": "object" },
-                        "x_content_type_options": { "type": "object" }
+                        "http_headers": {
+                            "type": ["object", "null"],
+                            "description": "HTTP security headers analysis",
+                            "properties": {
+                                "hsts": { "type": "object" },
+                                "hpkp": { "type": "object" },
+                                "csp": { "type": "object" },
+                                "x_frame_options": { "type": "object" },
+                                "x_content_type_options": { "type": "object" }
+                            }
+                        }
                     }
                 }
             }
@@ -410,6 +421,43 @@ mod tests {
         let schema = CipherRunSchema::get_schema();
         let title = schema.get("title").and_then(|v| v.as_str());
         assert_eq!(title, Some("CipherRun Scan Results"));
+    }
+
+    #[test]
+    fn test_schema_uses_serialized_result_group_names() {
+        let schema = CipherRunSchema::get_schema();
+        let properties = schema
+            .get("properties")
+            .and_then(|v| v.as_object())
+            .expect("schema properties should be an object");
+
+        assert!(properties.contains_key("http"));
+        assert!(!properties.contains_key("http_headers"));
+        assert!(
+            properties
+                .get("http")
+                .and_then(|v| v.get("properties"))
+                .and_then(|v| v.get("http_headers"))
+                .is_some()
+        );
+        assert!(
+            properties
+                .get("rating")
+                .and_then(|v| v.get("properties"))
+                .and_then(|v| v.get("ssl_rating"))
+                .is_some()
+        );
+        assert!(
+            properties
+                .get("rating")
+                .and_then(|v| v.get("properties"))
+                .and_then(|v| v.get("ssl_rating"))
+                .and_then(|v| v.get("properties"))
+                .and_then(|v| v.get("grade"))
+                .and_then(|v| v.get("pattern"))
+                .and_then(|v| v.as_str())
+                .is_some_and(|pattern| pattern.contains("Unverified"))
+        );
     }
 
     #[test]
