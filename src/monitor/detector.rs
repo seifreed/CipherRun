@@ -67,6 +67,11 @@ impl ChangeDetector {
             .collect()
     }
 
+    fn format_key_size(size: Option<usize>) -> String {
+        size.map(|value| format!("{value} bits"))
+            .unwrap_or_else(|| "N/A".to_string())
+    }
+
     /// Detect changes between two certificates
     pub fn detect_changes(
         &self,
@@ -113,8 +118,8 @@ impl ChangeDetector {
                 change_type: ChangeType::KeySizeChange,
                 severity: ChangeSeverity::High,
                 description: "Public key size changed".to_string(),
-                previous_value: Some(format!("{} bits", previous.public_key_size.unwrap_or(0))),
-                current_value: Some(format!("{} bits", current.public_key_size.unwrap_or(0))),
+                previous_value: Some(Self::format_key_size(previous.public_key_size)),
+                current_value: Some(Self::format_key_size(current.public_key_size)),
                 detected_at: now,
             });
         }
@@ -313,6 +318,21 @@ mod tests {
         assert_eq!(changes.len(), 1);
         assert!(matches!(changes[0].change_type, ChangeType::KeySizeChange));
         assert_eq!(changes[0].severity, ChangeSeverity::High);
+    }
+
+    #[test]
+    fn test_detect_key_size_change_preserves_unknown_size() {
+        let detector = ChangeDetector::new();
+
+        let previous = create_test_cert("123", "CN=Let's Encrypt", None, vec![]);
+        let current = create_test_cert("123", "CN=Let's Encrypt", Some(4096), vec![]);
+
+        let changes = detector.detect_changes(&previous, &current);
+
+        assert_eq!(changes.len(), 1);
+        assert!(matches!(changes[0].change_type, ChangeType::KeySizeChange));
+        assert_eq!(changes[0].previous_value.as_deref(), Some("N/A"));
+        assert_eq!(changes[0].current_value.as_deref(), Some("4096 bits"));
     }
 
     #[test]
