@@ -27,8 +27,10 @@ impl VpnScanner {
             if trimmed.starts_with('#') || trimmed.is_empty() {
                 continue;
             }
-            let lower = trimmed.to_lowercase();
-            if lower.starts_with("cipher ") || lower.starts_with("tls-cipher ") {
+            let directive = trimmed.split_whitespace().next().unwrap_or_default();
+            if directive.eq_ignore_ascii_case("cipher")
+                || directive.eq_ignore_ascii_case("tls-cipher")
+            {
                 saw_cipher_directive = true;
             }
             // Only the control-channel TLS suite (`tls-cipher`) encodes the
@@ -37,7 +39,7 @@ impl VpnScanner {
             // quantum-vulnerable — AES-256 retains ~128-bit strength under Grover
             // — so flagging it here was a false positive on essentially every
             // OpenVPN config.
-            if lower.starts_with("tls-cipher ") {
+            if directive.eq_ignore_ascii_case("tls-cipher") {
                 vulnerable.push(trimmed.to_string());
             }
         }
@@ -141,6 +143,25 @@ mod tests {
                 .any(|v| v.starts_with("tls-cipher")),
             "tls-cipher control-channel KEX must be flagged: {:?}",
             result.quantum_vulnerable
+        );
+    }
+
+    #[test]
+    fn test_vpn_cipher_directives_accept_tabs() {
+        let f = tmp_config("tls-cipher\tTLS-ECDHE-RSA-WITH-AES-256-GCM-SHA384\n");
+        let result = VpnScanner::scan(f.path()).expect("scan should succeed");
+
+        assert!(
+            result
+                .quantum_vulnerable
+                .iter()
+                .any(|v| v.starts_with("tls-cipher")),
+            "tab-separated tls-cipher must be detected: {:?}",
+            result.quantum_vulnerable
+        );
+        assert!(
+            !result.recommendations.iter().any(|r| r.contains("unknown")),
+            "detected cipher directives must not be reported as absent"
         );
     }
 
