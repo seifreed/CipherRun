@@ -44,7 +44,7 @@ async fn fetch_history_postgres(
     )
     .bind(&query.hostname)
     .bind(query.port as i32)
-    .bind(i64::try_from(query.limit).unwrap_or(i64::MAX))
+    .bind(scan_history_limit(query.limit)?)
     .fetch_all(pool)
     .await
     .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to query scan history: {}", e)))?;
@@ -69,7 +69,7 @@ async fn fetch_history_sqlite(
     )
     .bind(&query.hostname)
     .bind(query.port as i32)
-    .bind(i64::try_from(query.limit).unwrap_or(i64::MAX))
+    .bind(scan_history_limit(query.limit)?)
     .fetch_all(pool)
     .await
     .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to query scan history: {}", e)))?;
@@ -81,6 +81,12 @@ async fn fetch_history_sqlite(
 
 fn scan_history_field_error(field: &str, error: impl std::fmt::Display) -> crate::TlsError {
     crate::TlsError::DatabaseError(format!("Invalid scan history field {}: {}", field, error))
+}
+
+fn scan_history_limit(limit: usize) -> crate::Result<i64> {
+    i64::try_from(limit).map_err(|error| {
+        crate::TlsError::DatabaseError(format!("Invalid scan history limit: {}", error))
+    })
 }
 
 fn normalize_scan_id(id: i64) -> crate::Result<u64> {
@@ -285,5 +291,12 @@ mod tests {
             err.to_string()
                 .contains("Invalid scan history field scan_timestamp")
         );
+    }
+
+    #[test]
+    fn scan_history_limit_rejects_i64_overflow() {
+        let err = scan_history_limit(usize::MAX).expect_err("overflowing limit should fail loudly");
+
+        assert!(err.to_string().contains("Invalid scan history limit"));
     }
 }
