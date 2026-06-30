@@ -109,9 +109,11 @@ impl DatabaseConfig {
                     crate::TlsError::DatabaseError("Missing password".to_string())
                 })?;
 
-                // SECURITY: URL-encode password to handle special characters safely
-                // This prevents issues with passwords containing @, :, /, etc.
+                // SECURITY: URL-encode userinfo/path fields so reserved
+                // characters cannot break the PostgreSQL URL structure.
+                let encoded_username = urlencoding::encode(username);
                 let encoded_password = urlencoding::encode(password);
+                let encoded_database = urlencoding::encode(database);
 
                 // SECURITY WARNING: Log when embedding credentials in connection string
                 // Consider using environment variables or secret managers instead
@@ -125,10 +127,10 @@ impl DatabaseConfig {
 
                 Ok(format!(
                     "postgres://{}:{}@{}/{}",
-                    username,
+                    encoded_username,
                     encoded_password,
                     canonical_target(host, port),
-                    database
+                    encoded_database
                 ))
             }
             DatabaseType::Sqlite => {
@@ -253,6 +255,25 @@ mod tests {
             .connection_string()
             .expect("test assertion should succeed");
         assert_eq!(conn_str, "postgres://user:pass@[::1]:5432/testdb");
+    }
+
+    #[test]
+    fn test_postgres_connection_string_encodes_reserved_userinfo_and_database() {
+        let config = DatabaseConfig::postgres(
+            "localhost".to_string(),
+            5432,
+            "test/db".to_string(),
+            "user@tenant".to_string(),
+            "p:ss@word".to_string(),
+        );
+
+        let conn_str = config
+            .connection_string()
+            .expect("test assertion should succeed");
+        assert_eq!(
+            conn_str,
+            "postgres://user%40tenant:p%3Ass%40word@localhost:5432/test%2Fdb"
+        );
     }
 
     #[test]
