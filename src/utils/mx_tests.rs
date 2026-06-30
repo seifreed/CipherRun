@@ -292,6 +292,11 @@ fn test_parse_nslookup_output_trims_dot_and_spaces() {
 }
 
 #[test]
+fn test_synthetic_backend_ip_does_not_collide_at_u16_boundary() {
+    assert_ne!(synthetic_backend_ip(65_534), synthetic_backend_ip(65_535));
+}
+
+#[test]
 fn test_aggregate_scan_results_for_domain_is_conservative() {
     let supported = ProtocolTestResult {
         protocol: Protocol::TLS12,

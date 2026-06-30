@@ -502,13 +502,10 @@ fn normalize_mx_hostname(hostname: &str) -> Option<String> {
 }
 
 fn synthetic_backend_ip(index: usize) -> IpAddr {
-    let bytes = match u64::try_from(index) {
-        Ok(value) => value.to_be_bytes(),
-        Err(_) => u64::MAX.to_be_bytes(),
-    };
-    let [_, _, _, _, high_a, high_b, low_a, low_b] = bytes;
+    let value = u32::try_from(index.saturating_add(1)).unwrap_or(u32::MAX);
+    let [high_a, high_b, low_a, low_b] = value.to_be_bytes();
     let high = u16::from_be_bytes([high_a, high_b]);
-    let low = u16::from_be_bytes([low_a, low_b]).saturating_add(1);
+    let low = u16::from_be_bytes([low_a, low_b]);
     IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, high, low))
 }
 
