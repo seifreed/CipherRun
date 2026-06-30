@@ -74,26 +74,33 @@ impl NmapParser {
         // Parse each port entry
         let mut targets = Vec::new();
         for port_entry in ports_section.split(',') {
+            let port_entry = port_entry.trim();
+            if port_entry.is_empty() {
+                continue;
+            }
             let mut port_parts = port_entry.trim().split('/');
-            if let (Some(port), Some(state), Some(protocol)) =
+            let (Some(port), Some(state), Some(protocol)) =
                 (port_parts.next(), port_parts.next(), port_parts.next())
-            {
-                let port = port.parse::<u16>().map_err(|_| TlsError::ParseError {
-                    message: format!("Invalid Nmap port value: {port}"),
-                })?;
-                let state = state.to_string();
-                let protocol = protocol.to_string();
+            else {
+                return Err(TlsError::ParseError {
+                    message: format!("Invalid Nmap port entry: {port_entry}"),
+                });
+            };
+            let port = port.parse::<u16>().map_err(|_| TlsError::ParseError {
+                message: format!("Invalid Nmap port value: {port}"),
+            })?;
+            let state = state.to_string();
+            let protocol = protocol.to_string();
 
-                // Only include open ports
-                if state == "open" {
-                    targets.push(NmapTarget {
-                        hostname: hostname.clone(),
-                        ip: ip.clone(),
-                        port,
-                        protocol,
-                        state,
-                    });
-                }
+            // Only include open ports
+            if state == "open" {
+                targets.push(NmapTarget {
+                    hostname: hostname.clone(),
+                    ip: ip.clone(),
+                    port,
+                    protocol,
+                    state,
+                });
             }
         }
 
@@ -268,6 +275,13 @@ Host: 192.168.1.1 (example.com)	Ports: 443/open/tcp//https///	Ignored State: clo
             "Host: 10.0.0.4 (example.com) Ports: abc/open/tcp//bad///, 443/open/tcp//https///";
         let err = NmapParser::parse_host_line(line).expect_err("invalid port should fail");
         assert!(err.to_string().contains("Invalid Nmap port value"));
+    }
+
+    #[test]
+    fn test_parse_host_line_incomplete_port_entry_fails() {
+        let line = "Host: 10.0.0.4 (example.com) Ports: 443/open";
+        let err = NmapParser::parse_host_line(line).expect_err("incomplete port should fail");
+        assert!(err.to_string().contains("Invalid Nmap port entry"));
     }
 
     #[test]
