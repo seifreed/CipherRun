@@ -64,10 +64,15 @@ impl HostPortDaysInput {
         let (host_port, days_str) = raw.rsplit_once(':').ok_or_else(|| TlsError::InvalidInput {
             message: "Expected format HOSTNAME:PORT:DAYS".to_string(),
         })?;
-        if host_port.contains("://") && !host_port.rsplit('/').next().unwrap_or("").contains(':') {
-            return Err(TlsError::InvalidInput {
+        if host_port.contains("://") {
+            let url = url::Url::parse(host_port).map_err(|_| TlsError::InvalidInput {
                 message: "Expected format HOSTNAME:PORT:DAYS".to_string(),
-            });
+            })?;
+            if url.port().is_none() {
+                return Err(TlsError::InvalidInput {
+                    message: "Expected format HOSTNAME:PORT:DAYS".to_string(),
+                });
+            }
         }
 
         let days_str = days_str.trim();
@@ -164,9 +169,14 @@ mod tests {
     }
 
     #[test]
+    fn rejects_host_port_days_url_path_colon_without_authority_port() {
+        assert!(HostPortDaysInput::parse("https://example.com/path:443:7").is_err());
+    }
+
+    #[test]
     fn trims_host_port_days() {
-        let parsed = HostPortDaysInput::parse(" example.com:443: 7 ")
-            .expect("should parse trimmed input");
+        let parsed =
+            HostPortDaysInput::parse(" example.com:443: 7 ").expect("should parse trimmed input");
         assert_eq!(parsed.hostname, "example.com");
         assert_eq!(parsed.port, 443);
         assert_eq!(parsed.days, 7);
