@@ -171,7 +171,17 @@ impl HstsPreloadChecker {
 
     /// Normalize domain for consistent cache keys
     fn normalize_domain(domain: &str) -> String {
-        let mut normalized = domain.to_lowercase();
+        let mut normalized = domain.trim().to_lowercase();
+
+        if let Some(stripped) = normalized.strip_prefix("https://") {
+            normalized = stripped.to_string();
+        } else if let Some(stripped) = normalized.strip_prefix("http://") {
+            normalized = stripped.to_string();
+        }
+
+        if let Some(idx) = normalized.find(['/', '?', '#']) {
+            normalized.truncate(idx);
+        }
 
         // Remove www. prefix (ensure we don't create empty string)
         if let Some(stripped) = normalized.strip_prefix("www.")
@@ -180,8 +190,9 @@ impl HstsPreloadChecker {
             normalized = stripped.to_string();
         }
 
-        // Remove port if present
-        if let Some(idx) = normalized.find(':')
+        // Remove host:port suffix, but do not truncate raw IPv6 literals.
+        if normalized.matches(':').count() == 1
+            && let Some(idx) = normalized.find(':')
             && idx > 0
         {
             normalized = normalized.get(..idx).unwrap_or_default().to_string();
@@ -398,6 +409,10 @@ mod tests {
         );
         assert_eq!(
             HstsPreloadChecker::normalize_domain("www.example.com:443"),
+            "example.com"
+        );
+        assert_eq!(
+            HstsPreloadChecker::normalize_domain("https://www.example.com:443/path?q=1"),
             "example.com"
         );
     }
