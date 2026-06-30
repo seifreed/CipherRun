@@ -64,7 +64,13 @@ pub struct CtStreamer {
 }
 
 impl CtStreamer {
-    fn normalized_config(mut config: CtConfig) -> CtConfig {
+    fn normalized_config(mut config: CtConfig) -> Result<CtConfig> {
+        if config.poll_interval.is_zero() {
+            return Err(TlsError::InvalidInput {
+                message: "CT logs poll interval must be greater than 0 seconds".to_string(),
+            });
+        }
+
         // Validate and clamp batch size with warning
         let batch_size = if config.batch_size > MAX_BATCH_SIZE {
             tracing::warn!(
@@ -81,12 +87,12 @@ impl CtStreamer {
             config.batch_size
         };
         config.batch_size = batch_size;
-        config
+        Ok(config)
     }
 
     /// Create a new CT log streamer
     pub async fn new(config: CtConfig) -> Result<Self> {
-        let config = Self::normalized_config(config);
+        let config = Self::normalized_config(config)?;
 
         // Initialize source manager and fetch log sources
         let mut source_manager = SourceManager::new();
@@ -443,8 +449,19 @@ mod tests {
             ..Default::default()
         };
 
-        let config = CtStreamer::normalized_config(config);
+        let config = CtStreamer::normalized_config(config).expect("config should normalize");
         assert_eq!(config.batch_size, MAX_BATCH_SIZE);
+    }
+
+    #[test]
+    fn test_config_rejects_zero_poll_interval() {
+        let config = CtConfig {
+            poll_interval: Duration::ZERO,
+            ..Default::default()
+        };
+
+        let err = CtStreamer::normalized_config(config).expect_err("zero interval should fail");
+        assert!(err.to_string().contains("poll interval"));
     }
 
     #[tokio::test]
