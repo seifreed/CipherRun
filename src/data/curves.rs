@@ -97,7 +97,12 @@ impl CurvesDatabase {
         let id = id.trim().replace("0x", "").replace(",", "").to_lowercase();
 
         let mut names = names.split_whitespace();
-        let short_name = names.next().unwrap_or("unknown").to_string();
+        let short_name = names
+            .next()
+            .ok_or_else(|| TlsError::ParseError {
+                message: "Invalid format: missing curve name".to_string(),
+            })?
+            .to_string();
         let full_name = names.collect::<Vec<_>>().join(" ");
 
         let bits = Self::extract_bits(&short_name, &full_name);
@@ -262,6 +267,12 @@ mod tests {
     fn test_parse_curve_line_invalid() {
         let err = CurvesDatabase::parse_line("invalid").expect_err("should fail");
         assert!(err.to_string().contains("Invalid format"));
+    }
+
+    #[test]
+    fn test_parse_curve_line_missing_name_fails() {
+        let err = CurvesDatabase::parse_line("0x00,0x1d - ").expect_err("should fail");
+        assert!(err.to_string().contains("missing curve name"));
     }
 
     #[test]
