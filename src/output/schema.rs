@@ -125,7 +125,7 @@ impl CipherRunSchema {
                             "properties": {
                                 "grade": {
                                     "type": "string",
-                                    "pattern": "^([A-F]([+-])?|T|M|Unverified)$"
+                                    "enum": ["A+", "A", "A-", "B", "C", "D", "E", "F", "T", "M", "Unverified"]
                                 },
                                 "score": { "type": "integer", "minimum": 0, "maximum": 100 },
                                 "certificate_score": { "type": "integer", "minimum": 0, "maximum": 100 },
@@ -440,17 +440,17 @@ mod tests {
                 .and_then(|v| v.get("ssl_rating"))
                 .is_some()
         );
-        assert!(
-            properties
-                .get("rating")
-                .and_then(|v| v.get("properties"))
-                .and_then(|v| v.get("ssl_rating"))
-                .and_then(|v| v.get("properties"))
-                .and_then(|v| v.get("grade"))
-                .and_then(|v| v.get("pattern"))
-                .and_then(|v| v.as_str())
-                .is_some_and(|pattern| pattern.contains("Unverified"))
-        );
+        let grade_values = properties
+            .get("rating")
+            .and_then(|v| v.get("properties"))
+            .and_then(|v| v.get("ssl_rating"))
+            .and_then(|v| v.get("properties"))
+            .and_then(|v| v.get("grade"))
+            .and_then(|v| v.get("enum"))
+            .and_then(|v| v.as_array())
+            .expect("rating grade enum should be present");
+        assert!(grade_values.iter().any(|v| v == "Unverified"));
+        assert!(!grade_values.iter().any(|v| v == "B+"));
     }
 
     #[test]
