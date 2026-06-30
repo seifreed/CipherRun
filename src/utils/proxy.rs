@@ -61,6 +61,9 @@ impl ProxyConfig {
         if hostport.trim().is_empty() {
             crate::tls_bail!("Proxy host cannot be empty");
         }
+        if hostport.contains("://") {
+            crate::tls_bail!("Proxy host must be host[:port], not a URL");
+        }
         let (host, port) = split_target_host_port(hostport)?;
         if host.is_empty() {
             crate::tls_bail!("Proxy host cannot be empty");
@@ -326,6 +329,13 @@ mod tests {
         let err = ProxyConfig::parse("https://proxy.example.com:443")
             .expect_err("HTTPS proxy URLs are not supported");
         assert!(err.to_string().contains("Unsupported proxy scheme"));
+    }
+
+    #[test]
+    fn test_parse_proxy_rejects_nested_url_after_http_scheme() {
+        let err = ProxyConfig::parse("http://https://proxy.example.com:443")
+            .expect_err("nested proxy URL should fail");
+        assert!(err.to_string().contains("Proxy host must be host"));
     }
 
     #[test]
