@@ -115,12 +115,25 @@ fn enabled_algorithm(alg: &str) -> Option<String> {
 
 fn is_ssh_pqc_kex(alg: &str) -> bool {
     let lower = alg.to_lowercase();
-    lower.contains("mlkem") || lower.contains("sntrup") || lower.contains("kyber")
+    has_alg_prefix(&lower, "mlkem")
+        || has_alg_prefix(&lower, "sntrup")
+        || lower.contains("-kyber")
 }
 
 fn is_ssh_pqc_hostkey(alg: &str) -> bool {
     let lower = alg.to_lowercase();
-    lower.contains("dilithium") || lower.contains("falcon") || lower.contains("mldsa")
+    has_alg_prefix(&lower, "dilithium")
+        || has_alg_prefix(&lower, "mldsa")
+        || has_alg_prefix(&lower, "ssh-dilithium")
+        || has_alg_prefix(&lower, "ssh-falcon")
+        || has_alg_prefix(&lower, "ssh-mldsa")
+}
+
+fn has_alg_prefix(value: &str, prefix: &str) -> bool {
+    let Some(rest) = value.strip_prefix(prefix) else {
+        return false;
+    };
+    rest.bytes().next().is_none_or(|byte| !byte.is_ascii_alphabetic())
 }
 
 #[cfg(test)]
@@ -164,7 +177,10 @@ mod tests {
     fn test_pqc_kex_detection() {
         assert!(is_ssh_pqc_kex("mlkem768nistp256-sha256@openssh.com"));
         assert!(is_ssh_pqc_kex("sntrup761x25519-sha512@openssh.com"));
+        assert!(is_ssh_pqc_kex("x25519-kyber768-draft00@amazon.com"));
         assert!(!is_ssh_pqc_kex("curve25519-sha256"));
+        assert!(!is_ssh_pqc_kex("notkyber-kex"));
+        assert!(!is_ssh_pqc_hostkey("ssh-falconer"));
     }
 
     #[test]
