@@ -4,6 +4,7 @@ use crate::Result;
 use crate::api::{config::ApiConfig, middleware, routes, state::AppState};
 use crate::utils::network::canonical_target;
 use axum::{
+    extract::DefaultBodyLimit,
     Router, middleware as axum_middleware,
     routing::{delete, get, post},
 };
@@ -130,6 +131,8 @@ impl ApiServer {
         };
 
         router
+            // Enforce the configured JSON/body size limit for request extractors.
+            .layer(DefaultBodyLimit::max(self.config.max_body_size))
             // Add compression
             .layer(CompressionLayer::new())
             // Add logging
@@ -203,6 +206,12 @@ impl ApiServer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::config::Permission;
+    use axum::{
+        body::Body,
+        http::{Request, StatusCode},
+    };
+    use tower::ServiceExt;
 
     #[test]
     fn test_server_creation() {
@@ -217,5 +226,35 @@ mod tests {
         let server = ApiServer::new(config).expect("test assertion should succeed");
         let _router = server.build_router();
         // Just verify it builds without panicking
+    }
+
+    #[tokio::test]
+    async fn test_router_enforces_configured_body_limit() {
+        let mut config = ApiConfig {
+            max_body_size: 8,
+            ..Default::default()
+        };
+        config.api_keys.clear();
+        config
+            .api_keys
+            .insert("test-key".to_string(), Permission::User);
+
+        let app = ApiServer::new(config)
+            .expect("server should build")
+            .build_router();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/scan")
+                    .header("X-API-Key", "test-key")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"target":"example.com"}"#))
+                    .expect("request should build"),
+            )
+            .await
+            .expect("request should complete");
+
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
     }
 }
