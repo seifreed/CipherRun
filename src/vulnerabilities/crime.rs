@@ -189,7 +189,10 @@ impl<'a> CrimeTester<'a> {
                     // Truncated ServerHello split across reads; the probe cannot decide.
                     return Ok(CompressionProbeStatus::Inconclusive);
                 }
-                if response.first() == Some(&0x16) && response.get(5) == Some(&0x02) && n > 43 {
+                if response.first() == Some(&0x16) && response.get(5) == Some(&0x02) {
+                    if n <= 43 {
+                        return Ok(CompressionProbeStatus::Inconclusive);
+                    }
                     let Some(session_id_len) = response.get(43).copied().map(usize::from) else {
                         return Ok(CompressionProbeStatus::Inconclusive);
                     };
@@ -219,6 +222,7 @@ impl<'a> CrimeTester<'a> {
                             CompressionProbeStatus::Disabled
                         });
                     }
+                    return Ok(CompressionProbeStatus::Inconclusive);
                 }
                 Ok(CompressionProbeStatus::Disabled)
             }
@@ -434,8 +438,7 @@ impl<'a> CrimeTester<'a> {
                 Ok(Ok(n)) => {
                     total += n;
                     if total >= 5 {
-                        let record_len =
-                            u16::from_be_bytes([buffer[3], buffer[4]]) as usize;
+                        let record_len = u16::from_be_bytes([buffer[3], buffer[4]]) as usize;
                         let record_total = 5usize.saturating_add(record_len);
                         if total >= record_total {
                             break;
@@ -485,7 +488,7 @@ mod tests {
     use super::*;
     use std::net::TcpListener;
     use tokio::io::AsyncWriteExt;
-    use tokio::time::{sleep, Duration};
+    use tokio::time::{Duration, sleep};
 
     #[test]
     fn test_crime_result_creation() {
@@ -760,6 +763,46 @@ mod tests {
             .await
             .expect("probe should return a status");
         assert_eq!(status, CompressionProbeStatus::Enabled);
+
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_tls_compression_truncated_server_hello_is_inconclusive() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = vec![0u8; 4096];
+            let _ = socket.read(&mut buf).await.unwrap();
+
+            let mut response = vec![
+                0x16, 0x03, 0x03, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x03, 0x03,
+            ];
+            response.extend_from_slice(&[0xAA; 32]);
+
+            let rec_len = (response.len() - 5) as u16;
+            write_u16_at(&mut response, 3, rec_len);
+            let hs_len = response.len() - 9;
+            write_u24_at(&mut response, 6, hs_len);
+
+            socket.write_all(&response).await.unwrap();
+        });
+
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+        let tester = CrimeTester::new(&target);
+
+        let status = tester
+            .test_tls_compression()
+            .await
+            .expect("probe should return a status");
+        assert_eq!(status, CompressionProbeStatus::Inconclusive);
 
         server.await.unwrap();
     }
