@@ -172,7 +172,26 @@ impl Ja3sDatabase {
                 message: format!("Failed to parse JA3S database: {}", e),
             })?;
 
+        Self::from_signatures(signatures)
+    }
+
+    fn from_signatures(signatures: HashMap<String, Ja3sSignature>) -> Result<Self> {
+        for hash in signatures.keys() {
+            if !Self::is_valid_ja3s_hash(hash) {
+                return Err(TlsError::ParseError {
+                    message: format!("Invalid JA3S signature hash: {hash}"),
+                });
+            }
+        }
+
         Ok(Ja3sDatabase { signatures })
+    }
+
+    fn is_valid_ja3s_hash(hash: &str) -> bool {
+        hash.len() == 32
+            && hash
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
     }
 
     /// Match a JA3S hash against the database
@@ -449,6 +468,26 @@ mod tests {
 
         let ja3s_string = Ja3sFingerprint::build_ja3s_string(version, cipher, &extensions);
         assert_eq!(ja3s_string, "771,47,");
+    }
+
+    #[test]
+    fn test_database_load_rejects_invalid_hash() {
+        let mut signatures = HashMap::new();
+        signatures.insert(
+            "not-a-ja3s-hash".to_string(),
+            Ja3sSignature {
+                name: "Bad".to_string(),
+                server_type: ServerType::Unknown,
+                description: "Invalid hash".to_string(),
+                common_ports: Vec::new(),
+                indicators: Vec::new(),
+            },
+        );
+
+        let err = Ja3sDatabase::from_signatures(signatures)
+            .expect_err("invalid JA3S hash should fail");
+
+        assert!(err.to_string().contains("Invalid JA3S signature hash"));
     }
 
     #[test]
