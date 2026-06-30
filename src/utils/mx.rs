@@ -110,7 +110,7 @@ impl MxTester {
 
         for line in output_str.lines() {
             let line = line.trim();
-            if line.is_empty() {
+            if line.is_empty() || line.starts_with(';') {
                 continue;
             }
             let mut parts = line.split_whitespace();

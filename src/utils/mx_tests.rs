@@ -71,6 +71,19 @@ fn test_parse_dig_output_handles_whitespace() {
 }
 
 #[test]
+fn test_parse_dig_output_skips_comment_lines() {
+    let tester = MxTester::new("example.com".to_string());
+    let output = b";; communications error to 127.0.0.1#53\n10 mx1.example.com.\n";
+
+    let records = tester
+        .parse_dig_output(output)
+        .expect("comment lines should be ignored");
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].priority, 10);
+    assert_eq!(records[0].hostname, "mx1.example.com");
+}
+
+#[test]
 fn test_generate_mx_summary() {
     let mx1 = MxRecord {
         priority: 10,
