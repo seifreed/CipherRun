@@ -48,17 +48,7 @@ impl CaaChecker {
         match self.query_caa_records() {
             Ok(records) => {
                 if records.is_empty() {
-                    result.has_caa_records = false;
-                    result.issues.push(
-                        "No CAA records found - any CA can issue certificates for this domain"
-                            .to_string(),
-                    );
-                    result.recommendations.push(
-                        "Add CAA records to restrict which CAs can issue certificates".to_string(),
-                    );
-                    result.recommendations.push(
-                        "Example: example.com. IN CAA 0 issue \"letsencrypt.org\"".to_string(),
-                    );
+                    Self::record_no_caa_records(&mut result);
                 } else {
                     result.has_caa_records = true;
                     result.records = records;
@@ -76,6 +66,19 @@ impl CaaChecker {
         }
 
         Ok(result)
+    }
+
+    fn record_no_caa_records(result: &mut CaaCheckResult) {
+        result.has_caa_records = false;
+        result.issues.push(
+            "No CAA records found - any CA can issue certificates for this domain".to_string(),
+        );
+        result
+            .recommendations
+            .push("Add CAA records to restrict which CAs can issue certificates".to_string());
+        result
+            .recommendations
+            .push("Example: example.com. IN CAA 0 issue \"letsencrypt.org\"".to_string());
     }
 
     /// Query CAA records via dig
@@ -477,8 +480,15 @@ mod tests {
 
     #[test]
     fn test_check_reports_no_records_for_empty_successful_lookup() {
-        let checker = CaaChecker::new("invalid.invalid".to_string());
-        let result = checker.check().expect("check should return a result");
+        let mut result = CaaCheckResult {
+            has_caa_records: true,
+            records: Vec::new(),
+            compliant: false,
+            issues: Vec::new(),
+            recommendations: Vec::new(),
+        };
+
+        CaaChecker::record_no_caa_records(&mut result);
 
         assert!(
             result

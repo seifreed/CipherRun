@@ -98,7 +98,26 @@ impl CertificateInventory {
     }
 
     /// Add a domain to the inventory
-    pub fn add_domain(&mut self, domain: MonitoredDomain) -> Result<()> {
+    pub fn add_domain(&mut self, mut domain: MonitoredDomain) -> Result<()> {
+        if domain.port == 0 {
+            return Err(TlsError::InvalidInput {
+                message: "Monitored domain port must be between 1 and 65535".to_string(),
+            });
+        }
+        if domain.interval_seconds == 0 {
+            return Err(TlsError::InvalidInput {
+                message: "Monitored domain interval must be greater than 0 seconds".to_string(),
+            });
+        }
+
+        let (hostname, embedded_port) = split_target_host_port(&domain.hostname)?;
+        if embedded_port.is_some() {
+            return Err(TlsError::InvalidInput {
+                message: "Monitored domain hostname must not include a port".to_string(),
+            });
+        }
+        domain.hostname = hostname;
+
         let key = domain.identifier();
         self.domains.insert(key, domain);
         Ok(())
@@ -303,12 +322,12 @@ impl CertificateInventory {
             });
         }
 
-        let mut normalized_domains = HashMap::with_capacity(domains.len());
+        let mut normalized_inventory = Self::new();
         for domain in domains.into_values() {
-            normalized_domains.insert(domain.identifier(), domain);
+            normalized_inventory.add_domain(domain)?;
         }
 
-        self.domains = normalized_domains;
+        self.domains = normalized_inventory.domains;
         Ok(())
     }
 
@@ -443,6 +462,30 @@ mod tests {
             .remove_domain("example.com")
             .expect("test assertion should succeed");
         assert_eq!(inventory.len(), 0);
+    }
+
+    #[test]
+    fn test_inventory_rejects_unusable_domain() {
+        let mut inventory = CertificateInventory::new();
+        assert!(
+            inventory
+                .add_domain(MonitoredDomain::new(String::new(), 443))
+                .is_err()
+        );
+        assert!(
+            inventory
+                .add_domain(MonitoredDomain::new("example.com".to_string(), 0))
+                .is_err()
+        );
+        assert!(
+            inventory
+                .add_domain(MonitoredDomain::new("example.com:8443".to_string(), 443))
+                .is_err()
+        );
+
+        let domain = MonitoredDomain::new("example.com".to_string(), 443).with_interval(0);
+        assert!(inventory.add_domain(domain).is_err());
+        assert!(inventory.is_empty());
     }
 
     #[test]
@@ -697,6 +740,38 @@ mod tests {
         assert!(loaded_inventory.get_domain("example.com").is_some());
         assert!(loaded_inventory.get_domain("test.com:8443").is_some());
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_load_json_rejects_invalid_domain() -> Result<()> {
+        let mut temp_file = NamedTempFile::new()?;
+        writeln!(
+            temp_file,
+            r#"{{
+                "bad": {{
+                    "hostname": "",
+                    "port": 443,
+                    "enabled": true,
+                    "interval_seconds": 3600,
+                    "alert_thresholds": {{
+                        "expiry_30d": true,
+                        "expiry_14d": true,
+                        "expiry_7d": true,
+                        "expiry_1d": true,
+                        "on_change": true
+                    }},
+                    "last_scan": null,
+                    "last_certificate": null
+                }}
+            }}"#
+        )?;
+
+        let mut inventory = CertificateInventory::new();
+        let result = inventory.load_from_json(temp_file.path());
+
+        assert!(result.is_err());
+        assert!(inventory.is_empty());
         Ok(())
     }
 }
