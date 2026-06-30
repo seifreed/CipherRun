@@ -224,7 +224,12 @@ impl ServerHelloParser {
 
                     // supported_versions in a ServerHello carries exactly one
                     // 2-byte selected version (RFC 8446 §4.2.1).
-                    if ext_type == 0x002b && ext_data.len() >= 2 {
+                    if ext_type == 0x002b {
+                        if ext_data.len() != 2 {
+                            crate::tls_bail!(
+                                "ServerHello supported_versions extension must contain exactly 2 bytes"
+                            );
+                        }
                         negotiated_version =
                             Some(Self::read_u16_at(&ext_data, 0, "supported_versions")?);
                     }
@@ -498,6 +503,23 @@ mod tests {
             ServerHelloParser::parse(&server_hello).expect("test assertion should succeed");
         assert_eq!(parsed.version, Protocol::TLS13);
         assert!(parsed.has_extension(0x002b));
+    }
+
+    #[test]
+    fn test_server_hello_rejects_malformed_supported_versions_length() {
+        let mut server_hello = vec![
+            0x16, 0x03, 0x03, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x03, 0x03,
+        ];
+        server_hello.extend_from_slice(&[0u8; 32]);
+        server_hello.push(0x00);
+        server_hello.extend_from_slice(&[0x13, 0x01]);
+        server_hello.push(0x00);
+        server_hello.extend_from_slice(&[0x00, 0x07, 0x00, 0x2b, 0x00, 0x03, 0x03, 0x04, 0x00]);
+        patch_lengths(&mut server_hello);
+
+        let err = ServerHelloParser::parse(&server_hello).unwrap_err();
+
+        assert!(format!("{err}").contains("supported_versions extension must contain exactly 2"));
     }
 
     #[test]
