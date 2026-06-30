@@ -242,6 +242,56 @@ impl MonitorConfig {
                 message: "monitor.deduplication.window_hours must be greater than 0".to_string(),
             });
         }
+        self.validate_alerts()?;
+        Ok(())
+    }
+
+    fn validate_alerts(&self) -> Result<()> {
+        if let Some(email) = &self.monitor.alerts.email
+            && email.enabled
+            && (email.smtp_server.trim().is_empty()
+                || email.smtp_port == 0
+                || email.from_address.trim().is_empty()
+                || email.to_addresses.is_empty()
+                || email.to_addresses.iter().any(|addr| addr.trim().is_empty())
+                || email.username.trim().is_empty())
+        {
+            return Err(TlsError::ConfigError {
+                message: "enabled email alerts require SMTP server, port, sender, recipients, and username".to_string(),
+            });
+        }
+        if let Some(slack) = &self.monitor.alerts.slack
+            && slack.enabled
+            && slack.webhook_url.trim().is_empty()
+        {
+            return Err(TlsError::ConfigError {
+                message: "enabled Slack alerts require webhook_url".to_string(),
+            });
+        }
+        if let Some(teams) = &self.monitor.alerts.teams
+            && teams.enabled
+            && teams.webhook_url.trim().is_empty()
+        {
+            return Err(TlsError::ConfigError {
+                message: "enabled Teams alerts require webhook_url".to_string(),
+            });
+        }
+        if let Some(pagerduty) = &self.monitor.alerts.pagerduty
+            && pagerduty.enabled
+            && pagerduty.integration_key.trim().is_empty()
+        {
+            return Err(TlsError::ConfigError {
+                message: "enabled PagerDuty alerts require integration_key".to_string(),
+            });
+        }
+        if let Some(webhook) = &self.monitor.alerts.webhook
+            && webhook.enabled
+            && webhook.url.trim().is_empty()
+        {
+            return Err(TlsError::ConfigError {
+                message: "enabled webhook alerts require url".to_string(),
+            });
+        }
         Ok(())
     }
 }
@@ -413,5 +463,67 @@ window_hours = 0
         let err = MonitorConfig::from_file(&path).expect_err("zero dedup window should fail");
 
         assert!(err.to_string().contains("window_hours"));
+    }
+
+    #[test]
+    fn test_from_file_rejects_enabled_slack_without_webhook() {
+        let dir = tempfile::tempdir().expect("test assertion should succeed");
+        let path = dir.path().join("monitor.toml");
+        fs::write(
+            &path,
+            r#"
+[monitor.alerts.slack]
+enabled = true
+webhook_url = " "
+"#,
+        )
+        .expect("test assertion should succeed");
+
+        let err = MonitorConfig::from_file(&path).expect_err("empty Slack webhook should fail");
+
+        assert!(err.to_string().contains("Slack"));
+    }
+
+    #[test]
+    fn test_from_file_rejects_enabled_email_without_recipients() {
+        let dir = tempfile::tempdir().expect("test assertion should succeed");
+        let path = dir.path().join("monitor.toml");
+        fs::write(
+            &path,
+            r#"
+[monitor.alerts.email]
+enabled = true
+smtp_server = "smtp.example.com"
+smtp_port = 587
+from_address = "alerts@example.com"
+to_addresses = []
+username = "user"
+password = "pass"
+"#,
+        )
+        .expect("test assertion should succeed");
+
+        let err = MonitorConfig::from_file(&path).expect_err("empty email recipients should fail");
+
+        assert!(err.to_string().contains("email alerts"));
+    }
+
+    #[test]
+    fn test_from_file_rejects_enabled_webhook_without_url() {
+        let dir = tempfile::tempdir().expect("test assertion should succeed");
+        let path = dir.path().join("monitor.toml");
+        fs::write(
+            &path,
+            r#"
+[monitor.alerts.webhook]
+enabled = true
+url = ""
+"#,
+        )
+        .expect("test assertion should succeed");
+
+        let err = MonitorConfig::from_file(&path).expect_err("empty webhook url should fail");
+
+        assert!(err.to_string().contains("webhook alerts"));
     }
 }
