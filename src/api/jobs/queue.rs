@@ -258,7 +258,11 @@ impl JobQueue for InMemoryJobQueue {
         let mut queue = self.queue.write().await;
         let mut jobs = self.jobs.write().await;
 
-        if queue.len() >= self.max_capacity {
+        let active_jobs = jobs
+            .values()
+            .filter(|job| matches!(job.status, ScanStatus::Queued | ScanStatus::Running))
+            .count();
+        if active_jobs >= self.max_capacity {
             tls_bail!("Job queue is full");
         }
 
@@ -486,6 +490,29 @@ mod tests {
             .await
             .expect("test assertion should succeed");
         assert!(queue.enqueue(job3).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_queue_capacity_counts_running_jobs() {
+        let queue = InMemoryJobQueue::new(1);
+
+        let job1 = ScanJob::new("example1.com:443".to_string(), ScanOptions::default(), None);
+        let job2 = ScanJob::new("example2.com:443".to_string(), ScanOptions::default(), None);
+
+        queue
+            .enqueue(job1)
+            .await
+            .expect("test assertion should succeed");
+        queue
+            .dequeue()
+            .await
+            .expect("dequeue should succeed")
+            .expect("job should exist");
+
+        assert!(
+            queue.enqueue(job2).await.is_err(),
+            "running jobs must count against queue capacity"
+        );
     }
 
     #[tokio::test]
