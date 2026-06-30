@@ -240,6 +240,11 @@ impl CertificateInventory {
             } else {
                 default_interval_seconds
             };
+            if parts.next().is_some() {
+                return Err(TlsError::InvalidInput {
+                    message: format!("Invalid domains file line with extra fields: {line}"),
+                });
+            }
 
             let domain = MonitoredDomain::new(hostname, port).with_interval(interval_seconds);
 
@@ -659,6 +664,19 @@ mod tests {
         let result = inventory.load_from_file(temp_file.path(), 3600);
 
         assert!(result.is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn test_load_from_file_rejects_extra_fields() -> Result<()> {
+        let mut temp_file = NamedTempFile::new()?;
+        writeln!(temp_file, "example.com 30m unexpected")?;
+
+        let mut inventory = CertificateInventory::new();
+        let result = inventory.load_from_file(temp_file.path(), 3600);
+
+        assert!(result.is_err());
+        assert!(inventory.is_empty());
         Ok(())
     }
 
