@@ -16,6 +16,7 @@ pub struct MonitorConfig {
 
 /// Monitor settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct MonitorSettings {
     pub default_interval_seconds: u64,
     pub max_concurrent_scans: usize,
@@ -81,6 +82,7 @@ pub struct WebhookConfig {
 
 /// Alert thresholds configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ThresholdsConfig {
     pub expiry_30d: bool,
     pub expiry_14d: bool,
@@ -116,12 +118,19 @@ impl From<&ThresholdsConfig> for AlertThresholds {
 /// Alert deduplication configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeduplicationConfig {
+    #[serde(default = "default_deduplication_window_hours")]
     pub window_hours: u64,
+}
+
+fn default_deduplication_window_hours() -> u64 {
+    24
 }
 
 impl Default for DeduplicationConfig {
     fn default() -> Self {
-        Self { window_hours: 24 }
+        Self {
+            window_hours: default_deduplication_window_hours(),
+        }
     }
 }
 
@@ -233,6 +242,41 @@ mod tests {
         let toml_str = toml::to_string(&config).expect("test assertion should succeed");
         assert!(toml_str.contains("default_interval_seconds"));
         assert!(toml_str.contains("max_concurrent_scans"));
+    }
+
+    #[test]
+    fn test_config_deserialization_applies_monitor_defaults() {
+        let config: MonitorConfig = toml::from_str(
+            r#"
+[monitor]
+default_interval_seconds = 600
+"#,
+        )
+        .expect("partial monitor config should use defaults");
+
+        assert_eq!(config.monitor.default_interval_seconds, 600);
+        assert_eq!(config.monitor.max_concurrent_scans, 10);
+        assert!(config.monitor.thresholds.expiry_7d);
+        assert_eq!(config.monitor.deduplication.window_hours, 24);
+    }
+
+    #[test]
+    fn test_config_deserialization_applies_partial_threshold_defaults() {
+        let config: MonitorConfig = toml::from_str(
+            r#"
+[monitor]
+default_interval_seconds = 600
+max_concurrent_scans = 2
+
+[monitor.thresholds]
+expiry_7d = false
+"#,
+        )
+        .expect("partial thresholds config should use defaults");
+
+        assert!(!config.monitor.thresholds.expiry_7d);
+        assert!(config.monitor.thresholds.expiry_30d);
+        assert!(config.monitor.thresholds.on_certificate_change);
     }
 
     #[test]
