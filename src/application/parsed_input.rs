@@ -64,6 +64,11 @@ impl HostPortDaysInput {
         let (host_port, days_str) = raw.rsplit_once(':').ok_or_else(|| TlsError::InvalidInput {
             message: "Expected format HOSTNAME:PORT:DAYS".to_string(),
         })?;
+        if host_port.contains("://") && !host_port.rsplit('/').next().unwrap_or("").contains(':') {
+            return Err(TlsError::InvalidInput {
+                message: "Expected format HOSTNAME:PORT:DAYS".to_string(),
+            });
+        }
 
         let days_str = days_str.trim();
         let days = days_str.parse().map_err(|_| TlsError::InvalidInput {
@@ -151,6 +156,11 @@ mod tests {
         assert_eq!(parsed.hostname, "example.com");
         assert_eq!(parsed.port, 443);
         assert_eq!(parsed.days, 7);
+    }
+
+    #[test]
+    fn rejects_host_port_days_url_without_explicit_port() {
+        assert!(HostPortDaysInput::parse("https://example.com:7").is_err());
     }
 
     #[test]
