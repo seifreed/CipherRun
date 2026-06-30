@@ -15,41 +15,37 @@ impl CipherRunSchema {
             "title": "CipherRun Scan Results",
             "description": "Complete TLS/SSL security scan results from CipherRun",
             "type": "object",
-            "required": ["target", "timestamp", "scan_version"],
+            "required": ["target", "scan_time_ms", "protocols", "ciphers", "vulnerabilities"],
             "properties": {
                 "target": {
-                    "type": "object",
-                    "description": "Target information",
-                    "required": ["hostname", "port", "ip"],
-                    "properties": {
-                        "hostname": { "type": "string" },
-                        "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
-                        "ip": { "type": "string", "pattern": "^(?:[0-9]{1,3}\\.){3}[0-9]{1,3}$|^([0-9a-fA-F]{0,4}:){7}[0-9a-fA-F]{0,4}$" }
-                    }
-                },
-                "timestamp": {
                     "type": "string",
-                    "format": "date-time",
-                    "description": "ISO 8601 timestamp of scan start"
+                    "description": "Target scanned"
                 },
-                "scan_version": {
-                    "type": "string",
-                    "description": "CipherRun version"
+                "scan_time_ms": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Total scan time in milliseconds"
                 },
                 "protocols": {
                     "type": "array",
                     "description": "Supported TLS/SSL protocols",
                     "items": {
                         "type": "object",
-                        "required": ["protocol", "supported"],
+                        "required": ["protocol", "supported", "inconclusive", "preferred", "ciphers_count"],
                         "properties": {
                             "protocol": {
                                 "type": "string",
                                 "enum": ["SSLv2", "SSLv3", "TLS 1.0", "TLS 1.1", "TLS 1.2", "TLS 1.3", "QUIC"]
                             },
                             "supported": { "type": "boolean" },
+                            "inconclusive": { "type": "boolean" },
                             "preferred": { "type": "boolean" },
-                            "ciphers_count": { "type": "integer", "minimum": 0 }
+                            "ciphers_count": { "type": "integer", "minimum": 0 },
+                            "handshake_time_ms": { "type": ["integer", "null"], "minimum": 0 },
+                            "heartbeat_enabled": { "type": ["boolean", "null"] },
+                            "session_resumption_caching": { "type": ["boolean", "null"] },
+                            "session_resumption_tickets": { "type": ["boolean", "null"] },
+                            "secure_renegotiation": { "type": ["boolean", "null"] }
                         }
                     }
                 },
@@ -112,16 +108,19 @@ impl CipherRunSchema {
                     "description": "Detected vulnerabilities",
                     "items": {
                         "type": "object",
-                        "required": ["vuln_type", "vulnerable", "severity"],
+                        "required": ["vuln_type", "vulnerable", "inconclusive", "details", "severity"],
                         "properties": {
                             "vuln_type": { "type": "string" },
                             "vulnerable": { "type": "boolean" },
+                            "inconclusive": { "type": "boolean" },
+                            "details": { "type": "string" },
                             "severity": {
                                 "type": "string",
                                 "enum": ["Critical", "High", "Medium", "Low", "Info"]
                             },
                             "description": { "type": "string" },
-                            "cve": { "type": "string" },
+                            "cve": { "type": ["string", "null"] },
+                            "cwe": { "type": ["string", "null"] },
                             "cvss_score": { "type": "number", "minimum": 0.0, "maximum": 10.0 }
                         }
                     }
@@ -164,15 +163,21 @@ impl CipherRunSchema {
     pub fn get_protocol_schema() -> Value {
         json!({
             "type": "object",
-            "required": ["protocol", "supported"],
+            "required": ["protocol", "supported", "inconclusive", "preferred", "ciphers_count"],
             "properties": {
                 "protocol": {
                     "type": "string",
                     "enum": ["SSLv2", "SSLv3", "TLS 1.0", "TLS 1.1", "TLS 1.2", "TLS 1.3", "QUIC"]
                 },
                 "supported": { "type": "boolean" },
+                "inconclusive": { "type": "boolean" },
                 "preferred": { "type": "boolean" },
-                "ciphers_count": { "type": "integer", "minimum": 0 }
+                "ciphers_count": { "type": "integer", "minimum": 0 },
+                "handshake_time_ms": { "type": ["integer", "null"], "minimum": 0 },
+                "heartbeat_enabled": { "type": ["boolean", "null"] },
+                "session_resumption_caching": { "type": ["boolean", "null"] },
+                "session_resumption_tickets": { "type": ["boolean", "null"] },
+                "secure_renegotiation": { "type": ["boolean", "null"] }
             }
         })
     }
@@ -181,16 +186,19 @@ impl CipherRunSchema {
     pub fn get_vulnerability_schema() -> Value {
         json!({
             "type": "object",
-            "required": ["vuln_type", "vulnerable", "severity"],
+            "required": ["vuln_type", "vulnerable", "inconclusive", "details", "severity"],
             "properties": {
                 "vuln_type": { "type": "string" },
                 "vulnerable": { "type": "boolean" },
+                "inconclusive": { "type": "boolean" },
+                "details": { "type": "string" },
                 "severity": {
                     "type": "string",
                     "enum": ["Critical", "High", "Medium", "Low", "Info"]
                 },
                 "description": { "type": "string" },
-                "cve": { "type": "string" },
+                "cve": { "type": ["string", "null"] },
+                "cwe": { "type": ["string", "null"] },
                 "cvss_score": { "type": "number", "minimum": 0.0, "maximum": 10.0 }
             }
         })
@@ -210,7 +218,13 @@ impl CipherRunSchema {
         };
 
         // Check required fields
-        let required = vec!["target", "timestamp", "scan_version"];
+        let required = vec![
+            "target",
+            "scan_time_ms",
+            "protocols",
+            "ciphers",
+            "vulnerabilities",
+        ];
         for field in required {
             if !obj.contains_key(field) {
                 errors.push(format!("Missing required field: {}", field));
@@ -218,19 +232,10 @@ impl CipherRunSchema {
         }
 
         // Validate target structure
-        if let Some(target) = obj.get("target") {
-            if let Some(target_obj) = target.as_object() {
-                for required_field in &["hostname", "port", "ip"] {
-                    if !target_obj.contains_key(*required_field) {
-                        errors.push(format!(
-                            "Missing required field in target: {}",
-                            required_field
-                        ));
-                    }
-                }
-            } else {
-                errors.push("Target must be an object".to_string());
-            }
+        if let Some(target) = obj.get("target")
+            && !target.is_string()
+        {
+            errors.push("Target must be a string".to_string());
         }
 
         // Validate protocols array
@@ -239,9 +244,40 @@ impl CipherRunSchema {
         {
             for (idx, protocol) in protocols_arr.iter().enumerate() {
                 if let Some(proto_obj) = protocol.as_object()
-                    && (!proto_obj.contains_key("protocol") || !proto_obj.contains_key("supported"))
+                    && [
+                        "protocol",
+                        "supported",
+                        "inconclusive",
+                        "preferred",
+                        "ciphers_count",
+                    ]
+                    .iter()
+                    .any(|field| !proto_obj.contains_key(*field))
                 {
                     errors.push(format!("Protocol at index {} missing required fields", idx));
+                }
+            }
+        }
+
+        if let Some(vulnerabilities) = obj.get("vulnerabilities")
+            && let Some(vulnerabilities_arr) = vulnerabilities.as_array()
+        {
+            for (idx, vulnerability) in vulnerabilities_arr.iter().enumerate() {
+                if let Some(vuln_obj) = vulnerability.as_object()
+                    && [
+                        "vuln_type",
+                        "vulnerable",
+                        "inconclusive",
+                        "details",
+                        "severity",
+                    ]
+                    .iter()
+                    .any(|field| !vuln_obj.contains_key(*field))
+                {
+                    errors.push(format!(
+                        "Vulnerability at index {} missing required fields",
+                        idx
+                    ));
                 }
             }
         }
@@ -288,6 +324,9 @@ impl ValidationResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocols::{Protocol, ProtocolTestResult};
+    use crate::scanner::ScanResults;
+    use crate::vulnerabilities::{Severity, VulnerabilityResult, VulnerabilityType};
 
     #[test]
     fn test_schema_generation() {
@@ -300,13 +339,11 @@ mod tests {
     #[test]
     fn test_validation_valid_data() {
         let data = json!({
-            "target": {
-                "hostname": "example.com",
-                "port": 443,
-                "ip": "93.184.216.34"
-            },
-            "timestamp": "2024-01-01T00:00:00Z",
-            "scan_version": "1.0.0"
+            "target": "example.com:443",
+            "scan_time_ms": 100,
+            "protocols": [],
+            "ciphers": {},
+            "vulnerabilities": []
         });
 
         let result = CipherRunSchema::validate(&data);
@@ -316,7 +353,7 @@ mod tests {
     #[test]
     fn test_validation_missing_fields() {
         let data = json!({
-            "timestamp": "2024-01-01T00:00:00Z"
+            "scan_time_ms": 100
         });
 
         let result = CipherRunSchema::validate(&data);
@@ -327,20 +364,23 @@ mod tests {
     }
 
     #[test]
-    fn test_validation_missing_target_fields() {
+    fn test_validation_target_not_string() {
         let data = json!({
             "target": {
-                "hostname": "example.com"
+                "hostname": "example.com",
+                "port": 443,
+                "ip": "93.184.216.34"
             },
-            "timestamp": "2024-01-01T00:00:00Z",
-            "scan_version": "1.0.0"
+            "scan_time_ms": 100,
+            "protocols": [],
+            "ciphers": {},
+            "vulnerabilities": []
         });
 
         let result = CipherRunSchema::validate(&data);
         assert!(result.is_err());
         let errors = result.unwrap_err();
-        assert!(errors.iter().any(|e| e.contains("port")));
-        assert!(errors.iter().any(|e| e.contains("ip")));
+        assert!(errors.iter().any(|e| e.contains("Target must be a string")));
     }
 
     #[test]
@@ -360,6 +400,8 @@ mod tests {
         let required_values: Vec<&str> = required.iter().filter_map(|v| v.as_str()).collect();
         assert!(required_values.contains(&"vuln_type"));
         assert!(required_values.contains(&"vulnerable"));
+        assert!(required_values.contains(&"inconclusive"));
+        assert!(required_values.contains(&"details"));
         assert!(required_values.contains(&"severity"));
     }
 
@@ -401,11 +443,89 @@ mod tests {
     }
 
     #[test]
-    fn test_validation_target_not_object() {
+    fn test_validation_target_number() {
         let data = json!({
-            "target": "example.com",
-            "timestamp": "2024-01-01T00:00:00Z",
-            "scan_version": "1.0.0"
+            "target": 443,
+            "scan_time_ms": 100,
+            "protocols": [],
+            "ciphers": {},
+            "vulnerabilities": []
+        });
+
+        let result = CipherRunSchema::validate(&data);
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        assert!(errors.iter().any(|e| e.contains("Target must be a string")));
+    }
+
+    #[test]
+    fn test_validation_accepts_serialized_scan_results_with_inconclusive_states() {
+        let results = ScanResults {
+            target: "example.com:443".to_string(),
+            scan_time_ms: 100,
+            protocols: vec![ProtocolTestResult {
+                protocol: Protocol::TLS12,
+                supported: false,
+                inconclusive: true,
+                preferred: false,
+                ciphers_count: 0,
+                handshake_time_ms: None,
+                heartbeat_enabled: None,
+                session_resumption_caching: None,
+                session_resumption_tickets: None,
+                secure_renegotiation: None,
+            }],
+            vulnerabilities: vec![VulnerabilityResult {
+                vuln_type: VulnerabilityType::Heartbleed,
+                vulnerable: false,
+                inconclusive: true,
+                details: "probe timed out".to_string(),
+                cve: None,
+                cwe: Some("CWE-200".to_string()),
+                severity: Severity::High,
+            }],
+            ..Default::default()
+        };
+
+        let data = serde_json::to_value(results).expect("scan results should serialize");
+        let result = CipherRunSchema::validate(&data);
+        assert!(result.is_ok(), "{:?}", result);
+    }
+
+    #[test]
+    fn test_validation_rejects_protocol_missing_inconclusive() {
+        let data = json!({
+            "target": "example.com:443",
+            "scan_time_ms": 100,
+            "protocols": [{
+                "protocol": "TLS 1.2",
+                "supported": false,
+                "preferred": false,
+                "ciphers_count": 0
+            }],
+            "ciphers": {},
+            "vulnerabilities": []
+        });
+
+        let result = CipherRunSchema::validate(&data);
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        assert!(errors.iter().any(|e| e.contains("Protocol at index 0")));
+    }
+
+    #[test]
+    fn test_validation_rejects_vulnerability_missing_details() {
+        let data = json!({
+            "target": "example.com:443",
+            "scan_time_ms": 100,
+            "protocols": [],
+            "ciphers": {},
+            "vulnerabilities": [{
+                "vuln_type": "Heartbleed",
+                "vulnerable": false,
+                "inconclusive": true,
+                "severity": "High"
+            }]
         });
 
         let result = CipherRunSchema::validate(&data);
@@ -414,7 +534,7 @@ mod tests {
         assert!(
             errors
                 .iter()
-                .any(|e| e.contains("Target must be an object"))
+                .any(|e| e.contains("Vulnerability at index 0"))
         );
     }
 
