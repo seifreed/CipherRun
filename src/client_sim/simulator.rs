@@ -390,7 +390,10 @@ impl ClientSimulator {
         // separately). A verifying config would instead surface a cert error
         // for every such host, masking the negotiated handshake — matching the
         // behaviour of SSL Labs' handshake simulation.
-        Ok(crate::utils::insecure_tls::insecure_client_config_with_versions(&versions))
+        let mut config =
+            crate::utils::insecure_tls::insecure_client_config_with_versions(&versions);
+        config.enable_sni = client.uses_sni;
+        Ok(config)
     }
 
     fn parse_highest_protocol(value: Option<&str>) -> Result<Option<Protocol>> {
@@ -647,6 +650,18 @@ mod tests {
         let config = simulator.build_client_config(&profile).unwrap();
 
         assert!(config.enable_sni);
+    }
+
+    #[test]
+    fn test_build_client_config_honors_profile_sni_setting() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let simulator = sample_simulator();
+        let mut profile = sample_profile(Some("tls1_3"));
+        profile.uses_sni = false;
+
+        let config = simulator.build_client_config(&profile).unwrap();
+
+        assert!(!config.enable_sni);
     }
 
     #[test]
