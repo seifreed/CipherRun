@@ -252,6 +252,14 @@ impl CipherRunSchema {
             errors.push("ciphers must be an object".to_string());
         }
 
+        for field in ["certificate_chain", "rating", "http"] {
+            if let Some(value) = obj.get(field)
+                && !(value.is_object() || value.is_null())
+            {
+                errors.push(format!("{} must be an object or null", field));
+            }
+        }
+
         // Validate protocols array
         if let Some(protocols) = obj.get("protocols") {
             if let Some(protocols_arr) = protocols.as_array() {
@@ -700,6 +708,39 @@ mod tests {
             errors
                 .iter()
                 .any(|e| e.contains("ciphers must be an object"))
+        );
+    }
+
+    #[test]
+    fn test_validation_rejects_optional_result_groups_with_wrong_types() {
+        let data = json!({
+            "target": "example.com:443",
+            "scan_time_ms": 100,
+            "protocols": [],
+            "ciphers": {},
+            "vulnerabilities": [],
+            "certificate_chain": [],
+            "rating": "A",
+            "http": false
+        });
+
+        let result = CipherRunSchema::validate(&data);
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.contains("certificate_chain must be an object or null"))
+        );
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.contains("rating must be an object or null"))
+        );
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.contains("http must be an object or null"))
         );
     }
 
