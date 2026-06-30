@@ -624,9 +624,16 @@ mod tests {
 
     #[test]
     fn test_analyze_cipher_kex_ecdhe() {
-        let (algo, ephemeral, _params) = analyze_cipher_kex("ECDHE-ECDSA-AES128-GCM-SHA256");
+        let (algo, ephemeral, params) = analyze_cipher_kex("ECDHE-ECDSA-AES128-GCM-SHA256");
         assert_eq!(algo, "ECDHE");
         assert!(ephemeral);
+        assert!(matches!(
+            params,
+            KeyExchangeParams::Ecdhe {
+                curve,
+                point_size: 0
+            } if curve == "unknown"
+        ));
     }
 
     #[test]

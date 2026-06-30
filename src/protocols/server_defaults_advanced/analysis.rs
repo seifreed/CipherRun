@@ -21,20 +21,12 @@ pub(super) fn classify_dh_strength(size_bits: u16) -> DhStrength {
 pub(super) fn analyze_cipher_kex(cipher_name: &str) -> (String, bool, KeyExchangeParams) {
     let cipher_name = cipher_name.to_ascii_uppercase();
     if cipher_name.contains("ECDHE") {
-        let curve = if cipher_name.contains("256") {
-            "secp256r1".to_string()
-        } else if cipher_name.contains("384") {
-            "secp384r1".to_string()
-        } else {
-            "secp256r1".to_string()
-        };
-
         (
             "ECDHE".to_string(),
             true,
             KeyExchangeParams::Ecdhe {
-                curve,
-                point_size: 256,
+                curve: "unknown".to_string(),
+                point_size: 0,
             },
         )
     } else if cipher_name.contains("DHE") || cipher_name.contains("EDH") {
@@ -72,6 +64,7 @@ pub(super) fn estimate_key_size(params: &KeyExchangeParams) -> Option<u16> {
     match params {
         KeyExchangeParams::Rsa { modulus_size } => Some(*modulus_size),
         KeyExchangeParams::Dhe { prime_size, .. } => Some(*prime_size),
+        KeyExchangeParams::Ecdhe { point_size: 0, .. } => None,
         KeyExchangeParams::Ecdhe { point_size, .. } => Some(*point_size),
         KeyExchangeParams::Unknown => None,
     }
