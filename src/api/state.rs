@@ -91,7 +91,7 @@ pub struct ApiStats {
 impl ApiStats {
     /// Increment request counter
     pub fn increment_requests(&mut self) {
-        self.total_requests += 1;
+        self.total_requests = self.total_requests.saturating_add(1);
 
         // Update hourly stats
         let now = Instant::now();
@@ -110,7 +110,7 @@ impl ApiStats {
 
     /// Increment scan counter
     pub fn increment_scans(&mut self) {
-        self.total_scans += 1;
+        self.total_scans = self.total_scans.saturating_add(1);
         let now = Instant::now();
         self.scan_timestamps.push_back(now);
         self.prune_scan_timestamps(now);
@@ -119,18 +119,18 @@ impl ApiStats {
 
     /// Record completed scan
     pub fn record_completed_scan(&mut self, duration_ms: u64) {
-        self.completed_scans += 1;
-        self.total_scan_duration_ms += duration_ms;
+        self.completed_scans = self.completed_scans.saturating_add(1);
+        self.total_scan_duration_ms = self.total_scan_duration_ms.saturating_add(duration_ms);
     }
 
     /// Record failed scan
     pub fn record_failed_scan(&mut self) {
-        self.failed_scans += 1;
+        self.failed_scans = self.failed_scans.saturating_add(1);
     }
 
     pub fn record_response(&mut self, response_time_ms: u64) {
-        self.total_response_time_ms += response_time_ms;
-        self.total_responses += 1;
+        self.total_response_time_ms = self.total_response_time_ms.saturating_add(response_time_ms);
+        self.total_responses = self.total_responses.saturating_add(1);
     }
 
     /// Get average scan duration
@@ -414,6 +414,34 @@ mod tests {
         stats.total_response_time_ms = 250;
         stats.total_responses = 10;
         assert!((stats.avg_response_time_ms() - 25.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_api_stats_counters_saturate() {
+        let mut stats = ApiStats {
+            total_requests: u64::MAX,
+            total_scans: u64::MAX,
+            completed_scans: u64::MAX,
+            failed_scans: u64::MAX,
+            total_scan_duration_ms: u64::MAX - 5,
+            total_response_time_ms: u64::MAX - 5,
+            total_responses: u64::MAX,
+            ..Default::default()
+        };
+
+        stats.increment_requests();
+        stats.increment_scans();
+        stats.record_completed_scan(10);
+        stats.record_failed_scan();
+        stats.record_response(10);
+
+        assert_eq!(stats.total_requests, u64::MAX);
+        assert_eq!(stats.total_scans, u64::MAX);
+        assert_eq!(stats.completed_scans, u64::MAX);
+        assert_eq!(stats.failed_scans, u64::MAX);
+        assert_eq!(stats.total_scan_duration_ms, u64::MAX);
+        assert_eq!(stats.total_response_time_ms, u64::MAX);
+        assert_eq!(stats.total_responses, u64::MAX);
     }
 
     #[test]
