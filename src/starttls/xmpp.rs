@@ -57,10 +57,14 @@ impl XmppNegotiator {
         }
     }
 
-    fn decode_utf8_response(bytes: &[u8]) -> Result<&str> {
-        std::str::from_utf8(bytes).map_err(|error| crate::error::TlsError::ParseError {
-            message: format!("XMPP STARTTLS response is not valid UTF-8: {error}"),
-        })
+    fn decode_utf8_response(bytes: &[u8]) -> Result<Option<&str>> {
+        match std::str::from_utf8(bytes) {
+            Ok(response) => Ok(Some(response)),
+            Err(error) if error.error_len().is_none() => Ok(None),
+            Err(error) => Err(crate::error::TlsError::ParseError {
+                message: format!("XMPP STARTTLS response is not valid UTF-8: {error}"),
+            }),
+        }
     }
 
     /// Read until we find a specific XML tag
@@ -85,7 +89,9 @@ impl XmppNegotiator {
                     message: "XMPP STARTTLS response read length exceeded buffer".to_string(),
                 })?;
             accumulated.extend_from_slice(bytes);
-            let response = Self::decode_utf8_response(&accumulated)?;
+            let Some(response) = Self::decode_utf8_response(&accumulated)? else {
+                continue;
+            };
 
             if let Some(tag_name) = tag.strip_prefix("</").and_then(|tag| tag.strip_suffix('>')) {
                 if Self::contains_xml_end_tag(response, tag_name) {
@@ -125,7 +131,9 @@ impl XmppNegotiator {
                     message: "XMPP STARTTLS response read length exceeded buffer".to_string(),
                 })?;
             accumulated.extend_from_slice(bytes);
-            let response = Self::decode_utf8_response(&accumulated)?;
+            let Some(response) = Self::decode_utf8_response(&accumulated)? else {
+                continue;
+            };
 
             if Self::contains_xml_start_tag(response, "proceed")
                 || Self::contains_xml_start_tag(response, "failure")
@@ -207,8 +215,40 @@ impl StarttlsNegotiator for XmppNegotiator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::pin::Pin;
+    use std::task::{Context, Poll};
+    use tokio::io::{AsyncRead, ReadBuf};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::{TcpListener, TcpStream};
+
+    struct OneByteReader {
+        data: Vec<u8>,
+        offset: usize,
+    }
+
+    impl OneByteReader {
+        fn new(data: &[u8]) -> Self {
+            Self {
+                data: data.to_vec(),
+                offset: 0,
+            }
+        }
+    }
+
+    impl AsyncRead for OneByteReader {
+        fn poll_read(
+            mut self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            buf: &mut ReadBuf<'_>,
+        ) -> Poll<std::io::Result<()>> {
+            if self.offset >= self.data.len() || buf.remaining() == 0 {
+                return Poll::Ready(Ok(()));
+            }
+            buf.put_slice(&self.data[self.offset..self.offset + 1]);
+            self.offset += 1;
+            Poll::Ready(Ok(()))
+        }
+    }
 
     #[test]
     fn test_xmpp_negotiator_creation() {
@@ -301,18 +341,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_read_until_tag_accepts_split_utf8_character() {
-        let (mut client, mut server) = tokio::io::duplex(64);
-        let writer = tokio::spawn(async move {
-            server.write_all(b"<stream:features>\xc3").await.unwrap();
-            server.write_all(b"\xa9</stream:features>").await.unwrap();
-        });
+        let mut client = OneByteReader::new(b"<stream:features>\xc3\xa9</stream:features>");
 
         let response = XmppNegotiator::read_until_tag(&mut client, "</stream:features>")
             .await
             .expect("split UTF-8 should decode after the next read");
 
         assert!(response.contains("\u{00e9}</stream:features>"));
-        writer.await.unwrap();
     }
 
     #[tokio::test]
