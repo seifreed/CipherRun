@@ -3,6 +3,7 @@
 use crate::Result;
 use crate::error::TlsError;
 use crate::monitor::types::AlertThresholds;
+use reqwest::header::{HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -262,19 +263,13 @@ impl MonitorConfig {
         }
         if let Some(slack) = &self.monitor.alerts.slack
             && slack.enabled
-            && slack.webhook_url.trim().is_empty()
         {
-            return Err(TlsError::ConfigError {
-                message: "enabled Slack alerts require webhook_url".to_string(),
-            });
+            Self::validate_url("Slack webhook_url", &slack.webhook_url)?;
         }
         if let Some(teams) = &self.monitor.alerts.teams
             && teams.enabled
-            && teams.webhook_url.trim().is_empty()
         {
-            return Err(TlsError::ConfigError {
-                message: "enabled Teams alerts require webhook_url".to_string(),
-            });
+            Self::validate_url("Teams webhook_url", &teams.webhook_url)?;
         }
         if let Some(pagerduty) = &self.monitor.alerts.pagerduty
             && pagerduty.enabled
@@ -286,10 +281,34 @@ impl MonitorConfig {
         }
         if let Some(webhook) = &self.monitor.alerts.webhook
             && webhook.enabled
-            && webhook.url.trim().is_empty()
         {
+            Self::validate_url("webhook url", &webhook.url)?;
+            for (name, value) in &webhook.headers {
+                HeaderName::from_bytes(name.as_bytes()).map_err(|error| {
+                    TlsError::ConfigError {
+                        message: format!("Invalid webhook header name '{name}': {error}"),
+                    }
+                })?;
+                HeaderValue::from_str(value).map_err(|error| TlsError::ConfigError {
+                    message: format!("Invalid webhook header value for '{name}': {error}"),
+                })?;
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_url(label: &str, value: &str) -> Result<()> {
+        if value.trim().is_empty() {
             return Err(TlsError::ConfigError {
-                message: "enabled webhook alerts require url".to_string(),
+                message: format!("enabled {label} must not be empty"),
+            });
+        }
+        let url = reqwest::Url::parse(value).map_err(|error| TlsError::ConfigError {
+            message: format!("Invalid {label}: {error}"),
+        })?;
+        if !matches!(url.scheme(), "http" | "https") {
+            return Err(TlsError::ConfigError {
+                message: format!("Invalid {label}: scheme must be http or https"),
             });
         }
         Ok(())
@@ -524,6 +543,47 @@ url = ""
 
         let err = MonitorConfig::from_file(&path).expect_err("empty webhook url should fail");
 
-        assert!(err.to_string().contains("webhook alerts"));
+        assert!(err.to_string().contains("webhook url"));
+    }
+
+    #[test]
+    fn test_from_file_rejects_enabled_webhook_invalid_header() {
+        let dir = tempfile::tempdir().expect("test assertion should succeed");
+        let path = dir.path().join("monitor.toml");
+        fs::write(
+            &path,
+            r#"
+[monitor.alerts.webhook]
+enabled = true
+url = "https://webhook.example.com/alerts"
+
+[monitor.alerts.webhook.headers]
+"Bad Header" = "value"
+"#,
+        )
+        .expect("test assertion should succeed");
+
+        let err = MonitorConfig::from_file(&path).expect_err("bad webhook header should fail");
+
+        assert!(err.to_string().contains("Invalid webhook header name"));
+    }
+
+    #[test]
+    fn test_from_file_rejects_enabled_slack_invalid_url_scheme() {
+        let dir = tempfile::tempdir().expect("test assertion should succeed");
+        let path = dir.path().join("monitor.toml");
+        fs::write(
+            &path,
+            r#"
+[monitor.alerts.slack]
+enabled = true
+webhook_url = "file:///tmp/hook"
+"#,
+        )
+        .expect("test assertion should succeed");
+
+        let err = MonitorConfig::from_file(&path).expect_err("bad Slack URL should fail");
+
+        assert!(err.to_string().contains("scheme must be http or https"));
     }
 }
