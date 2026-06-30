@@ -66,6 +66,15 @@ impl FileJobStorage {
                 message: format!("Persisted job progress is out of range: {}", job.progress),
             });
         }
+        if matches!(
+            job.status,
+            ScanStatus::Completed | ScanStatus::Failed | ScanStatus::Cancelled
+        ) && job.completed_at.is_none()
+        {
+            return Err(crate::TlsError::ParseError {
+                message: "Persisted terminal job is missing completed_at".to_string(),
+            });
+        }
         if matches!(job.status, ScanStatus::Completed) && job.results.is_none() {
             return Err(crate::TlsError::ParseError {
                 message: "Persisted completed job is missing results".to_string(),
@@ -265,6 +274,24 @@ mod tests {
             .expect_err("failed job without error should fail");
 
         assert!(err.to_string().contains("missing error"));
+    }
+
+    #[test]
+    fn test_load_job_rejects_terminal_job_without_completed_at() {
+        let temp_dir = TempDir::new().expect("test assertion should succeed");
+        let storage = FileJobStorage::new(temp_dir.path()).expect("test assertion should succeed");
+        let mut job = ScanJob::new("example.com:443".to_string(), ScanOptions::default(), None);
+        job.status = ScanStatus::Cancelled;
+
+        let json = serde_json::to_string(&job).expect("test assertion should succeed");
+        std::fs::write(temp_dir.path().join(format!("{}.json", job.id)), json)
+            .expect("test assertion should succeed");
+
+        let err = storage
+            .load_job(&job.id)
+            .expect_err("terminal job without completed_at should fail");
+
+        assert!(err.to_string().contains("missing completed_at"));
     }
 
     #[test]
