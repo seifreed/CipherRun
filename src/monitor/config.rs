@@ -160,6 +160,7 @@ impl MonitorConfig {
             toml::from_str(&contents).map_err(|e| TlsError::ConfigError {
                 message: format!("Failed to parse TOML config: {e}"),
             })?;
+        config.validate()?;
 
         Ok(config)
     }
@@ -221,6 +222,27 @@ impl MonitorConfig {
         }
 
         channels
+    }
+}
+
+impl MonitorConfig {
+    fn validate(&self) -> Result<()> {
+        if self.monitor.default_interval_seconds == 0 {
+            return Err(TlsError::ConfigError {
+                message: "monitor.default_interval_seconds must be greater than 0".to_string(),
+            });
+        }
+        if self.monitor.max_concurrent_scans == 0 {
+            return Err(TlsError::ConfigError {
+                message: "monitor.max_concurrent_scans must be greater than 0".to_string(),
+            });
+        }
+        if self.monitor.deduplication.window_hours == 0 {
+            return Err(TlsError::ConfigError {
+                message: "monitor.deduplication.window_hours must be greater than 0".to_string(),
+            });
+        }
+        Ok(())
     }
 }
 
@@ -331,5 +353,65 @@ expiry_7d = false
     fn test_deduplication_default_window() {
         let dedup = DeduplicationConfig::default();
         assert_eq!(dedup.window_hours, 24);
+    }
+
+    #[test]
+    fn test_from_file_rejects_zero_interval() {
+        let dir = tempfile::tempdir().expect("test assertion should succeed");
+        let path = dir.path().join("monitor.toml");
+        fs::write(
+            &path,
+            r#"
+[monitor]
+default_interval_seconds = 0
+max_concurrent_scans = 1
+"#,
+        )
+        .expect("test assertion should succeed");
+
+        let err = MonitorConfig::from_file(&path).expect_err("zero interval should fail");
+
+        assert!(err.to_string().contains("default_interval_seconds"));
+    }
+
+    #[test]
+    fn test_from_file_rejects_zero_concurrency() {
+        let dir = tempfile::tempdir().expect("test assertion should succeed");
+        let path = dir.path().join("monitor.toml");
+        fs::write(
+            &path,
+            r#"
+[monitor]
+default_interval_seconds = 60
+max_concurrent_scans = 0
+"#,
+        )
+        .expect("test assertion should succeed");
+
+        let err = MonitorConfig::from_file(&path).expect_err("zero concurrency should fail");
+
+        assert!(err.to_string().contains("max_concurrent_scans"));
+    }
+
+    #[test]
+    fn test_from_file_rejects_zero_deduplication_window() {
+        let dir = tempfile::tempdir().expect("test assertion should succeed");
+        let path = dir.path().join("monitor.toml");
+        fs::write(
+            &path,
+            r#"
+[monitor]
+default_interval_seconds = 60
+max_concurrent_scans = 1
+
+[monitor.deduplication]
+window_hours = 0
+"#,
+        )
+        .expect("test assertion should succeed");
+
+        let err = MonitorConfig::from_file(&path).expect_err("zero dedup window should fail");
+
+        assert!(err.to_string().contains("window_hours"));
     }
 }
