@@ -46,6 +46,12 @@ fn optional_u64_cell(value: Option<u64>) -> String {
         .unwrap_or_else(|| "N/A".to_string())
 }
 
+fn optional_i64_cell(value: Option<i64>) -> String {
+    value
+        .map(|number| number.to_string())
+        .unwrap_or_else(|| "N/A".to_string())
+}
+
 /// Generate CSV output from scan results
 /// Produces multiple CSV tables: protocols, vulnerabilities, and summary
 pub fn generate_csv(results: &ScanResults) -> Result<String> {
@@ -199,7 +205,7 @@ pub fn generate_csv(results: &ScanResults) -> Result<String> {
                 "{},{},{},{}\n",
                 csv_cell(datetime.server_date.as_deref().unwrap_or("N/A")),
                 datetime.synchronized,
-                datetime.skew_seconds.unwrap_or(0),
+                optional_i64_cell(datetime.skew_seconds),
                 csv_cell(&datetime.details)
             ));
             output.push('\n');
@@ -623,6 +629,42 @@ mod tests {
 
         assert!(csv.contains("false,F,N/A,false,false,HSTS not enabled"));
         assert!(!csv.contains("false,F,0,false,false,HSTS not enabled"));
+    }
+
+    #[test]
+    fn test_csv_formats_missing_datetime_skew_as_unknown() {
+        let header_result = HeaderAnalysisResult {
+            headers: HashMap::new(),
+            issues: Vec::new(),
+            score: 0,
+            grade: SecurityGrade::F,
+            hsts_analysis: None,
+            hpkp_analysis: None,
+            cookie_analysis: None,
+            datetime_check: Some(DateTimeCheck {
+                server_date: None,
+                skew_seconds: None,
+                synchronized: false,
+                details: "No Date header found".to_string(),
+            }),
+            banner_detection: None,
+            reverse_proxy_detection: None,
+            http_status_code: None,
+            redirect_location: None,
+            redirect_chain: Vec::new(),
+            server_hostname: None,
+        };
+        let results = ScanResults {
+            http: Some(HttpResults {
+                http_headers: Some(header_result),
+            }),
+            ..Default::default()
+        };
+
+        let csv = generate_csv(&results).expect("test assertion should succeed");
+
+        assert!(csv.contains("N/A,false,N/A,No Date header found"));
+        assert!(!csv.contains("N/A,false,0,No Date header found"));
     }
 
     #[test]
