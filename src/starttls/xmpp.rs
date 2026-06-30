@@ -15,11 +15,43 @@ impl XmppNegotiator {
         Self { hostname }
     }
 
-    fn decode_utf8_response(bytes: &[u8]) -> Result<&str> {
-        std::str::from_utf8(bytes).map_err(|error| {
-            crate::error::TlsError::ParseError {
-                message: format!("XMPP STARTTLS response is not valid UTF-8: {error}"),
+    fn contains_xml_start_tag(response: &str, tag: &str) -> bool {
+        let needle = format!("<{tag}");
+        let mut search_from = 0;
+
+        while let Some(pos) = response[search_from..].find(&needle) {
+            let tag_start = search_from + pos;
+            let after_tag = tag_start + needle.len();
+            let delimited = matches!(
+                response.as_bytes().get(after_tag).copied(),
+                None | Some(b' ' | b'\t' | b'\r' | b'\n' | b'/' | b'>')
+            );
+
+            if delimited && !Self::is_inside_xml_comment(response, tag_start) {
+                return true;
             }
+
+            search_from = after_tag;
+        }
+
+        false
+    }
+
+    fn is_inside_xml_comment(response: &str, index: usize) -> bool {
+        let before = &response[..index];
+        let Some(open) = before.rfind("<!--") else {
+            return false;
+        };
+
+        match before.rfind("-->") {
+            Some(close) => close < open,
+            None => true,
+        }
+    }
+
+    fn decode_utf8_response(bytes: &[u8]) -> Result<&str> {
+        std::str::from_utf8(bytes).map_err(|error| crate::error::TlsError::ParseError {
+            message: format!("XMPP STARTTLS response is not valid UTF-8: {error}"),
         })
     }
 
@@ -83,7 +115,9 @@ impl XmppNegotiator {
             accumulated.extend_from_slice(bytes);
             let response = Self::decode_utf8_response(&accumulated)?;
 
-            if response.contains("<proceed") || response.contains("<failure") {
+            if Self::contains_xml_start_tag(response, "proceed")
+                || Self::contains_xml_start_tag(response, "failure")
+            {
                 return Ok(response.to_string());
             }
 
@@ -119,7 +153,7 @@ impl StarttlsNegotiator for XmppNegotiator {
         let response = Self::read_until_tag(stream, "</stream:features>").await?;
 
         // Check if STARTTLS is offered
-        if !response.contains("<starttls") {
+        if !Self::contains_xml_start_tag(&response, "starttls") {
             return Err(crate::error::TlsError::StarttlsError {
                 protocol: "XMPP".to_string(),
                 details: "Server does not offer STARTTLS".to_string(),
@@ -134,10 +168,10 @@ impl StarttlsNegotiator for XmppNegotiator {
         // 4. Read STARTTLS response
         let response = Self::read_until_starttls_response(stream).await?;
 
-        if response.contains("<proceed") {
+        if Self::contains_xml_start_tag(&response, "proceed") {
             // STARTTLS negotiation successful
             Ok(())
-        } else if response.contains("<failure") {
+        } else if Self::contains_xml_start_tag(&response, "failure") {
             Err(crate::error::TlsError::StarttlsError {
                 protocol: "XMPP".to_string(),
                 details: "Server sent <failure/>".to_string(),
@@ -169,6 +203,22 @@ mod tests {
         let negotiator = XmppNegotiator::new("example.com".to_string());
         assert_eq!(negotiator.protocol(), StarttlsProtocol::XMPP);
         assert_eq!(negotiator.expected_greeting(), Some("<?xml"));
+    }
+
+    #[test]
+    fn test_contains_xml_start_tag_ignores_comments_and_prefixes() {
+        assert!(XmppNegotiator::contains_xml_start_tag(
+            "<stream:features><starttls xmlns='urn:ietf:params:xml:ns:xmpp-tls'/></stream:features>",
+            "starttls"
+        ));
+        assert!(!XmppNegotiator::contains_xml_start_tag(
+            "<stream:features><!-- <starttls/> --></stream:features>",
+            "starttls"
+        ));
+        assert!(!XmppNegotiator::contains_xml_start_tag(
+            "<stream:features><starttls-required/></stream:features>",
+            "starttls"
+        ));
     }
 
     #[tokio::test]
