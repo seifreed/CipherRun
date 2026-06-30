@@ -5,6 +5,7 @@
 use super::{Command, CommandExit};
 use crate::{Args, Result};
 use async_trait::async_trait;
+use std::collections::HashMap;
 use tracing::info;
 
 /// CtLogsCommand handles Certificate Transparency logs streaming
@@ -24,33 +25,35 @@ impl CtLogsCommand {
     }
 }
 
+fn parse_custom_indices(index_args: &[String]) -> Result<HashMap<String, u64>> {
+    let mut custom_indices = HashMap::new();
+    for index_str in index_args {
+        let Some((source, index_value)) = index_str.split_once('=') else {
+            crate::tls_bail!("Invalid --ct-index format: {index_str}. Expected SOURCE=INDEX");
+        };
+        let source = source.trim();
+        if source.is_empty() {
+            crate::tls_bail!("Invalid --ct-index source: source cannot be empty");
+        }
+        let index_value = index_value.trim();
+        let index = index_value
+            .parse::<u64>()
+            .map_err(|_| crate::TlsError::InvalidInput {
+                message: format!("Invalid index value for source {source}: {index_value}"),
+            })?;
+        custom_indices.insert(source.to_string(), index);
+    }
+    Ok(custom_indices)
+}
+
 #[async_trait]
 impl Command for CtLogsCommand {
     async fn execute(&self) -> Result<CommandExit> {
         use crate::ct_logs::{CtConfig, CtStreamer};
-        use std::collections::HashMap;
 
         info!("Starting CT logs streaming mode");
 
-        // Parse custom indices from CLI arguments
-        let mut custom_indices = HashMap::new();
-        for index_str in &self.args.ct_logs.index {
-            if let Some((source, index_value)) = index_str.split_once('=') {
-                if let Ok(index) = index_value.parse::<u64>() {
-                    custom_indices.insert(source.to_string(), index);
-                } else {
-                    eprintln!(
-                        "Warning: Invalid index value for source {}: {}",
-                        source, index_value
-                    );
-                }
-            } else {
-                eprintln!(
-                    "Warning: Invalid --ct-index format: {}. Expected SOURCE=INDEX",
-                    index_str
-                );
-            }
-        }
+        let custom_indices = parse_custom_indices(&self.args.ct_logs.index)?;
 
         // Build configuration
         let config = CtConfig {
@@ -84,5 +87,29 @@ mod tests {
         let args = Args::default();
         let cmd = CtLogsCommand::new(args);
         assert_eq!(cmd.name(), "CtLogsCommand");
+    }
+
+    #[test]
+    fn test_parse_custom_indices() {
+        let indices =
+            parse_custom_indices(&[" google = 123 ".to_string(), "cloudflare=67890".to_string()])
+                .expect("indices should parse");
+
+        assert_eq!(indices.get("google"), Some(&123));
+        assert_eq!(indices.get("cloudflare"), Some(&67890));
+    }
+
+    #[test]
+    fn test_parse_custom_indices_rejects_invalid_format() {
+        let err = parse_custom_indices(&["google:123".to_string()])
+            .expect_err("invalid format should fail");
+        assert!(err.to_string().contains("Expected SOURCE=INDEX"));
+    }
+
+    #[test]
+    fn test_parse_custom_indices_rejects_invalid_value() {
+        let err = parse_custom_indices(&["google=abc".to_string()])
+            .expect_err("invalid value should fail");
+        assert!(err.to_string().contains("Invalid index value"));
     }
 }
