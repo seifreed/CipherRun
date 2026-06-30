@@ -71,18 +71,25 @@ pub(super) fn analyze_banner(banner: &[u8]) -> (ApplicationProtocol, f64) {
             return (ApplicationProtocol::Unknown, 0.0);
         };
         let pkt_len = u32::from_le_bytes([len_low, len_mid, len_high, 0]) as usize;
-        let version = banner
-            .get(5..)
-            .unwrap_or_default()
-            .iter()
-            .take_while(|&&byte| byte != 0x00)
-            .take(32);
-        let mut saw_version_byte = false;
-        let version_ok = version.inspect(|_| saw_version_byte = true).all(|&byte| {
-            byte.is_ascii_digit() || byte == b'.' || byte == b'-' || byte.is_ascii_alphabetic()
-        });
-        if pkt_len > 0 && pkt_len < 1024 && saw_version_byte && version_ok {
-            return (ApplicationProtocol::Mysql, 0.95);
+        if pkt_len > 0 && pkt_len < 1024 {
+            let Some(packet) = banner.get(5..) else {
+                return (ApplicationProtocol::Unknown, 0.0);
+            };
+            let Some(version_end) = packet.iter().position(|&byte| byte == 0x00) else {
+                return (ApplicationProtocol::Unknown, 0.0);
+            };
+            let version = &packet[..version_end];
+            let version_ok = version_end + 2 <= pkt_len
+                && !version.is_empty()
+                && version.iter().take(32).all(|&byte| {
+                    byte.is_ascii_digit()
+                        || byte == b'.'
+                        || byte == b'-'
+                        || byte.is_ascii_alphabetic()
+                });
+            if version_ok {
+                return (ApplicationProtocol::Mysql, 0.95);
+            }
         }
     }
 
@@ -189,6 +196,13 @@ mod tests {
     #[test]
     fn test_mysql_detection_rejects_missing_version_string() {
         let banner = [0x01, 0x00, 0x00, 0x00, 0x0a];
+        let (proto, _conf) = analyze_banner(&banner);
+        assert_eq!(proto, ApplicationProtocol::Unknown);
+    }
+
+    #[test]
+    fn test_mysql_detection_rejects_truncated_packet_without_version_nul() {
+        let banner = [0x06, 0x00, 0x00, 0x00, 0x0a, b'8'];
         let (proto, _conf) = analyze_banner(&banner);
         assert_eq!(proto, ApplicationProtocol::Unknown);
     }
