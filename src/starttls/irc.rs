@@ -57,7 +57,12 @@ impl StarttlsNegotiator for IrcNegotiator {
             }
 
             if line_count >= MAX_CAP_LINES {
-                break;
+                return Err(crate::error::TlsError::ParseError {
+                    message: format!(
+                        "IRC CAP LS response exceeded {} lines without a final line",
+                        MAX_CAP_LINES
+                    ),
+                });
             }
         }
 
@@ -294,6 +299,46 @@ mod tests {
             "notls must not be accepted as the tls capability"
         );
         drop(stream);
+
+        let _ = handle.await;
+    }
+
+    #[tokio::test]
+    async fn test_irc_negotiation_rejects_unfinished_cap_ls_response() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let port = listener.local_addr().expect("local addr").port();
+
+        let handle = tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let mut reader = BufReader::new(&mut socket);
+                let mut line = String::new();
+
+                let _ = reader.read_line(&mut line).await;
+                for _ in 0..50 {
+                    let _ = reader.get_mut().write_all(b"CAP * LS * :tls\r\n").await;
+                }
+                let _ = reader.get_mut().flush().await;
+            }
+        });
+
+        let mut stream = TcpStream::connect(("127.0.0.1", port))
+            .await
+            .expect("test assertion should succeed");
+
+        let negotiator = IrcNegotiator::new();
+        let result = tokio::time::timeout(
+            std::time::Duration::from_millis(250),
+            negotiator.negotiate_starttls(&mut stream),
+        )
+        .await
+        .expect("negotiation should not wait after CAP line limit");
+
+        assert!(
+            result.is_err(),
+            "unfinished CAP LS response must not proceed to STARTTLS"
+        );
 
         let _ = handle.await;
     }
