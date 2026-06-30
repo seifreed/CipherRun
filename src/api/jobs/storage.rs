@@ -60,6 +60,11 @@ impl FileJobStorage {
                 ),
             });
         }
+        if job.progress > 100 {
+            return Err(crate::TlsError::ParseError {
+                message: format!("Persisted job progress is out of range: {}", job.progress),
+            });
+        }
         Ok(())
     }
 }
@@ -93,12 +98,12 @@ impl JobStorage for FileJobStorage {
             let path = entry.path();
 
             if path.extension().and_then(|s| s.to_str()) == Some("json") {
-                let expected_id = path
-                    .file_stem()
-                    .and_then(|stem| stem.to_str())
-                    .ok_or_else(|| crate::TlsError::InvalidInput {
-                        message: format!("Invalid job file name: {}", path.display()),
-                    })?;
+                let expected_id =
+                    path.file_stem()
+                        .and_then(|stem| stem.to_str())
+                        .ok_or_else(|| crate::TlsError::InvalidInput {
+                            message: format!("Invalid job file name: {}", path.display()),
+                        })?;
                 self.job_path(expected_id)?;
                 let json = std::fs::read_to_string(&path)?;
                 let job = serde_json::from_str::<ScanJob>(&json).map_err(|e| {
@@ -193,6 +198,24 @@ mod tests {
     }
 
     #[test]
+    fn test_load_job_rejects_out_of_range_progress() {
+        let temp_dir = TempDir::new().expect("test assertion should succeed");
+        let storage = FileJobStorage::new(temp_dir.path()).expect("test assertion should succeed");
+        let mut job = ScanJob::new("example.com:443".to_string(), ScanOptions::default(), None);
+        job.progress = 101;
+
+        let json = serde_json::to_string(&job).expect("test assertion should succeed");
+        std::fs::write(temp_dir.path().join(format!("{}.json", job.id)), json)
+            .expect("test assertion should succeed");
+
+        let err = storage
+            .load_job(&job.id)
+            .expect_err("out-of-range persisted progress should fail");
+
+        assert!(err.to_string().contains("progress is out of range"));
+    }
+
+    #[test]
     fn test_load_all_jobs_rejects_invalid_or_mismatched_file_ids() {
         let temp_dir = TempDir::new().expect("test assertion should succeed");
         let storage = FileJobStorage::new(temp_dir.path()).expect("test assertion should succeed");
@@ -219,7 +242,11 @@ mod tests {
         assert!(storage.save_job(&job).is_err());
         assert!(storage.load_job("../outside").is_err());
         assert!(storage.delete_job("../outside").is_err());
-        assert!(storage.load_job("550E8400-E29B-41D4-A716-446655440000").is_err());
+        assert!(
+            storage
+                .load_job("550E8400-E29B-41D4-A716-446655440000")
+                .is_err()
+        );
         assert!(!temp_dir.path().join("../outside.json").exists());
     }
 }
