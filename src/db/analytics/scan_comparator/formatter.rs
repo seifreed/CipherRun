@@ -48,6 +48,11 @@ fn format_overall_rating(grade: Option<&String>, score: Option<i32>) -> String {
     format!("{grade} ({score})")
 }
 
+fn format_key_size_bits(size: Option<i32>) -> String {
+    size.map(|value| format!("{value} bits"))
+        .unwrap_or_else(|| "N/A".to_string())
+}
+
 impl ScanComparator {
     /// Format comparison as string
     pub fn format_comparison(
@@ -297,8 +302,8 @@ impl ScanComparator {
                     cert1.not_after.format("%Y-%m-%d")
                 ));
                 output.push_str(&format!(
-                    "  Key Size: {} bits\n",
-                    cert1.key_size.unwrap_or(0)
+                    "  Key Size: {}\n",
+                    format_key_size_bits(cert1.key_size)
                 ));
             }
             if let Some(cert2) = &comp.certificate_diff.scan_2_cert {
@@ -310,8 +315,8 @@ impl ScanComparator {
                     cert2.not_after.format("%Y-%m-%d")
                 ));
                 output.push_str(&format!(
-                    "  Key Size: {} bits\n",
-                    cert2.key_size.unwrap_or(0)
+                    "  Key Size: {}\n",
+                    format_key_size_bits(cert2.key_size)
                 ));
             }
             output.push('\n');

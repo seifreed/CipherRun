@@ -466,6 +466,64 @@ async fn test_scan_comparator_rejects_invalid_scan_port() {
 }
 
 #[tokio::test]
+async fn test_scan_comparator_formats_missing_certificate_key_size_as_unknown() {
+    let db = setup_db().await;
+    let now = Utc::now();
+    let scan1 = insert_scan(
+        &db,
+        "missing-key-size.test",
+        443,
+        now - Duration::days(2),
+        Some("A"),
+        Some(90),
+    )
+    .await;
+    let scan2 = insert_scan(
+        &db,
+        "missing-key-size.test",
+        443,
+        now - Duration::days(1),
+        Some("A"),
+        Some(90),
+    )
+    .await;
+    let cert1 = insert_certificate(
+        &db,
+        "missing_key_size_fp1",
+        "CN=missing-key-size.test",
+        "CN=CA",
+        now - Duration::days(90),
+        now + Duration::days(365),
+        None,
+    )
+    .await;
+    let cert2 = insert_certificate(
+        &db,
+        "missing_key_size_fp2",
+        "CN=missing-key-size.test",
+        "CN=CA",
+        now - Duration::days(90),
+        now + Duration::days(365),
+        Some(4096),
+    )
+    .await;
+    link_certificate(&db, scan1, cert1, 0).await;
+    link_certificate(&db, scan2, cert2, 0).await;
+
+    let comparator = ScanComparator::new(Arc::clone(&db));
+    let comparison = comparator
+        .compare_scans(scan1, scan2)
+        .await
+        .expect("test assertion should succeed");
+    let terminal_output = comparator
+        .format_comparison(&comparison, "terminal")
+        .expect("test assertion should succeed");
+
+    assert!(terminal_output.contains("Key Size: N/A"));
+    assert!(terminal_output.contains("Key Size: 4096 bits"));
+}
+
+#[tokio::test]
 async fn test_scan_comparator_compare_scans() {
     let db = setup_db().await;
     let now = Utc::now();
