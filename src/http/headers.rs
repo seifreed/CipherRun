@@ -410,7 +410,7 @@ impl SecurityHeaderChecker {
             // (`1; mode=block`) can introduce XS-Leaks. `X-XSS-Protection: 0`
             // (disable, rely on CSP) is the recommended value — so an *enabling*
             // value is the weak setting, not `0`.
-            if !value_lower.starts_with('0') {
+            if value_lower != "0" {
                 issues.push(HeaderIssue {
                     header_name: "X-XSS-Protection".to_string(),
                     severity: IssueSeverity::Low,

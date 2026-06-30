@@ -131,6 +131,17 @@ fn test_x_xss_protection_enabling_value_is_flagged() {
 }
 
 #[test]
+fn test_x_xss_protection_zero_with_options_is_flagged() {
+    let mut headers = HashMap::new();
+    headers.insert("X-XSS-Protection".to_string(), "0; mode=block".to_string());
+
+    let issues = SecurityHeaderChecker::check_all_headers(&headers);
+    assert!(issues.iter().any(|i| {
+        i.header_name == "X-XSS-Protection" && matches!(i.issue_type, IssueType::Insecure)
+    }));
+}
+
+#[test]
 fn test_referrer_policy_weak() {
     let mut headers = HashMap::new();
     headers.insert("Referrer-Policy".to_string(), "unsafe-url".to_string());
