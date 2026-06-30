@@ -44,7 +44,7 @@ impl LogSource {
 
     /// Mark source as failed
     pub fn mark_failed(&mut self, error: String) {
-        self.failure_count += 1;
+        self.failure_count = self.failure_count.saturating_add(1);
         self.last_error = Some(error);
         if self.failure_count >= 3 {
             self.usable = false;
@@ -261,6 +261,28 @@ mod tests {
         source.mark_success();
         assert!(source.is_healthy());
         assert_eq!(source.failure_count, 0);
+    }
+
+    #[test]
+    fn test_log_source_failure_count_saturates() {
+        let mut source = LogSource {
+            id: "test".to_string(),
+            description: "Test Log".to_string(),
+            operator: "Test Operator".to_string(),
+            url: "https://example.com".to_string(),
+            key: None,
+            mmd: None,
+            tree_size: 0,
+            usable: true,
+            last_error: None,
+            failure_count: u32::MAX,
+        };
+
+        source.mark_failed("overflow".to_string());
+
+        assert_eq!(source.failure_count, u32::MAX);
+        assert!(!source.usable);
+        assert_eq!(source.last_error.as_deref(), Some("overflow"));
     }
 
     #[test]
