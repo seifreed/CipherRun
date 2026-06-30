@@ -518,6 +518,11 @@ pub(crate) async fn validate_webhook_url(webhook_url: &str) -> Result<ValidatedW
             });
         }
     }
+    if matches!(url.port(), Some(0)) {
+        return Err(TlsError::InvalidInput {
+            message: "Webhook URL port must be between 1 and 65535".to_string(),
+        });
+    }
 
     // Resolve hostname and check all IPs against SSRF blocklist
     let host = url
@@ -724,5 +729,14 @@ mod tests {
             .expect_err("invalid scheme should fail");
 
         assert!(err.to_string().contains("only http/https"));
+    }
+
+    #[tokio::test]
+    async fn test_validate_webhook_url_rejects_zero_port() {
+        let err = validate_webhook_url("https://example.com:0/callback")
+            .await
+            .expect_err("port zero should fail");
+
+        assert!(err.to_string().contains("port must be between"));
     }
 }
