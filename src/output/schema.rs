@@ -77,21 +77,11 @@ impl CipherRunSchema {
                         }
                     }
                 },
-                "certificate": {
-                    "type": "object",
+                "certificate_chain": {
+                    "type": ["object", "null"],
                     "description": "Certificate chain information",
                     "properties": {
-                        "subject": { "type": "string" },
-                        "issuer": { "type": "string" },
-                        "valid_from": { "type": "string" },
-                        "valid_until": { "type": "string" },
-                        "san": {
-                            "type": "array",
-                            "items": { "type": "string" }
-                        },
-                        "signature_algorithm": { "type": "string" },
-                        "public_key_algorithm": { "type": "string" },
-                        "key_size": { "type": "integer" },
+                        "chain": { "type": "object" },
                         "validation": {
                             "type": "object",
                             "properties": {
@@ -100,7 +90,8 @@ impl CipherRunSchema {
                                 "hostname_match": { "type": "boolean" },
                                 "trust_chain_valid": { "type": "boolean" }
                             }
-                        }
+                        },
+                        "revocation": { "type": ["object", "null"] }
                     }
                 },
                 "vulnerabilities": {
@@ -433,6 +424,8 @@ mod tests {
 
         assert!(properties.contains_key("http"));
         assert!(!properties.contains_key("http_headers"));
+        assert!(properties.contains_key("certificate_chain"));
+        assert!(!properties.contains_key("certificate"));
         assert!(
             properties
                 .get("http")
