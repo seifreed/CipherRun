@@ -140,6 +140,7 @@ pub fn display_target_host(hostname: &str) -> String {
 /// This parser accepts URLs, bracketed IPv6, raw IPv6 literals, and host[:port]
 /// inputs. Raw IPv6 literals without brackets are treated as host-only values.
 pub fn split_target_host_port(input: &str) -> Result<(String, Option<u16>)> {
+    let input = input.trim();
     if input.trim().is_empty() {
         crate::tls_bail!("Target cannot be empty");
     }

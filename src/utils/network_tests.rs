@@ -16,6 +16,14 @@ async fn test_split_target_host_port_with_port() {
     assert_eq!(port, Some(8443));
 }
 
+#[test]
+fn test_split_target_host_port_trims_outer_whitespace() {
+    let (hostname, port) =
+        split_target_host_port("  example.com:8443\t").expect("target should be trimmed");
+    assert_eq!(hostname, "example.com");
+    assert_eq!(port, Some(8443));
+}
+
 #[tokio::test]
 async fn test_split_target_host_port_url() {
     let (hostname, port) =
