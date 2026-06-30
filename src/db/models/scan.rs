@@ -41,10 +41,14 @@ impl ScanRecord {
         self
     }
 
-    /// Set scan duration (capped to i64::MAX to prevent truncation)
-    pub fn with_duration(mut self, duration_ms: u64) -> Self {
-        self.scan_duration_ms = Some(i64::try_from(duration_ms).unwrap_or(i64::MAX));
-        self
+    /// Set scan duration.
+    pub fn with_duration(mut self, duration_ms: u64) -> crate::Result<Self> {
+        let duration =
+            i64::try_from(duration_ms).map_err(|error| crate::TlsError::InvalidInput {
+                message: format!("scan_duration_ms is too large: {error}"),
+            })?;
+        self.scan_duration_ms = Some(duration);
+        Ok(self)
     }
 }
 
@@ -66,5 +70,14 @@ mod tests {
 
         assert_eq!(scan.overall_grade, Some("A".to_string()));
         assert_eq!(scan.overall_score, Some(90));
+    }
+
+    #[test]
+    fn test_scan_record_rejects_overflowing_duration() {
+        let err = ScanRecord::new("example.com".to_string(), 443)
+            .with_duration(u64::MAX)
+            .expect_err("overflowing duration should fail");
+
+        assert!(err.to_string().contains("scan_duration_ms"));
     }
 }

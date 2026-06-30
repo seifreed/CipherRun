@@ -83,7 +83,7 @@ impl CipherRunDatabase {
         if let (Some(grade), Some(score)) = (&results.overall_grade, results.overall_score) {
             scan = scan.with_rating(grade.clone(), score);
         }
-        scan = scan.with_duration(results.scan_duration_ms);
+        scan = scan.with_duration(results.scan_duration_ms)?;
 
         // Insert scan
         let scan_id = self.scan_repo.create_scan(&scan).await?;
