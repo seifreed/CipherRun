@@ -415,26 +415,35 @@ impl PolicyResult {
 
         for violation in &self.violations {
             output.push_str(&format!(
-                "\"{}\",\"{}\",\"{:?}\",\"{}\",\"{}\",\"{}\"\n",
-                violation.rule_path,
-                violation.rule_name,
-                violation.action,
-                violation.description.replace('"', "\"\""),
-                violation
-                    .evidence
-                    .as_ref()
-                    .unwrap_or(&String::new())
-                    .replace('"', "\"\""),
-                violation
-                    .remediation
-                    .as_ref()
-                    .unwrap_or(&String::new())
-                    .replace('"', "\"\"")
+                "{},{},{},{},{},{}\n",
+                policy_csv_cell(&violation.rule_path),
+                policy_csv_cell(&violation.rule_name),
+                policy_csv_cell(&format!("{:?}", violation.action)),
+                policy_csv_cell(&violation.description),
+                policy_csv_cell(violation.evidence.as_deref().unwrap_or("")),
+                policy_csv_cell(violation.remediation.as_deref().unwrap_or(""))
             ));
         }
 
         Ok(output)
     }
+}
+
+fn policy_csv_cell(value: &str) -> String {
+    let trimmed = value.trim();
+    let safe = if trimmed.starts_with('=')
+        || trimmed.starts_with('+')
+        || trimmed.starts_with('-')
+        || trimmed.starts_with('@')
+        || trimmed.starts_with('\t')
+        || trimmed.starts_with('\r')
+    {
+        format!("'{trimmed}")
+    } else {
+        trimmed.to_string()
+    };
+
+    format!("\"{}\"", safe.replace('"', "\"\""))
 }
 
 #[cfg(test)]
@@ -554,8 +563,8 @@ mod tests {
 
         let violations = vec![
             PolicyViolation::new(
-                "rules.example",
-                "Example Rule",
+                "rules.\"example\"",
+                "Example \"Rule\"",
                 PolicyAction::Fail,
                 "Quote \"here\"",
             )
@@ -565,9 +574,41 @@ mod tests {
 
         let result = PolicyResult::new(policy, violations);
         let csv = result.format("csv").expect("test assertion should succeed");
+        assert!(csv.contains("\"rules.\"\"example\"\"\""));
+        assert!(csv.contains("\"Example \"\"Rule\"\"\""));
         assert!(csv.contains("\"Quote \"\"here\"\"\""));
         assert!(csv.contains("\"Evidence \"\"quoted\"\"\""));
         assert!(csv.contains("\"Fix \"\"now\"\"\""));
+    }
+
+    #[test]
+    fn test_policy_result_csv_neutralizes_formula_cells() {
+        let policy = Policy {
+            name: "CSV Policy".to_string(),
+            version: "1.0".to_string(),
+            description: None,
+            organization: None,
+            effective_date: None,
+            extends: None,
+            protocols: None,
+            ciphers: None,
+            certificates: None,
+            vulnerabilities: None,
+            rating: None,
+            compliance: None,
+            exceptions: Vec::new(),
+        };
+
+        let violations = vec![
+            PolicyViolation::new("=path", "+rule", PolicyAction::Fail, "@description")
+                .with_evidence("-evidence")
+                .with_remediation("=remediation"),
+        ];
+
+        let result = PolicyResult::new(policy, violations);
+        let csv = result.format("csv").expect("test assertion should succeed");
+        assert!(csv.contains("\"'=path\",\"'+rule\",\"Fail\",\"'@description\""));
+        assert!(csv.contains("\"'-evidence\",\"'=remediation\""));
     }
 
     #[test]
