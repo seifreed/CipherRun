@@ -77,6 +77,12 @@ impl ScanRequest {
             });
         }
 
+        if matches!(self.tls.sni_name.as_deref().map(str::trim), Some("")) {
+            return Err(TlsError::InvalidInput {
+                message: "SNI hostname must not be empty.".to_string(),
+            });
+        }
+
         if self.connection.retry_backoff_ms > self.connection.max_backoff_ms {
             return Err(TlsError::InvalidInput {
                 message: "Retry backoff cannot be greater than max backoff.".to_string(),

@@ -188,6 +188,19 @@ fn rejects_additional_ca_without_certificate_phase() {
 }
 
 #[test]
+fn rejects_blank_sni_name() {
+    let request = ScanRequest {
+        tls: ScanRequestTls {
+            sni_name: Some(" \t ".to_string()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    assert!(request.validate_common().is_err());
+}
+
+#[test]
 fn baseline_scan_requires_all_without_specific_focus() {
     let request = ScanRequest {
         target: Some("example.com:443".to_string()),
