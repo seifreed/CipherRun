@@ -226,10 +226,14 @@ where
                     .as_ref()
                     .map(|a| a.max_backoff())
                     .unwrap_or(config.max_backoff);
-                backoff = std::cmp::min(backoff * 2, max_backoff);
+                backoff = next_backoff(backoff, max_backoff);
             }
         }
     }
+}
+
+fn next_backoff(backoff: Duration, max_backoff: Duration) -> Duration {
+    std::cmp::min(backoff.checked_mul(2).unwrap_or(max_backoff), max_backoff)
 }
 
 /// Determine if an error should be retried.
@@ -621,5 +625,13 @@ mod tests {
         assert!(elapsed >= Duration::from_millis(70));
         assert!(elapsed < Duration::from_millis(150));
         assert_eq!(attempts.load(Ordering::SeqCst), 4); // 1 initial + 3 retries
+    }
+
+    #[test]
+    fn test_next_backoff_caps_overflow() {
+        assert_eq!(
+            next_backoff(Duration::MAX, Duration::from_secs(5)),
+            Duration::from_secs(5)
+        );
     }
 }
