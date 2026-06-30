@@ -96,7 +96,14 @@ impl PersistedScan {
         let (target_hostname, target_port) = match split_target_host_port(&results.target) {
             Ok((hostname, Some(port))) => (hostname, port),
             Ok((hostname, None)) => (hostname, 443),
-            Err(_) => (results.target.clone(), 443),
+            Err(error) => {
+                return Err(crate::TlsError::ParseError {
+                    message: format!(
+                        "Invalid scan target for persistence '{}': {}",
+                        results.target, error
+                    ),
+                });
+            }
         };
 
         let overall_grade = results.ssl_rating().map(|rating| rating.grade.to_string());
@@ -267,6 +274,22 @@ mod tests {
         assert_eq!(persisted.target_hostname, "example.com");
         assert_eq!(persisted.target_port, 443);
         assert_eq!(persisted.scan_duration_ms, 123);
+    }
+
+    #[test]
+    fn rejects_invalid_scan_target() {
+        let results = ScanResults {
+            target: "example.com:443:extra".to_string(),
+            ..Default::default()
+        };
+
+        let err = PersistedScan::try_from_scan_results(&results)
+            .expect_err("invalid target should fail persistence conversion");
+
+        assert!(
+            err.to_string()
+                .contains("Invalid scan target for persistence")
+        );
     }
 
     #[test]
