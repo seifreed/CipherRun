@@ -165,6 +165,14 @@ async fn test_parse_target_with_explicit_port_override() {
     assert_eq!(target.port, 8443);
 }
 
+#[tokio::test]
+async fn test_parse_target_rejects_zero_port_override() {
+    let err = Target::parse_with_port_override("93.184.216.34:443", Some(0))
+        .await
+        .expect_err("zero port override should fail");
+    assert!(err.to_string().contains("Port must be between"));
+}
+
 #[test]
 fn test_canonical_target_brackets_ipv6() {
     assert_eq!(canonical_target("2001:db8::1", 443), "[2001:db8::1]:443");

@@ -222,6 +222,9 @@ impl Target {
         let (hostname, parsed_port) = split_target_host_port(input)?;
         let hostname = normalize_dns_hostname(hostname);
         let port = port_override.or(parsed_port).unwrap_or(443);
+        if port == 0 {
+            crate::tls_bail!("Port must be between 1 and 65535");
+        }
         let ip_addresses = resolve_hostname(&hostname).await?;
 
         // Validate non-empty IP addresses
