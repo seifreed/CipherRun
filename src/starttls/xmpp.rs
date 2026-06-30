@@ -10,6 +10,8 @@ pub struct XmppNegotiator {
     hostname: String,
 }
 
+const MAX_XMPP_RESPONSE_LEN: usize = 65536;
+
 impl XmppNegotiator {
     pub fn new(hostname: String) -> Self {
         Self { hostname }
@@ -89,6 +91,12 @@ impl XmppNegotiator {
                     message: "XMPP STARTTLS response read length exceeded buffer".to_string(),
                 })?;
             accumulated.extend_from_slice(bytes);
+            if accumulated.len() > MAX_XMPP_RESPONSE_LEN {
+                return Err(crate::error::TlsError::Other(
+                    "Response too large".to_string(),
+                ));
+            }
+
             let Some(response) = Self::decode_utf8_response(&accumulated)? else {
                 continue;
             };
@@ -99,12 +107,6 @@ impl XmppNegotiator {
                 }
             } else if response.contains(tag) {
                 return Ok(response.to_string());
-            }
-
-            if accumulated.len() > 65536 {
-                return Err(crate::error::TlsError::Other(
-                    "Response too large".to_string(),
-                ));
             }
         }
     }
@@ -131,6 +133,12 @@ impl XmppNegotiator {
                     message: "XMPP STARTTLS response read length exceeded buffer".to_string(),
                 })?;
             accumulated.extend_from_slice(bytes);
+            if accumulated.len() > MAX_XMPP_RESPONSE_LEN {
+                return Err(crate::error::TlsError::Other(
+                    "Response too large".to_string(),
+                ));
+            }
+
             let Some(response) = Self::decode_utf8_response(&accumulated)? else {
                 continue;
             };
@@ -139,12 +147,6 @@ impl XmppNegotiator {
                 || Self::contains_xml_start_tag(response, "failure")
             {
                 return Ok(response.to_string());
-            }
-
-            if accumulated.len() > 65536 {
-                return Err(crate::error::TlsError::Other(
-                    "Response too large".to_string(),
-                ));
             }
         }
     }
@@ -364,6 +366,32 @@ mod tests {
         assert!(format!("{err}").contains("Response too large"));
 
         writer.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_read_until_tag_rejects_oversized_response_before_valid_tag() {
+        let mut payload = vec![b'a'; MAX_XMPP_RESPONSE_LEN + 1];
+        payload.extend_from_slice(b"</stream:features>");
+        let mut client = std::io::Cursor::new(payload);
+
+        let err = XmppNegotiator::read_until_tag(&mut client, "</stream:features>")
+            .await
+            .unwrap_err();
+
+        assert!(format!("{err}").contains("Response too large"));
+    }
+
+    #[tokio::test]
+    async fn test_read_until_starttls_response_rejects_oversized_response_before_proceed() {
+        let mut payload = vec![b'a'; MAX_XMPP_RESPONSE_LEN + 1];
+        payload.extend_from_slice(b"<proceed xmlns='urn:ietf:params:xml:ns:xmpp-tls'/>");
+        let mut client = std::io::Cursor::new(payload);
+
+        let err = XmppNegotiator::read_until_starttls_response(&mut client)
+            .await
+            .unwrap_err();
+
+        assert!(format!("{err}").contains("Response too large"));
     }
 
     #[tokio::test]
