@@ -518,7 +518,8 @@ protocols:
     fn parses_policy_file_metadata() {
         let content = "# Policy: Test\n# Description: Desc\n# Created: 2025-01-01T00:00:00Z\n# Enabled: false\n\nrules:\n  - test\n";
         let (name, description, _created_at, enabled, rules) =
-            parse_policy_file_content("fallback".to_string(), content);
+            parse_policy_file_content("fallback".to_string(), content)
+                .expect("policy content should parse");
 
         assert_eq!(name, "Test");
         assert_eq!(description.as_deref(), Some("Desc"));
