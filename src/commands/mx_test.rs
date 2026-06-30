@@ -60,7 +60,7 @@ impl MxTestCommand {
         )],
     ) -> Result<bool> {
         let exporter = ScanExporter::new(&self.args);
-        let json_path = exporter.collection_json_output_path();
+        let json_path = exporter.collection_json_output_path()?;
 
         let Some(json_file) = json_path else {
             return Ok(false);
@@ -175,7 +175,7 @@ impl MxTestCommand {
         }
 
         let exporter = ScanExporter::new(&self.args);
-        let mut plan = exporter.build_plan_from_view(cli_view.export_view());
+        let mut plan = exporter.build_plan_from_view(cli_view.export_view())?;
         plan.json_file = None;
         plan.json_multi_ip = None;
 

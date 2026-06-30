@@ -60,7 +60,7 @@ impl<'a> ScanExporter<'a> {
         Self { args }
     }
 
-    pub fn build_plan_from_view<'b>(&self, view: ScanExportView<'b>) -> ScanExportPlan<'b> {
+    pub fn build_plan_from_view<'b>(&self, view: ScanExportView<'b>) -> Result<ScanExportPlan<'b>> {
         let bundle_base = self.args.output.output_all.as_ref();
         let mut json_file = self.args.output.json.clone();
         let mut json_multi_ip = if view.has_multi_ip_export_data() {
@@ -83,18 +83,18 @@ impl<'a> ScanExporter<'a> {
             }
         }
 
-        ScanExportPlan {
+        Ok(ScanExportPlan {
             results: view.results(),
-            json_file: json_file.map(|path| self.apply_outprefix(path)),
+            json_file: self.apply_outprefix_option(json_file)?,
             json_pretty: self.args.output.json_pretty,
-            json_multi_ip: json_multi_ip.map(|path| self.apply_outprefix(path)),
-            csv_file: csv_file.map(|path| self.apply_outprefix(path)),
-            html_file: html_file.map(|path| self.apply_outprefix(path)),
-            xml_file: xml_file.map(|path| self.apply_outprefix(path)),
-        }
+            json_multi_ip: self.apply_outprefix_option(json_multi_ip)?,
+            csv_file: self.apply_outprefix_option(csv_file)?,
+            html_file: self.apply_outprefix_option(html_file)?,
+            xml_file: self.apply_outprefix_option(xml_file)?,
+        })
     }
 
-    pub(crate) fn collection_json_output_path(&self) -> Option<PathBuf> {
+    pub(crate) fn collection_json_output_path(&self) -> Result<Option<PathBuf>> {
         self.args
             .output
             .json
@@ -107,6 +107,7 @@ impl<'a> ScanExporter<'a> {
                     .map(|base| self.bundle_output_path(base, "json"))
             })
             .map(|path| self.apply_outprefix(path))
+            .transpose()
     }
 
     pub fn export(&self, plan: ScanExportPlan<'_>) -> Result<ScanExportOutcome> {
@@ -313,21 +314,38 @@ impl<'a> ScanExporter<'a> {
         }
     }
 
-    fn apply_outprefix(&self, path: PathBuf) -> PathBuf {
+    fn apply_outprefix_option(&self, path: Option<PathBuf>) -> Result<Option<PathBuf>> {
+        path.map(|path| self.apply_outprefix(path)).transpose()
+    }
+
+    fn apply_outprefix(&self, path: PathBuf) -> Result<PathBuf> {
         let Some(prefix) = self.args.output.outprefix.as_deref() else {
-            return path;
+            return Ok(path);
         };
+        validate_outprefix(prefix)?;
 
         let file_name = path
             .file_name()
             .map(|name| name.to_string_lossy().to_string())
             .unwrap_or_default();
         let prefixed_name = format!("{}{}", prefix, file_name);
-        match path.parent() {
+        Ok(match path.parent() {
             Some(parent) if !parent.as_os_str().is_empty() => parent.join(prefixed_name),
             _ => PathBuf::from(prefixed_name),
-        }
+        })
     }
+}
+
+fn validate_outprefix(prefix: &str) -> Result<()> {
+    if prefix.contains('/') || prefix.contains('\\') || Path::new(prefix).is_absolute() {
+        return Err(crate::TlsError::InvalidInput {
+            message: format!(
+                "--outprefix must be a filename prefix, not a path: {}",
+                prefix
+            ),
+        });
+    }
+    Ok(())
 }
 
 /// Build a filesystem-safe base filename from a scan target ("host:port").
@@ -387,9 +405,33 @@ mod tests {
         let exporter = ScanExporter::new(&args);
         let path = exporter
             .collection_json_output_path()
+            .expect("prefix should be accepted")
             .expect("json path should exist");
 
         assert_eq!(path, temp.path().join("pref-report.json"));
+    }
+
+    #[test]
+    fn test_collection_json_output_path_rejects_path_outprefix() {
+        let temp = tempdir().expect("tempdir should be created");
+        let args = Args {
+            output: crate::cli::OutputArgs {
+                json: Some(temp.path().join("report.json")),
+                outprefix: Some("/tmp/pref-".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let exporter = ScanExporter::new(&args);
+        let err = exporter
+            .collection_json_output_path()
+            .expect_err("absolute outprefix should be rejected");
+
+        assert!(
+            err.to_string()
+                .contains("--outprefix must be a filename prefix")
+        );
     }
 
     #[test]
@@ -468,7 +510,10 @@ mod tests {
             err.to_string()
                 .contains("Refusing to overwrite existing file")
         );
-        assert_eq!(fs::read_to_string(&path).expect("read seeded file"), "existing");
+        assert_eq!(
+            fs::read_to_string(&path).expect("read seeded file"),
+            "existing"
+        );
         let _ = fs::remove_file(path);
     }
 }

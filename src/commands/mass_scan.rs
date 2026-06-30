@@ -224,7 +224,7 @@ impl Command for MassScanCommand {
 
         // Export if requested (use filtered results)
         let exporter = ScanExporter::new(&self.args);
-        if let Some(json_file) = exporter.collection_json_output_path() {
+        if let Some(json_file) = exporter.collection_json_output_path()? {
             use serde_json::json;
 
             let json_results: Vec<_> = filtered_results

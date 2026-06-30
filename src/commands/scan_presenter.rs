@@ -118,7 +118,7 @@ impl<'a> ScanPresenter<'a> {
 
         let export_view = cli_view.export_view();
         let exporter = ScanExporter::new(self.args);
-        let plan = exporter.build_plan_from_view(export_view);
+        let plan = exporter.build_plan_from_view(export_view)?;
         if !plan.has_export_targets() {
             return Ok(ScanExportOutcome::none());
         }
