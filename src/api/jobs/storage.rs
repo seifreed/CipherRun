@@ -50,6 +50,18 @@ impl FileJobStorage {
         }
         Ok(self.base_path.join(format!("{}.json", id)))
     }
+
+    fn validate_loaded_job(expected_id: &str, job: &ScanJob) -> Result<()> {
+        if job.id != expected_id {
+            return Err(crate::TlsError::ParseError {
+                message: format!(
+                    "Persisted job id mismatch: file is {expected_id}, payload is {}",
+                    job.id
+                ),
+            });
+        }
+        Ok(())
+    }
 }
 
 impl JobStorage for FileJobStorage {
@@ -69,6 +81,7 @@ impl JobStorage for FileJobStorage {
 
         let json = std::fs::read_to_string(path)?;
         let job: ScanJob = serde_json::from_str(&json)?;
+        Self::validate_loaded_job(id, &job)?;
         Ok(Some(job))
     }
 
@@ -80,12 +93,20 @@ impl JobStorage for FileJobStorage {
             let path = entry.path();
 
             if path.extension().and_then(|s| s.to_str()) == Some("json") {
+                let expected_id = path
+                    .file_stem()
+                    .and_then(|stem| stem.to_str())
+                    .ok_or_else(|| crate::TlsError::InvalidInput {
+                        message: format!("Invalid job file name: {}", path.display()),
+                    })?;
+                self.job_path(expected_id)?;
                 let json = std::fs::read_to_string(&path)?;
                 let job = serde_json::from_str::<ScanJob>(&json).map_err(|e| {
                     crate::TlsError::ParseError {
                         message: format!("Failed to parse job file {}: {}", path.display(), e),
                     }
                 })?;
+                Self::validate_loaded_job(expected_id, &job)?;
                 jobs.push(job);
             }
         }
@@ -141,7 +162,8 @@ mod tests {
     fn test_load_all_jobs_reports_corrupt_job_file() {
         let temp_dir = TempDir::new().expect("test assertion should succeed");
         let storage = FileJobStorage::new(temp_dir.path()).expect("test assertion should succeed");
-        std::fs::write(temp_dir.path().join("corrupt.json"), "{not-json")
+        let job_id = Uuid::new_v4().to_string();
+        std::fs::write(temp_dir.path().join(format!("{job_id}.json")), "{not-json")
             .expect("test assertion should succeed");
 
         let err = storage
@@ -149,6 +171,41 @@ mod tests {
             .expect_err("corrupt persisted job should fail loudly");
 
         assert!(err.to_string().contains("Failed to parse job file"));
+    }
+
+    #[test]
+    fn test_load_job_rejects_payload_id_mismatch() {
+        let temp_dir = TempDir::new().expect("test assertion should succeed");
+        let storage = FileJobStorage::new(temp_dir.path()).expect("test assertion should succeed");
+        let mut job = ScanJob::new("example.com:443".to_string(), ScanOptions::default(), None);
+        let file_id = job.id.clone();
+        job.id = Uuid::new_v4().to_string();
+
+        let json = serde_json::to_string(&job).expect("test assertion should succeed");
+        std::fs::write(temp_dir.path().join(format!("{file_id}.json")), json)
+            .expect("test assertion should succeed");
+
+        let err = storage
+            .load_job(&file_id)
+            .expect_err("mismatched persisted id should fail");
+
+        assert!(err.to_string().contains("Persisted job id mismatch"));
+    }
+
+    #[test]
+    fn test_load_all_jobs_rejects_invalid_or_mismatched_file_ids() {
+        let temp_dir = TempDir::new().expect("test assertion should succeed");
+        let storage = FileJobStorage::new(temp_dir.path()).expect("test assertion should succeed");
+        let job = ScanJob::new("example.com:443".to_string(), ScanOptions::default(), None);
+        let json = serde_json::to_string(&job).expect("test assertion should succeed");
+        std::fs::write(temp_dir.path().join("not-a-job-id.json"), json)
+            .expect("test assertion should succeed");
+
+        let err = storage
+            .load_all_jobs()
+            .expect_err("invalid persisted file id should fail");
+
+        assert!(err.to_string().contains("Invalid job id"));
     }
 
     #[test]
