@@ -22,15 +22,21 @@ pub struct AuthExtension {
 }
 
 fn api_key_from_query(query: &str) -> Result<Option<String>, ApiError> {
+    let mut api_key = None;
     for param in query.split('&') {
         let (key, value) = param.split_once('=').unwrap_or((param, ""));
         let key = decode_query_component(key)?;
         if key == "api_key" {
-            return Ok(Some(decode_query_component(value)?));
+            if api_key.is_some() {
+                return Err(ApiError::BadRequest(
+                    "Duplicate api_key query parameter".to_string(),
+                ));
+            }
+            api_key = Some(decode_query_component(value)?);
         }
     }
 
-    Ok(None)
+    Ok(api_key)
 }
 
 fn decode_query_component(value: &str) -> Result<String, ApiError> {
@@ -236,6 +242,14 @@ mod tests {
         let err = api_key_from_query("api_key=%FF").expect_err("invalid encoding should fail");
 
         assert!(err.to_string().contains("Invalid query parameter encoding"));
+    }
+
+    #[test]
+    fn test_api_key_from_query_rejects_duplicate_keys() {
+        let err = api_key_from_query("api_key=one&api_key=two")
+            .expect_err("duplicate api keys should fail");
+
+        assert!(err.to_string().contains("Duplicate api_key"));
     }
 
     #[test]
