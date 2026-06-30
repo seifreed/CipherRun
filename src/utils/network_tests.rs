@@ -186,12 +186,32 @@ fn test_with_ips_empty_fails() {
 }
 
 #[test]
+fn test_with_ips_empty_hostname_fails() {
+    let result = Target::with_ips(
+        " \t ".to_string(),
+        443,
+        vec!["93.184.216.34".parse().unwrap()],
+    );
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("hostname"));
+}
+
+#[test]
 fn test_deserialize_target_empty_ips_fails() {
     let result = serde_json::from_str::<Target>(
         r#"{"hostname":"example.com","port":443,"ip_addresses":[]}"#,
     );
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("at least one IP"));
+}
+
+#[test]
+fn test_deserialize_target_empty_hostname_fails() {
+    let result = serde_json::from_str::<Target>(
+        r#"{"hostname":"","port":443,"ip_addresses":["93.184.216.34"]}"#,
+    );
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("hostname"));
 }
 
 #[test]

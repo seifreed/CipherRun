@@ -228,6 +228,9 @@ impl Target {
     /// Create a Target with pre-resolved IP addresses.
     /// Returns error if ip_addresses is empty.
     pub fn with_ips(hostname: String, port: u16, ip_addresses: Vec<IpAddr>) -> Result<Self> {
+        if hostname.trim().is_empty() {
+            return Err(TlsError::Other("Target hostname cannot be empty".to_string()));
+        }
         if ip_addresses.is_empty() {
             return Err(TlsError::Other(
                 "Target must have at least one IP address".to_string(),
