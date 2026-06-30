@@ -19,6 +19,10 @@ fn parse_crl_der_exact(der: &[u8]) -> Result<CertificateRevocationList<'_>> {
     Ok(crl)
 }
 
+fn is_http_crl_url(uri: &str) -> bool {
+    uri.starts_with("http://") || uri.starts_with("https://")
+}
+
 impl RevocationChecker {
     /// Extract CRL distribution point URL from certificate
     pub(crate) fn extract_crl_url(&self, cert: &CertificateInfo) -> Result<Option<String>> {
@@ -45,7 +49,7 @@ impl RevocationChecker {
                         {
                             for name in names {
                                 if let GeneralName::URI(uri) = name
-                                    && uri.starts_with("http")
+                                    && is_http_crl_url(uri)
                                 {
                                     return Ok(Some(uri.to_string()));
                                 }
@@ -218,6 +222,14 @@ mod tests {
 
         let err = checker.extract_crl_url(&cert).unwrap_err();
         assert!(format!("{err}").contains("CRL Distribution Points extension"));
+    }
+
+    #[test]
+    fn test_is_http_crl_url_rejects_http_prefix_schemes() {
+        assert!(is_http_crl_url("http://example.com/root.crl"));
+        assert!(is_http_crl_url("https://example.com/root.crl"));
+        assert!(!is_http_crl_url("httpx://example.com/root.crl"));
+        assert!(!is_http_crl_url("ftp://example.com/root.crl"));
     }
 
     #[test]
