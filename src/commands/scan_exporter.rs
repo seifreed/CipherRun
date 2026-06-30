@@ -286,8 +286,12 @@ impl<'a> ScanExporter<'a> {
             content.to_string()
         } else {
             let mut lines = content.lines();
-            let _header = lines.next();
-            lines.collect::<Vec<_>>().join("\n")
+            match lines.next() {
+                Some(first_line) if !first_line.starts_with("===") => {
+                    lines.collect::<Vec<_>>().join("\n")
+                }
+                _ => content.to_string(),
+            }
         };
 
         if !payload.is_empty() {
@@ -472,6 +476,37 @@ mod tests {
 
         let content = fs::read_to_string(&path).expect("csv should be readable");
         assert_eq!(content, "col1,col2\n1,2\n3,4\n");
+    }
+
+    #[test]
+    fn test_write_text_file_appends_sectioned_csv_without_dropping_marker() {
+        let temp = tempdir().expect("tempdir should be created");
+        let path = temp.path().join("report.csv");
+        fs::write(&path, "=== SCAN SUMMARY ===\nTarget\nold\n")
+            .expect("seed csv should be written");
+
+        let args = Args {
+            output: crate::cli::OutputArgs {
+                append: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let exporter = ScanExporter::new(&args);
+        exporter
+            .write_text_file(
+                &path,
+                "=== SCAN SUMMARY ===\nTarget\nnew\n",
+                "CSV",
+                ExportKind::Csv,
+            )
+            .expect("sectioned csv append should succeed");
+
+        let content = fs::read_to_string(&path).expect("csv should be readable");
+        assert_eq!(
+            content,
+            "=== SCAN SUMMARY ===\nTarget\nold\n=== SCAN SUMMARY ===\nTarget\nnew\n"
+        );
     }
 
     #[test]
