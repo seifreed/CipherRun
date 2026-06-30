@@ -69,14 +69,14 @@ impl StatsTracker {
     /// Increment total processed count
     pub fn increment_processed(&self) {
         if let Ok(mut stats) = self.stats.lock() {
-            stats.total_processed += 1;
+            stats.total_processed = stats.total_processed.saturating_add(1);
         }
     }
 
     /// Increment retry attempts
     pub fn increment_retries(&self) {
         if let Ok(mut stats) = self.stats.lock() {
-            stats.retry_attempts += 1;
+            stats.retry_attempts = stats.retry_attempts.saturating_add(1);
         }
     }
 
@@ -113,7 +113,7 @@ impl StatsTracker {
 
             source_stats.current_index = current_index;
             source_stats.tree_size = tree_size;
-            source_stats.successful_fetches += 1;
+            source_stats.successful_fetches = source_stats.successful_fetches.saturating_add(1);
 
             // Update average fetch time using running sum for accuracy
             let new_fetch_ms = u64::try_from(fetch_time.as_millis()).unwrap_or(u64::MAX);
@@ -135,7 +135,8 @@ impl StatsTracker {
         if let Ok(mut stats) = self.stats.lock() {
             // Only track if source exists or we have capacity
             if let Some(source_stats) = stats.per_source.get_mut(source_id) {
-                source_stats.certificates_processed += count;
+                source_stats.certificates_processed =
+                    source_stats.certificates_processed.saturating_add(count);
             } else if stats.per_source.len() < MAX_SOURCES {
                 // Create new entry only if under capacity
                 let source_stats = stats
@@ -145,7 +146,8 @@ impl StatsTracker {
                         source_id: source_id.to_string(),
                         ..Default::default()
                     });
-                source_stats.certificates_processed += count;
+                source_stats.certificates_processed =
+                    source_stats.certificates_processed.saturating_add(count);
             }
         }
     }
@@ -155,7 +157,7 @@ impl StatsTracker {
         if let Ok(mut stats) = self.stats.lock() {
             // Only update existing entries or create new ones if under capacity
             if let Some(source_stats) = stats.per_source.get_mut(source_id) {
-                source_stats.failed_fetches += 1;
+                source_stats.failed_fetches = source_stats.failed_fetches.saturating_add(1);
             } else if stats.per_source.len() < MAX_SOURCES {
                 let source_stats = stats
                     .per_source
@@ -164,7 +166,7 @@ impl StatsTracker {
                         source_id: source_id.to_string(),
                         ..Default::default()
                     });
-                source_stats.failed_fetches += 1;
+                source_stats.failed_fetches = source_stats.failed_fetches.saturating_add(1);
             }
         }
     }
@@ -335,5 +337,44 @@ mod tests {
         assert_eq!(source.avg_fetch_time_ms, 200);
         assert_eq!(source.failed_fetches, 1);
         assert_eq!(snapshot.retry_attempts, 1);
+    }
+
+    #[test]
+    fn test_stats_counters_saturate() {
+        let tracker = StatsTracker::new();
+        {
+            let mut stats = tracker
+                .stats
+                .lock()
+                .expect("stats lock should not be poisoned");
+            stats.total_processed = u64::MAX;
+            stats.retry_attempts = u64::MAX;
+            stats.per_source.insert(
+                "log-a".to_string(),
+                SourceStats {
+                    source_id: "log-a".to_string(),
+                    certificates_processed: u64::MAX - 5,
+                    successful_fetches: u64::MAX,
+                    failed_fetches: u64::MAX,
+                    total_fetch_time_ms: u64::MAX - 5,
+                    ..Default::default()
+                },
+            );
+        }
+
+        tracker.increment_processed();
+        tracker.increment_retries();
+        tracker.update_source_stats("log-a", 10, 100, Duration::from_millis(10));
+        tracker.increment_source_processed("log-a", 10);
+        tracker.increment_source_failures("log-a");
+
+        let snapshot = tracker.get_snapshot();
+        let source = &snapshot.per_source["log-a"];
+        assert_eq!(snapshot.total_processed, u64::MAX);
+        assert_eq!(snapshot.retry_attempts, u64::MAX);
+        assert_eq!(source.certificates_processed, u64::MAX);
+        assert_eq!(source.successful_fetches, u64::MAX);
+        assert_eq!(source.failed_fetches, u64::MAX);
+        assert_eq!(source.total_fetch_time_ms, u64::MAX);
     }
 }
