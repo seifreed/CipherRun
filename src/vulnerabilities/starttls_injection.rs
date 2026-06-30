@@ -226,7 +226,8 @@ impl StarttlsInjectionTester {
     ) -> Result<StarttlsInjectionStatus> {
         // Read server greeting
         let mut reader = BufReader::new(&mut stream);
-        let response = match timeout(Duration::from_secs(2), response::read_line(&mut reader)).await {
+        let response = match timeout(Duration::from_secs(2), response::read_line(&mut reader)).await
+        {
             Ok(Ok(line)) if !line.is_empty() => line,
             _ => return Ok(StarttlsInjectionStatus::Inconclusive),
         };
@@ -237,7 +238,8 @@ impl StarttlsInjectionTester {
 
         // Send CAPABILITY to check STARTTLS support
         reader.get_mut().write_all(b"a001 CAPABILITY\r\n").await?;
-        let response = match timeout(Duration::from_secs(2), response::read_line(&mut reader)).await {
+        let response = match timeout(Duration::from_secs(2), response::read_line(&mut reader)).await
+        {
             Ok(Ok(line)) if !line.is_empty() => line,
             _ => return Ok(StarttlsInjectionStatus::Inconclusive),
         };
@@ -313,7 +315,8 @@ impl StarttlsInjectionTester {
     ) -> Result<StarttlsInjectionStatus> {
         // Read server greeting
         let mut reader = BufReader::new(&mut stream);
-        let response = match timeout(Duration::from_secs(2), response::read_line(&mut reader)).await {
+        let response = match timeout(Duration::from_secs(2), response::read_line(&mut reader)).await
+        {
             Ok(Ok(line)) if !line.is_empty() => line,
             _ => return Ok(StarttlsInjectionStatus::Inconclusive),
         };
@@ -371,15 +374,15 @@ impl StarttlsInjectionTester {
             response.push_str(&line);
         }
 
-        // Vulnerable if USER command is processed before TLS
-        // Improved detection: Check for specific response patterns
-        // A vulnerable server will respond to the USER command with +OK
+        // Vulnerable if USER command is processed before TLS.
+        // A vulnerable server will respond to both STLS and the injected USER
+        // command with plaintext +OK responses.
         // An invulnerable server will either:
         // 1. Ignore the injection (only response to STLS)
         // 2. Return an error about the unexpected command
         // 3. Close the connection
 
-        // Count +OK responses that specifically indicate command processing
+        // Count positive POP3 responses in the plaintext stream.
         let ok_responses: Vec<&str> = response
             .lines()
             .filter(|line| line.starts_with("+OK"))
@@ -388,19 +391,7 @@ impl StarttlsInjectionTester {
         // Vulnerable if we got more than one +OK response
         // (one for STLS, one for the injected USER command)
         if ok_responses.len() >= 2 {
-            // Verify the second +OK is related to USER command processing
-            // by checking if it mentions user/authentication
-            let has_user_response = ok_responses.iter().skip(1).any(|line| {
-                Self::line_has_ascii_token(line, "user")
-                    || Self::line_has_ascii_token(line, "auth")
-                    || Self::line_has_ascii_token(line, "login")
-            });
-
-            return Ok(if has_user_response {
-                StarttlsInjectionStatus::Vulnerable
-            } else {
-                StarttlsInjectionStatus::NotVulnerable
-            });
+            return Ok(StarttlsInjectionStatus::Vulnerable);
         }
 
         // With only one +OK and no clear evidence of command processing,
@@ -668,7 +659,10 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(20)).await;
             socket.write_all(b"STARTTLS\r\na001 OK\r\n").await.unwrap();
             let _ = socket.read(&mut buf).await.unwrap();
-            socket.write_all(b"a002 OK Begin TLS\r\na003 OK LOGIN\r\n").await.unwrap();
+            socket
+                .write_all(b"a002 OK Begin TLS\r\na003 OK LOGIN\r\n")
+                .await
+                .unwrap();
         });
 
         let target = Target::with_ips(
@@ -841,12 +835,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_pop3_injection_vulnerable_when_user_response_omits_keyword() {
+        let port = start_scripted_server(
+            b"+OK POP3 server\r\n",
+            vec![
+                b"+OK CAPA\r\nSTLS\r\n.\r\n",
+                b"+OK Begin TLS negotiation now\r\n+OK name is a valid mailbox\r\n",
+            ],
+        )
+        .await;
+
+        let target = Target::with_ips(
+            "127.0.0.1".to_string(),
+            port,
+            vec!["127.0.0.1".parse().expect("valid IP")],
+        )
+        .expect("test assertion should succeed");
+        let tester = StarttlsInjectionTester::new(target);
+
+        let vulnerable = tester
+            .test_pop3_injection()
+            .await
+            .expect("test assertion should succeed");
+        assert!(vulnerable);
+    }
+
+    #[tokio::test]
     async fn test_pop3_injection_ignores_user_substrings() {
         let port = start_scripted_server(
             b"+OK POP3 server\r\n",
             vec![
                 b"+OK CAPA\r\nSTLS\r\n.\r\n",
-                b"+OK Begin TLS negotiation now\r\n+OK superuser mode disabled\r\n",
+                b"+OK Begin TLS negotiation now\r\n-ERR superuser mode disabled\r\n",
             ],
         )
         .await;
