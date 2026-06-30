@@ -329,7 +329,9 @@ fn parse_single_cookie(cookie_str: &str) -> CookieInfo {
             secure = true;
         } else if part.eq_ignore_ascii_case("HttpOnly") {
             httponly = true;
-        } else if let Some(value) = directive_value(part, "SameSite") {
+        } else if let Some(value) = directive_value(part, "SameSite")
+            && is_valid_samesite_value(value)
+        {
             samesite = Some(value.to_string());
         } else if let Some(value) = directive_value(part, "Domain") {
             domain = Some(value.to_string());
@@ -349,6 +351,12 @@ fn parse_single_cookie(cookie_str: &str) -> CookieInfo {
         path,
         expires,
     }
+}
+
+fn is_valid_samesite_value(value: &str) -> bool {
+    value.eq_ignore_ascii_case("Strict")
+        || value.eq_ignore_ascii_case("Lax")
+        || value.eq_ignore_ascii_case("None")
 }
 
 /// Check HTTP Date/Time
@@ -605,6 +613,18 @@ mod tests {
         assert_eq!(analysis.insecure_count, 0);
         assert_eq!(analysis.cookies[0].domain.as_deref(), Some("example.com"));
         assert_eq!(analysis.cookies[0].path.as_deref(), Some("/"));
+    }
+
+    #[test]
+    fn test_parse_cookie_invalid_samesite_counts_as_insecure() {
+        let cookies = vec!["session=abc123; Secure; HttpOnly; SameSite=Banana".to_string()];
+
+        let analysis = parse_cookies(&cookies);
+
+        assert_eq!(analysis.samesite_count, 0);
+        assert_eq!(analysis.insecure_count, 1);
+        assert_eq!(analysis.grade, Grade::F);
+        assert_eq!(analysis.cookies[0].samesite, None);
     }
 
     #[test]
