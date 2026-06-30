@@ -40,6 +40,12 @@ fn csv_cell(value: &str) -> String {
     csv_safe(&neutralized)
 }
 
+fn optional_u64_cell(value: Option<u64>) -> String {
+    value
+        .map(|number| number.to_string())
+        .unwrap_or_else(|| "N/A".to_string())
+}
+
 /// Generate CSV output from scan results
 /// Produces multiple CSV tables: protocols, vulnerabilities, and summary
 pub fn generate_csv(results: &ScanResults) -> Result<String> {
@@ -144,7 +150,7 @@ pub fn generate_csv(results: &ScanResults) -> Result<String> {
                 "{},{:?},{},{},{},{}\n",
                 hsts.enabled,
                 hsts.grade,
-                hsts.max_age.unwrap_or(0),
+                optional_u64_cell(hsts.max_age),
                 hsts.include_subdomains,
                 hsts.preload,
                 csv_cell(&hsts.details)
@@ -579,6 +585,44 @@ mod tests {
         assert!(csv.contains("REVERSE PROXY DETECTION"));
         assert!(csv.contains("SSL LABS RATING"));
         assert!(csv.contains("CLIENT COMPATIBILITY"));
+    }
+
+    #[test]
+    fn test_csv_formats_missing_hsts_max_age_as_unknown() {
+        let header_result = HeaderAnalysisResult {
+            headers: HashMap::new(),
+            issues: Vec::new(),
+            score: 0,
+            grade: SecurityGrade::F,
+            hsts_analysis: Some(HstsAnalysis {
+                enabled: false,
+                max_age: None,
+                include_subdomains: false,
+                preload: false,
+                details: "HSTS not enabled".to_string(),
+                grade: HeaderGrade::F,
+            }),
+            hpkp_analysis: None,
+            cookie_analysis: None,
+            datetime_check: None,
+            banner_detection: None,
+            reverse_proxy_detection: None,
+            http_status_code: None,
+            redirect_location: None,
+            redirect_chain: Vec::new(),
+            server_hostname: None,
+        };
+        let results = ScanResults {
+            http: Some(HttpResults {
+                http_headers: Some(header_result),
+            }),
+            ..Default::default()
+        };
+
+        let csv = generate_csv(&results).expect("test assertion should succeed");
+
+        assert!(csv.contains("false,F,N/A,false,false,HSTS not enabled"));
+        assert!(!csv.contains("false,F,0,false,false,HSTS not enabled"));
     }
 
     #[test]
