@@ -275,7 +275,7 @@ pub fn generate_csv(results: &ScanResults) -> Result<String> {
                         .unwrap_or_else(|| "N/A".to_string())
                 ),
                 csv_cell(client.cipher.as_deref().unwrap_or("N/A")),
-                client.handshake_time_ms.unwrap_or(0)
+                optional_u64_cell(client.handshake_time_ms)
             ));
         }
         output.push('\n');
@@ -812,7 +812,8 @@ mod tests {
 
         let csv = generate_csv(&results).expect("test assertion should succeed");
         assert!(csv.contains("CLIENT COMPATIBILITY"));
-        assert!(csv.contains("N/A"));
+        assert!(csv.contains("TestClient,false,N/A,N/A,N/A"));
+        assert!(!csv.contains("TestClient,false,N/A,N/A,0"));
     }
 
     #[test]
