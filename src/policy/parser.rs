@@ -3,6 +3,7 @@
 use crate::Result;
 use crate::policy::Policy;
 use crate::protocols::Protocol;
+use crate::security::sanitize_path;
 use regex::Regex;
 use serde_yaml;
 use std::path::{Path, PathBuf};
@@ -47,7 +48,7 @@ impl<'a> PolicyLoader<'a> {
 
         // Handle inheritance (extends)
         if let Some(ref extends_path) = policy.extends.clone() {
-            let parent_path = self.resolve_path(policy_path, extends_path);
+            let parent_path = self.resolve_path(policy_path, extends_path)?;
             let base_policy = self.load(&parent_path)?;
             policy = self.merge_policies(base_policy, policy)?;
         }
@@ -92,12 +93,16 @@ impl<'a> PolicyLoader<'a> {
     }
 
     /// Resolve a path relative to the current policy file
-    fn resolve_path(&self, current_file: &Path, relative_path: &str) -> PathBuf {
-        if let Some(parent) = current_file.parent() {
-            parent.join(relative_path)
+    fn resolve_path(&self, current_file: &Path, relative_path: &str) -> Result<PathBuf> {
+        let base_dir = if let Some(parent) = current_file.parent() {
+            parent
         } else {
-            self.base_path.join(relative_path)
-        }
+            self.base_path.as_path()
+        };
+
+        sanitize_path(relative_path, base_dir).map_err(|e| crate::TlsError::ConfigError {
+            message: format!("Invalid policy extends path '{}': {}", relative_path, e),
+        })
     }
 
     /// Merge two policies (child overrides parent)
@@ -690,6 +695,80 @@ policy:
                 .expect("min grade"),
             "A-"
         );
+    }
+
+    #[test]
+    fn test_extends_loads_same_directory_policy() {
+        let temp_dir = tempfile::tempdir().expect("test assertion should succeed");
+        let base_path = temp_dir.path().join("base.yaml");
+        let child_path = temp_dir.path().join("child.yaml");
+
+        std::fs::write(
+            &base_path,
+            r#"
+policy:
+  name: "Base Policy"
+  version: "1.0"
+  protocols:
+    required: ["TLSv1.2"]
+    action: FAIL
+"#,
+        )
+        .expect("test assertion should succeed");
+        std::fs::write(
+            &child_path,
+            r#"
+policy:
+  name: "Child Policy"
+  version: "1.0"
+  extends: "base.yaml"
+"#,
+        )
+        .expect("test assertion should succeed");
+
+        let source = crate::policy::source::FilesystemPolicySource;
+        let policy = PolicyLoader::from_source(temp_dir.path(), &source)
+            .load(&child_path)
+            .expect("same-directory extends should load");
+
+        assert_eq!(policy.name, "Child Policy");
+        assert!(policy.protocols.is_some());
+    }
+
+    #[test]
+    fn test_extends_rejects_path_traversal() {
+        let temp_dir = tempfile::tempdir().expect("test assertion should succeed");
+        let policy_dir = temp_dir.path().join("policies");
+        std::fs::create_dir(&policy_dir).expect("test assertion should succeed");
+        let outside_path = temp_dir.path().join("outside.yaml");
+        let child_path = policy_dir.join("child.yaml");
+
+        std::fs::write(
+            &outside_path,
+            r#"
+policy:
+  name: "Outside Policy"
+  version: "1.0"
+"#,
+        )
+        .expect("test assertion should succeed");
+        std::fs::write(
+            &child_path,
+            r#"
+policy:
+  name: "Child Policy"
+  version: "1.0"
+  extends: "../outside.yaml"
+"#,
+        )
+        .expect("test assertion should succeed");
+
+        let source = crate::policy::source::FilesystemPolicySource;
+        let err = PolicyLoader::from_source(&policy_dir, &source)
+            .load(&child_path)
+            .expect_err("traversal extends should fail");
+
+        assert!(err.to_string().contains("Invalid policy extends path"));
     }
 
     #[test]
