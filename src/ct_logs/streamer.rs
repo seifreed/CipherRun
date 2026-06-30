@@ -64,6 +64,16 @@ pub struct CtStreamer {
 }
 
 impl CtStreamer {
+    fn batch_end(current_index: u64, tree_size: u64, batch_size: u64) -> u64 {
+        if tree_size == 0 {
+            current_index
+        } else {
+            current_index
+                .saturating_add(batch_size.saturating_sub(1))
+                .min(tree_size.saturating_sub(1))
+        }
+    }
+
     fn normalized_config(config: CtConfig) -> Result<CtConfig> {
         if config.poll_interval.is_zero() {
             return Err(TlsError::InvalidInput {
@@ -287,12 +297,7 @@ impl CtStreamer {
 
             // Calculate batch end (guard against underflow when tree_size is 0)
             // batch_end is inclusive, so we subtract 1 from batch_size to get exactly batch_size entries
-            let batch_end = if tree_size == 0 {
-                current_index
-            } else {
-                (current_index + config.batch_size.saturating_sub(1))
-                    .min(tree_size.saturating_sub(1))
-            };
+            let batch_end = Self::batch_end(current_index, tree_size, config.batch_size);
 
             debug!(
                 "Fetching entries {}-{} from {} (tree size: {})",
@@ -323,7 +328,8 @@ impl CtStreamer {
             // Process entries
             let mut processed_count = 0;
             for (offset, entry_response) in entries.iter().enumerate() {
-                let entry_index = current_index + offset as u64;
+                let entry_index =
+                    current_index.saturating_add(u64::try_from(offset).unwrap_or(u64::MAX));
 
                 // Parse entry
                 match parser.parse_entry(entry_response, entry_index) {
@@ -360,7 +366,8 @@ impl CtStreamer {
                 sleep(Duration::from_secs(1)).await;
                 continue;
             }
-            current_index += entries.len() as u64;
+            current_index =
+                current_index.saturating_add(u64::try_from(entries.len()).unwrap_or(u64::MAX));
 
             // Small delay to avoid hammering the API
             sleep(Duration::from_millis(100)).await;
@@ -462,6 +469,24 @@ mod tests {
 
         let err = CtStreamer::normalized_config(config).expect_err("zero interval should fail");
         assert!(err.to_string().contains("poll interval"));
+    }
+
+    #[test]
+    fn test_batch_end_caps_at_tree_size() {
+        assert_eq!(CtStreamer::batch_end(10, 15, 100), 14);
+    }
+
+    #[test]
+    fn test_batch_end_saturates_current_index_overflow() {
+        assert_eq!(
+            CtStreamer::batch_end(u64::MAX - 5, u64::MAX, DEFAULT_BATCH_SIZE),
+            u64::MAX - 1
+        );
+    }
+
+    #[test]
+    fn test_batch_end_handles_empty_tree() {
+        assert_eq!(CtStreamer::batch_end(10, 0, DEFAULT_BATCH_SIZE), 10);
     }
 
     #[tokio::test]
