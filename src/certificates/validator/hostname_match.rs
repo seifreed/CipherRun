@@ -91,7 +91,7 @@ impl CertificateValidator {
         let subject_lower = cert.subject.to_lowercase();
         if let Some(cn_value) = extract_cn_value(&subject_lower) {
             // Normalize trailing dot (FQDN format) to match the normalized hostname
-            let cn_value = cn_value.trim_end_matches('.');
+            let cn_value = cn_value.strip_suffix('.').unwrap_or(cn_value);
             if cn_value == hostname_lower {
                 return true;
             }
@@ -305,6 +305,40 @@ mod tests {
 
         assert!(validator.check_hostname(&cert, &mut issues));
         assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn test_hostname_rejects_cn_with_multiple_trailing_dots() {
+        let cert = CertificateInfo {
+            subject: "CN=example.com..".to_string(),
+            issuer: "CN=CA".to_string(),
+            serial_number: "123".to_string(),
+            not_before: "2024-01-01".to_string(),
+            not_after: "2025-01-01".to_string(),
+            expiry_countdown: None,
+            signature_algorithm: "sha256WithRSAEncryption".to_string(),
+            public_key_algorithm: "rsaEncryption".to_string(),
+            public_key_size: Some(2048),
+            rsa_exponent: None,
+            san: vec![],
+            is_ca: false,
+            key_usage: vec![],
+            extended_key_usage: vec![],
+            extended_validation: false,
+            ev_oids: vec![],
+            pin_sha256: None,
+            fingerprint_sha256: None,
+            debian_weak_key: None,
+            aia_url: None,
+            der_bytes: vec![],
+            certificate_transparency: None,
+        };
+
+        let validator = CertificateValidator::new("example.com".to_string());
+        let mut issues = Vec::new();
+
+        assert!(!validator.check_hostname(&cert, &mut issues));
+        assert!(!issues.is_empty());
     }
 
     #[test]
