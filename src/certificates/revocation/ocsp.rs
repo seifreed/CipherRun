@@ -15,6 +15,10 @@ use x509_parser::prelude::*;
 /// responder and this host does not reject otherwise-fresh responses.
 const OCSP_CLOCK_SKEW_SECS: u32 = 300;
 
+fn is_http_ocsp_url(uri: &str) -> bool {
+    uri.starts_with("http://") || uri.starts_with("https://")
+}
+
 impl RevocationChecker {
     /// Extract OCSP responder URL from certificate
     pub(crate) fn extract_ocsp_url(&self, cert: &CertificateInfo) -> Result<Option<String>> {
@@ -38,6 +42,7 @@ impl RevocationChecker {
                         // OCSP OID: 1.3.6.1.5.5.7.48.1
                         if access_desc.access_method.to_string() == "1.3.6.1.5.5.7.48.1"
                             && let GeneralName::URI(uri) = &access_desc.access_location
+                            && is_http_ocsp_url(uri)
                         {
                             return Ok(Some(uri.to_string()));
                         }
@@ -437,5 +442,13 @@ mod tests {
 
         let err = checker.extract_ocsp_url(&cert).unwrap_err();
         assert!(format!("{err}").contains("Authority Information Access extension"));
+    }
+
+    #[test]
+    fn test_is_http_ocsp_url_rejects_non_http_schemes() {
+        assert!(is_http_ocsp_url("http://ocsp.example.com"));
+        assert!(is_http_ocsp_url("https://ocsp.example.com"));
+        assert!(!is_http_ocsp_url("ldap://ocsp.example.com"));
+        assert!(!is_http_ocsp_url("httpx://ocsp.example.com"));
     }
 }
