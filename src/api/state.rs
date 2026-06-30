@@ -225,6 +225,16 @@ impl AppState {
                 message: "rate_limit_per_minute must be greater than 0".to_string(),
             });
         }
+        if config.max_concurrent_scans == 0 {
+            return Err(crate::error::TlsError::ConfigError {
+                message: "max_concurrent_scans must be greater than 0".to_string(),
+            });
+        }
+        if config.job_queue_capacity == 0 {
+            return Err(crate::error::TlsError::ConfigError {
+                message: "job_queue_capacity must be greater than 0".to_string(),
+            });
+        }
 
         let config = Arc::new(config);
         let stats = Arc::new(tokio::sync::RwLock::new(ApiStats::default()));
@@ -397,5 +407,35 @@ mod tests {
         };
 
         assert!(err.to_string().contains("rate_limit_per_minute"));
+    }
+
+    #[test]
+    fn test_app_state_rejects_zero_max_concurrent_scans() {
+        let config = ApiConfig {
+            max_concurrent_scans: 0,
+            ..Default::default()
+        };
+
+        let err = match AppState::new(config) {
+            Ok(_) => panic!("zero concurrency should fail"),
+            Err(err) => err,
+        };
+
+        assert!(err.to_string().contains("max_concurrent_scans"));
+    }
+
+    #[test]
+    fn test_app_state_rejects_zero_job_queue_capacity() {
+        let config = ApiConfig {
+            job_queue_capacity: 0,
+            ..Default::default()
+        };
+
+        let err = match AppState::new(config) {
+            Ok(_) => panic!("zero queue capacity should fail"),
+            Err(err) => err,
+        };
+
+        assert!(err.to_string().contains("job_queue_capacity"));
     }
 }
