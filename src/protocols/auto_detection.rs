@@ -27,6 +27,10 @@ fn protocol_read_timeout() -> Duration {
     Duration::from_secs(3)
 }
 
+fn should_probe_http(port: u16) -> bool {
+    matches!(port, 80 | 8000 | 8080)
+}
+
 impl ProtocolDetector {
     /// Detect protocol automatically
     pub async fn detect(host: &str, port: u16) -> Result<DetectedProtocol> {
@@ -61,7 +65,7 @@ impl ProtocolDetector {
         let mut chunk = [0u8; 1024];
         loop {
             match timeout(read_timeout, stream.read(&mut chunk)).await {
-                Ok(Ok(0)) if (port == 80 || port == 443 || port == 8080) && banner.is_empty() => {
+                Ok(Ok(0)) if should_probe_http(port) && banner.is_empty() => {
                     return Self::detect_http(&mut stream).await;
                 }
                 Ok(Ok(0)) if banner.is_empty() => {
@@ -88,7 +92,7 @@ impl ProtocolDetector {
                 }
                 Ok(Err(error)) => return Err(error.into()),
                 Err(_) if !banner.is_empty() => break,
-                Err(_) if port == 80 || port == 443 || port == 8080 => {
+                Err(_) if should_probe_http(port) => {
                     return Self::detect_http(&mut stream).await;
                 }
                 Err(_) => {
@@ -102,7 +106,7 @@ impl ProtocolDetector {
         let banner_bytes = banner.as_slice();
         let (protocol, confidence) = analyze_banner(banner_bytes);
 
-        if protocol == ApplicationProtocol::Unknown && (port == 80 || port == 443 || port == 8080) {
+        if protocol == ApplicationProtocol::Unknown && should_probe_http(port) {
             return Self::detect_http(&mut stream).await;
         }
 
@@ -228,6 +232,15 @@ mod tests {
         assert_eq!(protocol_from_port(25), ApplicationProtocol::SmtpStartTls);
         assert_eq!(protocol_from_port(143), ApplicationProtocol::ImapStartTls);
         assert_eq!(protocol_from_port(110), ApplicationProtocol::Pop3StartTls);
+    }
+
+    #[test]
+    fn test_http_probe_ports_match_http_port_hints() {
+        assert!(should_probe_http(80));
+        assert!(should_probe_http(8000));
+        assert!(should_probe_http(8080));
+        assert!(!should_probe_http(443));
+        assert!(!should_probe_http(8443));
     }
 
     #[test]
