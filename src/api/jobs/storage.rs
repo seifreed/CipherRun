@@ -2,6 +2,7 @@
 
 use crate::Result;
 use crate::api::jobs::ScanJob;
+use crate::api::models::response::ScanStatus;
 use uuid::Uuid;
 
 /// Job storage trait for persisting jobs
@@ -63,6 +64,11 @@ impl FileJobStorage {
         if job.progress > 100 {
             return Err(crate::TlsError::ParseError {
                 message: format!("Persisted job progress is out of range: {}", job.progress),
+            });
+        }
+        if matches!(job.status, ScanStatus::Completed) && job.results.is_none() {
+            return Err(crate::TlsError::ParseError {
+                message: "Persisted completed job is missing results".to_string(),
             });
         }
         Ok(())
@@ -133,7 +139,7 @@ impl JobStorage for FileJobStorage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::models::request::ScanOptions;
+    use crate::api::models::{request::ScanOptions, response::ScanStatus};
     use tempfile::TempDir;
 
     #[test]
@@ -213,6 +219,26 @@ mod tests {
             .expect_err("out-of-range persisted progress should fail");
 
         assert!(err.to_string().contains("progress is out of range"));
+    }
+
+    #[test]
+    fn test_load_job_rejects_completed_job_without_results() {
+        let temp_dir = TempDir::new().expect("test assertion should succeed");
+        let storage = FileJobStorage::new(temp_dir.path()).expect("test assertion should succeed");
+        let mut job = ScanJob::new("example.com:443".to_string(), ScanOptions::default(), None);
+        job.status = ScanStatus::Completed;
+        job.progress = 100;
+        job.completed_at = Some(chrono::Utc::now());
+
+        let json = serde_json::to_string(&job).expect("test assertion should succeed");
+        std::fs::write(temp_dir.path().join(format!("{}.json", job.id)), json)
+            .expect("test assertion should succeed");
+
+        let err = storage
+            .load_job(&job.id)
+            .expect_err("completed job without results should fail");
+
+        assert!(err.to_string().contains("missing results"));
     }
 
     #[test]
