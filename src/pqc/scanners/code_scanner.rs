@@ -97,7 +97,20 @@ impl CodeScanner {
         let mut findings = Vec::new();
         let mut files_scanned = 0;
 
-        scan_dir(root, &mut findings, &mut files_scanned)?;
+        if root.is_dir() {
+            scan_dir(root, &mut findings, &mut files_scanned)?;
+        } else if is_source_file(root) {
+            scan_file(root, &mut findings)?;
+            files_scanned = 1;
+        } else {
+            return Err(crate::TlsError::FileSystemError {
+                path: root.display().to_string(),
+                source: std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "source path does not exist or is not a supported source file",
+                ),
+            });
+        }
 
         Ok(CodeScanResult {
             root: root.display().to_string(),
@@ -220,5 +233,22 @@ mod tests {
     #[test]
     fn test_code_scanner_flags_sha_hyphen_one() {
         assert!(algorithms_matched("Signature alg: SHA-1").contains(&"SHA-1"));
+    }
+
+    #[test]
+    fn test_code_scanner_scans_single_source_file() {
+        use std::io::Write;
+
+        let mut file = tempfile::Builder::new()
+            .suffix(".rs")
+            .tempfile()
+            .expect("create temp file");
+        writeln!(file, "let digest = MD5::new();").expect("write source file");
+
+        let result = CodeScanner::scan(file.path()).expect("scan should succeed");
+
+        assert_eq!(result.files_scanned, 1);
+        assert_eq!(result.findings.len(), 1);
+        assert_eq!(result.findings[0].algorithm, "MD5");
     }
 }
