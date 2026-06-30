@@ -365,7 +365,7 @@ fn test_hsts_directives_match_exact_tokens() {
     let mut headers = HashMap::new();
     headers.insert(
         "Strict-Transport-Security".to_string(),
-        "max-age=31536000; notincludeSubDomains; x-preload=false".to_string(),
+        "max-age=31536000; includeSubDomains=false; preload=false".to_string(),
     );
 
     let issues = SecurityHeaderChecker::check_all_headers(&headers);

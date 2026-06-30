@@ -585,11 +585,7 @@ impl SecurityHeaderChecker {
     fn has_semicolon_directive(value: &str, directive: &str) -> bool {
         value.split(';').any(|part| {
             let trimmed = part.trim();
-            let name = trimmed
-                .split_once('=')
-                .map(|(key, _)| key.trim())
-                .unwrap_or(trimmed);
-            name.eq_ignore_ascii_case(directive)
+            !trimmed.contains('=') && trimmed.eq_ignore_ascii_case(directive)
         })
     }
 
