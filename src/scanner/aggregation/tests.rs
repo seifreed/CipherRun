@@ -582,6 +582,52 @@ fn test_aggregate_ciphers_conservative_is_stable_and_conservative() {
 }
 
 #[test]
+fn test_aggregate_ciphers_saturates_overflowing_handshake_average() {
+    let ip1: IpAddr = Ipv4Addr::new(127, 0, 0, 1).into();
+    let ip2: IpAddr = Ipv4Addr::new(127, 0, 0, 2).into();
+    let cipher = make_cipher("AES128-SHA", 128, "RSA", "AES-128-CBC");
+
+    let mut summary_ip1 = make_summary(Protocol::TLS12, vec![cipher.clone()]);
+    summary_ip1.avg_handshake_time_ms = Some(u64::MAX);
+
+    let mut summary_ip2 = make_summary(Protocol::TLS12, vec![cipher]);
+    summary_ip2.avg_handshake_time_ms = Some(1);
+
+    let mut ciphers_ip1 = HashMap::new();
+    ciphers_ip1.insert(Protocol::TLS12, summary_ip1);
+    let mut ciphers_ip2 = HashMap::new();
+    ciphers_ip2.insert(Protocol::TLS12, summary_ip2);
+
+    let mut results = HashMap::new();
+    results.insert(
+        ip1,
+        SingleIpScanResult {
+            ip: ip1,
+            scan_result: make_scan_result(Vec::new(), ciphers_ip1, "fp1", Grade::A, 90, Vec::new()),
+            scan_duration_ms: 100,
+            error: None,
+        },
+    );
+    results.insert(
+        ip2,
+        SingleIpScanResult {
+            ip: ip2,
+            scan_result: make_scan_result(Vec::new(), ciphers_ip2, "fp2", Grade::A, 90, Vec::new()),
+            scan_duration_ms: 120,
+            error: None,
+        },
+    );
+
+    let aggregated = ConservativeAggregator::new(results, vec![]).aggregate();
+    let summary = aggregated
+        .ciphers
+        .get(&Protocol::TLS12)
+        .expect("TLS12 summary should exist");
+
+    assert_eq!(summary.avg_handshake_time_ms, Some(u64::MAX / 2));
+}
+
+#[test]
 fn test_aggregate_protocols_conservative_uses_consensus_metadata() {
     let ip1: IpAddr = Ipv4Addr::new(127, 0, 0, 1).into();
     let ip2: IpAddr = Ipv4Addr::new(127, 0, 0, 2).into();

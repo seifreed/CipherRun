@@ -55,11 +55,7 @@ impl ConservativeAggregator {
                 .iter()
                 .filter_map(|summary| summary.avg_handshake_time_ms)
                 .collect();
-            let avg_handshake_time_ms = if handshake_times.is_empty() {
-                None
-            } else {
-                Some(handshake_times.iter().sum::<u64>() / handshake_times.len() as u64)
-            };
+            let avg_handshake_time_ms = average_handshake_time(&handshake_times);
 
             let mut summary = ProtocolCipherSummary {
                 protocol,
@@ -103,6 +99,21 @@ impl ConservativeAggregator {
 
         result
     }
+}
+
+fn average_handshake_time(handshake_times: &[u64]) -> Option<u64> {
+    let count = u64::try_from(handshake_times.len()).ok()?;
+    if count == 0 {
+        return None;
+    }
+
+    Some(
+        handshake_times
+            .iter()
+            .copied()
+            .fold(0u64, u64::saturating_add)
+            / count,
+    )
 }
 
 fn consensus_server_preference(summaries: &[&ProtocolCipherSummary]) -> Vec<String> {
