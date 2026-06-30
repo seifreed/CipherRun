@@ -557,7 +557,18 @@ impl ClientHelloCapture {
             });
         }
 
-        // Skip server name list length (2 bytes)
+        let list_len = Self::read_u16_at(data, 0, "SNI server name list length")? as usize;
+        let list_end = 2usize
+            .checked_add(list_len)
+            .ok_or_else(|| TlsError::ParseError {
+                message: "SNI server name list length overflow".to_string(),
+            })?;
+        if list_end != data.len() {
+            return Err(TlsError::ParseError {
+                message: "Invalid SNI server name list length".to_string(),
+            });
+        }
+
         let mut cursor = 2;
 
         // Server name type (1 byte, should be 0 for hostname)
@@ -573,7 +584,12 @@ impl ClientHelloCapture {
         let name_len = Self::read_u16_at(data, cursor, "SNI name length")? as usize;
         cursor += 2;
 
-        if data.len() < cursor + name_len {
+        let name_end = cursor
+            .checked_add(name_len)
+            .ok_or_else(|| TlsError::ParseError {
+                message: "SNI name length overflow".to_string(),
+            })?;
+        if name_end > list_end {
             return Err(TlsError::ParseError {
                 message: "SNI name length exceeds extension data".to_string(),
             });
@@ -735,6 +751,43 @@ mod tests {
 
         let err = capture.get_sni().expect_err("invalid SNI type should fail");
         assert!(err.to_string().contains("Invalid SNI name type"));
+    }
+
+    #[test]
+    fn test_get_sni_rejects_trailing_bytes_after_declared_list() {
+        let capture = ClientHelloCapture::synthetic(
+            0x0303,
+            vec![0x1301],
+            vec![(
+                EXTENSION_SERVER_NAME,
+                vec![0x00, 0x04, 0x00, 0x00, 0x01, b'a', b'b'],
+            )],
+        );
+
+        let err = capture
+            .get_sni()
+            .expect_err("SNI list trailing bytes should fail");
+        assert!(
+            err.to_string()
+                .contains("Invalid SNI server name list length")
+        );
+    }
+
+    #[test]
+    fn test_get_sni_rejects_name_beyond_declared_list() {
+        let capture = ClientHelloCapture::synthetic(
+            0x0303,
+            vec![0x1301],
+            vec![(
+                EXTENSION_SERVER_NAME,
+                vec![0x00, 0x04, 0x00, 0x00, 0x02, b'a'],
+            )],
+        );
+
+        let err = capture
+            .get_sni()
+            .expect_err("SNI name beyond list should fail");
+        assert!(err.to_string().contains("SNI name length exceeds"));
     }
 
     #[test]
