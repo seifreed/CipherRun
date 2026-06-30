@@ -154,6 +154,9 @@ pub fn split_target_host_port(input: &str) -> Result<(String, Option<u16>)> {
             .host_str()
             .ok_or_else(|| TlsError::Other("No hostname in URL".to_string()))?
             .to_string();
+        if matches!(url.port(), Some(0)) {
+            crate::tls_bail!("Port must be between 1 and 65535");
+        }
         return Ok((host, url.port_or_known_default()));
     }
 

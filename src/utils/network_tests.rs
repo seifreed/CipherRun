@@ -52,6 +52,13 @@ fn test_split_target_host_port_rejects_non_http_url_scheme() {
     assert!(err.to_string().contains("Unsupported target URL scheme"));
 }
 
+#[test]
+fn test_split_target_host_port_rejects_url_port_zero() {
+    let err =
+        split_target_host_port("https://example.com:0").expect_err("URL port zero should fail");
+    assert!(err.to_string().contains("Port must be between"));
+}
+
 #[tokio::test]
 async fn test_parse_target_ip() {
     let target = Target::parse("93.184.216.34:443")
