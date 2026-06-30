@@ -80,8 +80,15 @@ impl ScanJob {
 
     /// Update progress
     pub fn update_progress(&mut self, progress: u8, stage: String) {
+        if progress > 100 {
+            tracing::warn!("Ignoring out-of-range job progress: {}", progress);
+            return;
+        }
+
         self.progress = progress;
         self.current_stage = Some(stage);
+        self.eta_seconds = None;
+        self.estimated_completion = None;
 
         // Estimate completion time based on progress
         if let Some(started) = self.started_at
@@ -112,11 +119,22 @@ impl ScanJob {
             };
 
             let remaining = total_estimated.saturating_sub(elapsed);
+            let Ok(remaining_seconds) = i64::try_from(remaining) else {
+                tracing::debug!("ETA calculation exceeds chrono range, skipping");
+                return;
+            };
+            let Some(remaining_duration) = chrono::Duration::try_seconds(remaining_seconds) else {
+                tracing::debug!("ETA calculation exceeds chrono range, skipping");
+                return;
+            };
+            let Some(estimated_completion) = Utc::now().checked_add_signed(remaining_duration)
+            else {
+                tracing::debug!("ETA completion time exceeds chrono range, skipping");
+                return;
+            };
+
             self.eta_seconds = Some(remaining);
-            self.estimated_completion = Some(
-                Utc::now()
-                    + chrono::Duration::seconds(i64::try_from(remaining).unwrap_or(i64::MAX)),
-            );
+            self.estimated_completion = Some(estimated_completion);
         }
     }
 
@@ -471,6 +489,30 @@ mod tests {
         // never falling through both counters.
         assert_eq!(queue.queue_length().await.unwrap(), 0);
         assert_eq!(queue.active_jobs_count().await.unwrap(), 1);
+    }
+
+    #[test]
+    fn test_update_progress_rejects_out_of_range_progress() {
+        let mut job = ScanJob::new("example.com:443".to_string(), ScanOptions::default(), None);
+        job.update_progress(50, "halfway".to_string());
+
+        job.update_progress(101, "invalid".to_string());
+
+        assert_eq!(job.progress, 50);
+        assert_eq!(job.current_stage.as_deref(), Some("halfway"));
+    }
+
+    #[test]
+    fn test_update_progress_skips_eta_beyond_datetime_range() {
+        let mut job = ScanJob::new("example.com:443".to_string(), ScanOptions::default(), None);
+        job.started_at = Some(DateTime::<Utc>::MIN_UTC);
+
+        job.update_progress(1, "ancient".to_string());
+
+        assert_eq!(job.progress, 1);
+        assert_eq!(job.current_stage.as_deref(), Some("ancient"));
+        assert!(job.eta_seconds.is_none());
+        assert!(job.estimated_completion.is_none());
     }
 
     #[tokio::test]
