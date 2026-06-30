@@ -55,7 +55,7 @@ fn bench_split_target_host_port(c: &mut Criterion) {
     let mut group = c.benchmark_group("input_parsing/split_target_host_port");
 
     for input in [
-        "https://example.com:8443/path?q=1",
+        "https://example.com:8443",
         "example.com:443",
         "[2001:db8::10]:9443",
     ] {

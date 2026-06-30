@@ -59,6 +59,28 @@ fn test_split_target_host_port_rejects_url_port_zero() {
     assert!(err.to_string().contains("Port must be between"));
 }
 
+#[test]
+fn test_split_target_host_port_rejects_url_credentials() {
+    let err = split_target_host_port("https://user@example.com:443")
+        .expect_err("target URL credentials should fail");
+    assert!(err.to_string().contains("must not contain credentials"));
+}
+
+#[test]
+fn test_split_target_host_port_rejects_url_path_query_fragment() {
+    for input in [
+        "https://example.com/path",
+        "https://example.com?target=other",
+        "https://example.com#fragment",
+    ] {
+        let err = split_target_host_port(input).expect_err("decorated target URL should fail");
+        assert!(
+            err.to_string()
+                .contains("must not include a path, query, or fragment")
+        );
+    }
+}
+
 #[tokio::test]
 async fn test_parse_target_ip() {
     let target = Target::parse("93.184.216.34:443")

@@ -150,6 +150,12 @@ pub fn split_target_host_port(input: &str) -> Result<(String, Option<u16>)> {
         if !matches!(url.scheme(), "http" | "https") {
             crate::tls_bail!("Unsupported target URL scheme: {}", url.scheme());
         }
+        if !url.username().is_empty() || url.password().is_some() {
+            crate::tls_bail!("Target URL must not contain credentials");
+        }
+        if url.path() != "/" || url.query().is_some() || url.fragment().is_some() {
+            crate::tls_bail!("Target URL must not include a path, query, or fragment");
+        }
         let host = url
             .host_str()
             .ok_or_else(|| TlsError::Other("No hostname in URL".to_string()))?
