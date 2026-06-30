@@ -165,6 +165,7 @@ impl DatabaseConfig {
         let config: Config = toml::from_str(&contents).map_err(|e| {
             crate::TlsError::DatabaseError(format!("Failed to parse config: {}", e))
         })?;
+        config.validate()?;
 
         Ok(config)
     }
@@ -196,6 +197,24 @@ max_age_days = 365
             crate::TlsError::DatabaseError(format!("Failed to write config: {}", e))
         })?;
 
+        Ok(())
+    }
+}
+
+impl Config {
+    fn validate(&self) -> crate::Result<()> {
+        if matches!(self.database.max_connections, Some(0)) {
+            return Err(crate::TlsError::DatabaseError(
+                "max_connections must be greater than 0".to_string(),
+            ));
+        }
+        if let Some(retention) = &self.retention
+            && retention.max_age_days < 0
+        {
+            return Err(crate::TlsError::DatabaseError(
+                "retention max_age_days must be non-negative".to_string(),
+            ));
+        }
         Ok(())
     }
 }
@@ -290,5 +309,53 @@ mod tests {
             .connection_string()
             .expect("test assertion should succeed");
         assert_eq!(conn_str, "postgres://user:pass@[::1]:5432/testdb");
+    }
+
+    #[test]
+    fn test_config_from_file_rejects_zero_max_connections() {
+        let dir = tempfile::tempdir().expect("test assertion should succeed");
+        let path = dir.path().join("db.toml");
+        std::fs::write(
+            &path,
+            r#"
+[database]
+type = "postgres"
+host = "localhost"
+port = 5432
+database = "cipherrun"
+username = "user"
+password = "pass"
+max_connections = 0
+"#,
+        )
+        .expect("test assertion should succeed");
+
+        let err = DatabaseConfig::from_file(path.to_str().expect("utf-8 path"))
+            .expect_err("zero max_connections should fail");
+
+        assert!(err.to_string().contains("max_connections"));
+    }
+
+    #[test]
+    fn test_config_from_file_rejects_negative_retention() {
+        let dir = tempfile::tempdir().expect("test assertion should succeed");
+        let path = dir.path().join("db.toml");
+        std::fs::write(
+            &path,
+            r#"
+[database]
+type = "sqlite"
+path = ":memory:"
+
+[retention]
+max_age_days = -1
+"#,
+        )
+        .expect("test assertion should succeed");
+
+        let err = DatabaseConfig::from_file(path.to_str().expect("utf-8 path"))
+            .expect_err("negative retention should fail");
+
+        assert!(err.to_string().contains("max_age_days"));
     }
 }
