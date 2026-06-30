@@ -35,7 +35,7 @@ impl CipherRunSchema {
                         "properties": {
                             "protocol": {
                                 "type": "string",
-                                "enum": ["SSLv2", "SSLv3", "TLS 1.0", "TLS 1.1", "TLS 1.2", "TLS 1.3", "QUIC"]
+                                "enum": ["SSLv2", "SSLv3", "TLS10", "TLS11", "TLS12", "TLS13", "QUIC"]
                             },
                             "supported": { "type": "boolean" },
                             "inconclusive": { "type": "boolean" },
@@ -169,7 +169,7 @@ impl CipherRunSchema {
             "properties": {
                 "protocol": {
                     "type": "string",
-                    "enum": ["SSLv2", "SSLv3", "TLS 1.0", "TLS 1.1", "TLS 1.2", "TLS 1.3", "QUIC"]
+                    "enum": ["SSLv2", "SSLv3", "TLS10", "TLS11", "TLS12", "TLS13", "QUIC"]
                 },
                 "supported": { "type": "boolean" },
                 "inconclusive": { "type": "boolean" },
@@ -480,7 +480,8 @@ mod tests {
             .and_then(|p| p.get("enum"))
             .and_then(|v| v.as_array())
             .unwrap();
-        assert!(enum_values.iter().any(|v| v == "TLS 1.2"));
+        assert!(enum_values.iter().any(|v| v == "TLS12"));
+        assert!(!enum_values.iter().any(|v| v == "TLS 1.2"));
     }
 
     #[test]
@@ -539,7 +540,7 @@ mod tests {
             "target": "example.com:443",
             "scan_time_ms": 100,
             "protocols": [{
-                "protocol": "TLS 1.2",
+                "protocol": "TLS12",
                 "supported": false,
                 "preferred": false,
                 "ciphers_count": 0
