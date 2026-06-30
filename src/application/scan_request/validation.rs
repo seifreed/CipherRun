@@ -27,6 +27,23 @@ impl ScanRequest {
             });
         }
 
+        if let Some(ip_override) = self.ip.as_deref()
+            && let Ok(ip) = ip_override.parse::<std::net::IpAddr>()
+        {
+            if self.network.ipv4_only && ip.is_ipv6() {
+                return Err(TlsError::InvalidInput {
+                    message: "Cannot use an IPv6 --ip override with IPv4-only scanning."
+                        .to_string(),
+                });
+            }
+            if self.network.ipv6_only && ip.is_ipv4() {
+                return Err(TlsError::InvalidInput {
+                    message: "Cannot use an IPv4 --ip override with IPv6-only scanning."
+                        .to_string(),
+                });
+            }
+        }
+
         if let Some(proxy) = &self.network.proxy {
             crate::utils::proxy::ProxyConfig::parse(proxy).map_err(|error| {
                 TlsError::InvalidInput {

@@ -79,6 +79,29 @@ fn rejects_conflicting_ip_scan_modes() {
 }
 
 #[test]
+fn rejects_ip_override_conflicting_with_address_family() {
+    let ipv4_with_ipv6_only = ScanRequest {
+        ip: Some("198.51.100.20".to_string()),
+        network: ScanRequestNetwork {
+            ipv6_only: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    assert!(ipv4_with_ipv6_only.validate_common().is_err());
+
+    let ipv6_with_ipv4_only = ScanRequest {
+        ip: Some("2001:db8::20".to_string()),
+        network: ScanRequestNetwork {
+            ipv4_only: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    assert!(ipv6_with_ipv4_only.validate_common().is_err());
+}
+
+#[test]
 fn rejects_missing_target_for_scan() {
     let request = ScanRequest::default();
     assert!(request.validate_for_scan().is_err());
