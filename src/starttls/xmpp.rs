@@ -16,16 +16,24 @@ impl XmppNegotiator {
     }
 
     fn contains_xml_start_tag(response: &str, tag: &str) -> bool {
-        let needle = format!("<{tag}");
+        Self::contains_xml_tag(response, &format!("<{tag}"), true)
+    }
+
+    fn contains_xml_end_tag(response: &str, tag: &str) -> bool {
+        Self::contains_xml_tag(response, &format!("</{tag}>"), false)
+    }
+
+    fn contains_xml_tag(response: &str, needle: &str, require_start_tag_delimiter: bool) -> bool {
         let mut search_from = 0;
 
-        while let Some(pos) = response[search_from..].find(&needle) {
+        while let Some(pos) = response[search_from..].find(needle) {
             let tag_start = search_from + pos;
             let after_tag = tag_start + needle.len();
-            let delimited = matches!(
-                response.as_bytes().get(after_tag).copied(),
-                None | Some(b' ' | b'\t' | b'\r' | b'\n' | b'/' | b'>')
-            );
+            let delimited = !require_start_tag_delimiter
+                || matches!(
+                    response.as_bytes().get(after_tag).copied(),
+                    None | Some(b' ' | b'\t' | b'\r' | b'\n' | b'/' | b'>')
+                );
 
             if delimited && !Self::is_inside_xml_comment(response, tag_start) {
                 return true;
@@ -79,7 +87,11 @@ impl XmppNegotiator {
             accumulated.extend_from_slice(bytes);
             let response = Self::decode_utf8_response(&accumulated)?;
 
-            if response.contains(tag) {
+            if let Some(tag_name) = tag.strip_prefix("</").and_then(|tag| tag.strip_suffix('>')) {
+                if Self::contains_xml_end_tag(response, tag_name) {
+                    return Ok(response.to_string());
+                }
+            } else if response.contains(tag) {
                 return Ok(response.to_string());
             }
 
@@ -235,6 +247,28 @@ mod tests {
             .await
             .unwrap();
         assert!(result.contains("</stream:features>"));
+
+        writer.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_read_until_tag_ignores_tag_inside_comment() {
+        let (mut client, mut server) = tokio::io::duplex(1024);
+        let writer = tokio::spawn(async move {
+            server
+                .write_all(b"<stream:features><!-- </stream:features> -->")
+                .await
+                .unwrap();
+            server
+                .write_all(b"<starttls/></stream:features>")
+                .await
+                .unwrap();
+        });
+
+        let result = XmppNegotiator::read_until_tag(&mut client, "</stream:features>")
+            .await
+            .unwrap();
+        assert!(result.contains("<starttls/>"));
 
         writer.await.unwrap();
     }
