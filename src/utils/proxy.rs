@@ -22,6 +22,7 @@ pub struct ProxyConfig {
 impl ProxyConfig {
     /// Parse proxy string (host:port or user:pass@host:port)
     pub fn parse(proxy_str: &str) -> Result<Self> {
+        let proxy_str = proxy_str.trim();
         // Check for user:pass@host:port format
         if let Some((auth, hostport)) = proxy_str.rsplit_once('@') {
             let (username, password) = if let Some((u, p)) = auth.split_once(':') {
@@ -295,6 +296,16 @@ mod tests {
     fn test_parse_proxy_with_auth() {
         let proxy = ProxyConfig::parse("user:pass@proxy.example.com:3128")
             .expect("test assertion should succeed");
+        assert_eq!(proxy.host, "proxy.example.com");
+        assert_eq!(proxy.port, 3128);
+        assert_eq!(proxy.username.as_deref(), Some("user"));
+        assert_eq!(proxy.password.as_deref(), Some("pass"));
+    }
+
+    #[test]
+    fn test_parse_proxy_trims_outer_whitespace() {
+        let proxy = ProxyConfig::parse("  user:pass@proxy.example.com:3128\t")
+            .expect("proxy should be trimmed");
         assert_eq!(proxy.host, "proxy.example.com");
         assert_eq!(proxy.port, 3128);
         assert_eq!(proxy.username.as_deref(), Some("user"));
