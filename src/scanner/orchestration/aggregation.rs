@@ -45,6 +45,7 @@ impl Scanner {
                     Duration::from_millis(0),
                     "Probe/connectivity preflight failed, but later scan phases established a working connection".to_string(),
                 );
+                aggregated.connection_time_ms = None;
                 aggregated.attempts = 0;
                 return aggregated;
             }
@@ -71,13 +72,15 @@ impl Scanner {
             let probe_error_count = attempted_statuses.len() - successful_statuses.len();
             let degraded_count = report.failed_scans + probe_error_count;
             let mut aggregated = if had_partial_failures || had_failed_ip_scans {
-                ProbeStatus::partial_success(
-                    Duration::from_millis(best_success.connection_time_ms.unwrap_or(0)),
+                let mut status = ProbeStatus::partial_success(
+                    Duration::from_millis(best_success.connection_time_ms.unwrap_or_default()),
                     format!(
                         "Connectivity succeeded for {} successful IP scans; {} IP scans failed or had probe errors",
                         report.successful_scans, degraded_count
                     ),
-                )
+                );
+                status.connection_time_ms = best_success.connection_time_ms;
+                status
             } else {
                 (*best_success).clone()
             };
@@ -89,12 +92,12 @@ impl Scanner {
             let best_observed_time_ms = attempted_statuses
                 .iter()
                 .filter_map(|(_, status)| status.connection_time_ms)
-                .min()
-                .unwrap_or(0);
+                .min();
             let mut aggregated = ProbeStatus::partial_success(
-                Duration::from_millis(best_observed_time_ms),
+                Duration::from_millis(best_observed_time_ms.unwrap_or_default()),
                 "Probe/connectivity preflight failed, but later scan phases established a working connection".to_string(),
             );
+            aggregated.connection_time_ms = best_observed_time_ms;
             aggregated.attempts = total_attempts;
             return aggregated;
         }

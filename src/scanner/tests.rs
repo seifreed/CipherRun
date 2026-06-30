@@ -1492,11 +1492,88 @@ fn test_build_conservative_multi_ip_result_partial_success_without_probe_attempt
         result.scan_metadata.probe_status.error_type,
         Some(crate::scanner::probe_status::ErrorType::Warning)
     );
-    assert_eq!(
-        result.scan_metadata.probe_status.connection_time_ms,
-        Some(0)
-    );
+    assert_eq!(result.scan_metadata.probe_status.connection_time_ms, None);
     assert_eq!(result.scan_metadata.probe_status.attempts, 0);
+}
+
+#[test]
+fn test_build_conservative_multi_ip_result_partial_success_preserves_unknown_probe_time() {
+    let args = Args {
+        target: Some("example.com".to_string()),
+        scan: crate::cli::ScanArgs {
+            all: true,
+            disable_rating: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let scanner = Scanner::new(args.to_scan_request().expect("scan request should build"))
+        .expect("test assertion should succeed");
+
+    let ip1: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+    let ip2: std::net::IpAddr = "127.0.0.2".parse().unwrap();
+    let mut success_without_time = ProbeStatus::success(Duration::from_millis(1));
+    success_without_time.connection_time_ms = None;
+    let successful_result = ScanResults {
+        scan_metadata: ScanMetadata {
+            probe_status: success_without_time,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let mut per_ip_results = HashMap::new();
+    per_ip_results.insert(
+        ip1,
+        crate::scanner::inconsistency::SingleIpScanResult {
+            ip: ip1,
+            scan_result: successful_result,
+            scan_duration_ms: 9,
+            error: None,
+        },
+    );
+    per_ip_results.insert(
+        ip2,
+        crate::scanner::inconsistency::SingleIpScanResult {
+            ip: ip2,
+            scan_result: ScanResults::default(),
+            scan_duration_ms: 50,
+            error: Some("timeout".to_string()),
+        },
+    );
+
+    let report = crate::scanner::multi_ip::MultiIpScanReport {
+        target: Target::with_ips("example.com".to_string(), 443, vec![ip1, ip2])
+            .expect("test assertion should succeed"),
+        per_ip_results,
+        total_ips: 2,
+        successful_scans: 1,
+        failed_scans: 1,
+        total_duration_ms: 59,
+        inconsistencies: Vec::new(),
+        aggregated: crate::scanner::aggregation::AggregatedScanResult {
+            protocols: Vec::new(),
+            ciphers: HashMap::new(),
+            grade: ("F".to_string(), 0),
+            certificate_info: None,
+            certificate_consistent: true,
+            inconsistencies: Vec::new(),
+            alpn_protocols: Vec::new(),
+            session_resumption_caching: Some(false),
+            session_resumption_tickets: Some(false),
+        },
+    };
+
+    let result = scanner
+        .build_conservative_multi_ip_result(&report)
+        .expect("test assertion should succeed");
+
+    assert!(result.scan_metadata.probe_status.success);
+    assert_eq!(
+        result.scan_metadata.probe_status.error_type,
+        Some(crate::scanner::probe_status::ErrorType::Warning)
+    );
+    assert_eq!(result.scan_metadata.probe_status.connection_time_ms, None);
 }
 
 #[test]
