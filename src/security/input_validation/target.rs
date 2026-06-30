@@ -68,6 +68,11 @@ fn parse_bracketed_ipv6(
         && let Some(bracket_end) = target.find(']')
     {
         let (hostname, rest) = target.split_at(bracket_end);
+        if hostname.parse::<Ipv6Addr>().is_err() {
+            return Err(ValidationError::InvalidHostname(
+                "Bracketed targets must contain an IPv6 address".to_string(),
+            ));
+        }
         let rest = rest.strip_prefix(']').unwrap_or(rest);
         let port = if let Some(port_str) = rest.strip_prefix(':') {
             Some(
@@ -306,5 +311,25 @@ mod tests {
 
         assert_eq!(host, "2001:db8::1");
         assert_eq!(port, Some(8443));
+    }
+
+    #[test]
+    fn test_validate_target_rejects_bracketed_hostname() {
+        let result = validate_target("[example.com]:443", true);
+
+        assert!(
+            result.is_err(),
+            "Bracketed target syntax is only valid for IPv6 literals"
+        );
+    }
+
+    #[test]
+    fn test_validate_target_rejects_bracketed_ipv4() {
+        let result = validate_target("[192.0.2.1]:443", true);
+
+        assert!(
+            result.is_err(),
+            "Bracketed target syntax is only valid for IPv6 literals"
+        );
     }
 }
