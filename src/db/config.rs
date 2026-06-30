@@ -142,6 +142,11 @@ impl DatabaseConfig {
                 let path = self.path.as_ref().ok_or_else(|| {
                     crate::TlsError::DatabaseError("Missing SQLite path".to_string())
                 })?;
+                if path.as_os_str().is_empty() {
+                    return Err(crate::TlsError::DatabaseError(
+                        "SQLite path must not be empty".to_string(),
+                    ));
+                }
 
                 // SQLx expects a proper SQLite connection string
                 let path_str = path.to_string_lossy();
@@ -269,6 +274,16 @@ mod tests {
             .connection_string()
             .expect("test assertion should succeed");
         assert!(conn_str.contains("sqlite:"));
+    }
+
+    #[test]
+    fn test_sqlite_connection_string_rejects_empty_path() {
+        let config = DatabaseConfig::sqlite(PathBuf::new());
+        let err = config
+            .connection_string()
+            .expect_err("empty SQLite path should fail");
+
+        assert!(err.to_string().contains("SQLite path"));
     }
 
     #[test]
