@@ -191,6 +191,11 @@ impl VulnerabilityScanner {
         let mut summary = VulnerabilitySummary::default();
 
         for result in results {
+            if result.inconclusive {
+                summary.total_inconclusive += 1;
+                continue;
+            }
+
             if result.vulnerable {
                 summary.total_vulnerable += 1;
                 match result.severity {
@@ -200,9 +205,6 @@ impl VulnerabilityScanner {
                     Severity::Low => summary.low += 1,
                     Severity::Info => summary.info += 1,
                 }
-            }
-            if result.inconclusive {
-                summary.total_inconclusive += 1;
             }
         }
 
@@ -560,6 +562,26 @@ mod tests {
         assert_eq!(summary.total_not_executed, 0);
         assert_eq!(summary.total_vulnerable, 0);
         assert_eq!(summary.total_inconclusive, 1);
+    }
+
+    #[test]
+    fn test_summarize_results_does_not_count_inconclusive_positive_as_confirmed() {
+        let results = vec![VulnerabilityResult {
+            vuln_type: VulnerabilityType::Heartbleed,
+            vulnerable: true,
+            inconclusive: true,
+            details: "Possibly vulnerable from partial scan".to_string(),
+            cve: None,
+            cwe: None,
+            severity: Severity::High,
+        }];
+
+        let summary = VulnerabilityScanner::summarize_results(&results);
+        assert_eq!(summary.total_expected, 1);
+        assert_eq!(summary.total_tested, 1);
+        assert_eq!(summary.total_vulnerable, 0);
+        assert_eq!(summary.total_inconclusive, 1);
+        assert_eq!(summary.high, 0);
     }
 
     #[test]
