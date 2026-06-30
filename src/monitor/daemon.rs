@@ -335,7 +335,7 @@ impl MonitorDaemon {
                             cert.not_after
                         ),
                     );
-                    let _ = alert_manager.send_alert(&alert).await;
+                    alert_manager.send_alert(&alert).await?;
                 }
                 return Ok(());
             }
@@ -492,6 +492,8 @@ mod tests {
         alerts: Arc<TokioMutex<Vec<Alert>>>,
     }
 
+    struct FailingChannel;
+
     #[async_trait]
     impl AlertChannel for RecordingChannel {
         async fn send_alert(&self, alert: &Alert) -> Result<()> {
@@ -501,6 +503,17 @@ mod tests {
 
         fn channel_name(&self) -> &str {
             "recording"
+        }
+    }
+
+    #[async_trait]
+    impl AlertChannel for FailingChannel {
+        async fn send_alert(&self, _alert: &Alert) -> Result<()> {
+            Err(crate::TlsError::Other("channel failed".to_string()))
+        }
+
+        fn channel_name(&self) -> &str {
+            "failing"
         }
     }
 
@@ -635,6 +648,31 @@ mod tests {
             ),
             _ => panic!("expected expiry warning alert, got {:?}", alert.alert_type),
         }
+    }
+
+    #[tokio::test]
+    async fn test_unparseable_expiry_propagates_alert_failure() {
+        let mut alert_manager = AlertManager::new(0);
+        alert_manager.add_channel(Box::new(FailingChannel));
+        let thresholds = crate::monitor::types::AlertThresholds {
+            expiry_30d: true,
+            expiry_14d: false,
+            expiry_7d: false,
+            expiry_1d: false,
+            on_change: false,
+        };
+        let cert = test_certificate("not-a-date".to_string());
+
+        let err = MonitorDaemon::check_expiry_warnings(
+            "example.com:443",
+            &cert,
+            &thresholds,
+            &alert_manager,
+        )
+        .await
+        .expect_err("failed alert delivery should be reported");
+
+        assert!(err.to_string().contains("All alert channels failed"));
     }
 
     #[tokio::test]
