@@ -64,29 +64,18 @@ pub struct CtStreamer {
 }
 
 impl CtStreamer {
-    fn normalized_config(mut config: CtConfig) -> Result<CtConfig> {
+    fn normalized_config(config: CtConfig) -> Result<CtConfig> {
         if config.poll_interval.is_zero() {
             return Err(TlsError::InvalidInput {
                 message: "CT logs poll interval must be greater than 0 seconds".to_string(),
             });
         }
 
-        // Validate and clamp batch size with warning
-        let batch_size = if config.batch_size > MAX_BATCH_SIZE {
-            tracing::warn!(
-                "batch_size {} exceeds maximum {}, clamping to {}",
-                config.batch_size,
-                MAX_BATCH_SIZE,
-                MAX_BATCH_SIZE
-            );
-            MAX_BATCH_SIZE
-        } else if config.batch_size == 0 {
-            tracing::warn!("batch_size cannot be 0, using default of 1");
-            1
-        } else {
-            config.batch_size
-        };
-        config.batch_size = batch_size;
+        if config.batch_size == 0 || config.batch_size > MAX_BATCH_SIZE {
+            return Err(TlsError::InvalidInput {
+                message: format!("CT logs batch size must be between 1 and {MAX_BATCH_SIZE}"),
+            });
+        }
         Ok(config)
     }
 
@@ -449,8 +438,19 @@ mod tests {
             ..Default::default()
         };
 
-        let config = CtStreamer::normalized_config(config).expect("config should normalize");
-        assert_eq!(config.batch_size, MAX_BATCH_SIZE);
+        let err = CtStreamer::normalized_config(config).expect_err("large batch should fail");
+        assert!(err.to_string().contains("batch size"));
+    }
+
+    #[test]
+    fn test_config_rejects_zero_batch_size() {
+        let config = CtConfig {
+            batch_size: 0,
+            ..Default::default()
+        };
+
+        let err = CtStreamer::normalized_config(config).expect_err("zero batch should fail");
+        assert!(err.to_string().contains("batch size"));
     }
 
     #[test]
