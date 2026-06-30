@@ -139,10 +139,13 @@ where
 
         if line_count == 0 {
             first_code = code;
-        } else if code != first_code && line.as_bytes().get(3) == Some(&b' ') {
-            // Final line of multi-line response may have a different code.
-            // Per RFC 959, use the final line's code as the actual response.
-            first_code = code;
+        } else if code != first_code {
+            return Err(crate::error::TlsError::ParseError {
+                message: format!(
+                    "{} multi-line response status code changed from {} to {}",
+                    protocol_name, first_code, code
+                ),
+            });
         }
 
         full_response.push_str(&line);
@@ -400,5 +403,23 @@ mod tests {
             .await
             .expect_err("unterminated multi-line response should fail");
         assert!(format!("{err}").contains("without a final line"));
+    }
+
+    #[tokio::test]
+    async fn test_read_multiline_status_rejects_changed_status_code() {
+        let (mut client, mut server) = tokio::io::duplex(128);
+        tokio::spawn(async move {
+            server
+                .write_all(b"220-First line\r\n234 Ready\r\n")
+                .await
+                .expect("test should write data");
+        });
+
+        let mut reader = BufReader::new(&mut client);
+        let err = read_multiline_status(&mut reader, "TEST", 100)
+            .await
+            .expect_err("changed status code should fail");
+
+        assert!(format!("{err}").contains("status code changed from 220 to 234"));
     }
 }
