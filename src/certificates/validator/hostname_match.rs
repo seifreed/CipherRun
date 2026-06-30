@@ -18,6 +18,21 @@ fn extract_cn_value(subject_lower: &str) -> Option<&str> {
     None
 }
 
+fn push_hostname_mismatch(
+    expected_hostname: &str,
+    sans: &[String],
+    issues: &mut Vec<ValidationIssue>,
+) {
+    issues.push(ValidationIssue {
+        severity: IssueSeverity::Critical,
+        issue_type: IssueType::HostnameMismatch,
+        description: format!(
+            "Certificate hostname mismatch. Expected: {}, Got SANs: {:?}",
+            expected_hostname, sans
+        ),
+    });
+}
+
 impl CertificateValidator {
     /// Check hostname match
     pub(crate) fn check_hostname(
@@ -67,6 +82,11 @@ impl CertificateValidator {
             }
         }
 
+        if !cert.san.is_empty() {
+            push_hostname_mismatch(&self.hostname, &cert.san, issues);
+            return false;
+        }
+
         // Check Common Name in subject (exact match or wildcard with DN boundary)
         let subject_lower = cert.subject.to_lowercase();
         if let Some(cn_value) = extract_cn_value(&subject_lower) {
@@ -90,14 +110,7 @@ impl CertificateValidator {
             }
         }
 
-        issues.push(ValidationIssue {
-            severity: IssueSeverity::Critical,
-            issue_type: IssueType::HostnameMismatch,
-            description: format!(
-                "Certificate hostname mismatch. Expected: {}, Got SANs: {:?}",
-                self.hostname, cert.san
-            ),
-        });
+        push_hostname_mismatch(&self.hostname, &cert.san, issues);
 
         false
     }
@@ -222,6 +235,43 @@ mod tests {
 
         assert!(validator.check_hostname(&cert, &mut issues));
         assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn test_hostname_mismatch_does_not_fall_back_to_cn_when_san_exists() {
+        let cert = CertificateInfo {
+            subject: "CN=example.com".to_string(),
+            issuer: "CN=CA".to_string(),
+            serial_number: "123".to_string(),
+            not_before: "2024-01-01".to_string(),
+            not_after: "2025-01-01".to_string(),
+            expiry_countdown: None,
+            signature_algorithm: "sha256WithRSAEncryption".to_string(),
+            public_key_algorithm: "rsaEncryption".to_string(),
+            public_key_size: Some(2048),
+            rsa_exponent: None,
+            san: vec!["other.example.com".to_string()],
+            is_ca: false,
+            key_usage: vec![],
+            extended_key_usage: vec![],
+            extended_validation: false,
+            ev_oids: vec![],
+            pin_sha256: None,
+            fingerprint_sha256: None,
+            debian_weak_key: None,
+            aia_url: None,
+            certificate_transparency: None,
+            der_bytes: vec![],
+        };
+
+        let validator = CertificateValidator::new("example.com".to_string());
+        let mut issues = Vec::new();
+
+        assert!(!validator.check_hostname(&cert, &mut issues));
+        assert!(issues.iter().any(|issue| {
+            matches!(issue.issue_type, IssueType::HostnameMismatch)
+                && matches!(issue.severity, IssueSeverity::Critical)
+        }));
     }
 
     #[test]
