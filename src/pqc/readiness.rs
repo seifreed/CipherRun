@@ -173,12 +173,21 @@ impl PqcReadinessScorer {
 
 fn is_pqc_sig(sig_alg: &str) -> bool {
     let lower = sig_alg.to_lowercase();
-    lower.contains("dilithium")
-        || lower.contains("falcon")
-        || lower.contains("sphincs")
-        || lower.contains("ml-dsa")
-        || lower.contains("mldsa")
-        || lower.contains("slh-dsa")
+    has_alg_component(&lower, "dilithium")
+        || has_alg_component(&lower, "falcon")
+        || has_alg_component(&lower, "sphincs")
+        || has_alg_component(&lower, "ml-dsa")
+        || has_alg_component(&lower, "mldsa")
+        || has_alg_component(&lower, "slh-dsa")
+}
+
+fn has_alg_component(value: &str, component: &str) -> bool {
+    value.match_indices(component).any(|(idx, _)| {
+        let before = value[..idx].bytes().next_back();
+        let after = value[idx + component.len()..].bytes().next();
+        before.is_none_or(|byte| !byte.is_ascii_alphabetic())
+            && after.is_none_or(|byte| !byte.is_ascii_alphabetic())
+    })
 }
 
 #[cfg(test)]
@@ -383,5 +392,7 @@ mod tests {
         assert!(is_pqc_sig("ML-DSA-65"));
         assert!(!is_pqc_sig("sha256WithRSAEncryption"));
         assert!(!is_pqc_sig("ecdsa-with-SHA256"));
+        assert!(!is_pqc_sig("notfalcon"));
+        assert!(!is_pqc_sig("predilithium3"));
     }
 }
