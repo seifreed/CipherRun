@@ -24,7 +24,13 @@ impl TrendAnalyzer {
 
         for scan in &scans {
             if let Some(score) = scan.overall_score {
-                let score_u8 = u8::try_from(score.clamp(0, 100)).unwrap_or_default();
+                if !(0..=100).contains(&score) {
+                    return Err(crate::TlsError::DatabaseError(format!(
+                        "Invalid rating score for scan {:?}: {score}",
+                        scan.scan_id
+                    )));
+                }
+                let score_u8 = score as u8;
                 data_points.push((scan.scan_timestamp, score_u8));
                 scores.push(score_u8);
             }
@@ -185,5 +191,31 @@ mod tests {
             rating.direction,
             crate::db::analytics::trend_analyzer::TrendDirection::Improving
         );
+    }
+
+    #[tokio::test]
+    async fn test_rating_trend_rejects_out_of_range_score() {
+        let db = setup_db().await;
+        let hostname = "example.com";
+        let port = 443;
+
+        insert_scan(
+            &db,
+            hostname,
+            port,
+            Utc::now() - Duration::days(1),
+            Some("A"),
+            Some(101),
+        )
+        .await;
+
+        let analyzer = TrendAnalyzer::new(db.clone());
+
+        let err = analyzer
+            .analyze_rating_trend(hostname, port, 30)
+            .await
+            .expect_err("out-of-range score should fail");
+
+        assert!(err.to_string().contains("Invalid rating score"));
     }
 }
