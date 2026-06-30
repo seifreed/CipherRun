@@ -10,6 +10,7 @@ pub(crate) enum ExportKind {
     Csv,
     Html,
     Xml,
+    RawHello,
 }
 
 pub struct ScanExportPlan<'a> {
@@ -189,6 +190,7 @@ impl<'a> ScanExporter<'a> {
                 continue;
             };
             let path = PathBuf::from(format!("{}.{}.{}", base, label, format.file_extension()));
+            self.ensure_write_allowed(&path, ExportKind::RawHello)?;
             fs::write(
                 &path,
                 crate::output::hello_export::render_hello(bytes, format),
@@ -224,7 +226,11 @@ impl<'a> ScanExporter<'a> {
         if self.args.output.append && path.exists() {
             match kind {
                 ExportKind::Csv => self.append_csv(path, content)?,
-                ExportKind::Json | ExportKind::MultiIpJson | ExportKind::Html | ExportKind::Xml => {
+                ExportKind::Json
+                | ExportKind::MultiIpJson
+                | ExportKind::Html
+                | ExportKind::Xml
+                | ExportKind::RawHello => {
                     return Err(crate::TlsError::InvalidInput {
                         message: format!(
                             "--append is only supported for CSV exports; cannot append to {}",
@@ -424,5 +430,45 @@ mod tests {
 
         let content = fs::read_to_string(&path).expect("csv should be readable");
         assert_eq!(content, "col1,col2\n1,2\n3,4\n");
+    }
+
+    #[test]
+    fn test_export_hellos_rejects_existing_file_without_overwrite() {
+        let target = format!("cipherrun-export-hello-test-{}:443", std::process::id());
+        let path = PathBuf::from(format!(
+            "{}.client_hello.hex",
+            sanitize_target_filename(&target)
+        ));
+        let _ = fs::remove_file(&path);
+        fs::write(&path, "existing").expect("seed hello export");
+
+        let args = Args {
+            fingerprint: crate::cli::FingerprintArgs {
+                export_hello: Some("hex".to_string()),
+                ..Default::default()
+            },
+            output: crate::cli::OutputArgs {
+                quiet: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut results = crate::scanner::ScanResults {
+            target,
+            ..Default::default()
+        };
+        results.fingerprints_mut().client_hello_raw = Some(vec![0x16, 0x03, 0x01]);
+
+        let exporter = ScanExporter::new(&args);
+        let err = exporter
+            .export_hellos(&results)
+            .expect_err("existing hello export should be rejected");
+
+        assert!(
+            err.to_string()
+                .contains("Refusing to overwrite existing file")
+        );
+        assert_eq!(fs::read_to_string(&path).expect("read seeded file"), "existing");
+        let _ = fs::remove_file(path);
     }
 }
