@@ -167,6 +167,10 @@ impl ApiConfig {
     /// - How many characters match
     /// - The position of the first mismatch
     pub fn validate_key(&self, key: &str) -> Option<Permission> {
+        if key.is_empty() {
+            return None;
+        }
+
         // Fast pre-filter: collect lengths of all valid keys
         // This is O(n) but doesn't leak timing about specific key content
         let valid_lengths: Vec<usize> = self.api_keys.keys().map(|k| k.len()).collect();
@@ -234,6 +238,14 @@ mod tests {
         assert_eq!(config.validate_key("test-key"), Some(Permission::Admin));
         assert_eq!(config.remove_key("test-key"), Some(Permission::Admin));
         assert_eq!(config.validate_key("test-key"), None);
+    }
+
+    #[test]
+    fn test_validate_key_rejects_empty_key_even_if_configured() {
+        let mut config = ApiConfig::default();
+        config.add_key(String::new(), Permission::Admin);
+
+        assert_eq!(config.validate_key(""), None);
     }
 
     #[test]
