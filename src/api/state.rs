@@ -220,6 +220,11 @@ impl ApiStats {
 impl AppState {
     /// Create new application state
     pub fn new(config: ApiConfig) -> Result<Self> {
+        if config.port == 0 {
+            return Err(crate::error::TlsError::ConfigError {
+                message: "port must be between 1 and 65535".to_string(),
+            });
+        }
         if config.rate_limit_per_minute == 0 {
             return Err(crate::error::TlsError::ConfigError {
                 message: "rate_limit_per_minute must be greater than 0".to_string(),
@@ -432,6 +437,21 @@ mod tests {
         };
 
         assert!(err.to_string().contains("rate_limit_per_minute"));
+    }
+
+    #[test]
+    fn test_app_state_rejects_zero_port() {
+        let config = ApiConfig {
+            port: 0,
+            ..Default::default()
+        };
+
+        let err = match AppState::new(config) {
+            Ok(_) => panic!("zero API port should fail"),
+            Err(err) => err,
+        };
+
+        assert!(err.to_string().contains("port"));
     }
 
     #[test]
