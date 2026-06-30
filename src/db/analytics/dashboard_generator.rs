@@ -142,7 +142,7 @@ impl DashboardGenerator {
         let mut timeseries = Vec::new();
 
         for scan in scans {
-            if let Some(score) = scan.overall_score {
+            if let Some(score) = dashboard_score(scan)? {
                 timeseries.push(TimeSeriesPoint {
                     timestamp: scan.scan_timestamp,
                     value: score as f64,
@@ -360,9 +360,15 @@ impl DashboardGenerator {
         let latest = scans.last();
 
         let latest_grade = latest.and_then(|s| s.overall_grade.clone());
-        let latest_score = latest.and_then(|s| s.overall_score);
+        let latest_score = latest
+            .map(|scan| dashboard_score(scan))
+            .transpose()?
+            .flatten();
 
-        let scores: Vec<i32> = scans.iter().filter_map(|s| s.overall_score).collect();
+        let scores: Vec<i32> = scans
+            .iter()
+            .filter_map(|scan| dashboard_score(scan).transpose())
+            .collect::<crate::Result<Vec<_>>>()?;
 
         let avg_score = if scores.is_empty() {
             0.0
@@ -500,6 +506,17 @@ fn severity_priority(severity: &str) -> usize {
     }
 }
 
+fn dashboard_score(scan: &ScanRecord) -> crate::Result<Option<i32>> {
+    match scan.overall_score {
+        Some(score) if (0..=100).contains(&score) => Ok(Some(score)),
+        Some(score) => Err(crate::TlsError::DatabaseError(format!(
+            "Invalid dashboard overall_score for scan {:?}: {score}",
+            scan.scan_id
+        ))),
+        None => Ok(None),
+    }
+}
+
 fn canonical_protocol_label(protocol: &str) -> String {
     crate::protocols::Protocol::from_str(protocol)
         .map(|protocol| protocol.name().to_string())
@@ -547,5 +564,31 @@ mod tests {
         assert_eq!(issue.title, "Heartbleed");
         assert_eq!(issue.severity, "critical");
         assert_eq!(issue.count, 3);
+    }
+
+    #[test]
+    fn test_dashboard_score_rejects_invalid_overall_score() {
+        let mut scan = ScanRecord::new("example.com".to_string(), 443);
+        scan.scan_id = Some(7);
+        scan.overall_score = Some(101);
+
+        let err = dashboard_score(&scan).expect_err("invalid score should fail");
+
+        assert!(err.to_string().contains("overall_score"));
+    }
+
+    #[test]
+    fn test_dashboard_score_accepts_valid_and_missing_scores() {
+        let mut scan = ScanRecord::new("example.com".to_string(), 443);
+        assert_eq!(
+            dashboard_score(&scan).expect("missing score is valid"),
+            None
+        );
+
+        scan.overall_score = Some(100);
+        assert_eq!(
+            dashboard_score(&scan).expect("valid score should pass"),
+            Some(100)
+        );
     }
 }
