@@ -253,6 +253,7 @@ pub async fn websocket_handler(
         Ok(_) => {
             let ws_state = Arc::new(crate::api::ws::progress::WsState {
                 progress_tx: state.progress_tx.clone(),
+                ping_interval_seconds: state.config.ws_ping_interval_seconds,
             });
 
             ws.on_upgrade(move |socket| scan_websocket_handler(socket, scan_id, ws_state))

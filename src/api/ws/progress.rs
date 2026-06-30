@@ -8,12 +8,14 @@ use axum::{
 };
 use futures::{SinkExt, StreamExt};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::broadcast;
 use tracing::{debug, error, info, trace, warn};
 
 /// AppState subset for WebSocket
 pub struct WsState {
     pub progress_tx: broadcast::Sender<ProgressMessage>,
+    pub ping_interval_seconds: u64,
 }
 
 /// Handle WebSocket upgrade
@@ -29,32 +31,46 @@ async fn websocket_handler(socket: WebSocket, state: Arc<WsState>) {
 
     // Subscribe to progress updates
     let mut progress_rx = state.progress_tx.subscribe();
+    let ping_interval_seconds = state.ping_interval_seconds;
 
     // Spawn task to send progress updates
     let mut send_task = tokio::spawn(async move {
+        let mut ping_interval = tokio::time::interval(Duration::from_secs(ping_interval_seconds));
+        ping_interval.tick().await;
+
         loop {
-            match progress_rx.recv().await {
-                Ok(progress) => {
-                    // Serialize progress message to JSON
-                    let json = match serde_json::to_string(&progress) {
-                        Ok(j) => j,
-                        Err(e) => {
-                            error!("Failed to serialize progress message: {}", e);
+            tokio::select! {
+                progress = progress_rx.recv() => {
+                    match progress {
+                        Ok(progress) => {
+                            // Serialize progress message to JSON
+                            let json = match serde_json::to_string(&progress) {
+                                Ok(j) => j,
+                                Err(e) => {
+                                    error!("Failed to serialize progress message: {}", e);
+                                    continue;
+                                }
+                            };
+
+                            // Send as text message
+                            if sender.send(Message::Text(json.into())).await.is_err() {
+                                debug!("Client disconnected");
+                                break;
+                            }
+                        }
+                        Err(broadcast::error::RecvError::Lagged(_)) => {
+                            // Receiver fell behind; newer messages are still available
                             continue;
                         }
-                    };
-
-                    // Send as text message
-                    if sender.send(Message::Text(json.into())).await.is_err() {
+                        Err(broadcast::error::RecvError::Closed) => break,
+                    }
+                }
+                _ = ping_interval.tick() => {
+                    if sender.send(Message::Ping(Vec::new().into())).await.is_err() {
                         debug!("Client disconnected");
                         break;
                     }
                 }
-                Err(broadcast::error::RecvError::Lagged(_)) => {
-                    // Receiver fell behind; newer messages are still available
-                    continue;
-                }
-                Err(broadcast::error::RecvError::Closed) => break,
             }
         }
     });
@@ -119,6 +135,7 @@ pub async fn scan_websocket_handler(socket: WebSocket, scan_id: String, state: A
 
     // Subscribe to progress updates
     let mut progress_rx = state.progress_tx.subscribe();
+    let ping_interval_seconds = state.ping_interval_seconds;
 
     // Send initial connection message
     let init_msg = serde_json::json!({
@@ -134,63 +151,76 @@ pub async fn scan_websocket_handler(socket: WebSocket, scan_id: String, state: A
     // Spawn task to send progress updates for this specific scan
     let scan_id_clone = scan_id.clone();
     let mut send_task = tokio::spawn(async move {
+        let mut ping_interval = tokio::time::interval(Duration::from_secs(ping_interval_seconds));
+        ping_interval.tick().await;
+
         loop {
-            match progress_rx.recv().await {
-                Ok(progress) => {
-                    // Filter messages for this scan only
-                    if progress.scan_id != scan_id_clone {
-                        continue;
-                    }
+            tokio::select! {
+                progress = progress_rx.recv() => {
+                    match progress {
+                        Ok(progress) => {
+                            // Filter messages for this scan only
+                            if progress.scan_id != scan_id_clone {
+                                continue;
+                            }
 
-                    // Serialize progress message to JSON
-                    let json = match serde_json::to_string(&progress) {
-                        Ok(j) => j,
-                        Err(e) => {
-                            error!("Failed to serialize progress message: {}", e);
-                            continue;
+                            // Serialize progress message to JSON
+                            let json = match serde_json::to_string(&progress) {
+                                Ok(j) => j,
+                                Err(e) => {
+                                    error!("Failed to serialize progress message: {}", e);
+                                    continue;
+                                }
+                            };
+
+                            // Send as text message
+                            if sender.send(Message::Text(json.into())).await.is_err() {
+                                debug!("Client disconnected");
+                                break;
+                            }
+
+                            // Close connection on completion or failure
+                            if progress.msg_type == "completed" || progress.msg_type == "failed" {
+                                debug!("Scan {} finished, closing WebSocket", scan_id_clone);
+                                let _ = sender.send(Message::Close(None)).await;
+                                break;
+                            }
                         }
-                    };
-
-                    // Send as text message
-                    if sender.send(Message::Text(json.into())).await.is_err() {
+                        Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                            // The progress stream is shared across every scan; under load
+                            // this per-scan receiver can fall far enough behind that the
+                            // dropped span includes this scan's terminal "completed"/
+                            // "failed" message. That message is emitted exactly once, so
+                            // continuing here would block forever waiting for a message
+                            // that will never arrive, leaking the connection. Notify the
+                            // client that the stream lagged and close it so the client can
+                            // reconnect or poll the REST scan-status endpoint for the
+                            // final result.
+                            warn!(
+                                "Progress stream lagged by {} messages for scan {}; closing stream",
+                                skipped, scan_id_clone
+                            );
+                            let notice = serde_json::json!({
+                                "type": "lagged",
+                                "scan_id": scan_id_clone,
+                                "message": "Progress stream fell behind and was closed; \
+                                            reconnect or poll the scan status endpoint for the final result",
+                            });
+                            if let Ok(json) = serde_json::to_string(&notice) {
+                                let _ = sender.send(Message::Text(json.into())).await;
+                            }
+                            let _ = sender.send(Message::Close(None)).await;
+                            break;
+                        }
+                        Err(broadcast::error::RecvError::Closed) => break,
+                    }
+                }
+                _ = ping_interval.tick() => {
+                    if sender.send(Message::Ping(Vec::new().into())).await.is_err() {
                         debug!("Client disconnected");
                         break;
                     }
-
-                    // Close connection on completion or failure
-                    if progress.msg_type == "completed" || progress.msg_type == "failed" {
-                        debug!("Scan {} finished, closing WebSocket", scan_id_clone);
-                        let _ = sender.send(Message::Close(None)).await;
-                        break;
-                    }
                 }
-                Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                    // The progress stream is shared across every scan; under load
-                    // this per-scan receiver can fall far enough behind that the
-                    // dropped span includes this scan's terminal "completed"/
-                    // "failed" message. That message is emitted exactly once, so
-                    // continuing here would block forever waiting for a message
-                    // that will never arrive, leaking the connection. Notify the
-                    // client that the stream lagged and close it so the client can
-                    // reconnect or poll the REST scan-status endpoint for the
-                    // final result.
-                    warn!(
-                        "Progress stream lagged by {} messages for scan {}; closing stream",
-                        skipped, scan_id_clone
-                    );
-                    let notice = serde_json::json!({
-                        "type": "lagged",
-                        "scan_id": scan_id_clone,
-                        "message": "Progress stream fell behind and was closed; \
-                                    reconnect or poll the scan status endpoint for the final result",
-                    });
-                    if let Ok(json) = serde_json::to_string(&notice) {
-                        let _ = sender.send(Message::Text(json.into())).await;
-                    }
-                    let _ = sender.send(Message::Close(None)).await;
-                    break;
-                }
-                Err(broadcast::error::RecvError::Closed) => break,
             }
         }
     });
@@ -246,6 +276,7 @@ mod tests {
         let (tx, mut rx) = broadcast::channel(8);
         let state = WsState {
             progress_tx: tx.clone(),
+            ping_interval_seconds: 30,
         };
 
         let msg = ProgressMessage::new("scan1", 5, "stage");

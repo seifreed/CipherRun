@@ -23,6 +23,7 @@ async fn start_ws_server() -> (
     let (tx, _rx) = broadcast::channel(16);
     let state = Arc::new(WsState {
         progress_tx: tx.clone(),
+        ping_interval_seconds: 30,
     });
 
     let app = Router::new()
@@ -47,6 +48,42 @@ async fn start_ws_server() -> (
     });
 
     (format!("ws://{}/ws", addr), tx, shutdown_tx)
+}
+
+#[tokio::test]
+async fn test_ws_sends_configured_ping() {
+    let (tx, _rx) = broadcast::channel(16);
+    let state = Arc::new(WsState {
+        progress_tx: tx,
+        ping_interval_seconds: 1,
+    });
+
+    let app = Router::new().route("/ws", get(handle_websocket)).with_state(state);
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("test assertion should succeed");
+    let addr = listener
+        .local_addr()
+        .expect("test assertion should succeed");
+    let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+    let server = axum::serve(listener, app).with_graceful_shutdown(async {
+        let _ = shutdown_rx.await;
+    });
+    tokio::spawn(async move {
+        let _ = server.await;
+    });
+
+    let (mut socket, _response) = connect_async(format!("ws://{}/ws", addr))
+        .await
+        .expect("test assertion should succeed");
+    let msg = timeout(Duration::from_secs(2), socket.next())
+        .await
+        .expect("configured ping should arrive")
+        .expect("socket should stay open")
+        .expect("message should be valid");
+
+    assert!(msg.is_ping());
+    let _ = shutdown_tx.send(());
 }
 
 async fn scan_ws(
