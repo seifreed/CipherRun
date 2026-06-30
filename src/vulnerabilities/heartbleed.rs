@@ -194,8 +194,9 @@ impl<'a> HeartbleedTester<'a> {
                 vulnerable: false,
                 bytes_received: response.len(),
                 bytes_sent: 0,
-                details: "Unable to test - unexpected TLS response while probing heartbeat extension"
-                    .to_string(),
+                details:
+                    "Unable to test - unexpected TLS response while probing heartbeat extension"
+                        .to_string(),
                 tested: false,
             });
         }
@@ -582,10 +583,10 @@ impl<'a> HeartbleedTester<'a> {
             bytes_received: n,
             bytes_sent: HEARTBEAT_BYTES_SENT,
             details,
-            // n=0: server sent nothing → conclusive (not vulnerable)
+            // n=0: server sent nothing after the malicious heartbeat → inconclusive
             // n 1..MIN_SUSPICIOUS_RESPONSE: ambiguous partial response → inconclusive
             // n>=MIN_SUSPICIOUS_RESPONSE: enough data to classify
-            tested: n == 0 || n >= MIN_SUSPICIOUS_RESPONSE,
+            tested: n >= MIN_SUSPICIOUS_RESPONSE,
         })
     }
 
@@ -1173,6 +1174,6 @@ mod tests {
         let mut stream = TcpStream::connect(addr).await.unwrap();
         let result = tester.send_malicious_heartbeat(&mut stream).await.unwrap();
         assert!(!result.vulnerable);
-        // Note: tested may be false if 0 bytes received (connection closed)
+        assert!(!result.tested);
     }
 }
