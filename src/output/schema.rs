@@ -278,6 +278,36 @@ impl CipherRunSchema {
                             errors
                                 .push(format!("Protocol at index {} missing required fields", idx));
                         }
+                        if !proto_obj.get("protocol").is_some_and(|value| {
+                            matches!(
+                                value.as_str(),
+                                Some(
+                                    "SSLv2"
+                                        | "SSLv3"
+                                        | "TLS10"
+                                        | "TLS11"
+                                        | "TLS12"
+                                        | "TLS13"
+                                        | "QUIC"
+                                )
+                            )
+                        }) {
+                            errors.push(format!("Protocol at index {} has invalid protocol", idx));
+                        }
+                        for field in ["supported", "inconclusive", "preferred"] {
+                            if !proto_obj.get(field).is_some_and(Value::is_boolean) {
+                                errors.push(format!(
+                                    "Protocol at index {} field {} must be boolean",
+                                    idx, field
+                                ));
+                            }
+                        }
+                        if !proto_obj.get("ciphers_count").is_some_and(Value::is_u64) {
+                            errors.push(format!(
+                                "Protocol at index {} field ciphers_count must be a non-negative integer",
+                                idx
+                            ));
+                        }
                     } else {
                         errors.push(format!("Protocol at index {} must be an object", idx));
                     }
@@ -303,6 +333,37 @@ impl CipherRunSchema {
                         {
                             errors.push(format!(
                                 "Vulnerability at index {} missing required fields",
+                                idx
+                            ));
+                        }
+                        if !vuln_obj.get("vuln_type").is_some_and(Value::is_string) {
+                            errors.push(format!(
+                                "Vulnerability at index {} field vuln_type must be a string",
+                                idx
+                            ));
+                        }
+                        for field in ["vulnerable", "inconclusive"] {
+                            if !vuln_obj.get(field).is_some_and(Value::is_boolean) {
+                                errors.push(format!(
+                                    "Vulnerability at index {} field {} must be boolean",
+                                    idx, field
+                                ));
+                            }
+                        }
+                        if !vuln_obj.get("details").is_some_and(Value::is_string) {
+                            errors.push(format!(
+                                "Vulnerability at index {} field details must be a string",
+                                idx
+                            ));
+                        }
+                        if !vuln_obj.get("severity").is_some_and(|value| {
+                            matches!(
+                                value.as_str(),
+                                Some("Critical" | "High" | "Medium" | "Low" | "Info")
+                            )
+                        }) {
+                            errors.push(format!(
+                                "Vulnerability at index {} has invalid severity",
                                 idx
                             ));
                         }
@@ -647,6 +708,42 @@ mod tests {
     }
 
     #[test]
+    fn test_validation_rejects_protocol_invalid_field_types() {
+        let data = json!({
+            "target": "example.com:443",
+            "scan_time_ms": 100,
+            "protocols": [{
+                "protocol": "TLS 1.2",
+                "supported": "false",
+                "inconclusive": false,
+                "preferred": false,
+                "ciphers_count": -1
+            }],
+            "ciphers": {},
+            "vulnerabilities": []
+        });
+
+        let result = CipherRunSchema::validate(&data);
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.contains("Protocol at index 0 has invalid protocol"))
+        );
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.contains("field supported must be boolean"))
+        );
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.contains("field ciphers_count must be a non-negative integer"))
+        );
+    }
+
+    #[test]
     fn test_validation_rejects_vulnerability_missing_details() {
         let data = json!({
             "target": "example.com:443",
@@ -668,6 +765,47 @@ mod tests {
             errors
                 .iter()
                 .any(|e| e.contains("Vulnerability at index 0"))
+        );
+    }
+
+    #[test]
+    fn test_validation_rejects_vulnerability_invalid_field_types() {
+        let data = json!({
+            "target": "example.com:443",
+            "scan_time_ms": 100,
+            "protocols": [],
+            "ciphers": {},
+            "vulnerabilities": [{
+                "vuln_type": 7,
+                "vulnerable": "false",
+                "inconclusive": false,
+                "details": null,
+                "severity": "banana"
+            }]
+        });
+
+        let result = CipherRunSchema::validate(&data);
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.contains("field vuln_type must be a string"))
+        );
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.contains("field vulnerable must be boolean"))
+        );
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.contains("field details must be a string"))
+        );
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.contains("Vulnerability at index 0 has invalid severity"))
         );
     }
 
