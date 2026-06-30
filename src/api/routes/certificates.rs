@@ -39,6 +39,11 @@ fn inventory_query_from_api(
             MAX_CERTIFICATE_LIMIT
         )));
     }
+    if i64::try_from(query.offset).is_err() {
+        return Err(ApiError::BadRequest(
+            "Invalid offset: value is too large.".to_string(),
+        ));
+    }
 
     let sort = match query.sort.as_str() {
         "expiry_desc" => CertificateInventorySort::ExpiryDesc,
@@ -237,6 +242,16 @@ mod tests {
     fn inventory_query_rejects_limit_above_contract_max() {
         let query = CertificateQuery {
             limit: MAX_CERTIFICATE_LIMIT + 1,
+            ..Default::default()
+        };
+
+        assert!(inventory_query_from_api(&query).is_err());
+    }
+
+    #[test]
+    fn inventory_query_rejects_offset_too_large_for_database() {
+        let query = CertificateQuery {
+            offset: usize::MAX,
             ..Default::default()
         };
 
