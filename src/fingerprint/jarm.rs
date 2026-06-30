@@ -97,12 +97,7 @@ impl JarmDatabase {
                 message: format!("Failed to parse JARM database JSON: {e}"),
             })?;
 
-        let mut db = Self::new();
-        for sig in signatures {
-            db.signatures.insert(sig.hash.clone(), sig);
-        }
-
-        Ok(db)
+        Self::from_signatures(signatures)
     }
 
     /// Load builtin database.
@@ -113,12 +108,33 @@ impl JarmDatabase {
                 message: format!("Failed to parse embedded JARM database: {e}"),
             })?;
 
+        Self::from_signatures(signatures)
+    }
+
+    fn from_signatures(signatures: Vec<JarmSignature>) -> Result<Self> {
         let mut db = Self::new();
         for sig in signatures {
+            if !Self::is_valid_jarm_hash(&sig.hash) {
+                return Err(TlsError::ParseError {
+                    message: format!("Invalid JARM signature hash: {}", sig.hash),
+                });
+            }
+            if db.signatures.contains_key(&sig.hash) {
+                return Err(TlsError::ParseError {
+                    message: format!("Duplicate JARM signature hash: {}", sig.hash),
+                });
+            }
             db.signatures.insert(sig.hash.clone(), sig);
         }
 
         Ok(db)
+    }
+
+    fn is_valid_jarm_hash(hash: &str) -> bool {
+        hash.len() == 62
+            && hash
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
     }
 
     /// Look up a JARM hash
@@ -743,6 +759,36 @@ mod tests {
 
         let not_found = db.lookup("nonexistent");
         assert!(not_found.is_none());
+    }
+
+    fn test_jarm_signature(hash: &str) -> JarmSignature {
+        JarmSignature {
+            hash: hash.to_string(),
+            name: "Test Server".to_string(),
+            server_type: "web".to_string(),
+            description: Some("Test description".to_string()),
+            threat_level: None,
+        }
+    }
+
+    #[test]
+    fn test_database_load_rejects_invalid_hash() {
+        let err = JarmDatabase::from_signatures(vec![test_jarm_signature("not-a-jarm-hash")])
+            .expect_err("invalid JARM hash should fail");
+
+        assert!(err.to_string().contains("Invalid JARM signature hash"));
+    }
+
+    #[test]
+    fn test_database_load_rejects_duplicate_hashes() {
+        let hash = "27d40d40d29d40d1dc42d43d00041d4689ee210389f4f6b4b5b1b93f92252d";
+        let err = JarmDatabase::from_signatures(vec![
+            test_jarm_signature(hash),
+            test_jarm_signature(hash),
+        ])
+        .expect_err("duplicate JARM hash should fail");
+
+        assert!(err.to_string().contains("Duplicate JARM signature hash"));
     }
 
     #[test]
