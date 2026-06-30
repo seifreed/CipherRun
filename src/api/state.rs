@@ -240,6 +240,11 @@ impl AppState {
                 message: "request_timeout_seconds must be greater than 0".to_string(),
             });
         }
+        if config.max_body_size == 0 {
+            return Err(crate::error::TlsError::ConfigError {
+                message: "max_body_size must be greater than 0".to_string(),
+            });
+        }
         if config.ws_ping_interval_seconds == 0 {
             return Err(crate::error::TlsError::ConfigError {
                 message: "ws_ping_interval_seconds must be greater than 0".to_string(),
@@ -487,6 +492,21 @@ mod tests {
         };
 
         assert!(err.to_string().contains("request_timeout_seconds"));
+    }
+
+    #[test]
+    fn test_app_state_rejects_zero_max_body_size() {
+        let config = ApiConfig {
+            max_body_size: 0,
+            ..Default::default()
+        };
+
+        let err = match AppState::new(config) {
+            Ok(_) => panic!("zero max body size should fail"),
+            Err(err) => err,
+        };
+
+        assert!(err.to_string().contains("max_body_size"));
     }
 
     #[test]
