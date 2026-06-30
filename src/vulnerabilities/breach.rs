@@ -133,15 +133,7 @@ impl BreachTester {
                         })?;
                         let response = String::from_utf8_lossy(bytes);
                         // Check for Content-Encoding header
-                        let compressed = response.lines().any(|line| {
-                            let lower = line.to_lowercase();
-                            lower.starts_with("content-encoding:")
-                                && (lower.contains("gzip")
-                                    || lower.contains("deflate")
-                                    || lower.contains("br")
-                                    || lower.contains("zstd")
-                                    || lower.contains("compress"))
-                        });
+                        let compressed = response.lines().any(Self::is_compressed_encoding_header);
                         Ok(Some(compressed))
                     } else {
                         Ok(None)
@@ -349,6 +341,22 @@ impl BreachTester {
         false
     }
 
+    fn is_compressed_encoding_header(line: &str) -> bool {
+        let Some(value) = line
+            .strip_prefix("Content-Encoding:")
+            .or_else(|| line.strip_prefix("content-encoding:"))
+        else {
+            return false;
+        };
+
+        value.split(',').map(str::trim).any(|token| {
+            matches!(
+                token.to_ascii_lowercase().as_str(),
+                "gzip" | "deflate" | "br" | "zstd" | "compress"
+            )
+        })
+    }
+
     fn classify_dynamic_content_response(response: &str, marker: &str) -> Option<bool> {
         let status_line = response.strip_prefix("HTTP/")?;
         let status_code = status_line
@@ -421,7 +429,7 @@ mod tests {
     use std::net::{IpAddr, Ipv4Addr};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
-    use tokio::time::{sleep, Duration};
+    use tokio::time::{Duration, sleep};
     use tokio_rustls::TlsAcceptor;
 
     async fn spawn_fragmented_https_server() -> u16 {
@@ -529,6 +537,16 @@ mod tests {
     }
 
     #[test]
+    fn test_compression_header_requires_exact_encoding_token() {
+        assert!(BreachTester::is_compressed_encoding_header(
+            "Content-Encoding: gzip, br"
+        ));
+        assert!(!BreachTester::is_compressed_encoding_header(
+            "Content-Encoding: bravo"
+        ));
+    }
+
+    #[test]
     fn test_breach_inconclusive_when_probes_fail() {
         // V11 regression: an unreachable server must not be classified as
         // confirmed-not-vulnerable. Probe failures on all three axes surface
@@ -563,7 +581,10 @@ mod tests {
             None
         );
         assert_eq!(
-            BreachTester::classify_dynamic_content_response("HTTP/1.1 404 Not Found\r\n\r\n", "marker"),
+            BreachTester::classify_dynamic_content_response(
+                "HTTP/1.1 404 Not Found\r\n\r\n",
+                "marker"
+            ),
             Some(false)
         );
         assert_eq!(
