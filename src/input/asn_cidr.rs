@@ -119,6 +119,7 @@ impl AsnCidrParser {
     /// Expand CIDR notation to individual IPs
     /// For large ranges, returns the network object instead of all IPs
     pub fn expand_cidr(cidr: &str) -> Result<CidrExpansion> {
+        let cidr = cidr.trim();
         let network = cidr
             .parse::<IpNetwork>()
             .map_err(|e| TlsError::InvalidInput {
@@ -465,6 +466,15 @@ mod tests {
             }
             _ => panic!("Expected FullList for small network"),
         }
+    }
+
+    #[test]
+    fn test_expand_cidr_trims_whitespace() {
+        let expansion =
+            AsnCidrParser::expand_cidr(" 192.0.2.0/30\t").expect("CIDR should be trimmed");
+
+        assert_eq!(expansion.network().to_string(), "192.0.2.0/30");
+        assert_eq!(expansion.total_ips(), 4);
     }
 
     #[test]
