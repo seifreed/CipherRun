@@ -147,6 +147,9 @@ pub fn split_target_host_port(input: &str) -> Result<(String, Option<u16>)> {
 
     if input.contains("://") {
         let url = url::Url::parse(input)?;
+        if !matches!(url.scheme(), "http" | "https") {
+            crate::tls_bail!("Unsupported target URL scheme: {}", url.scheme());
+        }
         let host = url
             .host_str()
             .ok_or_else(|| TlsError::Other("No hostname in URL".to_string()))?
@@ -230,7 +233,9 @@ impl Target {
     /// Returns error if ip_addresses is empty.
     pub fn with_ips(hostname: String, port: u16, ip_addresses: Vec<IpAddr>) -> Result<Self> {
         if hostname.trim().is_empty() {
-            return Err(TlsError::Other("Target hostname cannot be empty".to_string()));
+            return Err(TlsError::Other(
+                "Target hostname cannot be empty".to_string(),
+            ));
         }
         if ip_addresses.is_empty() {
             return Err(TlsError::Other(

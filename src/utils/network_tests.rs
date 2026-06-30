@@ -45,6 +45,13 @@ fn test_split_target_host_port_uses_known_url_default_ports() {
     assert_eq!(port, Some(443));
 }
 
+#[test]
+fn test_split_target_host_port_rejects_non_http_url_scheme() {
+    let err = split_target_host_port("ftp://example.com:21")
+        .expect_err("non-HTTP target URL schemes should fail");
+    assert!(err.to_string().contains("Unsupported target URL scheme"));
+}
+
 #[tokio::test]
 async fn test_parse_target_ip() {
     let target = Target::parse("93.184.216.34:443")
