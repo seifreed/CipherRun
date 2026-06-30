@@ -236,7 +236,14 @@ impl AsnCidrParser {
                 })
             }
             InputType::Ip(ip) => Ok(ExpandedInput::Ip { ip }),
-            InputType::Hostname(hostname) => Ok(ExpandedInput::Hostname { hostname }),
+            InputType::Hostname(hostname) => {
+                if hostname.trim().is_empty() {
+                    return Err(TlsError::InvalidInput {
+                        message: "Hostname input cannot be empty".to_string(),
+                    });
+                }
+                Ok(ExpandedInput::Hostname { hostname })
+            }
         }
     }
 }
@@ -436,6 +443,12 @@ mod tests {
             InputType::Hostname(hostname) => assert!(hostname.is_empty()),
             _ => panic!("Expected Hostname input type"),
         }
+    }
+
+    #[tokio::test]
+    async fn test_expand_inputs_rejects_empty_hostname() {
+        let result = AsnCidrParser::expand_inputs(vec!["   ".to_string()]).await;
+        assert!(result.is_err());
     }
 
     #[test]
