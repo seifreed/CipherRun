@@ -525,6 +525,32 @@ fn test_key_exchange_score_penalty_for_low_fs() {
 }
 
 #[test]
+fn test_key_exchange_score_handles_extreme_cipher_counts() {
+    use crate::ciphers::tester::{CipherCounts, ProtocolCipherSummary};
+    use std::collections::HashMap;
+
+    let summary = ProtocolCipherSummary {
+        protocol: Protocol::TLS12,
+        supported_ciphers: Vec::new(),
+        server_ordered: false,
+        server_preference: Vec::new(),
+        preferred_cipher: None,
+        counts: CipherCounts {
+            total: usize::MAX,
+            forward_secrecy: usize::MAX,
+            ..Default::default()
+        },
+        avg_handshake_time_ms: None,
+    };
+
+    let mut ciphers = HashMap::new();
+    ciphers.insert(Protocol::TLS12, summary);
+
+    let score = RatingCalculator::calculate_key_exchange_score(&ciphers);
+    assert_eq!(score, 100);
+}
+
+#[test]
 fn test_cipher_strength_score_export_ciphers_zero() {
     use crate::ciphers::tester::{CipherCounts, ProtocolCipherSummary};
     use std::collections::HashMap;
@@ -579,6 +605,33 @@ fn test_cipher_strength_score_counts_medium_strength_as_weak() {
         score < 100,
         "medium-strength ciphers must reduce the cipher-strength score, got {score}"
     );
+    assert_eq!(score, 75);
+}
+
+#[test]
+fn test_cipher_strength_score_handles_extreme_weak_counts() {
+    use crate::ciphers::tester::{CipherCounts, ProtocolCipherSummary};
+    use std::collections::HashMap;
+
+    let summary = ProtocolCipherSummary {
+        protocol: Protocol::TLS12,
+        supported_ciphers: Vec::new(),
+        server_ordered: false,
+        server_preference: Vec::new(),
+        preferred_cipher: None,
+        counts: CipherCounts {
+            total: usize::MAX,
+            low_strength: usize::MAX,
+            medium_strength: 1,
+            ..Default::default()
+        },
+        avg_handshake_time_ms: None,
+    };
+
+    let mut ciphers = HashMap::new();
+    ciphers.insert(Protocol::TLS12, summary);
+
+    let score = RatingCalculator::calculate_cipher_strength_score(&ciphers);
     assert_eq!(score, 75);
 }
 

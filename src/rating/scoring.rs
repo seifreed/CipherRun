@@ -271,16 +271,16 @@ impl RatingCalculator {
         let mut score = 100u8;
 
         // Check forward secrecy support
-        let mut total_ciphers = 0;
-        let mut fs_ciphers = 0;
+        let mut total_ciphers = 0usize;
+        let mut fs_ciphers = 0usize;
 
         for summary in ciphers.values() {
-            total_ciphers += summary.counts.total;
-            fs_ciphers += summary.counts.forward_secrecy;
+            total_ciphers = total_ciphers.saturating_add(summary.counts.total);
+            fs_ciphers = fs_ciphers.saturating_add(summary.counts.forward_secrecy);
         }
 
-        if let Some(fs_percentage) = (fs_ciphers * 100).checked_div(total_ciphers) {
-            let non_fs_percentage = 100 - fs_percentage;
+        if let Some(fs_percentage) = percentage(fs_ciphers, total_ciphers) {
+            let non_fs_percentage = 100usize.saturating_sub(fs_percentage);
 
             // SSL Labs criteria: Penalize based on percentage of non-FS ciphers
             if non_fs_percentage >= 50 {
@@ -307,9 +307,9 @@ impl RatingCalculator {
     /// - High percentage of weak ciphers indicates poor cipher suite configuration
     fn calculate_cipher_strength_score(ciphers: &HashMap<Protocol, ProtocolCipherSummary>) -> u8 {
         let mut score = 100u8;
-        let mut total_ciphers = 0;
-        let mut weak_ciphers = 0; // low + medium strength (matches weak_percentage doc)
-        let mut aead_count = 0;
+        let mut total_ciphers = 0usize;
+        let mut weak_ciphers = 0usize; // low + medium strength (matches weak_percentage doc)
+        let mut aead_count = 0usize;
 
         for summary in ciphers.values() {
             // NULL ciphers = instant F
@@ -325,12 +325,17 @@ impl RatingCalculator {
             // Aggregate counts across all protocols. Weak = low + medium strength,
             // matching the documented weak_percentage definition and the policy
             // module (policy/rules/cipher.rs), which classify both as weak.
-            total_ciphers += summary.counts.total;
-            weak_ciphers += summary.counts.low_strength + summary.counts.medium_strength;
-            aead_count += summary.counts.aead;
+            total_ciphers = total_ciphers.saturating_add(summary.counts.total);
+            weak_ciphers = weak_ciphers.saturating_add(
+                summary
+                    .counts
+                    .low_strength
+                    .saturating_add(summary.counts.medium_strength),
+            );
+            aead_count = aead_count.saturating_add(summary.counts.aead);
         }
 
-        if let Some(weak_percentage) = (weak_ciphers * 100).checked_div(total_ciphers) {
+        if let Some(weak_percentage) = percentage(weak_ciphers, total_ciphers) {
             // SSL Labs criteria: Penalize based on percentage of WEAK ciphers
             if weak_percentage >= 75 {
                 // 75%+ weak ciphers: -20 points (major penalty)
@@ -351,7 +356,7 @@ impl RatingCalculator {
 
             // Check AEAD support (penalty for CBC mode ciphers).
             // Guaranteed `Some` here: total_ciphers is non-zero inside this block.
-            let aead_percentage = (aead_count * 100).checked_div(total_ciphers).unwrap_or(0);
+            let aead_percentage = percentage(aead_count, total_ciphers).unwrap_or(0);
             if aead_percentage < 50 {
                 // Less than 50% AEAD: -5 points (CBC mode vulnerability)
                 score = score.saturating_sub(5);
@@ -426,6 +431,17 @@ impl RatingCalculator {
 
         (score, warnings)
     }
+}
+
+fn percentage(numerator: usize, denominator: usize) -> Option<usize> {
+    if denominator == 0 {
+        return None;
+    }
+
+    let percentage = (numerator as u128)
+        .saturating_mul(100)
+        .checked_div(denominator as u128)?;
+    Some(usize::try_from(percentage.min(100)).expect("percentage is capped at 100"))
 }
 
 #[cfg(test)]
