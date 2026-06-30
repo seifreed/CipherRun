@@ -97,6 +97,14 @@ where
             message: format!("Invalid {} status code", protocol_name),
         })?;
 
+    if let Some(separator) = line.as_bytes().get(3)
+        && !matches!(separator, b' ' | b'-' | b'\r' | b'\n')
+    {
+        return Err(crate::error::TlsError::ParseError {
+            message: format!("Invalid {} status separator", protocol_name),
+        });
+    }
+
     Ok((code, line))
 }
 
@@ -239,24 +247,35 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_read_multiline_status_multibyte_separator_does_not_panic() {
-        // A multi-byte char at byte index 3 (the code/separator position) must not
-        // panic the final-line detection.
+    async fn test_read_status_line_rejects_attached_text() {
         let (mut client, mut server) = tokio::io::duplex(64);
         tokio::spawn(async move {
-            // First line: multi-byte char at the separator position (continuation),
-            // followed by a proper final line.
             server
-                .write_all("250\u{1D400}cont\r\n250 done\r\n".as_bytes())
+                .write_all(b"220Ready\r\n")
                 .await
                 .expect("test should write data");
         });
 
         let mut reader = BufReader::new(&mut client);
-        let (code, _) = read_multiline_status(&mut reader, "TEST", 4)
-            .await
-            .expect("read_multiline_status should not panic");
-        assert_eq!(code, 250);
+        let err = read_status_line(&mut reader, "TEST").await.unwrap_err();
+        assert!(format!("{err}").contains("status separator"));
+    }
+
+    #[tokio::test]
+    async fn test_read_status_line_rejects_multibyte_separator_without_panic() {
+        // A multi-byte char at byte index 3 (the code/separator position) must
+        // yield a ParseError, not a panic from slicing on a non-char boundary.
+        let (mut client, mut server) = tokio::io::duplex(64);
+        tokio::spawn(async move {
+            server
+                .write_all("250\u{1D400}cont\r\n".as_bytes())
+                .await
+                .expect("test should write data");
+        });
+
+        let mut reader = BufReader::new(&mut client);
+        let err = read_status_line(&mut reader, "TEST").await.unwrap_err();
+        assert!(format!("{err}").contains("status separator"));
     }
 
     #[tokio::test]
