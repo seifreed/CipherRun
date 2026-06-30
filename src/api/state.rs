@@ -245,6 +245,16 @@ impl AppState {
                 message: "ws_ping_interval_seconds must be greater than 0".to_string(),
             });
         }
+        if config.api_keys.is_empty() {
+            return Err(crate::error::TlsError::ConfigError {
+                message: "api_keys must contain at least one key".to_string(),
+            });
+        }
+        if config.api_keys.keys().any(|key| key.is_empty()) {
+            return Err(crate::error::TlsError::ConfigError {
+                message: "api_keys must not contain empty keys".to_string(),
+            });
+        }
 
         let config = Arc::new(config);
         let stats = Arc::new(tokio::sync::RwLock::new(ApiStats::default()));
@@ -477,5 +487,34 @@ mod tests {
         };
 
         assert!(err.to_string().contains("request_timeout_seconds"));
+    }
+
+    #[test]
+    fn test_app_state_rejects_empty_api_key_set() {
+        let mut config = ApiConfig::default();
+        config.api_keys.clear();
+
+        let err = match AppState::new(config) {
+            Ok(_) => panic!("empty api key set should fail"),
+            Err(err) => err,
+        };
+
+        assert!(err.to_string().contains("api_keys"));
+    }
+
+    #[test]
+    fn test_app_state_rejects_empty_api_key_entry() {
+        let mut config = ApiConfig::default();
+        config.api_keys.clear();
+        config
+            .api_keys
+            .insert(String::new(), crate::api::config::Permission::Admin);
+
+        let err = match AppState::new(config) {
+            Ok(_) => panic!("empty api key should fail"),
+            Err(err) => err,
+        };
+
+        assert!(err.to_string().contains("empty keys"));
     }
 }
