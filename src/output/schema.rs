@@ -240,47 +240,70 @@ impl CipherRunSchema {
             errors.push("Target must be a string".to_string());
         }
 
-        // Validate protocols array
-        if let Some(protocols) = obj.get("protocols")
-            && let Some(protocols_arr) = protocols.as_array()
+        if let Some(scan_time_ms) = obj.get("scan_time_ms")
+            && !scan_time_ms.is_u64()
         {
-            for (idx, protocol) in protocols_arr.iter().enumerate() {
-                if let Some(proto_obj) = protocol.as_object()
-                    && [
-                        "protocol",
-                        "supported",
-                        "inconclusive",
-                        "preferred",
-                        "ciphers_count",
-                    ]
-                    .iter()
-                    .any(|field| !proto_obj.contains_key(*field))
-                {
-                    errors.push(format!("Protocol at index {} missing required fields", idx));
+            errors.push("scan_time_ms must be a non-negative integer".to_string());
+        }
+
+        if let Some(ciphers) = obj.get("ciphers")
+            && !ciphers.is_object()
+        {
+            errors.push("ciphers must be an object".to_string());
+        }
+
+        // Validate protocols array
+        if let Some(protocols) = obj.get("protocols") {
+            if let Some(protocols_arr) = protocols.as_array() {
+                for (idx, protocol) in protocols_arr.iter().enumerate() {
+                    if let Some(proto_obj) = protocol.as_object() {
+                        if [
+                            "protocol",
+                            "supported",
+                            "inconclusive",
+                            "preferred",
+                            "ciphers_count",
+                        ]
+                        .iter()
+                        .any(|field| !proto_obj.contains_key(*field))
+                        {
+                            errors
+                                .push(format!("Protocol at index {} missing required fields", idx));
+                        }
+                    } else {
+                        errors.push(format!("Protocol at index {} must be an object", idx));
+                    }
                 }
+            } else {
+                errors.push("protocols must be an array".to_string());
             }
         }
 
-        if let Some(vulnerabilities) = obj.get("vulnerabilities")
-            && let Some(vulnerabilities_arr) = vulnerabilities.as_array()
-        {
-            for (idx, vulnerability) in vulnerabilities_arr.iter().enumerate() {
-                if let Some(vuln_obj) = vulnerability.as_object()
-                    && [
-                        "vuln_type",
-                        "vulnerable",
-                        "inconclusive",
-                        "details",
-                        "severity",
-                    ]
-                    .iter()
-                    .any(|field| !vuln_obj.contains_key(*field))
-                {
-                    errors.push(format!(
-                        "Vulnerability at index {} missing required fields",
-                        idx
-                    ));
+        if let Some(vulnerabilities) = obj.get("vulnerabilities") {
+            if let Some(vulnerabilities_arr) = vulnerabilities.as_array() {
+                for (idx, vulnerability) in vulnerabilities_arr.iter().enumerate() {
+                    if let Some(vuln_obj) = vulnerability.as_object() {
+                        if [
+                            "vuln_type",
+                            "vulnerable",
+                            "inconclusive",
+                            "details",
+                            "severity",
+                        ]
+                        .iter()
+                        .any(|field| !vuln_obj.contains_key(*field))
+                        {
+                            errors.push(format!(
+                                "Vulnerability at index {} missing required fields",
+                                idx
+                            ));
+                        }
+                    } else {
+                        errors.push(format!("Vulnerability at index {} must be an object", idx));
+                    }
                 }
+            } else {
+                errors.push("vulnerabilities must be an array".to_string());
             }
         }
 
@@ -501,6 +524,26 @@ mod tests {
     }
 
     #[test]
+    fn test_validation_rejects_negative_scan_time() {
+        let data = json!({
+            "target": "example.com:443",
+            "scan_time_ms": -1,
+            "protocols": [],
+            "ciphers": {},
+            "vulnerabilities": []
+        });
+
+        let result = CipherRunSchema::validate(&data);
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.contains("scan_time_ms must be a non-negative integer"))
+        );
+    }
+
+    #[test]
     fn test_validation_accepts_serialized_scan_results_with_inconclusive_states() {
         let results = ScanResults {
             target: "example.com:443".to_string(),
@@ -556,6 +599,46 @@ mod tests {
     }
 
     #[test]
+    fn test_validation_rejects_protocols_not_array() {
+        let data = json!({
+            "target": "example.com:443",
+            "scan_time_ms": 100,
+            "protocols": "TLS12",
+            "ciphers": {},
+            "vulnerabilities": []
+        });
+
+        let result = CipherRunSchema::validate(&data);
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.contains("protocols must be an array"))
+        );
+    }
+
+    #[test]
+    fn test_validation_rejects_protocol_item_not_object() {
+        let data = json!({
+            "target": "example.com:443",
+            "scan_time_ms": 100,
+            "protocols": ["TLS12"],
+            "ciphers": {},
+            "vulnerabilities": []
+        });
+
+        let result = CipherRunSchema::validate(&data);
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.contains("Protocol at index 0 must be an object"))
+        );
+    }
+
+    #[test]
     fn test_validation_rejects_vulnerability_missing_details() {
         let data = json!({
             "target": "example.com:443",
@@ -577,6 +660,46 @@ mod tests {
             errors
                 .iter()
                 .any(|e| e.contains("Vulnerability at index 0"))
+        );
+    }
+
+    #[test]
+    fn test_validation_rejects_vulnerabilities_not_array() {
+        let data = json!({
+            "target": "example.com:443",
+            "scan_time_ms": 100,
+            "protocols": [],
+            "ciphers": {},
+            "vulnerabilities": "Heartbleed"
+        });
+
+        let result = CipherRunSchema::validate(&data);
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.contains("vulnerabilities must be an array"))
+        );
+    }
+
+    #[test]
+    fn test_validation_rejects_ciphers_not_object() {
+        let data = json!({
+            "target": "example.com:443",
+            "scan_time_ms": 100,
+            "protocols": [],
+            "ciphers": [],
+            "vulnerabilities": []
+        });
+
+        let result = CipherRunSchema::validate(&data);
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.contains("ciphers must be an object"))
         );
     }
 
