@@ -6,6 +6,7 @@ use crate::api::{
 };
 use axum::{
     extract::{Request, State},
+    http::HeaderMap,
     middleware::Next,
     response::Response,
 };
@@ -33,6 +34,18 @@ fn api_key_from_query(query: &str) -> Result<Option<String>, ApiError> {
     Ok(None)
 }
 
+fn api_key_from_headers(headers: &HeaderMap) -> Result<Option<String>, ApiError> {
+    headers
+        .get("X-API-Key")
+        .map(|value| {
+            value
+                .to_str()
+                .map(str::to_string)
+                .map_err(|error| ApiError::BadRequest(format!("Invalid X-API-Key header: {error}")))
+        })
+        .transpose()
+}
+
 /// Authentication middleware
 pub async fn authenticate(
     State(config): State<Arc<ApiConfig>>,
@@ -55,11 +68,7 @@ pub async fn authenticate(
     // which cannot set custom headers during the WebSocket handshake
     // SECURITY NOTE: Query parameters are logged in server logs, proxy logs,
     // and browser history. Use X-API-Key header when possible.
-    let header_api_key = req
-        .headers()
-        .get("X-API-Key")
-        .and_then(|h| h.to_str().ok())
-        .map(str::to_string);
+    let header_api_key = api_key_from_headers(req.headers())?;
     let (api_key, from_query_param) = if let Some(api_key) = header_api_key {
         (api_key, false)
     } else if let Some(query) = req.uri().query() {
@@ -155,6 +164,7 @@ mod tests {
     use super::*;
     use crate::api::config::Permission;
     use axum::body::Body;
+    use axum::http::HeaderValue;
     use axum::http::Request as HttpRequest;
 
     #[test]
@@ -210,6 +220,22 @@ mod tests {
     fn test_api_key_from_query_rejects_invalid_encoding() {
         let err = api_key_from_query("api_key=%FF").expect_err("invalid encoding should fail");
 
-        assert!(err.to_string().contains("Invalid api_key query parameter encoding"));
+        assert!(
+            err.to_string()
+                .contains("Invalid api_key query parameter encoding")
+        );
+    }
+
+    #[test]
+    fn test_api_key_from_headers_rejects_invalid_header_encoding() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "X-API-Key",
+            HeaderValue::from_bytes(&[0xff]).expect("opaque header bytes should build"),
+        );
+
+        let err = api_key_from_headers(&headers).expect_err("invalid header should fail");
+
+        assert!(err.to_string().contains("Invalid X-API-Key header"));
     }
 }
