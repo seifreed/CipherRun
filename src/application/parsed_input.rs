@@ -9,6 +9,7 @@ pub struct CompareScanIds {
 
 impl CompareScanIds {
     pub fn parse(raw: &str) -> Result<Self> {
+        let raw = raw.trim();
         let Some((left_raw, right_raw)) = raw.split_once(':') else {
             return Err(TlsError::InvalidInput {
                 message: "Expected format SCAN_ID_1:SCAN_ID_2".to_string(),
@@ -20,6 +21,8 @@ impl CompareScanIds {
             });
         }
 
+        let left_raw = left_raw.trim();
+        let right_raw = right_raw.trim();
         let left = left_raw.parse().map_err(|_| TlsError::InvalidInput {
             message: format!("Invalid scan ID: {}", left_raw),
         })?;
@@ -51,6 +54,7 @@ pub struct HostPortDaysInput {
 
 impl HostPortDaysInput {
     pub fn parse(raw: &str) -> Result<Self> {
+        let raw = raw.trim();
         if raw.matches(':').count() < 2 {
             return Err(TlsError::InvalidInput {
                 message: "Expected format HOSTNAME:PORT:DAYS".to_string(),
@@ -61,6 +65,7 @@ impl HostPortDaysInput {
             message: "Expected format HOSTNAME:PORT:DAYS".to_string(),
         })?;
 
+        let days_str = days_str.trim();
         let days = days_str.parse().map_err(|_| TlsError::InvalidInput {
             message: format!("Invalid days: {}", days_str),
         })?;
@@ -120,6 +125,13 @@ mod tests {
     }
 
     #[test]
+    fn trims_compare_scan_ids() {
+        let parsed = CompareScanIds::parse(" 1 : 2 ").expect("should parse");
+        assert_eq!(parsed.left, 1);
+        assert_eq!(parsed.right, 2);
+    }
+
+    #[test]
     fn rejects_invalid_compare_scan_ids() {
         assert!(CompareScanIds::parse("1").is_err());
         assert!(CompareScanIds::parse("1:2:3").is_err());
@@ -136,6 +148,15 @@ mod tests {
     #[test]
     fn parses_host_port_days() {
         let parsed = HostPortDaysInput::parse("example.com:443:7").expect("should parse");
+        assert_eq!(parsed.hostname, "example.com");
+        assert_eq!(parsed.port, 443);
+        assert_eq!(parsed.days, 7);
+    }
+
+    #[test]
+    fn trims_host_port_days() {
+        let parsed = HostPortDaysInput::parse(" example.com:443: 7 ")
+            .expect("should parse trimmed input");
         assert_eq!(parsed.hostname, "example.com");
         assert_eq!(parsed.port, 443);
         assert_eq!(parsed.days, 7);
