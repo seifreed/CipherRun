@@ -147,9 +147,9 @@ where
 
         full_response.push_str(&line);
 
-        // Final line: "NNN " (space after code, not dash). Compare the 4th byte
-        // directly so a multi-byte char at that position cannot panic the slice.
-        if line.as_bytes().get(3) == Some(&b' ') {
+        // Final line: "NNN " or bare "NNN\r\n" / "NNN\n" (not dash).
+        // Compare the 4th byte directly so a multi-byte char there cannot panic.
+        if matches!(line.as_bytes().get(3), Some(b' ' | b'\r' | b'\n')) {
             saw_final_line = true;
             break;
         }
@@ -365,6 +365,24 @@ mod tests {
             .expect("read_multiline_status should succeed");
         assert_eq!(code, 220);
         assert!(response.contains("Ready"));
+    }
+
+    #[tokio::test]
+    async fn test_read_multiline_status_accepts_bare_final_line() {
+        let (mut client, mut server) = tokio::io::duplex(128);
+        tokio::spawn(async move {
+            server
+                .write_all(b"220\r\n")
+                .await
+                .expect("test should write data");
+        });
+
+        let mut reader = BufReader::new(&mut client);
+        let (code, response) = read_multiline_status(&mut reader, "TEST", 100)
+            .await
+            .expect("bare final line should succeed");
+        assert_eq!(code, 220);
+        assert_eq!(response, "220\r\n");
     }
 
     #[tokio::test]
