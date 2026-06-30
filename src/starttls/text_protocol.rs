@@ -114,7 +114,7 @@ async fn read_greeting(
     match &config.greeting {
         GreetingStyle::Prefix(prefix) => {
             let line = response::read_line(reader).await?;
-            if !line.starts_with(prefix) {
+            if !line_starts_with_delimited_prefix(&line, prefix) {
                 return Err(TlsError::StarttlsError {
                     protocol: config.protocol_name.to_string(),
                     details: format!("Greeting failed: {}", line),
@@ -238,10 +238,13 @@ async fn read_tagged_capabilities(
         if has_capability_token(&line, cap.starttls_marker) {
             supported = true;
         }
-        if line.starts_with(ok_prefix) {
+        if line_starts_with_delimited_prefix(&line, ok_prefix) {
             return Ok(supported);
         }
-        if error_prefixes.iter().any(|p| line.starts_with(p)) {
+        if error_prefixes
+            .iter()
+            .any(|p| line_starts_with_delimited_prefix(&line, p))
+        {
             return Err(TlsError::StarttlsError {
                 protocol: config.protocol_name.to_string(),
                 details: "Capability command failed".to_string(),
@@ -261,7 +264,7 @@ async fn read_dot_terminated_capabilities(
     // Validate first line if required
     if let Some(prefix) = first_line_prefix {
         let line = response::read_line(reader).await?;
-        if !line.starts_with(prefix) {
+        if !line_starts_with_delimited_prefix(&line, prefix) {
             return Err(TlsError::StarttlsError {
                 protocol: config.protocol_name.to_string(),
                 details: "Capability command failed".to_string(),
@@ -328,7 +331,7 @@ async fn read_until_prefix_capabilities(
     let mut supported = false;
     for _ in 0..MAX_CAPABILITY_LINES {
         let line = response::read_line(reader).await?;
-        if line.starts_with(prefix) {
+        if line_starts_with_delimited_prefix(&line, prefix) {
             return Ok(supported);
         }
         if has_capability_token(&line, cap.starttls_marker) {
@@ -373,6 +376,14 @@ fn strip_status_prefix(token: &str) -> &str {
     }
 }
 
+fn line_starts_with_delimited_prefix(line: &str, prefix: &str) -> bool {
+    line.starts_with(prefix)
+        && line
+            .as_bytes()
+            .get(prefix.len())
+            .is_none_or(u8::is_ascii_whitespace)
+}
+
 async fn validate_success(
     config: &TextProtocolConfig,
     reader: &mut BufReader<&mut TcpStream>,
@@ -380,7 +391,7 @@ async fn validate_success(
     match &config.success {
         SuccessCheck::Prefix(prefix) => {
             let line = response::read_line(reader).await?;
-            if !line.starts_with(prefix) {
+            if !line_starts_with_delimited_prefix(&line, prefix) {
                 return Err(TlsError::StarttlsError {
                     protocol: config.protocol_name.to_string(),
                     details: format!("STARTTLS failed: {}", line),
@@ -416,6 +427,22 @@ mod tests {
         assert!(has_capability_token("\"STARTTLS\"", "STARTTLS"));
         assert!(!has_capability_token("250-NOSTARTTLS", "STARTTLS"));
         assert!(!has_capability_token("XSTARTTLS", "STARTTLS"));
+    }
+
+    #[test]
+    fn delimited_prefix_matching_rejects_longer_status_words() {
+        assert!(line_starts_with_delimited_prefix("+OK ready\r\n", "+OK"));
+        assert!(line_starts_with_delimited_prefix(
+            "a002 OK done\r\n",
+            "a002 OK"
+        ));
+        assert!(line_starts_with_delimited_prefix("OK\r\n", "OK"));
+        assert!(!line_starts_with_delimited_prefix("+OKAY ready\r\n", "+OK"));
+        assert!(!line_starts_with_delimited_prefix(
+            "a002 OKAY done\r\n",
+            "a002 OK"
+        ));
+        assert!(!line_starts_with_delimited_prefix("OKAY\r\n", "OK"));
     }
 
     #[tokio::test]
