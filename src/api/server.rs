@@ -1,14 +1,19 @@
 // API Server Implementation
 
 use crate::Result;
-use crate::api::{config::ApiConfig, middleware, routes, state::AppState};
+use crate::api::{
+    config::ApiConfig, middleware, models::error::ApiError, routes, state::AppState,
+};
 use crate::utils::network::canonical_target;
 use axum::{
+    error_handling::HandleErrorLayer,
     extract::DefaultBodyLimit,
     Router, middleware as axum_middleware,
     routing::{delete, get, post},
 };
 use std::sync::Arc;
+use std::time::Duration;
+use tower::{BoxError, ServiceBuilder};
 use tower_http::compression::CompressionLayer;
 use tracing::info;
 
@@ -16,6 +21,14 @@ use tracing::info;
 pub struct ApiServer {
     config: ApiConfig,
     state: Arc<AppState>,
+}
+
+async fn handle_timeout_error(error: BoxError) -> ApiError {
+    if error.is::<tower::timeout::error::Elapsed>() {
+        ApiError::Timeout("Request timed out".to_string())
+    } else {
+        ApiError::Internal(format!("Unhandled middleware error: {error}"))
+    }
 }
 
 impl ApiServer {
@@ -130,9 +143,24 @@ impl ApiServer {
             router
         };
 
+        #[cfg(test)]
+        let router = router.route(
+            "/__test/slow",
+            get(|| async {
+                tokio::time::sleep(Duration::from_secs(2)).await;
+                "ok"
+            }),
+        );
+
         router
             // Enforce the configured JSON/body size limit for request extractors.
             .layer(DefaultBodyLimit::max(self.config.max_body_size))
+            // Bound total request handling time using the configured API timeout.
+            .layer(
+                ServiceBuilder::new()
+                    .layer(HandleErrorLayer::new(handle_timeout_error))
+                    .timeout(Duration::from_secs(self.config.request_timeout_seconds)),
+            )
             // Add compression
             .layer(CompressionLayer::new())
             // Add logging
@@ -256,5 +284,29 @@ mod tests {
             .expect("request should complete");
 
         assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    #[tokio::test]
+    async fn test_router_enforces_configured_request_timeout() {
+        let config = ApiConfig {
+            request_timeout_seconds: 1,
+            ..Default::default()
+        };
+
+        let app = ApiServer::new(config)
+            .expect("server should build")
+            .build_router();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/__test/slow")
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("request should complete");
+
+        assert_eq!(response.status(), StatusCode::REQUEST_TIMEOUT);
     }
 }

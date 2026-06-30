@@ -235,6 +235,11 @@ impl AppState {
                 message: "job_queue_capacity must be greater than 0".to_string(),
             });
         }
+        if config.request_timeout_seconds == 0 {
+            return Err(crate::error::TlsError::ConfigError {
+                message: "request_timeout_seconds must be greater than 0".to_string(),
+            });
+        }
         if config.ws_ping_interval_seconds == 0 {
             return Err(crate::error::TlsError::ConfigError {
                 message: "ws_ping_interval_seconds must be greater than 0".to_string(),
@@ -457,5 +462,20 @@ mod tests {
         };
 
         assert!(err.to_string().contains("ws_ping_interval_seconds"));
+    }
+
+    #[test]
+    fn test_app_state_rejects_zero_request_timeout() {
+        let config = ApiConfig {
+            request_timeout_seconds: 0,
+            ..Default::default()
+        };
+
+        let err = match AppState::new(config) {
+            Ok(_) => panic!("zero request timeout should fail"),
+            Err(err) => err,
+        };
+
+        assert!(err.to_string().contains("request_timeout_seconds"));
     }
 }
