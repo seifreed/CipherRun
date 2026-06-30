@@ -4,11 +4,10 @@ This module contains Pydantic models for all API requests and responses.
 """
 
 from datetime import datetime
-from typing import List, Optional, Dict, Any
 from enum import Enum
+from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field, ConfigDict
-
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 # Enums
 
@@ -23,11 +22,11 @@ class ScanStatus(str, Enum):
 
 class Severity(str, Enum):
     """Severity level enumeration."""
-    CRITICAL = "critical"
-    HIGH = "high"
-    MEDIUM = "medium"
-    LOW = "low"
-    INFO = "info"
+    CRITICAL = "Critical"
+    HIGH = "High"
+    MEDIUM = "Medium"
+    LOW = "Low"
+    INFO = "Info"
 
 
 class SecurityGrade(str, Enum):
@@ -311,8 +310,14 @@ class ProtocolTestResult(BaseModel):
 
     protocol: str = Field(..., description="Protocol name")
     supported: bool = Field(..., description="Whether protocol is supported")
+    inconclusive: bool = Field(default=False, description="Whether protocol detection was inconclusive")
+    preferred: bool = Field(default=False, description="Whether protocol is preferred")
+    ciphers_count: int = Field(default=0, description="Number of supported ciphers")
     handshake_time_ms: Optional[int] = Field(default=None, description="Handshake time in milliseconds")
     heartbeat_enabled: Optional[bool] = Field(default=None, description="Heartbeat extension enabled")
+    session_resumption_caching: Optional[bool] = Field(default=None, description="Session ID resumption support")
+    session_resumption_tickets: Optional[bool] = Field(default=None, description="Session ticket resumption support")
+    secure_renegotiation: Optional[bool] = Field(default=None, description="Secure renegotiation support")
 
 
 class CipherInfo(BaseModel):
@@ -448,9 +453,11 @@ class VulnerabilityResult(BaseModel):
 
     vuln_type: str = Field(..., description="Vulnerability type")
     vulnerable: bool = Field(..., description="Whether target is vulnerable")
+    inconclusive: bool = Field(default=False, description="Whether vulnerability detection was inconclusive")
     severity: Severity = Field(..., description="Severity level")
     details: str = Field(..., description="Vulnerability details")
     cve: Optional[str] = Field(default=None, description="CVE identifier")
+    cwe: Optional[str] = Field(default=None, description="CWE identifier")
 
 
 class ClientSimulationResult(BaseModel):
@@ -491,6 +498,27 @@ class ScanResults(BaseModel):
     vulnerabilities: List[VulnerabilityResult] = Field(default_factory=list, description="Vulnerability results")
     client_simulations: Optional[List[ClientSimulationResult]] = Field(default=None, description="Client simulations")
     rating: Optional[RatingResult] = Field(default=None, description="SSL Labs rating")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _flatten_rust_result_groups(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+
+        normalized = dict(data)
+        http = normalized.get("http")
+        if normalized.get("http_headers") is None and isinstance(http, dict):
+            normalized["http_headers"] = http.get("http_headers")
+
+        rating = normalized.get("rating")
+        if isinstance(rating, dict) and "ssl_rating" in rating:
+            normalized["rating"] = rating.get("ssl_rating")
+
+        advanced = normalized.get("advanced")
+        if normalized.get("client_simulations") is None and isinstance(advanced, dict):
+            normalized["client_simulations"] = advanced.get("client_simulations")
+
+        return normalized
 
 
 class ComplianceSummary(BaseModel):

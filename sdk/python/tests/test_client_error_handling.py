@@ -207,3 +207,83 @@ def test_rating_result_accepts_unverified_grade():
     )
     assert result.grade == SecurityGrade.UNVERIFIED
     assert result.grade == "Unverified"
+
+
+def test_scan_results_accepts_rust_serialized_result_groups():
+    """Rust serializes grouped optional results, not the SDK's flat aliases."""
+    from cipherrun.models import ScanResults, SecurityGrade, Severity
+
+    results = ScanResults(
+        target="example.com:443",
+        scan_time_ms=123,
+        protocols=[
+            {
+                "protocol": "TLS 1.2",
+                "supported": False,
+                "inconclusive": True,
+                "preferred": False,
+                "ciphers_count": 0,
+                "handshake_time_ms": None,
+                "heartbeat_enabled": None,
+                "session_resumption_caching": None,
+                "session_resumption_tickets": None,
+                "secure_renegotiation": None,
+            }
+        ],
+        ciphers={},
+        http={
+            "http_headers": {
+                "grade": "A",
+                "score": 95,
+                "issues": [],
+                "http_status_code": 200,
+                "server_hostname": "example.com",
+            }
+        },
+        vulnerabilities=[
+            {
+                "vuln_type": "Heartbleed",
+                "vulnerable": False,
+                "inconclusive": True,
+                "details": "probe timed out",
+                "cve": None,
+                "cwe": "CWE-200",
+                "severity": "High",
+            }
+        ],
+        advanced={
+            "client_simulations": [
+                {
+                    "client_name": "OpenSSL",
+                    "success": True,
+                    "protocol": "TLS 1.2",
+                    "cipher": None,
+                    "error": None,
+                    "handshake_time_ms": 20,
+                }
+            ]
+        },
+        rating={
+            "ssl_rating": {
+                "grade": "Unverified",
+                "score": 0,
+                "certificate_score": 0,
+                "protocol_score": 0,
+                "key_exchange_score": 0,
+                "cipher_strength_score": 0,
+                "warnings": ["certificate unavailable"],
+            }
+        },
+    )
+
+    assert results.protocols[0].inconclusive is True
+    assert results.protocols[0].session_resumption_tickets is None
+    assert results.vulnerabilities[0].inconclusive is True
+    assert results.vulnerabilities[0].severity == Severity.HIGH
+    assert results.vulnerabilities[0].cwe == "CWE-200"
+    assert results.http_headers is not None
+    assert results.http_headers.score == 95
+    assert results.rating is not None
+    assert results.rating.grade == SecurityGrade.UNVERIFIED
+    assert results.client_simulations is not None
+    assert results.client_simulations[0].client_name == "OpenSSL"
