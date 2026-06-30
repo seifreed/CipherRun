@@ -61,7 +61,7 @@ impl AlertChannel for WebhookChannel {
 
         if !response.status().is_success() {
             let status = response.status();
-            let body = response.text().await.unwrap_or_default();
+            let body = response.text().await?;
             return Err(TlsError::HttpError {
                 status: status.as_u16(),
                 details: format!("Webhook error: {body}"),
@@ -105,7 +105,10 @@ impl AlertChannel for WebhookChannel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::monitor::alerts::AlertChannel;
+    use axum::{Router, http::StatusCode, routing::post};
     use std::collections::HashMap;
+    use tokio::net::TcpListener;
 
     fn create_test_config() -> WebhookConfig {
         let mut headers = HashMap::new();
@@ -139,5 +142,37 @@ mod tests {
         assert_eq!(payload["version"], "1.0");
         assert_eq!(payload["alert"]["hostname"], "example.com");
         assert_eq!(payload["alert"]["type"], "scan_failure");
+    }
+
+    #[tokio::test]
+    async fn test_send_alert_preserves_error_response_body() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test assertion should succeed");
+        let addr = listener
+            .local_addr()
+            .expect("test assertion should succeed");
+        let app = Router::new().route(
+            "/alerts",
+            post(|| async { (StatusCode::INTERNAL_SERVER_ERROR, "delivery failed") }),
+        );
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+
+        let channel = WebhookChannel::new(WebhookConfig {
+            enabled: true,
+            url: format!("http://{addr}/alerts"),
+            headers: HashMap::new(),
+        });
+        let alert =
+            Alert::scan_failure("example.com".to_string(), "Connection refused".to_string());
+
+        let err = channel
+            .send_alert(&alert)
+            .await
+            .expect_err("webhook error should fail");
+
+        assert!(err.to_string().contains("delivery failed"));
     }
 }
