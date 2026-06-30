@@ -71,6 +71,13 @@ impl FileJobStorage {
                 message: "Persisted completed job is missing results".to_string(),
             });
         }
+        if matches!(job.status, ScanStatus::Failed)
+            && job.error.as_deref().is_none_or(str::is_empty)
+        {
+            return Err(crate::TlsError::ParseError {
+                message: "Persisted failed job is missing error".to_string(),
+            });
+        }
         Ok(())
     }
 }
@@ -239,6 +246,25 @@ mod tests {
             .expect_err("completed job without results should fail");
 
         assert!(err.to_string().contains("missing results"));
+    }
+
+    #[test]
+    fn test_load_job_rejects_failed_job_without_error() {
+        let temp_dir = TempDir::new().expect("test assertion should succeed");
+        let storage = FileJobStorage::new(temp_dir.path()).expect("test assertion should succeed");
+        let mut job = ScanJob::new("example.com:443".to_string(), ScanOptions::default(), None);
+        job.status = ScanStatus::Failed;
+        job.completed_at = Some(chrono::Utc::now());
+
+        let json = serde_json::to_string(&job).expect("test assertion should succeed");
+        std::fs::write(temp_dir.path().join(format!("{}.json", job.id)), json)
+            .expect("test assertion should succeed");
+
+        let err = storage
+            .load_job(&job.id)
+            .expect_err("failed job without error should fail");
+
+        assert!(err.to_string().contains("missing error"));
     }
 
     #[test]
