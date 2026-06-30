@@ -15,6 +15,12 @@ const MAX_LABEL_LENGTH: usize = 63;
 /// - Rejects path separators and special characters
 /// - Validates length constraints per RFC 1035
 pub fn validate_hostname(hostname: &str) -> std::result::Result<(), ValidationError> {
+    let hostname = match hostname.strip_suffix('.') {
+        _ if hostname.ends_with("..") => hostname,
+        Some(stripped) if !stripped.is_empty() => stripped,
+        _ => hostname,
+    };
+
     if hostname.is_empty() {
         return Err(ValidationError::InvalidHostname(
             "Hostname cannot be empty".to_string(),
@@ -95,6 +101,7 @@ mod tests {
     #[test]
     fn test_validate_hostname_valid() {
         assert!(validate_hostname("example.com").is_ok());
+        assert!(validate_hostname("example.com.").is_ok());
         assert!(validate_hostname("sub.example.com").is_ok());
         assert!(validate_hostname("192.168.1.1").is_ok());
         assert!(validate_hostname("localhost").is_ok());
@@ -112,6 +119,7 @@ mod tests {
         assert!(validate_hostname("example com").is_err());
         assert!(validate_hostname("example\ncom").is_err());
         assert!(validate_hostname("").is_err());
+        assert!(validate_hostname(".").is_err());
         assert!(validate_hostname(&"a".repeat(300)).is_err());
     }
 
@@ -136,5 +144,6 @@ mod tests {
     #[test]
     fn test_validate_hostname_rejects_empty_label() {
         assert!(validate_hostname("example..com").is_err());
+        assert!(validate_hostname("example.com..").is_err());
     }
 }

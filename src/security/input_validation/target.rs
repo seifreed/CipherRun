@@ -56,6 +56,7 @@ fn normalize_target_hostname(hostname: String) -> String {
         return hostname;
     }
     match hostname.strip_suffix('.') {
+        _ if hostname.ends_with("..") => hostname,
         Some(stripped) if !stripped.is_empty() => stripped.to_string(),
         _ => hostname,
     }
@@ -284,7 +285,10 @@ mod tests {
     fn test_validate_target_treats_valid_unbracketed_ipv6_as_host_only() {
         let result = validate_target("::1:443", true);
 
-        assert!(result.is_ok(), "Valid IPv6 should not be rejected as a port");
+        assert!(
+            result.is_ok(),
+            "Valid IPv6 should not be rejected as a port"
+        );
         let (host, port) = result.expect("test assertion should succeed");
         assert_eq!(host, "::1:443");
         assert!(port.is_none());
@@ -305,7 +309,10 @@ mod tests {
     fn test_validate_target_allows_ipv6_with_decimal_looking_hextet() {
         let result = validate_target("2001:db8::443", true);
 
-        assert!(result.is_ok(), "Valid IPv6 hextet should not be treated as a port");
+        assert!(
+            result.is_ok(),
+            "Valid IPv6 hextet should not be treated as a port"
+        );
         let (host, port) = result.expect("test assertion should succeed");
 
         assert_eq!(host, "2001:db8::443");

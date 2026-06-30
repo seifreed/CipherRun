@@ -254,6 +254,16 @@ mod tests {
     }
 
     #[test]
+    fn inventory_query_accepts_rooted_fqdn_hostname_filter() {
+        let query = CertificateQuery {
+            hostname: Some("example.com.".to_string()),
+            ..Default::default()
+        };
+
+        assert!(inventory_query_from_api(&query).is_ok());
+    }
+
+    #[test]
     fn inventory_query_rejects_invalid_hostname_filter() {
         let query = CertificateQuery {
             hostname: Some("example..com".to_string()),
