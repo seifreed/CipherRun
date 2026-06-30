@@ -461,4 +461,15 @@ mod tests {
         assert!(err.to_string().contains("interval"));
         assert_eq!(scheduler.scheduled_count(), 0);
     }
+
+    #[test]
+    fn test_schedule_rejects_interval_beyond_datetime_range() {
+        let mut scheduler = SchedulingEngine::new().with_jitter(0);
+        let err = scheduler
+            .schedule_next_scan("example.com:443", i64::MAX as u64)
+            .expect_err("interval beyond DateTime range should fail");
+
+        assert!(err.to_string().contains("interval"));
+        assert_eq!(scheduler.scheduled_count(), 0);
+    }
 }

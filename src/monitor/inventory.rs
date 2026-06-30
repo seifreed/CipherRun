@@ -46,7 +46,12 @@ pub(crate) fn validate_monitor_interval_seconds(interval_seconds: u64) -> Result
             message: "Monitored domain interval is too large".to_string(),
         });
     };
-    if Duration::try_seconds(seconds).is_none() {
+    let Some(duration) = Duration::try_seconds(seconds) else {
+        return Err(TlsError::InvalidInput {
+            message: "Monitored domain interval is too large".to_string(),
+        });
+    };
+    if Utc::now().checked_add_signed(duration).is_none() {
         return Err(TlsError::InvalidInput {
             message: "Monitored domain interval is too large".to_string(),
         });
@@ -501,6 +506,9 @@ mod tests {
         );
 
         let domain = MonitoredDomain::new("example.com".to_string(), 443).with_interval(0);
+        assert!(inventory.add_domain(domain).is_err());
+        let domain =
+            MonitoredDomain::new("example.com".to_string(), 443).with_interval(i64::MAX as u64);
         assert!(inventory.add_domain(domain).is_err());
         let domain = MonitoredDomain::new("example.com".to_string(), 443).with_interval(u64::MAX);
         assert!(inventory.add_domain(domain).is_err());
