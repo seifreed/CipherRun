@@ -214,7 +214,12 @@ impl ScanExecutor {
                                     .unwrap_or_default();
                                 job = current;
                                 job.mark_completed(results);
-                                let _ = queue.update_job(&job).await;
+                                if let Err(e) = queue.update_job(&job).await {
+                                    error!(
+                                        "Failed to persist completed cancelled-race job {}: {}",
+                                        job.id, e
+                                    );
+                                }
                                 let _ = self.progress_tx.send(ProgressMessage::completed(&job.id));
                                 // The job is now Completed with results available, so it
                                 // must count toward completed-scan stats just like the
@@ -226,8 +231,16 @@ impl ScanExecutor {
                             Ok(Err(e)) => {
                                 job = current;
                                 job.mark_failed(e.to_string());
-                                let _ = queue.update_job(&job).await;
-                                let _ = self.progress_tx.send(ProgressMessage::failed(&job.id, job.error.clone().unwrap_or_default()));
+                                if let Err(e) = queue.update_job(&job).await {
+                                    error!(
+                                        "Failed to persist failed cancelled-race job {}: {}",
+                                        job.id, e
+                                    );
+                                }
+                                let _ = self.progress_tx.send(ProgressMessage::failed(
+                                    &job.id,
+                                    job.error.clone().unwrap_or_default(),
+                                ));
                             }
                             _ => {
                                 let _ = self.progress_tx.send(ProgressMessage::new(&job.id, job.progress, "cancelled"));
@@ -393,7 +406,12 @@ impl ScanExecutor {
         let _ = progress_tx.send(ProgressMessage::new(&job.id, progress, stage));
         let mut snapshot = job.clone();
         snapshot.update_progress(progress, stage.to_string());
-        let _ = queue.update_job_preserving_cancelled(&snapshot).await;
+        if let Err(e) = queue.update_job_preserving_cancelled(&snapshot).await {
+            error!(
+                "Failed to persist running progress for job {}: {}",
+                job.id, e
+            );
+        }
     }
 
     fn options_to_request(target: &str, options: &ScanOptions) -> Result<ScanRequest> {
@@ -420,10 +438,13 @@ impl ScanExecutor {
         let _ = self.progress_tx.send(msg);
         // A persistence error is not evidence of cancellation; keep going (true),
         // matching the previous fire-and-forget behaviour.
-        queue
-            .update_job_preserving_cancelled(job)
-            .await
-            .unwrap_or(true)
+        match queue.update_job_preserving_cancelled(job).await {
+            Ok(updated) => updated,
+            Err(e) => {
+                error!("Failed to persist progress for job {}: {}", job.id, e);
+                true
+            }
+        }
     }
 
     /// Send webhook notification.
