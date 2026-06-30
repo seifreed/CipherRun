@@ -26,6 +26,13 @@ impl ChangeTracker {
         details.join(", ")
     }
 
+    fn overall_rating_detail(grade: &str, score: Option<i32>) -> String {
+        let score = score
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "N/A".to_string());
+        format!("{grade} ({score})")
+    }
+
     fn rating_change_severity(old: &RatingRecord, new: &RatingRecord) -> ChangeSeverity {
         match new.score.cmp(&old.score) {
             std::cmp::Ordering::Less => ChangeSeverity::High,
@@ -137,11 +144,11 @@ impl ChangeTracker {
                 previous_value: scan1
                     .overall_grade
                     .clone()
-                    .map(|g| format!("{} ({})", g, scan1.overall_score.unwrap_or(0))),
+                    .map(|g| Self::overall_rating_detail(&g, scan1.overall_score)),
                 current_value: scan2
                     .overall_grade
                     .clone()
-                    .map(|g| format!("{} ({})", g, scan2.overall_score.unwrap_or(0))),
+                    .map(|g| Self::overall_rating_detail(&g, scan2.overall_score)),
                 timestamp,
             });
         }

@@ -1789,6 +1789,45 @@ async fn test_change_tracker_detects_component_rating_changes_without_overall_ch
 }
 
 #[tokio::test]
+async fn test_change_tracker_formats_missing_overall_score_as_unknown() {
+    let db = setup_db().await;
+    let now = Utc::now();
+
+    let scan1 = insert_scan(
+        &db,
+        "rating-missing-score.test",
+        443,
+        now - Duration::days(2),
+        Some("A"),
+        None,
+    )
+    .await;
+    let scan2 = insert_scan(
+        &db,
+        "rating-missing-score.test",
+        443,
+        now - Duration::days(1),
+        Some("B"),
+        None,
+    )
+    .await;
+
+    let tracker = ChangeTracker::new(Arc::clone(&db));
+    let changes = tracker
+        .detect_changes_between(scan1, scan2)
+        .await
+        .expect("test assertion should succeed");
+
+    let overall = changes
+        .iter()
+        .find(|change| change.description == "Overall rating changed")
+        .expect("overall rating change should be reported");
+
+    assert_eq!(overall.previous_value.as_deref(), Some("A (N/A)"));
+    assert_eq!(overall.current_value.as_deref(), Some("B (N/A)"));
+}
+
+#[tokio::test]
 async fn test_change_tracker_report_is_deterministic() {
     let tracker = ChangeTracker::new(setup_db().await);
     let timestamp = Utc::now();
