@@ -102,6 +102,24 @@ mod dns_only_tests {
     }
 
     #[test]
+    fn test_extract_domains_skips_non_dns_san_types() {
+        let cert = create_test_cert(
+            "CN=example.com,O=Test",
+            vec![
+                "URI:https://example.com/login".to_string(),
+                "email:admin@example.com".to_string(),
+                "DNS:api.example.com".to_string(),
+            ],
+        );
+        let domains = DnsOnlyMode::extract_domains(&cert);
+
+        assert_eq!(
+            domains,
+            vec!["api.example.com".to_string(), "example.com".to_string()]
+        );
+    }
+
+    #[test]
     fn test_case_insensitivity() {
         let cert = create_test_cert("CN=EXAMPLE.COM,O=Test", vec!["WWW.EXAMPLE.COM".to_string()]);
         let domains = DnsOnlyMode::extract_domains(&cert);

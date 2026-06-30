@@ -96,6 +96,12 @@ impl DnsOnlyMode {
 
     /// Normalize and filter a value so only DNS-style names remain.
     fn normalize_dns_domain(domain: &str) -> Option<String> {
+        if let Some((prefix, _)) = domain.split_once(':')
+            && !prefix.eq_ignore_ascii_case("dns")
+        {
+            return None;
+        }
+
         let normalized = Self::normalize_domain(domain);
         if normalized.is_empty() {
             return None;
