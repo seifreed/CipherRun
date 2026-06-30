@@ -250,6 +250,8 @@ impl CaaChecker {
                 .recommendations
                 .push(format!("Authorized CAs: {}", recognized_cas.join(", ")));
         }
+
+        result.compliant = result.issues.is_empty();
     }
 }
 
@@ -402,6 +404,7 @@ mod tests {
                 .iter()
                 .any(|rec| rec.contains("issuewild"))
         );
+        assert!(!result.compliant);
     }
 
     #[test]
