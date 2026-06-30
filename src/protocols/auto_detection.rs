@@ -291,6 +291,13 @@ mod tests {
     }
 
     #[test]
+    fn test_analyze_postgres_requires_greeting_at_start() {
+        let banner = "NOTICE: PostgreSQL docs are available";
+        let (protocol, _confidence) = analyze_banner(banner.as_bytes());
+        assert_eq!(protocol, ApplicationProtocol::Unknown);
+    }
+
+    #[test]
     fn test_requires_starttls() {
         assert!(requires_starttls(ApplicationProtocol::SmtpStartTls));
         assert!(requires_starttls(ApplicationProtocol::ImapStartTls));

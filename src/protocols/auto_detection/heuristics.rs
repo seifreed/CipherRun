@@ -84,7 +84,7 @@ pub(super) fn analyze_banner(banner: &[u8]) -> (ApplicationProtocol, f64) {
         }
     }
 
-    if lower.contains("postgresql") {
+    if lower.starts_with("postgresql") {
         return (ApplicationProtocol::Postgres, 0.90);
     }
 
