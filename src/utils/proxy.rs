@@ -23,6 +23,9 @@ impl ProxyConfig {
     /// Parse proxy string (host:port, http://host:port, or user:pass@host:port)
     pub fn parse(proxy_str: &str) -> Result<Self> {
         let proxy_str = proxy_str.trim();
+        if proxy_str.contains("://") && !proxy_str.starts_with("http://") {
+            crate::tls_bail!("Unsupported proxy scheme; only http:// proxies are supported");
+        }
         let proxy_str = proxy_str.strip_prefix("http://").unwrap_or(proxy_str);
         // Check for user:pass@host:port format
         if let Some((auth, hostport)) = proxy_str.rsplit_once('@') {
@@ -122,9 +125,12 @@ pub async fn connect_via_proxy(
     let mut reader = BufReader::new(stream);
     let mut status_line = String::new();
 
-    timeout(Duration::from_secs(10), read_proxy_line(&mut reader, &mut status_line))
-        .await
-        .map_err(|_| TlsError::Other("Proxy response timeout".to_string()))??;
+    timeout(
+        Duration::from_secs(10),
+        read_proxy_line(&mut reader, &mut status_line),
+    )
+    .await
+    .map_err(|_| TlsError::Other("Proxy response timeout".to_string()))??;
 
     // Parse HTTP status code from "HTTP/1.x NNN Reason" — substring matching "200"
     // would accept any response body or reason phrase that happens to contain "200".
@@ -156,9 +162,12 @@ pub async fn connect_via_proxy(
     let mut header_count = 0usize;
     loop {
         let mut header = String::new();
-        timeout(Duration::from_secs(10), read_proxy_line(&mut reader, &mut header))
-            .await
-            .map_err(|_| TlsError::Other("Proxy header read timeout".to_string()))??;
+        timeout(
+            Duration::from_secs(10),
+            read_proxy_line(&mut reader, &mut header),
+        )
+        .await
+        .map_err(|_| TlsError::Other("Proxy header read timeout".to_string()))??;
         header_count += 1;
         if header_count > MAX_PROXY_HEADERS {
             crate::tls_bail!("Proxy returned too many response headers");
@@ -310,6 +319,13 @@ mod tests {
         assert_eq!(proxy.host, "proxy.example.com");
         assert_eq!(proxy.port, 3128);
         assert!(proxy.username.is_none());
+    }
+
+    #[test]
+    fn test_parse_proxy_rejects_https_url() {
+        let err = ProxyConfig::parse("https://proxy.example.com:443")
+            .expect_err("HTTPS proxy URLs are not supported");
+        assert!(err.to_string().contains("Unsupported proxy scheme"));
     }
 
     #[test]
