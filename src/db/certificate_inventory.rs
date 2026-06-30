@@ -71,14 +71,15 @@ pub async fn list_certificates(
 ) -> crate::Result<CertificateInventoryPage> {
     let (total, certificates) = match pool {
         DatabasePool::Postgres(pool) => {
-            let query_parts = build_certificate_list_query_for_dialect(query, SqlDialect::Postgres);
+            let query_parts =
+                build_certificate_list_query_for_dialect(query, SqlDialect::Postgres)?;
             (
                 fetch_certificate_count_postgres(pool, &query_parts).await?,
                 fetch_certificate_list_postgres(pool, query, &query_parts).await?,
             )
         }
         DatabasePool::Sqlite(pool) => {
-            let query_parts = build_certificate_list_query(query);
+            let query_parts = build_certificate_list_query(query)?;
             (
                 fetch_certificate_count_sqlite(pool, &query_parts).await?,
                 fetch_certificate_list_sqlite(pool, query, &query_parts).await?,
@@ -102,14 +103,16 @@ pub async fn get_certificate(
     }
 }
 
-fn build_certificate_list_query(query: &CertificateInventoryQuery) -> CertificateListQuery {
+fn build_certificate_list_query(
+    query: &CertificateInventoryQuery,
+) -> crate::Result<CertificateListQuery> {
     build_certificate_list_query_for_dialect(query, SqlDialect::Sqlite)
 }
 
 fn build_certificate_list_query_for_dialect(
     query: &CertificateInventoryQuery,
     dialect: SqlDialect,
-) -> CertificateListQuery {
+) -> crate::Result<CertificateListQuery> {
     let mut where_clauses = Vec::new();
     let mut params = Vec::new();
 
@@ -123,7 +126,16 @@ fn build_certificate_list_query_for_dialect(
     }
 
     if let Some(days) = query.expiring_within_days {
-        let cutoff_date = Utc::now() + chrono::Duration::days(days as i64);
+        let duration = chrono::Duration::try_days(i64::from(days)).ok_or_else(|| {
+            crate::TlsError::InvalidInput {
+                message: format!("expiring_within_days value is too large: {days}"),
+            }
+        })?;
+        let cutoff_date = Utc::now().checked_add_signed(duration).ok_or_else(|| {
+            crate::TlsError::InvalidInput {
+                message: format!("expiring_within_days value is too large: {days}"),
+            }
+        })?;
         let placeholder = dialect.placeholder(params.len() + 1);
         // `not_after` is stored as a native datetime whose textual encoding
         // differs from `to_rfc3339()` (separator/fractional digits). On SQLite,
@@ -146,11 +158,11 @@ fn build_certificate_list_query_for_dialect(
         format!("WHERE {}", where_clauses.join(" AND "))
     };
 
-    CertificateListQuery {
+    Ok(CertificateListQuery {
         where_clause,
         params,
         order_by: query.sort.as_order_by(),
-    }
+    })
 }
 
 fn normalize_fingerprint_lookup(fingerprint: &str) -> String {
@@ -452,7 +464,7 @@ mod tests {
             hostname: None,
             expiring_within_days: None,
         };
-        let built = build_certificate_list_query(&query);
+        let built = build_certificate_list_query(&query).expect("query should build");
 
         assert!(built.where_clause.is_empty());
         assert!(built.params.is_empty());
@@ -468,7 +480,7 @@ mod tests {
             hostname: Some("example.com".to_string()),
             expiring_within_days: Some(30),
         };
-        let built = build_certificate_list_query(&query);
+        let built = build_certificate_list_query(&query).expect("query should build");
 
         assert!(built.where_clause.contains("s.target_hostname = ?"));
         assert!(
@@ -491,12 +503,31 @@ mod tests {
             expiring_within_days: Some(30),
         };
 
-        let built = build_certificate_list_query_for_dialect(&query, SqlDialect::Postgres);
+        let built = build_certificate_list_query_for_dialect(&query, SqlDialect::Postgres)
+            .expect("query should build");
 
         assert!(built.where_clause.contains("s.target_hostname = $1"));
         assert!(built.where_clause.contains("c.not_after <= $2"));
         assert!(!built.where_clause.contains('?'));
         assert_eq!(built.params.len(), 2);
+    }
+
+    #[test]
+    fn query_builder_rejects_out_of_range_expiry_window() {
+        let query = CertificateInventoryQuery {
+            limit: 10,
+            offset: 0,
+            sort: CertificateInventorySort::ExpiryAsc,
+            hostname: None,
+            expiring_within_days: Some(u32::MAX),
+        };
+
+        let err = match build_certificate_list_query(&query) {
+            Ok(_) => panic!("oversized expiry window should fail"),
+            Err(err) => err,
+        };
+
+        assert!(err.to_string().contains("expiring_within_days"));
     }
 
     #[test]
