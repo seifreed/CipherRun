@@ -22,7 +22,15 @@ where
         let (take, done) = {
             let available = reader.fill_buf().await?;
             if available.is_empty() {
-                break;
+                if bytes.is_empty() {
+                    return Err(crate::error::TlsError::ConnectionClosed {
+                        details: "Connection closed while reading STARTTLS response line"
+                            .to_string(),
+                    });
+                }
+                return Err(crate::error::TlsError::ParseError {
+                    message: "STARTTLS response line ended without newline".to_string(),
+                });
             }
 
             let newline_pos = available.iter().position(|&byte| byte == b'\n');
@@ -179,6 +187,35 @@ mod tests {
             .await
             .expect("read_line should succeed");
         assert_eq!(line, "hello world\r\n");
+    }
+
+    #[tokio::test]
+    async fn test_read_line_rejects_connection_closed_without_data() {
+        let (mut client, server) = tokio::io::duplex(16);
+        drop(server);
+
+        let mut reader = BufReader::new(&mut client);
+        let err = read_line(&mut reader)
+            .await
+            .expect_err("closed connection should not be an empty line");
+        assert!(format!("{err}").contains("Connection closed"));
+    }
+
+    #[tokio::test]
+    async fn test_read_line_rejects_unterminated_line() {
+        let (mut client, mut server) = tokio::io::duplex(16);
+        tokio::spawn(async move {
+            server
+                .write_all(b"220")
+                .await
+                .expect("test should write data");
+        });
+
+        let mut reader = BufReader::new(&mut client);
+        let err = read_line(&mut reader)
+            .await
+            .expect_err("unterminated line should fail");
+        assert!(format!("{err}").contains("without newline"));
     }
 
     #[tokio::test]
