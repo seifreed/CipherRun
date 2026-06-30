@@ -20,9 +20,10 @@ pub struct ProxyConfig {
 }
 
 impl ProxyConfig {
-    /// Parse proxy string (host:port or user:pass@host:port)
+    /// Parse proxy string (host:port, http://host:port, or user:pass@host:port)
     pub fn parse(proxy_str: &str) -> Result<Self> {
         let proxy_str = proxy_str.trim();
+        let proxy_str = proxy_str.strip_prefix("http://").unwrap_or(proxy_str);
         // Check for user:pass@host:port format
         if let Some((auth, hostport)) = proxy_str.rsplit_once('@') {
             let (username, password) = if let Some((u, p)) = auth.split_once(':') {
@@ -296,6 +297,26 @@ mod tests {
     fn test_parse_proxy_with_auth() {
         let proxy = ProxyConfig::parse("user:pass@proxy.example.com:3128")
             .expect("test assertion should succeed");
+        assert_eq!(proxy.host, "proxy.example.com");
+        assert_eq!(proxy.port, 3128);
+        assert_eq!(proxy.username.as_deref(), Some("user"));
+        assert_eq!(proxy.password.as_deref(), Some("pass"));
+    }
+
+    #[test]
+    fn test_parse_proxy_accepts_http_url() {
+        let proxy =
+            ProxyConfig::parse("http://proxy.example.com:3128").expect("proxy URL should parse");
+        assert_eq!(proxy.host, "proxy.example.com");
+        assert_eq!(proxy.port, 3128);
+        assert!(proxy.username.is_none());
+    }
+
+    #[test]
+    fn test_parse_proxy_round_trips_url_with_auth() {
+        let original =
+            ProxyConfig::parse("user:pass@proxy.example.com:3128").expect("proxy should parse");
+        let proxy = ProxyConfig::parse(&original.url()).expect("proxy URL should parse");
         assert_eq!(proxy.host, "proxy.example.com");
         assert_eq!(proxy.port, 3128);
         assert_eq!(proxy.username.as_deref(), Some("user"));
