@@ -148,6 +148,16 @@ impl ScanComparator {
         Self { db }
     }
 
+    fn validate_scan_record(scan: &ScanRecord) -> crate::Result<()> {
+        u16::try_from(scan.target_port).map_err(|_| {
+            crate::TlsError::DatabaseError(format!(
+                "Invalid scan field target_port for scan {:?}: {}",
+                scan.scan_id, scan.target_port
+            ))
+        })?;
+        Ok(())
+    }
+
     /// Compare two specific scans
     pub async fn compare_scans(
         &self,
@@ -161,6 +171,8 @@ impl ScanComparator {
         let scan_2 = self.get_scan_by_id(scan_id_2).await?.ok_or_else(|| {
             crate::TlsError::DatabaseError(format!("Scan {} not found", scan_id_2))
         })?;
+        Self::validate_scan_record(&scan_1)?;
+        Self::validate_scan_record(&scan_2)?;
 
         // Compare protocols
         let protocol_diff = self.compare_protocols(scan_id_1, scan_id_2).await?;

@@ -427,6 +427,45 @@ async fn test_certificate_analytics_rejects_invalid_optional_certificate_row() {
 }
 
 #[tokio::test]
+async fn test_scan_comparator_rejects_invalid_scan_port() {
+    let db = setup_db().await;
+    let now = Utc::now();
+    let scan1 = insert_scan(
+        &db,
+        "invalid-port.test",
+        443,
+        now - Duration::days(2),
+        Some("A"),
+        Some(90),
+    )
+    .await;
+    let scan2 = insert_scan(
+        &db,
+        "invalid-port.test",
+        443,
+        now - Duration::days(1),
+        Some("A"),
+        Some(90),
+    )
+    .await;
+
+    db.pool()
+        .execute(
+            "UPDATE scans SET target_port = ? WHERE scan_id = ?",
+            vec![BindValue::Int32(70000), BindValue::Int64(scan1)],
+        )
+        .await
+        .expect("test assertion should succeed");
+
+    let err = ScanComparator::new(Arc::clone(&db))
+        .compare_scans(scan1, scan2)
+        .await
+        .expect_err("invalid scan port should fail comparison");
+
+    assert!(err.to_string().contains("Invalid scan field target_port"));
+}
+
+#[tokio::test]
 async fn test_scan_comparator_compare_scans() {
     let db = setup_db().await;
     let now = Utc::now();
