@@ -18,6 +18,20 @@ pub struct TeamsChannel {
 impl TeamsChannel {
     /// Create new Teams channel
     pub fn new(config: TeamsConfig) -> Result<Self> {
+        let url =
+            reqwest::Url::parse(&config.webhook_url).map_err(|error| TlsError::ConfigError {
+                message: format!("Invalid Teams webhook_url: {error}"),
+            })?;
+        if !matches!(url.scheme(), "http" | "https") {
+            return Err(TlsError::ConfigError {
+                message: "Invalid Teams webhook_url: scheme must be http or https".to_string(),
+            });
+        }
+        if matches!(url.port(), Some(0)) {
+            return Err(TlsError::ConfigError {
+                message: "Invalid Teams webhook_url: port must be between 1 and 65535".to_string(),
+            });
+        }
         let client = reqwest::Client::builder()
             .timeout(ALERT_SEND_TIMEOUT)
             .build()?;
@@ -167,6 +181,14 @@ mod tests {
         let config = create_test_config();
         let channel = TeamsChannel::new(config).expect("test channel construction should succeed");
         assert_eq!(channel.channel_name(), "teams");
+    }
+
+    #[test]
+    fn test_teams_channel_rejects_invalid_webhook_url() {
+        let mut config = create_test_config();
+        config.webhook_url = "file:///tmp/hook".to_string();
+
+        assert!(TeamsChannel::new(config).is_err());
     }
 
     #[test]

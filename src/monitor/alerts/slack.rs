@@ -18,6 +18,20 @@ pub struct SlackChannel {
 impl SlackChannel {
     /// Create new Slack channel
     pub fn new(config: SlackConfig) -> Result<Self> {
+        let url =
+            reqwest::Url::parse(&config.webhook_url).map_err(|error| TlsError::ConfigError {
+                message: format!("Invalid Slack webhook_url: {error}"),
+            })?;
+        if !matches!(url.scheme(), "http" | "https") {
+            return Err(TlsError::ConfigError {
+                message: "Invalid Slack webhook_url: scheme must be http or https".to_string(),
+            });
+        }
+        if matches!(url.port(), Some(0)) {
+            return Err(TlsError::ConfigError {
+                message: "Invalid Slack webhook_url: port must be between 1 and 65535".to_string(),
+            });
+        }
         let client = reqwest::Client::builder()
             .timeout(ALERT_SEND_TIMEOUT)
             .build()?;
@@ -200,6 +214,14 @@ mod tests {
         let config = create_test_config();
         let channel = SlackChannel::new(config).expect("test channel construction should succeed");
         assert_eq!(channel.channel_name(), "slack");
+    }
+
+    #[test]
+    fn test_slack_channel_rejects_invalid_webhook_url() {
+        let mut config = create_test_config();
+        config.webhook_url = "ftp://hooks.slack.com/services/TEST".to_string();
+
+        assert!(SlackChannel::new(config).is_err());
     }
 
     #[test]

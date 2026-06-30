@@ -20,6 +20,11 @@ pub struct PagerDutyChannel {
 impl PagerDutyChannel {
     /// Create new PagerDuty channel
     pub fn new(config: PagerDutyConfig) -> Result<Self> {
+        if config.integration_key.trim().is_empty() {
+            return Err(TlsError::ConfigError {
+                message: "enabled PagerDuty alerts require integration_key".to_string(),
+            });
+        }
         let client = reqwest::Client::builder()
             .timeout(ALERT_SEND_TIMEOUT)
             .build()?;
@@ -185,6 +190,14 @@ mod tests {
         let channel =
             PagerDutyChannel::new(config).expect("test channel construction should succeed");
         assert_eq!(channel.channel_name(), "pagerduty");
+    }
+
+    #[test]
+    fn test_pagerduty_channel_rejects_blank_key() {
+        let mut config = create_test_config();
+        config.integration_key = " \t ".to_string();
+
+        assert!(PagerDutyChannel::new(config).is_err());
     }
 
     #[test]

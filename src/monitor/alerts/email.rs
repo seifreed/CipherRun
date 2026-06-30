@@ -18,6 +18,24 @@ pub struct EmailChannel {
 impl EmailChannel {
     /// Create new email channel
     pub fn new(config: EmailConfig) -> Result<Self> {
+        if config.smtp_server.trim().is_empty()
+            || config.smtp_port == 0
+            || config.from_address.trim().is_empty()
+            || config.to_addresses.is_empty()
+            || config
+                .to_addresses
+                .iter()
+                .any(|addr| addr.trim().is_empty())
+            || config.username.trim().is_empty()
+        {
+            return Err(TlsError::ConfigError {
+                message: "enabled email alerts require SMTP server, port, sender, recipients, and username".to_string(),
+            });
+        }
+        config.from_address.parse::<lettre::message::Mailbox>()?;
+        for to_addr in &config.to_addresses {
+            to_addr.parse::<lettre::message::Mailbox>()?;
+        }
         Ok(Self { config })
     }
 
@@ -307,6 +325,14 @@ mod tests {
         let config = create_test_config();
         let channel = EmailChannel::new(config);
         assert!(channel.is_ok());
+    }
+
+    #[test]
+    fn test_email_channel_rejects_invalid_address() {
+        let mut config = create_test_config();
+        config.to_addresses = vec!["not an email".to_string()];
+
+        assert!(EmailChannel::new(config).is_err());
     }
 
     #[test]
