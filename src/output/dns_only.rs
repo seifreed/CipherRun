@@ -115,7 +115,27 @@ impl DnsOnlyMode {
             return None;
         }
 
+        if !Self::is_dns_name(&normalized) {
+            return None;
+        }
+
         Some(normalized)
+    }
+
+    fn is_dns_name(domain: &str) -> bool {
+        if domain.len() > 253 || domain.starts_with('.') || domain.ends_with('.') {
+            return false;
+        }
+
+        domain.split('.').all(|label| {
+            !label.is_empty()
+                && label.len() <= 63
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+                && label
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+        })
     }
 
     /// Extract unique domains from a certificate chain
@@ -269,6 +289,24 @@ mod tests {
         let domains = DnsOnlyMode::extract_domains(&cert);
 
         assert_eq!(domains, vec!["example.com".to_string()]);
+    }
+
+    #[test]
+    fn test_extract_domains_skips_non_dns_values_with_dns_prefix() {
+        let cert = CertificateInfo {
+            subject: "CN=https://cn.example.com,O=Org,C=US".to_string(),
+            san: vec![
+                "DNS:https://example.com".to_string(),
+                "DNS:example.com:443".to_string(),
+                "DNS:example.com/path".to_string(),
+                "DNS:good.example.com".to_string(),
+            ],
+            ..Default::default()
+        };
+
+        let domains = DnsOnlyMode::extract_domains(&cert);
+
+        assert_eq!(domains, vec!["good.example.com".to_string()]);
     }
 
     #[test]
