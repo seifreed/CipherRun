@@ -33,7 +33,9 @@ pub(super) fn analyze_banner(banner: &[u8]) -> (ApplicationProtocol, f64) {
         return (ApplicationProtocol::SmtpStartTls, 0.95);
     }
 
-    if lower.starts_with("+ok") {
+    if lower.starts_with("+ok")
+        && (lower.contains("pop3") || lower.contains("dovecot") || lower.contains("cyrus"))
+    {
         return (ApplicationProtocol::Pop3StartTls, 0.95);
     }
 

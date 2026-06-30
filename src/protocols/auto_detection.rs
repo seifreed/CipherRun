@@ -268,6 +268,13 @@ mod tests {
     }
 
     #[test]
+    fn test_analyze_pop3_rejects_generic_ok_banner() {
+        let banner = "+OK service ready";
+        let (protocol, _confidence) = analyze_banner(banner.as_bytes());
+        assert_eq!(protocol, ApplicationProtocol::Unknown);
+    }
+
+    #[test]
     fn test_analyze_imap_banner() {
         let banner = "* OK IMAP4rev1 Server ready";
         let (protocol, confidence) = analyze_banner(banner.as_bytes());
