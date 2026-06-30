@@ -117,7 +117,7 @@ impl ClientDatabase {
                 );
 
                 current_section = section.trim().to_string();
-                current_values.extend(Self::extract_array_values(rest));
+                current_values.extend(Self::extract_array_values(rest)?);
 
                 if rest.contains(')') {
                     Self::append_section_values(
@@ -133,7 +133,7 @@ impl ClientDatabase {
                 continue;
             }
 
-            current_values.extend(Self::extract_array_values(line));
+            current_values.extend(Self::extract_array_values(line)?);
 
             // End of section
             if line.contains(')') {
@@ -247,7 +247,7 @@ impl ClientDatabase {
             .append(current_values);
     }
 
-    fn extract_array_values(line: &str) -> Vec<String> {
+    fn extract_array_values(line: &str) -> Result<Vec<String>> {
         let mut values = Vec::new();
         let mut current = String::new();
         let mut in_quote = false;
@@ -302,11 +302,17 @@ impl ClientDatabase {
             }
         }
 
+        if in_quote {
+            return Err(crate::TlsError::ParseError {
+                message: "Unterminated quoted value in client data".to_string(),
+            });
+        }
+
         if in_token && !in_quote {
             values.push(current);
         }
 
-        values
+        Ok(values)
     }
 
     fn parse_bool(value: &str) -> Option<bool> {
@@ -575,6 +581,23 @@ current+=("maybe")
         assert!(
             err.to_string()
                 .contains("Invalid client data field current")
+        );
+    }
+
+    #[test]
+    fn test_parse_rejects_unterminated_quoted_value() {
+        let data = r#"
+names+=("Client A)
+short+=("client_a")
+"#;
+
+        let err = match ClientDatabase::parse(data) {
+            Ok(_) => panic!("unterminated quoted value should fail"),
+            Err(err) => err,
+        };
+        assert!(
+            err.to_string()
+                .contains("Unterminated quoted value in client data")
         );
     }
 
