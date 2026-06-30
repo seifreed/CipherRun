@@ -1,6 +1,22 @@
 use crate::TlsError;
 use crate::db::{CipherRunDatabase, ScanRecord, ScanRepository};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
+
+pub(crate) fn cleanup_cutoff_days_ago(days: i64) -> crate::Result<DateTime<Utc>> {
+    if days < 0 {
+        return Err(TlsError::InvalidInput {
+            message: format!("Cleanup days cannot be negative: {}", days),
+        });
+    }
+    let duration = Duration::try_days(days).ok_or_else(|| TlsError::InvalidInput {
+        message: format!("Cleanup days value is too large: {}", days),
+    })?;
+    Utc::now()
+        .checked_sub_signed(duration)
+        .ok_or_else(|| TlsError::InvalidInput {
+            message: format!("Cleanup days value is too large: {}", days),
+        })
+}
 
 impl CipherRunDatabase {
     /// Get scan history for a hostname
@@ -58,12 +74,19 @@ impl CipherRunDatabase {
 
     /// Cleanup old scans based on retention policy
     pub async fn cleanup_old_scans(&self, days: i64) -> crate::Result<u64> {
-        if days < 0 {
-            return Err(TlsError::InvalidInput {
-                message: format!("Cleanup days cannot be negative: {}", days),
-            });
-        }
+        cleanup_cutoff_days_ago(days)?;
 
         self.scan_repo.delete_old_scans(days).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cleanup_cutoff_rejects_invalid_days() {
+        assert!(cleanup_cutoff_days_ago(-1).is_err());
+        assert!(cleanup_cutoff_days_ago(i64::MAX).is_err());
     }
 }

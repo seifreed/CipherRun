@@ -77,7 +77,7 @@ impl TrendAnalyzer {
         port: u16,
         days: i64,
     ) -> crate::Result<Vec<crate::db::ScanRecord>> {
-        let cutoff = Utc::now() - Duration::days(days);
+        let cutoff = cutoff_days_ago(days)?;
         self.db.get_scan_history_since(hostname, port, cutoff).await
     }
 
@@ -507,6 +507,22 @@ impl TrendAnalyzer {
             }
         }
     }
+}
+
+pub(crate) fn cutoff_days_ago(days: i64) -> crate::Result<DateTime<Utc>> {
+    if days <= 0 {
+        return Err(crate::TlsError::InvalidInput {
+            message: format!("Days must be positive: {days}"),
+        });
+    }
+    let duration = Duration::try_days(days).ok_or_else(|| crate::TlsError::InvalidInput {
+        message: format!("Days value is too large: {days}"),
+    })?;
+    Utc::now()
+        .checked_sub_signed(duration)
+        .ok_or_else(|| crate::TlsError::InvalidInput {
+            message: format!("Days value is too large: {days}"),
+        })
 }
 
 fn ordered_data_points<T: Clone>(data_points: &[(DateTime<Utc>, T)]) -> Vec<(DateTime<Utc>, T)> {

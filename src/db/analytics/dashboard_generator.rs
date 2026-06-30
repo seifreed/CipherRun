@@ -3,7 +3,7 @@
 
 use crate::db::connection::DatabasePool;
 use crate::db::{CipherRunDatabase, ScanRecord};
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -73,7 +73,7 @@ impl DashboardGenerator {
         port: u16,
         days: i64,
     ) -> crate::Result<DashboardData> {
-        let cutoff = Utc::now() - Duration::days(days);
+        let cutoff = super::trend_analyzer::cutoff_days_ago(days)?;
         let scans = self
             .db
             .get_scan_history_since(hostname, port, cutoff)

@@ -5,7 +5,6 @@ use crate::db::connection::DatabasePool;
 use crate::db::models::ScanRecord;
 use crate::db::traits::ScanRepository;
 use async_trait::async_trait;
-use chrono::{Duration, Utc};
 use sqlx::Row;
 
 pub struct ScanRepositoryImpl {
@@ -239,7 +238,7 @@ impl ScanRepository for ScanRepositoryImpl {
     }
 
     async fn delete_old_scans(&self, days: i64) -> crate::Result<u64> {
-        let cutoff_date = Utc::now() - Duration::days(days);
+        let cutoff_date = crate::db::history::cleanup_cutoff_days_ago(days)?;
 
         match &self.pool {
             DatabasePool::Postgres(pool) => {

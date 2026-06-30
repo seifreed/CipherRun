@@ -7,6 +7,13 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 #[test]
+fn test_cutoff_days_ago_rejects_invalid_days() {
+    assert!(cutoff_days_ago(0).is_err());
+    assert!(cutoff_days_ago(-1).is_err());
+    assert!(cutoff_days_ago(i64::MAX).is_err());
+}
+
+#[test]
 fn test_calculate_mean() {
     let values = vec![80, 85, 90, 95, 100];
     let mean = TrendAnalyzer::calculate_mean(&values);

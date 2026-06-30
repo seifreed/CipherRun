@@ -84,6 +84,11 @@ impl HostPortDaysInput {
                 message: format!("Days must be positive: {}", days),
             });
         }
+        if chrono::Duration::try_days(days).is_none() {
+            return Err(TlsError::InvalidInput {
+                message: format!("Days value is too large: {}", days),
+            });
+        }
 
         let (hostname, port) =
             split_target_host_port(host_port).map_err(|e| TlsError::InvalidInput {
@@ -186,6 +191,11 @@ mod tests {
     fn rejects_non_positive_host_port_days() {
         assert!(HostPortDaysInput::parse("example.com:443:0").is_err());
         assert!(HostPortDaysInput::parse("example.com:443:-7").is_err());
+    }
+
+    #[test]
+    fn rejects_oversized_host_port_days() {
+        assert!(HostPortDaysInput::parse(&format!("example.com:443:{}", i64::MAX)).is_err());
     }
 
     #[test]
