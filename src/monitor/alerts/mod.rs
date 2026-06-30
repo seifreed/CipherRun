@@ -320,7 +320,7 @@ impl AlertManager {
         if let Some(ref webhook_config) = config.monitor.alerts.webhook
             && webhook_config.enabled
         {
-            let channel = webhook::WebhookChannel::new(webhook_config.clone());
+            let channel = webhook::WebhookChannel::new(webhook_config.clone())?;
             manager.add_channel(Box::new(channel));
         }
 

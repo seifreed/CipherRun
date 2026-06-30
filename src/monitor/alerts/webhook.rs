@@ -5,6 +5,7 @@ use crate::error::TlsError;
 use crate::monitor::alerts::{Alert, AlertChannel};
 use crate::monitor::config::WebhookConfig;
 use async_trait::async_trait;
+use reqwest::header::{HeaderName, HeaderValue};
 use serde_json::json;
 
 /// Generic webhook alert channel
@@ -15,11 +16,33 @@ pub struct WebhookChannel {
 
 impl WebhookChannel {
     /// Create new webhook channel
-    pub fn new(config: WebhookConfig) -> Self {
-        Self {
+    pub fn new(config: WebhookConfig) -> Result<Self> {
+        let url = reqwest::Url::parse(&config.url).map_err(|error| TlsError::ConfigError {
+            message: format!("Invalid webhook url: {error}"),
+        })?;
+        if !matches!(url.scheme(), "http" | "https") {
+            return Err(TlsError::ConfigError {
+                message: "Invalid webhook url: scheme must be http or https".to_string(),
+            });
+        }
+        if matches!(url.port(), Some(0)) {
+            return Err(TlsError::ConfigError {
+                message: "Invalid webhook url: port must be between 1 and 65535".to_string(),
+            });
+        }
+        for (name, value) in &config.headers {
+            HeaderName::from_bytes(name.as_bytes()).map_err(|error| TlsError::ConfigError {
+                message: format!("Invalid webhook header name '{name}': {error}"),
+            })?;
+            HeaderValue::from_str(value).map_err(|error| TlsError::ConfigError {
+                message: format!("Invalid webhook header value for '{name}': {error}"),
+            })?;
+        }
+
+        Ok(Self {
             config,
             client: reqwest::Client::new(),
-        }
+        })
     }
 
     /// Format alert as JSON for webhook
@@ -124,14 +147,14 @@ mod tests {
     #[test]
     fn test_webhook_channel_new() {
         let config = create_test_config();
-        let channel = WebhookChannel::new(config);
+        let channel = WebhookChannel::new(config).expect("test assertion should succeed");
         assert_eq!(channel.channel_name(), "webhook");
     }
 
     #[test]
     fn test_format_payload() {
         let config = create_test_config();
-        let channel = WebhookChannel::new(config);
+        let channel = WebhookChannel::new(config).expect("test assertion should succeed");
 
         let alert =
             Alert::scan_failure("example.com".to_string(), "Connection refused".to_string());
@@ -164,7 +187,8 @@ mod tests {
             enabled: true,
             url: format!("http://{addr}/alerts"),
             headers: HashMap::new(),
-        });
+        })
+        .expect("test assertion should succeed");
         let alert =
             Alert::scan_failure("example.com".to_string(), "Connection refused".to_string());
 
@@ -174,5 +198,23 @@ mod tests {
             .expect_err("webhook error should fail");
 
         assert!(err.to_string().contains("delivery failed"));
+    }
+
+    #[test]
+    fn test_webhook_channel_rejects_invalid_header() {
+        let mut headers = HashMap::new();
+        headers.insert("bad header".to_string(), "value".to_string());
+
+        let result = WebhookChannel::new(WebhookConfig {
+            enabled: true,
+            url: "https://webhook.example.com/alerts".to_string(),
+            headers,
+        });
+        let err = match result {
+            Ok(_) => panic!("invalid header should fail"),
+            Err(err) => err,
+        };
+
+        assert!(err.to_string().contains("Invalid webhook header name"));
     }
 }
