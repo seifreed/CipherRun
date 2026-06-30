@@ -98,10 +98,17 @@ impl SchedulingEngine {
                 message: "Monitored domain interval is too large".to_string(),
             })?;
         let interval_with_jitter = self.add_jitter(interval);
-        let next_scan = Utc::now() + interval_with_jitter;
+        let next_scan = Self::checked_next_scan(Utc::now(), interval_with_jitter)?;
 
         self.next_scan_times.insert(identifier, next_scan);
         Ok(())
+    }
+
+    fn checked_next_scan(now: DateTime<Utc>, interval: Duration) -> Result<DateTime<Utc>> {
+        now.checked_add_signed(interval)
+            .ok_or_else(|| crate::TlsError::InvalidInput {
+                message: "Monitored domain interval is too large".to_string(),
+            })
     }
 
     /// Add jitter to duration to prevent thundering herd
@@ -471,5 +478,14 @@ mod tests {
 
         assert!(err.to_string().contains("interval"));
         assert_eq!(scheduler.scheduled_count(), 0);
+    }
+
+    #[test]
+    fn test_checked_next_scan_rejects_datetime_overflow() {
+        let err =
+            SchedulingEngine::checked_next_scan(DateTime::<Utc>::MAX_UTC, Duration::seconds(1))
+                .expect_err("datetime overflow should fail");
+
+        assert!(err.to_string().contains("interval"));
     }
 }
