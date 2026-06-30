@@ -1,7 +1,7 @@
 // Nmap Greppable Format Parser
 // Parses nmap -oG output format
 
-use crate::utils::network::canonical_target;
+use crate::utils::network::{canonical_target, parse_port};
 use crate::{Result, TlsError};
 
 /// Nmap target from greppable output
@@ -86,7 +86,7 @@ impl NmapParser {
                     message: format!("Invalid Nmap port entry: {port_entry}"),
                 });
             };
-            let port = port.parse::<u16>().map_err(|_| TlsError::ParseError {
+            let port = parse_port(port).map_err(|_| TlsError::ParseError {
                 message: format!("Invalid Nmap port value: {port}"),
             })?;
             let state = state.to_string();
@@ -266,6 +266,13 @@ Host: 192.168.1.1 (example.com)	Ports: 443/open/tcp//https///	Ignored State: clo
     fn test_parse_host_line_invalid_port_returns_error() {
         let line = "Host: 10.0.0.4 (example.com) Ports: abc/open/tcp//https///";
         let err = NmapParser::parse_host_line(line).expect_err("invalid port should fail");
+        assert!(err.to_string().contains("Invalid Nmap port value"));
+    }
+
+    #[test]
+    fn test_parse_host_line_rejects_zero_port() {
+        let line = "Host: 10.0.0.4 (example.com) Ports: 0/open/tcp//unknown///";
+        let err = NmapParser::parse_host_line(line).expect_err("zero port should fail");
         assert!(err.to_string().contains("Invalid Nmap port value"));
     }
 
