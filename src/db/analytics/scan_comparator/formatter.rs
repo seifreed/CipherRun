@@ -64,7 +64,7 @@ impl ScanComparator {
             "json" => serde_json::to_string_pretty(comparison).map_err(|e| {
                 crate::TlsError::DatabaseError(format!("JSON serialization failed: {}", e))
             }),
-            "terminal" | "text" => Ok(self.format_terminal(comparison)),
+            "terminal" | "text" => Self::format_terminal(comparison),
             _ => Err(crate::TlsError::DatabaseError(format!(
                 "Unknown format: {}",
                 format
@@ -72,8 +72,14 @@ impl ScanComparator {
         }
     }
 
-    fn format_terminal(&self, comp: &ScanComparison) -> String {
+    fn format_terminal(comp: &ScanComparison) -> crate::Result<String> {
         let mut output = String::new();
+        let target_port = u16::try_from(comp.scan_1.target_port).map_err(|_| {
+            crate::TlsError::DatabaseError(format!(
+                "Invalid scan field target_port for scan {:?}: {}",
+                comp.scan_1.scan_id, comp.scan_1.target_port
+            ))
+        })?;
 
         output.push_str("╔════════════════════════════════════════════════════════════════════╗\n");
         output.push_str("║                        SCAN COMPARISON                             ║\n");
@@ -93,10 +99,7 @@ impl ScanComparator {
         ));
         output.push_str(&format!(
             "Target: {}\n\n",
-            canonical_target(
-                &comp.scan_1.target_hostname,
-                u16::try_from(comp.scan_1.target_port).unwrap_or_default(),
-            )
+            canonical_target(&comp.scan_1.target_hostname, target_port)
         ));
 
         // Summary
@@ -351,6 +354,78 @@ impl ScanComparator {
             output.push('\n');
         }
 
-        output
+        Ok(output)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::ScanRecord;
+    use crate::db::analytics::scan_comparator::{
+        CertificateDiff, CipherDiff, ComparisonSummary, ProtocolDiff, RatingDiff, VulnerabilityDiff,
+    };
+
+    fn minimal_comparison() -> ScanComparison {
+        let scan = ScanRecord::new("example.com".to_string(), 443);
+        ScanComparison {
+            scan_1: scan.clone(),
+            scan_2: scan,
+            protocol_diff: ProtocolDiff {
+                added: Vec::new(),
+                removed: Vec::new(),
+                unchanged: Vec::new(),
+                preferred_change: None,
+            },
+            cipher_diff: CipherDiff {
+                added: Vec::new(),
+                removed: Vec::new(),
+                unchanged: Vec::new(),
+                changed: Vec::new(),
+            },
+            certificate_diff: CertificateDiff {
+                fingerprint_changed: false,
+                subject_changed: false,
+                issuer_changed: false,
+                key_size_changed: false,
+                expiry_changed: false,
+                scan_1_cert: None,
+                scan_2_cert: None,
+            },
+            vulnerability_diff: VulnerabilityDiff {
+                resolved: Vec::new(),
+                new: Vec::new(),
+                changed: Vec::new(),
+                unchanged: Vec::new(),
+            },
+            rating_diff: RatingDiff {
+                overall_changed: false,
+                scan_1_grade: None,
+                scan_1_score: None,
+                scan_2_grade: None,
+                scan_2_score: None,
+                component_diffs: Vec::new(),
+            },
+            summary: ComparisonSummary {
+                total_changes: 0,
+                protocol_changes: 0,
+                cipher_changes: 0,
+                certificate_changes: 0,
+                vulnerability_changes: 0,
+                rating_changes: 0,
+                time_between_scans: 0,
+            },
+        }
+    }
+
+    #[test]
+    fn terminal_formatter_rejects_invalid_target_port() {
+        let mut comparison = minimal_comparison();
+        comparison.scan_1.target_port = 70_000;
+
+        let err = ScanComparator::format_terminal(&comparison)
+            .expect_err("invalid target port should fail");
+
+        assert!(err.to_string().contains("target_port"));
     }
 }
