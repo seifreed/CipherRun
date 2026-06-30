@@ -41,7 +41,9 @@ fn parse_custom_indices(index_args: &[String]) -> Result<HashMap<String, u64>> {
             .map_err(|_| crate::TlsError::InvalidInput {
                 message: format!("Invalid index value for source {source}: {index_value}"),
             })?;
-        custom_indices.insert(source.to_string(), index);
+        if custom_indices.insert(source.to_string(), index).is_some() {
+            crate::tls_bail!("Duplicate --ct-index source: {source}");
+        }
     }
     Ok(custom_indices)
 }
@@ -111,5 +113,13 @@ mod tests {
         let err = parse_custom_indices(&["google=abc".to_string()])
             .expect_err("invalid value should fail");
         assert!(err.to_string().contains("Invalid index value"));
+    }
+
+    #[test]
+    fn test_parse_custom_indices_rejects_duplicate_source() {
+        let err = parse_custom_indices(&["google=1".to_string(), "google=2".to_string()])
+            .expect_err("duplicate source should fail");
+
+        assert!(err.to_string().contains("Duplicate --ct-index source"));
     }
 }
