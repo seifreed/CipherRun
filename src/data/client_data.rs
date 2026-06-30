@@ -156,7 +156,9 @@ impl ClientDatabase {
                         .get("short")
                         .and_then(|v| v.get(i))
                         .cloned()
-                        .unwrap_or_else(|| format!("client_{}", i)),
+                        .ok_or_else(|| crate::TlsError::ParseError {
+                            message: format!("Missing client data field short[{i}]"),
+                        })?,
                     cipher_string: all_sections
                         .get("ch_ciphers")
                         .and_then(|v| v.get(i))
@@ -599,6 +601,20 @@ short+=("client_a")
             err.to_string()
                 .contains("Unterminated quoted value in client data")
         );
+    }
+
+    #[test]
+    fn test_parse_rejects_missing_short_id() {
+        let data = r#"
+names+=("Client A" "Client B")
+short+=("client_a")
+"#;
+
+        let err = match ClientDatabase::parse(data) {
+            Ok(_) => panic!("missing short id should fail"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("Missing client data field short[1]"));
     }
 
     #[test]
