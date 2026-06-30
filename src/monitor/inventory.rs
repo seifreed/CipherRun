@@ -4,7 +4,7 @@ use crate::Result;
 use crate::certificates::parser::CertificateInfo;
 use crate::error::TlsError;
 use crate::utils::network::{canonical_target, normalize_dns_hostname, split_target_host_port};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -32,6 +32,27 @@ pub(crate) fn canonical_inventory_key(hostname: &str, port: u16) -> String {
         .unwrap_or_else(|_| hostname.to_ascii_lowercase());
 
     canonical_target(&normalized_hostname, port)
+}
+
+pub(crate) fn validate_monitor_interval_seconds(interval_seconds: u64) -> Result<()> {
+    if interval_seconds == 0 {
+        return Err(TlsError::InvalidInput {
+            message: "Monitored domain interval must be greater than 0 seconds".to_string(),
+        });
+    }
+
+    let Ok(seconds) = i64::try_from(interval_seconds) else {
+        return Err(TlsError::InvalidInput {
+            message: "Monitored domain interval is too large".to_string(),
+        });
+    };
+    if Duration::try_seconds(seconds).is_none() {
+        return Err(TlsError::InvalidInput {
+            message: "Monitored domain interval is too large".to_string(),
+        });
+    }
+
+    Ok(())
 }
 
 /// Monitored domain configuration
@@ -104,11 +125,7 @@ impl CertificateInventory {
                 message: "Monitored domain port must be between 1 and 65535".to_string(),
             });
         }
-        if domain.interval_seconds == 0 {
-            return Err(TlsError::InvalidInput {
-                message: "Monitored domain interval must be greater than 0 seconds".to_string(),
-            });
-        }
+        validate_monitor_interval_seconds(domain.interval_seconds)?;
 
         let (hostname, embedded_port) = split_target_host_port(&domain.hostname)?;
         if embedded_port.is_some() {
@@ -484,6 +501,8 @@ mod tests {
         );
 
         let domain = MonitoredDomain::new("example.com".to_string(), 443).with_interval(0);
+        assert!(inventory.add_domain(domain).is_err());
+        let domain = MonitoredDomain::new("example.com".to_string(), 443).with_interval(u64::MAX);
         assert!(inventory.add_domain(domain).is_err());
         assert!(inventory.is_empty());
     }

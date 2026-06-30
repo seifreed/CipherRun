@@ -1,6 +1,9 @@
 // Scheduling Engine - Manages scan intervals and timing
 
-use crate::monitor::inventory::{MonitoredDomain, canonical_inventory_key};
+use crate::Result;
+use crate::monitor::inventory::{
+    MonitoredDomain, canonical_inventory_key, validate_monitor_interval_seconds,
+};
 use crate::utils::network::split_target_host_port;
 use chrono::{DateTime, Duration, Utc};
 use rand::RngExt;
@@ -67,25 +70,38 @@ impl SchedulingEngine {
     }
 
     /// Mark a scan as completed and schedule the next one
-    pub fn mark_scan_completed(&mut self, domain: &MonitoredDomain) {
+    pub fn mark_scan_completed(&mut self, domain: &MonitoredDomain) -> Result<()> {
         let identifier = domain.identifier();
         self.in_progress.remove(&identifier);
-        self.schedule_next_scan_internal(&identifier, domain.interval_seconds);
+        self.schedule_next_scan_internal(&identifier, domain.interval_seconds)
     }
 
     /// Schedule next scan for a domain
-    pub fn schedule_next_scan(&mut self, hostname: &str, interval_seconds: u64) {
-        self.schedule_next_scan_internal(hostname, interval_seconds);
+    pub fn schedule_next_scan(&mut self, hostname: &str, interval_seconds: u64) -> Result<()> {
+        self.schedule_next_scan_internal(hostname, interval_seconds)
     }
 
     /// Internal method to schedule next scan with jitter
-    fn schedule_next_scan_internal(&mut self, identifier: &str, interval_seconds: u64) {
+    fn schedule_next_scan_internal(
+        &mut self,
+        identifier: &str,
+        interval_seconds: u64,
+    ) -> Result<()> {
+        validate_monitor_interval_seconds(interval_seconds)?;
         let identifier = canonical_schedule_key(identifier);
-        let clamped_seconds = i64::try_from(interval_seconds).unwrap_or(i64::MAX);
-        let interval_with_jitter = self.add_jitter(Duration::seconds(clamped_seconds));
+        let seconds =
+            i64::try_from(interval_seconds).map_err(|_| crate::TlsError::InvalidInput {
+                message: "Monitored domain interval is too large".to_string(),
+            })?;
+        let interval =
+            Duration::try_seconds(seconds).ok_or_else(|| crate::TlsError::InvalidInput {
+                message: "Monitored domain interval is too large".to_string(),
+            })?;
+        let interval_with_jitter = self.add_jitter(interval);
         let next_scan = Utc::now() + interval_with_jitter;
 
         self.next_scan_times.insert(identifier, next_scan);
+        Ok(())
     }
 
     /// Add jitter to duration to prevent thundering herd
@@ -249,7 +265,9 @@ mod tests {
         assert_eq!(scheduler.scheduled_count(), 0);
 
         // Simulate successful scan completion
-        scheduler.mark_scan_completed(due_domains[0]);
+        scheduler
+            .mark_scan_completed(due_domains[0])
+            .expect("valid interval should schedule");
         assert_eq!(scheduler.scheduled_count(), 1);
     }
 
@@ -257,7 +275,9 @@ mod tests {
     fn test_schedule_next_scan() {
         let mut scheduler = SchedulingEngine::new();
 
-        scheduler.schedule_next_scan("example.com:443", 3600);
+        scheduler
+            .schedule_next_scan("example.com:443", 3600)
+            .expect("valid interval should schedule");
 
         assert_eq!(scheduler.scheduled_count(), 1);
         assert!(scheduler.next_scan_time("example.com:443").is_some());
@@ -268,7 +288,9 @@ mod tests {
         let mut scheduler = SchedulingEngine::new();
         let domains = vec![create_test_domain("example.com", 3600)];
 
-        scheduler.schedule_next_scan("Example.COM:443", 3600);
+        scheduler
+            .schedule_next_scan("Example.COM:443", 3600)
+            .expect("valid interval should schedule");
 
         assert_eq!(scheduler.scheduled_count(), 1);
         assert!(scheduler.next_scan_time("example.com:443").is_some());
@@ -283,7 +305,9 @@ mod tests {
         let mut scheduler = SchedulingEngine::new();
         let domains = vec![create_test_domain("example.com", 3600)];
 
-        scheduler.schedule_next_scan("Example.COM.:443", 3600);
+        scheduler
+            .schedule_next_scan("Example.COM.:443", 3600)
+            .expect("valid interval should schedule");
 
         assert_eq!(scheduler.scheduled_count(), 1);
         assert!(scheduler.next_scan_time("example.com:443").is_some());
@@ -294,7 +318,9 @@ mod tests {
     fn test_time_until_next_scan() {
         let mut scheduler = SchedulingEngine::new();
 
-        scheduler.schedule_next_scan("example.com:443", 3600);
+        scheduler
+            .schedule_next_scan("example.com:443", 3600)
+            .expect("valid interval should schedule");
 
         let time_until = scheduler.time_until_next_scan("example.com:443");
         assert!(time_until.is_some());
@@ -309,7 +335,9 @@ mod tests {
     fn test_clear_schedule() {
         let mut scheduler = SchedulingEngine::new();
 
-        scheduler.schedule_next_scan("example.com:443", 3600);
+        scheduler
+            .schedule_next_scan("example.com:443", 3600)
+            .expect("valid interval should schedule");
         assert_eq!(scheduler.scheduled_count(), 1);
 
         scheduler.clear_schedule("example.com:443");
@@ -320,8 +348,12 @@ mod tests {
     fn test_clear_all() {
         let mut scheduler = SchedulingEngine::new();
 
-        scheduler.schedule_next_scan("example.com:443", 3600);
-        scheduler.schedule_next_scan("test.com:443", 1800);
+        scheduler
+            .schedule_next_scan("example.com:443", 3600)
+            .expect("valid interval should schedule");
+        scheduler
+            .schedule_next_scan("test.com:443", 1800)
+            .expect("valid interval should schedule");
         assert_eq!(scheduler.scheduled_count(), 2);
 
         scheduler.clear_all();
@@ -351,7 +383,9 @@ mod tests {
         scheduler.schedule_immediate("immediate.com:443");
 
         // Schedule one domain far in the future
-        scheduler.schedule_next_scan("future.com:443", 36000);
+        scheduler
+            .schedule_next_scan("future.com:443", 36000)
+            .expect("valid interval should schedule");
 
         let due_soon = scheduler.domains_due_within(60);
 
@@ -400,7 +434,9 @@ mod tests {
         // Not yet scheduled — mark all as completed
         assert_eq!(scheduler.scheduled_count(), 0);
         for domain in &due {
-            scheduler.mark_scan_completed(domain);
+            scheduler
+                .mark_scan_completed(domain)
+                .expect("valid interval should schedule");
         }
         assert_eq!(scheduler.scheduled_count(), 3);
 
@@ -413,5 +449,16 @@ mod tests {
     fn test_time_until_next_scan_unknown() {
         let scheduler = SchedulingEngine::new();
         assert!(scheduler.time_until_next_scan("missing:443").is_none());
+    }
+
+    #[test]
+    fn test_schedule_rejects_interval_too_large_for_chrono() {
+        let mut scheduler = SchedulingEngine::new();
+        let err = scheduler
+            .schedule_next_scan("example.com:443", u64::MAX)
+            .expect_err("oversized interval should fail");
+
+        assert!(err.to_string().contains("interval"));
+        assert_eq!(scheduler.scheduled_count(), 0);
     }
 }

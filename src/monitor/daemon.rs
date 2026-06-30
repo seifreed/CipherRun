@@ -184,7 +184,7 @@ impl MonitorDaemon {
             // Always clear in-progress and schedule next scan
             // (on failure, this allows the domain to be retried next cycle)
             let mut scheduler = self.scheduler.lock().await;
-            scheduler.mark_scan_completed(domain);
+            scheduler.mark_scan_completed(domain)?;
         }
 
         Ok(())
