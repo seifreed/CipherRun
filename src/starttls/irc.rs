@@ -45,7 +45,6 @@ impl StarttlsNegotiator for IrcNegotiator {
         loop {
             let response = Self::read_response(&mut reader).await?;
             line_count += 1;
-            let response_lower = response.to_ascii_lowercase();
 
             if has_irc_capability(&response, "tls") {
                 starttls_supported = true;
@@ -53,10 +52,7 @@ impl StarttlsNegotiator for IrcNegotiator {
 
             // Break on the final CAP LS line (no asterisk before the colon)
             // Multi-line continuation has "CAP * LS *" while final has "CAP * LS :"
-            if response_lower.contains("cap")
-                && response_lower.contains("ls")
-                && !response_lower.contains("ls *")
-            {
+            if is_final_cap_ls_response(&response) {
                 break;
             }
 
@@ -117,6 +113,37 @@ fn irc_reply_is_numeric(response: &str, numeric: &str) -> bool {
         Some(first)
     };
     command == Some(numeric)
+}
+
+fn is_final_cap_ls_response(response: &str) -> bool {
+    let mut tokens = response.split_whitespace();
+    let first = match tokens.next() {
+        Some(token) => token,
+        None => return false,
+    };
+
+    let command = if first.starts_with(':') {
+        tokens.next()
+    } else {
+        Some(first)
+    };
+    if !command.is_some_and(|token| token.eq_ignore_ascii_case("CAP")) {
+        return false;
+    }
+
+    let mut saw_ls = false;
+    for token in tokens {
+        if !saw_ls {
+            if token.eq_ignore_ascii_case("LS") {
+                saw_ls = true;
+            }
+            continue;
+        }
+
+        return token != "*";
+    }
+
+    saw_ls
 }
 
 fn has_irc_capability(response: &str, capability: &str) -> bool {
@@ -311,6 +338,18 @@ mod tests {
         ));
         // A hostname containing the digits must not match either.
         assert!(!irc_reply_is_numeric(":670.irc.example 691 :no\r\n", "670"));
+    }
+
+    #[test]
+    fn test_final_cap_ls_response_matches_positional_command_only() {
+        assert!(is_final_cap_ls_response("CAP * LS :multi-prefix tls\r\n"));
+        assert!(is_final_cap_ls_response(
+            ":irc.example.net CAP * LS :multi-prefix tls\r\n"
+        ));
+        assert!(!is_final_cap_ls_response("CAP * LS * :multi-prefix\r\n"));
+        assert!(!is_final_cap_ls_response(
+            ":irc.example.net NOTICE * :cap docs include ls examples\r\n"
+        ));
     }
 
     #[tokio::test]
