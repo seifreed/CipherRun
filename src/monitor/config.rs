@@ -284,10 +284,8 @@ impl MonitorConfig {
         {
             Self::validate_url("webhook url", &webhook.url)?;
             for (name, value) in &webhook.headers {
-                HeaderName::from_bytes(name.as_bytes()).map_err(|error| {
-                    TlsError::ConfigError {
-                        message: format!("Invalid webhook header name '{name}': {error}"),
-                    }
+                HeaderName::from_bytes(name.as_bytes()).map_err(|error| TlsError::ConfigError {
+                    message: format!("Invalid webhook header name '{name}': {error}"),
                 })?;
                 HeaderValue::from_str(value).map_err(|error| TlsError::ConfigError {
                     message: format!("Invalid webhook header value for '{name}': {error}"),
@@ -309,6 +307,11 @@ impl MonitorConfig {
         if !matches!(url.scheme(), "http" | "https") {
             return Err(TlsError::ConfigError {
                 message: format!("Invalid {label}: scheme must be http or https"),
+            });
+        }
+        if matches!(url.port(), Some(0)) {
+            return Err(TlsError::ConfigError {
+                message: format!("Invalid {label}: port must be between 1 and 65535"),
             });
         }
         Ok(())
@@ -585,5 +588,24 @@ webhook_url = "file:///tmp/hook"
         let err = MonitorConfig::from_file(&path).expect_err("bad Slack URL should fail");
 
         assert!(err.to_string().contains("scheme must be http or https"));
+    }
+
+    #[test]
+    fn test_from_file_rejects_enabled_slack_zero_port_url() {
+        let dir = tempfile::tempdir().expect("test assertion should succeed");
+        let path = dir.path().join("monitor.toml");
+        fs::write(
+            &path,
+            r#"
+[monitor.alerts.slack]
+enabled = true
+webhook_url = "https://webhook.example.com:0/alerts"
+"#,
+        )
+        .expect("test assertion should succeed");
+
+        let err = MonitorConfig::from_file(&path).expect_err("zero port Slack URL should fail");
+
+        assert!(err.to_string().contains("port must be between 1 and 65535"));
     }
 }
