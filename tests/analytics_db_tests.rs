@@ -743,6 +743,42 @@ async fn test_scan_comparator_renders_component_rating_changes_without_overall_c
 }
 
 #[tokio::test]
+async fn test_scan_comparator_formats_missing_overall_score_as_unknown() {
+    let db = setup_db().await;
+    let now = Utc::now();
+
+    let scan1 = insert_scan(
+        &db,
+        "rating-missing-score.test",
+        443,
+        now - Duration::days(2),
+        Some("A"),
+        None,
+    )
+    .await;
+    let scan2 = insert_scan(
+        &db,
+        "rating-missing-score.test",
+        443,
+        now - Duration::days(1),
+        Some("B"),
+        None,
+    )
+    .await;
+
+    let comparator = ScanComparator::new(Arc::clone(&db));
+    let comparison = comparator
+        .compare_scans(scan1, scan2)
+        .await
+        .expect("test assertion should succeed");
+    let terminal_output = comparator
+        .format_comparison(&comparison, "terminal")
+        .expect("test assertion should succeed");
+
+    assert!(terminal_output.contains("Overall: A (N/A) → B (N/A)"));
+}
+
+#[tokio::test]
 async fn test_scan_comparator_marks_rating_grade_and_rationale_changes_as_changed() {
     let db = setup_db().await;
     let now = Utc::now();

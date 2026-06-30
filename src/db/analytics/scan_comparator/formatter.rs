@@ -40,6 +40,14 @@ fn format_rating_detail(
     format!("score={} grade={} rationale={}", score, grade, rationale)
 }
 
+fn format_overall_rating(grade: Option<&String>, score: Option<i32>) -> String {
+    let grade = grade.map(String::as_str).unwrap_or("N/A");
+    let score = score
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "N/A".to_string());
+    format!("{grade} ({score})")
+}
+
 impl ScanComparator {
     /// Format comparison as string
     pub fn format_comparison(
@@ -130,17 +138,15 @@ impl ScanComparator {
             output
                 .push_str("───────────────────────────────────────────────────────────────────\n");
             output.push_str(&format!(
-                "Overall: {} ({}) → {} ({})\n\n",
-                comp.rating_diff
-                    .scan_1_grade
-                    .as_ref()
-                    .unwrap_or(&"N/A".to_string()),
-                comp.rating_diff.scan_1_score.unwrap_or(0),
-                comp.rating_diff
-                    .scan_2_grade
-                    .as_ref()
-                    .unwrap_or(&"N/A".to_string()),
-                comp.rating_diff.scan_2_score.unwrap_or(0)
+                "Overall: {} → {}\n\n",
+                format_overall_rating(
+                    comp.rating_diff.scan_1_grade.as_ref(),
+                    comp.rating_diff.scan_1_score
+                ),
+                format_overall_rating(
+                    comp.rating_diff.scan_2_grade.as_ref(),
+                    comp.rating_diff.scan_2_score
+                )
             ));
 
             for component in &comp.rating_diff.component_diffs {
