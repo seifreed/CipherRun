@@ -370,11 +370,7 @@ impl DashboardGenerator {
             .filter_map(|scan| dashboard_score(scan).transpose())
             .collect::<crate::Result<Vec<_>>>()?;
 
-        let avg_score = if scores.is_empty() {
-            0.0
-        } else {
-            scores.iter().sum::<i32>() as f64 / scores.len() as f64
-        };
+        let avg_score = average_dashboard_score(&scores);
 
         let total_vulnerabilities = top_issues.iter().map(|i| i.count).sum();
         let critical_vulnerabilities = top_issues
@@ -517,6 +513,14 @@ fn dashboard_score(scan: &ScanRecord) -> crate::Result<Option<i32>> {
     }
 }
 
+fn average_dashboard_score(scores: &[i32]) -> f64 {
+    if scores.is_empty() {
+        return 0.0;
+    }
+
+    scores.iter().map(|&score| f64::from(score)).sum::<f64>() / scores.len() as f64
+}
+
 fn canonical_protocol_label(protocol: &str) -> String {
     crate::protocols::Protocol::from_str(protocol)
         .map(|protocol| protocol.name().to_string())
@@ -590,5 +594,12 @@ mod tests {
             dashboard_score(&scan).expect("valid score should pass"),
             Some(100)
         );
+    }
+
+    #[test]
+    fn test_average_dashboard_score_does_not_overflow_i32_sum() {
+        let scores = vec![100; 22_000_000];
+
+        assert_eq!(average_dashboard_score(&scores), 100.0);
     }
 }
