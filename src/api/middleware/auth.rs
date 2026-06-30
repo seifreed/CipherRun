@@ -23,15 +23,21 @@ pub struct AuthExtension {
 
 fn api_key_from_query(query: &str) -> Result<Option<String>, ApiError> {
     for param in query.split('&') {
-        if let Some(("api_key", value)) = param.split_once('=') {
-            let decoded = urlencoding::decode(value).map_err(|error| {
-                ApiError::BadRequest(format!("Invalid api_key query parameter encoding: {error}"))
-            })?;
-            return Ok(Some(decoded.to_string()));
+        let (key, value) = param.split_once('=').unwrap_or((param, ""));
+        let key = decode_query_component(key)?;
+        if key == "api_key" {
+            return Ok(Some(decode_query_component(value)?));
         }
     }
 
     Ok(None)
+}
+
+fn decode_query_component(value: &str) -> Result<String, ApiError> {
+    let value = value.replace('+', " ");
+    urlencoding::decode(&value)
+        .map(|decoded| decoded.into_owned())
+        .map_err(|error| ApiError::BadRequest(format!("Invalid query parameter encoding: {error}")))
 }
 
 fn api_key_from_headers(headers: &HeaderMap) -> Result<Option<String>, ApiError> {
@@ -208,6 +214,15 @@ mod tests {
     }
 
     #[test]
+    fn test_api_key_from_query_uses_form_url_encoding() {
+        let key = api_key_from_query("api%5Fkey=a+b")
+            .expect("valid query should parse")
+            .expect("api key should exist");
+
+        assert_eq!(key, "a b");
+    }
+
+    #[test]
     fn test_api_key_from_query_returns_none_when_absent() {
         assert!(
             api_key_from_query("foo=bar")
@@ -220,10 +235,7 @@ mod tests {
     fn test_api_key_from_query_rejects_invalid_encoding() {
         let err = api_key_from_query("api_key=%FF").expect_err("invalid encoding should fail");
 
-        assert!(
-            err.to_string()
-                .contains("Invalid api_key query parameter encoding")
-        );
+        assert!(err.to_string().contains("Invalid query parameter encoding"));
     }
 
     #[test]
