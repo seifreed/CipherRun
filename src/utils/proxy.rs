@@ -181,7 +181,15 @@ async fn read_proxy_line<R: AsyncBufRead + Unpin>(
         let (take, done) = {
             let available = reader.fill_buf().await?;
             if available.is_empty() {
-                break;
+                if bytes.is_empty() {
+                    return Err(TlsError::ConnectionClosed {
+                        details: "Proxy closed connection before sending a response line"
+                            .to_string(),
+                    });
+                }
+                return Err(TlsError::UnexpectedResponse {
+                    details: "Proxy response line ended before newline".to_string(),
+                });
             }
 
             let newline_pos = available.iter().position(|&byte| byte == b'\n');
@@ -483,5 +491,29 @@ mod tests {
             .await
             .expect_err("oversized proxy status line should fail");
         assert!(err.to_string().contains("too long"));
+    }
+
+    #[tokio::test]
+    async fn test_read_proxy_line_rejects_unterminated_line() {
+        let mut reader = BufReader::new(&b"HTTP/1.1 200 OK"[..]);
+        let mut line = String::new();
+
+        let err = read_proxy_line(&mut reader, &mut line)
+            .await
+            .expect_err("unterminated proxy line should fail");
+
+        assert!(err.to_string().contains("ended before newline"));
+    }
+
+    #[tokio::test]
+    async fn test_read_proxy_line_rejects_empty_eof() {
+        let mut reader = BufReader::new(&b""[..]);
+        let mut line = String::new();
+
+        let err = read_proxy_line(&mut reader, &mut line)
+            .await
+            .expect_err("empty EOF should fail");
+
+        assert!(matches!(err, TlsError::ConnectionClosed { .. }));
     }
 }
