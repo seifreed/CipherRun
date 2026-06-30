@@ -340,10 +340,7 @@ impl SecurityHeaderChecker {
 
         if let Some((_, value)) = key {
             let value_lower = value.trim().to_lowercase();
-            if value_lower != "deny"
-                && value_lower != "sameorigin"
-                && !value_lower.starts_with("allow-from")
-            {
+            if value_lower != "deny" && value_lower != "sameorigin" {
                 issues.push(HeaderIssue {
                     header_name: "X-Frame-Options".to_string(),
                     severity: IssueSeverity::Medium,

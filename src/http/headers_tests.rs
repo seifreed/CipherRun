@@ -94,6 +94,20 @@ fn test_invalid_x_frame_options() {
 }
 
 #[test]
+fn test_x_frame_options_allow_from_is_invalid() {
+    let mut headers = HashMap::new();
+    headers.insert(
+        "X-Frame-Options".to_string(),
+        "ALLOW-FROM https://example.com".to_string(),
+    );
+
+    let issues = SecurityHeaderChecker::check_all_headers(&headers);
+    assert!(issues.iter().any(|i| {
+        i.header_name == "X-Frame-Options" && matches!(i.issue_type, IssueType::Invalid)
+    }));
+}
+
+#[test]
 fn test_x_content_type_options_invalid() {
     let mut headers = HashMap::new();
     headers.insert("X-Content-Type-Options".to_string(), "sniff".to_string());
