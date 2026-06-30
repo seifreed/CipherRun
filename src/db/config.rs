@@ -99,6 +99,11 @@ impl DatabaseConfig {
                 let port = self.port.ok_or_else(|| {
                     crate::TlsError::DatabaseError("Missing PostgreSQL port".to_string())
                 })?;
+                if port == 0 {
+                    return Err(crate::TlsError::DatabaseError(
+                        "PostgreSQL port must be greater than 0".to_string(),
+                    ));
+                }
                 let database = self.database.as_ref().ok_or_else(|| {
                     crate::TlsError::DatabaseError("Missing database name".to_string())
                 })?;
@@ -280,6 +285,23 @@ mod tests {
             .connection_string()
             .expect("test assertion should succeed");
         assert_eq!(conn_str, "postgres://user:pass@[::1]:5432/testdb");
+    }
+
+    #[test]
+    fn test_postgres_connection_string_rejects_zero_port() {
+        let config = DatabaseConfig::postgres(
+            "localhost".to_string(),
+            0,
+            "testdb".to_string(),
+            "user".to_string(),
+            "pass".to_string(),
+        );
+
+        let err = config
+            .connection_string()
+            .expect_err("zero PostgreSQL port should fail");
+
+        assert!(err.to_string().contains("PostgreSQL port"));
     }
 
     #[test]
