@@ -15,6 +15,7 @@ pub fn validate_target(
     target: &str,
     allow_private_ips: bool,
 ) -> std::result::Result<(String, Option<u16>), ValidationError> {
+    let target = target.trim();
     if target.is_empty() {
         return Err(ValidationError::InvalidHostname(
             "Target cannot be empty".to_string(),
@@ -258,6 +259,15 @@ mod tests {
     fn test_validate_target_normalizes_rooted_fqdn() {
         let (host, port) =
             validate_target("example.com.:443", true).expect("rooted FQDN target should be valid");
+
+        assert_eq!(host, "example.com");
+        assert_eq!(port, Some(443));
+    }
+
+    #[test]
+    fn test_validate_target_trims_outer_whitespace() {
+        let (host, port) =
+            validate_target("  example.com:443\t", true).expect("target should be trimmed");
 
         assert_eq!(host, "example.com");
         assert_eq!(port, Some(443));
