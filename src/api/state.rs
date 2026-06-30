@@ -220,6 +220,12 @@ impl ApiStats {
 impl AppState {
     /// Create new application state
     pub fn new(config: ApiConfig) -> Result<Self> {
+        if config.rate_limit_per_minute == 0 {
+            return Err(crate::error::TlsError::ConfigError {
+                message: "rate_limit_per_minute must be greater than 0".to_string(),
+            });
+        }
+
         let config = Arc::new(config);
         let stats = Arc::new(tokio::sync::RwLock::new(ApiStats::default()));
 
@@ -376,5 +382,20 @@ mod tests {
         assert_eq!(stats.avg_scan_duration(), 0.0);
         assert_eq!(stats.scans_last_24h(), 0);
         assert_eq!(stats.scans_last_7d(), 0);
+    }
+
+    #[test]
+    fn test_app_state_rejects_zero_rate_limit() {
+        let config = ApiConfig {
+            rate_limit_per_minute: 0,
+            ..Default::default()
+        };
+
+        let err = match AppState::new(config) {
+            Ok(_) => panic!("zero rate limit should fail"),
+            Err(err) => err,
+        };
+
+        assert!(err.to_string().contains("rate_limit_per_minute"));
     }
 }
