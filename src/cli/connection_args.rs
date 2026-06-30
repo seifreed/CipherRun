@@ -75,8 +75,10 @@ impl ConnectionArgs {
         self.delay
             .as_deref()
             .map(|d| {
-                crate::utils::rate_limiter::parse_delay(d)
-                    .map(|duration| u64::try_from(duration.as_millis()).unwrap_or(u64::MAX))
+                let duration = crate::utils::rate_limiter::parse_delay(d)?;
+                u64::try_from(duration.as_millis()).map_err(|_| crate::TlsError::InvalidInput {
+                    message: format!("Delay is too large: {d}"),
+                })
             })
             .transpose()
     }
@@ -140,6 +142,16 @@ mod tests {
     fn test_effective_sleep_ms_rejects_invalid_delay() {
         let args = ConnectionArgs {
             delay: Some("nope".to_string()),
+            ..Default::default()
+        };
+
+        assert!(args.effective_sleep_ms().is_err());
+    }
+
+    #[test]
+    fn test_effective_sleep_ms_rejects_delay_that_exceeds_millis_range() {
+        let args = ConnectionArgs {
+            delay: Some(format!("{}s", u64::MAX / 1000 + 1)),
             ..Default::default()
         };
 
