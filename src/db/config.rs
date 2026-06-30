@@ -203,6 +203,12 @@ max_age_days = 365
 
 impl Config {
     fn validate(&self) -> crate::Result<()> {
+        if self.database.db_type == DatabaseType::Postgres && matches!(self.database.port, Some(0))
+        {
+            return Err(crate::TlsError::DatabaseError(
+                "PostgreSQL port must be greater than 0".to_string(),
+            ));
+        }
         if matches!(self.database.max_connections, Some(0)) {
             return Err(crate::TlsError::DatabaseError(
                 "max_connections must be greater than 0".to_string(),
@@ -334,6 +340,30 @@ max_connections = 0
             .expect_err("zero max_connections should fail");
 
         assert!(err.to_string().contains("max_connections"));
+    }
+
+    #[test]
+    fn test_config_from_file_rejects_zero_postgres_port() {
+        let dir = tempfile::tempdir().expect("test assertion should succeed");
+        let path = dir.path().join("db.toml");
+        std::fs::write(
+            &path,
+            r#"
+[database]
+type = "postgres"
+host = "localhost"
+port = 0
+database = "cipherrun"
+username = "user"
+password = "pass"
+"#,
+        )
+        .expect("test assertion should succeed");
+
+        let err = DatabaseConfig::from_file(path.to_str().expect("utf-8 path"))
+            .expect_err("zero PostgreSQL port should fail");
+
+        assert!(err.to_string().contains("PostgreSQL port"));
     }
 
     #[test]
