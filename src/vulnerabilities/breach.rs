@@ -9,6 +9,8 @@ use crate::Result;
 use crate::constants::TLS_HANDSHAKE_TIMEOUT;
 use crate::utils::network::Target;
 
+const BREACH_HTTP_RESPONSE_LIMIT: usize = 1024 * 1024;
+
 /// BREACH vulnerability tester
 pub struct BreachTester {
     target: Target,
@@ -194,7 +196,7 @@ impl BreachTester {
 
                     // Read as much of the HTTP response as is available so a
                     // fragmented body does not get misclassified.
-                    let mut buffer = vec![0u8; 16384];
+                    let mut buffer = vec![0u8; BREACH_HTTP_RESPONSE_LIMIT];
                     let n = Self::read_http_response(&mut ssl_stream, &mut buffer)?;
 
                     if n > 0 {
@@ -264,7 +266,7 @@ impl BreachTester {
 
                     // Read as much of the HTTP response as is available so a
                     // fragmented body does not get misclassified.
-                    let mut buffer = vec![0u8; 16384];
+                    let mut buffer = vec![0u8; BREACH_HTTP_RESPONSE_LIMIT];
                     let n = Self::read_http_response(&mut ssl_stream, &mut buffer)?;
 
                     if n > 0 {
@@ -597,6 +599,27 @@ mod tests {
             ),
             Some(true)
         );
+    }
+
+    #[test]
+    fn test_dynamic_content_detects_marker_after_legacy_short_read_limit() {
+        let marker = "BREACH_TEST_MARKER_12345";
+        let response = format!("HTTP/1.1 200 OK\r\n\r\n{}{}", "a".repeat(20_000), marker);
+
+        assert_eq!(
+            BreachTester::classify_dynamic_content_response(&response, marker),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn test_sensitive_patterns_detect_token_after_legacy_short_read_limit() {
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n{}<input name=\"csrf\" value=\"abc\">",
+            "a".repeat(20_000)
+        );
+
+        assert!(BreachTester::detect_sensitive_patterns(&response));
     }
 
     #[tokio::test]
