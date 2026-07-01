@@ -136,6 +136,9 @@ pub(crate) struct AdditionalCaEntry {
     pub der: Vec<u8>,
 }
 
+const MAX_ADDITIONAL_CA_FILE_BYTES: u64 = 1024 * 1024;
+const MAX_ADDITIONAL_CA_FILES: usize = 1024;
+
 impl CertificateValidator {
     /// Create new validator for a hostname
     pub fn new(hostname: String) -> Self {
@@ -177,9 +180,20 @@ impl CertificateValidator {
         let mut entries = Vec::new();
 
         if path.is_dir() {
+            let mut files_seen = 0usize;
             for item in std::fs::read_dir(path)? {
                 let item = item?;
                 if item.file_type()?.is_file() {
+                    if files_seen >= MAX_ADDITIONAL_CA_FILES {
+                        return Err(crate::TlsError::InvalidInput {
+                            message: format!(
+                                "Too many additional CA files in {}: max {}",
+                                path.display(),
+                                MAX_ADDITIONAL_CA_FILES
+                            ),
+                        });
+                    }
+                    files_seen += 1;
                     Self::load_additional_ca_file(&item.path(), &mut entries)?;
                 }
             }
@@ -198,6 +212,18 @@ impl CertificateValidator {
     }
 
     fn load_additional_ca_file(path: &Path, entries: &mut Vec<AdditionalCaEntry>) -> Result<()> {
+        let size = std::fs::metadata(path)?.len();
+        if size > MAX_ADDITIONAL_CA_FILE_BYTES {
+            return Err(crate::TlsError::InvalidInput {
+                message: format!(
+                    "Additional CA file '{}' is too large: {} bytes (max {})",
+                    path.display(),
+                    size,
+                    MAX_ADDITIONAL_CA_FILE_BYTES
+                ),
+            });
+        }
+
         let bytes = std::fs::read(path)?;
         let certificates = match openssl::x509::X509::stack_from_pem(&bytes) {
             Ok(certs) => certs,
@@ -345,6 +371,7 @@ impl ValidationResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs::File;
 
     #[test]
     fn test_parse_cert_date_formats() {
@@ -380,5 +407,20 @@ mod tests {
         };
         assert!(result.summary().contains("1 issues"));
         assert_eq!(result.critical_issues().len(), 1);
+    }
+
+    #[test]
+    fn test_additional_ca_rejects_oversized_file_before_read() {
+        let temp_dir = tempfile::tempdir().expect("test assertion should succeed");
+        let path = temp_dir.path().join("ca.pem");
+        let file = File::create(&path).expect("test assertion should succeed");
+        file.set_len(MAX_ADDITIONAL_CA_FILE_BYTES + 1)
+            .expect("test assertion should succeed");
+
+        let err = CertificateValidator::load_additional_ca_entries(&path)
+            .expect_err("oversized additional CA file should fail before reading");
+
+        assert!(err.to_string().contains("Additional CA file"));
+        assert!(err.to_string().contains("too large"));
     }
 }
