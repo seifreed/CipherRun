@@ -44,25 +44,16 @@ impl CaaChecker {
             recommendations: Vec::new(),
         };
 
-        // Query CAA records using dig
-        match self.query_caa_records() {
-            Ok(records) => {
-                if records.is_empty() {
-                    Self::record_no_caa_records(&mut result);
-                } else {
-                    result.has_caa_records = true;
-                    result.records = records;
-                    result.compliant = true;
+        let records = self.query_caa_records()?;
+        if records.is_empty() {
+            Self::record_no_caa_records(&mut result);
+        } else {
+            result.has_caa_records = true;
+            result.records = records;
+            result.compliant = true;
 
-                    // Analyze CAA records
-                    self.analyze_caa_records(&mut result);
-                }
-            }
-            Err(e) => {
-                result
-                    .issues
-                    .push(format!("Failed to query CAA records: {}", e));
-            }
+            // Analyze CAA records
+            self.analyze_caa_records(&mut result);
         }
 
         Ok(result)
@@ -278,6 +269,15 @@ mod tests {
 
         assert_eq!(record.flags, 0);
         assert_eq!(record.tag, "issue");
+    }
+
+    #[test]
+    fn test_check_propagates_caa_query_errors() {
+        let checker = CaaChecker::new("bad\0domain".to_string());
+
+        checker
+            .check()
+            .expect_err("CAA query errors should not be hidden in result issues");
     }
 
     #[test]
