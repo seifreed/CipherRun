@@ -19,6 +19,13 @@ fn is_http_ocsp_url(uri: &str) -> bool {
     uri.starts_with("http://") || uri.starts_with("https://")
 }
 
+fn openssl_x509_from_der_exact(der: &[u8], context: &str) -> Result<X509> {
+    parse_x509_der_exact(der, context)?;
+    X509::from_der(der).map_err(|e| crate::error::TlsError::ParseError {
+        message: format!("Failed to parse {context} DER: {e}"),
+    })
+}
+
 impl RevocationChecker {
     /// Extract OCSP responder URL from certificate
     pub(crate) fn extract_ocsp_url(&self, cert: &CertificateInfo) -> Result<Option<String>> {
@@ -147,17 +154,9 @@ impl RevocationChecker {
             crate::error::TlsError::Other("Issuer certificate required for OCSP request".into())
         })?;
 
-        // Parse certificates from DER bytes using OpenSSL
-        let cert_x509 =
-            X509::from_der(&cert.der_bytes).map_err(|e| crate::error::TlsError::ParseError {
-                message: format!("Failed to parse certificate DER: {}", e),
-            })?;
-
-        let issuer_x509 = X509::from_der(&issuer_info.der_bytes).map_err(|e| {
-            crate::error::TlsError::ParseError {
-                message: format!("Failed to parse issuer certificate DER: {}", e),
-            }
-        })?;
+        let cert_x509 = openssl_x509_from_der_exact(&cert.der_bytes, "certificate")?;
+        let issuer_x509 =
+            openssl_x509_from_der_exact(&issuer_info.der_bytes, "issuer certificate")?;
 
         // Create OCSP certificate ID
         // This combines the certificate serial number with hashes of the issuer's name and public key
@@ -249,16 +248,9 @@ impl RevocationChecker {
             )
         })?;
 
-        let cert_x509 =
-            X509::from_der(&cert.der_bytes).map_err(|e| crate::error::TlsError::ParseError {
-                message: format!("Failed to parse certificate DER: {}", e),
-            })?;
-
-        let issuer_x509 = X509::from_der(&issuer_info.der_bytes).map_err(|e| {
-            crate::error::TlsError::ParseError {
-                message: format!("Failed to parse issuer certificate DER: {}", e),
-            }
-        })?;
+        let cert_x509 = openssl_x509_from_der_exact(&cert.der_bytes, "certificate")?;
+        let issuer_x509 =
+            openssl_x509_from_der_exact(&issuer_info.der_bytes, "issuer certificate")?;
 
         // SECURITY: verify the OCSP response signature before trusting any status.
         // Without this, a forged or MITM'd response over the (plain-HTTP) AIA fetch
@@ -432,6 +424,34 @@ mod tests {
         cert.der_bytes.push(0xff);
 
         let err = checker.extract_ocsp_url(&cert).unwrap_err();
+        assert!(format!("{err}").contains("trailing bytes"));
+    }
+
+    #[test]
+    fn test_build_ocsp_request_rejects_trailing_certificate_der_bytes() {
+        let checker = RevocationChecker::new(false);
+        let mut cert = cert_with_raw_extension_der("1.2.3.4", b"\x05\x00");
+        let issuer = cert_with_raw_extension_der("1.2.3.4", b"\x05\x00");
+        cert.der_bytes.push(0xff);
+
+        let err = checker
+            .build_ocsp_request(&cert, Some(&issuer))
+            .expect_err("trailing certificate DER bytes should fail");
+
+        assert!(format!("{err}").contains("trailing bytes"));
+    }
+
+    #[test]
+    fn test_build_ocsp_request_rejects_trailing_issuer_der_bytes() {
+        let checker = RevocationChecker::new(false);
+        let cert = cert_with_raw_extension_der("1.2.3.4", b"\x05\x00");
+        let mut issuer = cert_with_raw_extension_der("1.2.3.4", b"\x05\x00");
+        issuer.der_bytes.push(0xff);
+
+        let err = checker
+            .build_ocsp_request(&cert, Some(&issuer))
+            .expect_err("trailing issuer DER bytes should fail");
+
         assert!(format!("{err}").contains("trailing bytes"));
     }
 
