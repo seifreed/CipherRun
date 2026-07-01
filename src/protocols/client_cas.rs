@@ -460,6 +460,34 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_ca_list_rejects_trailing_bytes_after_ca_list() {
+        let tester = ClientCAsTester::new(
+            Target::with_ips(
+                "example.test".to_string(),
+                443,
+                vec!["127.0.0.1".parse().expect("valid IP")],
+            )
+            .expect("test assertion should succeed"),
+        );
+
+        let dn = build_dn("CN5", "ORG5");
+        let mut handshake = build_certificate_request(&dn);
+        handshake.push(0xff);
+        let body_len = handshake.len() - 4;
+        handshake[1] = ((body_len >> 16) & 0xff) as u8;
+        handshake[2] = ((body_len >> 8) & 0xff) as u8;
+        handshake[3] = (body_len & 0xff) as u8;
+
+        let err = tester
+            .parse_ca_list(&handshake)
+            .expect_err("trailing bytes after CA list should fail");
+        assert!(
+            err.to_string()
+                .contains("CertificateRequest contains trailing bytes after CA list")
+        );
+    }
+
+    #[test]
     fn test_parse_certificate_request_skips_non_handshake() {
         let tester = ClientCAsTester::new(
             Target::with_ips(

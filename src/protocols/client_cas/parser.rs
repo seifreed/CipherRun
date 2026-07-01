@@ -234,6 +234,11 @@ impl ClientCAsTester {
                 message: "CertificateRequest CA list length exceeds message".to_string(),
             });
         }
+        if ca_list_end != data.len() {
+            return Err(crate::TlsError::ParseError {
+                message: "CertificateRequest contains trailing bytes after CA list".to_string(),
+            });
+        }
 
         let mut cas = Vec::new();
         let ca_data = Self::slice_range(data, pos, ca_list_len, "CertificateRequest CA list")?;
