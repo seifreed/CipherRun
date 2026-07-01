@@ -23,13 +23,7 @@ impl StarttlsTester {
 
     /// Test STARTTLS for a specific protocol
     pub async fn test_protocol(&self, protocol: StarttlsProtocol) -> StarttlsTestResult {
-        // Use the target's configured port if it differs from the default TLS port (443),
-        // otherwise fall back to the protocol's default STARTTLS port
-        let port = if self.target.port != 443 {
-            self.target.port
-        } else {
-            protocol.default_port()
-        };
+        let port = self.target.port;
 
         // For implicit TLS protocols (SMTPS, IMAPS, etc.), we don't test STARTTLS
         if protocol.is_implicit_tls() {
@@ -218,6 +212,25 @@ mod tests {
         let result = tester.test_protocol(StarttlsProtocol::IRC).await;
         assert!(!result.starttls_supported);
         assert_eq!(result.port, StarttlsProtocol::IRC.default_port());
+    }
+
+    #[tokio::test]
+    async fn test_protocol_respects_explicit_443_port() {
+        let target = Target::with_ips(
+            "127.0.0.1".to_string(),
+            443,
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .unwrap();
+        let tester = StarttlsTester {
+            target,
+            connect_timeout: Duration::from_millis(50),
+        };
+
+        let result = tester.test_protocol(StarttlsProtocol::SMTP).await;
+
+        assert!(!result.starttls_supported);
+        assert_eq!(result.port, 443);
     }
 
     #[tokio::test]
