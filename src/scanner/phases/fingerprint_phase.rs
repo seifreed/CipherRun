@@ -101,6 +101,19 @@ impl FingerprintPhase {
         JarmDatabase::builtin()
     }
 
+    fn validate_requested_databases(&self, context: &mut ScanContext) -> Result<()> {
+        if context.args.should_run_ja3_fingerprint() {
+            let _ = self.load_ja3_database(context)?;
+        }
+        if context.args.should_run_ja3s_fingerprint() {
+            let _ = self.load_ja3s_database(context)?;
+        }
+        if context.args.should_run_jarm_fingerprint() {
+            let _ = self.load_jarm_database(context)?;
+        }
+        Ok(())
+    }
+
     /// Capture JA3 client fingerprint
     ///
     /// JA3 is a method for creating SSL/TLS client fingerprints that are
@@ -290,6 +303,8 @@ impl ScanPhase for FingerprintPhase {
     }
 
     async fn execute(&self, context: &mut ScanContext) -> Result<()> {
+        self.validate_requested_databases(context)?;
+
         // Capture JA3 if requested
         if context.args.should_run_ja3_fingerprint()
             && let Err(e) = self.capture_ja3(context).await
@@ -523,5 +538,55 @@ mod tests {
 
         assert!(!err.to_string().is_empty());
         assert!(context.results.scan_metadata.human_warnings.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_execute_rejects_invalid_requested_custom_databases() {
+        async fn assert_rejects(args: ScanRequest, expected: &str) {
+            let target = crate::utils::network::Target::with_ips(
+                "localhost".to_string(),
+                443,
+                vec!["127.0.0.1".parse().expect("valid IP")],
+            )
+            .expect("test assertion should succeed");
+            let mut context = ScanContext::new(target, Arc::new(args), None, None);
+
+            let err = FingerprintPhase::new()
+                .execute(&mut context)
+                .await
+                .expect_err("invalid requested custom database should fail the phase");
+
+            assert!(err.to_string().contains(expected), "{err}");
+            assert!(context.results.scan_metadata.human_warnings.is_empty());
+        }
+
+        let missing = || {
+            std::env::temp_dir().join(format!(
+                "cipherrun_missing_fingerprint_{}_{}.json",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .expect("time")
+                    .as_nanos()
+            ))
+        };
+
+        let mut args = ScanRequest::default();
+        args.scan.scope.all = false;
+        args.fingerprint.explicit_ja3 = true;
+        args.fingerprint.ja3_database = Some(missing());
+        assert_rejects(args, "No such file").await;
+
+        let mut args = ScanRequest::default();
+        args.scan.scope.all = false;
+        args.fingerprint.explicit_ja3s = true;
+        args.fingerprint.ja3s_database = Some(missing());
+        assert_rejects(args, "No such file").await;
+
+        let mut args = ScanRequest::default();
+        args.scan.scope.all = false;
+        args.fingerprint.explicit_jarm = true;
+        args.fingerprint.jarm_database = Some(missing());
+        assert_rejects(args, "No such file").await;
     }
 }
