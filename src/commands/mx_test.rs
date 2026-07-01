@@ -11,6 +11,8 @@ use crate::application::{ScanAssessment, ScanExecutionReport};
 use crate::compliance::{BuiltinFrameworkSource, engine::DefaultComplianceEvaluator};
 use crate::db::ConfigFileScanResultsStoreFactory;
 use crate::policy::{FilesystemPolicySource, evaluator::DefaultPolicyEvaluator};
+use crate::scanner::ScanResults;
+use crate::utils::mx::MxRecord;
 use crate::{Args, Result, TlsError};
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -54,10 +56,7 @@ impl MxTestCommand {
     fn export_collection_json(
         &self,
         mx_domain: &str,
-        results: &[(
-            crate::utils::mx::MxRecord,
-            Result<crate::scanner::ScanResults>,
-        )],
+        results: &[(MxRecord, Result<ScanResults>)],
     ) -> Result<bool> {
         let exporter = ScanExporter::new(&self.args);
         let json_path = exporter.collection_json_output_path()?;
@@ -95,10 +94,7 @@ impl MxTestCommand {
     async fn build_execution_report(
         &self,
         mx_tester: &crate::utils::mx::MxTester,
-        results: &[(
-            crate::utils::mx::MxRecord,
-            Result<crate::scanner::ScanResults>,
-        )],
+        results: &[(MxRecord, Result<ScanResults>)],
     ) -> Result<ScanExecutionReport> {
         let aggregated_results = mx_tester.aggregate_scan_results(results)?;
         let assessment =
@@ -202,6 +198,14 @@ impl MxTestCommand {
             notices.render_export_spacing(true);
         }
     }
+
+    fn exit_for_results(results: &[(MxRecord, Result<ScanResults>)]) -> CommandExit {
+        if results.iter().any(|(_, result)| result.is_err()) {
+            CommandExit::failure(1)
+        } else {
+            CommandExit::success()
+        }
+    }
 }
 
 struct MxWorkflowDependencies {
@@ -243,6 +247,7 @@ impl Command for MxTestCommand {
                 self.args.network.max_parallel,
             )
             .await?;
+        let scan_exit = Self::exit_for_results(&results);
 
         if !self.args.output.quiet {
             println!("{}", MxTester::generate_mx_summary(&results));
@@ -251,7 +256,7 @@ impl Command for MxTestCommand {
         self.export_collection_json(mx_domain, &results)?;
 
         if !self.needs_aggregated_post_processing() {
-            return Ok(CommandExit::success());
+            return Ok(scan_exit);
         }
 
         let report = self.build_execution_report(&mx_tester, &results).await?;
@@ -266,7 +271,11 @@ impl Command for MxTestCommand {
             self.render_post_scan_notices(&report, &export_outcome);
         }
 
-        Ok(post_exit)
+        if scan_exit.is_success() {
+            Ok(post_exit)
+        } else {
+            Ok(scan_exit)
+        }
     }
 
     fn name(&self) -> &'static str {
@@ -290,5 +299,27 @@ mod tests {
         let cmd = MxTestCommand::new(args);
         let err = cmd.execute().await.unwrap_err();
         assert!(format!("{err}").contains("MX domain is required"));
+    }
+
+    #[test]
+    fn test_exit_for_results_fails_when_any_mx_failed() {
+        let results = vec![
+            (
+                MxRecord {
+                    priority: 10,
+                    hostname: "ok.example".to_string(),
+                },
+                Ok(ScanResults::default()),
+            ),
+            (
+                MxRecord {
+                    priority: 20,
+                    hostname: "bad.example".to_string(),
+                },
+                Err(TlsError::Other("scan failed".to_string())),
+            ),
+        ];
+
+        assert!(!MxTestCommand::exit_for_results(&results).is_success());
     }
 }
