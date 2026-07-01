@@ -25,9 +25,9 @@ pub struct OpenSslClientOptions {
     pub debug: bool,
     pub state: bool,
     pub timeout: Option<Duration>,
-    pub verify_locations: Option<String>,
-    pub cert: Option<String>,
-    pub key: Option<String>,
+    pub verify_locations: Option<OsString>,
+    pub cert: Option<OsString>,
+    pub key: Option<OsString>,
     pub pass: Option<String>,
     pub proxy: Option<String>,
     pub alpn: Option<Vec<String>>,
@@ -321,12 +321,12 @@ impl OpenSslClient {
     }
 }
 
-fn validate_file_path_arg(value: &str, flag: &str) -> crate::Result<()> {
-    if value.starts_with('-') {
+fn validate_file_path_arg(value: &std::ffi::OsStr, flag: &str) -> crate::Result<()> {
+    if value.to_string_lossy().starts_with('-') {
         crate::tls_bail!(
             "Invalid value for {}: '{}' looks like a flag, not a file path",
             flag,
-            value
+            value.to_string_lossy()
         );
     }
     Ok(())
@@ -430,6 +430,18 @@ mod tests {
             client.openssl_path().as_bytes(),
             path.as_os_str().as_bytes()
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_file_path_arg_validation_accepts_non_utf8_path() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let path = OsString::from_vec(vec![b'c', b'e', b'r', b't', 0xff]);
+
+        validate_file_path_arg(&path, "-cert").expect("non-UTF8 path should stay valid");
+        validate_file_path_arg(std::ffi::OsStr::new("-cert.pem"), "-cert")
+            .expect_err("flag-like path should still be rejected");
     }
 
     #[test]

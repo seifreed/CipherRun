@@ -107,19 +107,19 @@ impl CertificatePhase {
                 .tls
                 .add_ca
                 .as_ref()
-                .map(|path| path.display().to_string()),
+                .map(|path| path.as_os_str().to_os_string()),
             cert: context
                 .args
                 .tls
                 .mtls_cert
                 .as_ref()
-                .map(|path| path.display().to_string()),
+                .map(|path| path.as_os_str().to_os_string()),
             key: context
                 .args
                 .tls
                 .client_key
                 .as_ref()
-                .map(|path| path.display().to_string()),
+                .map(|path| path.as_os_str().to_os_string()),
             pass: context.args.tls.client_key_password.clone(),
             proxy: context.args.network.proxy.clone(),
             bugs: context.args.tls.bugs,
