@@ -154,6 +154,27 @@ def test_rate_limit_exhausted_raises_rate_limit_error_not_value_error(monkeypatc
         client._make_request("GET", "/api/v1/scan/x", max_rate_limit_retries=0)
 
 
+def test_sync_client_quotes_path_parameters(monkeypatch):
+    client = CipherRunClient(api_key="k")
+    endpoints = []
+
+    def fake_request(_method, endpoint, **_kwargs):
+        endpoints.append(endpoint)
+        response = MagicMock()
+        response.json.return_value = {
+            "scan_id": "scan/1",
+            "status": "queued",
+            "progress": 0,
+        }
+        return response
+
+    monkeypatch.setattr(client, "_make_request", fake_request)
+
+    client.get_scan_status("scan/1")
+
+    assert endpoints == ["/api/v1/scan/scan%2F1"]
+
+
 # --- Async variants ---
 
 
@@ -166,9 +187,7 @@ def test_async_safe_error_data_invalid_json():
 def test_async_safe_error_data_valid_json():
     response = AsyncMock()
     response.json = AsyncMock(return_value={"message": "boom"})
-    assert asyncio.run(async_safe_error_data(response)) == {
-        "message": "boom"
-    }
+    assert asyncio.run(async_safe_error_data(response)) == {"message": "boom"}
 
 
 def test_async_wait_for_scan_failed_raises_api_error(monkeypatch):
@@ -184,6 +203,28 @@ def test_async_wait_for_scan_failed_raises_api_error(monkeypatch):
 
     with pytest.raises(APIError):
         asyncio.run(run())
+
+
+def test_async_client_quotes_path_parameters(monkeypatch):
+    client = AsyncCipherRunClient(api_key="k")
+    endpoints = []
+
+    async def fake_request(_method, endpoint, **_kwargs):
+        endpoints.append(endpoint)
+        return {
+            "scan_id": "scan/1",
+            "status": "queued",
+            "progress": 0,
+        }
+
+    monkeypatch.setattr(client, "_make_request", fake_request)
+
+    async def run():
+        await client.get_scan_status("scan/1")
+
+    asyncio.run(run())
+
+    assert endpoints == ["/api/v1/scan/scan%2F1"]
 
 
 # --- SecurityGrade / RatingResult Unverified ---

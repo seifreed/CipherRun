@@ -79,7 +79,6 @@ def _safe_error_data(response: "requests.Response") -> Dict[str, Any]:
         return {}
 
 
-
 class CipherRunClient:
     """Synchronous client for the CipherRun API.
 
@@ -234,7 +233,7 @@ class CipherRunClient:
             >>> status = client.get_scan_status(scan_id)
             >>> print(f"Progress: {status.progress}%")
         """
-        response = self._make_request("GET", f"/api/v1/scan/{scan_id}")
+        response = self._make_request("GET", f"/api/v1/scan/{quote(scan_id, safe='')}")
         return ScanStatusResponse(**response.json())
 
     def get_scan_results(self, scan_id: str) -> ScanResults:
@@ -253,7 +252,7 @@ class CipherRunClient:
             >>> results = client.get_scan_results(scan_id)
             >>> print(f"Protocols: {len(results.protocols)}")
         """
-        response = self._make_request("GET", f"/api/v1/scan/{scan_id}/results")
+        response = self._make_request("GET", f"/api/v1/scan/{quote(scan_id, safe='')}/results")
         return ScanResults(**response.json())
 
     def cancel_scan(self, scan_id: str) -> bool:
@@ -269,7 +268,7 @@ class CipherRunClient:
             >>> if client.cancel_scan(scan_id):
             ...     print("Scan cancelled")
         """
-        response = self._make_request("DELETE", f"/api/v1/scan/{scan_id}")
+        response = self._make_request("DELETE", f"/api/v1/scan/{quote(scan_id, safe='')}")
         data = response.json()
         return "cancelled" in data.get("message", "").lower()
 
@@ -364,7 +363,7 @@ class CipherRunClient:
             >>> cert = client.get_certificate(fingerprint)
             >>> print(cert.common_name)
         """
-        response = self._make_request("GET", f"/api/v1/certificates/{fingerprint}")
+        response = self._make_request("GET", f"/api/v1/certificates/{quote(fingerprint, safe='')}")
         return CertificateSummary(**response.json())
 
     def check_compliance(self, framework: str, target: str, detailed: bool = False) -> ComplianceReport:
@@ -383,7 +382,7 @@ class CipherRunClient:
             >>> print(report.status)
         """
         params = {"target": target, "detailed": detailed, "format": "json"}
-        response = self._make_request("GET", f"/api/v1/compliance/{framework}", params=params)
+        response = self._make_request("GET", f"/api/v1/compliance/{quote(framework, safe='')}", params=params)
         return ComplianceReport(**response.json())
 
     def create_policy(
@@ -432,7 +431,7 @@ class CipherRunClient:
             >>> policy = client.get_policy(policy_id)
             >>> print(policy.name)
         """
-        response = self._make_request("GET", f"/api/v1/policies/{policy_id}")
+        response = self._make_request("GET", f"/api/v1/policies/{quote(policy_id, safe='')}")
         return PolicyResponse(**response.json())
 
     def evaluate_policy(
@@ -461,7 +460,7 @@ class CipherRunClient:
         )
         response = self._make_request(
             "POST",
-            f"/api/v1/policies/{policy_id}/evaluate",
+            f"/api/v1/policies/{quote(policy_id, safe='')}/evaluate",
             json_data=request.model_dump(),
         )
         return PolicyEvaluationResponse(**response.json())

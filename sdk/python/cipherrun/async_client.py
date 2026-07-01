@@ -78,7 +78,6 @@ async def _safe_error_data(response: "aiohttp.ClientResponse") -> Dict[str, Any]
         return {}
 
 
-
 class AsyncCipherRunClient:
     """Asynchronous client for the CipherRun API.
 
@@ -195,13 +194,13 @@ class AsyncCipherRunClient:
                 if retry_count >= self.max_retries:
                     raise SDKTimeoutError(f"Request timed out after {timeout or self.timeout}s: {str(e)}") from e
                 retry_count += 1
-                await asyncio.sleep(self.retry_backoff ** retry_count)
+                await asyncio.sleep(self.retry_backoff**retry_count)
 
             except aiohttp.ClientConnectionError as e:
                 if retry_count >= self.max_retries:
                     raise SDKConnectionError(f"Connection failed: {str(e)}") from e
                 retry_count += 1
-                await asyncio.sleep(self.retry_backoff ** retry_count)
+                await asyncio.sleep(self.retry_backoff**retry_count)
 
             except aiohttp.ClientError as e:
                 raise SDKConnectionError(f"Request failed: {str(e)}") from e
@@ -247,7 +246,7 @@ class AsyncCipherRunClient:
             >>> status = await client.get_scan_status(scan_id)
             >>> print(f"Progress: {status.progress}%")
         """
-        data = await self._make_request("GET", f"/api/v1/scan/{scan_id}")
+        data = await self._make_request("GET", f"/api/v1/scan/{quote(scan_id, safe='')}")
         return ScanStatusResponse(**data)
 
     async def get_scan_results(self, scan_id: str) -> ScanResults:
@@ -266,7 +265,7 @@ class AsyncCipherRunClient:
             >>> results = await client.get_scan_results(scan_id)
             >>> print(f"Protocols: {len(results.protocols)}")
         """
-        data = await self._make_request("GET", f"/api/v1/scan/{scan_id}/results")
+        data = await self._make_request("GET", f"/api/v1/scan/{quote(scan_id, safe='')}/results")
         return ScanResults(**data)
 
     async def cancel_scan(self, scan_id: str) -> bool:
@@ -282,7 +281,7 @@ class AsyncCipherRunClient:
             >>> if await client.cancel_scan(scan_id):
             ...     print("Scan cancelled")
         """
-        data = await self._make_request("DELETE", f"/api/v1/scan/{scan_id}")
+        data = await self._make_request("DELETE", f"/api/v1/scan/{quote(scan_id, safe='')}")
         return "cancelled" in data.get("message", "").lower()
 
     async def wait_for_scan(
@@ -376,7 +375,7 @@ class AsyncCipherRunClient:
             >>> cert = await client.get_certificate(fingerprint)
             >>> print(cert.common_name)
         """
-        data = await self._make_request("GET", f"/api/v1/certificates/{fingerprint}")
+        data = await self._make_request("GET", f"/api/v1/certificates/{quote(fingerprint, safe='')}")
         return CertificateSummary(**data)
 
     async def check_compliance(self, framework: str, target: str, detailed: bool = False) -> ComplianceReport:
@@ -395,7 +394,7 @@ class AsyncCipherRunClient:
             >>> print(report.status)
         """
         params = {"target": target, "detailed": detailed, "format": "json"}
-        data = await self._make_request("GET", f"/api/v1/compliance/{framework}", params=params)
+        data = await self._make_request("GET", f"/api/v1/compliance/{quote(framework, safe='')}", params=params)
         return ComplianceReport(**data)
 
     async def create_policy(
@@ -444,7 +443,7 @@ class AsyncCipherRunClient:
             >>> policy = await client.get_policy(policy_id)
             >>> print(policy.name)
         """
-        data = await self._make_request("GET", f"/api/v1/policies/{policy_id}")
+        data = await self._make_request("GET", f"/api/v1/policies/{quote(policy_id, safe='')}")
         return PolicyResponse(**data)
 
     async def evaluate_policy(
@@ -473,7 +472,7 @@ class AsyncCipherRunClient:
         )
         data = await self._make_request(
             "POST",
-            f"/api/v1/policies/{policy_id}/evaluate",
+            f"/api/v1/policies/{quote(policy_id, safe='')}/evaluate",
             json_data=request.model_dump(),
         )
         return PolicyEvaluationResponse(**data)
