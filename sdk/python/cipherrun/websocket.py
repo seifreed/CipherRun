@@ -4,8 +4,9 @@ This module provides WebSocket client functionality for streaming scan progress.
 """
 
 import asyncio
+import inspect
 import json
-from typing import AsyncIterator, Awaitable, Callable, Optional
+from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Optional
 from urllib.parse import quote, urljoin, urlparse
 
 import websockets
@@ -31,6 +32,12 @@ def _progress_message_from_frame(data: dict) -> Optional[ProgressMessage]:
         return ProgressMessage(**data)
     except Exception as e:
         raise WebSocketError(f"Invalid progress message: {e}") from e
+
+
+def _websocket_header_kwargs(connect_func: Callable[..., Any], headers: dict) -> Dict[str, dict]:
+    if "additional_headers" in inspect.signature(connect_func).parameters:
+        return {"additional_headers": headers}
+    return {"extra_headers": headers}
 
 
 class WebSocketProgressClient:
@@ -108,7 +115,7 @@ class WebSocketProgressClient:
         try:
             async with websockets.connect(
                 ws_url,
-                extra_headers=extra_headers,
+                **_websocket_header_kwargs(websockets.connect, extra_headers),
                 ping_interval=20,
                 ping_timeout=10,
                 close_timeout=10,

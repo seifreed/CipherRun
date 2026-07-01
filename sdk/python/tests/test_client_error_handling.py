@@ -34,7 +34,7 @@ from cipherrun.client import (
 )
 from cipherrun.exceptions import APIError, CipherRunError, RateLimitError
 from cipherrun.models import ScanStatusResponse
-from cipherrun.websocket import WebSocketProgressClient
+from cipherrun.websocket import WebSocketProgressClient, _websocket_header_kwargs
 
 
 def test_parse_retry_after_accepts_delta_seconds():
@@ -261,6 +261,20 @@ def test_websocket_client_quotes_scan_id(monkeypatch):
 
     assert connected_urls == ["ws://localhost:8080/api/v1/scan/scan%2F1/stream"]
     assert messages[0].scan_id == "scan/1"
+
+
+def test_websocket_header_kwargs_supports_old_websockets():
+    def connect(_uri, *, extra_headers=None):
+        return extra_headers
+
+    assert _websocket_header_kwargs(connect, {"X-API-Key": "k"}) == {"extra_headers": {"X-API-Key": "k"}}
+
+
+def test_websocket_header_kwargs_supports_new_websockets():
+    def connect(_uri, *, additional_headers=None):
+        return additional_headers
+
+    assert _websocket_header_kwargs(connect, {"X-API-Key": "k"}) == {"additional_headers": {"X-API-Key": "k"}}
 
 
 # --- SecurityGrade / RatingResult Unverified ---
