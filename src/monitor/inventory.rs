@@ -260,12 +260,9 @@ impl CertificateInventory {
             // Check domain count limit
             domain_count += 1;
             if domain_count > MAX_DOMAINS {
-                tracing::warn!(
-                    "Domains file contains more than {} entries, only the first {} will be loaded",
-                    MAX_DOMAINS,
-                    MAX_DOMAINS
-                );
-                break;
+                return Err(TlsError::InvalidInput {
+                    message: format!("Domains file contains more than {MAX_DOMAINS} entries"),
+                });
             }
 
             // Parse line: hostname[:port] [interval]
@@ -768,6 +765,27 @@ mod tests {
         assert_eq!(inventory.len(), 1);
         assert!(inventory.get_domain("existing.example").is_some());
         assert!(inventory.get_domain("new.example").is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn test_load_from_file_rejects_too_many_domains_without_partial_load() -> Result<()> {
+        let mut temp_file = NamedTempFile::new()?;
+        for index in 0..=MAX_DOMAINS {
+            writeln!(temp_file, "host{index}.example")?;
+        }
+
+        let mut inventory = CertificateInventory::new();
+        inventory.add_domain(MonitoredDomain::new("existing.example".to_string(), 443))?;
+
+        let err = inventory
+            .load_from_file(temp_file.path(), 3600)
+            .expect_err("oversized inventory should fail");
+
+        assert!(err.to_string().contains("more than"));
+        assert_eq!(inventory.len(), 1);
+        assert!(inventory.get_domain("existing.example").is_some());
+        assert!(inventory.get_domain("host0.example").is_none());
         Ok(())
     }
 
