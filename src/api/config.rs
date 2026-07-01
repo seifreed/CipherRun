@@ -7,6 +7,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use subtle::ConstantTimeEq;
 
+const MAX_API_CONFIG_BYTES: u64 = 1024 * 1024;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiConfig {
     /// Server host address
@@ -140,6 +142,20 @@ impl ApiConfig {
 
     pub(crate) fn from_file_unvalidated(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
+        let size = std::fs::metadata(path)
+            .map_err(|e| TlsError::FileSystemError {
+                path: path.display().to_string(),
+                source: e,
+            })?
+            .len();
+        if size > MAX_API_CONFIG_BYTES {
+            return Err(TlsError::InvalidInput {
+                message: format!(
+                    "API config file too large: {} bytes (max {})",
+                    size, MAX_API_CONFIG_BYTES
+                ),
+            });
+        }
         let content = std::fs::read_to_string(path).map_err(|e| TlsError::FileSystemError {
             path: path.display().to_string(),
             source: e,
@@ -337,6 +353,18 @@ enable_swagger = true
 
         let err = ApiConfig::from_file(&path).expect_err("invalid config should fail at load");
         assert!(err.to_string().contains("max_concurrent_scans"));
+    }
+
+    #[test]
+    fn test_from_file_rejects_oversized_config_before_read() {
+        let dir = tempfile::tempdir().expect("tempdir should be created");
+        let path = dir.path().join("api.toml");
+        let file = std::fs::File::create(&path).expect("config should be created");
+        file.set_len(MAX_API_CONFIG_BYTES + 1)
+            .expect("config should be resized");
+
+        let err = ApiConfig::from_file(&path).expect_err("oversized config should fail");
+        assert!(err.to_string().contains("API config file too large"));
     }
 
     #[cfg(unix)]

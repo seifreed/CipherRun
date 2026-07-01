@@ -9,6 +9,8 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
+const MAX_MONITOR_CONFIG_BYTES: u64 = 1024 * 1024;
+
 /// Main monitoring configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MonitorConfig {
@@ -151,6 +153,20 @@ impl Default for MonitorSettings {
 impl MonitorConfig {
     /// Load configuration from TOML file
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
+        let size = fs::metadata(path.as_ref())
+            .map_err(|e| TlsError::FileSystemError {
+                path: path.as_ref().display().to_string(),
+                source: e,
+            })?
+            .len();
+        if size > MAX_MONITOR_CONFIG_BYTES {
+            return Err(TlsError::InvalidInput {
+                message: format!(
+                    "Monitor config file too large: {} bytes (max {})",
+                    size, MAX_MONITOR_CONFIG_BYTES
+                ),
+            });
+        }
         let contents =
             fs::read_to_string(path.as_ref()).map_err(|e| TlsError::FileSystemError {
                 path: path.as_ref().display().to_string(),
@@ -504,6 +520,18 @@ webhook_url = " "
         let err = MonitorConfig::from_file(&path).expect_err("empty Slack webhook should fail");
 
         assert!(err.to_string().contains("Slack"));
+    }
+
+    #[test]
+    fn test_from_file_rejects_oversized_config_before_read() {
+        let dir = tempfile::tempdir().expect("test assertion should succeed");
+        let path = dir.path().join("monitor.toml");
+        let file = fs::File::create(&path).expect("config should be created");
+        file.set_len(MAX_MONITOR_CONFIG_BYTES + 1)
+            .expect("config should be resized");
+
+        let err = MonitorConfig::from_file(&path).expect_err("oversized config should fail");
+        assert!(err.to_string().contains("Monitor config file too large"));
     }
 
     #[test]

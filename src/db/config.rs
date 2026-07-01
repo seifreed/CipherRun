@@ -6,6 +6,8 @@ use crate::utils::path_ext::PathExt;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+const MAX_DATABASE_CONFIG_BYTES: u64 = 1024 * 1024;
+
 /// Database type
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -178,6 +180,17 @@ impl DatabaseConfig {
     /// Load configuration from TOML file
     pub fn from_file(path: impl AsRef<Path>) -> crate::Result<Config> {
         let path = path.as_ref();
+        let size = std::fs::metadata(path)
+            .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to read config: {}", e)))?
+            .len();
+        if size > MAX_DATABASE_CONFIG_BYTES {
+            return Err(crate::TlsError::InvalidInput {
+                message: format!(
+                    "Database config file too large: {} bytes (max {})",
+                    size, MAX_DATABASE_CONFIG_BYTES
+                ),
+            });
+        }
         let contents = std::fs::read_to_string(path)
             .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to read config: {}", e)))?;
 
@@ -432,6 +445,18 @@ max_connections = 0
         let err = DatabaseConfig::from_file(&path).expect_err("zero max_connections should fail");
 
         assert!(err.to_string().contains("max_connections"));
+    }
+
+    #[test]
+    fn test_config_from_file_rejects_oversized_config_before_read() {
+        let dir = tempfile::tempdir().expect("test assertion should succeed");
+        let path = dir.path().join("db.toml");
+        let file = std::fs::File::create(&path).expect("config should be created");
+        file.set_len(MAX_DATABASE_CONFIG_BYTES + 1)
+            .expect("config should be resized");
+
+        let err = DatabaseConfig::from_file(&path).expect_err("oversized config should fail");
+        assert!(err.to_string().contains("Database config file too large"));
     }
 
     #[test]
