@@ -10,6 +10,7 @@ use crate::monitor::inventory::{CertificateInventory, MonitoredDomain};
 use crate::monitor::scheduler::SchedulingEngine;
 use crate::utils::network::Target;
 use chrono::Utc;
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::{Mutex, Semaphore};
@@ -44,13 +45,14 @@ impl MonitorDaemon {
     }
 
     /// Load domains from file
-    pub async fn load_domains(&self, path: &str) -> Result<()> {
+    pub async fn load_domains(&self, path: impl AsRef<Path>) -> Result<()> {
+        let path = path.as_ref();
         let mut inventory = self.inventory.lock().await;
         inventory.load_from_file(path, self.config.monitor.default_interval_seconds)?;
         // The file format has no per-domain thresholds, so apply the configured
         // ones; otherwise the [thresholds] config section would be ignored.
         inventory.apply_default_thresholds(&(&self.config.monitor.thresholds).into());
-        tracing::info!("Loaded {} domains from {}", inventory.len(), path);
+        tracing::info!("Loaded {} domains from {}", inventory.len(), path.display());
         Ok(())
     }
 
@@ -575,20 +577,36 @@ mod tests {
         let mut temp_file = NamedTempFile::new()?;
         writeln!(temp_file, "# Domains\nexample.com\nexample.org:8443 5m")?;
 
-        daemon
-            .load_domains(
-                temp_file
-                    .path()
-                    .to_str()
-                    .expect("temp file path should be valid UTF-8"),
-            )
-            .await?;
+        daemon.load_domains(temp_file.path()).await?;
 
         let stats = daemon.stats().await;
         assert_eq!(stats.total_domains, 2);
         assert_eq!(stats.enabled_domains, 2);
 
         Ok(())
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_load_domains_does_not_pre_reject_non_utf8_path() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let config = MonitorConfig::default();
+        let daemon = MonitorDaemon::new(config)
+            .await
+            .expect("test assertion should succeed");
+        let dir = tempfile::tempdir().expect("tempdir should be created");
+        let path = dir.path().join(OsString::from_vec(vec![
+            b'd', b'o', b'm', b'a', b'i', b'n', b's', 0xff, b'.', b't', b'x', b't',
+        ]));
+
+        let err = daemon
+            .load_domains(&path)
+            .await
+            .expect_err("missing non-UTF-8 path should produce a filesystem error");
+
+        assert!(!err.to_string().contains("Invalid domains file path"));
     }
 
     #[tokio::test]
@@ -683,14 +701,7 @@ mod tests {
             .expect("test assertion should succeed");
 
         let temp_file = NamedTempFile::new()?;
-        daemon
-            .load_domains(
-                temp_file
-                    .path()
-                    .to_str()
-                    .expect("temp file path should be valid UTF-8"),
-            )
-            .await?;
+        daemon.load_domains(temp_file.path()).await?;
 
         let stats = daemon.stats().await;
         assert_eq!(stats.total_domains, 0);

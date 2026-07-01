@@ -4,7 +4,7 @@
 
 use super::{Command, CommandExit};
 use crate::application::HostPortInput;
-use crate::{Args, Result, TlsError};
+use crate::{Args, Result};
 use async_trait::async_trait;
 use tracing::info;
 
@@ -70,12 +70,7 @@ impl MonitorCommand {
 
     async fn load_domains_from_file(&self, daemon: &crate::monitor::MonitorDaemon) -> Result<()> {
         if let Some(domains_file) = &self.args.monitoring.domains_file {
-            let path_str = domains_file
-                .to_str()
-                .ok_or_else(|| TlsError::InvalidInput {
-                    message: "Invalid domains file path".to_string(),
-                })?;
-            daemon.load_domains(path_str).await?;
+            daemon.load_domains(domains_file).await?;
         }
 
         Ok(())
