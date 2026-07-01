@@ -4,7 +4,7 @@ use crate::Result;
 use crate::error::TlsError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use subtle::ConstantTimeEq;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -132,9 +132,10 @@ fn generate_secure_api_key() -> String {
 
 impl ApiConfig {
     /// Create config from file
-    pub fn from_file(path: &str) -> Result<Self> {
+    pub fn from_file(path: impl AsRef<Path>) -> Result<Self> {
+        let path = path.as_ref();
         let content = std::fs::read_to_string(path).map_err(|e| TlsError::FileSystemError {
-            path: path.to_string(),
+            path: path.display().to_string(),
             source: e,
         })?;
         let config: ApiConfig = toml::from_str(&content).map_err(|e| TlsError::ConfigError {
@@ -144,13 +145,14 @@ impl ApiConfig {
     }
 
     /// Create example config file
-    pub fn create_example(path: &str) -> Result<()> {
+    pub fn create_example(path: impl AsRef<Path>) -> Result<()> {
+        let path = path.as_ref();
         let config = Self::default();
         let toml = toml::to_string_pretty(&config).map_err(|e| TlsError::ConfigError {
             message: format!("Failed to serialize API config: {e}"),
         })?;
         std::fs::write(path, toml).map_err(|e| TlsError::FileSystemError {
-            path: path.to_string(),
+            path: path.display().to_string(),
             source: e,
         })?;
         Ok(())
@@ -251,9 +253,28 @@ mod tests {
     #[test]
     fn test_create_example_writes_file() {
         let path = std::env::temp_dir().join("cipherrun-api-config.toml");
-        ApiConfig::create_example(path.to_str().unwrap()).expect("write should succeed");
+        ApiConfig::create_example(&path).expect("write should succeed");
         let contents = std::fs::read_to_string(&path).expect("read should succeed");
         assert!(contents.contains("host"));
         let _ = std::fs::remove_file(path);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_from_file_does_not_pre_reject_non_utf8_path() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let dir = tempfile::tempdir().expect("tempdir should be created");
+        let path = dir.path().join(OsString::from_vec(vec![
+            b'a', b'p', b'i', 0xff, b'.', b't', b'o', b'm', b'l',
+        ]));
+
+        let err = match ApiConfig::from_file(&path) {
+            Ok(_) => panic!("missing non-UTF-8 path should produce a filesystem error"),
+            Err(err) => err,
+        };
+
+        assert!(!err.to_string().contains("Invalid config file path"));
     }
 }

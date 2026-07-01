@@ -94,10 +94,7 @@ impl Command for ApiServerCommand {
         // Load configuration from file or use CLI args
         let has_config_file = self.args.api_server.config.is_some();
         let mut config = if let Some(config_path) = &self.args.api_server.config {
-            let config_str = config_path.to_str().ok_or_else(|| TlsError::InvalidInput {
-                message: "Invalid config file path".to_string(),
-            })?;
-            ApiConfig::from_file(config_str)?
+            ApiConfig::from_file(config_path)?
         } else {
             ApiConfig::default()
         };
