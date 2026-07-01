@@ -488,14 +488,14 @@ impl ClientHelloCapture {
         bytes.extend_from_slice(&self.session_id);
 
         // Cipher Suites
-        let cipher_suites_len = self
-            .cipher_suites
-            .len()
-            .checked_mul(2)
-            .and_then(|len| Self::u16_len(len, "Cipher suites").ok())
-            .ok_or_else(|| TlsError::ParseError {
-                message: "Cipher suites length is too large".to_string(),
-            })?;
+        let cipher_suites_len =
+            self.cipher_suites
+                .len()
+                .checked_mul(2)
+                .ok_or_else(|| TlsError::ParseError {
+                    message: "Cipher suites length is too large".to_string(),
+                })?;
+        let cipher_suites_len = Self::u16_len(cipher_suites_len, "Cipher suites")?;
         bytes.extend_from_slice(&cipher_suites_len.to_be_bytes());
         for cipher in &self.cipher_suites {
             bytes.extend_from_slice(&cipher.to_be_bytes());
@@ -721,6 +721,19 @@ mod tests {
 
         let parsed = ClientHelloCapture::parse(&bytes).expect("ClientHello body should parse");
         assert!(parsed.extensions.is_empty());
+    }
+
+    #[test]
+    fn test_to_bytes_rejects_oversized_cipher_suite_list() {
+        let capture = ClientHelloCapture::synthetic(0x0303, vec![0x1301; 32768], vec![]);
+        let err = capture
+            .to_bytes()
+            .expect_err("oversized cipher list should fail");
+
+        assert!(
+            err.to_string()
+                .contains("Cipher suites length is too large")
+        );
     }
 
     #[test]
