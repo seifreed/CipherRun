@@ -206,6 +206,13 @@ impl CommandRouter {
             });
         }
 
+        if args.mx_domain.is_some() && args.target.is_some() {
+            return Err(TlsError::InvalidInput {
+                message: "Cannot use --mx with a scan target. Choose one scanning mode."
+                    .to_string(),
+            });
+        }
+
         // Check for target + mass-source conflict
         if args.target.is_some() && any_mass_source {
             return Err(TlsError::InvalidInput {
@@ -371,6 +378,16 @@ mod tests {
         let args = Args {
             input_file: Some(std::path::PathBuf::from("targets.txt")),
             asn: Some("AS13335".to_string()),
+            ..Default::default()
+        };
+        assert!(CommandRouter::validate_routing(&args).is_err());
+    }
+
+    #[test]
+    fn test_validate_mx_and_target_conflict() {
+        let args = Args {
+            mx_domain: Some("example.com".to_string()),
+            target: Some("example.com:443".to_string()),
             ..Default::default()
         };
         assert!(CommandRouter::validate_routing(&args).is_err());

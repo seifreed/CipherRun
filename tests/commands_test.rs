@@ -300,14 +300,12 @@ fn test_router_rejects_analytics_and_database() {
 }
 
 #[test]
-fn test_router_mx_overrides_scan() {
-    assert_eq!(
-        route_name(build_args(|args| {
-            args.mx_domain = Some("example.com".to_string());
-            args.target = Some("example.com:443".to_string());
-        })),
-        "MxTestCommand"
-    );
+fn test_router_rejects_mx_and_target() {
+    let err = CommandRouter::route(build_args(|args| {
+        args.mx_domain = Some("example.com".to_string());
+        args.target = Some("example.com:443".to_string());
+    }));
+    assert!(err.is_err());
 }
 
 #[test]
@@ -391,6 +389,15 @@ fn test_validate_mx_and_file_conflict() {
         args.input_file = Some(PathBuf::from("targets.txt"));
     }));
     assert!(error.contains("Cannot use --mx with --file"));
+}
+
+#[test]
+fn test_validate_mx_and_target_conflict() {
+    let error = validate_err(build_args(|args| {
+        args.mx_domain = Some("example.com".to_string());
+        args.target = Some("example.com:443".to_string());
+    }));
+    assert!(error.contains("Cannot use --mx with a scan target"));
 }
 
 #[test]
