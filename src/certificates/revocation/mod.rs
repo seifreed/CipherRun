@@ -1,6 +1,7 @@
 // Certificate Revocation Checker - Check certificate revocation status via OCSP and CRL
 
 mod crl;
+mod http;
 mod ocsp;
 mod stapling;
 

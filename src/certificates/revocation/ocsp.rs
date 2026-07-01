@@ -1,4 +1,6 @@
-use super::{RevocationChecker, RevocationStatus, parse_x509_der_exact};
+use super::{
+    RevocationChecker, RevocationStatus, http::validate_revocation_http_url, parse_x509_der_exact,
+};
 use crate::Result;
 use crate::certificates::parser::CertificateInfo;
 use openssl::hash::MessageDigest;
@@ -75,22 +77,22 @@ impl RevocationChecker {
         issuer: Option<&CertificateInfo>,
         ocsp_url: &str,
     ) -> Result<RevocationStatus> {
+        let validated = validate_revocation_http_url(ocsp_url, self.check_timeout).await?;
+
         // Build OCSP request
         let request_body = self.build_ocsp_request(cert, issuer)?;
 
-        // Send HTTP POST to OCSP responder
-        let client = reqwest::Client::builder()
-            .timeout(self.check_timeout)
-            .build()?;
-
+        // Send HTTP POST to OCSP responder. Resolution was validated and pinned
+        // above because the URL comes from the untrusted certificate.
         // Handle timeout separately from HTTP errors
         // This allows callers to distinguish between:
         // - Timeout: might want to retry or fall back to CRL
         // - HTTP error: might indicate server issue, should fall back to CRL
         let response = match timeout(
             self.check_timeout,
-            client
-                .post(ocsp_url)
+            validated
+                .client
+                .post(validated.url)
                 .header("Content-Type", "application/ocsp-request")
                 .body(request_body)
                 .send(),
@@ -473,5 +475,18 @@ mod tests {
         assert!(!is_http_ocsp_url("ldap://ocsp.example.com"));
         assert!(!is_http_ocsp_url("httpx://ocsp.example.com"));
         assert!(!is_http_ocsp_url("http://"));
+    }
+
+    #[tokio::test]
+    async fn test_check_ocsp_rejects_private_url_before_request() {
+        let checker = RevocationChecker::new(false);
+        let cert = CertificateInfo::default();
+
+        let err = checker
+            .check_ocsp(&cert, None, "http://127.0.0.1/ocsp")
+            .await
+            .expect_err("private OCSP URL should be rejected before request");
+
+        assert!(format!("{err}").contains("private/internal IP"));
     }
 }

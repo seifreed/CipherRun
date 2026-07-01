@@ -1,0 +1,106 @@
+use crate::security::{is_private_ip, validate_hostname};
+use crate::{Result, TlsError};
+use std::time::Duration;
+use tokio::net::lookup_host;
+use url::Url;
+
+#[derive(Debug)]
+pub(crate) struct ValidatedRevocationHttp {
+    pub(crate) url: Url,
+    pub(crate) client: reqwest::Client,
+}
+
+pub(crate) async fn validate_revocation_http_url(
+    uri: &str,
+    timeout: Duration,
+) -> Result<ValidatedRevocationHttp> {
+    let url = Url::parse(uri).map_err(|error| TlsError::InvalidInput {
+        message: format!("Invalid revocation URL: {error}"),
+    })?;
+
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err(TlsError::InvalidInput {
+            message: "Revocation URL must use http or https".to_string(),
+        });
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err(TlsError::InvalidInput {
+            message: "Revocation URL must not contain credentials".to_string(),
+        });
+    }
+
+    let host = url.host_str().ok_or_else(|| TlsError::InvalidInput {
+        message: "Revocation URL must include a host".to_string(),
+    })?;
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        if is_private_ip(&ip) {
+            return Err(TlsError::InvalidInput {
+                message: format!("Revocation URL resolves to private/internal IP {ip}"),
+            });
+        }
+    } else {
+        validate_hostname(host).map_err(|error| TlsError::InvalidInput {
+            message: format!("Invalid revocation URL host: {error}"),
+        })?;
+    }
+
+    let port = url
+        .port_or_known_default()
+        .ok_or_else(|| TlsError::InvalidInput {
+            message: "Revocation URL must include a valid port".to_string(),
+        })?;
+    let addrs: Vec<_> = lookup_host((host, port)).await?.collect();
+    if addrs.is_empty() {
+        return Err(TlsError::InvalidInput {
+            message: "Revocation URL host did not resolve".to_string(),
+        });
+    }
+    for addr in &addrs {
+        if is_private_ip(&addr.ip()) {
+            return Err(TlsError::InvalidInput {
+                message: format!(
+                    "Revocation URL resolves to private/internal IP {}",
+                    addr.ip()
+                ),
+            });
+        }
+    }
+
+    let mut client_builder = reqwest::Client::builder()
+        .timeout(timeout)
+        .redirect(reqwest::redirect::Policy::none());
+    for addr in addrs {
+        client_builder = client_builder.resolve(host, addr);
+    }
+
+    Ok(ValidatedRevocationHttp {
+        url,
+        client: client_builder.build()?,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_validate_revocation_http_url_rejects_private_ip() {
+        let err = validate_revocation_http_url("http://127.0.0.1/crl", Duration::from_secs(1))
+            .await
+            .expect_err("private revocation URL should be rejected");
+
+        assert!(err.to_string().contains("private/internal IP"));
+    }
+
+    #[tokio::test]
+    async fn test_validate_revocation_http_url_rejects_credentials() {
+        let err = validate_revocation_http_url(
+            "https://user:pass@example.com/ocsp",
+            Duration::from_secs(1),
+        )
+        .await
+        .expect_err("credentialed revocation URL should be rejected");
+
+        assert!(err.to_string().contains("credentials"));
+    }
+}

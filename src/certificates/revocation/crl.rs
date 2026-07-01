@@ -1,4 +1,6 @@
-use super::{RevocationChecker, RevocationStatus, parse_x509_der_exact};
+use super::{
+    RevocationChecker, RevocationStatus, http::validate_revocation_http_url, parse_x509_der_exact,
+};
 use crate::Result;
 use crate::certificates::parser::CertificateInfo;
 use tokio::time::timeout;
@@ -77,12 +79,14 @@ impl RevocationChecker {
         issuer: Option<&CertificateInfo>,
         crl_url: &str,
     ) -> Result<RevocationStatus> {
-        // Download CRL
-        let client = reqwest::Client::builder()
-            .timeout(self.check_timeout)
-            .build()?;
-
-        let response = timeout(self.check_timeout, client.get(crl_url).send()).await??;
+        // Download CRL. The URL comes from the untrusted certificate, so validate
+        // and pin resolution before making the request.
+        let validated = validate_revocation_http_url(crl_url, self.check_timeout).await?;
+        let response = timeout(
+            self.check_timeout,
+            validated.client.get(validated.url).send(),
+        )
+        .await??;
 
         if !response.status().is_success() {
             return Err(crate::error::TlsError::Other(format!(
@@ -233,6 +237,19 @@ mod tests {
         assert!(!is_http_crl_url("httpx://example.com/root.crl"));
         assert!(!is_http_crl_url("ftp://example.com/root.crl"));
         assert!(!is_http_crl_url("http://"));
+    }
+
+    #[tokio::test]
+    async fn test_check_crl_rejects_private_url_before_request() {
+        let checker = RevocationChecker::new(false);
+        let cert = CertificateInfo::default();
+
+        let err = checker
+            .check_crl(&cert, None, "http://127.0.0.1/root.crl")
+            .await
+            .expect_err("private CRL URL should be rejected before request");
+
+        assert!(format!("{err}").contains("private/internal IP"));
     }
 
     #[test]
