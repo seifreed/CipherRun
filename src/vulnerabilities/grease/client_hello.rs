@@ -3,6 +3,7 @@ use super::{
     GreaseTester,
 };
 use crate::Result;
+use crate::constants::{BUFFER_SIZE_MAX_WITH_OVERHEAD, TLS_RECORD_HEADER_SIZE};
 use crate::protocols::Protocol;
 use crate::protocols::handshake::ClientHelloBuilder;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -36,7 +37,7 @@ impl GreaseTester {
 
         // Read the full response so fragmented ServerHello/alert records do
         // not get misclassified as inconclusive.
-        let mut buffer = vec![0u8; 4096];
+        let mut buffer = vec![0u8; BUFFER_SIZE_MAX_WITH_OVERHEAD];
         let n = match Self::read_complete_response(&mut stream, &mut buffer).await {
             Ok(n) => n,
             Err(e) => return Err(TlsError::IoError { source: e }),
@@ -228,13 +229,35 @@ impl GreaseTester {
         stream: &mut tokio::net::TcpStream,
         buffer: &mut [u8],
     ) -> std::io::Result<usize> {
-        use std::io::ErrorKind;
+        use std::io::{Error, ErrorKind};
 
         let mut total = 0;
         while total < buffer.len() {
             match timeout(Duration::from_secs(10), stream.read(&mut buffer[total..])).await {
                 Ok(Ok(0)) => break,
-                Ok(Ok(n)) => total += n,
+                Ok(Ok(n)) => {
+                    total += n;
+                    if total >= TLS_RECORD_HEADER_SIZE {
+                        let record_len = u16::from_be_bytes([buffer[3], buffer[4]]) as usize;
+                        let record_total = TLS_RECORD_HEADER_SIZE
+                            .checked_add(record_len)
+                            .ok_or_else(|| {
+                                Error::new(
+                                    ErrorKind::InvalidData,
+                                    "GREASE TLS record length overflow",
+                                )
+                            })?;
+                        if record_total > buffer.len() {
+                            return Err(Error::new(
+                                ErrorKind::InvalidData,
+                                "GREASE TLS record length exceeds buffer",
+                            ));
+                        }
+                        if total >= record_total {
+                            break;
+                        }
+                    }
+                }
                 Ok(Err(err))
                     if total == 0
                         && matches!(err.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock) =>
@@ -347,9 +370,10 @@ fn classify_grease_response(response: &[u8]) -> GreaseTestOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::constants::{BUFFER_SIZE_DEFAULT, CONTENT_TYPE_HANDSHAKE};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
-    use tokio::time::{sleep, Duration};
+    use tokio::time::{Duration, sleep};
 
     #[test]
     fn test_classify_grease_response_rejects_malformed_alert_length() {
@@ -414,6 +438,45 @@ mod tests {
             other => panic!("expected rejected, got {other:?}"),
         }
 
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_read_complete_response_accepts_large_record_without_peer_close() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = socket.read(&mut buf).await.unwrap();
+            let record_len = BUFFER_SIZE_DEFAULT as u16;
+            let header = [
+                CONTENT_TYPE_HANDSHAKE,
+                0x03,
+                0x03,
+                (record_len >> 8) as u8,
+                record_len as u8,
+            ];
+            socket.write_all(&header).await.unwrap();
+            socket
+                .write_all(&vec![0u8; BUFFER_SIZE_DEFAULT])
+                .await
+                .unwrap();
+            sleep(Duration::from_secs(1)).await;
+        });
+
+        let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .unwrap();
+        stream.write_all(b"hello").await.unwrap();
+
+        let mut buffer = vec![0u8; BUFFER_SIZE_MAX_WITH_OVERHEAD];
+        let n = GreaseTester::read_complete_response(&mut stream, &mut buffer)
+            .await
+            .expect("read should succeed");
+
+        assert_eq!(n, TLS_RECORD_HEADER_SIZE + BUFFER_SIZE_DEFAULT);
         server.await.unwrap();
     }
 }
