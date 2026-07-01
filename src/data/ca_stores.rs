@@ -90,6 +90,12 @@ impl CAStore {
             certificates.push(ca_cert);
         }
 
+        if certificates.is_empty() {
+            return Err(crate::TlsError::ParseError {
+                message: format!("CA store {name} contains no certificates"),
+            });
+        }
+
         Ok(Self {
             name: name.to_string(),
             certificates,
@@ -253,6 +259,14 @@ mod tests {
 
         let err = CAStore::from_pem("Test", &pem).expect_err("trailing DER should fail");
         assert!(format!("{err}").contains("trailing byte"));
+    }
+
+    #[test]
+    fn test_ca_store_rejects_empty_certificate_store() {
+        let pem = "-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n";
+        let err = CAStore::from_pem("Empty", pem).expect_err("empty CA store should fail");
+
+        assert!(format!("{err}").contains("contains no certificates"));
     }
 
     #[test]
