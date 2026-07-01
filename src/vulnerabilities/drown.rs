@@ -31,6 +31,8 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::timeout;
 
+const SSLV2_MAX_RECORD_WITH_HEADER: usize = 32767 + 2;
+
 /// SSLv2 detection status with granular confidence levels
 ///
 /// # DROWN Vulnerability Context
@@ -198,7 +200,7 @@ impl DrownTester {
 
         // Read the full SSLv2 response record so fragmented headers do not get
         // misclassified as truncation.
-        let mut buffer = vec![0u8; 4096];
+        let mut buffer = vec![0u8; SSLV2_MAX_RECORD_WITH_HEADER];
         match timeout(
             Duration::from_secs(3),
             Self::read_complete_sslv2_record(&mut stream, &mut buffer),
@@ -342,7 +344,7 @@ impl DrownTester {
 
         // Read the full SSLv2 response record so fragmented headers do not get
         // misclassified as truncation.
-        let mut buffer = vec![0u8; 4096];
+        let mut buffer = vec![0u8; SSLV2_MAX_RECORD_WITH_HEADER];
         match timeout(
             Duration::from_secs(3),
             Self::read_complete_sslv2_record(&mut stream, &mut buffer),
@@ -510,6 +512,12 @@ impl DrownTester {
                     if total >= 2 {
                         let record_len = (((buffer[0] & 0x7f) as usize) << 8) | buffer[1] as usize;
                         let record_total = 2usize.saturating_add(record_len);
+                        if record_total > buffer.len() {
+                            return Err(std::io::Error::new(
+                                ErrorKind::InvalidData,
+                                "DROWN SSLv2 response length exceeds buffer",
+                            ));
+                        }
                         if total >= record_total {
                             break;
                         }
@@ -560,7 +568,7 @@ pub struct DrownTestResult {
 mod tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    use tokio::time::{sleep, Duration};
+    use tokio::time::{Duration, sleep};
 
     fn byte_at(data: &[u8], offset: usize) -> Option<u8> {
         data.get(offset).copied()
@@ -784,6 +792,39 @@ mod tests {
             let _ = socket.write_all(&response[..1]).await;
             sleep(Duration::from_millis(50)).await;
             let _ = socket.write_all(&response[1..]).await;
+        });
+
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+
+        let result = DrownTester::new(target)
+            .test_sslv2()
+            .await
+            .expect("sslv2 probe should not error");
+        server.await.expect("server task");
+
+        assert_eq!(result, Sslv2Status::Confirmed);
+    }
+
+    #[tokio::test]
+    async fn test_sslv2_reads_large_response_record() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener");
+        let port = listener.local_addr().expect("local addr").port();
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept");
+            let mut buf = [0u8; 128];
+            let _ = socket.read(&mut buf).await.expect("read client hello");
+            let record_len = 5000usize;
+            let mut response = vec![0x80 | ((record_len >> 8) as u8), record_len as u8, 0x04];
+            response.extend(vec![0u8; record_len - 1]);
+            let _ = socket.write_all(&response).await;
         });
 
         let target = Target::with_ips(
