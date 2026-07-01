@@ -235,6 +235,29 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_dn_fields_reads_final_minimal_attribute() {
+        let tester = ClientCAsTester::new(
+            Target::with_ips(
+                "example.test".to_string(),
+                443,
+                vec!["127.0.0.1".parse().expect("valid IP")],
+            )
+            .expect("test assertion should succeed"),
+        );
+
+        let mut dn = vec![0x30];
+        dn.extend_from_slice(&[0x06, 0x03, 0x55, 0x04, 0x0a, 0x0c]);
+        dn.push(1);
+        dn.push(b'Z');
+
+        let (_, org) = tester
+            .extract_dn_fields(&dn)
+            .expect("DN fields should parse");
+
+        assert_eq!(org.as_deref(), Some("Z"));
+    }
+
+    #[test]
     fn test_parse_ca_list() {
         let tester = ClientCAsTester::new(
             Target::with_ips(

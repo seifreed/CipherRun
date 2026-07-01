@@ -290,7 +290,11 @@ impl ClientCAsTester {
         let mut cn = None;
         let mut org = None;
 
-        for i in 0..dn_data.len().saturating_sub(6) {
+        if dn_data.len() < 7 {
+            return Ok((cn, org));
+        }
+
+        for i in 0..=dn_data.len() - 7 {
             let Some(oid_mid) = i.checked_add(3) else {
                 break;
             };
