@@ -126,6 +126,31 @@ impl ScanRequest {
             });
         }
 
+        let starttls_modes = [
+            self.starttls.protocol.is_some(),
+            self.starttls.smtp,
+            self.starttls.imap,
+            self.starttls.pop3,
+            self.starttls.ftp,
+            self.starttls.ldap,
+            self.starttls.xmpp,
+            self.starttls.psql,
+            self.starttls.mysql,
+            self.starttls.irc,
+            self.starttls.xmpp_server,
+            self.starttls.nntp,
+            self.starttls.sieve,
+            self.starttls.lmtp,
+        ]
+        .into_iter()
+        .filter(|enabled| *enabled)
+        .count();
+        if starttls_modes > 1 {
+            return Err(TlsError::InvalidInput {
+                message: "Cannot combine multiple STARTTLS protocol options.".to_string(),
+            });
+        }
+
         if let Some(xmpphost) = self.starttls.xmpphost.as_deref() {
             crate::security::validate_hostname(xmpphost).map_err(|error| {
                 TlsError::InvalidInput {

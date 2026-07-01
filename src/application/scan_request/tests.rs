@@ -335,6 +335,26 @@ fn rejects_malformed_xmpphost() {
 }
 
 #[test]
+fn rejects_multiple_starttls_protocol_options() {
+    let request = ScanRequest {
+        starttls: ScanRequestStarttls {
+            smtp: true,
+            imap: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let err = request
+        .validate_common()
+        .expect_err("multiple STARTTLS protocols should fail validation");
+    assert!(
+        err.to_string()
+            .contains("Cannot combine multiple STARTTLS protocol options")
+    );
+}
+
+#[test]
 fn baseline_scan_requires_all_without_specific_focus() {
     let request = ScanRequest {
         target: Some("example.com:443".to_string()),
