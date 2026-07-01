@@ -14,6 +14,8 @@ use std::time::{Duration, Instant};
 use tokio::io::AsyncWriteExt;
 use tokio::time::timeout;
 
+const PRE_HANDSHAKE_RESPONSE_BUFFER_SIZE: usize = 32 * 1024;
+
 /// Pre-handshake scanner for fast certificate retrieval
 pub struct PreHandshakeScanner {
     target: Target,
@@ -51,7 +53,7 @@ impl PreHandshakeScanner {
             .await
             .map_err(|e| TlsError::IoError { source: e })?;
 
-        let mut response_buffer = vec![0u8; 16384];
+        let mut response_buffer = vec![0u8; PRE_HANDSHAKE_RESPONSE_BUFFER_SIZE];
         let bytes_read = timeout(
             self.timeout_duration,
             handshake_read::read_until_server_hello_done(
@@ -440,8 +442,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_read_until_server_hello_done_handles_fragmented_server_handshake() {
-        let mut params = CertificateParams::new(vec!["example.com".to_string()])
-            .expect("params should build");
+        let mut params =
+            CertificateParams::new(vec!["example.com".to_string()]).expect("params should build");
         let mut dn = DistinguishedName::new();
         dn.push(DnType::CommonName, "example.com");
         params.distinguished_name = dn;
@@ -489,11 +491,8 @@ mod tests {
             port,
             vec!["127.0.0.1".parse().expect("valid IP")],
         )
-            .expect("target should build");
-        let addr = std::net::SocketAddr::new(
-            "127.0.0.1".parse().expect("valid IP"),
-            target.port,
-        );
+        .expect("target should build");
+        let addr = std::net::SocketAddr::new("127.0.0.1".parse().expect("valid IP"), target.port);
         let mut client = tokio::net::TcpStream::connect(addr)
             .await
             .expect("client should connect");
@@ -505,7 +504,7 @@ mod tests {
             .await
             .expect("client should write hello");
 
-        let mut response_buffer = vec![0u8; 16384];
+        let mut response_buffer = vec![0u8; PRE_HANDSHAKE_RESPONSE_BUFFER_SIZE];
         let bytes_read = handshake_read::read_until_server_hello_done(
             &mut client,
             &mut response_buffer,
@@ -514,6 +513,75 @@ mod tests {
         .await;
 
         assert!(bytes_read > split);
+
+        handle.await.expect("server task should complete");
+    }
+
+    #[tokio::test]
+    async fn test_read_until_server_hello_done_allows_large_certificate_flight() {
+        let server_hello_body = build_server_hello_body(0x03, 0x03, 0, 0x1301, 0x00);
+        let server_hello =
+            build_handshake_record(&[build_handshake_message(0x02, &server_hello_body)]);
+        let certificate_a =
+            build_handshake_record(&[build_handshake_message(0x0b, &[0u8; 10_000])]);
+        let certificate_b = build_handshake_record(&[build_handshake_message(0x0b, &[0u8; 8_000])]);
+        let server_hello_done = build_handshake_record(&[build_handshake_message(0x0e, &[])]);
+
+        let mut response = Vec::new();
+        response.extend_from_slice(&server_hello);
+        response.extend_from_slice(&certificate_a);
+        response.extend_from_slice(&certificate_b);
+        response.extend_from_slice(&server_hello_done);
+        let expected_len = response.len();
+        assert!(response.len() > 16 * 1024);
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let port = listener.local_addr().expect("local addr").port();
+
+        let handle = tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let mut client_hello = [0u8; 4096];
+                let _ = socket
+                    .read(&mut client_hello)
+                    .await
+                    .expect("server should read client hello");
+                socket
+                    .write_all(&response)
+                    .await
+                    .expect("server should write handshake flight");
+            }
+        });
+
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            port,
+            vec!["127.0.0.1".parse().expect("valid IP")],
+        )
+        .expect("target should build");
+        let addr = std::net::SocketAddr::new("127.0.0.1".parse().expect("valid IP"), target.port);
+        let mut client = tokio::net::TcpStream::connect(addr)
+            .await
+            .expect("client should connect");
+        let client_hello = PreHandshakeScanner::new(target)
+            .build_client_hello()
+            .expect("client hello should build");
+        client
+            .write_all(&client_hello)
+            .await
+            .expect("client should write hello");
+
+        let mut response_buffer = vec![0u8; PRE_HANDSHAKE_RESPONSE_BUFFER_SIZE];
+        let bytes_read = handshake_read::read_until_server_hello_done(
+            &mut client,
+            &mut response_buffer,
+            Duration::from_secs(2),
+        )
+        .await;
+
+        assert!(bytes_read > 16 * 1024);
+        assert_eq!(bytes_read, expected_len);
 
         handle.await.expect("server task should complete");
     }
