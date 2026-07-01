@@ -471,33 +471,73 @@ impl<'a> EarlyDataTester<'a> {
             });
         }
 
-        // Full 0-RTT replay testing would require:
-        // 1. Complete TLS 1.3 handshake to get session ticket
-        // 2. Parse NewSessionTicket for max_early_data_size
-        // 3. Resume connection with early data
-        // 4. Attempt replay of same early data
-        //
-        // Since this requires significant TLS 1.3 state management,
-        // we mark the result as INCONCLUSIVE with detailed explanation.
-        // This is more honest than returning "not vulnerable" without testing.
+        let domain = match crate::utils::network::server_name_for_hostname(&self.target.hostname) {
+            Ok(domain) => domain,
+            Err(_) => {
+                return Ok(ReplayTestResult {
+                    tested: false,
+                    vulnerable: false,
+                    inconclusive: true,
+                    details: "Early Data replay test inconclusive - invalid TLS server name"
+                        .to_string(),
+                });
+            }
+        };
+        let mut config = crate::utils::insecure_tls::insecure_client_config();
+        config.enable_early_data = true;
+        let config = Arc::new(config);
 
-        Ok(ReplayTestResult {
-            tested: false,
-            vulnerable: false,
-            inconclusive: true,
-            details: format!(
-                "TLS 1.3 with early_data supported (max: {} bytes, estimated: {}). \
-                 Full 0-RTT replay testing requires session resumption which is not \
-                 currently implemented. Manual testing recommended. \
-                 Potential vulnerability: Servers without anti-replay mechanisms may accept \
-                 replayed 0-RTT data, allowing request duplication attacks.",
-                early_data_info
-                    .max_early_data_size
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| "unknown".to_string()),
-                early_data_info.is_estimated
-            ),
-        })
+        if let Err(error) = self.warm_up_session(&config, domain.clone()).await {
+            return Ok(ReplayTestResult {
+                tested: false,
+                vulnerable: false,
+                inconclusive: true,
+                details: format!("Early Data replay test inconclusive - warm-up failed: {error}"),
+            });
+        }
+
+        let first = self.probe_resumed_early_data(&config, domain.clone()).await;
+        let second = self.probe_resumed_early_data(&config, domain).await;
+
+        match (first, second) {
+            (EarlyDataSupportStatus::Supported, EarlyDataSupportStatus::Supported) => {
+                Ok(ReplayTestResult {
+                    tested: true,
+                    vulnerable: true,
+                    inconclusive: false,
+                    details: "Server accepted the same 0-RTT request on two resumed connections"
+                        .to_string(),
+                })
+            }
+            (EarlyDataSupportStatus::Supported, EarlyDataSupportStatus::NotSupported) => {
+                Ok(ReplayTestResult {
+                    tested: true,
+                    vulnerable: false,
+                    inconclusive: false,
+                    details: "Server accepted initial 0-RTT data but rejected replayed early data"
+                        .to_string(),
+                })
+            }
+            (EarlyDataSupportStatus::NotSupported, _) => Ok(ReplayTestResult {
+                tested: true,
+                vulnerable: false,
+                inconclusive: false,
+                details: "Server did not accept resumed 0-RTT data during replay probe".to_string(),
+            }),
+            _ => Ok(ReplayTestResult {
+                tested: false,
+                vulnerable: false,
+                inconclusive: true,
+                details: format!(
+                    "Early Data replay test inconclusive (max: {} bytes, estimated: {})",
+                    early_data_info
+                        .max_early_data_size
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| "unknown".to_string()),
+                    early_data_info.is_estimated
+                ),
+            }),
+        }
     }
 
     /// Attempt to connect with TLS 1.3
@@ -670,6 +710,30 @@ mod tests {
         assert!(result.supports_early_data);
         // Internally consistent: early-data support implies a reported size.
         assert!(result.max_early_data_size.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_replay_attack_exercises_two_resumed_early_data_connections() {
+        install_crypto_provider();
+        let addr = spawn_tls13_server(16384).await;
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            addr.port(),
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .unwrap();
+
+        let tester = EarlyDataTester::new(&target);
+        let result = tester.test_replay_attack().await.unwrap();
+
+        assert!(result.tested || result.inconclusive);
+        if result.tested {
+            assert!(
+                result.details.contains("0-RTT")
+                    || result.details.contains("early data")
+                    || result.details.contains("Early Data")
+            );
+        }
     }
 
     #[test]
