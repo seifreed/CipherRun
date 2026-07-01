@@ -8,6 +8,7 @@ use crate::Args;
 use crate::Result;
 use crate::error::TlsError;
 use crate::scanner::ScanResults;
+use crate::security::input_validation::validate_resolved_ips;
 use crate::utils::network::{Target, build_system_resolver, canonical_target};
 use hickory_resolver::TokioResolver;
 use hickory_resolver::proto::rr::RData;
@@ -103,6 +104,12 @@ impl AnycastScanner {
 
     /// Resolve all A and AAAA records for hostname
     async fn resolve_all_ips(&self) -> Result<Vec<IpAddr>> {
+        crate::security::validate_hostname(&self.hostname).map_err(|error| {
+            TlsError::InvalidInput {
+                message: format!("Invalid anycast hostname: {error}"),
+            }
+        })?;
+
         let resolver = Self::build_resolver()?;
 
         let mut ips = Vec::new();
@@ -149,6 +156,8 @@ impl AnycastScanner {
             }
         }
 
+        validate_anycast_resolved_ips(&self.hostname, &ips)?;
+
         Ok(ips)
     }
 
@@ -174,6 +183,11 @@ impl AnycastScanner {
 
 fn anycast_target_for_ip(ip: &IpAddr, port: u16) -> String {
     canonical_target(&ip.to_string(), port)
+}
+
+fn validate_anycast_resolved_ips(hostname: &str, ips: &[IpAddr]) -> Result<()> {
+    validate_resolved_ips(ips, false)
+        .map_err(|error| TlsError::Other(format!("SSRF validation failed for {hostname}: {error}")))
 }
 
 /// Result of scanning a single IP
@@ -326,6 +340,26 @@ mod tests {
     fn test_anycast_target_for_ip_keeps_ipv4_plain() {
         let ip: IpAddr = "192.0.2.10".parse().unwrap();
         assert_eq!(anycast_target_for_ip(&ip, 443), "192.0.2.10:443");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_all_ips_rejects_invalid_hostname_before_lookup() {
+        let scanner = AnycastScanner::new("example.com/path".to_string(), 443, Args::default());
+
+        let err = scanner
+            .resolve_all_ips()
+            .await
+            .expect_err("invalid anycast hostname should fail before lookup");
+        assert!(err.to_string().contains("Invalid anycast hostname"));
+    }
+
+    #[test]
+    fn test_validate_anycast_resolved_ips_rejects_private_ip() {
+        let ips = ["127.0.0.1".parse().unwrap()];
+
+        let err = validate_anycast_resolved_ips("example.com", &ips)
+            .expect_err("private anycast DNS answers should be blocked");
+        assert!(err.to_string().contains("SSRF validation failed"));
     }
 
     #[test]
