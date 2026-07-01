@@ -30,6 +30,7 @@ pub struct MonitorDaemon {
 impl MonitorDaemon {
     /// Create new monitoring daemon
     pub async fn new(config: MonitorConfig) -> Result<Self> {
+        config.validate()?;
         let max_concurrent = config.monitor.max_concurrent_scans;
         let alert_manager = Arc::new(AlertManager::from_config(&config).await?);
 
@@ -535,6 +536,19 @@ mod tests {
         let config = MonitorConfig::default();
         let daemon = MonitorDaemon::new(config).await;
         assert!(daemon.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_daemon_rejects_invalid_direct_config() {
+        let mut config = MonitorConfig::default();
+        config.monitor.max_concurrent_scans = 0;
+
+        let err = match MonitorDaemon::new(config).await {
+            Ok(_) => panic!("invalid direct config should fail"),
+            Err(err) => err,
+        };
+
+        assert!(err.to_string().contains("max_concurrent_scans"));
     }
 
     #[tokio::test]

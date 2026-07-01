@@ -227,7 +227,7 @@ impl MonitorConfig {
 }
 
 impl MonitorConfig {
-    fn validate(&self) -> Result<()> {
+    pub(crate) fn validate(&self) -> Result<()> {
         if self.monitor.default_interval_seconds == 0 {
             return Err(TlsError::ConfigError {
                 message: "monitor.default_interval_seconds must be greater than 0".to_string(),
