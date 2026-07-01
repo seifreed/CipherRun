@@ -42,6 +42,12 @@ impl MxTester {
 
     /// Query MX records for the domain
     pub async fn query_mx_records(&self) -> Result<Vec<MxRecord>> {
+        crate::security::validate_hostname(&self.domain).map_err(|error| {
+            crate::error::TlsError::InvalidInput {
+                message: format!("Invalid MX domain: {error}"),
+            }
+        })?;
+
         println!(
             "\n{} MX records for {}...",
             "Querying".cyan().bold(),

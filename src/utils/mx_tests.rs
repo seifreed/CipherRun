@@ -291,6 +291,17 @@ fn test_parse_nslookup_output_trims_dot_and_spaces() {
     assert_eq!(records[0].hostname, "mx.example.com");
 }
 
+#[tokio::test]
+async fn test_query_mx_records_rejects_invalid_domain_before_lookup() {
+    let tester = MxTester::new("example.com/path".to_string());
+
+    let err = tester
+        .query_mx_records()
+        .await
+        .expect_err("invalid MX domain should fail before lookup");
+    assert!(err.to_string().contains("Invalid MX domain"));
+}
+
 #[test]
 fn test_synthetic_backend_ip_does_not_collide_at_u16_boundary() {
     assert_ne!(synthetic_backend_ip(65_534), synthetic_backend_ip(65_535));
