@@ -284,6 +284,37 @@ def test_sync_list_certificates_preserves_empty_hostname_filter(monkeypatch):
     assert params_seen[0]["hostname"] == ""
 
 
+def test_sync_check_compliance_serializes_detailed_as_lowercase_bool(monkeypatch):
+    client = CipherRunClient(api_key="k")
+    params_seen = []
+
+    def fake_request(_method, _endpoint, **kwargs):
+        params_seen.append(kwargs["params"])
+        response = MagicMock()
+        response.json.return_value = {
+            "framework_id": "pci-dss-v4",
+            "framework_name": "PCI DSS",
+            "framework_version": "4.0",
+            "target": "example.com:443",
+            "status": "compliant",
+            "summary": {
+                "total": 0,
+                "passed": 0,
+                "failed": 0,
+                "warnings": 0,
+                "compliance_percentage": 100.0,
+            },
+            "evaluated_at": "2026-01-01T00:00:00Z",
+        }
+        return response
+
+    monkeypatch.setattr(client, "_make_request", fake_request)
+
+    client.check_compliance("pci-dss-v4", "example.com:443", detailed=True)
+
+    assert params_seen[0]["detailed"] == "true"
+
+
 def test_join_url_preserves_base_path_prefix():
     assert _join_url("https://example.com/cipherrun", "/api/v1/health") == "https://example.com/cipherrun/api/v1/health"
     assert (
@@ -441,6 +472,38 @@ def test_async_list_certificates_preserves_empty_hostname_filter(monkeypatch):
     asyncio.run(run())
 
     assert params_seen[0]["hostname"] == ""
+
+
+def test_async_check_compliance_serializes_detailed_as_lowercase_bool(monkeypatch):
+    client = AsyncCipherRunClient(api_key="k")
+    params_seen = []
+
+    async def fake_request(_method, _endpoint, **kwargs):
+        params_seen.append(kwargs["params"])
+        return {
+            "framework_id": "pci-dss-v4",
+            "framework_name": "PCI DSS",
+            "framework_version": "4.0",
+            "target": "example.com:443",
+            "status": "compliant",
+            "summary": {
+                "total": 0,
+                "passed": 0,
+                "failed": 0,
+                "warnings": 0,
+                "compliance_percentage": 100.0,
+            },
+            "evaluated_at": "2026-01-01T00:00:00Z",
+        }
+
+    monkeypatch.setattr(client, "_make_request", fake_request)
+
+    async def run():
+        await client.check_compliance("pci-dss-v4", "example.com:443", detailed=False)
+
+    asyncio.run(run())
+
+    assert params_seen[0]["detailed"] == "false"
 
 
 def test_websocket_client_quotes_scan_id_and_preserves_base_path(monkeypatch):

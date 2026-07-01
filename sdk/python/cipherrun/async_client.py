@@ -398,7 +398,7 @@ class AsyncCipherRunClient:
             >>> report = await client.check_compliance("pci-dss-v4", "example.com:443")
             >>> print(report.status)
         """
-        params = {"target": target, "detailed": detailed, "format": "json"}
+        params = {"target": target, "detailed": str(detailed).lower(), "format": "json"}
         data = await self._make_request("GET", f"/api/v1/compliance/{quote(framework, safe='')}", params=params)
         return ComplianceReport(**data)
 
