@@ -179,7 +179,7 @@ async fn check_capability(
             reader.get_mut().flush().await?;
         }
         CapabilityCommand::WithHostname(template) => {
-            let cmd = template.replace("{}", hostname);
+            let cmd = hostname_command(template, hostname)?;
             reader.get_mut().write_all(cmd.as_bytes()).await?;
             reader.get_mut().flush().await?;
         }
@@ -351,6 +351,15 @@ fn capability_line_limit_error(config: &TextProtocolConfig) -> TlsError {
     }
 }
 
+fn hostname_command(template: &str, hostname: &str) -> Result<String> {
+    if hostname.is_empty() || hostname.chars().any(char::is_whitespace) {
+        return Err(TlsError::InvalidInput {
+            message: "STARTTLS hostname contains invalid whitespace".to_string(),
+        });
+    }
+    Ok(template.replace("{}", hostname))
+}
+
 fn has_capability_token(line: &str, marker: &str) -> bool {
     let marker = marker.trim();
     line.split_whitespace().any(|token| {
@@ -443,6 +452,18 @@ mod tests {
             "a002 OK"
         ));
         assert!(!line_starts_with_delimited_prefix("OKAY\r\n", "OK"));
+    }
+
+    #[test]
+    fn hostname_command_rejects_command_injection_whitespace() {
+        let err = hostname_command("EHLO {}\r\n", "good.example\r\nSTARTTLS")
+            .expect_err("CRLF in EHLO hostname should fail");
+        assert!(err.to_string().contains("invalid whitespace"));
+
+        assert_eq!(
+            hostname_command("EHLO {}\r\n", "good.example").expect("valid hostname"),
+            "EHLO good.example\r\n"
+        );
     }
 
     #[tokio::test]
