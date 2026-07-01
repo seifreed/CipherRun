@@ -47,7 +47,7 @@ use async_trait::async_trait;
 /// - JA3 capture (--ja3)
 /// - JA3S capture (--ja3s)
 /// - JARM capture (--jarm)
-/// - Database paths (--ja3-database, --jarm-database)
+/// - Database paths (--ja3-database, --ja3s-database, --jarm-database)
 /// - Raw capture (--client-hello, --server-hello)
 pub struct FingerprintPhase;
 
@@ -68,6 +68,19 @@ impl FingerprintPhase {
         }
 
         Ja3Database::load_default()
+    }
+
+    fn load_ja3s_database(
+        &self,
+        context: &mut ScanContext,
+    ) -> Result<crate::fingerprint::Ja3sDatabase> {
+        use crate::fingerprint::Ja3sDatabase;
+
+        if let Some(db_path) = context.args.fingerprint.ja3s_database.clone() {
+            return Ja3sDatabase::from_file(&db_path);
+        }
+
+        Ja3sDatabase::load_default()
     }
 
     /// Capture JA3 client fingerprint
@@ -137,7 +150,7 @@ impl FingerprintPhase {
         let ja3s = Ja3sFingerprint::from_server_hello(&server_hello);
 
         // Match against signature database
-        let ja3s_db = match Ja3sDatabase::load_default() {
+        let ja3s_db = match self.load_ja3s_database(context) {
             Ok(db) => db,
             Err(e) => {
                 context
@@ -460,6 +473,34 @@ mod tests {
         let err = FingerprintPhase::new()
             .load_ja3_database(&mut context)
             .expect_err("invalid custom JA3 database path should fail");
+
+        assert!(!err.to_string().is_empty());
+        assert!(context.results.scan_metadata.human_warnings.is_empty());
+    }
+
+    #[test]
+    fn test_load_ja3s_database_rejects_invalid_custom_path() {
+        let target = crate::utils::network::Target::with_ips(
+            "localhost".to_string(),
+            443,
+            vec!["127.0.0.1".parse().expect("valid IP")],
+        )
+        .expect("test assertion should succeed");
+
+        let mut args = ScanRequest::default();
+        args.fingerprint.ja3s_database = Some(std::env::temp_dir().join(format!(
+            "cipherrun_missing_ja3s_{}_{}.json",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        )));
+
+        let mut context = ScanContext::new(target, Arc::new(args), None, None);
+        let err = FingerprintPhase::new()
+            .load_ja3s_database(&mut context)
+            .expect_err("invalid custom JA3S database path should fail");
 
         assert!(!err.to_string().is_empty());
         assert!(context.results.scan_metadata.human_warnings.is_empty());

@@ -164,6 +164,16 @@ impl Ja3sDatabase {
         }
     }
 
+    /// Load database from JSON file
+    pub fn from_file(path: &std::path::Path) -> Result<Self> {
+        let contents = std::fs::read_to_string(path)?;
+        let signatures: HashMap<String, Ja3sSignature> =
+            serde_json::from_str(&contents).map_err(|e| TlsError::ParseError {
+                message: format!("Failed to parse JA3S database: {}", e),
+            })?;
+        Self::from_signatures(signatures)
+    }
+
     /// Load default database from embedded JSON
     pub fn load_default() -> Result<Self> {
         let json = include_str!("../../data/ja3s_signatures.json");
