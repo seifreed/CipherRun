@@ -43,15 +43,39 @@ impl<'a> PolicyLoader<'a> {
 
     /// Load a policy from a file path
     pub fn load(&self, policy_path: &Path) -> Result<Policy> {
+        self.load_with_stack(policy_path, &mut Vec::new())
+    }
+
+    fn load_with_stack(
+        &self,
+        policy_path: &Path,
+        loading_stack: &mut Vec<PathBuf>,
+    ) -> Result<Policy> {
+        let stack_path = policy_path
+            .canonicalize()
+            .unwrap_or_else(|_| policy_path.to_path_buf());
+        if loading_stack.contains(&stack_path) {
+            let mut cycle = loading_stack
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>();
+            cycle.push(stack_path.display().to_string());
+            return Err(crate::TlsError::ConfigError {
+                message: format!("Policy extends cycle detected: {}", cycle.join(" -> ")),
+            });
+        }
+
+        loading_stack.push(stack_path);
         let content = self.source.read_to_string(policy_path)?;
         let mut policy = self.parse_policy_document(&content)?;
 
         // Handle inheritance (extends)
         if let Some(ref extends_path) = policy.extends.clone() {
             let parent_path = self.resolve_path(policy_path, extends_path)?;
-            let base_policy = self.load(&parent_path)?;
+            let base_policy = self.load_with_stack(&parent_path, loading_stack)?;
             policy = self.merge_policies(base_policy, policy)?;
         }
+        loading_stack.pop();
 
         self.normalize_policy_values(&mut policy);
 
@@ -769,6 +793,41 @@ policy:
             .expect_err("traversal extends should fail");
 
         assert!(err.to_string().contains("Invalid policy extends path"));
+    }
+
+    #[test]
+    fn test_extends_rejects_cycles() {
+        let temp_dir = tempfile::tempdir().expect("test assertion should succeed");
+        let policy_a = temp_dir.path().join("a.yaml");
+        let policy_b = temp_dir.path().join("b.yaml");
+
+        std::fs::write(
+            &policy_a,
+            r#"
+policy:
+  name: "Policy A"
+  version: "1.0"
+  extends: "b.yaml"
+"#,
+        )
+        .expect("test assertion should succeed");
+        std::fs::write(
+            &policy_b,
+            r#"
+policy:
+  name: "Policy B"
+  version: "1.0"
+  extends: "a.yaml"
+"#,
+        )
+        .expect("test assertion should succeed");
+
+        let source = crate::policy::source::FilesystemPolicySource;
+        let err = PolicyLoader::from_source(temp_dir.path(), &source)
+            .load(&policy_a)
+            .expect_err("cyclic policy inheritance should fail");
+
+        assert!(err.to_string().contains("Policy extends cycle detected"));
     }
 
     #[test]
