@@ -92,15 +92,17 @@ impl LdapNegotiator {
             });
         }
 
-        let Some((seq_len, seq_len_bytes)) = Self::read_ber_length(bytes, 1, "LDAP sequence length")? else {
+        let Some((seq_len, seq_len_bytes)) =
+            Self::read_ber_length(bytes, 1, "LDAP sequence length")?
+        else {
             return Ok(None);
         };
         let content_start = 1 + seq_len_bytes;
-        let seq_end = content_start
-            .checked_add(seq_len)
-            .ok_or_else(|| crate::error::TlsError::ParseError {
+        let seq_end = content_start.checked_add(seq_len).ok_or_else(|| {
+            crate::error::TlsError::ParseError {
                 message: "LDAP sequence length overflow".to_string(),
-            })?;
+            }
+        })?;
 
         if bytes.len() < seq_end {
             return Ok(None);
@@ -119,7 +121,9 @@ impl LdapNegotiator {
         }
         offset += 1;
 
-        let Some((msg_len, msg_len_bytes)) = Self::read_ber_length(bytes, offset, "LDAP messageID length")? else {
+        let Some((msg_len, msg_len_bytes)) =
+            Self::read_ber_length(bytes, offset, "LDAP messageID length")?
+        else {
             return Ok(None);
         };
         if msg_len == 0 {
@@ -144,15 +148,18 @@ impl LdapNegotiator {
         }
         offset += 1;
 
-        let Some((ext_len, ext_len_bytes)) = Self::read_ber_length(bytes, offset, "LDAP extended response length")? else {
+        let Some((ext_len, ext_len_bytes)) =
+            Self::read_ber_length(bytes, offset, "LDAP extended response length")?
+        else {
             return Ok(None);
         };
         offset += ext_len_bytes;
-        let ext_end = offset
-            .checked_add(ext_len)
-            .ok_or_else(|| crate::error::TlsError::ParseError {
-                message: "LDAP extended response length overflow".to_string(),
-            })?;
+        let ext_end =
+            offset
+                .checked_add(ext_len)
+                .ok_or_else(|| crate::error::TlsError::ParseError {
+                    message: "LDAP extended response length overflow".to_string(),
+                })?;
         if ext_end > seq_end {
             return Ok(None);
         }
@@ -164,7 +171,9 @@ impl LdapNegotiator {
         }
         offset += 1;
 
-        let Some((result_len, result_len_bytes)) = Self::read_ber_length(bytes, offset, "LDAP resultCode length")? else {
+        let Some((result_len, result_len_bytes)) =
+            Self::read_ber_length(bytes, offset, "LDAP resultCode length")?
+        else {
             return Ok(None);
         };
         if result_len == 0 {
@@ -172,12 +181,18 @@ impl LdapNegotiator {
                 message: "LDAP resultCode has zero length".to_string(),
             });
         }
+        if result_len != 1 {
+            return Err(crate::error::TlsError::ParseError {
+                message: "LDAP resultCode length must be 1".to_string(),
+            });
+        }
         offset += result_len_bytes;
-        let result_end = offset
-            .checked_add(result_len)
-            .ok_or_else(|| crate::error::TlsError::ParseError {
-                message: "LDAP resultCode length overflow".to_string(),
-            })?;
+        let result_end =
+            offset
+                .checked_add(result_len)
+                .ok_or_else(|| crate::error::TlsError::ParseError {
+                    message: "LDAP resultCode length overflow".to_string(),
+                })?;
         if result_end > ext_end {
             return Ok(None);
         }
@@ -191,7 +206,9 @@ impl LdapNegotiator {
         }
         offset += 1;
 
-        let Some((dn_len, dn_len_bytes)) = Self::read_ber_length(bytes, offset, "LDAP matchedDN length")? else {
+        let Some((dn_len, dn_len_bytes)) =
+            Self::read_ber_length(bytes, offset, "LDAP matchedDN length")?
+        else {
             return Ok(None);
         };
         offset += dn_len_bytes;
@@ -211,15 +228,18 @@ impl LdapNegotiator {
         }
         offset += 1;
 
-        let Some((diag_len, diag_len_bytes)) = Self::read_ber_length(bytes, offset, "LDAP diagnosticMessage length")? else {
+        let Some((diag_len, diag_len_bytes)) =
+            Self::read_ber_length(bytes, offset, "LDAP diagnosticMessage length")?
+        else {
             return Ok(None);
         };
         offset += diag_len_bytes;
-        offset = offset
-            .checked_add(diag_len)
-            .ok_or_else(|| crate::error::TlsError::ParseError {
-                message: "LDAP diagnosticMessage length overflow".to_string(),
-            })?;
+        offset =
+            offset
+                .checked_add(diag_len)
+                .ok_or_else(|| crate::error::TlsError::ParseError {
+                    message: "LDAP diagnosticMessage length overflow".to_string(),
+                })?;
         if offset > ext_end {
             return Ok(None);
         }
@@ -354,6 +374,23 @@ mod tests {
         assert!(result.is_err(), "Expected malformed LDAP response to fail");
 
         server.await.unwrap();
+    }
+
+    #[test]
+    fn test_ldap_parse_rejects_multi_byte_result_code() {
+        let response = [
+            0x30, 0x0d, // SEQUENCE, length 13
+            0x02, 0x01, 0x01, // messageID = 1
+            0x78, 0x08, // ExtendedResponse, length 8
+            0x0a, 0x02, 0x00, 0x00, // malformed resultCode length 2
+            0x04, 0x00, // matchedDN
+            0x04, 0x00, // diagnosticMessage
+        ];
+
+        let err = LdapNegotiator::parse_starttls_response(&response)
+            .expect_err("multi-byte LDAP resultCode should fail");
+
+        assert!(err.to_string().contains("resultCode length"));
     }
 
     #[tokio::test]
