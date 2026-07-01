@@ -126,6 +126,23 @@ impl ScanRequest {
             });
         }
 
+        if let Some(xmpphost) = self.starttls.xmpphost.as_deref() {
+            crate::security::validate_hostname(xmpphost).map_err(|error| {
+                TlsError::InvalidInput {
+                    message: format!("Invalid XMPP hostname: {}", error),
+                }
+            })?;
+
+            if !matches!(
+                self.starttls_protocol(),
+                Some(crate::starttls::StarttlsProtocol::XMPP)
+            ) {
+                return Err(TlsError::InvalidInput {
+                    message: "--xmpphost requires an XMPP STARTTLS mode.".to_string(),
+                });
+            }
+        }
+
         if self.starttls.rdp && self.has_starttls_negotiation_request() {
             return Err(TlsError::InvalidInput {
                 message: "Cannot combine --rdp with STARTTLS negotiation options.".to_string(),

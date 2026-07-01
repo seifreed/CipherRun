@@ -301,6 +301,40 @@ fn rejects_invalid_export_hello_format() {
 }
 
 #[test]
+fn rejects_xmpphost_without_xmpp_starttls() {
+    let request = ScanRequest {
+        starttls: ScanRequestStarttls {
+            smtp: true,
+            xmpphost: Some("chat.example.com".to_string()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let err = request
+        .validate_common()
+        .expect_err("xmpphost without XMPP STARTTLS should fail validation");
+    assert!(err.to_string().contains("--xmpphost requires"));
+}
+
+#[test]
+fn rejects_malformed_xmpphost() {
+    let request = ScanRequest {
+        starttls: ScanRequestStarttls {
+            xmpp: true,
+            xmpphost: Some("bad host".to_string()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let err = request
+        .validate_common()
+        .expect_err("malformed xmpphost should fail validation");
+    assert!(err.to_string().contains("Invalid XMPP hostname"));
+}
+
+#[test]
 fn baseline_scan_requires_all_without_specific_focus() {
     let request = ScanRequest {
         target: Some("example.com:443".to_string()),
