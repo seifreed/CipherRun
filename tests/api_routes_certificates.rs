@@ -24,7 +24,14 @@ async fn test_certificates_no_db_returns_503() {
         axum::http::StatusCode::SERVICE_UNAVAILABLE
     );
     assert_eq!(
-        common::api::send_status(&app, common::api::request("GET", "/certificates/abcd")).await,
+        common::api::send_status(
+            &app,
+            common::api::request(
+                "GET",
+                "/certificates/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            ),
+        )
+        .await,
         axum::http::StatusCode::SERVICE_UNAVAILABLE
     );
 }

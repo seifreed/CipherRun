@@ -156,15 +156,17 @@ async fn test_get_certificate_success_and_not_found() {
     let pool = state.db_pool.as_ref().unwrap().clone();
 
     let soon = Utc::now() + Duration::days(20);
-    insert_scan_and_cert(&pool, "example.com", "fp-ok", "CN=example.com", soon).await;
+    let fingerprint = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    insert_scan_and_cert(&pool, "example.com", fingerprint, "CN=example.com", soon).await;
 
-    let response = get_certificate(State(state.clone()), Path("fp-ok".to_string()))
+    let response = get_certificate(State(state.clone()), Path(fingerprint.to_string()))
         .await
         .expect("test assertion should succeed");
-    assert_eq!(response.0.fingerprint, "fp-ok");
+    assert_eq!(response.0.fingerprint, fingerprint);
     assert_eq!(response.0.common_name, "example.com");
 
-    let err = get_certificate(State(state.clone()), Path("missing".to_string()))
+    let missing = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    let err = get_certificate(State(state.clone()), Path(missing.to_string()))
         .await
         .expect_err("test assertion should fail");
     assert!(err.to_string().contains("not found"));

@@ -84,6 +84,17 @@ fn present_inventory_record(
     .map_err(|e| ApiError::Internal(e.to_string()))
 }
 
+fn validate_certificate_fingerprint(fingerprint: &str) -> Result<(), ApiError> {
+    let normalized = fingerprint.replace(':', "");
+    if normalized.len() == 64 && normalized.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Ok(());
+    }
+
+    Err(ApiError::BadRequest(
+        "Invalid certificate fingerprint: expected SHA-256 hex fingerprint".to_string(),
+    ))
+}
+
 /// List certificates
 ///
 /// Returns a paginated list of certificates from the inventory
@@ -134,6 +145,7 @@ pub async fn list_certificates(
     ),
     responses(
         (status = 200, description = "Certificate details", body = CertificateSummary),
+        (status = 400, description = "Invalid fingerprint", body = ApiErrorResponse),
         (status = 404, description = "Certificate not found", body = ApiErrorResponse)
     ),
     security(
@@ -144,6 +156,8 @@ pub async fn get_certificate(
     State(state): State<Arc<AppState>>,
     Path(fingerprint): Path<String>,
 ) -> Result<Json<CertificateSummary>, ApiError> {
+    validate_certificate_fingerprint(&fingerprint)?;
+
     let inventory_service = inventory_service_from_state(&state)?;
     let cert = load_inventory_record(&inventory_service, &fingerprint)
         .await?
@@ -154,7 +168,9 @@ pub async fn get_certificate(
 
 #[cfg(test)]
 mod tests {
-    use super::{MAX_CERTIFICATE_LIMIT, inventory_query_from_api};
+    use super::{
+        MAX_CERTIFICATE_LIMIT, inventory_query_from_api, validate_certificate_fingerprint,
+    };
     use crate::api::models::request::CertificateQuery;
     use crate::api::presenters::certificates::{CertificateView, present_certificate_summary};
     use crate::application::CertificateInventorySort;
@@ -286,5 +302,21 @@ mod tests {
         };
 
         assert!(inventory_query_from_api(&query).is_err());
+    }
+
+    #[test]
+    fn certificate_fingerprint_accepts_sha256_hex_forms() {
+        let plain = "a".repeat(64);
+        let colon_separated = (0..32).map(|_| "aa").collect::<Vec<_>>().join(":");
+
+        assert!(validate_certificate_fingerprint(&plain).is_ok());
+        assert!(validate_certificate_fingerprint(&colon_separated).is_ok());
+    }
+
+    #[test]
+    fn certificate_fingerprint_rejects_non_sha256_values() {
+        assert!(validate_certificate_fingerprint("abc123").is_err());
+        assert!(validate_certificate_fingerprint(&"g".repeat(64)).is_err());
+        assert!(validate_certificate_fingerprint("").is_err());
     }
 }
