@@ -285,6 +285,22 @@ fn rejects_mtls_key_password_without_key() {
 }
 
 #[test]
+fn rejects_invalid_export_hello_format() {
+    let request = ScanRequest {
+        fingerprint: ScanRequestFingerprint {
+            export_hello: Some("raw".to_string()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let err = request
+        .validate_common()
+        .expect_err("invalid export format should fail validation");
+    assert!(err.to_string().contains("Unknown --export-hello format"));
+}
+
+#[test]
 fn baseline_scan_requires_all_without_specific_focus() {
     let request = ScanRequest {
         target: Some("example.com:443".to_string()),

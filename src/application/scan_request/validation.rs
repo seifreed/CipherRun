@@ -110,6 +110,10 @@ impl ScanRequest {
             });
         }
 
+        if let Some(format) = &self.fingerprint.export_hello {
+            crate::output::hello_export::HelloExportFormat::parse(format)?;
+        }
+
         if self.connection.retry_backoff_ms > self.connection.max_backoff_ms {
             return Err(TlsError::InvalidInput {
                 message: "Retry backoff cannot be greater than max backoff.".to_string(),
