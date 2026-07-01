@@ -10,6 +10,8 @@ use std::sync::Arc;
 use tokio_rustls::TlsConnector;
 use tracing::warn;
 
+const MAX_MTLS_PEM_BYTES: u64 = 16 * 1024 * 1024;
+
 /// mTLS configuration
 pub struct MtlsConfig {
     pub cert_chain: Vec<CertificateDer<'static>>,
@@ -34,6 +36,25 @@ fn parse_certs(pem_bytes: &[u8]) -> crate::Result<Vec<CertificateDer<'static>>> 
         .filter(|p| p.tag() == "CERTIFICATE")
         .map(|p| CertificateDer::from(p.into_contents()))
         .collect())
+}
+
+fn read_mtls_pem(path: &Path, label: &str) -> Result<Vec<u8>> {
+    let size = fs::metadata(path)
+        .map_err(|e| crate::error::TlsError::MtlsError {
+            message: format!("Failed to open {label}: {}", e),
+        })?
+        .len();
+    if size > MAX_MTLS_PEM_BYTES {
+        return Err(crate::error::TlsError::MtlsError {
+            message: format!(
+                "{label} too large: {} bytes (max {})",
+                size, MAX_MTLS_PEM_BYTES
+            ),
+        });
+    }
+    fs::read(path).map_err(|e| crate::error::TlsError::MtlsError {
+        message: format!("Failed to open {label}: {}", e),
+    })
 }
 
 fn parse_keys(pem_bytes: &[u8]) -> crate::Result<Vec<PrivateKeyDer<'static>>> {
@@ -80,19 +101,13 @@ impl MtlsConfig {
         key_path: P,
         _key_password: Option<&str>,
     ) -> Result<Self> {
-        let cert_bytes =
-            fs::read(cert_path.as_ref()).map_err(|e| crate::error::TlsError::MtlsError {
-                message: format!("Failed to open certificate file: {}", e),
-            })?;
+        let cert_bytes = read_mtls_pem(cert_path.as_ref(), "certificate file")?;
         let certs = parse_certs(&cert_bytes)?;
         if certs.is_empty() {
             crate::tls_bail!("No certificates found in certificate file");
         }
 
-        let key_bytes =
-            fs::read(key_path.as_ref()).map_err(|e| crate::error::TlsError::MtlsError {
-                message: format!("Failed to open private key file: {}", e),
-            })?;
+        let key_bytes = read_mtls_pem(key_path.as_ref(), "private key file")?;
         let keys = parse_keys(&key_bytes)?;
 
         Ok(Self {
@@ -103,9 +118,7 @@ impl MtlsConfig {
 
     /// Load mTLS configuration from a PEM file containing both cert chain and private key
     pub fn from_pem_file<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let pem_bytes = fs::read(path.as_ref()).map_err(|e| crate::error::TlsError::MtlsError {
-            message: format!("Failed to open mTLS PEM file: {}", e),
-        })?;
+        let pem_bytes = read_mtls_pem(path.as_ref(), "mTLS PEM file")?;
 
         let certs = parse_certs(&pem_bytes)?;
         if certs.is_empty() {
@@ -187,6 +200,21 @@ KHvHJKYnrKyB
             .err()
             .expect("should fail on empty PEM");
         assert!(err.to_string().contains("No certificates"));
+    }
+
+    #[test]
+    fn test_mtls_from_pem_file_rejects_oversized_file_before_read() {
+        let temp_file = NamedTempFile::new().expect("test assertion should succeed");
+        temp_file
+            .as_file()
+            .set_len(MAX_MTLS_PEM_BYTES + 1)
+            .expect("test file should be resized");
+
+        let err = MtlsConfig::from_pem_file(temp_file.path())
+            .err()
+            .expect("oversized PEM should fail before parse");
+
+        assert!(err.to_string().contains("mTLS PEM file too large"));
     }
 
     #[test]
