@@ -99,8 +99,29 @@ impl StarttlsArgs {
             Some(StarttlsProtocol::MYSQL)
         } else if self.irc {
             Some(StarttlsProtocol::IRC)
+        } else if self.nntp {
+            Some(StarttlsProtocol::NNTP)
+        } else if self.sieve {
+            Some(StarttlsProtocol::SIEVE)
+        } else if self.lmtp {
+            Some(StarttlsProtocol::LMTP)
         } else {
-            None
+            let protocol = self.protocol.as_deref()?.trim().to_ascii_lowercase();
+            match protocol.as_str() {
+                "smtp" => Some(StarttlsProtocol::SMTP),
+                "imap" => Some(StarttlsProtocol::IMAP),
+                "pop3" => Some(StarttlsProtocol::POP3),
+                "ftp" => Some(StarttlsProtocol::FTP),
+                "ldap" => Some(StarttlsProtocol::LDAP),
+                "xmpp" | "xmpp-server" => Some(StarttlsProtocol::XMPP),
+                "postgres" | "postgresql" | "psql" => Some(StarttlsProtocol::POSTGRES),
+                "mysql" => Some(StarttlsProtocol::MYSQL),
+                "irc" => Some(StarttlsProtocol::IRC),
+                "nntp" => Some(StarttlsProtocol::NNTP),
+                "sieve" => Some(StarttlsProtocol::SIEVE),
+                "lmtp" => Some(StarttlsProtocol::LMTP),
+                _ => None,
+            }
         }
     }
 }
@@ -157,5 +178,43 @@ mod tests {
         let parsed = TestCli::parse_from(["test", "--starttls", "pop3"]);
         let args = parsed.args;
         assert_eq!(args.protocol.as_deref(), Some("pop3"));
+        assert_eq!(args.starttls_protocol(), Some(StarttlsProtocol::POP3));
+    }
+
+    #[test]
+    fn test_starttls_protocol_extended_flags() {
+        assert_eq!(
+            StarttlsArgs {
+                nntp: true,
+                ..Default::default()
+            }
+            .starttls_protocol(),
+            Some(StarttlsProtocol::NNTP)
+        );
+        assert_eq!(
+            StarttlsArgs {
+                sieve: true,
+                ..Default::default()
+            }
+            .starttls_protocol(),
+            Some(StarttlsProtocol::SIEVE)
+        );
+        assert_eq!(
+            StarttlsArgs {
+                lmtp: true,
+                ..Default::default()
+            }
+            .starttls_protocol(),
+            Some(StarttlsProtocol::LMTP)
+        );
+    }
+
+    #[test]
+    fn test_starttls_protocol_string_normalization() {
+        let args = StarttlsArgs {
+            protocol: Some(" PostgreSQL ".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(args.starttls_protocol(), Some(StarttlsProtocol::POSTGRES));
     }
 }
