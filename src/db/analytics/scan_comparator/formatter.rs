@@ -80,6 +80,14 @@ impl ScanComparator {
                 comp.scan_1.scan_id, comp.scan_1.target_port
             ))
         })?;
+        let scan_1_id = comp
+            .scan_1
+            .scan_id
+            .ok_or_else(|| crate::TlsError::DatabaseError("Scan 1 missing scan_id".to_string()))?;
+        let scan_2_id = comp
+            .scan_2
+            .scan_id
+            .ok_or_else(|| crate::TlsError::DatabaseError("Scan 2 missing scan_id".to_string()))?;
 
         output.push_str("╔════════════════════════════════════════════════════════════════════╗\n");
         output.push_str("║                        SCAN COMPARISON                             ║\n");
@@ -90,12 +98,12 @@ impl ScanComparator {
         output.push_str(&format!(
             "Scan 1: {} (ID: {})\n",
             comp.scan_1.scan_timestamp.format("%Y-%m-%d %H:%M:%S UTC"),
-            comp.scan_1.scan_id.unwrap_or(0)
+            scan_1_id
         ));
         output.push_str(&format!(
             "Scan 2: {} (ID: {})\n",
             comp.scan_2.scan_timestamp.format("%Y-%m-%d %H:%M:%S UTC"),
-            comp.scan_2.scan_id.unwrap_or(0)
+            scan_2_id
         ));
         output.push_str(&format!(
             "Target: {}\n\n",
@@ -427,5 +435,16 @@ mod tests {
             .expect_err("invalid target port should fail");
 
         assert!(err.to_string().contains("target_port"));
+    }
+
+    #[test]
+    fn terminal_formatter_rejects_missing_scan_id() {
+        let mut comparison = minimal_comparison();
+        comparison.scan_1.scan_id = None;
+
+        let err =
+            ScanComparator::format_terminal(&comparison).expect_err("missing scan id should fail");
+
+        assert!(err.to_string().contains("missing scan_id"));
     }
 }
