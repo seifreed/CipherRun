@@ -36,7 +36,7 @@ from cipherrun.client import (
     _parse_retry_after,
     _safe_error_data,
 )
-from cipherrun.exceptions import APIError, CipherRunError, RateLimitError
+from cipherrun.exceptions import APIError, CipherRunError, RateLimitError, WebSocketError
 from cipherrun.models import ScanOptions, ScanStatusResponse
 from cipherrun.websocket import WebSocketProgressClient, _websocket_header_kwargs
 
@@ -476,6 +476,31 @@ def test_websocket_client_quotes_scan_id_and_preserves_base_path(monkeypatch):
 
     assert connected_urls == ["ws://localhost:8080/cipherrun/api/v1/scan/scan%2F1/stream"]
     assert messages[0].scan_id == "scan/1"
+
+
+def test_websocket_invalid_json_raises_websocket_error(monkeypatch):
+    class FakeWebSocket:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def recv(self):
+            return "not json"
+
+    def fake_connect(_url, **_kwargs):
+        return FakeWebSocket()
+
+    monkeypatch.setattr("websockets.connect", fake_connect)
+
+    async def run():
+        client = WebSocketProgressClient()
+        async for _progress in client.stream_progress("scan-1"):
+            pass
+
+    with pytest.raises(WebSocketError):
+        asyncio.run(run())
 
 
 def test_websocket_header_kwargs_supports_old_websockets():

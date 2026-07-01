@@ -134,7 +134,10 @@ class WebSocketProgressClient:
                                 timeout=timeout,
                             )
 
-                            data = json.loads(message)
+                            try:
+                                data = json.loads(message)
+                            except json.JSONDecodeError as e:
+                                raise WebSocketError(f"Invalid WebSocket JSON frame: {e}") from e
                             progress = _progress_message_from_frame(data)
                             if progress is None:
                                 continue
