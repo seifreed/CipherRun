@@ -27,9 +27,14 @@ impl ScanRequest {
             });
         }
 
-        if let Some(ip_override) = self.ip.as_deref()
-            && let Ok(ip) = ip_override.parse::<std::net::IpAddr>()
-        {
+        if let Some(ip_override) = self.ip.as_deref() {
+            let ip =
+                ip_override
+                    .parse::<std::net::IpAddr>()
+                    .map_err(|_| TlsError::InvalidInput {
+                        message: format!("Invalid IP override: {}", ip_override),
+                    })?;
+
             if self.network.ipv4_only && ip.is_ipv6() {
                 return Err(TlsError::InvalidInput {
                     message: "Cannot use an IPv6 --ip override with IPv4-only scanning."

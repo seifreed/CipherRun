@@ -102,6 +102,19 @@ fn rejects_ip_override_conflicting_with_address_family() {
 }
 
 #[test]
+fn rejects_malformed_ip_override() {
+    let request = ScanRequest {
+        ip: Some("not-an-ip".to_string()),
+        ..Default::default()
+    };
+
+    let err = request
+        .validate_common()
+        .expect_err("malformed --ip should fail validation");
+    assert!(err.to_string().contains("Invalid IP override"));
+}
+
+#[test]
 fn rejects_missing_target_for_scan() {
     let request = ScanRequest::default();
     assert!(request.validate_for_scan().is_err());
