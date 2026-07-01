@@ -108,10 +108,7 @@ impl MassScanCommand {
         config: MassScanConfig,
     ) -> Result<(MassScanner, String)> {
         if let Some(input_file) = self.args.input_file.as_ref() {
-            let input_file_str = input_file.to_str().ok_or_else(|| TlsError::InvalidInput {
-                message: "Invalid input file path".to_string(),
-            })?;
-            let scanner = MassScanner::from_file(request, config, input_file_str)?;
+            let scanner = MassScanner::from_file(request, config, input_file)?;
             return Ok((scanner, format!("file {}", input_file.display())));
         }
 

@@ -14,6 +14,7 @@ use crate::scanner::{ScanResults, Scanner};
 use crate::utils::network_runtime;
 use colored::Colorize;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 
@@ -63,7 +64,7 @@ impl MassScanner {
     pub fn from_file(
         request: ScanRequest,
         config: MassScanConfig,
-        file_path: &str,
+        file_path: &Path,
     ) -> Result<Self> {
         let content = std::fs::read_to_string(file_path)?;
         let targets: Vec<String> = content
@@ -75,7 +76,7 @@ impl MassScanner {
         if targets.is_empty() {
             return Err(crate::error::TlsError::Other(format!(
                 "No targets found in file: {}",
-                file_path
+                file_path.display()
             )));
         }
 
@@ -616,12 +617,9 @@ mod tests {
         )
         .expect("test file should be created");
 
-        let scanner = MassScanner::from_file(
-            ScanRequest::default(),
-            MassScanConfig::default(),
-            path.to_str().expect("test path should be valid UTF-8"),
-        )
-        .expect("should parse targets");
+        let scanner =
+            MassScanner::from_file(ScanRequest::default(), MassScanConfig::default(), &path)
+                .expect("should parse targets");
         assert_eq!(scanner.targets.len(), 2);
         assert_eq!(scanner.targets[0], "example.com:443");
         assert_eq!(scanner.targets[1], "mail.example.com:25");
@@ -635,17 +633,36 @@ mod tests {
         path.push("cipherrun_targets_empty.txt");
         std::fs::write(&path, "  \n# only comment\n").expect("test file should be created");
 
-        let err = MassScanner::from_file(
-            ScanRequest::default(),
-            MassScanConfig::default(),
-            path.to_str().expect("test path should be valid UTF-8"),
-        )
-        .err()
-        .expect("result should be an error");
+        let err = MassScanner::from_file(ScanRequest::default(), MassScanConfig::default(), &path)
+            .err()
+            .expect("result should be an error");
         let msg = err.to_string();
         assert!(msg.contains("No targets found"));
 
         let _ = std::fs::remove_file(path);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_mass_scanner_from_file_does_not_pre_reject_non_utf8_path() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let dir = tempdir().expect("tempdir should be created");
+        let path = dir.path().join(OsString::from_vec(vec![
+            b't', b'a', b'r', b'g', b'e', b't', b's', 0xff, b'.', b't', b'x', b't',
+        ]));
+
+        let err = match MassScanner::from_file(
+            ScanRequest::default(),
+            MassScanConfig::default(),
+            &path,
+        ) {
+            Ok(_) => panic!("missing non-UTF-8 path should produce a filesystem error"),
+            Err(err) => err,
+        };
+
+        assert!(!err.to_string().contains("Invalid input file path"));
     }
 
     #[test]
@@ -772,13 +789,9 @@ mod tests {
         let path = dir.path().join("targets.txt");
         std::fs::write(&path, "# comment only\n\n   \n").expect("test file should be created");
 
-        let err = MassScanner::from_file(
-            ScanRequest::default(),
-            MassScanConfig::default(),
-            path.to_str().expect("test path should be valid UTF-8"),
-        )
-        .err()
-        .expect("result should be an error");
+        let err = MassScanner::from_file(ScanRequest::default(), MassScanConfig::default(), &path)
+            .err()
+            .expect("result should be an error");
         assert!(err.to_string().contains("No targets found"));
     }
 }
