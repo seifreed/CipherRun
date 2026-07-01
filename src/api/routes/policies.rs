@@ -30,6 +30,8 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+const MAX_POLICY_ID_BYTES: usize = 200;
+
 fn existing_policy_path(policy_dir: &std::path::Path, id: &str) -> Result<PathBuf, ApiError> {
     let policy_path = sanitized_policy_path(policy_dir, id)?;
     if !policy_path.exists() {
@@ -51,6 +53,12 @@ fn policy_id_from_request_name(name: &str) -> Result<String, ApiError> {
         return Err(ApiError::BadRequest(
             "Policy name must contain at least one letter or number".to_string(),
         ));
+    }
+    if policy_id.len() > MAX_POLICY_ID_BYTES {
+        return Err(ApiError::BadRequest(format!(
+            "Policy name is too long (max {} filename bytes)",
+            MAX_POLICY_ID_BYTES
+        )));
     }
 
     Ok(policy_id)
@@ -364,6 +372,34 @@ protocols:
             .expect_err("policy name without usable filename characters should fail");
 
         assert!(matches!(err, ApiError::BadRequest(_)));
+        let _ = std::fs::remove_dir_all(&policy_dir);
+    }
+
+    #[tokio::test]
+    async fn test_create_policy_rejects_filename_too_long_before_write() {
+        let policy_dir = std::env::temp_dir().join("cipherrun_policy_tests_long_name");
+        let _ = std::fs::remove_dir_all(&policy_dir);
+        let state = build_state(policy_dir.clone());
+
+        let request = PolicyRequest {
+            name: "a".repeat(MAX_POLICY_ID_BYTES + 1),
+            description: None,
+            rules: sample_policy_yaml(),
+            enabled: true,
+        };
+
+        let err = create_policy(State(state), Json(request))
+            .await
+            .expect_err("overlong policy filename should fail validation");
+
+        assert!(matches!(err, ApiError::BadRequest(_)));
+        assert!(
+            std::fs::read_dir(&policy_dir)
+                .expect("policy dir should exist")
+                .next()
+                .is_none(),
+            "invalid request must not create a policy file"
+        );
         let _ = std::fs::remove_dir_all(&policy_dir);
     }
 
