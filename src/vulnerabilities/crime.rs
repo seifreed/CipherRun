@@ -7,6 +7,7 @@
 use crate::Result;
 use crate::constants::{
     BUFFER_SIZE_MAX_WITH_OVERHEAD, CONTENT_TYPE_HANDSHAKE, TLS_HANDSHAKE_TIMEOUT,
+    TLS_RECORD_HEADER_SIZE,
 };
 use crate::protocols::Protocol;
 use crate::protocols::handshake::ClientHelloBuilder;
@@ -441,9 +442,22 @@ impl<'a> CrimeTester<'a> {
                 Ok(Ok(0)) => break,
                 Ok(Ok(n)) => {
                     total += n;
-                    if total >= 5 {
+                    if total >= TLS_RECORD_HEADER_SIZE {
                         let record_len = u16::from_be_bytes([buffer[3], buffer[4]]) as usize;
-                        let record_total = 5usize.saturating_add(record_len);
+                        let record_total = TLS_RECORD_HEADER_SIZE
+                            .checked_add(record_len)
+                            .ok_or_else(|| {
+                                std::io::Error::new(
+                                    ErrorKind::InvalidData,
+                                    "CRIME TLS record length overflow",
+                                )
+                            })?;
+                        if record_total > buffer.len() {
+                            return Err(std::io::Error::new(
+                                ErrorKind::InvalidData,
+                                "CRIME TLS record length exceeds buffer",
+                            ));
+                        }
                         if total >= record_total {
                             break;
                         }
@@ -491,6 +505,7 @@ pub struct CrimeTestResult {
 mod tests {
     use super::*;
     use crate::constants::BUFFER_SIZE_DEFAULT;
+    use std::io::ErrorKind;
     use std::net::TcpListener;
     use tokio::io::AsyncWriteExt;
     use tokio::time::{Duration, sleep};
@@ -528,6 +543,34 @@ mod tests {
             .expect("record should read");
 
         assert_eq!(n, 5 + BUFFER_SIZE_DEFAULT);
+        server.await.expect("server should finish");
+    }
+
+    #[tokio::test]
+    async fn test_read_complete_tls_record_rejects_oversized_record_for_buffer() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("local addr should exist");
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept should succeed");
+            socket
+                .write_all(&[CONTENT_TYPE_HANDSHAKE, 0x03, 0x03, 0x00, 0x20])
+                .await
+                .expect("write header");
+            socket.write_all(&[0u8; 8]).await.expect("write body");
+        });
+
+        let mut stream = tokio::net::TcpStream::connect(addr)
+            .await
+            .expect("connect should succeed");
+        let mut buffer = [0u8; 16];
+        let err = CrimeTester::read_complete_tls_record(&mut stream, &mut buffer)
+            .await
+            .expect_err("oversized record should fail");
+
+        assert_eq!(err.kind(), ErrorKind::InvalidData);
         server.await.expect("server should finish");
     }
 
