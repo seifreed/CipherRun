@@ -294,8 +294,7 @@ impl CtVerifier {
                         "crt.sh",
                     )
                     .await?;
-                    let text = String::from_utf8_lossy(&body);
-                    Self::parse_ct_log_response(&text)
+                    Self::parse_ct_log_response_bytes(&body)
                 } else {
                     Err(crate::TlsError::HttpError {
                         status: response.status().as_u16(),
@@ -305,6 +304,13 @@ impl CtVerifier {
             }
             Err(err) => Err(err.into()),
         }
+    }
+
+    fn parse_ct_log_response_bytes(body: &[u8]) -> Result<CtLogLookup> {
+        let text = std::str::from_utf8(body).map_err(|error| crate::TlsError::ParseError {
+            message: format!("CT log response was not valid UTF-8: {error}"),
+        })?;
+        Self::parse_ct_log_response(text)
     }
 
     fn parse_ct_log_response(text: &str) -> Result<CtLogLookup> {
@@ -646,5 +652,13 @@ mod tests {
             .expect_err("non-array CT response should be inconclusive to caller");
 
         assert!(err.to_string().contains("not a JSON array"));
+    }
+
+    #[test]
+    fn test_parse_ct_log_response_bytes_rejects_invalid_utf8() {
+        let err = CtVerifier::parse_ct_log_response_bytes(b"[{\"name\":\"\xff\"}]")
+            .expect_err("invalid UTF-8 response should fail");
+
+        assert!(err.to_string().contains("not valid UTF-8"));
     }
 }
