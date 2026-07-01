@@ -230,6 +230,61 @@ fn rejects_malformed_sni_name() {
 }
 
 #[test]
+fn rejects_incomplete_separate_mtls_files() {
+    let missing_certs = ScanRequest {
+        tls: ScanRequestTls {
+            client_key: Some("client.key".into()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    assert!(missing_certs.validate_common().is_err());
+
+    let missing_key = ScanRequest {
+        tls: ScanRequestTls {
+            client_certs: Some("client.crt".into()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    assert!(missing_key.validate_common().is_err());
+}
+
+#[test]
+fn rejects_conflicting_mtls_modes() {
+    let request = ScanRequest {
+        tls: ScanRequestTls {
+            mtls_cert: Some("bundle.pem".into()),
+            client_key: Some("client.key".into()),
+            client_certs: Some("client.crt".into()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let err = request
+        .validate_common()
+        .expect_err("conflicting mTLS modes should fail validation");
+    assert!(err.to_string().contains("Cannot combine --mtls"));
+}
+
+#[test]
+fn rejects_mtls_key_password_without_key() {
+    let request = ScanRequest {
+        tls: ScanRequestTls {
+            client_key_password: Some("secret".to_string()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let err = request
+        .validate_common()
+        .expect_err("--pkpass without --pk should fail validation");
+    assert!(err.to_string().contains("--pkpass requires --pk"));
+}
+
+#[test]
 fn baseline_scan_requires_all_without_specific_focus() {
     let request = ScanRequest {
         target: Some("example.com:443".to_string()),

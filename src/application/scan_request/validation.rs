@@ -90,6 +90,26 @@ impl ScanRequest {
             })?;
         }
 
+        if self.tls.client_key.is_some() ^ self.tls.client_certs.is_some() {
+            return Err(TlsError::InvalidInput {
+                message: "mTLS separate key mode requires both --pk and --certs.".to_string(),
+            });
+        }
+
+        if self.tls.mtls_cert.is_some()
+            && (self.tls.client_key.is_some() || self.tls.client_certs.is_some())
+        {
+            return Err(TlsError::InvalidInput {
+                message: "Cannot combine --mtls with --pk/--certs.".to_string(),
+            });
+        }
+
+        if self.tls.client_key_password.is_some() && self.tls.client_key.is_none() {
+            return Err(TlsError::InvalidInput {
+                message: "--pkpass requires --pk.".to_string(),
+            });
+        }
+
         if self.connection.retry_backoff_ms > self.connection.max_backoff_ms {
             return Err(TlsError::InvalidInput {
                 message: "Retry backoff cannot be greater than max backoff.".to_string(),
