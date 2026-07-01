@@ -16,6 +16,7 @@ use ring::digest::{SHA256, digest};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::path::Path;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -86,9 +87,10 @@ impl JarmDatabase {
     }
 
     /// Load database from JSON file
-    pub fn from_file(path: &str) -> Result<Self> {
+    pub fn from_file(path: impl AsRef<Path>) -> Result<Self> {
+        let path = path.as_ref();
         let content = std::fs::read_to_string(path).map_err(|e| TlsError::FileSystemError {
-            path: path.to_string(),
+            path: path.display().to_string(),
             source: e,
         })?;
 

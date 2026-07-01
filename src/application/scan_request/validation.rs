@@ -131,9 +131,6 @@ impl ScanRequest {
         }
 
         if let Some(path) = &self.fingerprint.jarm_database {
-            let path = path.to_str().ok_or_else(|| TlsError::InvalidInput {
-                message: "Invalid JARM database path: path is not valid UTF-8.".to_string(),
-            })?;
             crate::fingerprint::JarmDatabase::from_file(path).map_err(|error| {
                 TlsError::InvalidInput {
                     message: format!("Invalid JARM database: {}", error),

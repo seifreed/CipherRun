@@ -1,5 +1,9 @@
 use super::*;
 use crate::protocols::Protocol;
+#[cfg(unix)]
+use std::ffi::OsString;
+#[cfg(unix)]
+use std::os::unix::ffi::OsStringExt;
 
 #[test]
 fn maps_full_scan_options_into_internal_request() {
@@ -343,6 +347,27 @@ fn rejects_invalid_custom_fingerprint_database_paths() {
             .expect_err("missing fingerprint database should fail validation");
         assert!(err.to_string().contains(label));
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn rejects_non_utf8_jarm_database_path_without_prechecking_utf8() {
+    let request = ScanRequest {
+        fingerprint: ScanRequestFingerprint {
+            jarm_database: Some(std::path::PathBuf::from(OsString::from_vec(vec![
+                b'j', b'a', b'r', b'm', b'-', 0xff, b'.', b'j', b's', b'o', b'n',
+            ]))),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let err = request
+        .validate_common()
+        .expect_err("unreadable JARM database should fail validation");
+    let message = err.to_string();
+    assert!(message.contains("Invalid JARM database"));
+    assert!(!message.contains("not valid UTF-8"));
 }
 
 #[test]

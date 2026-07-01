@@ -90,12 +90,7 @@ impl FingerprintPhase {
         use crate::fingerprint::JarmDatabase;
 
         if let Some(db_path) = context.args.fingerprint.jarm_database.clone() {
-            let path = db_path
-                .to_str()
-                .ok_or_else(|| crate::TlsError::InvalidInput {
-                    message: "JARM database path contains invalid UTF-8 characters".to_string(),
-                })?;
-            return JarmDatabase::from_file(path);
+            return JarmDatabase::from_file(db_path);
         }
 
         JarmDatabase::builtin()
