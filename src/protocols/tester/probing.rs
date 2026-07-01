@@ -15,6 +15,7 @@ use tokio::time::timeout;
 const LEGACY_PROBE_CIPHERS: &[u16] = &[
     0xc014, 0xc013, 0xc00a, 0xc009, 0x0035, 0x002f, 0xc012, 0xc008, 0x000a, 0x0005, 0x0004,
 ];
+const SSLV2_MAX_RECORD_WITH_HEADER: usize = 32767 + 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ProtocolProbeOutcome {
@@ -297,7 +298,8 @@ impl ProtocolTester {
 
                 match timeout(self.read_timeout, async {
                     stream.write_all(&client_hello).await?;
-                    self.read_complete_sslv2_record(&mut stream, 1024).await
+                    self.read_complete_sslv2_record(&mut stream, SSLV2_MAX_RECORD_WITH_HEADER)
+                        .await
                 })
                 .await
                 {
@@ -316,7 +318,7 @@ impl ProtocolTester {
                         let [first, second, msg_type] = header;
                         let is_sslv2_header = (first & 0x80) != 0;
                         let record_len = ((first & 0x7f) as usize) << 8 | second as usize;
-                        let reasonable = record_len > 0 && record_len <= 16384;
+                        let reasonable = record_len > 0 && record_len <= 32767;
                         let complete = 2usize
                             .checked_add(record_len)
                             .is_some_and(|record_total| response.len() >= record_total);
@@ -401,7 +403,19 @@ impl ProtocolTester {
             total += n;
             if total >= 2 {
                 let record_len = (((response[0] & 0x7f) as usize) << 8) | response[1] as usize;
-                if total >= 2 + record_len {
+                let record_total = 2usize.checked_add(record_len).ok_or_else(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "SSLv2 probe response length overflow",
+                    )
+                })?;
+                if record_total > response.len() {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "SSLv2 probe response length exceeds buffer",
+                    ));
+                }
+                if total >= record_total {
                     break;
                 }
             }
@@ -959,6 +973,45 @@ mod legacy_probe_tests {
             .test_sslv2_on_ip(addr)
             .await
             .expect("fragmented SSLv2 response should be classified");
+
+        assert_eq!(outcome, ProtocolProbeOutcome::Supported);
+    }
+
+    #[tokio::test]
+    async fn test_sslv2_probe_handles_large_server_hello() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("local addr should exist");
+
+        tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let mut buffer = vec![0u8; 64];
+                let _ = socket.read(&mut buffer).await.unwrap();
+
+                let record_len = 5000usize;
+                let mut record = vec![0x80 | ((record_len >> 8) as u8), record_len as u8, 0x02];
+                record.extend(vec![0u8; record_len - 1]);
+                socket
+                    .write_all(&record)
+                    .await
+                    .expect("write SSLv2 response");
+            }
+        });
+
+        let target = Target::with_ips("example.test".to_string(), addr.port(), vec![addr.ip()])
+            .expect("target should build");
+        let tester = ProtocolTester::new(target)
+            .with_connect_timeout(Duration::from_millis(100))
+            .with_read_timeout(Duration::from_millis(100));
+
+        let outcome = tester
+            .test_sslv2_on_ip(addr)
+            .await
+            .expect("large SSLv2 response should be classified");
 
         assert_eq!(outcome, ProtocolProbeOutcome::Supported);
     }
