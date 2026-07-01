@@ -279,8 +279,8 @@ impl CertificateAdvancedTester {
                     "AES128-SHA",
                     "DES-CBC3-SHA",
                 ],
-                "TLS_AES_256_GCM_SHA384", // Expected if client preference
-                "TLS_AES_256_GCM_SHA384", // Expected if server preference (assuming server prefers strong)
+                "ECDHE-RSA-AES256-GCM-SHA384", // Expected if client preference
+                "ECDHE-RSA-AES256-GCM-SHA384", // Expected if server preference (assuming server prefers strong)
             ),
             // Test 2: Weak to strong order
             (
@@ -291,37 +291,29 @@ impl CertificateAdvancedTester {
                     "AES256-SHA",
                     "ECDHE-RSA-AES128-GCM-SHA256",
                     "ECDHE-RSA-AES256-GCM-SHA384",
-                    "TLS_AES_128_GCM_SHA256",
-                    "TLS_AES_256_GCM_SHA384",
                 ],
-                "DES-CBC3-SHA",           // Expected if client preference
-                "TLS_AES_256_GCM_SHA384", // Expected if server preference (assuming server prefers strong)
+                "DES-CBC3-SHA",                // Expected if client preference
+                "ECDHE-RSA-AES256-GCM-SHA384", // Expected if server preference (assuming server prefers strong)
             ),
             // Test 3: Random order
             (
                 "Random order",
                 vec![
                     "AES128-SHA",
-                    "TLS_AES_256_GCM_SHA384",
                     "DES-CBC3-SHA",
                     "ECDHE-RSA-AES256-GCM-SHA384",
                     "AES256-SHA",
                     "ECDHE-RSA-AES128-GCM-SHA256",
                 ],
-                "AES128-SHA",             // Expected if client preference
-                "TLS_AES_256_GCM_SHA384", // Expected if server preference
+                "AES128-SHA",                  // Expected if client preference
+                "ECDHE-RSA-AES256-GCM-SHA384", // Expected if server preference
             ),
             // Test 4: Only modern ciphers
             (
                 "Modern ciphers only",
-                vec![
-                    "ECDHE-RSA-AES128-GCM-SHA256",
-                    "TLS_AES_128_GCM_SHA256",
-                    "ECDHE-RSA-AES256-GCM-SHA384",
-                    "TLS_AES_256_GCM_SHA384",
-                ],
+                vec!["ECDHE-RSA-AES128-GCM-SHA256", "ECDHE-RSA-AES256-GCM-SHA384"],
                 "ECDHE-RSA-AES128-GCM-SHA256", // Expected if client preference
-                "TLS_AES_256_GCM_SHA384",      // Expected if server preference
+                "ECDHE-RSA-AES256-GCM-SHA384", // Expected if server preference
             ),
         ];
 
@@ -401,6 +393,9 @@ impl CertificateAdvancedTester {
 
             // Set cipher list
             builder.set_cipher_list(&cipher_string)?;
+            // set_cipher_list does not constrain TLS 1.3 ciphers. Keep this
+            // probe on TLS 1.2 so the configured order is the order measured.
+            builder.set_max_proto_version(Some(SslVersion::TLS1_2))?;
 
             let connector = builder.build();
 
