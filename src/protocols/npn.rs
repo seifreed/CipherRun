@@ -3,6 +3,7 @@
 // It's now deprecated in favor of ALPN, but some servers still support it
 
 use crate::Result;
+use crate::constants::{BUFFER_SIZE_MAX_WITH_OVERHEAD, TLS_RECORD_HEADER_SIZE};
 use crate::utils::network::Target;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -80,6 +81,24 @@ impl NpnTester {
             })
     }
 
+    fn tls_record_total_len(
+        header: &[u8; TLS_RECORD_HEADER_SIZE],
+    ) -> std::io::Result<Option<usize>> {
+        let record_len = u16::from_be_bytes([header[3], header[4]]) as usize;
+        let total_len = TLS_RECORD_HEADER_SIZE
+            .checked_add(record_len)
+            .ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "NPN record length overflow",
+                )
+            })?;
+        if total_len > BUFFER_SIZE_MAX_WITH_OVERHEAD {
+            return Ok(None);
+        }
+        Ok(Some(total_len))
+    }
+
     /// Test if NPN is supported
     pub async fn test(&self) -> Result<NpnTestResult> {
         let (supported_protocols, inconclusive) = match self.test_npn_support().await? {
@@ -133,16 +152,16 @@ impl NpnTester {
                         return Ok::<Option<Vec<u8>>, std::io::Error>(None);
                     }
 
-                    let record_len = u16::from_be_bytes([header[3], header[4]]) as usize;
-                    let total_len = 5usize.checked_add(record_len).ok_or_else(|| {
-                        std::io::Error::new(
-                            std::io::ErrorKind::InvalidData,
-                            "NPN record length overflow",
-                        )
-                    })?;
+                    let Some(total_len) = Self::tls_record_total_len(&header)? else {
+                        return Ok::<Option<Vec<u8>>, std::io::Error>(None);
+                    };
                     let mut buffer = vec![0u8; total_len];
-                    buffer[..5].copy_from_slice(&header);
-                    if stream.read_exact(&mut buffer[5..]).await.is_err() {
+                    buffer[..TLS_RECORD_HEADER_SIZE].copy_from_slice(&header);
+                    if stream
+                        .read_exact(&mut buffer[TLS_RECORD_HEADER_SIZE..])
+                        .await
+                        .is_err()
+                    {
                         return Ok::<Option<Vec<u8>>, std::io::Error>(None);
                     }
 
@@ -470,6 +489,26 @@ pub struct NpnTestResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_npn_record_total_len_rejects_oversized_record() {
+        let max_record_len = crate::constants::BUFFER_SIZE_MAX_WITH_OVERHEAD
+            - crate::constants::TLS_RECORD_HEADER_SIZE;
+        let allowed = max_record_len as u16;
+        let rejected = (max_record_len + 1) as u16;
+
+        let allowed_header = [0x16, 0x03, 0x03, (allowed >> 8) as u8, allowed as u8];
+        assert_eq!(
+            NpnTester::tls_record_total_len(&allowed_header).expect("length should parse"),
+            Some(crate::constants::BUFFER_SIZE_MAX_WITH_OVERHEAD)
+        );
+
+        let rejected_header = [0x16, 0x03, 0x03, (rejected >> 8) as u8, rejected as u8];
+        assert_eq!(
+            NpnTester::tls_record_total_len(&rejected_header).expect("length should parse"),
+            None
+        );
+    }
 
     #[test]
     fn test_npn_result() {
@@ -958,6 +997,9 @@ mod tests {
 
         assert!(result.supported);
         assert!(!result.inconclusive);
-        assert_eq!(result.protocols, vec!["h2".to_string(), "http/1.1".to_string()]);
+        assert_eq!(
+            result.protocols,
+            vec!["h2".to_string(), "http/1.1".to_string()]
+        );
     }
 }
