@@ -74,17 +74,12 @@ impl ComplianceEngine {
                 "CertificateExpiration" => ComplianceChecker::check_cert_expiration(rule, results)?,
                 "Vulnerability" => ComplianceChecker::check_vulnerabilities(rule, results)?,
                 _ => {
-                    // I7 fix: previously returning Err aborted the ENTIRE compliance
-                    // report for a single unknown rule_type, discarding results from
-                    // every valid rule in the framework. Now we log a warning and
-                    // treat the unknown rule as producing zero violations so the
-                    // rest of the evaluation continues.
-                    tracing::warn!(
-                        "Unknown compliance rule type '{}' in requirement '{}' — skipping rule",
-                        rule.rule_type,
-                        requirement.id
-                    );
-                    Vec::new()
+                    return Err(crate::TlsError::ConfigError {
+                        message: format!(
+                            "Unknown compliance rule type '{}' in requirement '{}'",
+                            rule.rule_type, requirement.id
+                        ),
+                    });
                 }
             };
 
@@ -268,10 +263,7 @@ mod tests {
     }
 
     #[test]
-    fn test_unknown_rule_type_does_not_abort_report() {
-        // I7 regression: a framework with one unknown rule_type and one valid
-        // rule must still produce a complete report — the unknown rule is
-        // skipped (with a warning) and the valid rule evaluates normally.
+    fn test_unknown_rule_type_fails_evaluation() {
         let framework = ComplianceFramework {
             id: "test".to_string(),
             name: "Test Framework".to_string(),
@@ -341,11 +333,9 @@ mod tests {
             ..Default::default()
         };
 
-        let report = engine
+        let err = engine
             .evaluate(&results)
-            .expect("unknown rule type must not abort the report");
-        assert_eq!(report.summary.total, 1);
-        // The valid rule evaluates cleanly; overall passes despite the bogus rule.
-        assert_eq!(report.summary.passed, 1);
+            .expect_err("unknown rule type should fail compliance evaluation");
+        assert!(err.to_string().contains("Unknown compliance rule type"));
     }
 }
