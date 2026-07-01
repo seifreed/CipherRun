@@ -6,7 +6,7 @@
 // specially crafted TLS packets during the handshake phase.
 
 use crate::Result;
-use crate::constants::TLS_HANDSHAKE_TIMEOUT;
+use crate::constants::{BUFFER_SIZE_MAX_WITH_OVERHEAD, TLS_HANDSHAKE_TIMEOUT};
 use crate::protocols::Protocol;
 use crate::protocols::handshake::ClientHelloBuilder;
 use crate::utils::network::Target;
@@ -209,7 +209,7 @@ impl WinshockTester {
 
         // Read the full ServerHello record so a fragmented handshake does not
         // get misclassified as inconclusive.
-        let mut buffer = vec![0u8; 8192];
+        let mut buffer = vec![0u8; BUFFER_SIZE_MAX_WITH_OVERHEAD];
         match self
             .read_complete_tls_record(&mut stream, &mut buffer, Duration::from_secs(3))
             .await
@@ -330,6 +330,7 @@ pub struct WinshockTestResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::constants::{BUFFER_SIZE_DEFAULT, CONTENT_TYPE_HANDSHAKE};
     use tokio::io::AsyncWriteExt;
     use tokio::net::TcpListener;
 
@@ -517,8 +518,12 @@ mod tests {
             .await
             .unwrap();
         let tester = WinshockTester::new(
-            Target::with_ips("localhost".to_string(), port, vec!["127.0.0.1".parse().unwrap()])
-                .unwrap(),
+            Target::with_ips(
+                "localhost".to_string(),
+                port,
+                vec!["127.0.0.1".parse().unwrap()],
+            )
+            .unwrap(),
         );
         stream.write_all(b"ping").await.unwrap();
         let mut buffer = [0u8; 32];
@@ -528,6 +533,49 @@ mod tests {
             .unwrap();
         assert_eq!(n, 7);
 
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_winshock_read_complete_tls_record_accepts_record_above_default_buffer() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let record_len = BUFFER_SIZE_DEFAULT as u16;
+            let header = [
+                CONTENT_TYPE_HANDSHAKE,
+                0x03,
+                0x03,
+                (record_len >> 8) as u8,
+                record_len as u8,
+            ];
+            socket.write_all(&header).await.unwrap();
+            socket
+                .write_all(&vec![0u8; BUFFER_SIZE_DEFAULT])
+                .await
+                .unwrap();
+        });
+
+        let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .unwrap();
+        let tester = WinshockTester::new(
+            Target::with_ips(
+                "localhost".to_string(),
+                port,
+                vec!["127.0.0.1".parse().unwrap()],
+            )
+            .unwrap(),
+        );
+        let mut buffer = vec![0u8; BUFFER_SIZE_MAX_WITH_OVERHEAD];
+        let n = tester
+            .read_complete_tls_record(&mut stream, &mut buffer, Duration::from_secs(1))
+            .await
+            .unwrap();
+
+        assert_eq!(n, 5 + BUFFER_SIZE_DEFAULT);
         server.await.unwrap();
     }
 }
