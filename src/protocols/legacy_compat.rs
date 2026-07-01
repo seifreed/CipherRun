@@ -12,10 +12,14 @@ pub use model::{
 };
 
 use crate::Result;
+use crate::protocols::{Protocol, handshake::ClientHelloBuilder};
 use crate::utils::network::Target;
 use std::time::Duration;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::time::timeout;
 
 const CIPHER_TIMEOUT: Duration = Duration::from_secs(3);
+const LEGACY_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LegacyProbeOutcome {
@@ -501,9 +505,15 @@ impl LegacyCompatTester {
     async fn test_legacy_handshakes(&self) -> Result<LegacyHandshakeTest> {
         let mut quirks = Vec::new();
 
-        let sslv2_compatible_hello = false;
+        let sslv2_compatible_hello = self
+            .probe_legacy_handshake(Self::sslv2_compat_client_hello()?)
+            .await?;
         let fragmented_handshake = false;
-        let old_signature_algorithms = false;
+        let old_signature_algorithms = self
+            .probe_legacy_handshake(Self::old_signature_algorithms_client_hello(
+                &self.target.hostname,
+            )?)
+            .await?;
 
         if sslv2_compatible_hello {
             quirks.push("SSLv2-compatible ClientHello".to_string());
@@ -521,6 +531,61 @@ impl LegacyCompatTester {
             old_signature_algorithms,
             quirks,
         })
+    }
+
+    async fn probe_legacy_handshake(&self, hello: Vec<u8>) -> Result<bool> {
+        let Some(addr) = self.target.socket_addrs().first().copied() else {
+            return Ok(false);
+        };
+        let mut stream =
+            match crate::utils::network::connect_with_timeout(addr, LEGACY_HANDSHAKE_TIMEOUT, None)
+                .await
+            {
+                Ok(stream) => stream,
+                Err(_) => return Ok(false),
+            };
+
+        stream.write_all(&hello).await?;
+        Self::read_legacy_handshake_accepted(&mut stream).await
+    }
+
+    async fn read_legacy_handshake_accepted(stream: &mut tokio::net::TcpStream) -> Result<bool> {
+        let mut header = [0u8; 5];
+        match timeout(LEGACY_HANDSHAKE_TIMEOUT, stream.read_exact(&mut header)).await {
+            Ok(Ok(_)) => Ok(Self::legacy_response_looks_accepted(&header)),
+            Ok(Err(_)) | Err(_) => Ok(false),
+        }
+    }
+
+    fn legacy_response_looks_accepted(header: &[u8; 5]) -> bool {
+        matches!(header[0], 0x16 | 0x80..=0xff)
+    }
+
+    fn old_signature_algorithms_client_hello(hostname: &str) -> Result<Vec<u8>> {
+        let mut builder = ClientHelloBuilder::new(Protocol::TLS12);
+        builder.for_vulnerability_testing();
+        builder.add_sni(hostname)?;
+        builder.add_supported_groups(&[0x0017, 0x0018])?;
+        builder.add_signature_algorithms(&[(0x01, 0x01), (0x02, 0x01), (0x02, 0x03)])?;
+        builder.build()
+    }
+
+    fn sslv2_compat_client_hello() -> Result<Vec<u8>> {
+        let mut hello = vec![
+            0x80, 0x00, 0x01, 0x03, 0x01, 0x00, 0x09, 0x00, 0x00, 0x00, 0x10,
+        ];
+        hello.extend_from_slice(&[0x01, 0x00, 0x80, 0x03, 0x00, 0x80, 0x06, 0x00, 0x40]);
+        hello.extend_from_slice(&[0x42; 16]);
+
+        let record_len = hello.len() - 2;
+        let record_len = u16::try_from(record_len).map_err(|_| {
+            crate::TlsError::Other(
+                "SSLv2-compatible ClientHello exceeds maximum length".to_string(),
+            )
+        })?;
+        hello[0] = 0x80 | ((record_len >> 8) as u8);
+        hello[1] = record_len as u8;
+        Ok(hello)
     }
 
     fn determine_compatibility_level(
@@ -585,6 +650,40 @@ mod tests {
     fn test_cipher_info_modern_cipher_is_low() {
         let info = LegacyCiphers::get_cipher_info("TLS_AES_128_GCM_SHA256");
         assert_eq!(info.security_level, SecurityConcern::Low);
+    }
+
+    #[test]
+    fn test_sslv2_compat_client_hello_structure() {
+        let hello = LegacyCompatTester::sslv2_compat_client_hello()
+            .expect("SSLv2-compatible hello should build");
+
+        assert_eq!(hello[0] & 0x80, 0x80);
+        assert_eq!(hello[2], 0x01);
+        assert_eq!(&hello[3..5], &[0x03, 0x01]);
+    }
+
+    #[test]
+    fn test_old_signature_algorithms_client_hello_uses_md5_sha1() {
+        let hello = LegacyCompatTester::old_signature_algorithms_client_hello("example.test")
+            .expect("legacy signature hello should build");
+
+        assert!(hello.windows(12).any(|window| window
+            == [
+                0x00, 0x0d, 0x00, 0x08, 0x00, 0x06, 0x01, 0x01, 0x02, 0x01, 0x02, 0x03
+            ]));
+    }
+
+    #[test]
+    fn test_legacy_response_acceptance_classifier() {
+        assert!(LegacyCompatTester::legacy_response_looks_accepted(&[
+            0x16, 0x03, 0x03, 0x00, 0x2a,
+        ]));
+        assert!(LegacyCompatTester::legacy_response_looks_accepted(&[
+            0x80, 0x2a, 0x04, 0x00, 0x02,
+        ]));
+        assert!(!LegacyCompatTester::legacy_response_looks_accepted(&[
+            0x15, 0x03, 0x03, 0x00, 0x02,
+        ]));
     }
 
     #[tokio::test]
