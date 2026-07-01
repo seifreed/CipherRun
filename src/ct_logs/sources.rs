@@ -100,8 +100,15 @@ impl SourceManager {
             });
         }
 
+        const MAX_CT_LOG_LIST_BYTES: u64 = 16 * 1024 * 1024;
+        let body = crate::utils::http::read_response_body_capped(
+            response,
+            MAX_CT_LOG_LIST_BYTES,
+            "CT log list",
+        )
+        .await?;
         let log_list: GoogleCtLogList =
-            response.json().await.map_err(|e| TlsError::ParseError {
+            serde_json::from_slice(&body).map_err(|e| TlsError::ParseError {
                 message: format!("Failed to parse CT log list: {}", e),
             })?;
 
@@ -117,6 +124,11 @@ impl SourceManager {
                 if let Some(state) = &log.state
                     && state.usable.is_some()
                 {
+                    if !is_valid_ct_log_url(&log.url) {
+                        warn!("Skipping CT log with invalid URL: {}", log.url);
+                        continue;
+                    }
+
                     let log_id = log.log_id.clone();
                     let source = LogSource {
                         id: log_id.clone(),
@@ -187,6 +199,16 @@ impl SourceManager {
     pub fn healthy_sources_count(&self) -> usize {
         self.sources.values().filter(|s| s.is_healthy()).count()
     }
+}
+
+fn is_valid_ct_log_url(url: &str) -> bool {
+    url::Url::parse(url).is_ok_and(|url| {
+        matches!(url.scheme(), "http" | "https")
+            && url.host_str().is_some()
+            && url.username().is_empty()
+            && url.password().is_none()
+            && !matches!(url.port(), Some(0))
+    })
 }
 
 impl Default for SourceManager {
@@ -290,6 +312,16 @@ mod tests {
         let manager = SourceManager::new();
         assert_eq!(manager.total_sources(), 0);
         assert_eq!(manager.healthy_sources_count(), 0);
+    }
+
+    #[test]
+    fn test_is_valid_ct_log_url_rejects_unsafe_urls() {
+        assert!(is_valid_ct_log_url("https://ct.example.com"));
+        assert!(is_valid_ct_log_url("http://ct.example.com"));
+        assert!(!is_valid_ct_log_url("file:///tmp/log"));
+        assert!(!is_valid_ct_log_url("https://user@example.com"));
+        assert!(!is_valid_ct_log_url("https://example.com:0"));
+        assert!(!is_valid_ct_log_url("https://"));
     }
 
     #[test]
