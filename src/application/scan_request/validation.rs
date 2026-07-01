@@ -88,6 +88,12 @@ impl ScanRequest {
                     message: format!("Invalid SNI hostname: {}", error),
                 }
             })?;
+            if sni_name.ends_with('.') {
+                return Err(TlsError::InvalidInput {
+                    message: "Invalid SNI hostname: SNI must not include a trailing dot."
+                        .to_string(),
+                });
+            }
         }
 
         if self.tls.client_key.is_some() ^ self.tls.client_certs.is_some() {
