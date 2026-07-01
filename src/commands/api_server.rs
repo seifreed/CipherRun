@@ -44,6 +44,19 @@ fn apply_cli_overrides(
     config.enable_swagger = args.swagger || config.enable_swagger;
 }
 
+fn load_effective_api_config(args: &Args) -> Result<crate::api::ApiConfig> {
+    let has_config_file = args.api_server.config.is_some();
+    let mut config = if let Some(config_path) = &args.api_server.config {
+        crate::api::ApiConfig::from_file_unvalidated(config_path)?
+    } else {
+        crate::api::ApiConfig::default()
+    };
+
+    apply_cli_overrides(&mut config, &args.api_server, has_config_file);
+    config.validate()?;
+    Ok(config)
+}
+
 /// ApiServerCommand handles REST API server mode
 ///
 /// This command is responsible for:
@@ -84,19 +97,11 @@ impl ApiServerCommand {
 #[async_trait]
 impl Command for ApiServerCommand {
     async fn execute(&self) -> Result<CommandExit> {
-        use crate::api::{ApiConfig, ApiServer};
+        use crate::api::ApiServer;
 
         info!("Starting CipherRun in API server mode");
 
-        // Load configuration from file or use CLI args
-        let has_config_file = self.args.api_server.config.is_some();
-        let mut config = if let Some(config_path) = &self.args.api_server.config {
-            ApiConfig::from_file_unvalidated(config_path)?
-        } else {
-            ApiConfig::default()
-        };
-
-        apply_cli_overrides(&mut config, &self.args.api_server, has_config_file);
+        let config = load_effective_api_config(&self.args)?;
 
         // Attach a database pool when --db-config was supplied, so the
         // history/certificate-inventory/stats endpoints are backed by storage
@@ -198,14 +203,52 @@ enable_swagger = true
         )
         .expect("config should be written");
 
-        let mut config = crate::api::ApiConfig::from_file_unvalidated(&path)
-            .expect("raw config should load before CLI overrides");
-        let args = crate::cli::ApiServerArgs {
-            max_concurrent: Some(2),
+        let args = Args {
+            api_server: crate::cli::ApiServerArgs {
+                config: Some(path),
+                max_concurrent: Some(2),
+                ..Default::default()
+            },
             ..Default::default()
         };
-        apply_cli_overrides(&mut config, &args, true);
+        let config =
+            load_effective_api_config(&args).expect("CLI override should make config valid");
 
         crate::api::ApiServer::new(config).expect("effective config should validate");
+    }
+
+    #[test]
+    fn test_effective_api_config_rejects_invalid_config_before_server_start() {
+        let dir = tempfile::tempdir().expect("tempdir should be created");
+        let path = dir.path().join("api.toml");
+        std::fs::write(
+            &path,
+            r#"
+host = "127.0.0.1"
+port = 8080
+max_concurrent_scans = 0
+api_keys = { "test-key" = "User" }
+enable_cors = false
+rate_limit_per_minute = 100
+max_body_size = 1048576
+request_timeout_seconds = 300
+ws_ping_interval_seconds = 30
+job_queue_capacity = 1000
+enable_swagger = true
+"#,
+        )
+        .expect("config should be written");
+
+        let args = Args {
+            api_server: crate::cli::ApiServerArgs {
+                config: Some(path),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let err =
+            load_effective_api_config(&args).expect_err("invalid effective config should fail");
+
+        assert!(err.to_string().contains("max_concurrent_scans"));
     }
 }
