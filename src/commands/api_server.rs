@@ -3,7 +3,7 @@
 // Licensed under GPL-3.0
 
 use super::{Command, CommandExit};
-use crate::{Args, Result, TlsError};
+use crate::{Args, Result};
 use async_trait::async_trait;
 use tracing::info;
 
@@ -68,17 +68,14 @@ impl ApiServerCommand {
             return Ok(None);
         };
 
-        let path_str = db_config_path
-            .to_str()
-            .ok_or_else(|| TlsError::InvalidInput {
-                message: "Invalid database config file path".to_string(),
-            })?;
-
-        let config = crate::db::DatabaseConfig::from_file(path_str)?;
+        let config = crate::db::DatabaseConfig::from_file(db_config_path)?;
         let pool = crate::db::DatabasePool::new(&config.database).await?;
         crate::db::run_migrations(&pool).await?;
 
-        info!("API server database persistence enabled from {}", path_str);
+        info!(
+            "API server database persistence enabled from {}",
+            db_config_path.display()
+        );
 
         Ok(Some(std::sync::Arc::new(pool)))
     }

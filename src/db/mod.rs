@@ -59,7 +59,7 @@ impl CipherRunDatabase {
     }
 
     /// Create database from config file
-    pub async fn from_config_file(path: &str) -> crate::Result<Self> {
+    pub async fn from_config_file(path: impl AsRef<std::path::Path>) -> crate::Result<Self> {
         let config = DatabaseConfig::from_file(path)?;
         Self::new(&config.database).await
     }

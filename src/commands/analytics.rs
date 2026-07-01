@@ -4,9 +4,9 @@
 
 use super::{Command, CommandExit};
 use crate::application::{CompareScanIds, HostPortDaysInput};
-use crate::utils::path_ext::PathExt;
 use crate::{Args, Result, TlsError};
 use async_trait::async_trait;
+use std::path::Path;
 
 /// AnalyticsCommand handles database analytics operations
 ///
@@ -33,10 +33,8 @@ impl AnalyticsCommand {
             .args
             .database
             .config
-            .as_ref()
-            .map(|p| p.to_str_checked())
-            .transpose()?
-            .unwrap_or("database.toml");
+            .as_deref()
+            .unwrap_or_else(|| Path::new("database.toml"));
 
         Ok(Arc::new(
             CipherRunDatabase::from_config_file(db_config_path).await?,
@@ -331,7 +329,7 @@ path = \"{}\"\n",
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn test_analytics_rejects_non_utf8_database_config_path() {
+    async fn test_analytics_does_not_pre_reject_non_utf8_database_config_path() {
         let mut args = Args::default();
         args.database.config = Some(PathBuf::from(OsString::from_vec(vec![0x66, 0x80])));
 
@@ -341,6 +339,6 @@ path = \"{}\"\n",
             Err(err) => err,
         };
 
-        assert!(err.to_string().contains("invalid UTF-8"));
+        assert!(!err.to_string().contains("invalid UTF-8"));
     }
 }

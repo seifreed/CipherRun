@@ -5,9 +5,9 @@
 use super::{Command, CommandExit};
 use crate::application::HostPortInput;
 use crate::utils::network::canonical_target;
-use crate::utils::path_ext::PathExt;
 use crate::{Args, Result};
 use async_trait::async_trait;
+use std::path::Path;
 
 /// DatabaseCommand handles database operations
 ///
@@ -32,10 +32,8 @@ impl DatabaseCommand {
             .args
             .database
             .config
-            .as_ref()
-            .map(|p| p.to_str_checked())
-            .transpose()?
-            .unwrap_or("database.toml");
+            .as_deref()
+            .unwrap_or_else(|| Path::new("database.toml"));
 
         CipherRunDatabase::from_config_file(db_config_path).await
     }
@@ -154,7 +152,7 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn test_database_rejects_non_utf8_config_path() {
+    async fn test_database_does_not_pre_reject_non_utf8_config_path() {
         let mut args = Args::default();
         args.database.config = Some(PathBuf::from(OsString::from_vec(vec![0x66, 0x80])));
 
@@ -164,6 +162,6 @@ mod tests {
             Err(err) => err,
         };
 
-        assert!(err.to_string().contains("invalid UTF-8"));
+        assert!(!err.to_string().contains("invalid UTF-8"));
     }
 }

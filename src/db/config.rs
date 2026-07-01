@@ -4,7 +4,7 @@
 use crate::utils::network::canonical_target;
 use crate::utils::path_ext::PathExt;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Database type
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -169,7 +169,8 @@ impl DatabaseConfig {
     }
 
     /// Load configuration from TOML file
-    pub fn from_file(path: &str) -> crate::Result<Config> {
+    pub fn from_file(path: impl AsRef<Path>) -> crate::Result<Config> {
+        let path = path.as_ref();
         let contents = std::fs::read_to_string(path)
             .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to read config: {}", e)))?;
 
@@ -390,8 +391,7 @@ max_connections = 0
         )
         .expect("test assertion should succeed");
 
-        let err = DatabaseConfig::from_file(path.to_str().expect("utf-8 path"))
-            .expect_err("zero max_connections should fail");
+        let err = DatabaseConfig::from_file(&path).expect_err("zero max_connections should fail");
 
         assert!(err.to_string().contains("max_connections"));
     }
@@ -414,8 +414,7 @@ password = "pass"
         )
         .expect("test assertion should succeed");
 
-        let err = DatabaseConfig::from_file(path.to_str().expect("utf-8 path"))
-            .expect_err("zero PostgreSQL port should fail");
+        let err = DatabaseConfig::from_file(&path).expect_err("zero PostgreSQL port should fail");
 
         assert!(err.to_string().contains("PostgreSQL port"));
     }
@@ -437,8 +436,7 @@ max_age_days = -1
         )
         .expect("test assertion should succeed");
 
-        let err = DatabaseConfig::from_file(path.to_str().expect("utf-8 path"))
-            .expect_err("negative retention should fail");
+        let err = DatabaseConfig::from_file(&path).expect_err("negative retention should fail");
 
         assert!(err.to_string().contains("max_age_days"));
     }
