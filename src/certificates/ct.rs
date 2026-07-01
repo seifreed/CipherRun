@@ -165,9 +165,6 @@ impl CtVerifier {
             Err(_) => ext_value,
         };
 
-        if sct_list.len() < 2 {
-            return Ok(0);
-        }
         self.count_scts_in_list(sct_list)
     }
 
@@ -412,6 +409,17 @@ mod tests {
             .expect_err("trailing DER bytes should fail");
 
         assert!(err.to_string().contains("trailing bytes"));
+    }
+
+    #[test]
+    fn test_count_scts_in_extension_value_rejects_short_list() {
+        let verifier = CtVerifier::new(false);
+
+        let err = verifier
+            .count_scts_in_extension_value(&[0x04, 0x01, 0x00])
+            .expect_err("short SCT list should fail");
+
+        assert!(err.to_string().contains("too short"));
     }
 
     #[test]
