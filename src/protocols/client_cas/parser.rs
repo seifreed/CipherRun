@@ -310,27 +310,7 @@ impl ClientCAsTester {
                 && oid_prefix == Some(&[0x06, 0x03, 0x55])
                 && (oid_type == Some(&[0x04, 0x03, 0x0c]) || oid_type == Some(&[0x04, 0x03, 0x13]))
             {
-                let len = Self::read_u8_at(dn_data, oid_end, "CertificateRequest DN value length")?
-                    as usize;
-                let Some(value_start) = oid_end.checked_add(1) else {
-                    break;
-                };
-                let value_end =
-                    value_start
-                        .checked_add(len)
-                        .ok_or_else(|| crate::TlsError::ParseError {
-                            message: "CertificateRequest DN value length overflow".to_string(),
-                        })?;
-                let value_bytes = dn_data.get(value_start..value_end).ok_or_else(|| {
-                    crate::TlsError::ParseError {
-                        message: "CertificateRequest DN value length exceeds data".to_string(),
-                    }
-                })?;
-                let value = std::str::from_utf8(value_bytes).map_err(|error| {
-                    crate::TlsError::ParseError {
-                        message: format!("Invalid certificate request DN UTF-8: {error}"),
-                    }
-                })?;
+                let value = Self::read_dn_string_value(dn_data, oid_end)?;
                 cn = Some(value.to_string());
             }
 
@@ -340,31 +320,62 @@ impl ClientCAsTester {
                 && oid_prefix == Some(&[0x06, 0x03, 0x55])
                 && (oid_type == Some(&[0x04, 0x0a, 0x0c]) || oid_type == Some(&[0x04, 0x0a, 0x13]))
             {
-                let len = Self::read_u8_at(dn_data, oid_end, "CertificateRequest DN value length")?
-                    as usize;
-                let Some(value_start) = oid_end.checked_add(1) else {
-                    break;
-                };
-                let value_end =
-                    value_start
-                        .checked_add(len)
-                        .ok_or_else(|| crate::TlsError::ParseError {
-                            message: "CertificateRequest DN value length overflow".to_string(),
-                        })?;
-                let value_bytes = dn_data.get(value_start..value_end).ok_or_else(|| {
-                    crate::TlsError::ParseError {
-                        message: "CertificateRequest DN value length exceeds data".to_string(),
-                    }
-                })?;
-                let value = std::str::from_utf8(value_bytes).map_err(|error| {
-                    crate::TlsError::ParseError {
-                        message: format!("Invalid certificate request DN UTF-8: {error}"),
-                    }
-                })?;
+                let value = Self::read_dn_string_value(dn_data, oid_end)?;
                 org = Some(value.to_string());
             }
         }
 
         Ok((cn, org))
+    }
+
+    fn read_dn_string_value(data: &[u8], len_offset: usize) -> crate::Result<&str> {
+        let (len, value_start) = Self::read_der_length(data, len_offset)?;
+        let value_bytes = Self::slice_range(data, value_start, len, "CertificateRequest DN value")?;
+        std::str::from_utf8(value_bytes).map_err(|error| crate::TlsError::ParseError {
+            message: format!("Invalid certificate request DN UTF-8: {error}"),
+        })
+    }
+
+    fn read_der_length(data: &[u8], offset: usize) -> crate::Result<(usize, usize)> {
+        let first = Self::read_u8_at(data, offset, "CertificateRequest DN value length")?;
+        let value_start = offset
+            .checked_add(1)
+            .ok_or_else(|| crate::TlsError::ParseError {
+                message: "CertificateRequest DN value length offset overflow".to_string(),
+            })?;
+
+        if first & 0x80 == 0 {
+            return Ok((first as usize, value_start));
+        }
+
+        let len_len = (first & 0x7f) as usize;
+        if len_len == 0 {
+            return Err(crate::TlsError::ParseError {
+                message: "CertificateRequest DN indefinite length is not valid DER".to_string(),
+            });
+        }
+        let len_end =
+            value_start
+                .checked_add(len_len)
+                .ok_or_else(|| crate::TlsError::ParseError {
+                    message: "CertificateRequest DN value length overflow".to_string(),
+                })?;
+        let len_bytes =
+            data.get(value_start..len_end)
+                .ok_or_else(|| crate::TlsError::ParseError {
+                    message: "CertificateRequest DN value length truncated".to_string(),
+                })?;
+
+        let mut len = 0usize;
+        for byte in len_bytes {
+            len = len
+                .checked_mul(256)
+                .and_then(|value| value.checked_add(*byte as usize))
+                .ok_or_else(|| crate::TlsError::ParseError {
+                    message: "CertificateRequest DN value length overflow".to_string(),
+                })?;
+        }
+
+        Ok((len, len_end))
     }
 }

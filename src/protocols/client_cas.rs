@@ -194,6 +194,30 @@ mod tests {
         dn
     }
 
+    fn push_der_len(out: &mut Vec<u8>, len: usize) {
+        if len < 0x80 {
+            out.push(len as u8);
+        } else if len <= 0xff {
+            out.extend_from_slice(&[0x81, len as u8]);
+        } else {
+            out.extend_from_slice(&[0x82, (len >> 8) as u8, len as u8]);
+        }
+    }
+
+    fn build_raw_dn_der(cn_bytes: &[u8], org_bytes: &[u8]) -> Vec<u8> {
+        let mut dn = Vec::new();
+
+        dn.extend_from_slice(&[0x06, 0x03, 0x55, 0x04, 0x03, 0x0c]);
+        push_der_len(&mut dn, cn_bytes.len());
+        dn.extend_from_slice(cn_bytes);
+
+        dn.extend_from_slice(&[0x06, 0x03, 0x55, 0x04, 0x0a, 0x0c]);
+        push_der_len(&mut dn, org_bytes.len());
+        dn.extend_from_slice(org_bytes);
+
+        dn
+    }
+
     fn build_certificate_request(dn: &[u8]) -> Vec<u8> {
         let mut body = Vec::new();
         body.push(0);
@@ -232,6 +256,27 @@ mod tests {
             .expect("DN fields should parse");
         assert_eq!(cn.as_deref(), Some("Example CN"));
         assert_eq!(org.as_deref(), Some("Example Org"));
+    }
+
+    #[test]
+    fn test_extract_dn_fields_reads_der_long_form_lengths() {
+        let tester = ClientCAsTester::new(
+            Target::with_ips(
+                "example.test".to_string(),
+                443,
+                vec!["127.0.0.1".parse().expect("valid IP")],
+            )
+            .expect("test assertion should succeed"),
+        );
+
+        let cn = "A".repeat(130);
+        let dn = build_raw_dn_der(cn.as_bytes(), b"Example Org");
+        let (parsed_cn, parsed_org) = tester
+            .extract_dn_fields(&dn)
+            .expect("DN fields should parse");
+
+        assert_eq!(parsed_cn.as_deref(), Some(cn.as_str()));
+        assert_eq!(parsed_org.as_deref(), Some("Example Org"));
     }
 
     #[test]
@@ -335,7 +380,7 @@ mod tests {
             .expect_err("truncated DN value should fail");
         assert!(
             err.to_string()
-                .contains("CertificateRequest DN value length exceeds data")
+                .contains("CertificateRequest DN value truncated")
         );
     }
 
