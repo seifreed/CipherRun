@@ -58,6 +58,8 @@ fn is_private_ipv6(ip: &Ipv6Addr) -> bool {
         || is_ipv4_mapped_private(ip)
         // IPv4-compatible IPv6 addresses (::x.x.x.x, deprecated)
         || is_ipv4_compatible_ipv6(ip)
+        // 6to4 addresses (2002:V4ADDR::/48) can embed private IPv4 targets.
+        || is_6to4_private(ip)
         // Deprecated site-local addresses (fec0::/10, RFC 3879)
         || (ip.segments()[0] & 0xffc0) == 0xfec0
 }
@@ -105,6 +107,23 @@ fn is_ipv4_compatible_ipv6(ip: &Ipv6Addr) -> bool {
         (segments[6] & 0xff) as u8,
         (segments[7] >> 8) as u8,
         (segments[7] & 0xff) as u8,
+    );
+
+    is_private_ipv4(&ipv4_addr)
+}
+
+/// Check if IPv6 address is a 6to4 address (2002::/16) embedding a private IPv4.
+fn is_6to4_private(ip: &Ipv6Addr) -> bool {
+    let segments = ip.segments();
+    if segments[0] != 0x2002 {
+        return false;
+    }
+
+    let ipv4_addr = Ipv4Addr::new(
+        (segments[1] >> 8) as u8,
+        (segments[1] & 0xff) as u8,
+        (segments[2] >> 8) as u8,
+        (segments[2] & 0xff) as u8,
     );
 
     is_private_ipv4(&ipv4_addr)
@@ -216,6 +235,22 @@ mod tests {
         assert!(
             is_private_ip(&"::10.0.0.1".parse().unwrap()),
             "::10.0.0.1 (IPv4-compatible) should be private"
+        );
+    }
+
+    #[test]
+    fn test_is_private_ipv6_6to4_private_embedded_ipv4() {
+        assert!(
+            is_private_ip(&"2002:7f00:1::".parse().unwrap()),
+            "6to4 address embedding 127.0.0.1 should be private"
+        );
+        assert!(
+            is_private_ip(&"2002:c0a8:101::".parse().unwrap()),
+            "6to4 address embedding 192.168.1.1 should be private"
+        );
+        assert!(
+            !is_private_ip(&"2002:0808:0808::".parse().unwrap()),
+            "6to4 address embedding public 8.8.8.8 should not be private"
         );
     }
 
