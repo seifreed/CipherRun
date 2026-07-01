@@ -177,6 +177,15 @@ impl CommandRouter {
                 message: "Cannot combine multiple analytics operations (--compare, --changes, --trends, --dashboard). Choose one.".to_string(),
             });
         }
+        if analytics_count == 1
+            && (args.output.csv.is_some()
+                || args.output.html.is_some()
+                || args.output.xml.is_some())
+        {
+            return Err(TlsError::InvalidInput {
+                message: "Analytics output supports terminal or JSON only; CSV/HTML/XML exports are not available.".to_string(),
+            });
+        }
 
         let exclusive_mode_active = mode_count == 1;
         let additional_action_requested = args.target.is_some()

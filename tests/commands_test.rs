@@ -461,6 +461,15 @@ fn test_validate_analytics_compare_standalone() {
 }
 
 #[test]
+fn test_validate_analytics_rejects_csv_export() {
+    let err = validate_err(build_args(|args| {
+        args.compare = Some("1:2".to_string());
+        args.output.csv = Some(PathBuf::from("analytics.csv"));
+    }));
+    assert!(err.contains("CSV/HTML/XML"));
+}
+
+#[test]
 fn test_validate_empty_args() {
     assert!(CommandRouter::validate_routing(&Args::default()).is_err());
 }

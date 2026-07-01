@@ -2,6 +2,7 @@
 // Copyright (C) 2025 Marc Rivero (@seifreed)
 // Licensed under GPL-3.0
 
+use super::scan_exporter::{ExportKind, ScanExporter};
 use super::{Command, CommandExit};
 use crate::application::{CompareScanIds, HostPortDaysInput};
 use crate::{Args, Result, TlsError};
@@ -72,13 +73,15 @@ impl AnalyticsCommand {
     }
 
     fn prefers_json_output(&self) -> bool {
-        self.args.output.json.is_some() || self.args.output.json_pretty
+        self.args.output.json.is_some()
+            || self.args.output.output_all.is_some()
+            || self.args.output.json_pretty
     }
 
-    fn print_or_save_output(&self, output: &str, success_message: &str) -> Result<()> {
-        if let Some(json_path) = &self.args.output.json {
-            std::fs::write(json_path, output)?;
-            println!("✓ {} {}", success_message, json_path.display());
+    fn print_or_save_output(&self, output: &str, _success_message: &str) -> Result<()> {
+        let exporter = ScanExporter::new(&self.args);
+        if let Some(json_path) = exporter.collection_json_output_path()? {
+            exporter.write_text_file(&json_path, output, "JSON", ExportKind::Json)?;
         } else {
             println!("{}", output);
         }
@@ -325,6 +328,46 @@ path = \"{}\"\n",
 
         let cmd = AnalyticsCommand::new(args);
         assert!(cmd.execute().await.is_err());
+    }
+
+    #[test]
+    fn test_analytics_json_output_uses_export_guards() {
+        let dir = tempfile::tempdir().expect("tempdir should be created");
+        let path = dir.path().join("analytics.json");
+        std::fs::write(&path, "{}").expect("seed file should be written");
+
+        let args = Args {
+            output: crate::cli::OutputArgs {
+                json: Some(path),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let cmd = AnalyticsCommand::new(args);
+        let err = cmd
+            .print_or_save_output("{}", "saved to:")
+            .expect_err("existing output should be protected");
+
+        assert!(err.to_string().contains("Refusing to overwrite"));
+    }
+
+    #[test]
+    fn test_analytics_json_output_uses_output_all_and_outprefix() {
+        let dir = tempfile::tempdir().expect("tempdir should be created");
+        let args = Args {
+            output: crate::cli::OutputArgs {
+                output_all: Some(dir.path().join("analytics")),
+                outprefix: Some("pref-".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let cmd = AnalyticsCommand::new(args);
+        cmd.print_or_save_output("{\"ok\":true}", "saved to:")
+            .expect("output should be written");
+
+        let path = dir.path().join("pref-analytics.json");
+        assert!(path.exists());
     }
 
     #[cfg(unix)]
