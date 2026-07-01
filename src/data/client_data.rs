@@ -100,7 +100,7 @@ impl ClientDatabase {
         let mut current_values: Vec<String> = Vec::new();
         let mut all_sections: HashMap<String, Vec<String>> = HashMap::new();
 
-        for line in data.lines() {
+        for (line_num, line) in data.lines().enumerate() {
             let line = line.trim();
 
             // Skip comments and empty lines
@@ -130,7 +130,9 @@ impl ClientDatabase {
             }
 
             if current_section.is_empty() {
-                continue;
+                return Err(crate::TlsError::ParseError {
+                    message: format!("Unexpected client data line {}: {line}", line_num + 1),
+                });
             }
 
             current_values.extend(Self::extract_array_values(line)?);
@@ -642,6 +644,21 @@ short+=("client_a")
             err.to_string()
                 .contains("Unterminated quoted value in client data")
         );
+    }
+
+    #[test]
+    fn test_parse_rejects_unexpected_line_outside_section() {
+        let data = r#"
+names=("Client A")
+short+=("client_a")
+"#;
+
+        let err = match ClientDatabase::parse(data) {
+            Ok(_) => panic!("unexpected line should fail"),
+            Err(err) => err,
+        };
+
+        assert!(err.to_string().contains("Unexpected client data line"));
     }
 
     #[test]
