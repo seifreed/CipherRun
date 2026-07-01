@@ -70,14 +70,28 @@ async fn get_top_domains_from_db(
     limit: i64,
 ) -> crate::Result<Vec<DomainStats>> {
     let rows = db.get_top_domains(limit).await?;
-    Ok(rows
-        .into_iter()
-        .map(|(domain, count, last_scan)| DomainStats {
-            domain,
-            scan_count: u64::try_from(count).unwrap_or_default(),
-            last_scan,
-        })
-        .collect())
+    rows.into_iter()
+        .map(|(domain, count, last_scan)| top_domain_row_to_stats(domain, count, last_scan))
+        .collect::<crate::Result<Vec<_>>>()
+}
+
+fn top_domain_row_to_stats(
+    domain: String,
+    count: i64,
+    last_scan: chrono::DateTime<chrono::Utc>,
+) -> crate::Result<DomainStats> {
+    let scan_count = u64::try_from(count).map_err(|_| {
+        crate::TlsError::DatabaseError(format!(
+            "Invalid top domain field scan_count: negative value {}",
+            count
+        ))
+    })?;
+
+    Ok(DomainStats {
+        domain,
+        scan_count,
+        last_scan,
+    })
 }
 
 #[cfg(test)]
@@ -204,5 +218,13 @@ mod tests {
             .await
             .expect_err("configured db failure should bubble up");
         assert!(matches!(err, ApiError::Internal(_)));
+    }
+
+    #[test]
+    fn test_top_domain_row_to_stats_rejects_negative_count() {
+        let err = top_domain_row_to_stats("example.com".to_string(), -1, Utc::now())
+            .expect_err("negative scan count should fail");
+
+        assert!(err.to_string().contains("negative value -1"));
     }
 }
