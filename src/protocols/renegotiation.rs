@@ -4,8 +4,9 @@
 
 use crate::Result;
 use crate::constants::{
-    CONTENT_TYPE_HANDSHAKE, DEFAULT_READ_TIMEOUT, EXTENSION_RENEGOTIATION_INFO,
-    HANDSHAKE_TYPE_CLIENT_HELLO, SHORT_TIMEOUT, VERSION_TLS_1_2,
+    BUFFER_SIZE_MAX_WITH_OVERHEAD, CONTENT_TYPE_HANDSHAKE, DEFAULT_READ_TIMEOUT,
+    EXTENSION_RENEGOTIATION_INFO, HANDSHAKE_TYPE_CLIENT_HELLO, SHORT_TIMEOUT,
+    TLS_RECORD_HEADER_SIZE, VERSION_TLS_1_2,
 };
 use crate::utils::network::Target;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -491,24 +492,46 @@ impl<'a> RenegotiationTester<'a> {
         Ok(hello)
     }
 
-    async fn read_tls_record(stream: &mut tokio::net::TcpStream) -> std::io::Result<Option<Vec<u8>>> {
+    async fn read_tls_record(
+        stream: &mut tokio::net::TcpStream,
+    ) -> std::io::Result<Option<Vec<u8>>> {
         let mut header = [0u8; 5];
         if stream.read_exact(&mut header).await.is_err() {
             return Ok(None);
         }
 
-        let record_len = u16::from_be_bytes([header[3], header[4]]) as usize;
-        let total_len = match 5usize.checked_add(record_len) {
-            Some(len) => len,
-            None => return Ok(None),
+        let Some(total_len) = Self::tls_record_total_len(&header)? else {
+            return Ok(None);
         };
         let mut response = vec![0u8; total_len];
-        response[..5].copy_from_slice(&header);
-        if stream.read_exact(&mut response[5..]).await.is_err() {
+        response[..TLS_RECORD_HEADER_SIZE].copy_from_slice(&header);
+        if stream
+            .read_exact(&mut response[TLS_RECORD_HEADER_SIZE..])
+            .await
+            .is_err()
+        {
             return Ok(None);
         }
 
         Ok(Some(response))
+    }
+
+    fn tls_record_total_len(
+        header: &[u8; TLS_RECORD_HEADER_SIZE],
+    ) -> std::io::Result<Option<usize>> {
+        let record_len = u16::from_be_bytes([header[3], header[4]]) as usize;
+        let total_len = TLS_RECORD_HEADER_SIZE
+            .checked_add(record_len)
+            .ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "TLS record length overflow",
+                )
+            })?;
+        if total_len > BUFFER_SIZE_MAX_WITH_OVERHEAD {
+            return Ok(None);
+        }
+        Ok(Some(total_len))
     }
 
     /// Build ClientHello WITHOUT renegotiation_info extension
@@ -742,6 +765,28 @@ pub struct RenegotiationTestResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_tls_record_total_len_rejects_oversized_record() {
+        let max_record_len = crate::constants::BUFFER_SIZE_MAX_WITH_OVERHEAD
+            - crate::constants::TLS_RECORD_HEADER_SIZE;
+        let allowed = max_record_len as u16;
+        let rejected = (max_record_len + 1) as u16;
+
+        let allowed_header = [0x16, 0x03, 0x03, (allowed >> 8) as u8, allowed as u8];
+        assert_eq!(
+            RenegotiationTester::tls_record_total_len(&allowed_header)
+                .expect("length should parse"),
+            Some(crate::constants::BUFFER_SIZE_MAX_WITH_OVERHEAD)
+        );
+
+        let rejected_header = [0x16, 0x03, 0x03, (rejected >> 8) as u8, rejected as u8];
+        assert_eq!(
+            RenegotiationTester::tls_record_total_len(&rejected_header)
+                .expect("length should parse"),
+            None
+        );
+    }
 
     fn patch_test_server_hello_lengths(response: &mut [u8]) {
         let rec_len = u16::try_from(response.len() - 5)
@@ -1210,7 +1255,10 @@ mod tests {
         let err = tester
             .has_renegotiation_info_extension(&response)
             .expect_err("truncated extensions length must fail");
-        assert!(err.to_string().contains("truncated before extensions length"));
+        assert!(
+            err.to_string()
+                .contains("truncated before extensions length")
+        );
     }
 
     #[tokio::test]
@@ -1225,7 +1273,10 @@ mod tests {
             let mut buf = vec![0u8; 4096];
             let _ = socket1.read(&mut buf).await.expect("read first hello");
             let malformed = [0x16, 0x03, 0x03, 0x00, 0x01, 0x02];
-            socket1.write_all(&malformed).await.expect("write malformed");
+            socket1
+                .write_all(&malformed)
+                .await
+                .expect("write malformed");
 
             let (mut socket2, _) = listener.accept().await.expect("accept second");
             let _ = socket2.read(&mut buf).await.expect("read second hello");
@@ -1252,7 +1303,10 @@ mod tests {
             response[6] = ((hs_len >> 16) & 0xff) as u8;
             response[7] = ((hs_len >> 8) & 0xff) as u8;
             response[8] = (hs_len & 0xff) as u8;
-            socket2.write_all(&response).await.expect("write server hello");
+            socket2
+                .write_all(&response)
+                .await
+                .expect("write server hello");
         });
 
         let target = Target::with_ips(
@@ -1300,10 +1354,16 @@ mod tests {
             response.extend_from_slice(&[0x00, 0x05, 0xff, 0x01, 0x00, 0x01, 0x00]);
             patch_test_server_hello_lengths(&mut response);
 
-            socket.write_all(&response[..8]).await.expect("write first fragment");
+            socket
+                .write_all(&response[..8])
+                .await
+                .expect("write first fragment");
             socket.flush().await.expect("flush first fragment");
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-            socket.write_all(&response[8..]).await.expect("write second fragment");
+            socket
+                .write_all(&response[8..])
+                .await
+                .expect("write second fragment");
             socket.flush().await.expect("flush second fragment");
         });
 
