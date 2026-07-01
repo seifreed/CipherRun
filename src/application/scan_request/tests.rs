@@ -214,6 +214,22 @@ fn rejects_blank_sni_name() {
 }
 
 #[test]
+fn rejects_malformed_sni_name() {
+    let request = ScanRequest {
+        tls: ScanRequestTls {
+            sni_name: Some("bad host".to_string()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let err = request
+        .validate_common()
+        .expect_err("malformed SNI should fail validation");
+    assert!(err.to_string().contains("Invalid SNI hostname"));
+}
+
+#[test]
 fn baseline_scan_requires_all_without_specific_focus() {
     let request = ScanRequest {
         target: Some("example.com:443".to_string()),

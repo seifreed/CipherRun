@@ -82,10 +82,12 @@ impl ScanRequest {
             });
         }
 
-        if matches!(self.tls.sni_name.as_deref().map(str::trim), Some("")) {
-            return Err(TlsError::InvalidInput {
-                message: "SNI hostname must not be empty.".to_string(),
-            });
+        if let Some(sni_name) = self.tls.sni_name.as_deref() {
+            crate::security::validate_hostname(sni_name).map_err(|error| {
+                TlsError::InvalidInput {
+                    message: format!("Invalid SNI hostname: {}", error),
+                }
+            })?;
         }
 
         if self.connection.retry_backoff_ms > self.connection.max_backoff_ms {
