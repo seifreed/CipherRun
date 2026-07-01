@@ -7,10 +7,10 @@ use std::net::IpAddr;
 
 const EMPTY_SCAN_OPTIONS_ERROR: &str = "Scan options must enable at least one scan phase";
 
-fn validate_api_target(target: &str) -> Result<(String, u16), ApiError> {
+fn validate_api_target(target: &str) -> Result<(String, Option<u16>), ApiError> {
     let (hostname, port) = validate_target(target, false)
         .map_err(|e| ApiError::BadRequest(format!("Invalid target: {}", e)))?;
-    Ok((hostname, port.unwrap_or(PORT_HTTPS)))
+    Ok((hostname, port))
 }
 
 fn validate_ip_override(ip_override: &str) -> Result<(), ApiError> {
@@ -45,7 +45,8 @@ fn normalized_starttls_protocol(options: &ScanOptions) -> Option<String> {
 }
 
 pub fn scan_request_from_target(target: &str) -> Result<ScanRequest, ApiError> {
-    let (hostname, port) = validate_api_target(target)?;
+    let (hostname, parsed_port) = validate_api_target(target)?;
+    let port = parsed_port.unwrap_or(PORT_HTTPS);
 
     Ok(ScanRequest {
         target: Some(canonical_target(&hostname, port)),
@@ -62,13 +63,25 @@ pub fn scan_request_from_target_and_options(
         return Err(ApiError::BadRequest(EMPTY_SCAN_OPTIONS_ERROR.to_string()));
     }
 
-    let (hostname, port) = validate_api_target(target)?;
+    let (hostname, parsed_port) = validate_api_target(target)?;
 
     if let Some(ip_override) = options.ip.as_deref() {
         validate_ip_override(ip_override)?;
     }
 
     let starttls_protocol = normalized_starttls_protocol(options);
+    let starttls_port = starttls_protocol.as_ref().and_then(|protocol| {
+        ScanRequest {
+            starttls: crate::application::scan_request::ScanRequestStarttls {
+                protocol: Some(protocol.clone()),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+        .starttls_protocol()
+        .map(|protocol| protocol.default_port())
+    });
+    let port = parsed_port.or(starttls_port).unwrap_or(PORT_HTTPS);
     let request = ScanRequest {
         target: Some(canonical_target(&hostname, port)),
         port: Some(port),
@@ -225,6 +238,20 @@ mod tests {
 
         assert!(request.scan.proto.enabled);
         assert_eq!(request.starttls.protocol.as_deref(), Some("smtp"));
+    }
+
+    #[test]
+    fn starttls_only_request_uses_protocol_default_port() {
+        let options = ScanOptions {
+            starttls_protocol: Some("smtp".to_string()),
+            ..Default::default()
+        };
+
+        let request = scan_request_from_target_and_options("mail.example.com", &options)
+            .expect("starttls-only request should build");
+
+        assert_eq!(request.target.as_deref(), Some("mail.example.com:25"));
+        assert_eq!(request.port, Some(25));
     }
 
     #[test]

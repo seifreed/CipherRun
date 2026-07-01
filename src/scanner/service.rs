@@ -42,6 +42,23 @@ struct PreflightCapture {
 }
 
 impl Scanner {
+    fn effective_port(request: &ScanRequest, embedded_port: Option<u16>) -> u16 {
+        request
+            .port
+            .or(embedded_port)
+            .or_else(|| request.starttls_protocol().map(|protocol| protocol.default_port()))
+            .unwrap_or(443)
+    }
+
+    fn parse_port_override(request: &ScanRequest, embedded_port: Option<u16>) -> Option<u16> {
+        request.port.or_else(|| {
+            embedded_port
+                .is_none()
+                .then(|| request.starttls_protocol().map(|protocol| protocol.default_port()))
+                .flatten()
+        })
+    }
+
     /// Create a new Scanner with the progress reporter implied by the request.
     ///
     /// CLI usage gets the `TerminalProgressReporter`, except in machine-readable
@@ -84,7 +101,7 @@ impl Scanner {
         let placeholder_ip = PLACEHOLDER_IP;
         let target = Target::with_ips(
             hostname,
-            request.port.or(embedded_port).unwrap_or(443),
+            Self::effective_port(&request, embedded_port),
             vec![placeholder_ip],
         )?;
 
@@ -128,7 +145,7 @@ impl Scanner {
                         message: format!("Invalid IP override: {}", ip_override),
                     })?;
             let (hostname, embedded_port) = split_target_host_port(target_str)?;
-            let port = self.request.port.or(embedded_port).unwrap_or(443);
+            let port = Self::effective_port(&self.request, embedded_port);
             Target::with_ips(hostname, port, vec![ip])?
         } else {
             self.resolve_target_with_request_network(target_str).await?
@@ -244,10 +261,14 @@ impl Scanner {
 
     async fn resolve_target_with_request_network(&self, target_str: &str) -> Result<Target> {
         let (hostname, embedded_port) = split_target_host_port(target_str)?;
-        let port = self.request.port.or(embedded_port).unwrap_or(443);
+        let port = Self::effective_port(&self.request, embedded_port);
 
         let target = if self.request.network.resolvers.is_empty() {
-            Target::parse_with_port_override(target_str, self.request.port).await?
+            Target::parse_with_port_override(
+                target_str,
+                Self::parse_port_override(&self.request, embedded_port),
+            )
+            .await?
         } else if let Ok(ip) = hostname.parse::<IpAddr>() {
             validate_resolved_ips(&[ip], false).map_err(|error| crate::TlsError::InvalidInput {
                 message: format!("Resolved target failed SSRF validation: {}", error),
@@ -772,6 +793,37 @@ mod tests {
             target.ip_addresses,
             vec!["198.51.100.20".parse::<IpAddr>().unwrap()]
         );
+    }
+
+    #[tokio::test]
+    async fn initialize_uses_starttls_default_port_when_target_has_no_port() {
+        let scanner = Scanner::with_reporter(
+            ScanRequest {
+                target: Some("example.com".to_string()),
+                ip: Some("198.51.100.20".to_string()),
+                starttls: crate::application::scan_request::ScanRequestStarttls {
+                    smtp: true,
+                    ..Default::default()
+                },
+                scan: ScanRequestScan {
+                    proto: crate::application::scan_request::ScanRequestProto {
+                        enabled: true,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            Arc::new(SilentProgressReporter::new()),
+        )
+        .expect("scanner should build");
+
+        scanner
+            .initialize()
+            .await
+            .expect("initialization should succeed");
+
+        assert_eq!(scanner.get_target_owned().port, 25);
     }
 
     #[tokio::test]
