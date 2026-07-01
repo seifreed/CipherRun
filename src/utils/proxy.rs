@@ -274,9 +274,9 @@ fn build_connect_request(
     let mut request = format!("CONNECT {} HTTP/1.1\r\nHost: {}\r\n", authority, authority);
 
     // Add Proxy-Authorization if credentials provided
-    if let (Some(user), Some(pass)) = (username, password) {
+    if let Some(user) = username {
         use base64::{Engine as _, engine::general_purpose};
-        let credentials = format!("{}:{}", user, pass);
+        let credentials = format!("{}:{}", user, password.as_deref().unwrap_or(""));
         let encoded = general_purpose::STANDARD.encode(credentials.as_bytes());
         request.push_str(&format!("Proxy-Authorization: Basic {}\r\n", encoded));
     }
@@ -451,9 +451,9 @@ mod tests {
     }
 
     #[test]
-    fn test_build_connect_request_username_only_no_header() {
+    fn test_build_connect_request_username_only_sends_empty_password() {
         let request = build_connect_request("example.com", 443, &Some("user".to_string()), &None);
-        assert!(!request.contains("Proxy-Authorization"));
+        assert!(request.contains("Proxy-Authorization: Basic dXNlcjo="));
     }
 
     #[test]
