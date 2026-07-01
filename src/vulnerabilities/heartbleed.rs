@@ -1,7 +1,8 @@
 // Heartbleed (CVE-2014-0160) vulnerability checker
 
 use crate::constants::{
-    CONTENT_TYPE_HEARTBEAT, HEARTBEAT_REQUEST, TLS_HANDSHAKE_TIMEOUT, VERSION_TLS_1_2,
+    BUFFER_SIZE_MAX_WITH_OVERHEAD, CONTENT_TYPE_HEARTBEAT, HEARTBEAT_REQUEST,
+    TLS_HANDSHAKE_TIMEOUT, TLS_RECORD_HEADER_SIZE, VERSION_TLS_1_2,
 };
 use crate::protocols::{Protocol, handshake::ClientHelloBuilder};
 use crate::utils::network::Target;
@@ -173,7 +174,8 @@ impl<'a> HeartbleedTester<'a> {
         // Send ClientHello
         let response = match timeout(self.read_timeout, async {
             stream.write_all(&client_hello).await?;
-            self.read_complete_tls_record(&mut stream, 16384).await
+            self.read_complete_tls_record(&mut stream, BUFFER_SIZE_MAX_WITH_OVERHEAD)
+                .await
         })
         .await
         {
@@ -513,7 +515,10 @@ impl<'a> HeartbleedTester<'a> {
         ];
 
         stream.write_all(&heartbeat).await?;
-        let result = match self.read_complete_tls_record(stream, 65535).await {
+        let result = match self
+            .read_complete_tls_record(stream, u16::MAX as usize + TLS_RECORD_HEADER_SIZE)
+            .await
+        {
             Ok(response) => response,
             Err(error) if error.kind() == std::io::ErrorKind::TimedOut => {
                 return Ok(HeartbleedResult {
@@ -620,9 +625,24 @@ impl<'a> HeartbleedTester<'a> {
                 break;
             }
             total += n;
-            if total >= 5 {
+            if total >= TLS_RECORD_HEADER_SIZE {
                 let record_len = u16::from_be_bytes([response[3], response[4]]) as usize;
-                if total >= 5 + record_len {
+                let record_total =
+                    TLS_RECORD_HEADER_SIZE
+                        .checked_add(record_len)
+                        .ok_or_else(|| {
+                            std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                "heartbeat response record length overflow",
+                            )
+                        })?;
+                if record_total > response.len() {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "heartbeat response record length exceeds buffer",
+                    ));
+                }
+                if total >= record_total {
                     break;
                 }
             }
@@ -635,6 +655,7 @@ impl<'a> HeartbleedTester<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::constants::BUFFER_SIZE_MAX_TLS_RECORD;
     use std::net::{IpAddr, Ipv4Addr};
     use tokio::net::TcpListener;
 
@@ -752,6 +773,21 @@ mod tests {
         data
     }
 
+    fn max_size_server_hello_with_heartbeat() -> Vec<u8> {
+        let mut data = server_hello_with_heartbeat();
+        let current_record_len = data.len() - TLS_RECORD_HEADER_SIZE;
+        let filler_len = BUFFER_SIZE_MAX_TLS_RECORD - current_record_len - 4;
+        data.push(0x0b);
+        data.extend_from_slice(&[
+            ((filler_len >> 16) & 0xff) as u8,
+            ((filler_len >> 8) & 0xff) as u8,
+            (filler_len & 0xff) as u8,
+        ]);
+        data.extend_from_slice(&vec![0u8; filler_len]);
+        write_u16_at(&mut data, 3, BUFFER_SIZE_MAX_TLS_RECORD as u16);
+        data
+    }
+
     #[tokio::test]
     #[ignore] // Requires network access
     async fn test_heartbleed_modern_server() {
@@ -805,6 +841,42 @@ mod tests {
             let _ = socket.write_all(&response[..split]).await;
             tokio::time::sleep(Duration::from_millis(50)).await;
             let _ = socket.write_all(&response[split..]).await;
+            let _ = timeout(Duration::from_millis(500), socket.read(&mut buffer)).await;
+        });
+
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
+        )
+        .unwrap();
+        let tester = HeartbleedTester {
+            target: &target,
+            sni_hostname: None,
+            connect_timeout: Duration::from_millis(200),
+            read_timeout: Duration::from_millis(200),
+            starttls: None,
+            starttls_hostname: None,
+        };
+        let result = tester.test_protocol(Protocol::TLS12).await.unwrap();
+
+        assert!(result.bytes_sent > 0, "{result:?}");
+        assert!(!result.vulnerable);
+
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_heartbleed_accepts_max_size_initial_serverhello() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buffer = [0u8; 4096];
+            let _ = socket.read(&mut buffer).await;
+            let response = max_size_server_hello_with_heartbeat();
+            let _ = socket.write_all(&response).await;
             let _ = timeout(Duration::from_millis(500), socket.read(&mut buffer)).await;
         });
 
