@@ -136,6 +136,11 @@ impl ServerHelloCapture {
                 message: "ServerHello handshake length exceeds record length".to_string(),
             });
         }
+        if handshake_end != record_end {
+            return Err(TlsError::ParseError {
+                message: "ServerHello record contains trailing bytes after handshake".to_string(),
+            });
+        }
         let data = data
             .get(..handshake_end)
             .ok_or_else(|| TlsError::ParseError {
@@ -479,7 +484,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_serverhello_ignores_extension_after_handshake_end() {
+    fn test_parse_serverhello_rejects_extension_after_handshake_end() {
         let data = vec![
             0x16, 0x03, 0x03, 0x00, 0x30, // record includes trailing bytes
             0x02, 0x00, 0x00, 0x26, // ServerHello ends before extensions
@@ -494,8 +499,8 @@ mod tests {
             0x00, 0x0f, 0x00, 0x00,
         ];
 
-        let parsed = ServerHelloCapture::parse(&data).expect("trailing bytes must be ignored");
-        assert!(parsed.extensions.is_empty());
+        let err = ServerHelloCapture::parse(&data).expect_err("trailing bytes should fail");
+        assert!(err.to_string().contains("trailing bytes"));
     }
 
     #[test]
@@ -552,7 +557,7 @@ mod tests {
         ];
 
         let err = ServerHelloCapture::parse(&data).expect_err("truncated handshake body must fail");
-        assert!(err.to_string().contains("Failed to read version"));
+        assert!(err.to_string().contains("trailing bytes"));
     }
 
     #[test]
