@@ -76,41 +76,36 @@ impl AsnCidrParser {
             message: format!("Failed to parse RIPEstat response: {}", e),
         })?;
 
-        // Parse prefixes from JSON response
-        let mut prefixes = Vec::new();
-        let mut unparsed = 0usize;
+        Self::parse_ripestat_prefixes(asn, &json)
+    }
 
+    fn parse_ripestat_prefixes(asn: u32, json: &serde_json::Value) -> Result<Vec<IpNetwork>> {
+        let mut prefixes = Vec::new();
         if let Some(data) = json.get("data")
             && let Some(prefixes_array) = data.get("prefixes").and_then(|p| p.as_array())
         {
             for prefix_obj in prefixes_array {
-                let Some(prefix_str) = prefix_obj.get("prefix").and_then(|p| p.as_str()) else {
-                    continue;
-                };
-                match prefix_str.parse::<IpNetwork>() {
-                    Ok(network) => prefixes.push(network),
-                    Err(e) => {
-                        // Surface rather than silently drop: a dropped prefix
-                        // means announced targets the user asked for go unscanned.
-                        unparsed += 1;
-                        tracing::warn!(
-                            "Skipping unparseable prefix '{}' announced by AS{}: {}",
-                            prefix_str,
-                            asn,
-                            e
-                        );
+                let prefix_str = prefix_obj
+                    .get("prefix")
+                    .and_then(|p| p.as_str())
+                    .ok_or_else(|| TlsError::ParseError {
+                        message: format!("Malformed prefix entry in RIPEstat response for AS{asn}"),
+                    })?;
+                prefixes.push(prefix_str.parse::<IpNetwork>().map_err(|e| {
+                    TlsError::ParseError {
+                        message: format!(
+                            "Invalid prefix '{}' announced by AS{}: {}",
+                            prefix_str, asn, e
+                        ),
                     }
-                }
+                })?);
             }
         }
 
         if prefixes.is_empty() {
-            let message = if unparsed > 0 {
-                format!("AS{asn} announced {unparsed} prefix(es) but none could be parsed")
-            } else {
-                format!("No prefixes found for AS{asn}")
-            };
-            return Err(TlsError::InvalidInput { message });
+            return Err(TlsError::InvalidInput {
+                message: format!("No prefixes found for AS{asn}"),
+            });
         }
 
         Ok(prefixes)
@@ -381,6 +376,39 @@ mod tests {
         // matched "AS" while byte index 2 fell inside the multi-byte character.
         // Must return an error rather than panic on a non-char-boundary slice.
         assert!(AsnCidrParser::parse_asn_number("aſ123").is_err());
+    }
+
+    #[test]
+    fn test_ripestat_prefix_parse_rejects_invalid_prefix() {
+        let json = serde_json::json!({
+            "data": {
+                "prefixes": [
+                    { "prefix": "192.0.2.0/24" },
+                    { "prefix": "not-a-prefix" }
+                ]
+            }
+        });
+
+        let err = AsnCidrParser::parse_ripestat_prefixes(64496, &json)
+            .expect_err("invalid announced prefix should fail");
+
+        assert!(err.to_string().contains("Invalid prefix"));
+    }
+
+    #[test]
+    fn test_ripestat_prefix_parse_rejects_malformed_entry() {
+        let json = serde_json::json!({
+            "data": {
+                "prefixes": [
+                    { "not_prefix": "192.0.2.0/24" }
+                ]
+            }
+        });
+
+        let err = AsnCidrParser::parse_ripestat_prefixes(64496, &json)
+            .expect_err("malformed announced prefix should fail");
+
+        assert!(err.to_string().contains("Malformed prefix entry"));
     }
 
     #[test]
