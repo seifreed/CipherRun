@@ -94,6 +94,12 @@ impl ScanRequest {
                         .to_string(),
                 });
             }
+            if sni_name.parse::<std::net::IpAddr>().is_ok() {
+                return Err(TlsError::InvalidInput {
+                    message: "Invalid SNI hostname: SNI must be a DNS name, not an IP address."
+                        .to_string(),
+                });
+            }
         }
 
         if self.tls.client_key.is_some() ^ self.tls.client_certs.is_some() {
