@@ -1,5 +1,6 @@
 use crate::application::ScanExportView;
 use crate::{Args, Result};
+use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -307,11 +308,12 @@ impl<'a> ScanExporter<'a> {
 
     fn bundle_output_path(&self, base: &Path, suffix: &str) -> PathBuf {
         let parent = base.parent();
-        let file_name = base
+        let mut derived_name = base
             .file_name()
-            .map(|name| name.to_string_lossy().to_string())
-            .unwrap_or_else(|| "scan".to_string());
-        let derived_name = format!("{}.{}", file_name, suffix);
+            .map(|name| name.to_os_string())
+            .unwrap_or_else(|| OsString::from("scan"));
+        derived_name.push(".");
+        derived_name.push(suffix);
         match parent {
             Some(parent) if !parent.as_os_str().is_empty() => parent.join(derived_name),
             _ => PathBuf::from(derived_name),
@@ -330,9 +332,14 @@ impl<'a> ScanExporter<'a> {
 
         let file_name = path
             .file_name()
-            .map(|name| name.to_string_lossy().to_string())
-            .unwrap_or_default();
-        let prefixed_name = format!("{}{}", prefix, file_name);
+            .ok_or_else(|| crate::TlsError::InvalidInput {
+                message: format!(
+                    "Cannot apply --outprefix to path without file name: {}",
+                    path.display()
+                ),
+            })?;
+        let mut prefixed_name = OsString::from(prefix);
+        prefixed_name.push(file_name);
         Ok(match path.parent() {
             Some(parent) if !parent.as_os_str().is_empty() => parent.join(prefixed_name),
             _ => PathBuf::from(prefixed_name),
@@ -377,6 +384,9 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
+    #[cfg(unix)]
+    use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
     #[test]
     fn test_sanitize_target_filename_replaces_unsafe_chars() {
         assert_eq!(
@@ -413,6 +423,57 @@ mod tests {
             .expect("json path should exist");
 
         assert_eq!(path, temp.path().join("pref-report.json"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_collection_json_output_path_preserves_non_utf8_output_all_filename() {
+        let temp = tempdir().expect("tempdir should be created");
+        let base_name = OsString::from_vec(vec![b'r', b'e', 0x80, b'p']);
+        let args = Args {
+            output: crate::cli::OutputArgs {
+                output_all: Some(temp.path().join(&base_name)),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let exporter = ScanExporter::new(&args);
+        let path = exporter
+            .collection_json_output_path()
+            .expect("path should be built")
+            .expect("json path should exist");
+
+        let mut expected = base_name;
+        expected.push(".json");
+        assert_eq!(path.parent(), Some(temp.path()));
+        assert_eq!(path.file_name().unwrap().as_bytes(), expected.as_bytes());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_collection_json_output_path_preserves_non_utf8_filename_with_outprefix() {
+        let temp = tempdir().expect("tempdir should be created");
+        let file_name = OsString::from_vec(vec![b'r', 0x80, b'.', b'j', b's', b'o', b'n']);
+        let args = Args {
+            output: crate::cli::OutputArgs {
+                json: Some(temp.path().join(&file_name)),
+                outprefix: Some("pref-".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let exporter = ScanExporter::new(&args);
+        let path = exporter
+            .collection_json_output_path()
+            .expect("prefix should be applied")
+            .expect("json path should exist");
+
+        let mut expected = OsString::from("pref-");
+        expected.push(file_name);
+        assert_eq!(path.parent(), Some(temp.path()));
+        assert_eq!(path.file_name().unwrap().as_bytes(), expected.as_bytes());
     }
 
     #[test]
