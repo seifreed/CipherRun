@@ -5,14 +5,15 @@ This module provides WebSocket client functionality for streaming scan progress.
 
 import asyncio
 import json
-from typing import AsyncIterator, Optional, Callable, Awaitable
-from urllib.parse import urljoin, urlparse
+from typing import AsyncIterator, Awaitable, Callable, Optional
+from urllib.parse import quote, urljoin, urlparse
 
 import websockets
 from websockets.client import WebSocketClientProtocol
 
+from .exceptions import ConnectionError as SDKConnectionError
+from .exceptions import WebSocketError
 from .models import ProgressMessage
-from .exceptions import WebSocketError, ConnectionError as SDKConnectionError
 
 
 def _progress_message_from_frame(data: dict) -> Optional[ProgressMessage]:
@@ -29,7 +30,7 @@ def _progress_message_from_frame(data: dict) -> Optional[ProgressMessage]:
     try:
         return ProgressMessage(**data)
     except Exception as e:
-        raise WebSocketError(f"Invalid progress message: {e}")
+        raise WebSocketError(f"Invalid progress message: {e}") from e
 
 
 class WebSocketProgressClient:
@@ -97,7 +98,7 @@ class WebSocketProgressClient:
             ...     if progress.msg_type == "completed":
             ...         break
         """
-        endpoint = f"/api/v1/scan/{scan_id}/stream"
+        endpoint = f"/api/v1/scan/{quote(scan_id, safe='')}/stream"
         ws_url = self._convert_to_ws_url(urljoin(self.base_url, endpoint))
 
         extra_headers = {}
@@ -132,20 +133,18 @@ class WebSocketProgressClient:
                             if progress.msg_type in ["completed", "failed", "cancelled"]:
                                 break
 
-                        except asyncio.TimeoutError:
-                            raise WebSocketError(
-                                f"No message received within {timeout}s timeout"
-                            )
+                        except asyncio.TimeoutError as e:
+                            raise WebSocketError(f"No message received within {timeout}s timeout") from e
 
                 except websockets.exceptions.ConnectionClosed as e:
-                    raise WebSocketError(f"WebSocket connection closed: {e}")
+                    raise WebSocketError(f"WebSocket connection closed: {e}") from e
 
         except websockets.exceptions.WebSocketException as e:
-            raise WebSocketError(f"WebSocket error: {str(e)}")
+            raise WebSocketError(f"WebSocket error: {str(e)}") from e
         except WebSocketError:
             raise
         except Exception as e:
-            raise SDKConnectionError(f"Connection failed: {str(e)}")
+            raise SDKConnectionError(f"Connection failed: {str(e)}") from e
         finally:
             self._websocket = None
 

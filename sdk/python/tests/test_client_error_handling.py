@@ -34,6 +34,7 @@ from cipherrun.client import (
 )
 from cipherrun.exceptions import APIError, CipherRunError, RateLimitError
 from cipherrun.models import ScanStatusResponse
+from cipherrun.websocket import WebSocketProgressClient
 
 
 def test_parse_retry_after_accepts_delta_seconds():
@@ -225,6 +226,41 @@ def test_async_client_quotes_path_parameters(monkeypatch):
     asyncio.run(run())
 
     assert endpoints == ["/api/v1/scan/scan%2F1"]
+
+
+def test_websocket_client_quotes_scan_id(monkeypatch):
+    connected_urls = []
+
+    class FakeWebSocket:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def recv(self):
+            return (
+                '{"msg_type":"completed","scan_id":"scan/1","progress":100,'
+                '"stage":"done","timestamp":"2026-01-01T00:00:00Z"}'
+            )
+
+    def fake_connect(url, **_kwargs):
+        connected_urls.append(url)
+        return FakeWebSocket()
+
+    monkeypatch.setattr("websockets.connect", fake_connect)
+
+    async def run():
+        client = WebSocketProgressClient()
+        messages = []
+        async for progress in client.stream_progress("scan/1"):
+            messages.append(progress)
+        return messages
+
+    messages = asyncio.run(run())
+
+    assert connected_urls == ["ws://localhost:8080/api/v1/scan/scan%2F1/stream"]
+    assert messages[0].scan_id == "scan/1"
 
 
 # --- SecurityGrade / RatingResult Unverified ---
