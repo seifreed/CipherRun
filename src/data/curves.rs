@@ -105,7 +105,7 @@ impl CurvesDatabase {
             message: "Invalid format".to_string(),
         })?;
 
-        let id = id.trim().replace("0x", "").replace(",", "").to_lowercase();
+        let id = Self::normalize_curve_id(id)?;
 
         let mut names = names.split_whitespace();
         let short_name = names
@@ -130,6 +130,16 @@ impl CurvesDatabase {
             hybrid,
             quantum_vulnerable,
         })
+    }
+
+    fn normalize_curve_id(id: &str) -> Result<String> {
+        let id = id.trim().replace("0x", "").replace(",", "").to_lowercase();
+        if id.len() != 4 || !id.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(TlsError::ParseError {
+                message: "Invalid format: invalid curve ID".to_string(),
+            });
+        }
+        Ok(id)
     }
 
     /// Extract security bits from curve name
@@ -300,6 +310,14 @@ mod tests {
     fn test_parse_curve_line_invalid() {
         let err = CurvesDatabase::parse_line("invalid").expect_err("should fail");
         assert!(err.to_string().contains("Invalid format"));
+    }
+
+    #[test]
+    fn test_parse_curve_line_rejects_invalid_id() {
+        let err =
+            CurvesDatabase::parse_line("0xGG,0x1d - X25519  Curve25519").expect_err("should fail");
+
+        assert!(err.to_string().contains("invalid curve ID"));
     }
 
     #[test]

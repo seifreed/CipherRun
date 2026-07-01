@@ -76,10 +76,9 @@ impl CipherDatabase {
         let (hexcode, rest) = line.split_once(" - ").ok_or_else(|| TlsError::ParseError {
             message: "Invalid format: missing ' - ' separator".to_string(),
         })?;
-        let hexcode = hexcode.trim();
-
-        // Parse hexcode (e.g., "0xCC,0x14" -> "cc14")
-        let hexcode = hexcode.replace("0x", "").replace(",", "").to_lowercase();
+        // Parse hexcode (e.g., "0xCC,0x14" -> "cc14"). TLS ciphers use
+        // two bytes; legacy SSLv2 ciphers in this dataset use three bytes.
+        let hexcode = Self::normalize_hexcode(hexcode)?;
 
         // Split rest into fields
         let mut fields = rest.split_whitespace();
@@ -119,6 +118,14 @@ impl CipherDatabase {
                 mac = value.to_string();
             }
         }
+        if [kx.as_str(), auth.as_str(), enc.as_str(), mac.as_str()]
+            .iter()
+            .any(|value| value.is_empty())
+        {
+            return Err(TlsError::ParseError {
+                message: "Invalid format: missing cipher attributes".to_string(),
+            });
+        }
 
         // Extract bit strength from encryption field
         let bits = Self::extract_bits(&enc);
@@ -138,6 +145,20 @@ impl CipherDatabase {
             bits,
             export,
         })
+    }
+
+    fn normalize_hexcode(hexcode: &str) -> Result<String> {
+        let hexcode = hexcode
+            .trim()
+            .replace("0x", "")
+            .replace(",", "")
+            .to_lowercase();
+        if !matches!(hexcode.len(), 4 | 6) || !hexcode.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(TlsError::ParseError {
+                message: "Invalid format: invalid cipher hexcode".to_string(),
+            });
+        }
+        Ok(hexcode)
     }
 
     /// Extract bit strength from encryption string (e.g., "AES(256)" -> 256)
@@ -320,6 +341,22 @@ mod tests {
         let line = "invalid line";
         let err = CipherDatabase::parse_line(line).expect_err("should fail");
         assert!(err.to_string().contains("Invalid format"));
+    }
+
+    #[test]
+    fn test_parse_line_rejects_invalid_hexcode() {
+        let line = "0xGG,0x02 - TLS_AES_256_GCM_SHA384 TLS_AES_256_GCM_SHA384 TLSv1.3 Kx=any Au=any Enc=AESGCM(256) Mac=AEAD";
+        let err = CipherDatabase::parse_line(line).expect_err("should fail");
+
+        assert!(err.to_string().contains("invalid cipher hexcode"));
+    }
+
+    #[test]
+    fn test_parse_line_rejects_missing_cipher_attributes() {
+        let line = "0x13,0x02 - TLS_AES_256_GCM_SHA384 TLS_AES_256_GCM_SHA384 TLSv1.3 Kx=any Au=any Enc=AESGCM(256)";
+        let err = CipherDatabase::parse_line(line).expect_err("should fail");
+
+        assert!(err.to_string().contains("missing cipher attributes"));
     }
 
     #[test]
