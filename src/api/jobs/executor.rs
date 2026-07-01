@@ -453,13 +453,7 @@ impl ScanExecutor {
     /// Validates the URL against SSRF before making the request.
     async fn send_webhook(webhook_url: &str, job: &ScanJob) -> Result<()> {
         let validated = validate_webhook_url(webhook_url).await?;
-
-        // Pin resolved IPs to prevent DNS rebinding TOCTOU attacks
-        let mut client_builder = reqwest::Client::builder().timeout(Duration::from_secs(10));
-        for addr in &validated.resolved_addrs {
-            client_builder = client_builder.resolve(&validated.host, *addr);
-        }
-        let client = client_builder.build()?;
+        let client = webhook_http_client(&validated)?;
 
         let payload = serde_json::json!({
             "job_id": job.id,
@@ -503,6 +497,19 @@ impl Clone for ScanExecutor {
             shutdown_rx: self.shutdown_rx.clone(),
         }
     }
+}
+
+fn webhook_http_client(validated: &ValidatedWebhook) -> Result<reqwest::Client> {
+    // Pin resolved IPs to prevent DNS rebinding TOCTOU attacks. Redirects stay
+    // disabled so a validated public webhook cannot bounce the request to a
+    // private/internal URL that was never checked.
+    let mut client_builder = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .redirect(reqwest::redirect::Policy::none());
+    for addr in &validated.resolved_addrs {
+        client_builder = client_builder.resolve(&validated.host, *addr);
+    }
+    Ok(client_builder.build()?)
 }
 
 pub(crate) async fn validate_webhook_url(webhook_url: &str) -> Result<ValidatedWebhook> {
@@ -740,5 +747,40 @@ mod tests {
             .expect_err("port zero should fail");
 
         assert!(err.to_string().contains("port must be between"));
+    }
+
+    #[tokio::test]
+    async fn test_webhook_client_does_not_follow_redirects() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test listener should bind");
+        let addr = listener.local_addr().expect("listener should expose addr");
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("client should connect");
+            let mut request = [0_u8; 1024];
+            let _ = socket.read(&mut request).await.expect("request should read");
+            socket
+                .write_all(
+                    b"HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:9/private\r\nContent-Length: 0\r\n\r\n",
+                )
+                .await
+                .expect("redirect response should write");
+        });
+
+        let validated = ValidatedWebhook {
+            host: "example.test".to_string(),
+            resolved_addrs: vec![addr],
+        };
+        let client = webhook_http_client(&validated).expect("webhook client should build");
+        let response = client
+            .post(format!("http://example.test:{}/callback", addr.port()))
+            .send()
+            .await
+            .expect("redirect response should be returned");
+
+        assert_eq!(response.status(), reqwest::StatusCode::FOUND);
+        server.await.expect("server task should finish");
     }
 }
