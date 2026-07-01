@@ -3,7 +3,7 @@
 // Licensed under GPL-3.0
 
 use super::{Command, CommandExit};
-use crate::utils::anycast::AnycastScanner;
+use crate::utils::anycast::{AnycastScanResults, AnycastScanner};
 use crate::utils::network::Target;
 use crate::{Args, Result, TlsError};
 use async_trait::async_trait;
@@ -31,6 +31,14 @@ impl AnycastScanCommand {
                 .map(|protocol| protocol.default_port())
         })
     }
+
+    fn exit_for_results(results: &AnycastScanResults) -> CommandExit {
+        if results.successful_scans < results.total_ips {
+            CommandExit::failure(1)
+        } else {
+            CommandExit::success()
+        }
+    }
 }
 
 #[async_trait]
@@ -47,7 +55,7 @@ impl Command for AnycastScanCommand {
         let results = scanner.scan_all_ips().await?;
         results.display_summary();
 
-        Ok(CommandExit::success())
+        Ok(Self::exit_for_results(&results))
     }
 
     fn name(&self) -> &'static str {
@@ -58,6 +66,9 @@ impl Command for AnycastScanCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::utils::anycast::{AnycastDetection, IpScanResult};
+    use std::collections::{HashMap, HashSet};
+    use std::net::{IpAddr, Ipv4Addr};
 
     #[test]
     fn test_anycast_scan_command_name() {
@@ -91,5 +102,39 @@ mod tests {
         };
 
         assert_eq!(AnycastScanCommand::port_override(&args), Some(8443));
+    }
+
+    fn anycast_results(total_ips: usize, successful_scans: usize) -> AnycastScanResults {
+        AnycastScanResults {
+            hostname: "example.test".to_string(),
+            port: 443,
+            total_ips,
+            successful_scans,
+            ip_results: vec![IpScanResult {
+                ip: IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)),
+                results: Default::default(),
+                error: (successful_scans < total_ips).then(|| "timeout".to_string()),
+            }],
+            anycast_detection: AnycastDetection {
+                is_anycast: false,
+                confidence: 0.0,
+                reasons: Vec::new(),
+                certificate_fingerprints: HashSet::new(),
+                cipher_preferences: HashMap::new(),
+                protocol_support: HashMap::new(),
+            },
+        }
+    }
+
+    #[test]
+    fn test_anycast_scan_partial_failure_returns_failure() {
+        let exit = AnycastScanCommand::exit_for_results(&anycast_results(2, 1));
+        assert!(!exit.is_success());
+    }
+
+    #[test]
+    fn test_anycast_scan_all_success_returns_success() {
+        let exit = AnycastScanCommand::exit_for_results(&anycast_results(2, 2));
+        assert!(exit.is_success());
     }
 }
