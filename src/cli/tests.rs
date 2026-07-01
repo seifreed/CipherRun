@@ -118,6 +118,31 @@ fn test_validate_scan_all_ips_conflicts_with_test_all_ips() {
 }
 
 #[test]
+fn test_validate_rejects_non_positive_history_limit() {
+    let args = Args {
+        database: DatabaseArgs {
+            history: Some("example.com:443".to_string()),
+            history_limit: 0,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    assert!(args.validate().is_err());
+}
+
+#[test]
+fn test_validate_rejects_negative_cleanup_days() {
+    let args = Args {
+        database: DatabaseArgs {
+            cleanup_days: Some(-1),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    assert!(args.validate().is_err());
+}
+
+#[test]
 fn test_validate_xmpphost_requires_xmpp_starttls() {
     let args = Args {
         target: Some("example.com:5222".to_string()),

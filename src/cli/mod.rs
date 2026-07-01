@@ -269,6 +269,16 @@ impl Args {
             })?;
         }
 
+        if self.database.history.is_some() && self.database.history_limit <= 0 {
+            crate::tls_bail!("--history-limit must be positive");
+        }
+
+        if let Some(days) = self.database.cleanup_days
+            && days < 0
+        {
+            crate::tls_bail!("--cleanup-days cannot be negative");
+        }
+
         if let Some(format) = &self.fingerprint.export_hello {
             crate::output::hello_export::HelloExportFormat::parse(format)?;
         }
