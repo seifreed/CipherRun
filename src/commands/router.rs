@@ -215,6 +215,17 @@ impl CommandRouter {
                 message: "Operational modes (--serve, --monitor, --ct-logs, analytics) cannot be combined with scan targets, MX/file/ASN/CIDR input, or database action flags.".to_string(),
             });
         }
+        if (args.subcommand.is_some()
+            || args.api_server.enable
+            || args.monitoring.enable
+            || args.monitoring.test_alert
+            || args.ct_logs.enable)
+            && Self::has_output_artifact_options(args)
+        {
+            return Err(TlsError::InvalidInput {
+                message: "PQC/API/monitor/CT logs modes do not support scan output artifact options. Use mode-specific output flags such as --ct-json where available.".to_string(),
+            });
+        }
 
         // Mass-scan target sources (--file, --asn, --cidr) and a single target/MX
         // are mutually exclusive: each selects a distinct scanning mode.

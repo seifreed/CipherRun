@@ -451,6 +451,41 @@ fn test_validate_ct_logs_standalone() {
 }
 
 #[test]
+fn test_validate_ct_logs_allows_ct_json() {
+    validate_ok(build_args(|args| {
+        args.ct_logs.enable = true;
+        args.ct_logs.json = true;
+    }));
+}
+
+#[test]
+fn test_validate_api_server_rejects_output_artifact_options() {
+    let err = validate_err(build_args(|args| {
+        args.api_server.enable = true;
+        args.output.output_all = Some(PathBuf::from("api-output"));
+    }));
+    assert!(err.contains("do not support scan output artifact options"));
+}
+
+#[test]
+fn test_validate_monitor_rejects_output_artifact_options() {
+    let err = validate_err(build_args(|args| {
+        args.monitoring.enable = true;
+        args.output.json_pretty = true;
+    }));
+    assert!(err.contains("do not support scan output artifact options"));
+}
+
+#[test]
+fn test_validate_ct_logs_rejects_global_output_artifact_options() {
+    let err = validate_err(build_args(|args| {
+        args.ct_logs.enable = true;
+        args.output.json = Some(PathBuf::from("ct.json"));
+    }));
+    assert!(err.contains("do not support scan output artifact options"));
+}
+
+#[test]
 fn test_validate_database_init_standalone() {
     validate_ok(build_args(|args| args.database.init = true));
 }
