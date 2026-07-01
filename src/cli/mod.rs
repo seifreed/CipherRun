@@ -411,7 +411,7 @@ impl Args {
                     early_data: self.scan.early_data,
                 },
                 certs: crate::application::scan_request::ScanRequestCerts {
-                    analyze_certificates: false,
+                    analyze_certificates: self.scan.show_certificates,
                     ocsp: self.scan.ocsp,
                     no_check_certificate: self.scan.no_check_certificate,
                 },

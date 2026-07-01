@@ -390,6 +390,7 @@ fn test_to_scan_request_preserves_functional_scan_flags() {
             disable_rating: true,
             fast: true,
             ocsp: true,
+            show_certificates: true,
             pre_handshake: true,
             probe_status: true,
             ..Default::default()
@@ -405,8 +406,28 @@ fn test_to_scan_request_preserves_functional_scan_flags() {
     assert!(request.scan.prefs.disable_rating);
     assert!(request.scan.prefs.fast);
     assert!(request.scan.certs.ocsp);
+    assert!(request.scan.certs.analyze_certificates);
     assert!(request.scan.prefs.pre_handshake);
     assert!(request.scan.prefs.probe_status);
+}
+
+#[test]
+fn test_show_certificates_is_standalone_scan_workload() {
+    let args = Args {
+        target: Some("example.com".to_string()),
+        scan: ScanArgs {
+            all: false,
+            show_certificates: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let request = args.to_scan_request().expect("scan request should build");
+
+    assert!(request.scan.certs.analyze_certificates);
+    assert!(request.validate_for_scan().is_ok());
+    assert!(request.should_run_certificate_phase());
 }
 
 #[test]
