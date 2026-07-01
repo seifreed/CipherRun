@@ -96,6 +96,9 @@ impl LegacyCompatTester {
 
             match builder.set_cipher_list(&cipher) {
                 Ok(_) => {
+                    // set_cipher_list does not constrain TLS 1.3 ciphersuites.
+                    // Keep legacy cipher probes on TLS <= 1.2.
+                    builder.set_max_proto_version(Some(SslVersion::TLS1_2))?;
                     let connector = builder.build();
                     match connector.connect(&hostname, std_stream) {
                         Ok(_) => Ok(LegacyProbeOutcome::Supported),
