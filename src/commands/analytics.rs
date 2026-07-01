@@ -5,7 +5,7 @@
 use super::scan_exporter::{ExportKind, ScanExporter};
 use super::{Command, CommandExit};
 use crate::application::{CompareScanIds, HostPortDaysInput};
-use crate::{Args, Result, TlsError};
+use crate::{Args, Result};
 use async_trait::async_trait;
 use std::path::Path;
 
@@ -42,34 +42,13 @@ impl AnalyticsCommand {
         ))
     }
 
-    fn parse_compare_ids(&self, raw: &str) -> Result<Option<(i64, i64)>> {
-        match CompareScanIds::parse(raw) {
-            Ok(parsed) => Ok(Some((parsed.left, parsed.right))),
-            Err(TlsError::InvalidInput { message })
-                if message == "Expected format SCAN_ID_1:SCAN_ID_2" =>
-            {
-                eprintln!("Error: --compare requires format SCAN_ID_1:SCAN_ID_2");
-                Ok(None)
-            }
-            Err(err) => Err(err),
-        }
+    fn parse_compare_ids(&self, raw: &str) -> Result<(i64, i64)> {
+        let parsed = CompareScanIds::parse(raw)?;
+        Ok((parsed.left, parsed.right))
     }
 
-    fn parse_host_port_days(
-        &self,
-        raw: &str,
-        flag_name: &str,
-    ) -> Result<Option<HostPortDaysInput>> {
-        match HostPortDaysInput::parse(raw) {
-            Ok(parsed) => Ok(Some(parsed)),
-            Err(TlsError::InvalidInput { message })
-                if message == "Expected format HOSTNAME:PORT:DAYS" =>
-            {
-                eprintln!("Error: --{} requires format HOSTNAME:PORT:DAYS", flag_name);
-                Ok(None)
-            }
-            Err(err) => Err(err),
-        }
+    fn parse_host_port_days(&self, raw: &str, _flag_name: &str) -> Result<HostPortDaysInput> {
+        HostPortDaysInput::parse(raw)
     }
 
     fn prefers_json_output(&self) -> bool {
@@ -100,9 +79,7 @@ impl AnalyticsCommand {
     async fn handle_compare(&self, compare_str: &str) -> Result<CommandExit> {
         use crate::db::analytics::ScanComparator;
 
-        let Some((scan_id_1, scan_id_2)) = self.parse_compare_ids(compare_str)? else {
-            return Ok(CommandExit::failure(1));
-        };
+        let (scan_id_1, scan_id_2) = self.parse_compare_ids(compare_str)?;
 
         let db = self.open_database().await?;
         let comparator = ScanComparator::new(db);
@@ -121,9 +98,7 @@ impl AnalyticsCommand {
     async fn handle_changes(&self, changes_str: &str) -> Result<CommandExit> {
         use crate::db::analytics::ChangeTracker;
 
-        let Some(input) = self.parse_host_port_days(changes_str, "changes")? else {
-            return Ok(CommandExit::failure(1));
-        };
+        let input = self.parse_host_port_days(changes_str, "changes")?;
 
         let db = self.open_database().await?;
         let tracker = ChangeTracker::new(db);
@@ -145,9 +120,7 @@ impl AnalyticsCommand {
     async fn handle_trends(&self, trends_str: &str) -> Result<CommandExit> {
         use crate::db::analytics::TrendAnalyzer;
 
-        let Some(input) = self.parse_host_port_days(trends_str, "trends")? else {
-            return Ok(CommandExit::failure(1));
-        };
+        let input = self.parse_host_port_days(trends_str, "trends")?;
 
         let db = self.open_database().await?;
         let analyzer = TrendAnalyzer::new(db);
@@ -184,9 +157,7 @@ impl AnalyticsCommand {
     async fn handle_dashboard(&self, dashboard_str: &str) -> Result<CommandExit> {
         use crate::db::analytics::DashboardGenerator;
 
-        let Some(input) = self.parse_host_port_days(dashboard_str, "dashboard")? else {
-            return Ok(CommandExit::failure(1));
-        };
+        let input = self.parse_host_port_days(dashboard_str, "dashboard")?;
 
         let db = self.open_database().await?;
         let generator = DashboardGenerator::new(db);
@@ -285,11 +256,11 @@ path = \"{}\"\n",
         args.compare = Some("only-one-id".to_string());
 
         let cmd = AnalyticsCommand::new(args);
-        let exit = cmd
+        let err = cmd
             .execute()
             .await
-            .expect("invalid compare format should not fail");
-        assert!(!exit.is_success());
+            .expect_err("invalid compare format should fail");
+        assert!(err.to_string().contains("SCAN_ID_1:SCAN_ID_2"));
     }
 
     #[tokio::test]
@@ -299,11 +270,11 @@ path = \"{}\"\n",
         args.changes = Some("missing:parts".to_string());
 
         let cmd = AnalyticsCommand::new(args);
-        let exit = cmd
+        let err = cmd
             .execute()
             .await
-            .expect("invalid changes format should not fail");
-        assert!(!exit.is_success());
+            .expect_err("invalid changes format should fail");
+        assert!(err.to_string().contains("HOSTNAME:PORT:DAYS"));
     }
 
     #[tokio::test]
@@ -313,11 +284,11 @@ path = \"{}\"\n",
         args.dashboard = Some("missing:parts".to_string());
 
         let cmd = AnalyticsCommand::new(args);
-        let exit = cmd
+        let err = cmd
             .execute()
             .await
-            .expect("invalid dashboard format should not fail");
-        assert!(!exit.is_success());
+            .expect_err("invalid dashboard format should fail");
+        assert!(err.to_string().contains("HOSTNAME:PORT:DAYS"));
     }
 
     #[tokio::test]
