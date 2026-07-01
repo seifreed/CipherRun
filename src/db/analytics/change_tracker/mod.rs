@@ -112,7 +112,10 @@ fn is_tls_version(protocol: &str, version: &str) -> bool {
 
 fn is_ssl_protocol(protocol: &str) -> bool {
     let normalized = protocol_identity(protocol);
-    normalized.starts_with("SSL")
+    matches!(
+        normalized.as_str(),
+        "SSL2" | "SSL2.0" | "SSL20" | "SSL3" | "SSL3.0" | "SSL30"
+    )
 }
 
 fn vulnerability_sort_key(vuln: &&VulnerabilityRecord) -> (String, String, String, String) {
@@ -634,6 +637,14 @@ mod tests {
         assert!(is_tls_version("TLSv1.3", "1.3"));
         assert!(!is_tls_version("TLS 1.30", "1.3"));
         assert!(!is_tls_version("TLS 1.20", "1.2"));
+    }
+
+    #[test]
+    fn test_ssl_protocol_matching_is_exact_after_normalization() {
+        assert!(is_ssl_protocol("SSLv3"));
+        assert!(is_ssl_protocol("SSL 3.0"));
+        assert!(!is_ssl_protocol("SSLv300"));
+        assert!(!is_ssl_protocol("not-SSLv3"));
     }
 
     #[tokio::test]

@@ -131,7 +131,21 @@ fn is_tls_version(protocol: &str, version: &str) -> bool {
 
 fn is_ssl_protocol(protocol: &str) -> bool {
     let normalized = normalized_protocol_name(protocol);
-    normalized.starts_with("SSL") || normalized.contains("SSLV")
+    matches!(
+        normalized.as_str(),
+        "SSL2"
+            | "SSLV2"
+            | "SSL2.0"
+            | "SSLV2.0"
+            | "SSL20"
+            | "SSLV20"
+            | "SSL3"
+            | "SSLV3"
+            | "SSL3.0"
+            | "SSLV3.0"
+            | "SSL30"
+            | "SSLV30"
+    )
 }
 
 #[cfg(test)]
@@ -244,6 +258,14 @@ mod tests {
         assert!(super::is_tls_version("TLSv1.3", "1.3"));
         assert!(!super::is_tls_version("TLS 1.30", "1.3"));
         assert!(!super::is_tls_version("TLS 1.20", "1.2"));
+    }
+
+    #[test]
+    fn test_ssl_protocol_matching_is_exact_after_normalization() {
+        assert!(super::is_ssl_protocol("SSLv3"));
+        assert!(super::is_ssl_protocol("SSL 3.0"));
+        assert!(!super::is_ssl_protocol("SSLv300"));
+        assert!(!super::is_ssl_protocol("not-SSLv3"));
     }
 
     #[tokio::test]
