@@ -193,7 +193,7 @@ impl LogjamTester {
     /// to prevent blocking the async runtime.
     async fn test_weak_dh_params(&self) -> Result<WeakDhStatus> {
         use openssl::pkey::Id;
-        use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
+        use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode, SslVersion};
 
         let addr = self
             .target
@@ -229,6 +229,9 @@ impl LogjamTester {
 
             // Set DHE ciphers only
             builder.set_cipher_list("DHE:EDH:!aNULL:!eNULL")?;
+            // DHE cipher lists do not constrain TLS 1.3. Limit the probe to
+            // TLS <= 1.2 so peer_tmp_key() measures finite-field DH.
+            builder.set_max_proto_version(Some(SslVersion::TLS1_2))?;
 
             let connector = builder.build();
             match connector.connect(&hostname, std_stream) {
@@ -349,6 +352,9 @@ impl LogjamTester {
             // Try to set the specific cipher
             match builder.set_cipher_list(&cipher) {
                 Ok(_) => {
+                    // set_cipher_list does not apply to TLS 1.3 ciphersuites.
+                    // Keep per-DHE probes on TLS <= 1.2.
+                    builder.set_max_proto_version(Some(SslVersion::TLS1_2))?;
                     let connector = builder.build();
                     match connector.connect(&hostname, std_stream) {
                         Ok(_) => Ok(LogjamProbeStatus::Supported),

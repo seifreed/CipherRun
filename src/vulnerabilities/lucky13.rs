@@ -95,7 +95,7 @@ impl Lucky13Tester {
 
     /// Test if CBC ciphers are supported.
     async fn test_cbc_ciphers(&self) -> Result<CbcCipherSupportStatus> {
-        use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
+        use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode, SslVersion};
 
         let addr = self
             .target
@@ -120,6 +120,9 @@ impl Lucky13Tester {
                     // validity is assessed separately.
                     builder.set_verify(SslVerifyMode::NONE);
                     builder.set_cipher_list(cbc_ciphers)?;
+                    // CBC ciphers are TLS <= 1.2. TLS 1.3 ignores set_cipher_list,
+                    // so keep this probe on the protocol versions it measures.
+                    builder.set_max_proto_version(Some(SslVersion::TLS1_2))?;
 
                     let connector = builder.build();
                     match connector.connect(&hostname, std_stream) {
