@@ -501,6 +501,38 @@ fn test_check_signature_allowed_matches_separator_alias() {
 }
 
 #[test]
+fn test_check_signature_denied_rejects_partial_match() {
+    let rule = Rule {
+        rule_type: "SignatureAlgorithm".to_string(),
+        allowed: vec![],
+        denied: vec!["HA1".to_string()],
+        allowed_patterns: vec![],
+        denied_patterns: vec![],
+        preferred_patterns: vec![],
+        min_rsa_bits: None,
+        min_ecc_bits: None,
+        required: None,
+        require_valid_chain: None,
+        require_unexpired: None,
+        require_hostname_match: None,
+        max_days_until_expiration: None,
+        custom_params: HashMap::new(),
+    };
+    let mut results = create_certificate_assessment("2027-01-01 00:00:00 +0000".to_string(), true);
+    results
+        .certificate_chain
+        .as_mut()
+        .unwrap()
+        .chain
+        .certificates[0]
+        .signature_algorithm = "SHA-1-RSA".to_string();
+
+    let violations =
+        ComplianceChecker::check_signature(&rule, &results).expect("test assertion should succeed");
+    assert!(violations.is_empty(), "{violations:?}");
+}
+
+#[test]
 fn test_check_cert_expiration_does_not_warn_for_recently_expired_certificates() {
     let rule = Rule {
         rule_type: "CertificateExpiration".to_string(),

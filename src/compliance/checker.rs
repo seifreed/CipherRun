@@ -97,13 +97,27 @@ impl ComplianceChecker {
             .collect()
     }
 
+    fn signature_algorithm_aliases(value: &str) -> Vec<String> {
+        let mut aliases = vec![Self::normalize_signature_algorithm_name(value)];
+        let parts: Vec<String> = value
+            .split(|c: char| !c.is_ascii_alphanumeric())
+            .filter(|part| !part.is_empty())
+            .map(Self::normalize_signature_algorithm_name)
+            .collect();
+        aliases.extend(parts.iter().cloned());
+        aliases.extend(parts.windows(2).map(|pair| pair.concat()));
+        aliases
+    }
+
     fn signature_algorithm_matches(configured: &str, observed: &str) -> bool {
         let configured = Self::normalize_signature_algorithm_name(configured);
         if configured.is_empty() {
             return false;
         }
 
-        Self::normalize_signature_algorithm_name(observed).contains(&configured)
+        Self::signature_algorithm_aliases(observed)
+            .iter()
+            .any(|alias| alias == &configured)
     }
 
     /// Check cipher suite compliance

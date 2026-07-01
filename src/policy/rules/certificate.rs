@@ -229,13 +229,27 @@ fn normalize_signature_algorithm_name(value: &str) -> String {
         .collect()
 }
 
+fn signature_algorithm_aliases(value: &str) -> Vec<String> {
+    let mut aliases = vec![normalize_signature_algorithm_name(value)];
+    let parts: Vec<String> = value
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|part| !part.is_empty())
+        .map(normalize_signature_algorithm_name)
+        .collect();
+    aliases.extend(parts.iter().cloned());
+    aliases.extend(parts.windows(2).map(|pair| pair.concat()));
+    aliases
+}
+
 fn signature_algorithm_matches(signature_algorithm: &str, prohibited: &str) -> bool {
     let prohibited = normalize_signature_algorithm_name(prohibited);
     if prohibited.is_empty() {
         return false;
     }
 
-    normalize_signature_algorithm_name(signature_algorithm).contains(&prohibited)
+    signature_algorithm_aliases(signature_algorithm)
+        .iter()
+        .any(|alias| alias == &prohibited)
 }
 
 #[cfg(test)]
@@ -540,6 +554,29 @@ mod tests {
             violations[0].rule_path,
             "certificates.prohibited_signature_algorithms"
         );
+    }
+
+    #[test]
+    fn test_prohibited_signature_algorithm_rejects_partial_match() {
+        let policy = CertificatePolicy {
+            min_key_size: None,
+            max_days_until_expiry: None,
+            prohibited_signature_algorithms: Some(vec!["HA1".to_string()]),
+            require_valid_trust_chain: None,
+            require_san: None,
+            require_hostname_match: None,
+            action: PolicyAction::Fail,
+        };
+
+        let mut cert_result = create_test_cert_result();
+        cert_result.chain.certificates[0].signature_algorithm = "SHA-1-RSA".to_string();
+
+        let rule = CertificateRule::new(&policy, Some(&cert_result));
+        let violations = rule
+            .evaluate("example.com:443")
+            .expect("test assertion should succeed");
+
+        assert!(violations.is_empty(), "{violations:?}");
     }
 
     #[test]
