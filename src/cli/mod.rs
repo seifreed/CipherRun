@@ -238,6 +238,10 @@ impl Args {
             crate::tls_bail!("--json-multi-ip requires --test-all-ips");
         }
 
+        if self.network.max_parallel == 0 {
+            crate::tls_bail!("--max-parallel must be greater than 0");
+        }
+
         if self.network.scan_all_ips {
             if self.target.is_none() || self.input_file.is_some() || self.mx_domain.is_some() {
                 crate::tls_bail!("--scan-all-ips requires a single target scan");

@@ -27,6 +27,12 @@ impl ScanRequest {
             });
         }
 
+        if self.network.max_concurrent_ciphers == 0 {
+            return Err(TlsError::InvalidInput {
+                message: "Max concurrent cipher tests must be greater than 0.".to_string(),
+            });
+        }
+
         if let Some(ip_override) = self.ip.as_deref() {
             let ip =
                 ip_override

@@ -165,6 +165,22 @@ fn rejects_hardfail_without_phone_out() {
 }
 
 #[test]
+fn rejects_zero_max_concurrent_ciphers() {
+    let request = ScanRequest {
+        network: ScanRequestNetwork {
+            max_concurrent_ciphers: 0,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let err = request
+        .validate_common()
+        .expect_err("zero max_concurrent_ciphers should be rejected");
+    assert!(err.to_string().contains("Max concurrent cipher"));
+}
+
+#[test]
 fn rejects_ssl_native_without_certificate_phase() {
     let request = ScanRequest {
         tls: ScanRequestTls {
