@@ -219,14 +219,12 @@ fn test_router_priority_5_database_history_only() {
 }
 
 #[test]
-fn test_router_priority_5_database_with_target_routes_to_scan() {
-    assert_eq!(
-        route_name(build_args(|args| {
-            args.database.init = true;
-            args.target = Some("example.com:443".to_string());
-        })),
-        "ScanCommand"
-    );
+fn test_router_rejects_database_action_with_target() {
+    let err = CommandRouter::route(build_args(|args| {
+        args.database.init = true;
+        args.target = Some("example.com:443".to_string());
+    }));
+    assert!(err.is_err());
 }
 
 #[test]
@@ -585,25 +583,21 @@ fn test_command_trait_object_mass_scan() {
 // ============================================================================
 
 #[test]
-fn test_router_database_with_input_file_routes_to_mass_scan() {
-    assert_eq!(
-        route_name(build_args(|args| {
-            args.database.init = true;
-            args.input_file = Some(PathBuf::from("targets.txt"));
-        })),
-        "MassScanCommand"
-    );
+fn test_router_rejects_database_action_with_input_file() {
+    let err = CommandRouter::route(build_args(|args| {
+        args.database.init = true;
+        args.input_file = Some(PathBuf::from("targets.txt"));
+    }));
+    assert!(err.is_err());
 }
 
 #[test]
-fn test_router_database_with_mx_routes_to_mx_test() {
-    assert_eq!(
-        route_name(build_args(|args| {
-            args.database.init = true;
-            args.mx_domain = Some("example.com".to_string());
-        })),
-        "MxTestCommand"
-    );
+fn test_router_rejects_database_action_with_mx() {
+    let err = CommandRouter::route(build_args(|args| {
+        args.database.init = true;
+        args.mx_domain = Some("example.com".to_string());
+    }));
+    assert!(err.is_err());
 }
 
 #[test]

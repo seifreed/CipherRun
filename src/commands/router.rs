@@ -197,6 +197,20 @@ impl CommandRouter {
         }
 
         let any_mass_source = mass_sources == 1;
+        let database_action_requested = args.database.init
+            || args.database.cleanup_days.is_some()
+            || args.database.history.is_some();
+        let scan_source_requested = args.target.is_some()
+            || args.input_file.is_some()
+            || args.asn.is_some()
+            || args.cidr.is_some()
+            || args.mx_domain.is_some();
+
+        if database_action_requested && scan_source_requested {
+            return Err(TlsError::InvalidInput {
+                message: "Database actions (--db-init, --cleanup-days, --history) cannot be combined with scan targets, MX/file/ASN/CIDR input, or --mx. Use --store-results for scan persistence.".to_string(),
+            });
+        }
 
         // Check for MX + mass-source conflict
         if args.mx_domain.is_some() && any_mass_source {
@@ -394,9 +408,7 @@ mod tests {
     }
 
     #[test]
-    fn test_route_database_flag_with_cidr_still_scans() {
-        // A database action flag must not shadow a --cidr/--asn scan source:
-        // the scan still has to run (DatabaseCommand would silently drop it).
+    fn test_reject_database_action_with_cidr() {
         let args = Args {
             cidr: Some("192.0.2.0/30".to_string()),
             database: DatabaseArgs {
@@ -405,12 +417,11 @@ mod tests {
             },
             ..Default::default()
         };
-        let cmd = CommandRouter::route(args).expect("test assertion should succeed");
-        assert_eq!(cmd.name(), "MassScanCommand");
+        assert!(CommandRouter::route(args).is_err());
     }
 
     #[test]
-    fn test_route_database_flag_with_asn_still_scans() {
+    fn test_reject_database_action_with_asn() {
         let args = Args {
             asn: Some("AS13335".to_string()),
             database: DatabaseArgs {
@@ -419,8 +430,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let cmd = CommandRouter::route(args).expect("test assertion should succeed");
-        assert_eq!(cmd.name(), "MassScanCommand");
+        assert!(CommandRouter::route(args).is_err());
     }
 
     #[test]
