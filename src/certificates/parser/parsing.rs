@@ -247,32 +247,24 @@ impl CertificateParser {
                             }
                             GeneralName::IPAddress(ip) => {
                                 let addr_str = match ip.len() {
-                                    4 => match <[u8; 4]>::try_from(*ip) {
-                                        Ok(addr) => std::net::Ipv4Addr::from(addr).to_string(),
-                                        Err(_) => {
-                                            debug!(
-                                                "Invalid IPv4 address length in SAN: {} bytes, expected 4",
-                                                ip.len()
-                                            );
-                                            format!("IP:{}", hex::encode(ip))
-                                        }
-                                    },
+                                    4 => std::net::Ipv4Addr::new(ip[0], ip[1], ip[2], ip[3])
+                                        .to_string(),
                                     16 => {
-                                        // Convert IPv6 bytes to address, handling malformed data gracefully
-                                        let arr: [u8; 16] = match (*ip).try_into() {
-                                            Ok(a) => a,
-                                            Err(_) => {
-                                                debug!(
-                                                    "Invalid IPv6 address length in SAN: {} bytes, expected 16",
-                                                    ip.len()
-                                                );
-                                                // Return unspecified address for malformed data
-                                                [0; 16]
-                                            }
-                                        };
+                                        let mut arr = [0u8; 16];
+                                        arr.copy_from_slice(ip);
                                         format!("{}", std::net::Ipv6Addr::from(arr))
                                     }
-                                    _ => format!("IP:{}", hex::encode(ip)),
+                                    _ => {
+                                        return Err(
+                                            crate::CertificateValidationError::ParseError {
+                                                details: format!(
+                                                    "Invalid subject alternative name extension: IP address SAN has {} bytes, expected 4 or 16",
+                                                    ip.len()
+                                                ),
+                                            }
+                                            .into(),
+                                        );
+                                    }
                                 };
                                 san.push(addr_str);
                             }
@@ -734,6 +726,19 @@ mod tests {
         let der = cert_with_raw_extension_der("2.5.29.17", b"\x05\x00");
         let error =
             CertificateParser::parse_certificate(&der).expect_err("malformed SAN should fail");
+
+        assert!(
+            error
+                .to_string()
+                .contains("Invalid subject alternative name extension")
+        );
+    }
+
+    #[test]
+    fn test_parse_certificate_rejects_invalid_ip_san_length() {
+        let der = cert_with_raw_extension_der("2.5.29.17", b"\x30\x07\x87\x05\x01\x02\x03\x04\x05");
+        let error =
+            CertificateParser::parse_certificate(&der).expect_err("invalid IP SAN should fail");
 
         assert!(
             error
