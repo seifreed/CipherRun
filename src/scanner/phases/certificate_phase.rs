@@ -231,7 +231,14 @@ impl CertificatePhase {
         let hostname = Self::tls_hostname(context);
 
         let validator = if let Some(additional_ca) = context.args.tls.add_ca.as_deref() {
-            CertificateValidator::with_platform_trust_and_additional_ca(hostname, additional_ca)?
+            CertificateValidator::with_platform_trust_and_additional_ca(hostname, additional_ca)
+                .map_err(|error| crate::TlsError::InvalidInput {
+                    message: format!(
+                        "Invalid additional CA path '{}': {}",
+                        additional_ca.display(),
+                        error
+                    ),
+                })?
         } else {
             CertificateValidator::with_platform_trust(hostname)?
         };

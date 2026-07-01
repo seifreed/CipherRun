@@ -50,6 +50,16 @@ use crate::utils::network::{Target, canonical_target};
 use async_trait::async_trait;
 use std::sync::Arc;
 
+fn is_fatal_phase_error(error: &crate::TlsError) -> bool {
+    matches!(
+        error,
+        crate::TlsError::InvalidInput { .. }
+            | crate::TlsError::ConfigError { .. }
+            | crate::TlsError::FileSystemError { .. }
+            | crate::TlsError::MtlsError { .. }
+    )
+}
+
 // =============================================================================
 // Progress Reporting Trait
 // =============================================================================
@@ -337,6 +347,9 @@ impl PhaseOrchestrator {
                 // remaining phases still produce findings. Unreachable targets
                 // are already rejected earlier (DNS resolution / preflight).
                 if let Err(error) = phase.execute(&mut context).await {
+                    if is_fatal_phase_error(&error) {
+                        return Err(error);
+                    }
                     tracing::warn!("Phase '{}' failed: {}", phase.name(), error);
                     context.results.add_human_warning(format!(
                         "{} could not complete: {}",
@@ -365,6 +378,41 @@ impl Default for PhaseOrchestrator {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct ErrorPhase {
+        error: crate::TlsError,
+    }
+
+    #[async_trait]
+    impl ScanPhase for ErrorPhase {
+        fn name(&self) -> &'static str {
+            "Error Phase"
+        }
+
+        fn should_run(&self, _args: &ScanRequest) -> bool {
+            true
+        }
+
+        async fn execute(&self, _context: &mut ScanContext) -> Result<()> {
+            Err(match &self.error {
+                crate::TlsError::InvalidInput { message } => crate::TlsError::InvalidInput {
+                    message: message.clone(),
+                },
+                crate::TlsError::Other(message) => crate::TlsError::Other(message.clone()),
+                _ => crate::TlsError::Other(self.error.to_string()),
+            })
+        }
+    }
+
+    fn test_context() -> ScanContext {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .expect("test assertion should succeed");
+        ScanContext::new(target, Arc::new(ScanRequest::default()), None, None)
+    }
 
     /// Test reporter that counts calls
     struct CountingReporter {
@@ -464,5 +512,40 @@ mod tests {
         let args = Arc::new(ScanRequest::default());
         let context = ScanContext::new(target, args, None, None);
         assert_eq!(context.results.target, "example.com:443");
+    }
+
+    #[tokio::test]
+    async fn test_orchestrator_propagates_fatal_phase_errors() {
+        let orchestrator = PhaseOrchestrator::new().add_phase(Box::new(ErrorPhase {
+            error: crate::TlsError::InvalidInput {
+                message: "bad config".to_string(),
+            },
+        }));
+
+        let err = orchestrator
+            .execute(test_context())
+            .await
+            .expect_err("fatal phase error should fail scan");
+
+        assert!(err.to_string().contains("bad config"));
+    }
+
+    #[tokio::test]
+    async fn test_orchestrator_keeps_nonfatal_phase_errors_as_warnings() {
+        let orchestrator = PhaseOrchestrator::new().add_phase(Box::new(ErrorPhase {
+            error: crate::TlsError::Other("probe failed".to_string()),
+        }));
+
+        let results = orchestrator
+            .execute(test_context())
+            .await
+            .expect("nonfatal phase error should not fail scan");
+
+        assert_eq!(results.scan_metadata.human_warnings.len(), 1);
+        assert!(
+            results.scan_metadata.human_warnings[0].contains("probe failed"),
+            "{:?}",
+            results.scan_metadata.human_warnings
+        );
     }
 }
