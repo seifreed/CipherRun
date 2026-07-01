@@ -23,6 +23,8 @@ type ScanTask = (
     tokio::task::JoinHandle<(String, Result<ScanResults>)>,
 );
 
+const MAX_TARGET_FILE_BYTES: u64 = 16 * 1024 * 1024;
+
 /// Mass scanner for scanning multiple targets
 ///
 /// Performance optimization: Uses Arc<ScanRequest> to avoid expensive cloning
@@ -66,6 +68,15 @@ impl MassScanner {
         config: MassScanConfig,
         file_path: &Path,
     ) -> Result<Self> {
+        let file_size = std::fs::metadata(file_path)?.len();
+        if file_size > MAX_TARGET_FILE_BYTES {
+            return Err(crate::error::TlsError::InvalidInput {
+                message: format!(
+                    "Target file too large: {} bytes (max {})",
+                    file_size, MAX_TARGET_FILE_BYTES
+                ),
+            });
+        }
         let content = std::fs::read_to_string(file_path)?;
         let targets: Vec<String> = content
             .lines()
@@ -640,6 +651,26 @@ mod tests {
         assert!(msg.contains("No targets found"));
 
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_mass_scanner_from_file_rejects_oversized_file_before_read() {
+        let dir = tempdir().expect("tempdir should be created");
+        let path = dir.path().join("targets.txt");
+        let file = std::fs::File::create(&path).expect("test file should be created");
+        file.set_len(MAX_TARGET_FILE_BYTES + 1)
+            .expect("test file should be resized");
+
+        let err = match MassScanner::from_file(
+            ScanRequest::default(),
+            MassScanConfig::default(),
+            &path,
+        ) {
+            Ok(_) => panic!("oversized target file should fail before read"),
+            Err(err) => err,
+        };
+
+        assert!(err.to_string().contains("Target file too large"));
     }
 
     #[cfg(unix)]
