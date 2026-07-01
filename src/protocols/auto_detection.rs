@@ -420,13 +420,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_detect_by_banner_rejects_invalid_utf8_version() {
+    async fn test_detect_by_banner_accepts_invalid_utf8_text_banner() {
         let port = spawn_banner_server(b"220 mail.example.com ESMTP Postfix\xff\r\n").await;
-        let err = ProtocolDetector::detect_by_banner("127.0.0.1", port)
+        let detected = ProtocolDetector::detect_by_banner("127.0.0.1", port)
             .await
-            .expect_err("invalid banner UTF-8 should fail");
+            .expect("invalid UTF-8 in a text banner should not abort detection");
 
-        assert!(err.to_string().contains("Invalid protocol banner UTF-8"));
+        assert_eq!(detected.protocol, ApplicationProtocol::SmtpStartTls);
+        assert_eq!(
+            detected.version.as_deref(),
+            Some("220 mail.example.com ESMTP Postfix\u{fffd}")
+        );
     }
 
     #[tokio::test]

@@ -121,9 +121,7 @@ pub(super) fn extract_version(
         | ApplicationProtocol::Pop3StartTls
         | ApplicationProtocol::Ftp
         | ApplicationProtocol::FtpStartTls => {
-            let s = std::str::from_utf8(banner).map_err(|error| crate::TlsError::ParseError {
-                message: format!("Invalid protocol banner UTF-8: {error}"),
-            })?;
+            let s = String::from_utf8_lossy(banner);
             Ok(s.lines().next().map(|l| l.to_string()))
         }
         _ => Ok(None),
@@ -205,5 +203,14 @@ mod tests {
         let banner = [0x06, 0x00, 0x00, 0x00, 0x0a, b'8'];
         let (proto, _conf) = analyze_banner(&banner);
         assert_eq!(proto, ApplicationProtocol::Unknown);
+    }
+
+    #[test]
+    fn test_extract_version_uses_first_line_for_text_banners_with_binary_tail() {
+        let banner = b"220 smtp.example ESMTP ready\r\n\xff\xfe";
+        let version = extract_version(banner, ApplicationProtocol::SmtpStartTls)
+            .expect("valid first banner line should not fail on binary tail");
+
+        assert_eq!(version.as_deref(), Some("220 smtp.example ESMTP ready"));
     }
 }
