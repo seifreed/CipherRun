@@ -3,17 +3,13 @@ use super::*;
 /// Extract the first CN value from a lowercased DN string (e.g. "cn=example.com, o=corp").
 /// Returns the CN value without leading/trailing whitespace, or None if not found.
 fn extract_cn_value(subject_lower: &str) -> Option<&str> {
-    for (pos, _) in subject_lower.match_indices("cn=") {
-        let before = subject_lower.get(..pos).unwrap_or_default();
-        let before_ok =
-            pos == 0 || before.ends_with(", ") || before.ends_with(',') || before.ends_with('/');
-        if !before_ok {
+    for part in subject_lower.split([',', '/']) {
+        let Some((key, value)) = part.split_once('=') else {
             continue;
+        };
+        if key.trim() == "cn" {
+            return Some(value.trim());
         }
-        let value_start = pos + "cn=".len();
-        let rest = subject_lower.get(value_start..)?;
-        let value_end = rest.find([',', '/']).unwrap_or(rest.len());
-        return Some(rest.get(..value_end)?.trim());
     }
     None
 }
@@ -278,6 +274,39 @@ mod tests {
     fn test_hostname_matches_cn_before_next_dn_attribute_without_space() {
         let cert = CertificateInfo {
             subject: "CN=example.com,O=Test".to_string(),
+            issuer: "CN=CA".to_string(),
+            serial_number: "123".to_string(),
+            not_before: "2024-01-01".to_string(),
+            not_after: "2025-01-01".to_string(),
+            expiry_countdown: None,
+            signature_algorithm: "sha256WithRSAEncryption".to_string(),
+            public_key_algorithm: "rsaEncryption".to_string(),
+            public_key_size: Some(2048),
+            rsa_exponent: None,
+            san: vec![],
+            is_ca: false,
+            key_usage: vec![],
+            extended_key_usage: vec![],
+            extended_validation: false,
+            ev_oids: vec![],
+            pin_sha256: None,
+            fingerprint_sha256: None,
+            debian_weak_key: None,
+            aia_url: None,
+            der_bytes: vec![],
+            certificate_transparency: None,
+        };
+        let validator = CertificateValidator::new("example.com".to_string());
+        let mut issues = Vec::new();
+
+        assert!(validator.check_hostname(&cert, &mut issues));
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn test_hostname_matches_cn_with_spaces_around_equals() {
+        let cert = CertificateInfo {
+            subject: "C=US, O=Test, CN = example.com".to_string(),
             issuer: "CN=CA".to_string(),
             serial_number: "123".to_string(),
             not_before: "2024-01-01".to_string(),
