@@ -10,7 +10,10 @@
 //! local OpenSSL cipher availability: the bytes go on the wire as-is and the
 //! server's ServerHello (or alert) is the authority.
 
-use crate::constants::{CONTENT_TYPE_ALERT, CONTENT_TYPE_HANDSHAKE, HANDSHAKE_TYPE_SERVER_HELLO};
+use crate::constants::{
+    BUFFER_SIZE_MAX_WITH_OVERHEAD, CONTENT_TYPE_ALERT, CONTENT_TYPE_HANDSHAKE,
+    HANDSHAKE_TYPE_SERVER_HELLO, TLS_RECORD_HEADER_SIZE,
+};
 use crate::protocols::Protocol;
 use crate::protocols::handshake::ClientHelloBuilder;
 use crate::utils::network::Target;
@@ -22,9 +25,6 @@ const PROBE_CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// Read timeout for a single cipher probe.
 const PROBE_READ_TIMEOUT: Duration = Duration::from_secs(3);
-
-/// Read buffer size for the ServerHello/alert response of a probe.
-const PROBE_BUFFER_SIZE: usize = 4096;
 
 const MIN_SERVER_HELLO_LEN: usize = 43;
 
@@ -163,18 +163,22 @@ async fn probe_cipher_at_protocol(
         }
 
         let record_len = u16::from_be_bytes([header[3], header[4]]) as usize;
-        let total_len = 5usize.checked_add(record_len).ok_or_else(|| {
-            crate::TlsError::ParseError {
+        let total_len = TLS_RECORD_HEADER_SIZE
+            .checked_add(record_len)
+            .ok_or_else(|| crate::TlsError::ParseError {
                 message: "Cipher probe record length overflow".to_string(),
-            }
-        })?;
-        if total_len > PROBE_BUFFER_SIZE {
+            })?;
+        if total_len > BUFFER_SIZE_MAX_WITH_OVERHEAD {
             return Ok::<_, crate::TlsError>((Vec::new(), 0));
         }
 
         let mut response = vec![0u8; total_len];
-        response[..5].copy_from_slice(&header);
-        if stream.read_exact(&mut response[5..]).await.is_err() {
+        response[..TLS_RECORD_HEADER_SIZE].copy_from_slice(&header);
+        if stream
+            .read_exact(&mut response[TLS_RECORD_HEADER_SIZE..])
+            .await
+            .is_err()
+        {
             return Ok::<_, crate::TlsError>((Vec::new(), 0));
         }
         Ok::<_, crate::TlsError>((response, total_len))
@@ -247,6 +251,7 @@ fn classify_probe_response(response: &[u8], n: usize) -> CipherProbeStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::constants::BUFFER_SIZE_DEFAULT;
     use crate::utils::network::Target;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
@@ -279,6 +284,16 @@ mod tests {
         let mut response = vec![0u8; MIN_SERVER_HELLO_LEN];
         set_byte(&mut response, 0, CONTENT_TYPE_HANDSHAKE);
         set_u16_be(&mut response, 3, (MIN_SERVER_HELLO_LEN - 5) as u16);
+        set_byte(&mut response, 5, HANDSHAKE_TYPE_SERVER_HELLO);
+        set_u24_be(&mut response, 6, MIN_SERVER_HELLO_LEN - 9);
+        set_u16_be(&mut response, 9, protocol.as_hex());
+        response
+    }
+
+    fn large_server_hello_record(protocol: Protocol) -> Vec<u8> {
+        let mut response = vec![0u8; TLS_RECORD_HEADER_SIZE + BUFFER_SIZE_DEFAULT];
+        set_byte(&mut response, 0, CONTENT_TYPE_HANDSHAKE);
+        set_u16_be(&mut response, 3, BUFFER_SIZE_DEFAULT as u16);
         set_byte(&mut response, 5, HANDSHAKE_TYPE_SERVER_HELLO);
         set_u24_be(&mut response, 6, MIN_SERVER_HELLO_LEN - 9);
         set_u16_be(&mut response, 9, protocol.as_hex());
@@ -399,15 +414,35 @@ mod tests {
             socket.write_all(&response[split..]).await.unwrap();
         });
 
-        let target = Target::with_ips(
-            "example.test".to_string(),
-            addr.port(),
-            vec![addr.ip()],
-        )
-        .unwrap();
+        let target =
+            Target::with_ips("example.test".to_string(), addr.port(), vec![addr.ip()]).unwrap();
 
-        let status = probe_cipher_at_protocol(&target, 0x1301, Protocol::TLS12, None, None, None)
-            .await;
+        let status =
+            probe_cipher_at_protocol(&target, 0x1301, Protocol::TLS12, None, None, None).await;
+
+        assert_eq!(status, CipherProbeStatus::Supported);
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_probe_cipher_at_protocol_accepts_large_serverhello_record() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = socket.read(&mut buf).await.unwrap();
+
+            let response = large_server_hello_record(Protocol::TLS12);
+            socket.write_all(&response).await.unwrap();
+        });
+
+        let target =
+            Target::with_ips("example.test".to_string(), addr.port(), vec![addr.ip()]).unwrap();
+
+        let status =
+            probe_cipher_at_protocol(&target, 0x1301, Protocol::TLS12, None, None, None).await;
 
         assert_eq!(status, CipherProbeStatus::Supported);
         server.await.unwrap();
