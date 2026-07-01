@@ -376,6 +376,8 @@ fn csv_report_cell(s: &str) -> String {
         || trimmed.starts_with('+')
         || trimmed.starts_with('-')
         || trimmed.starts_with('@')
+        || trimmed.starts_with('\t')
+        || trimmed.starts_with('\r')
     {
         format!("'{trimmed}")
     } else {
@@ -466,6 +468,8 @@ mod tests {
         assert!(csv.contains("\"'=REQ\",\"'+Name\",\"'@Category\""));
         assert!(csv.contains("\"'-Weak Protocol\""));
         assert!(csv.contains("\"'=TLS 1.0 enabled\""));
+        assert!(csv_report_cell("\t=1+1").starts_with("\"'"));
+        assert!(csv_report_cell("\r=1+1").starts_with("\"'"));
     }
 
     #[test]
