@@ -122,7 +122,7 @@ impl AlertChannel for PagerDutyChannel {
 
         if !response.status().is_success() {
             let status = response.status();
-            let body = response.text().await?;
+            let body = super::alert_error_body(response, "PagerDuty error response").await?;
             return Err(TlsError::HttpError {
                 status: status.as_u16(),
                 details: format!("PagerDuty API error: {body}"),

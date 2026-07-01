@@ -19,6 +19,15 @@ use tokio::sync::Mutex;
 
 pub use channels::AlertChannel;
 
+const ALERT_ERROR_BODY_LIMIT: u64 = 64 * 1024;
+
+async fn alert_error_body(response: reqwest::Response, context: &str) -> Result<String> {
+    let body =
+        crate::utils::http::read_response_body_capped(response, ALERT_ERROR_BODY_LIMIT, context)
+            .await?;
+    Ok(String::from_utf8_lossy(&body).into_owned())
+}
+
 /// Alert type
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]

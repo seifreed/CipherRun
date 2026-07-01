@@ -124,7 +124,7 @@ impl AlertChannel for TeamsChannel {
 
         if !response.status().is_success() {
             let status = response.status();
-            let body = response.text().await?;
+            let body = super::alert_error_body(response, "Teams error response").await?;
             return Err(TlsError::HttpError {
                 status: status.as_u16(),
                 details: format!("Teams webhook error: {body}"),

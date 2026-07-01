@@ -84,7 +84,7 @@ impl AlertChannel for WebhookChannel {
 
         if !response.status().is_success() {
             let status = response.status();
-            let body = response.text().await?;
+            let body = super::alert_error_body(response, "Webhook error response").await?;
             return Err(TlsError::HttpError {
                 status: status.as_u16(),
                 details: format!("Webhook error: {body}"),
@@ -198,6 +198,42 @@ mod tests {
             .expect_err("webhook error should fail");
 
         assert!(err.to_string().contains("delivery failed"));
+    }
+
+    #[tokio::test]
+    async fn test_send_alert_caps_error_response_body() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test assertion should succeed");
+        let addr = listener
+            .local_addr()
+            .expect("test assertion should succeed");
+        let app = Router::new().route(
+            "/alerts",
+            post(|| async { (StatusCode::INTERNAL_SERVER_ERROR, "x".repeat(70 * 1024)) }),
+        );
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+
+        let channel = WebhookChannel::new(WebhookConfig {
+            enabled: true,
+            url: format!("http://{addr}/alerts"),
+            headers: HashMap::new(),
+        })
+        .expect("test assertion should succeed");
+        let alert =
+            Alert::scan_failure("example.com".to_string(), "Connection refused".to_string());
+
+        let err = channel
+            .send_alert(&alert)
+            .await
+            .expect_err("oversized webhook error should fail");
+
+        assert!(
+            err.to_string()
+                .contains("Webhook error response response too large")
+        );
     }
 
     #[test]
