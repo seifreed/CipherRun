@@ -509,13 +509,11 @@ fn test_router_analytics_dashboard_format_validation() {
 
 #[test]
 fn test_router_analytics_multiple_operations() {
-    assert_eq!(
-        route_name(build_args(|args| {
-            args.compare = Some("1:2".to_string());
-            args.trends = Some("example.com:443:30".to_string());
-        })),
-        "AnalyticsCommand"
-    );
+    let err = validate_err(build_args(|args| {
+        args.compare = Some("1:2".to_string());
+        args.trends = Some("example.com:443:30".to_string());
+    }));
+    assert!(err.contains("Cannot combine multiple analytics operations"));
 }
 
 // ============================================================================
@@ -602,12 +600,13 @@ fn test_router_rejects_database_action_with_mx() {
 
 #[test]
 fn test_validate_all_analytics_options_together() {
-    validate_ok(build_args(|args| {
+    let err = validate_err(build_args(|args| {
         args.compare = Some("1:2".to_string());
         args.changes = Some("example.com:443:30".to_string());
         args.trends = Some("example.com:443:7".to_string());
         args.dashboard = Some("example.com:443:90".to_string());
     }));
+    assert!(err.contains("Cannot combine multiple analytics operations"));
 }
 
 #[test]

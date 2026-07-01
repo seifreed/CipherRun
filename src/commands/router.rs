@@ -163,6 +163,21 @@ impl CommandRouter {
             });
         }
 
+        let analytics_count = [
+            args.compare.is_some(),
+            args.changes.is_some(),
+            args.trends.is_some(),
+            args.dashboard.is_some(),
+        ]
+        .iter()
+        .filter(|&&x| x)
+        .count();
+        if analytics_count > 1 {
+            return Err(TlsError::InvalidInput {
+                message: "Cannot combine multiple analytics operations (--compare, --changes, --trends, --dashboard). Choose one.".to_string(),
+            });
+        }
+
         let exclusive_mode_active = mode_count == 1;
         let additional_action_requested = args.target.is_some()
             || args.input_file.is_some()
@@ -312,6 +327,16 @@ mod tests {
         };
         let cmd = CommandRouter::route(args).expect("test assertion should succeed");
         assert_eq!(cmd.name(), "AnalyticsCommand");
+    }
+
+    #[test]
+    fn test_validate_rejects_multiple_analytics_operations() {
+        let args = Args {
+            compare: Some("1:2".to_string()),
+            trends: Some("example.com:443:30".to_string()),
+            ..Default::default()
+        };
+        assert!(CommandRouter::validate_routing(&args).is_err());
     }
 
     #[test]
