@@ -100,7 +100,7 @@ impl AnalyticsCommand {
         use crate::db::analytics::ScanComparator;
 
         let Some((scan_id_1, scan_id_2)) = self.parse_compare_ids(compare_str)? else {
-            return Ok(CommandExit::success());
+            return Ok(CommandExit::failure(1));
         };
 
         let db = self.open_database().await?;
@@ -121,7 +121,7 @@ impl AnalyticsCommand {
         use crate::db::analytics::ChangeTracker;
 
         let Some(input) = self.parse_host_port_days(changes_str, "changes")? else {
-            return Ok(CommandExit::success());
+            return Ok(CommandExit::failure(1));
         };
 
         let db = self.open_database().await?;
@@ -145,7 +145,7 @@ impl AnalyticsCommand {
         use crate::db::analytics::TrendAnalyzer;
 
         let Some(input) = self.parse_host_port_days(trends_str, "trends")? else {
-            return Ok(CommandExit::success());
+            return Ok(CommandExit::failure(1));
         };
 
         let db = self.open_database().await?;
@@ -184,7 +184,7 @@ impl AnalyticsCommand {
         use crate::db::analytics::DashboardGenerator;
 
         let Some(input) = self.parse_host_port_days(dashboard_str, "dashboard")? else {
-            return Ok(CommandExit::success());
+            return Ok(CommandExit::failure(1));
         };
 
         let db = self.open_database().await?;
@@ -284,9 +284,11 @@ path = \"{}\"\n",
         args.compare = Some("only-one-id".to_string());
 
         let cmd = AnalyticsCommand::new(args);
-        cmd.execute()
+        let exit = cmd
+            .execute()
             .await
             .expect("invalid compare format should not fail");
+        assert!(!exit.is_success());
     }
 
     #[tokio::test]
@@ -296,9 +298,25 @@ path = \"{}\"\n",
         args.changes = Some("missing:parts".to_string());
 
         let cmd = AnalyticsCommand::new(args);
-        cmd.execute()
+        let exit = cmd
+            .execute()
             .await
             .expect("invalid changes format should not fail");
+        assert!(!exit.is_success());
+    }
+
+    #[tokio::test]
+    async fn test_analytics_dashboard_invalid_format() {
+        let mut args = Args::default();
+        args.database.config = Some(create_temp_db_config());
+        args.dashboard = Some("missing:parts".to_string());
+
+        let cmd = AnalyticsCommand::new(args);
+        let exit = cmd
+            .execute()
+            .await
+            .expect("invalid dashboard format should not fail");
+        assert!(!exit.is_success());
     }
 
     #[tokio::test]
