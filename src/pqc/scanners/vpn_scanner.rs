@@ -2,6 +2,8 @@ use crate::Result;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
+const MAX_VPN_CONFIG_BYTES: u64 = 1024 * 1024;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VpnScanResult {
     pub path: String,
@@ -16,6 +18,18 @@ pub struct VpnScanner;
 
 impl VpnScanner {
     pub fn scan(path: &Path) -> Result<VpnScanResult> {
+        let size = std::fs::metadata(path)?.len();
+        if size > MAX_VPN_CONFIG_BYTES {
+            return Err(crate::TlsError::InvalidInput {
+                message: format!(
+                    "VPN config '{}' is too large: {} bytes (max {})",
+                    path.display(),
+                    size,
+                    MAX_VPN_CONFIG_BYTES
+                ),
+            });
+        }
+
         let content = std::fs::read_to_string(path)?;
         let mut vulnerable = Vec::new();
         let mut recommendations = Vec::new();
@@ -107,6 +121,19 @@ mod tests {
     }
 
     #[test]
+    fn test_vpn_scan_rejects_oversized_config_before_read() {
+        let f = tempfile::NamedTempFile::new().expect("create temp file");
+        f.as_file()
+            .set_len(MAX_VPN_CONFIG_BYTES + 1)
+            .expect("resize temp file");
+
+        let err = VpnScanner::scan(f.path()).expect_err("oversized VPN config should fail");
+
+        assert!(err.to_string().contains("VPN config"));
+        assert!(err.to_string().contains("too large"));
+    }
+
+    #[test]
     fn test_vpn_no_evidence_scores_zero() {
         // Config with no `cipher`/`tls-cipher` directives — score must be 0, not 50.
         let f = tmp_config("# comment only\ndev tun\nremote vpn.example.com 1194\n");
@@ -170,12 +197,10 @@ mod tests {
         let f = tmp_config("[Interface]\nPrivateKey = abc\n");
         let result = VpnScanner::scan(f.path()).expect("scan should succeed");
         assert_eq!(result.vpn_type, "WireGuard");
-        assert!(
-            result
-                .quantum_vulnerable
-                .iter()
-                .any(|v| v.contains("X25519"))
-        );
+        assert!(result
+            .quantum_vulnerable
+            .iter()
+            .any(|v| v.contains("X25519")));
         assert_eq!(result.score, 0);
     }
 }

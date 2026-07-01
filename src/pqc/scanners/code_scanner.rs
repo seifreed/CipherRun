@@ -4,6 +4,9 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::LazyLock;
 
+const MAX_CODE_SCAN_FILE_BYTES: u64 = 1024 * 1024;
+const MAX_CODE_SCAN_FILES: usize = 10_000;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CodeFinding {
     pub file: String,
@@ -96,10 +99,11 @@ impl CodeScanner {
     pub fn scan(root: &Path) -> Result<CodeScanResult> {
         let mut findings = Vec::new();
         let mut files_scanned = 0;
+        let file_type = std::fs::symlink_metadata(root)?.file_type();
 
-        if root.is_dir() {
+        if file_type.is_dir() {
             scan_dir(root, &mut findings, &mut files_scanned)?;
-        } else if is_source_file(root) {
+        } else if file_type.is_file() && is_source_file(root) {
             scan_file(root, &mut findings)?;
             files_scanned = 1;
         } else {
@@ -127,12 +131,21 @@ fn scan_dir(dir: &Path, findings: &mut Vec<CodeFinding>, count: &mut usize) -> R
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
-        if path.is_dir() {
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
             let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
             if !matches!(name, "target" | ".git" | "node_modules" | "vendor") {
                 scan_dir(&path, findings, count)?;
             }
-        } else if is_source_file(&path) {
+        } else if file_type.is_file() && is_source_file(&path) {
+            if *count >= MAX_CODE_SCAN_FILES {
+                return Err(crate::TlsError::InvalidInput {
+                    message: format!(
+                        "PQC code scan file limit exceeded: max {} files",
+                        MAX_CODE_SCAN_FILES
+                    ),
+                });
+            }
             scan_file(&path, findings)?;
             *count += 1;
         }
@@ -141,6 +154,18 @@ fn scan_dir(dir: &Path, findings: &mut Vec<CodeFinding>, count: &mut usize) -> R
 }
 
 fn scan_file(path: &Path, findings: &mut Vec<CodeFinding>) -> Result<()> {
+    let size = std::fs::metadata(path)?.len();
+    if size > MAX_CODE_SCAN_FILE_BYTES {
+        return Err(crate::TlsError::InvalidInput {
+            message: format!(
+                "PQC code scan file '{}' is too large: {} bytes (max {})",
+                path.display(),
+                size,
+                MAX_CODE_SCAN_FILE_BYTES
+            ),
+        });
+    }
+
     let content = std::fs::read_to_string(path)?;
     for (line_no, line) in content.lines().enumerate() {
         for pat in patterns()? {
@@ -250,5 +275,40 @@ mod tests {
         assert_eq!(result.files_scanned, 1);
         assert_eq!(result.findings.len(), 1);
         assert_eq!(result.findings[0].algorithm, "MD5");
+    }
+
+    #[test]
+    fn test_code_scanner_rejects_oversized_source_file_before_read() {
+        let file = tempfile::Builder::new()
+            .suffix(".rs")
+            .tempfile()
+            .expect("create temp file");
+        file.as_file()
+            .set_len(MAX_CODE_SCAN_FILE_BYTES + 1)
+            .expect("resize temp file");
+
+        let err = CodeScanner::scan(file.path()).expect_err("oversized source should fail");
+
+        assert!(err.to_string().contains("PQC code scan file"));
+        assert!(err.to_string().contains("too large"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_code_scanner_does_not_follow_directory_symlinks() {
+        use std::io::Write;
+        use std::os::unix::fs::symlink;
+
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let outside_dir = tempfile::tempdir().expect("create outside dir");
+        let mut outside_file =
+            std::fs::File::create(outside_dir.path().join("outside.rs")).expect("create file");
+        writeln!(outside_file, "let digest = MD5::new();").expect("write source");
+        symlink(outside_dir.path(), temp_dir.path().join("linked")).expect("create symlink");
+
+        let result = CodeScanner::scan(temp_dir.path()).expect("scan should succeed");
+
+        assert_eq!(result.files_scanned, 0);
+        assert!(result.findings.is_empty());
     }
 }

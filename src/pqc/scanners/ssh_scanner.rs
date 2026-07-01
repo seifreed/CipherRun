@@ -4,6 +4,8 @@ use crate::Result;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
+const MAX_SSH_CONFIG_BYTES: u64 = 1024 * 1024;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SshScanResult {
     pub path: String,
@@ -17,6 +19,18 @@ pub struct SshScanner;
 
 impl SshScanner {
     pub fn scan(path: &Path) -> Result<SshScanResult> {
+        let size = std::fs::metadata(path)?.len();
+        if size > MAX_SSH_CONFIG_BYTES {
+            return Err(crate::TlsError::InvalidInput {
+                message: format!(
+                    "SSH config '{}' is too large: {} bytes (max {})",
+                    path.display(),
+                    size,
+                    MAX_SSH_CONFIG_BYTES
+                ),
+            });
+        }
+
         let content = std::fs::read_to_string(path)?;
         let mut vulnerable = Vec::new();
         let mut safe = Vec::new();
@@ -115,9 +129,7 @@ fn enabled_algorithm(alg: &str) -> Option<String> {
 
 fn is_ssh_pqc_kex(alg: &str) -> bool {
     let lower = alg.to_lowercase();
-    has_alg_prefix(&lower, "mlkem")
-        || has_alg_prefix(&lower, "sntrup")
-        || lower.contains("-kyber")
+    has_alg_prefix(&lower, "mlkem") || has_alg_prefix(&lower, "sntrup") || lower.contains("-kyber")
 }
 
 fn is_ssh_pqc_hostkey(alg: &str) -> bool {
@@ -133,7 +145,9 @@ fn has_alg_prefix(value: &str, prefix: &str) -> bool {
     let Some(rest) = value.strip_prefix(prefix) else {
         return false;
     };
-    rest.bytes().next().is_none_or(|byte| !byte.is_ascii_alphabetic())
+    rest.bytes()
+        .next()
+        .is_none_or(|byte| !byte.is_ascii_alphabetic())
 }
 
 #[cfg(test)]
@@ -144,6 +158,19 @@ mod tests {
     fn test_extract_algorithms() {
         let algs = extract_algorithms("KexAlgorithms curve25519-sha256,ecdh-sha2-nistp256");
         assert_eq!(algs, vec!["curve25519-sha256", "ecdh-sha2-nistp256"]);
+    }
+
+    #[test]
+    fn test_ssh_scan_rejects_oversized_config_before_read() {
+        let f = tempfile::NamedTempFile::new().expect("create temp file");
+        f.as_file()
+            .set_len(MAX_SSH_CONFIG_BYTES + 1)
+            .expect("resize temp file");
+
+        let err = SshScanner::scan(f.path()).expect_err("oversized SSH config should fail");
+
+        assert!(err.to_string().contains("SSH config"));
+        assert!(err.to_string().contains("too large"));
     }
 
     #[test]
