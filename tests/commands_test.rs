@@ -456,6 +456,15 @@ fn test_validate_database_init_standalone() {
 }
 
 #[test]
+fn test_validate_database_action_rejects_output_artifact_options() {
+    let err = validate_err(build_args(|args| {
+        args.database.init = true;
+        args.output.json = Some(PathBuf::from("db.json"));
+    }));
+    assert!(err.contains("do not support scan output artifact options"));
+}
+
+#[test]
 fn test_validate_analytics_compare_standalone() {
     validate_ok(build_args(|args| args.compare = Some("1:2".to_string())));
 }

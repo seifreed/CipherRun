@@ -49,6 +49,19 @@ impl CommandRouter {
             || args.target.is_some()
     }
 
+    fn has_output_artifact_options(args: &Args) -> bool {
+        args.output.json.is_some()
+            || args.output.json_multi_ip.is_some()
+            || args.output.csv.is_some()
+            || args.output.html.is_some()
+            || args.output.xml.is_some()
+            || args.output.output_all.is_some()
+            || args.output.outprefix.is_some()
+            || args.output.json_pretty
+            || args.output.append
+            || args.output.overwrite
+    }
+
     /// Route CLI arguments to the appropriate Command
     ///
     /// # Arguments
@@ -233,6 +246,11 @@ impl CommandRouter {
         if database_action_requested && scan_source_requested {
             return Err(TlsError::InvalidInput {
                 message: "Database actions (--db-init, --cleanup-days, --history) cannot be combined with scan targets, MX/file/ASN/CIDR input, or --mx. Use --store-results for scan persistence.".to_string(),
+            });
+        }
+        if database_action_requested && Self::has_output_artifact_options(args) {
+            return Err(TlsError::InvalidInput {
+                message: "Database actions (--db-init, --cleanup-days, --history) do not support scan output artifact options.".to_string(),
             });
         }
 
