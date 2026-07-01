@@ -180,7 +180,10 @@ pub async fn scan_websocket_handler(socket: WebSocket, scan_id: String, state: A
                             }
 
                             // Close connection on completion or failure
-                            if progress.msg_type == "completed" || progress.msg_type == "failed" {
+                            if progress.msg_type == "completed"
+                                || progress.msg_type == "failed"
+                                || progress.msg_type == "cancelled"
+                            {
                                 debug!("Scan {} finished, closing WebSocket", scan_id_clone);
                                 let _ = sender.send(Message::Close(None)).await;
                                 break;

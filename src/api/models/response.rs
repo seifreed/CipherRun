@@ -391,6 +391,18 @@ impl ProgressMessage {
             timestamp: Utc::now(),
         }
     }
+
+    /// Create a cancellation message
+    pub fn cancelled(scan_id: impl Into<String>, progress: u8) -> Self {
+        Self {
+            msg_type: "cancelled".to_string(),
+            scan_id: scan_id.into(),
+            progress,
+            stage: "cancelled".to_string(),
+            details: None,
+            timestamp: Utc::now(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -420,6 +432,11 @@ mod tests {
         assert_eq!(failed.msg_type, "failed");
         assert_eq!(failed.progress, 0);
         assert_eq!(failed.details.as_deref(), Some("boom"));
+
+        let cancelled = ProgressMessage::cancelled("scan4", 42);
+        assert_eq!(cancelled.msg_type, "cancelled");
+        assert_eq!(cancelled.progress, 42);
+        assert_eq!(cancelled.stage, "cancelled");
     }
 
     #[test]

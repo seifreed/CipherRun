@@ -243,7 +243,9 @@ impl ScanExecutor {
                                 ));
                             }
                             _ => {
-                                let _ = self.progress_tx.send(ProgressMessage::new(&job.id, job.progress, "cancelled"));
+                                let _ = self
+                                    .progress_tx
+                                    .send(ProgressMessage::cancelled(&job.id, job.progress));
                             }
                         }
                         return;
@@ -288,7 +290,7 @@ impl ScanExecutor {
                 }
 
                 let msg = if cancelled {
-                    ProgressMessage::new(&job.id, job.progress, "cancelled")
+                    ProgressMessage::cancelled(&job.id, job.progress)
                 } else {
                     ProgressMessage::completed(&job.id)
                 };
@@ -318,7 +320,7 @@ impl ScanExecutor {
                     failed = true;
                 }
                 let msg = if cancelled {
-                    ProgressMessage::new(&job.id, job.progress, "cancelled")
+                    ProgressMessage::cancelled(&job.id, job.progress)
                 } else {
                     ProgressMessage::failed(&job.id, job.error.clone().unwrap_or_default())
                 };
