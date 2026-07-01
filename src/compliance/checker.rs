@@ -212,7 +212,9 @@ impl ComplianceChecker {
             }
 
             // Check ECC key size
-            if (key_algo.starts_with("ec") || key_algo.contains("ecdsa"))
+            if (key_algo.starts_with("ec")
+                || key_algo.contains("ecdsa")
+                || key_algo.contains("ecpublickey"))
                 && let Some(min_ecc_bits) = rule.min_ecc_bits
                 && u32::try_from(key_size).unwrap_or(u32::MAX) < min_ecc_bits
             {

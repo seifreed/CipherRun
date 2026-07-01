@@ -251,6 +251,41 @@ fn test_check_protocols_denied_names_are_normalized() {
 }
 
 #[test]
+fn test_check_key_size_flags_ec_public_key_algorithm() {
+    let rule = Rule {
+        rule_type: "CertificateKeySize".to_string(),
+        allowed: vec![],
+        denied: vec![],
+        allowed_patterns: vec![],
+        denied_patterns: vec![],
+        preferred_patterns: vec![],
+        min_rsa_bits: None,
+        min_ecc_bits: Some(256),
+        required: None,
+        require_valid_chain: None,
+        require_unexpired: None,
+        require_hostname_match: None,
+        max_days_until_expiration: None,
+        custom_params: HashMap::new(),
+    };
+    let mut results = create_certificate_assessment("2027-01-01 00:00:00 +0000".to_string(), true);
+    let cert = &mut results
+        .certificate_chain
+        .as_mut()
+        .unwrap()
+        .chain
+        .certificates[0];
+    cert.public_key_algorithm = "id-ecPublicKey".to_string();
+    cert.public_key_size = Some(224);
+
+    let violations =
+        ComplianceChecker::check_key_size(&rule, &results).expect("test assertion should succeed");
+    assert_eq!(violations.len(), 1);
+    assert_eq!(violations[0].violation_type, "Insufficient Key Size");
+    assert!(violations[0].description.contains("ECC key size"));
+}
+
+#[test]
 fn test_check_forward_secrecy_treats_tls13_cipher_metadata_case_insensitively() {
     let rule = Rule {
         rule_type: "ForwardSecrecy".to_string(),
