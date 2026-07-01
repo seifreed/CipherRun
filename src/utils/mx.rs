@@ -462,7 +462,7 @@ impl MxTester {
             scan_time_ms: successful_results
                 .iter()
                 .map(|result| result.scan_time_ms)
-                .sum(),
+                .fold(0u64, u64::saturating_add),
             protocols: aggregated.protocols,
             ciphers: aggregated.ciphers,
             certificate_chain,

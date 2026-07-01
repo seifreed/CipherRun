@@ -392,6 +392,36 @@ fn test_aggregate_scan_results_marks_vulnerabilities_inconclusive_when_mx_fails(
 }
 
 #[test]
+fn test_aggregate_scan_results_saturates_scan_time() {
+    let results: Vec<(MxRecord, Result<ScanResults>)> = vec![
+        (
+            MxRecord {
+                priority: 10,
+                hostname: "mx1.example.com".to_string(),
+            },
+            Ok(ScanResults {
+                scan_time_ms: u64::MAX,
+                ..Default::default()
+            }),
+        ),
+        (
+            MxRecord {
+                priority: 20,
+                hostname: "mx2.example.com".to_string(),
+            },
+            Ok(ScanResults {
+                scan_time_ms: 1,
+                ..Default::default()
+            }),
+        ),
+    ];
+
+    let aggregate = MxTester::aggregate_scan_results_for_domain("example.com", &results).unwrap();
+
+    assert_eq!(aggregate.scan_time_ms, u64::MAX);
+}
+
+#[test]
 fn test_aggregate_scan_results_warns_when_clean_mx_coverage_is_partial() {
     let results: Vec<(MxRecord, Result<ScanResults>)> = vec![
         (
