@@ -27,6 +27,11 @@ fn api_key_from_query(query: &str) -> Result<Option<String>, ApiError> {
         let (key, value) = param.split_once('=').unwrap_or((param, ""));
         let key = decode_query_component(key)?;
         if key == "api_key" {
+            if !param.contains('=') {
+                return Err(ApiError::BadRequest(
+                    "api_key query parameter must include a value".to_string(),
+                ));
+            }
             if api_key.is_some() {
                 return Err(ApiError::BadRequest(
                     "Duplicate api_key query parameter".to_string(),
@@ -256,6 +261,13 @@ mod tests {
             .expect_err("duplicate api keys should fail");
 
         assert!(err.to_string().contains("Duplicate api_key"));
+    }
+
+    #[test]
+    fn test_api_key_from_query_rejects_missing_value_separator() {
+        let err = api_key_from_query("api_key").expect_err("malformed api_key should fail");
+
+        assert!(err.to_string().contains("must include a value"));
     }
 
     #[test]
