@@ -155,17 +155,19 @@ impl LegacyCompatTester {
         let (export_ciphers, export_stats) = self.test_export_ciphers().await?;
         let (null_ciphers, null_stats) = self.test_null_ciphers().await?;
         let (anonymous_dh, anonymous_stats) = self.test_anonymous_dh().await?;
-        let legacy_handshakes = self.test_legacy_handshakes().await?;
+        let (legacy_handshakes, legacy_handshake_stats) = self.test_legacy_handshakes().await?;
         let inconclusive_probe_count = sslv2_stats.inconclusive
             + weak_stats.inconclusive
             + export_stats.inconclusive
             + null_stats.inconclusive
-            + anonymous_stats.inconclusive;
+            + anonymous_stats.inconclusive
+            + legacy_handshake_stats.inconclusive;
         let total_probe_count = sslv2_stats.total
             + weak_stats.total
             + export_stats.total
             + null_stats.total
-            + anonymous_stats.total;
+            + anonymous_stats.total
+            + legacy_handshake_stats.total;
         let all_cipher_probes_inconclusive = sslv2_stats.all_inconclusive()
             && weak_stats.all_inconclusive()
             && export_stats.all_inconclusive()
@@ -181,8 +183,10 @@ impl LegacyCompatTester {
             &anonymous_dh,
             &legacy_handshakes,
         );
-        let inconclusive =
-            !has_legacy_evidence && (!baseline_tls_ok || all_cipher_probes_inconclusive);
+        let inconclusive = !has_legacy_evidence
+            && (!baseline_tls_ok
+                || all_cipher_probes_inconclusive
+                || legacy_handshake_stats.all_inconclusive());
         let compatibility_level = if inconclusive {
             CompatibilityLevel::Unknown
         } else {
@@ -505,18 +509,26 @@ impl LegacyCompatTester {
         ))
     }
 
-    async fn test_legacy_handshakes(&self) -> Result<LegacyHandshakeTest> {
+    async fn test_legacy_handshakes(&self) -> Result<(LegacyHandshakeTest, ProbeStats)> {
         let mut quirks = Vec::new();
+        let mut stats = ProbeStats::default();
 
-        let sslv2_compatible_hello = self
+        let sslv2_compatible_outcome = self
             .probe_legacy_handshake(Self::sslv2_compat_client_hello()?)
             .await?;
+        stats.record(sslv2_compatible_outcome);
         let fragmented_handshake = false;
-        let old_signature_algorithms = self
+        let old_signature_outcome = self
             .probe_legacy_handshake(Self::old_signature_algorithms_client_hello(
                 &self.target.hostname,
             )?)
             .await?;
+        stats.record(old_signature_outcome);
+
+        let sslv2_compatible_hello =
+            matches!(sslv2_compatible_outcome, LegacyProbeOutcome::Supported);
+        let old_signature_algorithms =
+            matches!(old_signature_outcome, LegacyProbeOutcome::Supported);
 
         if sslv2_compatible_hello {
             quirks.push("SSLv2-compatible ClientHello".to_string());
@@ -528,35 +540,43 @@ impl LegacyCompatTester {
             quirks.push("Supports MD5/SHA1 signatures only".to_string());
         }
 
-        Ok(LegacyHandshakeTest {
-            sslv2_compatible_hello,
-            fragmented_handshake,
-            old_signature_algorithms,
-            quirks,
-        })
+        Ok((
+            LegacyHandshakeTest {
+                sslv2_compatible_hello,
+                fragmented_handshake,
+                old_signature_algorithms,
+                quirks,
+            },
+            stats,
+        ))
     }
 
-    async fn probe_legacy_handshake(&self, hello: Vec<u8>) -> Result<bool> {
+    async fn probe_legacy_handshake(&self, hello: Vec<u8>) -> Result<LegacyProbeOutcome> {
         let Some(addr) = self.target.socket_addrs().first().copied() else {
-            return Ok(false);
+            return Ok(LegacyProbeOutcome::Inconclusive);
         };
         let mut stream =
             match crate::utils::network::connect_with_timeout(addr, LEGACY_HANDSHAKE_TIMEOUT, None)
                 .await
             {
                 Ok(stream) => stream,
-                Err(_) => return Ok(false),
+                Err(_) => return Ok(LegacyProbeOutcome::Inconclusive),
             };
 
         stream.write_all(&hello).await?;
         Self::read_legacy_handshake_accepted(&mut stream).await
     }
 
-    async fn read_legacy_handshake_accepted(stream: &mut tokio::net::TcpStream) -> Result<bool> {
+    async fn read_legacy_handshake_accepted(
+        stream: &mut tokio::net::TcpStream,
+    ) -> Result<LegacyProbeOutcome> {
         let mut header = [0u8; 5];
         match timeout(LEGACY_HANDSHAKE_TIMEOUT, stream.read_exact(&mut header)).await {
-            Ok(Ok(_)) => Ok(Self::legacy_response_looks_accepted(&header)),
-            Ok(Err(_)) | Err(_) => Ok(false),
+            Ok(Ok(_)) if Self::legacy_response_looks_accepted(&header) => {
+                Ok(LegacyProbeOutcome::Supported)
+            }
+            Ok(Ok(_)) => Ok(LegacyProbeOutcome::NotSupported),
+            Ok(Err(_)) | Err(_) => Ok(LegacyProbeOutcome::Inconclusive),
         }
     }
 
@@ -737,6 +757,27 @@ mod tests {
             "inactive target must not be classified as Modern: {result:?}"
         );
         assert!(result.details.contains("inconclusive"));
+    }
+
+    #[tokio::test]
+    async fn test_legacy_handshake_closed_target_is_inconclusive() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            addr.port(),
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .unwrap();
+
+        let tester = LegacyCompatTester::new(target);
+        let outcome = tester
+            .probe_legacy_handshake(LegacyCompatTester::sslv2_compat_client_hello().unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(outcome, LegacyProbeOutcome::Inconclusive);
     }
 
     #[test]
