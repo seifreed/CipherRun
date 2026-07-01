@@ -72,9 +72,17 @@ impl AsnCidrParser {
             });
         }
 
-        let json: serde_json::Value = response.json().await.map_err(|e| TlsError::ParseError {
-            message: format!("Failed to parse RIPEstat response: {}", e),
-        })?;
+        const MAX_RIPESTAT_BYTES: u64 = 16 * 1024 * 1024;
+        let body = crate::utils::http::read_response_body_capped(
+            response,
+            MAX_RIPESTAT_BYTES,
+            "RIPEstat response",
+        )
+        .await?;
+        let json: serde_json::Value =
+            serde_json::from_slice(&body).map_err(|e| TlsError::ParseError {
+                message: format!("Failed to parse RIPEstat response: {}", e),
+            })?;
 
         Self::parse_ripestat_prefixes(asn, &json)
     }
