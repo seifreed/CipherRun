@@ -20,6 +20,29 @@ pub use jarm::{JarmDatabase, JarmFingerprint, JarmFingerprinter, JarmSignature};
 pub use jarm_probes::{JarmProbe, JarmProbeOptions, get_probes};
 pub use server_hello::{Extension as ServerExtension, ServerHelloCapture};
 
+const MAX_SIGNATURE_DATABASE_BYTES: u64 = 16 * 1024 * 1024;
+
+fn read_signature_database(path: &std::path::Path) -> crate::Result<String> {
+    let size = std::fs::metadata(path)
+        .map_err(|source| crate::TlsError::FileSystemError {
+            path: path.display().to_string(),
+            source,
+        })?
+        .len();
+    if size > MAX_SIGNATURE_DATABASE_BYTES {
+        return Err(crate::TlsError::InvalidInput {
+            message: format!(
+                "Signature database too large: {} bytes (max {})",
+                size, MAX_SIGNATURE_DATABASE_BYTES
+            ),
+        });
+    }
+    std::fs::read_to_string(path).map_err(|source| crate::TlsError::FileSystemError {
+        path: path.display().to_string(),
+        source,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -30,5 +53,21 @@ mod tests {
         assert_eq!(probes.len(), 10);
         assert_eq!(probes[0].options.hostname, "example.com");
         assert_eq!(probes[0].options.port, 443);
+    }
+
+    #[test]
+    fn test_custom_signature_database_rejects_oversized_file_before_read() {
+        let dir = tempfile::tempdir().expect("tempdir should be created");
+        let path = dir.path().join("ja3.json");
+        let file = std::fs::File::create(&path).expect("database file should be created");
+        file.set_len(MAX_SIGNATURE_DATABASE_BYTES + 1)
+            .expect("database file should be resized");
+
+        let err = match Ja3Database::from_file(&path) {
+            Ok(_) => panic!("oversized signature database should fail before read"),
+            Err(err) => err,
+        };
+
+        assert!(err.to_string().contains("Signature database too large"));
     }
 }

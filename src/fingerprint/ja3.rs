@@ -247,7 +247,7 @@ impl Ja3Database {
 
     /// Load database from JSON file
     pub fn from_file(path: &std::path::Path) -> Result<Self> {
-        let contents = std::fs::read_to_string(path)?;
+        let contents = super::read_signature_database(path)?;
         Self::from_json(&contents)
     }
 

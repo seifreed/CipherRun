@@ -166,7 +166,7 @@ impl Ja3sDatabase {
 
     /// Load database from JSON file
     pub fn from_file(path: &std::path::Path) -> Result<Self> {
-        let contents = std::fs::read_to_string(path)?;
+        let contents = super::read_signature_database(path)?;
         let signatures: HashMap<String, Ja3sSignature> =
             serde_json::from_str(&contents).map_err(|e| TlsError::ParseError {
                 message: format!("Failed to parse JA3S database: {}", e),
@@ -494,8 +494,8 @@ mod tests {
             },
         );
 
-        let err = Ja3sDatabase::from_signatures(signatures)
-            .expect_err("invalid JA3S hash should fail");
+        let err =
+            Ja3sDatabase::from_signatures(signatures).expect_err("invalid JA3S hash should fail");
 
         assert!(err.to_string().contains("Invalid JA3S signature hash"));
     }

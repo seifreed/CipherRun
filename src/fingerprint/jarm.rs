@@ -89,10 +89,7 @@ impl JarmDatabase {
     /// Load database from JSON file
     pub fn from_file(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
-        let content = std::fs::read_to_string(path).map_err(|e| TlsError::FileSystemError {
-            path: path.display().to_string(),
-            source: e,
-        })?;
+        let content = super::read_signature_database(path)?;
 
         let signatures: Vec<JarmSignature> =
             serde_json::from_str(&content).map_err(|e| TlsError::ParseError {
