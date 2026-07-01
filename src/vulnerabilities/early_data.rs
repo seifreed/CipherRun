@@ -725,12 +725,11 @@ mod tests {
             }
         });
 
-        let target = Target::with_ips(
-            "invalid..host".to_string(),
-            addr.port(),
-            vec![IpAddr::from([127, 0, 0, 1])],
-        )
-        .unwrap();
+        let target = Target {
+            hostname: "invalid..host".to_string(),
+            port: addr.port(),
+            ip_addresses: vec![IpAddr::from([127, 0, 0, 1])],
+        };
 
         let tester = EarlyDataTester::new(&target);
         let err = tester.connect_tls13().await.unwrap_err();

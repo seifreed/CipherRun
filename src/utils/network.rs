@@ -12,7 +12,7 @@ use tokio::net::TcpStream;
 use tokio::time::timeout;
 
 // Import SSRF validation for DNS rebinding protection
-use crate::security::input_validation::ssrf::validate_resolved_ips;
+use crate::security::input_validation::{validate_hostname, validate_resolved_ips};
 use crate::utils::{network_runtime, proxy::connect_via_proxy};
 
 /// Target information
@@ -260,6 +260,8 @@ impl Target {
                 "Port must be between 1 and 65535".to_string(),
             ));
         }
+        validate_hostname(hostname)
+            .map_err(|error| TlsError::Other(format!("Invalid target hostname: {}", error)))?;
         // Canonicalize here too so every construction path (the --ip override and
         // custom-resolver branches build Targets directly through this) yields
         // the same hostname as the DNS path; otherwise a rooted FQDN reaches the
