@@ -180,11 +180,11 @@ impl ClientHelloBuilder {
 
     pub fn add_supported_versions(&mut self, versions: &[u16]) -> Result<&mut Self> {
         let mut data = BytesMut::new();
-        let max_versions = 127; // 127 * 2 = 254 bytes, fits in u8
-        let versions_to_write = versions.iter().take(max_versions);
-        let versions_byte_len = versions_to_write.len() * 2;
+        let versions_byte_len = versions.len().checked_mul(2).ok_or_else(|| {
+            TlsError::Other("supported versions exceeds maximum length".to_string())
+        })?;
         data.put_u8(Self::u8_len(versions_byte_len, "supported versions")?);
-        for version in versions_to_write {
+        for version in versions {
             data.put_u16(*version);
         }
         self.extensions
@@ -297,6 +297,22 @@ mod tests {
         assert!(
             err.to_string()
                 .contains("cipher suite list exceeds maximum length")
+        );
+    }
+
+    #[test]
+    fn test_client_hello_rejects_oversized_supported_versions() {
+        let mut builder = ClientHelloBuilder::new(Protocol::TLS13);
+        let versions = vec![0x0304; 128];
+
+        let err = match builder.add_supported_versions(&versions) {
+            Ok(_) => panic!("oversized supported_versions should fail"),
+            Err(err) => err,
+        };
+
+        assert!(
+            err.to_string()
+                .contains("supported versions exceeds maximum length")
         );
     }
 
