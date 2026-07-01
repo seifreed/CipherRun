@@ -23,6 +23,14 @@ impl AnycastScanCommand {
     pub fn new(args: Args) -> Self {
         Self { args }
     }
+
+    fn port_override(args: &Args) -> Option<u16> {
+        args.port.or_else(|| {
+            args.starttls
+                .starttls_protocol()
+                .map(|protocol| protocol.default_port())
+        })
+    }
 }
 
 #[async_trait]
@@ -32,7 +40,8 @@ impl Command for AnycastScanCommand {
             message: "--scan-all-ips requires a target".to_string(),
         })?;
 
-        let target = Target::parse_with_port_override(target_input, self.args.port).await?;
+        let target =
+            Target::parse_with_port_override(target_input, Self::port_override(&self.args)).await?;
 
         let scanner = AnycastScanner::new(target.hostname.clone(), target.port, self.args.clone());
         let results = scanner.scan_all_ips().await?;
@@ -55,5 +64,32 @@ mod tests {
         let args = Args::default();
         let cmd = AnycastScanCommand::new(args);
         assert_eq!(cmd.name(), "AnycastScanCommand");
+    }
+
+    #[test]
+    fn test_port_override_uses_starttls_default_port() {
+        let args = Args {
+            starttls: crate::cli::StarttlsArgs {
+                smtp: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        assert_eq!(AnycastScanCommand::port_override(&args), Some(25));
+    }
+
+    #[test]
+    fn test_explicit_port_overrides_starttls_default_port() {
+        let args = Args {
+            port: Some(8443),
+            starttls: crate::cli::StarttlsArgs {
+                smtp: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        assert_eq!(AnycastScanCommand::port_override(&args), Some(8443));
     }
 }
