@@ -1,8 +1,8 @@
 // Job Storage - Persistence layer for jobs
 
-use crate::Result;
 use crate::api::jobs::ScanJob;
 use crate::api::models::response::ScanStatus;
+use crate::Result;
 use uuid::Uuid;
 
 /// Job storage trait for persisting jobs
@@ -94,6 +94,7 @@ impl FileJobStorage {
 impl JobStorage for FileJobStorage {
     fn save_job(&self, job: &ScanJob) -> Result<()> {
         let path = self.job_path(&job.id)?;
+        Self::validate_loaded_job(&job.id, job)?;
         let json = serde_json::to_string_pretty(job)?;
         std::fs::write(path, json)?;
         Ok(())
@@ -295,6 +296,23 @@ mod tests {
     }
 
     #[test]
+    fn test_save_job_rejects_unloadable_terminal_job() {
+        let temp_dir = TempDir::new().expect("test assertion should succeed");
+        let storage = FileJobStorage::new(temp_dir.path()).expect("test assertion should succeed");
+        let mut job = ScanJob::new("example.com:443".to_string(), ScanOptions::default(), None);
+        job.status = ScanStatus::Completed;
+        job.progress = 100;
+        job.completed_at = Some(chrono::Utc::now());
+
+        let err = storage
+            .save_job(&job)
+            .expect_err("storage should reject jobs it cannot load back");
+
+        assert!(err.to_string().contains("missing results"));
+        assert!(!temp_dir.path().join(format!("{}.json", job.id)).exists());
+    }
+
+    #[test]
     fn test_load_all_jobs_rejects_invalid_or_mismatched_file_ids() {
         let temp_dir = TempDir::new().expect("test assertion should succeed");
         let storage = FileJobStorage::new(temp_dir.path()).expect("test assertion should succeed");
@@ -321,11 +339,9 @@ mod tests {
         assert!(storage.save_job(&job).is_err());
         assert!(storage.load_job("../outside").is_err());
         assert!(storage.delete_job("../outside").is_err());
-        assert!(
-            storage
-                .load_job("550E8400-E29B-41D4-A716-446655440000")
-                .is_err()
-        );
+        assert!(storage
+            .load_job("550E8400-E29B-41D4-A716-446655440000")
+            .is_err());
         assert!(!temp_dir.path().join("../outside.json").exists());
     }
 }
