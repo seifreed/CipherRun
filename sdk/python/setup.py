@@ -1,10 +1,16 @@
 """Setup configuration for CipherRun Python SDK."""
 
-from setuptools import setup, find_packages
 from pathlib import Path
 
+from setuptools import find_packages, setup
+
 this_directory = Path(__file__).parent
-long_description = (this_directory / "README.md").read_text(encoding="utf-8")
+readme_path = this_directory / "README.md"
+long_description = (
+    readme_path.read_text(encoding="utf-8")
+    if readme_path.exists()
+    else "Official Python SDK for the CipherRun SSL/TLS security scanning API."
+)
 
 setup(
     name="cipherrun",
