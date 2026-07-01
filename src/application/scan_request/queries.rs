@@ -91,6 +91,7 @@ impl ScanRequest {
 
     pub fn has_specific_scan_focus(&self) -> bool {
         self.scan.proto.enabled
+            || self.protocols_to_test().is_some()
             || self.scan.ciphers.each_cipher
             || self.scan.ciphers.cipher_per_proto
             || self.scan.ciphers.categories

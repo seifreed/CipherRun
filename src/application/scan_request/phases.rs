@@ -17,6 +17,7 @@ impl ScanRequest {
         // alone would score a TLS 1.3-only server as lacking TLS 1.3 and emit a
         // spurious "Enable TLS 1.3" recommendation.
         self.scan.proto.enabled
+            || self.protocols_to_test().is_some()
             || self.baseline_scan_requested()
             || self.should_run_cipher_phase()
             || self.scan.ciphers.pqc_readiness

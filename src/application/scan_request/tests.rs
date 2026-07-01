@@ -479,6 +479,57 @@ fn standalone_cipher_focus_pulls_in_protocol_phase() {
 }
 
 #[test]
+fn standalone_protocol_filter_runs_protocol_phase_without_baseline() {
+    let request = ScanRequest {
+        target: Some("example.com:443".to_string()),
+        scan: ScanRequestScan {
+            scope: ScanRequestScope {
+                all: false,
+                ..Default::default()
+            },
+            proto: ScanRequestProto {
+                tls13: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    assert!(request.has_specific_scan_focus());
+    assert!(!request.baseline_scan_requested());
+    assert!(request.should_run_protocol_phase());
+    assert!(request.validate_for_scan().is_ok());
+    assert_eq!(request.protocols_to_test(), Some(vec![Protocol::TLS13]));
+}
+
+#[test]
+fn protocol_filter_focus_disables_implicit_baseline_scan() {
+    let request = ScanRequest {
+        target: Some("example.com:443".to_string()),
+        scan: ScanRequestScan {
+            scope: ScanRequestScope {
+                all: true,
+                ..Default::default()
+            },
+            proto: ScanRequestProto {
+                tlsall: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    assert!(request.has_specific_scan_focus());
+    assert!(!request.baseline_scan_requested());
+    assert!(request.should_run_protocol_phase());
+    assert!(!request.should_run_cipher_phase());
+    assert!(!request.should_run_certificate_phase());
+    assert!(!request.should_run_http_headers_phase());
+}
+
+#[test]
 fn explicit_positive_fingerprint_focus_disables_baseline_scan() {
     let request = ScanRequest {
         target: Some("example.com:443".to_string()),
