@@ -54,6 +54,9 @@ fn is_private_ipv6(ip: &Ipv6Addr) -> bool {
             && ip.segments()[3] == 0)
         // Benchmarking range (2001:2::/48, RFC 5180)
         || (ip.segments()[0] == 0x2001 && ip.segments()[1] == 0x0002)
+        // Teredo tunneling prefix (2001::/32, RFC 4380). Treat transition
+        // tunnels as non-public targets for SSRF filtering.
+        || (ip.segments()[0] == 0x2001 && ip.segments()[1] == 0x0000)
         // IPv4-mapped IPv6 addresses (::ffff:x.x.x.x)
         || is_ipv4_mapped_private(ip)
         // IPv4-compatible IPv6 addresses (::x.x.x.x, deprecated)
@@ -251,6 +254,14 @@ mod tests {
         assert!(
             !is_private_ip(&"2002:0808:0808::".parse().unwrap()),
             "6to4 address embedding public 8.8.8.8 should not be private"
+        );
+    }
+
+    #[test]
+    fn test_is_private_ipv6_teredo_prefix() {
+        assert!(
+            is_private_ip(&"2001:0:4136:e378:8000:63bf:3fff:fdd2".parse().unwrap()),
+            "Teredo transition addresses should not bypass SSRF filtering"
         );
     }
 
