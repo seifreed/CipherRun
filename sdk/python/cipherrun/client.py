@@ -346,7 +346,7 @@ class CipherRunClient:
             "offset": offset,
             "sort": sort,
         }
-        if hostname:
+        if hostname is not None:
             params["hostname"] = hostname
         if expiring_within_days is not None:
             params["expiring_within_days"] = expiring_within_days

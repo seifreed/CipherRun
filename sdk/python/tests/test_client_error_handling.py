@@ -267,6 +267,23 @@ def test_sync_evaluate_policy_omits_missing_options(monkeypatch):
     assert payloads == [{"target": "example.com"}]
 
 
+def test_sync_list_certificates_preserves_empty_hostname_filter(monkeypatch):
+    client = CipherRunClient(api_key="k")
+    params_seen = []
+
+    def fake_request(_method, _endpoint, **kwargs):
+        params_seen.append(kwargs["params"])
+        response = MagicMock()
+        response.json.return_value = {"total": 0, "offset": 0, "limit": 50, "certificates": []}
+        return response
+
+    monkeypatch.setattr(client, "_make_request", fake_request)
+
+    client.list_certificates(hostname="")
+
+    assert params_seen[0]["hostname"] == ""
+
+
 def test_join_url_preserves_base_path_prefix():
     assert _join_url("https://example.com/cipherrun", "/api/v1/health") == "https://example.com/cipherrun/api/v1/health"
     assert (
@@ -406,6 +423,24 @@ def test_async_evaluate_policy_omits_missing_options(monkeypatch):
     asyncio.run(run())
 
     assert payloads == [{"target": "example.com"}]
+
+
+def test_async_list_certificates_preserves_empty_hostname_filter(monkeypatch):
+    client = AsyncCipherRunClient(api_key="k")
+    params_seen = []
+
+    async def fake_request(_method, _endpoint, **kwargs):
+        params_seen.append(kwargs["params"])
+        return {"total": 0, "offset": 0, "limit": 50, "certificates": []}
+
+    monkeypatch.setattr(client, "_make_request", fake_request)
+
+    async def run():
+        await client.list_certificates(hostname="")
+
+    asyncio.run(run())
+
+    assert params_seen[0]["hostname"] == ""
 
 
 def test_websocket_client_quotes_scan_id_and_preserves_base_path(monkeypatch):
