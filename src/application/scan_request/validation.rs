@@ -114,6 +114,33 @@ impl ScanRequest {
             crate::output::hello_export::HelloExportFormat::parse(format)?;
         }
 
+        if let Some(path) = &self.fingerprint.ja3_database {
+            crate::fingerprint::Ja3Database::from_file(path).map_err(|error| {
+                TlsError::InvalidInput {
+                    message: format!("Invalid JA3 database: {}", error),
+                }
+            })?;
+        }
+
+        if let Some(path) = &self.fingerprint.ja3s_database {
+            crate::fingerprint::Ja3sDatabase::from_file(path).map_err(|error| {
+                TlsError::InvalidInput {
+                    message: format!("Invalid JA3S database: {}", error),
+                }
+            })?;
+        }
+
+        if let Some(path) = &self.fingerprint.jarm_database {
+            let path = path.to_str().ok_or_else(|| TlsError::InvalidInput {
+                message: "Invalid JARM database path: path is not valid UTF-8.".to_string(),
+            })?;
+            crate::fingerprint::JarmDatabase::from_file(path).map_err(|error| {
+                TlsError::InvalidInput {
+                    message: format!("Invalid JARM database: {}", error),
+                }
+            })?;
+        }
+
         if self.connection.retry_backoff_ms > self.connection.max_backoff_ms {
             return Err(TlsError::InvalidInput {
                 message: "Retry backoff cannot be greater than max backoff.".to_string(),

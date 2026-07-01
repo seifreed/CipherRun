@@ -301,6 +301,51 @@ fn rejects_invalid_export_hello_format() {
 }
 
 #[test]
+fn rejects_invalid_custom_fingerprint_database_paths() {
+    let missing = std::env::temp_dir().join(format!(
+        "cipherrun_missing_fingerprint_db_{}_{}.json",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time")
+            .as_nanos()
+    ));
+
+    for (label, fingerprint) in [
+        (
+            "JA3",
+            ScanRequestFingerprint {
+                ja3_database: Some(missing.clone()),
+                ..Default::default()
+            },
+        ),
+        (
+            "JA3S",
+            ScanRequestFingerprint {
+                ja3s_database: Some(missing.clone()),
+                ..Default::default()
+            },
+        ),
+        (
+            "JARM",
+            ScanRequestFingerprint {
+                jarm_database: Some(missing.clone()),
+                ..Default::default()
+            },
+        ),
+    ] {
+        let request = ScanRequest {
+            fingerprint,
+            ..Default::default()
+        };
+        let err = request
+            .validate_common()
+            .expect_err("missing fingerprint database should fail validation");
+        assert!(err.to_string().contains(label));
+    }
+}
+
+#[test]
 fn rejects_xmpphost_without_xmpp_starttls() {
     let request = ScanRequest {
         starttls: ScanRequestStarttls {
