@@ -767,7 +767,7 @@ mod tests {
         let scanner = Scanner::with_reporter(
             ScanRequest {
                 target: Some("example.com:443".to_string()),
-                ip: Some("198.51.100.20".to_string()),
+                ip: Some("8.8.8.8".to_string()),
                 scan: ScanRequestScan {
                     prefs: crate::application::scan_request::ScanRequestPrefs {
                         probe_status: true,
@@ -789,10 +789,7 @@ mod tests {
         let target = scanner.get_target_owned();
         assert_eq!(target.hostname, "example.com");
         assert_eq!(target.port, 443);
-        assert_eq!(
-            target.ip_addresses,
-            vec!["198.51.100.20".parse::<IpAddr>().unwrap()]
-        );
+        assert_eq!(target.ip_addresses, vec!["8.8.8.8".parse::<IpAddr>().unwrap()]);
     }
 
     #[tokio::test]
@@ -800,7 +797,7 @@ mod tests {
         let scanner = Scanner::with_reporter(
             ScanRequest {
                 target: Some("example.com".to_string()),
-                ip: Some("198.51.100.20".to_string()),
+                ip: Some("8.8.8.8".to_string()),
                 starttls: crate::application::scan_request::ScanRequestStarttls {
                     smtp: true,
                     ..Default::default()
@@ -831,7 +828,7 @@ mod tests {
         let scanner = Scanner::with_reporter(
             ScanRequest {
                 target: Some("example.com:443".to_string()),
-                ip: Some("198.51.100.20".to_string()),
+                ip: Some("8.8.8.8".to_string()),
                 scan: ScanRequestScan {
                     prefs: crate::application::scan_request::ScanRequestPrefs {
                         probe_status: true,

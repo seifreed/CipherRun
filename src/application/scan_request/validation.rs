@@ -41,6 +41,12 @@ impl ScanRequest {
                         message: format!("Invalid IP override: {}", ip_override),
                     })?;
 
+            crate::security::input_validation::validate_resolved_ips(&[ip], false).map_err(
+                |error| TlsError::InvalidInput {
+                    message: format!("Invalid IP override: {}", error),
+                },
+            )?;
+
             if self.network.ipv4_only && ip.is_ipv6() {
                 return Err(TlsError::InvalidInput {
                     message: "Cannot use an IPv6 --ip override with IPv4-only scanning."
