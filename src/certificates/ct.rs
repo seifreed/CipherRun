@@ -162,6 +162,13 @@ impl CtVerifier {
                 });
             }
             Ok((_, obj)) => obj.as_slice().unwrap_or(ext_value),
+            Err(error) if ext_value.first() == Some(&0x04) => {
+                return Err(crate::TlsError::ParseError {
+                    message: format!(
+                        "Malformed SCT extension: invalid inner OCTET STRING: {error}"
+                    ),
+                });
+            }
             Err(_) => ext_value,
         };
 
@@ -420,6 +427,17 @@ mod tests {
             .expect_err("short SCT list should fail");
 
         assert!(err.to_string().contains("too short"));
+    }
+
+    #[test]
+    fn test_count_scts_in_extension_value_rejects_malformed_der_octet_string() {
+        let verifier = CtVerifier::new(false);
+
+        let err = verifier
+            .count_scts_in_extension_value(&[0x04, 0x82, 0x00])
+            .expect_err("malformed DER OCTET STRING should fail");
+
+        assert!(err.to_string().contains("invalid inner OCTET STRING"));
     }
 
     #[test]
