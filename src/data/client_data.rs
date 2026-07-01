@@ -226,7 +226,11 @@ impl ClientDatabase {
                     current: Self::parse_optional_bool(&all_sections, "current", i, true)?,
                 };
 
-                by_id.insert(profile.short_id.clone(), i);
+                if by_id.insert(profile.short_id.clone(), i).is_some() {
+                    return Err(crate::TlsError::ParseError {
+                        message: format!("Duplicate client data short id: {}", profile.short_id),
+                    });
+                }
                 clients.push(profile);
             }
         }
@@ -614,7 +618,24 @@ short+=("client_a")
             Ok(_) => panic!("missing short id should fail"),
             Err(err) => err,
         };
-        assert!(err.to_string().contains("Missing client data field short[1]"));
+        assert!(
+            err.to_string()
+                .contains("Missing client data field short[1]")
+        );
+    }
+
+    #[test]
+    fn test_parse_rejects_duplicate_short_id() {
+        let data = r#"
+names+=("Client A" "Client B")
+short+=("client_a" "client_a")
+"#;
+
+        let err = match ClientDatabase::parse(data) {
+            Ok(_) => panic!("duplicate short id should fail"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("Duplicate client data short id"));
     }
 
     #[test]
