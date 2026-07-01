@@ -64,18 +64,7 @@ impl FingerprintPhase {
         use crate::fingerprint::Ja3Database;
 
         if let Some(db_path) = context.args.fingerprint.ja3_database.clone() {
-            return match Ja3Database::from_file(&db_path) {
-                Ok(database) => Ok(database),
-                Err(e) => {
-                    context
-                        .results
-                        .add_human_warning(format!("Failed to load custom JA3 database: {}", e));
-                    context
-                        .results
-                        .add_human_warning("Falling back to builtin JA3 database");
-                    Ja3Database::load_default()
-                }
-            };
+            return Ja3Database::from_file(&db_path);
         }
 
         Ja3Database::load_default()
@@ -449,7 +438,7 @@ mod tests {
     }
 
     #[test]
-    fn test_load_ja3_database_warns_and_falls_back_for_invalid_custom_path() {
+    fn test_load_ja3_database_rejects_invalid_custom_path() {
         let target = crate::utils::network::Target::with_ips(
             "localhost".to_string(),
             443,
@@ -468,29 +457,11 @@ mod tests {
         )));
 
         let mut context = ScanContext::new(target, Arc::new(args), None, None);
-        let db = FingerprintPhase::new()
+        let err = FingerprintPhase::new()
             .load_ja3_database(&mut context)
-            .expect("builtin JA3 database should parse");
+            .expect_err("invalid custom JA3 database path should fail");
 
-        assert!(
-            db.match_fingerprint("773906b0efdefa24a7f2b8eb6985bf37")
-                .is_some()
-        );
-        assert!(
-            context
-                .results
-                .scan_metadata
-                .human_warnings
-                .iter()
-                .any(|warning| warning.contains("Failed to load custom JA3 database"))
-        );
-        assert!(
-            context
-                .results
-                .scan_metadata
-                .human_warnings
-                .iter()
-                .any(|warning| warning.contains("Falling back to builtin JA3 database"))
-        );
+        assert!(!err.to_string().is_empty());
+        assert!(context.results.scan_metadata.human_warnings.is_empty());
     }
 }
