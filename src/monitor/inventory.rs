@@ -244,6 +244,9 @@ impl CertificateInventory {
 
         let reader = BufReader::new(file);
         let mut domain_count = 0;
+        let mut staged = CertificateInventory {
+            domains: self.domains.clone(),
+        };
 
         for line in reader.lines() {
             let line = line?;
@@ -289,9 +292,10 @@ impl CertificateInventory {
 
             let domain = MonitoredDomain::new(hostname, port).with_interval(interval_seconds);
 
-            self.add_domain(domain)?;
+            staged.add_domain(domain)?;
         }
 
+        self.domains = staged.domains;
         Ok(())
     }
 
@@ -747,6 +751,23 @@ mod tests {
 
         assert!(result.is_err());
         assert!(inventory.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn test_load_from_file_error_keeps_existing_inventory_unchanged() -> Result<()> {
+        let mut temp_file = NamedTempFile::new()?;
+        writeln!(temp_file, "new.example\nbad.example 30m unexpected")?;
+
+        let mut inventory = CertificateInventory::new();
+        inventory.add_domain(MonitoredDomain::new("existing.example".to_string(), 443))?;
+
+        let result = inventory.load_from_file(temp_file.path(), 3600);
+
+        assert!(result.is_err());
+        assert_eq!(inventory.len(), 1);
+        assert!(inventory.get_domain("existing.example").is_some());
+        assert!(inventory.get_domain("new.example").is_none());
         Ok(())
     }
 
