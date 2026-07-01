@@ -1,6 +1,6 @@
 use super::{Protocol, ProtocolTestResult, ProtocolTester};
 use crate::Result;
-use crate::constants::{BUFFER_SIZE_MAX_TLS_RECORD, CONTENT_TYPE_ALERT};
+use crate::constants::{BUFFER_SIZE_MAX_WITH_OVERHEAD, CONTENT_TYPE_ALERT, TLS_RECORD_HEADER_SIZE};
 use crate::protocols::handshake::{ClientHelloBuilder, ServerHelloParser};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::timeout;
@@ -302,12 +302,13 @@ impl ProtocolTester {
                 .await
                 {
                     Ok(Ok(response)) if response.len() >= 3 => {
-                        let header = response
-                            .get(..3)
-                            .ok_or_else(|| crate::TlsError::ParseError {
-                                message: "SSLv2 probe response truncated before header"
-                                    .to_string(),
-                            })?;
+                        let header =
+                            response
+                                .get(..3)
+                                .ok_or_else(|| crate::TlsError::ParseError {
+                                    message: "SSLv2 probe response truncated before header"
+                                        .to_string(),
+                                })?;
                         let header: [u8; 3] =
                             header.try_into().map_err(|_| crate::TlsError::ParseError {
                                 message: "SSLv2 probe response truncated before header".to_string(),
@@ -475,17 +476,17 @@ impl ProtocolTester {
                 return Ok::<Option<Vec<u8>>, std::io::Error>(None);
             }
 
-            let record_len = u16::from_be_bytes([header[3], header[4]]) as usize;
-            let total_len = 5usize
-                .checked_add(record_len)
-                .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "TLS record length overflow"))?;
-            if total_len > BUFFER_SIZE_MAX_TLS_RECORD {
+            let Some(total_len) = Self::legacy_probe_tls_record_total_len(&header)? else {
                 return Ok::<Option<Vec<u8>>, std::io::Error>(None);
-            }
+            };
 
             let mut resp = vec![0u8; total_len];
-            resp[..5].copy_from_slice(&header);
-            if stream.read_exact(&mut resp[5..]).await.is_err() {
+            resp[..TLS_RECORD_HEADER_SIZE].copy_from_slice(&header);
+            if stream
+                .read_exact(&mut resp[TLS_RECORD_HEADER_SIZE..])
+                .await
+                .is_err()
+            {
                 return Ok::<Option<Vec<u8>>, std::io::Error>(None);
             }
 
@@ -507,6 +508,24 @@ impl ProtocolTester {
             // Write failure or read timeout: genuinely ambiguous transport state.
             _ => Ok(ProtocolProbeOutcome::Inconclusive),
         }
+    }
+
+    fn legacy_probe_tls_record_total_len(
+        header: &[u8; TLS_RECORD_HEADER_SIZE],
+    ) -> std::io::Result<Option<usize>> {
+        let record_len = u16::from_be_bytes([header[3], header[4]]) as usize;
+        let total_len = TLS_RECORD_HEADER_SIZE
+            .checked_add(record_len)
+            .ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "TLS record length overflow",
+                )
+            })?;
+        if total_len > BUFFER_SIZE_MAX_WITH_OVERHEAD {
+            return Ok(None);
+        }
+        Ok(Some(total_len))
     }
 
     pub(super) async fn test_tls12_with_openssl_on_ip(
@@ -738,13 +757,34 @@ fn classify_legacy_probe_response(response: &[u8], protocol: Protocol) -> Protoc
 #[cfg(test)]
 mod legacy_probe_tests {
     use super::*;
-    use crate::constants::{CONTENT_TYPE_HANDSHAKE, HANDSHAKE_TYPE_SERVER_HELLO};
+    use crate::constants::{
+        BUFFER_SIZE_MAX_TLS_RECORD, CONTENT_TYPE_HANDSHAKE, HANDSHAKE_TYPE_SERVER_HELLO,
+        TLS_RECORD_HEADER_SIZE,
+    };
     use crate::utils::mtls::MtlsConfig;
     use crate::utils::network::Target;
     use rustls_pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
     use std::net::Ipv4Addr;
     use std::time::Duration;
     use tokio::io::AsyncReadExt;
+
+    #[test]
+    fn test_tls_record_total_len_accepts_full_fragment_with_header() {
+        let record_len = BUFFER_SIZE_MAX_TLS_RECORD as u16;
+        let header = [
+            CONTENT_TYPE_HANDSHAKE,
+            0x03,
+            0x03,
+            (record_len >> 8) as u8,
+            record_len as u8,
+        ];
+
+        assert_eq!(
+            ProtocolTester::legacy_probe_tls_record_total_len(&header)
+                .expect("length should parse"),
+            Some(TLS_RECORD_HEADER_SIZE + BUFFER_SIZE_MAX_TLS_RECORD)
+        );
+    }
 
     /// Build a minimal ServerHello record advertising `version` in the legacy
     /// version field (no supported_versions extension, so the parser reports the
@@ -851,7 +891,10 @@ mod legacy_probe_tests {
                 let _ = socket.read(&mut buffer).await.unwrap();
 
                 let record = server_hello_record(0x0301);
-                socket.write_all(&record[..6]).await.expect("write first fragment");
+                socket
+                    .write_all(&record[..6])
+                    .await
+                    .expect("write first fragment");
                 socket.flush().await.expect("flush first fragment");
                 tokio::time::sleep(Duration::from_millis(20)).await;
                 socket
@@ -892,7 +935,10 @@ mod legacy_probe_tests {
                 let _ = socket.read(&mut buffer).await.unwrap();
 
                 let record = [0x80, 0x04, 0x02, 0x00, 0x00, 0x00];
-                socket.write_all(&record[..2]).await.expect("write first fragment");
+                socket
+                    .write_all(&record[..2])
+                    .await
+                    .expect("write first fragment");
                 socket.flush().await.expect("flush first fragment");
                 tokio::time::sleep(Duration::from_millis(20)).await;
                 socket

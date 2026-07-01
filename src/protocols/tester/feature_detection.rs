@@ -1,7 +1,8 @@
 use super::ProtocolTester;
 use crate::Result;
 use crate::constants::{
-    BUFFER_SIZE_MAX_TLS_RECORD, CONTENT_TYPE_HANDSHAKE, HANDSHAKE_TYPE_SERVER_HELLO,
+    BUFFER_SIZE_MAX_TLS_RECORD, BUFFER_SIZE_MAX_WITH_OVERHEAD, CONTENT_TYPE_HANDSHAKE,
+    HANDSHAKE_TYPE_SERVER_HELLO, TLS_RECORD_HEADER_SIZE,
 };
 use crate::protocols::{
     Protocol,
@@ -148,7 +149,7 @@ impl ProtocolTester {
         if first_payload.len() >= server_hello_payload_len {
             return Ok(Some(first_record));
         }
-        if server_hello_payload_len > BUFFER_SIZE_MAX_TLS_RECORD - 5 {
+        if server_hello_payload_len > BUFFER_SIZE_MAX_TLS_RECORD {
             return Ok(None);
         }
 
@@ -187,23 +188,38 @@ impl ProtocolTester {
             return Ok(None);
         }
 
-        let record_len = u16::from_be_bytes([header[3], header[4]]) as usize;
-        let total_len = 5usize.checked_add(record_len).ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "TLS record length overflow",
-            )
-        })?;
-        if total_len > BUFFER_SIZE_MAX_TLS_RECORD {
+        let Some(total_len) = Self::tls_record_total_len(&header)? else {
             return Ok(None);
-        }
+        };
 
         let mut record = vec![0u8; total_len];
-        record[..5].copy_from_slice(&header);
-        if stream.read_exact(&mut record[5..]).await.is_err() {
+        record[..TLS_RECORD_HEADER_SIZE].copy_from_slice(&header);
+        if stream
+            .read_exact(&mut record[TLS_RECORD_HEADER_SIZE..])
+            .await
+            .is_err()
+        {
             return Ok(None);
         }
         Ok(Some(record))
+    }
+
+    fn tls_record_total_len(
+        header: &[u8; TLS_RECORD_HEADER_SIZE],
+    ) -> std::io::Result<Option<usize>> {
+        let record_len = u16::from_be_bytes([header[3], header[4]]) as usize;
+        let total_len = TLS_RECORD_HEADER_SIZE
+            .checked_add(record_len)
+            .ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "TLS record length overflow",
+                )
+            })?;
+        if total_len > BUFFER_SIZE_MAX_WITH_OVERHEAD {
+            return Ok(None);
+        }
+        Ok(Some(total_len))
     }
 
     fn server_hello_payload_len(record: &[u8]) -> Option<usize> {
@@ -216,5 +232,43 @@ impl ProtocolTester {
         let [high, mid, low] = bytes;
         let body_len = ((high as usize) << 16) | ((mid as usize) << 8) | low as usize;
         4usize.checked_add(body_len)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_tls_record_total_len_accepts_full_fragment_with_header() {
+        let record_len = BUFFER_SIZE_MAX_TLS_RECORD as u16;
+        let header = [
+            CONTENT_TYPE_HANDSHAKE,
+            0x03,
+            0x03,
+            (record_len >> 8) as u8,
+            record_len as u8,
+        ];
+
+        assert_eq!(
+            ProtocolTester::tls_record_total_len(&header).expect("length should parse"),
+            Some(TLS_RECORD_HEADER_SIZE + BUFFER_SIZE_MAX_TLS_RECORD)
+        );
+    }
+
+    #[test]
+    fn test_server_hello_payload_len_accepts_full_fragment() {
+        let body_len = BUFFER_SIZE_MAX_TLS_RECORD - 4;
+        let mut record = vec![0u8; 9];
+        record[0] = CONTENT_TYPE_HANDSHAKE;
+        record[5] = HANDSHAKE_TYPE_SERVER_HELLO;
+        record[6] = ((body_len >> 16) & 0xff) as u8;
+        record[7] = ((body_len >> 8) & 0xff) as u8;
+        record[8] = (body_len & 0xff) as u8;
+
+        assert_eq!(
+            ProtocolTester::server_hello_payload_len(&record),
+            Some(BUFFER_SIZE_MAX_TLS_RECORD)
+        );
     }
 }
