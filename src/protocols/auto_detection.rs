@@ -233,8 +233,11 @@ mod tests {
     fn test_protocol_from_port() {
         assert_eq!(protocol_from_port(443), ApplicationProtocol::Https);
         assert_eq!(protocol_from_port(25), ApplicationProtocol::SmtpStartTls);
+        assert_eq!(protocol_from_port(2525), ApplicationProtocol::SmtpStartTls);
         assert_eq!(protocol_from_port(143), ApplicationProtocol::ImapStartTls);
         assert_eq!(protocol_from_port(110), ApplicationProtocol::Pop3StartTls);
+        assert_eq!(protocol_from_port(21), ApplicationProtocol::FtpStartTls);
+        assert_eq!(protocol_from_port(5269), ApplicationProtocol::XmppStartTls);
     }
 
     #[test]

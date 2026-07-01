@@ -2,9 +2,9 @@ use super::ApplicationProtocol;
 
 pub(super) fn protocol_from_port(port: u16) -> ApplicationProtocol {
     match port {
-        21 => ApplicationProtocol::Ftp,
+        21 => ApplicationProtocol::FtpStartTls,
         22 => ApplicationProtocol::Unknown,
-        25 | 587 => ApplicationProtocol::SmtpStartTls,
+        25 | 587 | 2525 => ApplicationProtocol::SmtpStartTls,
         80 | 8080 | 8000 => ApplicationProtocol::Http,
         110 => ApplicationProtocol::Pop3StartTls,
         143 => ApplicationProtocol::ImapStartTls,
@@ -15,7 +15,7 @@ pub(super) fn protocol_from_port(port: u16) -> ApplicationProtocol {
         995 => ApplicationProtocol::Pop3,
         3306 => ApplicationProtocol::Mysql,
         5222 => ApplicationProtocol::XmppStartTls,
-        5269 => ApplicationProtocol::Xmpp,
+        5269 => ApplicationProtocol::XmppStartTls,
         5432 => ApplicationProtocol::Postgres,
         6379 => ApplicationProtocol::Redis,
         27017 => ApplicationProtocol::MongoDB,
