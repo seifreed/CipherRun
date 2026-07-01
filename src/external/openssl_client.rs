@@ -7,6 +7,7 @@ use crate::security::{
 };
 use crate::utils::network::canonical_target;
 use serde::{Deserialize, Serialize};
+use std::ffi::OsString;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
@@ -81,7 +82,7 @@ pub struct ConnectionInfo {
 
 /// OpenSSL s_client wrapper
 pub struct OpenSslClient {
-    openssl_path: String,
+    openssl_path: OsString,
 }
 
 impl Default for OpenSslClient {
@@ -93,12 +94,19 @@ impl Default for OpenSslClient {
 impl OpenSslClient {
     pub fn new() -> Self {
         Self {
-            openssl_path: "openssl".to_string(),
+            openssl_path: OsString::from("openssl"),
         }
     }
 
-    pub fn with_path(path: String) -> Self {
-        Self { openssl_path: path }
+    pub fn with_path(path: impl Into<OsString>) -> Self {
+        Self {
+            openssl_path: path.into(),
+        }
+    }
+
+    #[cfg(test)]
+    fn openssl_path(&self) -> &std::ffi::OsStr {
+        &self.openssl_path
     }
 
     /// Run OpenSSL s_client with the given options
@@ -409,6 +417,20 @@ fn connect_authority(host: &str, port: u16) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn test_with_path_preserves_non_utf8_path() {
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+        let path = OsString::from_vec(vec![b'o', b'p', b'e', b'n', b's', b's', b'l', 0xff]);
+        let client = OpenSslClient::with_path(path.clone());
+
+        assert_eq!(
+            client.openssl_path().as_bytes(),
+            path.as_os_str().as_bytes()
+        );
+    }
 
     #[test]
     fn test_extract_certificates() {

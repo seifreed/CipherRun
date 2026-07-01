@@ -149,7 +149,7 @@ async fn run_cli() -> cipherrun::Result<CommandExit> {
     // Handle --local (list local OpenSSL ciphers and exit)
     if args.tls.local {
         let openssl = if let Some(path) = &args.tls.openssl_path {
-            OpenSslClient::with_path(path.to_str_checked()?.to_string())
+            OpenSslClient::with_path(path.as_os_str())
         } else {
             OpenSslClient::new()
         };

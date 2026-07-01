@@ -89,7 +89,7 @@ impl CertificatePhase {
         let target = context.target();
         let connect_host = target.primary_ip()?.to_string();
         let openssl = if let Some(path) = &context.args.tls.openssl_path {
-            OpenSslClient::with_path(path.display().to_string())
+            OpenSslClient::with_path(path.as_os_str())
         } else {
             OpenSslClient::new()
         };
