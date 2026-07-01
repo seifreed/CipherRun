@@ -222,6 +222,8 @@ impl Target {
     pub async fn parse_with_port_override(input: &str, port_override: Option<u16>) -> Result<Self> {
         let (hostname, parsed_port) = split_target_host_port(input)?;
         let hostname = normalize_dns_hostname(hostname);
+        validate_hostname(&hostname)
+            .map_err(|error| TlsError::Other(format!("Invalid target hostname: {}", error)))?;
         let port = port_override.or(parsed_port).unwrap_or(443);
         if port == 0 {
             crate::tls_bail!("Port must be between 1 and 65535");

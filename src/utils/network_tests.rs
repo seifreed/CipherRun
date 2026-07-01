@@ -126,6 +126,15 @@ async fn test_parse_target_bracketed_ipv6_with_port() {
 }
 
 #[tokio::test]
+async fn test_parse_target_rejects_invalid_hostname_before_dns() {
+    let err = Target::parse("bad host:443")
+        .await
+        .expect_err("invalid hostname should fail validation");
+
+    assert!(err.to_string().contains("Invalid target hostname"));
+}
+
+#[tokio::test]
 async fn test_connect_with_timeout_maps_connection_refused() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
