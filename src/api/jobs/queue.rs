@@ -285,6 +285,9 @@ impl JobQueue for InMemoryJobQueue {
         }
 
         let job_id = job.id.clone();
+        if jobs.contains_key(&job_id) {
+            tls_bail!("Job already exists: {}", job_id);
+        }
         queue.push_back(job.clone());
         jobs.insert(job_id.clone(), job);
 
@@ -532,6 +535,36 @@ mod tests {
             .await
             .expect("test assertion should succeed");
         assert!(queue.enqueue(job3).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_enqueue_rejects_duplicate_job_id() {
+        let queue = InMemoryJobQueue::new(10);
+        let job = ScanJob::new("example.com:443".to_string(), ScanOptions::default(), None);
+        let mut duplicate = ScanJob::new(
+            "other.example:443".to_string(),
+            ScanOptions::default(),
+            None,
+        );
+        duplicate.id = job.id.clone();
+
+        queue
+            .enqueue(job.clone())
+            .await
+            .expect("initial enqueue should succeed");
+        let err = queue
+            .enqueue(duplicate)
+            .await
+            .expect_err("duplicate job id should fail");
+
+        assert!(err.to_string().contains("already exists"));
+        assert_eq!(queue.queue_length().await.unwrap(), 1);
+        let queued = queue
+            .dequeue()
+            .await
+            .expect("dequeue should succeed")
+            .expect("original job should still be queued");
+        assert_eq!(queued.target, job.target);
     }
 
     #[tokio::test]
