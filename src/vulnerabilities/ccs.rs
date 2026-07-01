@@ -6,8 +6,8 @@
 
 use crate::Result;
 use crate::constants::{
-    CONTENT_TYPE_ALERT, CONTENT_TYPE_CHANGE_CIPHER_SPEC, CONTENT_TYPE_HANDSHAKE,
-    TLS_HANDSHAKE_TIMEOUT, VERSION_TLS_1_0,
+    BUFFER_SIZE_MAX_WITH_OVERHEAD, CONTENT_TYPE_ALERT, CONTENT_TYPE_CHANGE_CIPHER_SPEC,
+    CONTENT_TYPE_HANDSHAKE, TLS_HANDSHAKE_TIMEOUT, VERSION_TLS_1_0,
 };
 use crate::protocols::Protocol;
 use crate::protocols::handshake::ClientHelloBuilder;
@@ -100,7 +100,7 @@ impl CcsInjectionTester {
                 stream.write_all(&client_hello).await?;
 
                 // Read ServerHello
-                let mut buffer = vec![0u8; 4096];
+                let mut buffer = vec![0u8; BUFFER_SIZE_MAX_WITH_OVERHEAD];
                 let _n = match timeout(
                     Duration::from_secs(3),
                     read_complete_tls_record(&mut stream, &mut buffer),
@@ -379,6 +379,7 @@ pub struct CcsTestResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::constants::BUFFER_SIZE_DEFAULT;
     use crate::constants::{CONTENT_TYPE_HANDSHAKE, HANDSHAKE_TYPE_CLIENT_HELLO};
     use std::net::TcpListener;
     use std::time::Duration;
@@ -543,8 +544,43 @@ mod tests {
             .unwrap();
 
         assert_eq!(n, 9);
-        assert_eq!(&buffer[..n], &[0x16, 0x03, 0x03, 0x00, 0x04, 0x0e, 0x00, 0x00, 0x00]);
+        assert_eq!(
+            &buffer[..n],
+            &[0x16, 0x03, 0x03, 0x00, 0x04, 0x0e, 0x00, 0x00, 0x00]
+        );
 
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_read_complete_tls_record_accepts_record_above_default_buffer() {
+        let listener = TokioTcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let record_len = BUFFER_SIZE_DEFAULT as u16;
+            let header = [
+                CONTENT_TYPE_HANDSHAKE,
+                0x03,
+                0x03,
+                (record_len >> 8) as u8,
+                record_len as u8,
+            ];
+            socket.write_all(&header).await.unwrap();
+            socket
+                .write_all(&vec![0u8; BUFFER_SIZE_DEFAULT])
+                .await
+                .unwrap();
+        });
+
+        let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let mut buffer = vec![0u8; BUFFER_SIZE_MAX_WITH_OVERHEAD];
+        let n = read_complete_tls_record(&mut stream, &mut buffer)
+            .await
+            .unwrap();
+
+        assert_eq!(n, 5 + BUFFER_SIZE_DEFAULT);
         server.await.unwrap();
     }
 
