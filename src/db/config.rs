@@ -97,6 +97,13 @@ impl DatabaseConfig {
                 let host = self.host.as_ref().ok_or_else(|| {
                     crate::TlsError::DatabaseError("Missing PostgreSQL host".to_string())
                 })?;
+                let host_for_validation = host
+                    .strip_prefix('[')
+                    .and_then(|value| value.strip_suffix(']'))
+                    .unwrap_or(host);
+                crate::security::validate_hostname(host_for_validation).map_err(|error| {
+                    crate::TlsError::DatabaseError(format!("Invalid PostgreSQL host: {error}"))
+                })?;
                 let port = self.port.ok_or_else(|| {
                     crate::TlsError::DatabaseError("Missing PostgreSQL port".to_string())
                 })?;
@@ -349,6 +356,23 @@ mod tests {
             .expect_err("zero PostgreSQL port should fail");
 
         assert!(err.to_string().contains("PostgreSQL port"));
+    }
+
+    #[test]
+    fn test_postgres_connection_string_rejects_invalid_host() {
+        let config = DatabaseConfig::postgres(
+            "localhost/path".to_string(),
+            5432,
+            "testdb".to_string(),
+            "user".to_string(),
+            "pass".to_string(),
+        );
+
+        let err = config
+            .connection_string()
+            .expect_err("invalid PostgreSQL host should fail");
+
+        assert!(err.to_string().contains("Invalid PostgreSQL host"));
     }
 
     #[test]
