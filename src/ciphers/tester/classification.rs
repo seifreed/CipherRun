@@ -10,13 +10,16 @@ impl CipherTester {
         protocol: Protocol,
     ) -> bool {
         let cipher_protocol = cipher.protocol.to_ascii_uppercase();
+        let cipher_protocol = cipher_protocol.as_str();
+        let is_tls13 = matches!(cipher_protocol, "TLS13" | "TLSV1.3");
+        let is_sslv2 = cipher_protocol == "SSLV2";
 
         if matches!(protocol, Protocol::TLS13) {
-            return cipher_protocol.contains("TLS13") || cipher_protocol.contains("TLSV1.3");
+            return is_tls13;
         }
 
         if matches!(protocol, Protocol::SSLv2) {
-            return cipher_protocol.contains("SSLV2");
+            return is_sslv2;
         }
 
         // For TLS 1.0/1.1, exclude ciphers defined only for TLS 1.2+.
@@ -31,20 +34,12 @@ impl CipherTester {
             // The cipher DB stores a single protocol value (e.g. "TLSv1.2"), never
             // comma-separated, so we check for TLS 1.2/TLS12 without the presence
             // of any older version string.
-            let is_tls12_exclusive = (cipher_protocol.contains("TLSV1.2")
-                || cipher_protocol.contains("TLS12"))
-                && !cipher_protocol.contains("TLSV1.1")
-                && !cipher_protocol.contains("TLSV1.0");
-            return !cipher_protocol.contains("TLS13")
-                && !cipher_protocol.contains("TLSV1.3")
-                && !cipher_protocol.contains("SSLV2")
-                && !is_tls12_exclusive;
+            let is_tls12_exclusive = matches!(cipher_protocol, "TLSV1.2" | "TLS12");
+            return !is_tls13 && !is_sslv2 && !is_tls12_exclusive;
         }
 
         // TLS 1.2: exclude TLS 1.3-only and SSLv2 ciphers.
-        !cipher_protocol.contains("TLS13")
-            && !cipher_protocol.contains("TLSV1.3")
-            && !cipher_protocol.contains("SSLV2")
+        !is_tls13 && !is_sslv2
     }
 
     pub(super) fn calculate_cipher_counts(&self, ciphers: &[CipherSuite]) -> CipherCounts {

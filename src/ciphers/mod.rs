@@ -59,7 +59,7 @@ impl CipherSuite {
 
         // TLS 1.3 always provides Forward Secrecy by design (RFC 8446)
         // All TLS 1.3 cipher suites use ephemeral key exchange (ECDHE or DHE)
-        if protocol.contains("TLSV1.3") || protocol.contains("TLS13") {
+        if matches!(protocol.as_str(), "TLSV1.3" | "TLS13") {
             return true;
         }
 
@@ -167,6 +167,17 @@ mod tests {
 
         assert!(!cipher.has_forward_secrecy());
         assert!(!cipher.is_aead());
+    }
+
+    #[test]
+    fn test_cipher_forward_secrecy_does_not_substring_match_protocol() {
+        let mut cipher = base_cipher();
+        cipher.protocol = "TLSv1.30".to_string();
+        cipher.key_exchange = "any".to_string();
+        cipher.openssl_name = "TLS_AES_128_GCM_SHA256".to_string();
+        cipher.iana_name = "TLS_AES_128_GCM_SHA256".to_string();
+
+        assert!(!cipher.has_forward_secrecy());
     }
 
     #[test]
