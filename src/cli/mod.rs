@@ -234,6 +234,10 @@ impl Args {
             );
         }
 
+        if self.output.json_multi_ip.is_some() && !self.network.test_all_ips {
+            crate::tls_bail!("--json-multi-ip requires --test-all-ips");
+        }
+
         if self.network.scan_all_ips {
             if self.target.is_none() || self.input_file.is_some() || self.mx_domain.is_some() {
                 crate::tls_bail!("--scan-all-ips requires a single target scan");

@@ -179,6 +179,19 @@ fn test_validate_mx_rejects_json_multi_ip() {
 }
 
 #[test]
+fn test_validate_json_multi_ip_requires_test_all_ips() {
+    let args = Args {
+        target: Some("example.com:443".to_string()),
+        output: OutputArgs {
+            json_multi_ip: Some(std::path::PathBuf::from("multi-ip.json")),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    assert!(args.validate().is_err());
+}
+
+#[test]
 fn test_validate_rejects_invalid_color_mode() {
     let args = Args::parse_with_sources_from(["cipherrun", "example.com:443", "--color", "4"])
         .expect("parse should succeed");
