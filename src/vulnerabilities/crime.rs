@@ -5,7 +5,9 @@
 // by observing changes in compression ratios when injecting known data.
 
 use crate::Result;
-use crate::constants::TLS_HANDSHAKE_TIMEOUT;
+use crate::constants::{
+    BUFFER_SIZE_MAX_WITH_OVERHEAD, CONTENT_TYPE_HANDSHAKE, TLS_HANDSHAKE_TIMEOUT,
+};
 use crate::protocols::Protocol;
 use crate::protocols::handshake::ClientHelloBuilder;
 use crate::utils::network::Target;
@@ -170,7 +172,7 @@ impl<'a> CrimeTester<'a> {
 
         // Read the full ServerHello record so a fragmented response is not
         // misclassified as inconclusive.
-        let mut buffer = vec![0u8; 4096];
+        let mut buffer = vec![0u8; BUFFER_SIZE_MAX_WITH_OVERHEAD];
         match timeout(
             Duration::from_secs(3),
             Self::read_complete_tls_record(&mut stream, &mut buffer),
@@ -189,7 +191,9 @@ impl<'a> CrimeTester<'a> {
                     // Truncated ServerHello split across reads; the probe cannot decide.
                     return Ok(CompressionProbeStatus::Inconclusive);
                 }
-                if response.first() == Some(&0x16) && response.get(5) == Some(&0x02) {
+                if response.first() == Some(&CONTENT_TYPE_HANDSHAKE)
+                    && response.get(5) == Some(&0x02)
+                {
                     if n <= 43 {
                         return Ok(CompressionProbeStatus::Inconclusive);
                     }
@@ -264,7 +268,7 @@ impl<'a> CrimeTester<'a> {
 
         // Read the full ServerHello record so a fragmented response is not
         // misclassified as inconclusive.
-        let mut buffer = vec![0u8; 8192];
+        let mut buffer = vec![0u8; BUFFER_SIZE_MAX_WITH_OVERHEAD];
         match timeout(
             Duration::from_secs(3),
             Self::read_complete_tls_record(&mut stream, &mut buffer),
@@ -486,9 +490,46 @@ pub struct CrimeTestResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::constants::BUFFER_SIZE_DEFAULT;
     use std::net::TcpListener;
     use tokio::io::AsyncWriteExt;
     use tokio::time::{Duration, sleep};
+
+    #[tokio::test]
+    async fn test_read_complete_tls_record_accepts_record_above_default_buffer() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("local addr should exist");
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept should succeed");
+            let record_len = BUFFER_SIZE_DEFAULT as u16;
+            let header = [
+                CONTENT_TYPE_HANDSHAKE,
+                0x03,
+                0x03,
+                (record_len >> 8) as u8,
+                record_len as u8,
+            ];
+            socket.write_all(&header).await.expect("write header");
+            socket
+                .write_all(&vec![0u8; BUFFER_SIZE_DEFAULT])
+                .await
+                .expect("write body");
+        });
+
+        let mut stream = tokio::net::TcpStream::connect(addr)
+            .await
+            .expect("connect should succeed");
+        let mut buffer = vec![0u8; BUFFER_SIZE_MAX_WITH_OVERHEAD];
+        let n = CrimeTester::read_complete_tls_record(&mut stream, &mut buffer)
+            .await
+            .expect("record should read");
+
+        assert_eq!(n, 5 + BUFFER_SIZE_DEFAULT);
+        server.await.expect("server should finish");
+    }
 
     #[test]
     fn test_crime_result_creation() {
