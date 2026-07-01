@@ -402,15 +402,10 @@ impl ServerDefaultsAdvancedTester {
         let hostname = self.target.hostname.clone();
         let group_name = group_name.to_string();
         tokio::task::spawn_blocking(move || -> Result<CurveProbeOutcome> {
-            let mut builder = SslConnector::builder(SslMethod::tls())?;
-            builder.set_verify(SslVerifyMode::NONE);
-            if builder
-                .set_cipher_list("ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256")
-                .is_err()
-                || builder.set_groups_list(&group_name).is_err()
-            {
-                return Ok(CurveProbeOutcome::Inconclusive);
-            }
+            let builder = match build_ecdh_curve_connector_builder(&group_name) {
+                Ok(builder) => builder,
+                Err(_) => return Ok(CurveProbeOutcome::Inconclusive),
+            };
 
             let connector = builder.build();
             let ssl_stream = match connector.connect(&hostname, std_stream) {
@@ -552,13 +547,35 @@ impl ServerDefaultsAdvancedTester {
     }
 }
 
+fn build_ecdh_curve_connector_builder(
+    group_name: &str,
+) -> Result<openssl::ssl::SslConnectorBuilder> {
+    use openssl::ssl::SslVersion;
+
+    let mut builder = SslConnector::builder(SslMethod::tls())?;
+    builder.set_verify(SslVerifyMode::NONE);
+    builder.set_cipher_list("ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256")?;
+    builder.set_groups_list(group_name)?;
+    builder.set_max_proto_version(Some(SslVersion::TLS1_2))?;
+    Ok(builder)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use openssl::ssl::SslVersion;
     use std::net::{IpAddr, SocketAddr};
     use std::sync::Once;
     use tokio::net::TcpListener;
     use tokio_rustls::TlsAcceptor;
+
+    #[test]
+    fn test_ecdh_curve_connector_is_limited_to_tls12() {
+        let mut builder =
+            build_ecdh_curve_connector_builder("P-256").expect("ECDH curve connector should build");
+
+        assert_eq!(builder.max_proto_version(), Some(SslVersion::TLS1_2));
+    }
 
     #[test]
     fn test_classify_dh_strength() {
