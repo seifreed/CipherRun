@@ -147,16 +147,14 @@ impl CertificateInventory {
 
     /// Normalize a hostname into a consistent `host:port` key.
     /// If no port is specified, defaults to 443.
-    fn normalize_key(hostname: &str) -> String {
-        match split_target_host_port(hostname) {
-            Ok((hostname, port)) => canonical_inventory_key(&hostname, port.unwrap_or(443)),
-            Err(_) => hostname.to_ascii_lowercase(),
-        }
+    fn normalize_key(hostname: &str) -> Result<String> {
+        let (hostname, port) = split_target_host_port(hostname)?;
+        Ok(canonical_inventory_key(&hostname, port.unwrap_or(443)))
     }
 
     /// Remove a domain from the inventory
     pub fn remove_domain(&mut self, hostname: &str) -> Result<()> {
-        let key = Self::normalize_key(hostname);
+        let key = Self::normalize_key(hostname)?;
         // Try exact key first, then fall back to raw hostname in case it was
         // stored without a port suffix
         if self.domains.remove(&key).is_none() && key != hostname {
@@ -167,7 +165,7 @@ impl CertificateInventory {
 
     /// Get a domain by hostname
     pub fn get_domain(&self, hostname: &str) -> Option<&MonitoredDomain> {
-        let key = Self::normalize_key(hostname);
+        let key = Self::normalize_key(hostname).ok()?;
         self.domains.get(&key).or_else(|| {
             if key != hostname {
                 self.domains.get(hostname)
@@ -179,7 +177,7 @@ impl CertificateInventory {
 
     /// Get a mutable reference to a domain
     pub fn get_domain_mut(&mut self, hostname: &str) -> Option<&mut MonitoredDomain> {
-        let key = Self::normalize_key(hostname);
+        let key = Self::normalize_key(hostname).ok()?;
         if self.domains.contains_key(&key) {
             return self.domains.get_mut(&key);
         }
@@ -485,6 +483,17 @@ mod tests {
             .remove_domain("example.com")
             .expect("test assertion should succeed");
         assert_eq!(inventory.len(), 0);
+    }
+
+    #[test]
+    fn test_inventory_remove_rejects_invalid_identifier() {
+        let mut inventory = CertificateInventory::new();
+
+        let err = inventory
+            .remove_domain("example.com:notaport")
+            .expect_err("invalid target should not be ignored");
+
+        assert!(err.to_string().contains("Invalid port number"));
     }
 
     #[test]

@@ -88,7 +88,7 @@ impl SchedulingEngine {
         interval_seconds: u64,
     ) -> Result<()> {
         validate_monitor_interval_seconds(interval_seconds)?;
-        let identifier = canonical_schedule_key(identifier);
+        let identifier = try_canonical_schedule_key(identifier)?;
         let seconds =
             i64::try_from(interval_seconds).map_err(|_| crate::TlsError::InvalidInput {
                 message: "Monitored domain interval is too large".to_string(),
@@ -182,10 +182,12 @@ impl SchedulingEngine {
 }
 
 fn canonical_schedule_key(identifier: &str) -> String {
-    match split_target_host_port(identifier) {
-        Ok((hostname, port)) => canonical_inventory_key(&hostname, port.unwrap_or(443)),
-        Err(_) => identifier.to_ascii_lowercase(),
-    }
+    try_canonical_schedule_key(identifier).unwrap_or_else(|_| identifier.to_ascii_lowercase())
+}
+
+fn try_canonical_schedule_key(identifier: &str) -> Result<String> {
+    let (hostname, port) = split_target_host_port(identifier)?;
+    Ok(canonical_inventory_key(&hostname, port.unwrap_or(443)))
 }
 
 impl Default for SchedulingEngine {
@@ -288,6 +290,18 @@ mod tests {
 
         assert_eq!(scheduler.scheduled_count(), 1);
         assert!(scheduler.next_scan_time("example.com:443").is_some());
+    }
+
+    #[test]
+    fn test_schedule_next_scan_rejects_invalid_identifier() {
+        let mut scheduler = SchedulingEngine::new();
+
+        let err = scheduler
+            .schedule_next_scan("example.com:notaport", 3600)
+            .expect_err("invalid target should not be scheduled");
+
+        assert!(err.to_string().contains("Invalid port number"));
+        assert_eq!(scheduler.scheduled_count(), 0);
     }
 
     #[test]
