@@ -33,9 +33,6 @@ impl Command for PqcScanCommand {
 
     async fn execute(&self) -> Result<CommandExit> {
         let mut any_findings = false;
-        // A scan that could not run (e.g. an unreadable path) must not report
-        // success: a CI gate keyed on the exit code would pass on a broken path.
-        let mut any_error = false;
 
         if let Some(path) = &self.ssh_path {
             println!("\n{}", "=== SSH Configuration Audit ===".bold());
@@ -63,10 +60,7 @@ impl Command for PqcScanCommand {
                         }
                     }
                 }
-                Err(e) => {
-                    any_error = true;
-                    println!("  {} Failed to scan SSH config: {}", "X".red(), e);
-                }
+                Err(e) => return Err(e),
             }
         }
 
@@ -91,10 +85,7 @@ impl Command for PqcScanCommand {
                         }
                     }
                 }
-                Err(e) => {
-                    any_error = true;
-                    println!("  {} Failed to scan VPN config: {}", "X".red(), e);
-                }
+                Err(e) => return Err(e),
             }
         }
 
@@ -125,10 +116,7 @@ impl Command for PqcScanCommand {
                         }
                     }
                 }
-                Err(e) => {
-                    any_error = true;
-                    println!("  {} Failed to scan source code: {}", "X".red(), e);
-                }
+                Err(e) => return Err(e),
             }
         }
 
@@ -140,7 +128,7 @@ impl Command for PqcScanCommand {
             return Ok(CommandExit::success());
         }
 
-        if any_findings || any_error {
+        if any_findings {
             Ok(CommandExit::failure(1))
         } else {
             Ok(CommandExit::success())
@@ -160,16 +148,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_pqc_scan_unreadable_path_returns_failure() {
-        // A scan that cannot run (path does not exist) must not exit 0, so a CI
-        // gate keyed on the exit code does not pass on a broken/typo'd path.
+    async fn test_pqc_scan_unreadable_path_returns_error() {
         let cmd = PqcScanCommand::new(
             Some(PathBuf::from("/nonexistent/cipherrun-pqc-test/ssh_config")),
             None,
             None,
         );
-        let exit = cmd.execute().await.expect("execute should not error");
-        assert!(!exit.is_success());
+        cmd.execute()
+            .await
+            .expect_err("unreadable path should propagate scanner error");
     }
 
     #[test]
