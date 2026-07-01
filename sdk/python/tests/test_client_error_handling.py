@@ -225,6 +225,30 @@ def test_sync_create_scan_preserves_explicit_options(monkeypatch):
     assert payloads[0]["options"]["test_protocols"] is False
 
 
+def test_sync_evaluate_policy_omits_missing_options(monkeypatch):
+    client = CipherRunClient(api_key="k")
+    payloads = []
+
+    def fake_request(_method, _endpoint, **kwargs):
+        payloads.append(kwargs["json_data"])
+        response = MagicMock()
+        response.json.return_value = {
+            "policy_id": "policy/1",
+            "policy_name": "Policy",
+            "target": "example.com:443",
+            "compliant": True,
+            "evaluated_at": "2026-01-01T00:00:00Z",
+            "scan_id": "scan-1",
+        }
+        return response
+
+    monkeypatch.setattr(client, "_make_request", fake_request)
+
+    client.evaluate_policy("policy/1", "example.com")
+
+    assert payloads == [{"target": "example.com"}]
+
+
 def test_join_url_preserves_base_path_prefix():
     assert _join_url("https://example.com/cipherrun", "/api/v1/health") == "https://example.com/cipherrun/api/v1/health"
     assert (
@@ -302,6 +326,31 @@ def test_async_create_scan_omits_missing_options(monkeypatch):
 
     async def run():
         await client.create_scan("example.com")
+
+    asyncio.run(run())
+
+    assert payloads == [{"target": "example.com"}]
+
+
+def test_async_evaluate_policy_omits_missing_options(monkeypatch):
+    client = AsyncCipherRunClient(api_key="k")
+    payloads = []
+
+    async def fake_request(_method, _endpoint, **kwargs):
+        payloads.append(kwargs["json_data"])
+        return {
+            "policy_id": "policy/1",
+            "policy_name": "Policy",
+            "target": "example.com:443",
+            "compliant": True,
+            "evaluated_at": "2026-01-01T00:00:00Z",
+            "scan_id": "scan-1",
+        }
+
+    monkeypatch.setattr(client, "_make_request", fake_request)
+
+    async def run():
+        await client.evaluate_policy("policy/1", "example.com")
 
     asyncio.run(run())
 

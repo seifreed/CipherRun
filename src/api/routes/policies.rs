@@ -185,7 +185,10 @@ pub async fn evaluate_policy(
         .load_policy(&policy_path)
         .map_err(|e| ApiError::Internal(format!("Failed to load policy: {}", e)))?;
 
-    let scan_request = scan_request_from_target_and_options(&request.target, &request.options)?;
+    let options = request
+        .options
+        .unwrap_or_else(crate::api::models::request::ScanOptions::full);
+    let scan_request = scan_request_from_target_and_options(&request.target, &options)?;
 
     let (scan_results, policy_result) =
         policy_adapter::run_policy_check_with_defaults(&policy, scan_request).await?;
@@ -400,7 +403,7 @@ protocols:
             Path(created.id),
             Json(PolicyEvaluationRequest {
                 target: "example.com:443".to_string(),
-                options: Default::default(),
+                options: Some(Default::default()),
             }),
         )
         .await
@@ -431,11 +434,11 @@ protocols:
             Path(created.id),
             Json(PolicyEvaluationRequest {
                 target: "example.com:443".to_string(),
-                options: crate::api::models::request::ScanOptions {
+                options: Some(crate::api::models::request::ScanOptions {
                     test_protocols: true,
                     timeout_seconds: 0,
                     ..Default::default()
-                },
+                }),
             }),
         )
         .await
@@ -466,11 +469,11 @@ protocols:
             Path(created.id),
             Json(PolicyEvaluationRequest {
                 target: "example.com:443".to_string(),
-                options: crate::api::models::request::ScanOptions {
+                options: Some(crate::api::models::request::ScanOptions {
                     test_protocols: true,
                     ip: Some("not-an-ip".to_string()),
                     ..Default::default()
-                },
+                }),
             }),
         )
         .await
@@ -501,10 +504,10 @@ protocols:
             Path(created.id),
             Json(PolicyEvaluationRequest {
                 target: "127.0.0.1:443".to_string(),
-                options: crate::api::models::request::ScanOptions {
+                options: Some(crate::api::models::request::ScanOptions {
                     test_protocols: true,
                     ..Default::default()
-                },
+                }),
             }),
         )
         .await

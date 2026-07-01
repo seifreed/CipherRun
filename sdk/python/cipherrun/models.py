@@ -128,7 +128,7 @@ class PolicyEvaluationRequest(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     target: str = Field(..., description="Target to evaluate")
-    options: ScanOptions = Field(default_factory=ScanOptions, description="Scan options")
+    options: Optional[ScanOptions] = Field(default=None, description="Scan options")
 
 
 class ComplianceCheckRequest(BaseModel):

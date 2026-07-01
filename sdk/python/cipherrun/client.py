@@ -449,7 +449,7 @@ class CipherRunClient:
         Args:
             policy_id: Policy ID
             target: Target to evaluate
-            options: Scan options (uses default if None)
+            options: Scan options (API defaults to a full scan if None)
 
         Returns:
             PolicyEvaluationResponse with evaluation results
@@ -460,12 +460,12 @@ class CipherRunClient:
         """
         request = PolicyEvaluationRequest(
             target=target,
-            options=options or ScanOptions(),
+            options=options,
         )
         response = self._make_request(
             "POST",
             f"/api/v1/policies/{quote(policy_id, safe='')}/evaluate",
-            json_data=request.model_dump(),
+            json_data=request.model_dump(exclude_none=True),
         )
         return PolicyEvaluationResponse(**response.json())
 

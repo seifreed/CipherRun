@@ -158,8 +158,8 @@ pub struct PolicyEvaluationRequest {
     pub target: String,
 
     /// Scan options
-    #[serde(default)]
-    pub options: ScanOptions,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub options: Option<ScanOptions>,
 }
 
 /// Certificate query parameters
@@ -283,6 +283,15 @@ mod tests {
         let json = r#"{ "name": "Policy", "rules": "rules" }"#;
         let req: PolicyRequest = serde_json::from_str(json).expect("test assertion should succeed");
         assert!(req.enabled);
+    }
+
+    #[test]
+    fn test_policy_evaluation_request_defaults_options_to_none() {
+        let json = r#"{ "target": "example.com:443" }"#;
+        let req: PolicyEvaluationRequest =
+            serde_json::from_str(json).expect("test assertion should succeed");
+        assert_eq!(req.target, "example.com:443");
+        assert!(req.options.is_none());
     }
 
     #[test]
