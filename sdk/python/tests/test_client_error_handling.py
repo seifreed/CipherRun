@@ -22,6 +22,9 @@ from cipherrun.async_client import (
     AsyncCipherRunClient,
 )
 from cipherrun.async_client import (
+    _join_url as async_join_url,
+)
+from cipherrun.async_client import (
     _parse_retry_after as async_parse_retry_after,
 )
 from cipherrun.async_client import (
@@ -29,6 +32,7 @@ from cipherrun.async_client import (
 )
 from cipherrun.client import (
     CipherRunClient,
+    _join_url,
     _parse_retry_after,
     _safe_error_data,
 )
@@ -176,6 +180,14 @@ def test_sync_client_quotes_path_parameters(monkeypatch):
     assert endpoints == ["/api/v1/scan/scan%2F1"]
 
 
+def test_join_url_preserves_base_path_prefix():
+    assert _join_url("https://example.com/cipherrun", "/api/v1/health") == "https://example.com/cipherrun/api/v1/health"
+    assert (
+        async_join_url("https://example.com/cipherrun/", "api/v1/health")
+        == "https://example.com/cipherrun/api/v1/health"
+    )
+
+
 # --- Async variants ---
 
 
@@ -228,7 +240,7 @@ def test_async_client_quotes_path_parameters(monkeypatch):
     assert endpoints == ["/api/v1/scan/scan%2F1"]
 
 
-def test_websocket_client_quotes_scan_id(monkeypatch):
+def test_websocket_client_quotes_scan_id_and_preserves_base_path(monkeypatch):
     connected_urls = []
 
     class FakeWebSocket:
@@ -251,7 +263,7 @@ def test_websocket_client_quotes_scan_id(monkeypatch):
     monkeypatch.setattr("websockets.connect", fake_connect)
 
     async def run():
-        client = WebSocketProgressClient()
+        client = WebSocketProgressClient(base_url="http://localhost:8080/cipherrun")
         messages = []
         async for progress in client.stream_progress("scan/1"):
             messages.append(progress)
@@ -259,7 +271,7 @@ def test_websocket_client_quotes_scan_id(monkeypatch):
 
     messages = asyncio.run(run())
 
-    assert connected_urls == ["ws://localhost:8080/api/v1/scan/scan%2F1/stream"]
+    assert connected_urls == ["ws://localhost:8080/cipherrun/api/v1/scan/scan%2F1/stream"]
     assert messages[0].scan_id == "scan/1"
 
 

@@ -5,7 +5,7 @@ This module provides the main synchronous client for the CipherRun API.
 
 import time
 from typing import Any, Dict, Optional
-from urllib.parse import quote, urljoin
+from urllib.parse import quote
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -77,6 +77,10 @@ def _safe_error_data(response: "requests.Response") -> Dict[str, Any]:
         return response.json()
     except ValueError:
         return {}
+
+
+def _join_url(base_url: str, endpoint: str) -> str:
+    return f"{base_url.rstrip('/')}/{endpoint.lstrip('/')}"
 
 
 class CipherRunClient:
@@ -154,7 +158,7 @@ class CipherRunClient:
         Raises:
             CipherRunError: On API errors
         """
-        url = urljoin(self.base_url, endpoint)
+        url = _join_url(self.base_url, endpoint)
         timeout = timeout or self.timeout
 
         rate_limit_retries = 0

@@ -5,7 +5,7 @@ This module provides an async client for the CipherRun API using aiohttp.
 
 import asyncio
 from typing import Any, Dict, Optional
-from urllib.parse import quote, urljoin
+from urllib.parse import quote
 
 import aiohttp
 from aiohttp import ClientTimeout
@@ -76,6 +76,10 @@ async def _safe_error_data(response: "aiohttp.ClientResponse") -> Dict[str, Any]
         return await response.json()
     except (aiohttp.ClientError, ValueError, asyncio.TimeoutError):
         return {}
+
+
+def _join_url(base_url: str, endpoint: str) -> str:
+    return f"{base_url.rstrip('/')}/{endpoint.lstrip('/')}"
 
 
 class AsyncCipherRunClient:
@@ -158,7 +162,7 @@ class AsyncCipherRunClient:
         Raises:
             CipherRunError: On API errors
         """
-        url = urljoin(self.base_url, endpoint)
+        url = _join_url(self.base_url, endpoint)
         session = await self._get_session()
 
         timeout_obj = ClientTimeout(total=timeout or self.timeout)

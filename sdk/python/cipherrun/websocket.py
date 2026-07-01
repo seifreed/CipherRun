@@ -7,7 +7,7 @@ import asyncio
 import inspect
 import json
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Optional
-from urllib.parse import quote, urljoin, urlparse
+from urllib.parse import quote, urlparse
 
 import websockets
 from websockets.client import WebSocketClientProtocol
@@ -38,6 +38,10 @@ def _websocket_header_kwargs(connect_func: Callable[..., Any], headers: dict) ->
     if "additional_headers" in inspect.signature(connect_func).parameters:
         return {"additional_headers": headers}
     return {"extra_headers": headers}
+
+
+def _join_url(base_url: str, endpoint: str) -> str:
+    return f"{base_url.rstrip('/')}/{endpoint.lstrip('/')}"
 
 
 class WebSocketProgressClient:
@@ -106,7 +110,7 @@ class WebSocketProgressClient:
             ...         break
         """
         endpoint = f"/api/v1/scan/{quote(scan_id, safe='')}/stream"
-        ws_url = self._convert_to_ws_url(urljoin(self.base_url, endpoint))
+        ws_url = self._convert_to_ws_url(_join_url(self.base_url, endpoint))
 
         extra_headers = {}
         if self.api_key:
