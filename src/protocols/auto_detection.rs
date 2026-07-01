@@ -319,6 +319,8 @@ mod tests {
     fn test_requires_starttls() {
         assert!(requires_starttls(ApplicationProtocol::SmtpStartTls));
         assert!(requires_starttls(ApplicationProtocol::ImapStartTls));
+        assert!(requires_starttls(ApplicationProtocol::Mysql));
+        assert!(requires_starttls(ApplicationProtocol::Postgres));
         assert!(!requires_starttls(ApplicationProtocol::Https));
     }
 

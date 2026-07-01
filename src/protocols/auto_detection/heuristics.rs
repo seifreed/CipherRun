@@ -137,6 +137,8 @@ pub(super) fn requires_starttls(protocol: ApplicationProtocol) -> bool {
             | ApplicationProtocol::FtpStartTls
             | ApplicationProtocol::XmppStartTls
             | ApplicationProtocol::LdapStartTls
+            | ApplicationProtocol::Mysql
+            | ApplicationProtocol::Postgres
     )
 }
 
