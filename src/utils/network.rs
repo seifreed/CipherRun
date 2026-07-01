@@ -244,7 +244,8 @@ impl Target {
     /// Create a Target with pre-resolved IP addresses.
     /// Returns error if ip_addresses is empty.
     pub fn with_ips(hostname: String, port: u16, ip_addresses: Vec<IpAddr>) -> Result<Self> {
-        if hostname.trim().is_empty() {
+        let hostname = hostname.trim();
+        if hostname.is_empty() {
             return Err(TlsError::Other(
                 "Target hostname cannot be empty".to_string(),
             ));
@@ -264,7 +265,7 @@ impl Target {
         // the same hostname as the DNS path; otherwise a rooted FQDN reaches the
         // TLS layer / output inconsistently depending on how the scan was invoked.
         Ok(Self {
-            hostname: normalize_dns_hostname(hostname),
+            hostname: normalize_dns_hostname(hostname.to_string()),
             port,
             ip_addresses,
         })

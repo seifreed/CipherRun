@@ -524,12 +524,12 @@ fn test_server_name_for_hostname_accepts_normalized_fqdn() {
 fn test_with_ips_normalizes_rooted_fqdn_hostname() {
     use std::net::{IpAddr, Ipv4Addr};
     let target = Target::with_ips(
-        "example.com.".to_string(),
+        " example.com. ".to_string(),
         443,
         vec![IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1))],
     )
     .expect("valid target");
     // The --ip override and custom-resolver paths build Targets via with_ips;
-    // the rooted FQDN must be canonicalized identically to the DNS path.
+    // the hostname must be canonicalized identically to the DNS path.
     assert_eq!(target.hostname, "example.com");
 }
