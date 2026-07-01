@@ -9,6 +9,8 @@ use serde_yaml;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
+const MAX_POLICY_EXTENDS_DEPTH: usize = 32;
+
 pub trait PolicyDocumentSource: Send + Sync {
     fn read_to_string(&self, path: &Path) -> Result<String>;
 }
@@ -51,6 +53,15 @@ impl<'a> PolicyLoader<'a> {
         policy_path: &Path,
         loading_stack: &mut Vec<PathBuf>,
     ) -> Result<Policy> {
+        if loading_stack.len() >= MAX_POLICY_EXTENDS_DEPTH {
+            return Err(crate::TlsError::ConfigError {
+                message: format!(
+                    "Policy extends depth exceeds maximum of {} documents",
+                    MAX_POLICY_EXTENDS_DEPTH
+                ),
+            });
+        }
+
         let stack_path = policy_path
             .canonicalize()
             .unwrap_or_else(|_| policy_path.to_path_buf());
@@ -828,6 +839,38 @@ policy:
             .expect_err("cyclic policy inheritance should fail");
 
         assert!(err.to_string().contains("Policy extends cycle detected"));
+    }
+
+    #[test]
+    fn test_extends_rejects_excessive_depth() {
+        let temp_dir = tempfile::tempdir().expect("test assertion should succeed");
+
+        for i in 0..=MAX_POLICY_EXTENDS_DEPTH {
+            let extends = if i < MAX_POLICY_EXTENDS_DEPTH {
+                format!(r#"  extends: "policy-{}.yaml""#, i + 1)
+            } else {
+                String::new()
+            };
+            std::fs::write(
+                temp_dir.path().join(format!("policy-{i}.yaml")),
+                format!(
+                    r#"
+policy:
+  name: "Policy {i}"
+  version: "1.0"
+{extends}
+"#
+                ),
+            )
+            .expect("test assertion should succeed");
+        }
+
+        let source = crate::policy::source::FilesystemPolicySource;
+        let err = PolicyLoader::from_source(temp_dir.path(), &source)
+            .load(&temp_dir.path().join("policy-0.yaml"))
+            .expect_err("excessive policy inheritance should fail");
+
+        assert!(err.to_string().contains("extends depth exceeds maximum"));
     }
 
     #[test]
