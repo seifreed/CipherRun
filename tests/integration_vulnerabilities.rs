@@ -358,8 +358,17 @@ async fn test_renegotiation_vulnerability_async() {
 
     if let Ok(vuln_result) = result {
         println!("Renegotiation test result: {}", vuln_result.details);
-        // Note: This test is not fully implemented yet
         println!("Vulnerable: {}", vuln_result.vulnerable);
+        assert!(
+            !vuln_result.vulnerable,
+            "Modern server should not allow insecure renegotiation: {}",
+            vuln_result.details
+        );
+        assert!(
+            !vuln_result.inconclusive,
+            "Renegotiation result should be conclusive for a modern public server: {}",
+            vuln_result.details
+        );
     }
 }
 
@@ -376,8 +385,17 @@ async fn test_tls_fallback_scsv_async() {
 
     if let Ok(vuln_result) = result {
         println!("TLS Fallback SCSV test result: {}", vuln_result.details);
-        // Note: This test is not fully implemented yet
         println!("Vulnerable: {}", vuln_result.vulnerable);
+        assert!(
+            !vuln_result.vulnerable,
+            "Modern server should support TLS Fallback SCSV or TLS 1.3+: {}",
+            vuln_result.details
+        );
+        assert!(
+            !vuln_result.inconclusive,
+            "TLS Fallback SCSV result should be conclusive for a modern public server: {}",
+            vuln_result.details
+        );
     }
 }
 

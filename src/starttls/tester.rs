@@ -133,6 +133,7 @@ impl StarttlsTester {
 mod tests {
     use super::*;
     use std::net::IpAddr;
+    use tokio::net::TcpListener;
 
     #[test]
     fn test_tester_creation() {
@@ -174,12 +175,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_protocol_ldap_is_dispatched_not_stubbed() {
-        // LDAP has a real negotiator; test_protocol must dispatch it rather than
-        // return the old "not yet implemented" stub. Against a closed local port
-        // it fails to connect, but the error must NOT be the stub message.
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+
         let target = Target::with_ips(
             "example.com".to_string(),
-            389,
+            port,
             vec![IpAddr::from([127, 0, 0, 1])],
         )
         .unwrap();
@@ -189,12 +191,8 @@ mod tests {
         };
         let result = tester.test_protocol(StarttlsProtocol::LDAP).await;
         assert!(!result.starttls_supported);
-        assert!(
-            !result
-                .error
-                .unwrap_or_default()
-                .contains("not yet implemented")
-        );
+        let error = result.error.expect("closed port should return an error");
+        assert!(error.contains("Connection") || error.contains("timed out"));
     }
 
     #[tokio::test]
