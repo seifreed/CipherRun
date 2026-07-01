@@ -7,6 +7,8 @@ use chrono::Utc;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+const MAX_STORED_POLICY_BYTES: u64 = 1024 * 1024;
+
 /// Parsed policy metadata: (name, description, created_at, enabled, rules_content, updated_at)
 pub(super) type PolicyMetadata = (
     String,
@@ -113,13 +115,20 @@ pub(super) fn read_policy_with_metadata(
     policy_path: &Path,
     fallback_id: String,
 ) -> Result<PolicyMetadata, ApiError> {
+    let metadata = fs::metadata(policy_path)
+        .map_err(|e| ApiError::Internal(format!("Failed to get policy metadata: {}", e)))?;
+    let size = metadata.len();
+    if size > MAX_STORED_POLICY_BYTES {
+        return Err(ApiError::BadRequest(format!(
+            "Policy file is too large: {} bytes (max {})",
+            size, MAX_STORED_POLICY_BYTES
+        )));
+    }
+
     let content = fs::read_to_string(policy_path)
         .map_err(|e| ApiError::Internal(format!("Failed to read policy file: {}", e)))?;
     let (name, description, created_at, enabled, rules_content) =
         parse_policy_file_content(fallback_id, &content)?;
-
-    let metadata = fs::metadata(policy_path)
-        .map_err(|e| ApiError::Internal(format!("Failed to get policy metadata: {}", e)))?;
 
     let modified = metadata
         .modified()
@@ -139,6 +148,7 @@ pub(super) fn read_policy_with_metadata(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs::File;
 
     #[test]
     fn parse_policy_file_content_uses_defaults_for_missing_metadata() {
@@ -707,5 +717,19 @@ mod tests {
 
         let _ = std::fs::remove_file(policy_path);
         let _ = std::fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn read_policy_with_metadata_rejects_oversized_file_before_read() {
+        let temp_dir = tempfile::tempdir().expect("test assertion should succeed");
+        let policy_path = temp_dir.path().join("policy.yaml");
+        let file = File::create(&policy_path).expect("test assertion should succeed");
+        file.set_len(MAX_STORED_POLICY_BYTES + 1)
+            .expect("test assertion should succeed");
+
+        let err = read_policy_with_metadata(&policy_path, "fallback".to_string())
+            .expect_err("oversized stored policy should fail before reading");
+
+        assert!(err.to_string().contains("Policy file is too large"));
     }
 }
