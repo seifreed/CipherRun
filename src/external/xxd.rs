@@ -2,6 +2,7 @@
 
 /// Simple hex dump implementation (xxd-style offset/hex/ASCII layout)
 pub fn simple_hex_dump(data: &[u8], cols: usize) -> String {
+    let cols = cols.max(1);
     let mut output = String::new();
 
     for (i, chunk) in data.chunks(cols).enumerate() {
@@ -107,5 +108,13 @@ mod tests {
             ascii_col(partial_line),
             "ASCII column must align between full and partial rows"
         );
+    }
+
+    #[test]
+    fn test_simple_hex_dump_zero_columns_does_not_panic() {
+        let dump = simple_hex_dump(b"AB", 0);
+
+        assert!(dump.contains("41 A"));
+        assert!(dump.contains("42 B"));
     }
 }
