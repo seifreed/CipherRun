@@ -5,6 +5,8 @@ use crate::api::models::response::ScanStatus;
 use crate::Result;
 use uuid::Uuid;
 
+const MAX_JOB_FILE_BYTES: u64 = 4 * 1024 * 1024;
+
 /// Job storage trait for persisting jobs
 pub trait JobStorage: Send + Sync {
     /// Save job to storage
@@ -52,6 +54,22 @@ impl FileJobStorage {
         Ok(self.base_path.join(format!("{}.json", id)))
     }
 
+    fn read_job_file(path: &std::path::Path) -> Result<String> {
+        let size = std::fs::metadata(path)?.len();
+        if size > MAX_JOB_FILE_BYTES {
+            return Err(crate::TlsError::InvalidInput {
+                message: format!(
+                    "Job file {} is too large: {} bytes (max {})",
+                    path.display(),
+                    size,
+                    MAX_JOB_FILE_BYTES
+                ),
+            });
+        }
+
+        Ok(std::fs::read_to_string(path)?)
+    }
+
     fn validate_loaded_job(expected_id: &str, job: &ScanJob) -> Result<()> {
         if job.id != expected_id {
             return Err(crate::TlsError::ParseError {
@@ -96,6 +114,16 @@ impl JobStorage for FileJobStorage {
         let path = self.job_path(&job.id)?;
         Self::validate_loaded_job(&job.id, job)?;
         let json = serde_json::to_string_pretty(job)?;
+        if json.len() as u64 > MAX_JOB_FILE_BYTES {
+            return Err(crate::TlsError::InvalidInput {
+                message: format!(
+                    "Job {} is too large to persist: {} bytes (max {})",
+                    job.id,
+                    json.len(),
+                    MAX_JOB_FILE_BYTES
+                ),
+            });
+        }
         std::fs::write(path, json)?;
         Ok(())
     }
@@ -107,7 +135,7 @@ impl JobStorage for FileJobStorage {
             return Ok(None);
         }
 
-        let json = std::fs::read_to_string(path)?;
+        let json = Self::read_job_file(&path)?;
         let job: ScanJob = serde_json::from_str(&json)?;
         Self::validate_loaded_job(id, &job)?;
         Ok(Some(job))
@@ -128,7 +156,7 @@ impl JobStorage for FileJobStorage {
                             message: format!("Invalid job file name: {}", path.display()),
                         })?;
                 self.job_path(expected_id)?;
-                let json = std::fs::read_to_string(&path)?;
+                let json = Self::read_job_file(&path)?;
                 let job = serde_json::from_str::<ScanJob>(&json).map_err(|e| {
                     crate::TlsError::ParseError {
                         message: format!("Failed to parse job file {}: {}", path.display(), e),
@@ -157,6 +185,7 @@ impl JobStorage for FileJobStorage {
 mod tests {
     use super::*;
     use crate::api::models::{request::ScanOptions, response::ScanStatus};
+    use std::fs::File;
     use tempfile::TempDir;
 
     #[test]
@@ -199,6 +228,59 @@ mod tests {
             .expect_err("corrupt persisted job should fail loudly");
 
         assert!(err.to_string().contains("Failed to parse job file"));
+    }
+
+    #[test]
+    fn test_load_job_rejects_oversized_file_before_read() {
+        let temp_dir = TempDir::new().expect("test assertion should succeed");
+        let storage = FileJobStorage::new(temp_dir.path()).expect("test assertion should succeed");
+        let job_id = Uuid::new_v4().to_string();
+        let path = temp_dir.path().join(format!("{job_id}.json"));
+        let file = File::create(&path).expect("test assertion should succeed");
+        file.set_len(MAX_JOB_FILE_BYTES + 1)
+            .expect("test assertion should succeed");
+
+        let err = storage
+            .load_job(&job_id)
+            .expect_err("oversized persisted job should fail before reading");
+
+        assert!(err.to_string().contains("Job file"));
+        assert!(err.to_string().contains("too large"));
+    }
+
+    #[test]
+    fn test_load_all_jobs_rejects_oversized_file_before_read() {
+        let temp_dir = TempDir::new().expect("test assertion should succeed");
+        let storage = FileJobStorage::new(temp_dir.path()).expect("test assertion should succeed");
+        let job_id = Uuid::new_v4().to_string();
+        let path = temp_dir.path().join(format!("{job_id}.json"));
+        let file = File::create(&path).expect("test assertion should succeed");
+        file.set_len(MAX_JOB_FILE_BYTES + 1)
+            .expect("test assertion should succeed");
+
+        let err = storage
+            .load_all_jobs()
+            .expect_err("oversized persisted job should fail before reading");
+
+        assert!(err.to_string().contains("Job file"));
+        assert!(err.to_string().contains("too large"));
+    }
+
+    #[test]
+    fn test_save_job_rejects_oversized_serialized_job() {
+        let temp_dir = TempDir::new().expect("test assertion should succeed");
+        let storage = FileJobStorage::new(temp_dir.path()).expect("test assertion should succeed");
+        let mut job = ScanJob::new("example.com:443".to_string(), ScanOptions::default(), None);
+        job.status = ScanStatus::Failed;
+        job.completed_at = Some(chrono::Utc::now());
+        job.error = Some("x".repeat(MAX_JOB_FILE_BYTES as usize));
+
+        let err = storage
+            .save_job(&job)
+            .expect_err("oversized serialized job should not be written");
+
+        assert!(err.to_string().contains("too large to persist"));
+        assert!(!temp_dir.path().join(format!("{}.json", job.id)).exists());
     }
 
     #[test]
