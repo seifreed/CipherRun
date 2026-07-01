@@ -132,6 +132,7 @@ impl LdapNegotiator {
             });
         }
         offset += msg_len_bytes;
+        let msg_start = offset;
         offset = offset
             .checked_add(msg_len)
             .ok_or_else(|| crate::error::TlsError::ParseError {
@@ -139,6 +140,11 @@ impl LdapNegotiator {
             })?;
         if offset > seq_end {
             return Ok(None);
+        }
+        if bytes.get(msg_start..offset) != Some(&[0x01]) {
+            return Err(crate::error::TlsError::ParseError {
+                message: "LDAP STARTTLS response messageID does not match request".to_string(),
+            });
         }
 
         if bytes.get(offset) != Some(&0x78) {
@@ -391,6 +397,23 @@ mod tests {
             .expect_err("multi-byte LDAP resultCode should fail");
 
         assert!(err.to_string().contains("resultCode length"));
+    }
+
+    #[test]
+    fn test_ldap_parse_rejects_mismatched_message_id() {
+        let response = [
+            0x30, 0x0c, // SEQUENCE, length 12
+            0x02, 0x01, 0x02, // messageID = 2, but request used 1
+            0x78, 0x07, // ExtendedResponse, length 7
+            0x0a, 0x01, 0x00, // success
+            0x04, 0x00, // matchedDN
+            0x04, 0x00, // diagnosticMessage
+        ];
+
+        let err = LdapNegotiator::parse_starttls_response(&response)
+            .expect_err("mismatched LDAP messageID should fail");
+
+        assert!(err.to_string().contains("messageID"));
     }
 
     #[tokio::test]
