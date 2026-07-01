@@ -126,8 +126,7 @@ fn normalized_protocol_name(protocol: &str) -> String {
 
 fn is_tls_version(protocol: &str, version: &str) -> bool {
     let normalized = normalized_protocol_name(protocol);
-    normalized.contains(&format!("TLS{}", version))
-        || normalized.contains(&format!("TLSV{}", version))
+    normalized == format!("TLS{}", version) || normalized == format!("TLSV{}", version)
 }
 
 fn is_ssl_protocol(protocol: &str) -> bool {
@@ -237,6 +236,14 @@ mod tests {
         assert!(summary.contains("TLS 1.3 adoption"));
         assert!(summary.contains("TLS 1.2 usage"));
         assert!(summary.contains("Legacy protocols detected"));
+    }
+
+    #[test]
+    fn test_tls_version_matching_is_exact_after_normalization() {
+        assert!(super::is_tls_version("TLS 1.3", "1.3"));
+        assert!(super::is_tls_version("TLSv1.3", "1.3"));
+        assert!(!super::is_tls_version("TLS 1.30", "1.3"));
+        assert!(!super::is_tls_version("TLS 1.20", "1.2"));
     }
 
     #[tokio::test]

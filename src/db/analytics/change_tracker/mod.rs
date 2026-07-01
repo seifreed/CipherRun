@@ -107,7 +107,7 @@ fn protocol_identity(protocol: &str) -> String {
 
 fn is_tls_version(protocol: &str, version: &str) -> bool {
     let normalized = protocol_identity(protocol);
-    normalized.contains(&format!("TLS{}", version))
+    normalized == format!("TLS{}", version)
 }
 
 fn is_ssl_protocol(protocol: &str) -> bool {
@@ -626,6 +626,14 @@ mod tests {
         assert!(ChangeSeverity::High > ChangeSeverity::Medium);
         assert!(ChangeSeverity::Medium > ChangeSeverity::Low);
         assert!(ChangeSeverity::Low > ChangeSeverity::Info);
+    }
+
+    #[test]
+    fn test_tls_version_matching_is_exact_after_normalization() {
+        assert!(is_tls_version("TLS 1.3", "1.3"));
+        assert!(is_tls_version("TLSv1.3", "1.3"));
+        assert!(!is_tls_version("TLS 1.30", "1.3"));
+        assert!(!is_tls_version("TLS 1.20", "1.2"));
     }
 
     #[tokio::test]
