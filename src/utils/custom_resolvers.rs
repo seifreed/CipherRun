@@ -7,6 +7,7 @@
 /// - Testing behind corporate proxies with custom DNS
 /// - Avoiding DNS spoofing or poisoning from ISP DNS
 use crate::Result;
+use crate::security::input_validation::validate_resolved_ips;
 use hickory_resolver::TokioResolver;
 use hickory_resolver::config::{ConnectionConfig, NameServerConfig, ResolverConfig};
 use hickory_resolver::net::runtime::TokioRuntimeProvider;
@@ -152,6 +153,8 @@ impl CustomResolver {
     /// }
     /// ```
     pub async fn resolve(&self, hostname: &str) -> Result<Vec<IpAddr>> {
+        validate_custom_resolver_hostname(hostname, "hostname")?;
+
         let resolver = self.build_resolver()?;
         let response = tokio::time::timeout(self.query_timeout, resolver.lookup_ip(hostname))
             .await
@@ -181,11 +184,15 @@ impl CustomResolver {
             });
         }
 
+        validate_custom_resolved_ips(hostname, &all_ips)?;
+
         Ok(all_ips)
     }
 
     /// Resolve MX records for a domain using the configured resolvers.
     pub async fn lookup_mx(&self, hostname: &str) -> Result<Vec<(u16, String)>> {
+        validate_custom_resolver_hostname(hostname, "MX hostname")?;
+
         let resolver = self.build_resolver()?;
         let response = tokio::time::timeout(self.query_timeout, resolver.mx_lookup(hostname))
             .await
@@ -280,6 +287,18 @@ fn normalize_mx_hostname(hostname: &str) -> Option<String> {
         return None;
     }
     Some(hostname.trim_end_matches('.').to_string())
+}
+
+fn validate_custom_resolver_hostname(hostname: &str, label: &str) -> Result<()> {
+    crate::security::validate_hostname(hostname).map_err(|error| crate::TlsError::InvalidInput {
+        message: format!("Invalid custom resolver {label}: {error}"),
+    })
+}
+
+fn validate_custom_resolved_ips(hostname: &str, ips: &[IpAddr]) -> Result<()> {
+    validate_resolved_ips(ips, false).map_err(|error| crate::TlsError::InvalidInput {
+        message: format!("Custom resolver result failed SSRF validation for {hostname}: {error}"),
+    })
 }
 
 #[cfg(test)]
@@ -446,6 +465,42 @@ mod tests {
             normalize_mx_hostname("mx.example.com."),
             Some("mx.example.com".to_string())
         );
+    }
+
+    #[tokio::test]
+    async fn test_resolve_rejects_invalid_hostname_before_lookup() {
+        let resolver =
+            CustomResolver::new(vec!["8.8.8.8".to_string()]).expect("resolver should parse");
+
+        let err = resolver
+            .resolve("example.com/path")
+            .await
+            .expect_err("invalid hostname should fail before lookup");
+        assert!(err.to_string().contains("Invalid custom resolver hostname"));
+    }
+
+    #[tokio::test]
+    async fn test_lookup_mx_rejects_invalid_hostname_before_lookup() {
+        let resolver =
+            CustomResolver::new(vec!["8.8.8.8".to_string()]).expect("resolver should parse");
+
+        let err = resolver
+            .lookup_mx("example.com/path")
+            .await
+            .expect_err("invalid MX hostname should fail before lookup");
+        assert!(
+            err.to_string()
+                .contains("Invalid custom resolver MX hostname")
+        );
+    }
+
+    #[test]
+    fn test_validate_custom_resolved_ips_rejects_private_ip() {
+        let ips = ["127.0.0.1".parse().unwrap()];
+
+        let err = validate_custom_resolved_ips("example.com", &ips)
+            .expect_err("private custom resolver answers should be blocked");
+        assert!(err.to_string().contains("SSRF validation"));
     }
 
     #[test]
