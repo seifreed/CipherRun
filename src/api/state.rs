@@ -151,7 +151,7 @@ impl ApiStats {
             .iter()
             .filter(|(t, _)| *t <= now && now.duration_since(*t).as_secs() <= 3600)
             .map(|(_, c)| c)
-            .sum()
+            .fold(0u64, |total, count| total.saturating_add(*count))
     }
 
     /// Get average response time in milliseconds
@@ -397,6 +397,16 @@ mod tests {
         assert_eq!(stats.total_requests, 1);
         assert_eq!(stats.requests_last_hour.len(), 1);
         assert_eq!(stats.requests_in_last_hour(), 1);
+    }
+
+    #[test]
+    fn test_api_stats_requests_in_last_hour_saturates() {
+        let now = Instant::now();
+        let mut stats = ApiStats::default();
+        stats.requests_last_hour.push_back((now, u64::MAX));
+        stats.requests_last_hour.push_back((now, 1));
+
+        assert_eq!(stats.requests_in_last_hour(), u64::MAX);
     }
 
     #[test]
