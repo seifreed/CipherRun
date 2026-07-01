@@ -39,7 +39,15 @@ impl MassScanCommand {
 
     /// Port applied to expanded CIDR/ASN host addresses.
     fn scan_port(&self) -> u16 {
-        self.args.port.unwrap_or(crate::constants::PORT_HTTPS)
+        self.args
+            .port
+            .or_else(|| {
+                self.args
+                    .starttls
+                    .starttls_protocol()
+                    .map(|protocol| protocol.default_port())
+            })
+            .unwrap_or(crate::constants::PORT_HTTPS)
     }
 
     /// Format an expanded host address as a scan target, bracketing IPv6.
@@ -340,6 +348,29 @@ mod tests {
         };
 
         assert_eq!(scanner.targets, vec!["198.51.100.5:8443".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn test_build_mass_scanner_uses_starttls_default_port_for_cidr() {
+        let args = Args {
+            cidr: Some("198.51.100.5/32".to_string()),
+            starttls: crate::cli::StarttlsArgs {
+                smtp: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let cmd = MassScanCommand::new(args);
+
+        let (scanner, _) = match cmd
+            .build_mass_scanner(ScanRequest::default(), MassScanConfig::default())
+            .await
+        {
+            Ok(built) => built,
+            Err(e) => panic!("CIDR expansion should succeed: {e}"),
+        };
+
+        assert_eq!(scanner.targets, vec!["198.51.100.5:25".to_string()]);
     }
 
     #[test]
