@@ -238,8 +238,11 @@ impl OpenSslClient {
 
         // Add proxy
         if let Some(ref proxy) = options.proxy {
+            let proxy = crate::utils::proxy::ProxyConfig::parse(proxy).map_err(|e| {
+                crate::error::TlsError::Other(format!("Invalid proxy configuration: {e}"))
+            })?;
             cmd.arg("-proxy");
-            cmd.arg(proxy);
+            cmd.arg(proxy.authority());
         }
 
         // Add ALPN
@@ -558,6 +561,14 @@ SSL-Session:
         };
         let err = client.run(&options).expect_err("should fail");
         assert!(err.to_string().contains("Invalid STARTTLS"));
+
+        let options = OpenSslClientOptions {
+            host: "example.com".to_string(),
+            proxy: Some("http://proxy.example.com/path".to_string()),
+            ..Default::default()
+        };
+        let err = client.run(&options).expect_err("should fail");
+        assert!(err.to_string().contains("Invalid proxy"));
     }
 
     #[test]
