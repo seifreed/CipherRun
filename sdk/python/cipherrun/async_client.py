@@ -165,7 +165,8 @@ class AsyncCipherRunClient:
         url = _join_url(self.base_url, endpoint)
         session = await self._get_session()
 
-        timeout_obj = ClientTimeout(total=timeout or self.timeout)
+        request_timeout = self.timeout if timeout is None else timeout
+        timeout_obj = ClientTimeout(total=request_timeout)
         rate_limit_retries = 0
         retry_count = 0
 
@@ -196,7 +197,7 @@ class AsyncCipherRunClient:
 
             except asyncio.TimeoutError as e:
                 if retry_count >= self.max_retries:
-                    raise SDKTimeoutError(f"Request timed out after {timeout or self.timeout}s: {str(e)}") from e
+                    raise SDKTimeoutError(f"Request timed out after {request_timeout}s: {str(e)}") from e
                 retry_count += 1
                 await asyncio.sleep(self.retry_backoff**retry_count)
 

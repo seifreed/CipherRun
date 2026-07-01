@@ -159,7 +159,7 @@ class CipherRunClient:
             CipherRunError: On API errors
         """
         url = _join_url(self.base_url, endpoint)
-        timeout = timeout or self.timeout
+        timeout = self.timeout if timeout is None else timeout
 
         rate_limit_retries = 0
 

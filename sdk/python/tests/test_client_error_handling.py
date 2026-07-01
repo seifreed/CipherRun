@@ -159,6 +159,24 @@ def test_rate_limit_exhausted_raises_rate_limit_error_not_value_error(monkeypatc
         client._make_request("GET", "/api/v1/scan/x", max_rate_limit_retries=0)
 
 
+def test_sync_make_request_preserves_explicit_zero_timeout(monkeypatch):
+    client = CipherRunClient(api_key="k")
+    timeouts = []
+
+    def fake_request(*_args, **kwargs):
+        timeouts.append(kwargs["timeout"])
+        response = MagicMock()
+        response.ok = True
+        response.status_code = 200
+        return response
+
+    monkeypatch.setattr(client.session, "request", fake_request)
+
+    client._make_request("GET", "/api/v1/health", timeout=0)
+
+    assert timeouts == [0]
+
+
 def test_sync_client_quotes_path_parameters(monkeypatch):
     client = CipherRunClient(api_key="k")
     endpoints = []
@@ -285,6 +303,39 @@ def test_async_wait_for_scan_failed_raises_api_error(monkeypatch):
 
     with pytest.raises(APIError):
         asyncio.run(run())
+
+
+def test_async_make_request_preserves_explicit_zero_timeout(monkeypatch):
+    client = AsyncCipherRunClient(api_key="k")
+    timeouts = []
+
+    class FakeResponse:
+        status = 200
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def json(self):
+            return {}
+
+    class FakeSession:
+        closed = False
+
+        def request(self, *_args, **kwargs):
+            timeouts.append(kwargs["timeout"].total)
+            return FakeResponse()
+
+    client._session = FakeSession()
+
+    async def run():
+        await client._make_request("GET", "/api/v1/health", timeout=0)
+
+    asyncio.run(run())
+
+    assert timeouts == [0]
 
 
 def test_async_client_quotes_path_parameters(monkeypatch):
