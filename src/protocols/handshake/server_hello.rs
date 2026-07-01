@@ -101,6 +101,9 @@ impl ServerHelloParser {
         if hs_end > record.len() {
             crate::tls_bail!("ServerHello handshake length exceeds record length");
         }
+        if hs_end != record.len() {
+            crate::tls_bail!("ServerHello record contains trailing bytes after handshake");
+        }
         let record = Self::slice_range(record, 0, hs_end, "ServerHello handshake")?;
         offset = hs_body_start;
 
@@ -374,7 +377,7 @@ mod tests {
     }
 
     #[test]
-    fn test_server_hello_ignores_extensions_after_handshake_end() {
+    fn test_server_hello_rejects_extensions_after_handshake_end() {
         let mut server_hello = vec![
             0x16, 0x03, 0x03, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x03, 0x03,
         ];
@@ -391,10 +394,9 @@ mod tests {
         server_hello[4] = (record_len & 0xff) as u8;
         server_hello[6..9].copy_from_slice(&handshake_len);
 
-        let parsed =
-            ServerHelloParser::parse(&server_hello).expect("test assertion should succeed");
-        assert_eq!(parsed.heartbeat_enabled, None);
-        assert!(!parsed.has_extension(0x000f));
+        let err = ServerHelloParser::parse(&server_hello)
+            .expect_err("trailing bytes after handshake should fail");
+        assert!(err.to_string().contains("trailing bytes"));
     }
 
     #[test]
