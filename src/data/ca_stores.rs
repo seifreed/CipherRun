@@ -12,7 +12,8 @@ static CA_STORES_INNER: std::sync::OnceLock<Arc<CAStores>> = std::sync::OnceLock
 /// Get the global CA stores
 ///
 /// Returns the stores if already initialized, or initializes it on first call.
-/// Initialization errors are logged and an empty store is used as fallback.
+/// Initialization errors are fatal because an empty trust store would make
+/// certificate validation results misleading.
 pub fn ca_stores() -> Arc<CAStores> {
     CA_STORES_INNER
         .get_or_init(|| ca_stores_from_load_result(CAStores::load()))
@@ -21,8 +22,7 @@ pub fn ca_stores() -> Arc<CAStores> {
 
 fn ca_stores_from_load_result(result: Result<CAStores>) -> Arc<CAStores> {
     Arc::new(result.unwrap_or_else(|e| {
-        tracing::error!("Failed to load CA stores: {e}");
-        CAStores::empty()
+        panic!("Failed to load CA stores: {e}");
     }))
 }
 
@@ -256,12 +256,8 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "Failed to load CA stores")]
     fn test_ca_stores_load_error_is_not_suppressed() {
-        let stores = ca_stores_from_load_result(Err(crate::TlsError::Other(
-            "broken store".into(),
-        )));
-
-        assert_eq!(stores.total_certificates(), 0);
-        assert_eq!(stores.mozilla.name, "Mozilla");
+        let _ = ca_stores_from_load_result(Err(crate::TlsError::Other("broken store".into())));
     }
 }
