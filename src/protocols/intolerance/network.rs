@@ -116,8 +116,6 @@ impl IntoleranceTester {
     }
 
     pub(super) async fn extract_dh_prime(&self) -> Result<Option<String>> {
-        use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
-
         let addr = self
             .target
             .socket_addrs()
@@ -133,12 +131,7 @@ impl IntoleranceTester {
 
         let hostname = self.target.hostname.clone();
         tokio::task::spawn_blocking(move || -> Result<Option<String>> {
-            let mut builder = SslConnector::builder(SslMethod::tls())?;
-            // Certificate validity is irrelevant to the negotiated DH prime; a
-            // verifying connector would fail the handshake at cert validation on
-            // bad-cert hosts and leave a weak/known DH prime undetected.
-            builder.set_verify(SslVerifyMode::NONE);
-            builder.set_cipher_list("DHE:EDH:!aNULL:!eNULL")?;
+            let builder = build_dh_prime_connector_builder()?;
 
             let connector = builder.build();
             match connector.connect(&hostname, std_stream) {
@@ -190,12 +183,34 @@ impl IntoleranceTester {
     }
 }
 
+fn build_dh_prime_connector_builder() -> Result<openssl::ssl::SslConnectorBuilder> {
+    use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode, SslVersion};
+
+    let mut builder = SslConnector::builder(SslMethod::tls())?;
+    // Certificate validity is irrelevant to the negotiated DH prime; a
+    // verifying connector would fail the handshake at cert validation on
+    // bad-cert hosts and leave a weak/known DH prime undetected.
+    builder.set_verify(SslVerifyMode::NONE);
+    builder.set_cipher_list("DHE:EDH:!aNULL:!eNULL")?;
+    builder.set_max_proto_version(Some(SslVersion::TLS1_2))?;
+    Ok(builder)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::utils::network::Target;
+    use openssl::ssl::SslVersion;
     use std::time::Duration;
     use tokio::io::AsyncWriteExt;
+
+    #[test]
+    fn test_dh_prime_connector_is_limited_to_tls12() {
+        let mut builder =
+            build_dh_prime_connector_builder().expect("DH prime connector should build");
+
+        assert_eq!(builder.max_proto_version(), Some(SslVersion::TLS1_2));
+    }
 
     #[tokio::test]
     async fn test_send_and_read_alert_rejects_truncated_alert() {
