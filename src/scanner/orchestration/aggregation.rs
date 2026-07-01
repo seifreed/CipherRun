@@ -55,7 +55,7 @@ impl Scanner {
         let total_attempts: u32 = attempted_statuses
             .iter()
             .map(|(_, status)| status.attempts)
-            .sum();
+            .fold(0u32, u32::saturating_add);
         let successful_statuses: Vec<_> = attempted_statuses
             .iter()
             .copied()

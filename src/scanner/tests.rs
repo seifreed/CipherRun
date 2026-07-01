@@ -1231,6 +1231,88 @@ fn test_build_conservative_multi_ip_result_aggregates_probe_metadata() {
 }
 
 #[test]
+fn test_build_conservative_multi_ip_result_saturates_probe_attempts() {
+    let args = Args {
+        target: Some("example.com".to_string()),
+        scan: crate::cli::ScanArgs {
+            all: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let scanner = Scanner::new(args.to_scan_request().expect("scan request should build"))
+        .expect("test assertion should succeed");
+
+    let ip1: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+    let ip2: std::net::IpAddr = "127.0.0.2".parse().unwrap();
+
+    let mut first_status = ProbeStatus::success(Duration::from_millis(10));
+    first_status.attempts = u32::MAX;
+    let mut second_status = ProbeStatus::success(Duration::from_millis(20));
+    second_status.attempts = 1;
+
+    let mut per_ip_results = HashMap::new();
+    per_ip_results.insert(
+        ip1,
+        crate::scanner::inconsistency::SingleIpScanResult {
+            ip: ip1,
+            scan_result: ScanResults {
+                scan_metadata: ScanMetadata {
+                    probe_status: first_status,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            scan_duration_ms: 10,
+            error: None,
+        },
+    );
+    per_ip_results.insert(
+        ip2,
+        crate::scanner::inconsistency::SingleIpScanResult {
+            ip: ip2,
+            scan_result: ScanResults {
+                scan_metadata: ScanMetadata {
+                    probe_status: second_status,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            scan_duration_ms: 20,
+            error: None,
+        },
+    );
+
+    let report = crate::scanner::multi_ip::MultiIpScanReport {
+        target: Target::with_ips("example.com".to_string(), 443, vec![ip1, ip2])
+            .expect("test assertion should succeed"),
+        per_ip_results,
+        total_ips: 2,
+        successful_scans: 2,
+        failed_scans: 0,
+        total_duration_ms: 30,
+        inconsistencies: Vec::new(),
+        aggregated: crate::scanner::aggregation::AggregatedScanResult {
+            protocols: Vec::new(),
+            ciphers: HashMap::new(),
+            grade: ("F".to_string(), 0),
+            certificate_info: None,
+            certificate_consistent: true,
+            inconsistencies: Vec::new(),
+            alpn_protocols: Vec::new(),
+            session_resumption_caching: None,
+            session_resumption_tickets: None,
+        },
+    };
+
+    let result = scanner
+        .build_conservative_multi_ip_result(&report)
+        .expect("test assertion should succeed");
+
+    assert_eq!(result.scan_metadata.probe_status.attempts, u32::MAX);
+}
+
+#[test]
 fn test_build_conservative_multi_ip_result_keeps_success_with_failed_ips() {
     let args = Args {
         target: Some("example.com".to_string()),
