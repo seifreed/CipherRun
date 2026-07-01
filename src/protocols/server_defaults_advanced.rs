@@ -250,6 +250,7 @@ impl ServerDefaultsAdvancedTester {
                     ),
                 });
             }
+            builder.set_max_proto_version(Some(openssl::ssl::SslVersion::TLS1_2))?;
 
             let connector = builder.build();
 
