@@ -78,6 +78,9 @@ impl ProxyConfig {
         if host.is_empty() {
             crate::tls_bail!("Proxy host cannot be empty");
         }
+        crate::security::validate_hostname(&host).map_err(|error| TlsError::InvalidInput {
+            message: format!("Invalid proxy host: {error}"),
+        })?;
         // Default to port 8080 for HTTP proxies
         Ok((host, port.unwrap_or(8080)))
     }
@@ -354,6 +357,13 @@ mod tests {
         let err = ProxyConfig::parse("http://https://proxy.example.com:443")
             .expect_err("nested proxy URL should fail");
         assert!(err.to_string().contains("Proxy host must be host"));
+    }
+
+    #[test]
+    fn test_parse_proxy_rejects_url_path() {
+        let err = ProxyConfig::parse("http://proxy.example.com/path")
+            .expect_err("proxy URL paths should fail at parse time");
+        assert!(err.to_string().contains("Invalid proxy host"));
     }
 
     #[test]
