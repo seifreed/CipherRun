@@ -410,7 +410,7 @@ impl CertificateParser {
         let aia_url = super::extraction::extract_aia_url(&cert)?;
 
         // Check for Certificate Transparency (SCT extension)
-        let certificate_transparency = super::checks::check_certificate_transparency(&cert);
+        let certificate_transparency = super::checks::check_certificate_transparency(&cert)?;
 
         Ok(CertificateInfo {
             subject: cert.subject().to_string(),
@@ -771,6 +771,15 @@ mod tests {
                 .to_string()
                 .contains("Authority Information Access extension")
         );
+    }
+
+    #[test]
+    fn test_parse_certificate_rejects_malformed_sct_extension() {
+        let der = cert_with_raw_extension_der("1.3.6.1.4.1.11129.2.4.2", b"\x04\x82\x00");
+        let error = CertificateParser::parse_certificate(&der)
+            .expect_err("malformed SCT extension should fail");
+
+        assert!(error.to_string().contains("Malformed SCT extension"));
     }
 
     #[test]

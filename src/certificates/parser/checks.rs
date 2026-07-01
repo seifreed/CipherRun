@@ -37,10 +37,12 @@ pub(crate) fn check_debian_weak_key(der_bytes: &[u8]) -> crate::Result<Option<bo
 /// * `cert` - X.509 certificate to check
 ///
 /// # Returns
-/// * `Some("Yes (certificate)")` - Certificate has SCT extension
-/// * `Some("No")` - Certificate does not have SCT extension
-/// * `None` - Unable to check (parsing error)
-pub(crate) fn check_certificate_transparency(cert: &X509Certificate) -> Option<String> {
+/// * `Ok(Some("Yes (certificate)"))` - Certificate has at least one embedded SCT
+/// * `Ok(Some("No"))` - Certificate does not have embedded SCTs
+/// * `Err(_)` - SCT extension is present but malformed
+pub(crate) fn check_certificate_transparency(
+    cert: &X509Certificate,
+) -> crate::Result<Option<String>> {
     // SCT extension OID: 1.3.6.1.4.1.11129.2.4.2
     const SCT_EXTENSION_OID: &str = "1.3.6.1.4.1.11129.2.4.2";
 
@@ -48,11 +50,16 @@ pub(crate) fn check_certificate_transparency(cert: &X509Certificate) -> Option<S
     for ext in cert.extensions() {
         let oid_str = ext.oid.to_id_string();
         if oid_str == SCT_EXTENSION_OID {
-            // SCT extension found - certificate contains embedded SCTs
-            return Some("Yes (certificate)".to_string());
+            let count = crate::certificates::ct::CtVerifier::new(false)
+                .count_scts_in_extension_value(ext.value)?;
+            return Ok(Some(if count > 0 {
+                "Yes (certificate)".to_string()
+            } else {
+                "No".to_string()
+            }));
         }
     }
 
     // No SCT extension found
-    Some("No".to_string())
+    Ok(Some("No".to_string()))
 }

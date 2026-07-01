@@ -152,7 +152,7 @@ impl CtVerifier {
     /// in an inner DER OCTET STRING. It must be unwrapped first; counting against
     /// the raw value would read the inner OCTET STRING tag/length as the SCT-list
     /// length and yield a wrong (usually zero) count.
-    fn count_scts_in_extension_value(&self, ext_value: &[u8]) -> Result<usize> {
+    pub(crate) fn count_scts_in_extension_value(&self, ext_value: &[u8]) -> Result<usize> {
         let parsed_inner = der_parser::der::parse_der_octetstring(ext_value);
         let sct_list: &[u8] = match &parsed_inner {
             Ok((rest, _)) if !rest.is_empty() => {
