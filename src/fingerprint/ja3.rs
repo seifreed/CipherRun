@@ -4,8 +4,10 @@
 
 use crate::Result;
 use crate::fingerprint::client_hello_capture::ClientHelloCapture;
+use serde::de::{MapAccess, Visitor};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fmt;
 
 /// JA3 Fingerprint structure containing the raw string and hash
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -246,8 +248,7 @@ impl Ja3Database {
     /// Load database from JSON file
     pub fn from_file(path: &std::path::Path) -> Result<Self> {
         let contents = std::fs::read_to_string(path)?;
-        let signatures: HashMap<String, Ja3Signature> = serde_json::from_str(&contents)?;
-        Self::from_signatures(signatures)
+        Self::from_json(&contents)
     }
 
     /// Load the default database from the embedded JA3 signature JSON.
@@ -258,8 +259,27 @@ impl Ja3Database {
     /// malware/C2 families).
     pub fn load_default() -> Result<Self> {
         let json = include_str!("../../data/ja3_signatures.json");
-        let signatures: HashMap<String, Ja3Signature> = serde_json::from_str(json)?;
-        Self::from_signatures(signatures)
+        Self::from_json(json)
+    }
+
+    fn from_json(json: &str) -> Result<Self> {
+        let mut deserializer = serde_json::Deserializer::from_str(json);
+        let signatures =
+            serde::Deserializer::deserialize_map(&mut deserializer, Ja3SignaturePairsVisitor)?;
+        deserializer.end()?;
+        Self::from_signature_pairs(signatures)
+    }
+
+    fn from_signature_pairs(signatures: Vec<(String, Ja3Signature)>) -> Result<Self> {
+        let mut by_hash = HashMap::new();
+        for (hash, signature) in signatures {
+            if by_hash.insert(hash.clone(), signature).is_some() {
+                return Err(crate::TlsError::ParseError {
+                    message: format!("Duplicate JA3 signature hash: {hash}"),
+                });
+            }
+        }
+        Self::from_signatures(by_hash)
     }
 
     fn from_signatures(signatures: HashMap<String, Ja3Signature>) -> Result<Self> {
@@ -391,6 +411,27 @@ impl Ja3Database {
     }
 }
 
+struct Ja3SignaturePairsVisitor;
+
+impl<'de> Visitor<'de> for Ja3SignaturePairsVisitor {
+    type Value = Vec<(String, Ja3Signature)>;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a JA3 signature object")
+    }
+
+    fn visit_map<M>(self, mut access: M) -> std::result::Result<Self::Value, M::Error>
+    where
+        M: MapAccess<'de>,
+    {
+        let mut signatures = Vec::with_capacity(access.size_hint().unwrap_or(0));
+        while let Some((hash, signature)) = access.next_entry()? {
+            signatures.push((hash, signature));
+        }
+        Ok(signatures)
+    }
+}
+
 impl Default for Ja3Database {
     fn default() -> Self {
         Self::new()
@@ -492,10 +533,32 @@ mod tests {
             },
         );
 
-        let err = Ja3Database::from_signatures(signatures)
-            .expect_err("invalid JA3 hash should fail");
+        let err =
+            Ja3Database::from_signatures(signatures).expect_err("invalid JA3 hash should fail");
 
         assert!(err.to_string().contains("Invalid JA3 signature hash"));
+    }
+
+    #[test]
+    fn test_database_load_rejects_duplicate_json_hashes() {
+        let json = r#"{
+            "773906b0efdefa24a7f2b8eb6985bf37": {
+                "name": "One",
+                "category": "Browser",
+                "description": "First",
+                "threat_level": "none"
+            },
+            "773906b0efdefa24a7f2b8eb6985bf37": {
+                "name": "Two",
+                "category": "Tool",
+                "description": "Second",
+                "threat_level": "low"
+            }
+        }"#;
+
+        let err = Ja3Database::from_json(json).expect_err("duplicate JA3 hash should fail");
+
+        assert!(err.to_string().contains("Duplicate JA3 signature hash"));
     }
 
     #[test]

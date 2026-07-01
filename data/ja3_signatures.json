@@ -149,12 +149,6 @@
     "description": "IcedID banking trojan",
     "threat_level": "critical"
   },
-  "5d6e7f8e9d0c1b2a3c4d5e6f7f8e9d0c": {
-    "name": "Ursnif",
-    "category": "Malware",
-    "description": "Ursnif/Gozi banking trojan",
-    "threat_level": "critical"
-  },
   "6d7e8f9e0d1c2b3a4c5d6e7f8f9e0d1c": {
     "name": "ZLoader",
     "category": "Malware",
