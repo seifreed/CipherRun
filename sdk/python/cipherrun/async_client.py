@@ -219,7 +219,7 @@ class AsyncCipherRunClient:
 
         Args:
             target: Target to scan (hostname:port or just hostname)
-            options: Scan options (uses default if None)
+            options: Scan options (API defaults to a full scan if None)
             webhook_url: Optional webhook URL to call when scan completes
 
         Returns:
@@ -231,10 +231,10 @@ class AsyncCipherRunClient:
         """
         request = ScanRequest(
             target=target,
-            options=options or ScanOptions(),
+            options=options,
             webhook_url=webhook_url,
         )
-        data = await self._make_request("POST", "/api/v1/scan", json_data=request.model_dump())
+        data = await self._make_request("POST", "/api/v1/scan", json_data=request.model_dump(exclude_none=True))
         return ScanResponse(**data)
 
     async def get_scan_status(self, scan_id: str) -> ScanStatusResponse:

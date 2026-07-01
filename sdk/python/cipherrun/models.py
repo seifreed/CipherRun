@@ -11,8 +11,10 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 # Enums
 
+
 class ScanStatus(str, Enum):
     """Scan status enumeration."""
+
     QUEUED = "queued"
     RUNNING = "running"
     COMPLETED = "completed"
@@ -22,6 +24,7 @@ class ScanStatus(str, Enum):
 
 class Severity(str, Enum):
     """Severity level enumeration."""
+
     CRITICAL = "Critical"
     HIGH = "High"
     MEDIUM = "Medium"
@@ -31,6 +34,7 @@ class Severity(str, Enum):
 
 class SecurityGrade(str, Enum):
     """Security grade enumeration."""
+
     A_PLUS = "A+"
     A = "A"
     A_MINUS = "A-"
@@ -52,8 +56,10 @@ class SecurityGrade(str, Enum):
 
 # Request Models
 
+
 class ScanOptions(BaseModel):
     """Scan configuration options."""
+
     model_config = ConfigDict(extra="allow")
 
     test_protocols: bool = Field(default=False, description="Test all SSL/TLS protocols")
@@ -97,15 +103,17 @@ class ScanOptions(BaseModel):
 
 class ScanRequest(BaseModel):
     """Request to create a new scan."""
+
     model_config = ConfigDict(extra="allow")
 
     target: str = Field(..., description="Target to scan (hostname:port or just hostname)")
-    options: ScanOptions = Field(default_factory=ScanOptions, description="Scan options")
+    options: Optional[ScanOptions] = Field(default=None, description="Scan options")
     webhook_url: Optional[str] = Field(default=None, description="Webhook URL to call when scan completes")
 
 
 class PolicyRequest(BaseModel):
     """Request to create or update a policy."""
+
     model_config = ConfigDict(extra="allow")
 
     name: str = Field(..., description="Policy name")
@@ -116,6 +124,7 @@ class PolicyRequest(BaseModel):
 
 class PolicyEvaluationRequest(BaseModel):
     """Request to evaluate a target against a policy."""
+
     model_config = ConfigDict(extra="allow")
 
     target: str = Field(..., description="Target to evaluate")
@@ -124,6 +133,7 @@ class PolicyEvaluationRequest(BaseModel):
 
 class ComplianceCheckRequest(BaseModel):
     """Request for compliance check."""
+
     model_config = ConfigDict(extra="allow")
 
     target: str = Field(..., description="Target to check")
@@ -133,8 +143,10 @@ class ComplianceCheckRequest(BaseModel):
 
 # Response Models
 
+
 class ScanResponse(BaseModel):
     """Response when creating a scan."""
+
     model_config = ConfigDict(extra="allow")
 
     scan_id: str = Field(..., description="Unique scan ID")
@@ -147,6 +159,7 @@ class ScanResponse(BaseModel):
 
 class ScanStatusResponse(BaseModel):
     """Response for scan status."""
+
     model_config = ConfigDict(extra="allow")
 
     scan_id: str = Field(..., description="Unique scan ID")
@@ -162,6 +175,7 @@ class ScanStatusResponse(BaseModel):
 
 class ProgressMessage(BaseModel):
     """WebSocket progress message."""
+
     model_config = ConfigDict(extra="allow")
 
     msg_type: str = Field(..., description="Message type")
@@ -174,6 +188,7 @@ class ProgressMessage(BaseModel):
 
 class CertificateSummary(BaseModel):
     """Certificate summary information."""
+
     model_config = ConfigDict(extra="allow")
 
     fingerprint: str = Field(..., description="SHA-256 fingerprint")
@@ -190,6 +205,7 @@ class CertificateSummary(BaseModel):
 
 class CertificateListResponse(BaseModel):
     """Response for certificate list."""
+
     model_config = ConfigDict(extra="allow")
 
     total: int = Field(..., description="Total count of certificates")
@@ -200,6 +216,7 @@ class CertificateListResponse(BaseModel):
 
 class PolicyCheckResult(BaseModel):
     """Individual policy check result."""
+
     model_config = ConfigDict(extra="allow")
 
     check: str = Field(..., description="Check name")
@@ -212,6 +229,7 @@ class PolicyCheckResult(BaseModel):
 
 class PolicyResponse(BaseModel):
     """Policy details response."""
+
     model_config = ConfigDict(extra="allow")
 
     id: str = Field(..., description="Policy ID")
@@ -225,6 +243,7 @@ class PolicyResponse(BaseModel):
 
 class PolicyEvaluationResponse(BaseModel):
     """Policy evaluation result."""
+
     model_config = ConfigDict(extra="allow")
 
     policy_id: str = Field(..., description="Policy ID")
@@ -238,6 +257,7 @@ class PolicyEvaluationResponse(BaseModel):
 
 class HealthResponse(BaseModel):
     """Health check response."""
+
     model_config = ConfigDict(extra="allow")
 
     status: str = Field(..., description="Service status")
@@ -251,6 +271,7 @@ class HealthResponse(BaseModel):
 
 class DomainStats(BaseModel):
     """Domain statistics."""
+
     model_config = ConfigDict(extra="allow")
 
     domain: str = Field(..., description="Domain name")
@@ -260,6 +281,7 @@ class DomainStats(BaseModel):
 
 class ApiUsageStats(BaseModel):
     """API usage statistics."""
+
     model_config = ConfigDict(extra="allow")
 
     requests_last_hour: int = Field(..., description="Requests in last hour")
@@ -269,6 +291,7 @@ class ApiUsageStats(BaseModel):
 
 class StatsResponse(BaseModel):
     """API statistics response."""
+
     model_config = ConfigDict(extra="allow")
 
     total_scans: int = Field(..., description="Total scans performed")
@@ -283,6 +306,7 @@ class StatsResponse(BaseModel):
 
 class HistoricalScan(BaseModel):
     """Historical scan record."""
+
     model_config = ConfigDict(extra="allow")
 
     scan_id: int = Field(..., description="Scan ID")
@@ -294,6 +318,7 @@ class HistoricalScan(BaseModel):
 
 class ScanHistoryResponse(BaseModel):
     """Scan history response."""
+
     model_config = ConfigDict(extra="allow")
 
     domain: str = Field(..., description="Domain")
@@ -304,8 +329,10 @@ class ScanHistoryResponse(BaseModel):
 
 # Scan Results Models
 
+
 class ProtocolTestResult(BaseModel):
     """Protocol test result."""
+
     model_config = ConfigDict(extra="allow")
 
     protocol: str = Field(..., description="Protocol name")
@@ -322,6 +349,7 @@ class ProtocolTestResult(BaseModel):
 
 class CipherInfo(BaseModel):
     """Cipher suite information."""
+
     model_config = ConfigDict(extra="allow")
 
     iana_name: str = Field(..., description="IANA cipher name")
@@ -336,6 +364,7 @@ class CipherInfo(BaseModel):
 
 class CipherCounts(BaseModel):
     """Cipher suite counts and statistics."""
+
     model_config = ConfigDict(extra="allow")
 
     total: int = Field(default=0, description="Total cipher suites")
@@ -350,6 +379,7 @@ class CipherCounts(BaseModel):
 
 class ProtocolCipherSummary(BaseModel):
     """Cipher summary for a protocol."""
+
     model_config = ConfigDict(extra="allow")
 
     protocol: str = Field(..., description="Protocol name")
@@ -362,6 +392,7 @@ class ProtocolCipherSummary(BaseModel):
 
 class CertificateInfo(BaseModel):
     """Certificate information."""
+
     model_config = ConfigDict(extra="allow")
 
     subject: str = Field(..., description="Certificate subject")
@@ -380,6 +411,7 @@ class CertificateInfo(BaseModel):
 
 class ValidationIssue(BaseModel):
     """Certificate validation issue."""
+
     model_config = ConfigDict(extra="allow")
 
     severity: str = Field(..., description="Issue severity")
@@ -388,6 +420,7 @@ class ValidationIssue(BaseModel):
 
 class ValidationResult(BaseModel):
     """Certificate validation result."""
+
     model_config = ConfigDict(extra="allow")
 
     valid: bool = Field(..., description="Overall validity")
@@ -400,6 +433,7 @@ class ValidationResult(BaseModel):
 
 class RevocationResult(BaseModel):
     """Certificate revocation check result."""
+
     model_config = ConfigDict(extra="allow")
 
     status: str = Field(..., description="Revocation status")
@@ -409,6 +443,7 @@ class RevocationResult(BaseModel):
 
 class CertificateChain(BaseModel):
     """Certificate chain information."""
+
     model_config = ConfigDict(extra="allow")
 
     certificates: List[CertificateInfo] = Field(default_factory=list, description="Certificate chain")
@@ -418,6 +453,7 @@ class CertificateChain(BaseModel):
 
 class CertificateAnalysisResult(BaseModel):
     """Complete certificate analysis result."""
+
     model_config = ConfigDict(extra="allow")
 
     chain: CertificateChain = Field(..., description="Certificate chain")
@@ -427,6 +463,7 @@ class CertificateAnalysisResult(BaseModel):
 
 class HeaderIssue(BaseModel):
     """HTTP header security issue."""
+
     model_config = ConfigDict(extra="allow")
 
     header_name: str = Field(..., description="Header name")
@@ -438,6 +475,7 @@ class HeaderIssue(BaseModel):
 
 class HeaderAnalysisResult(BaseModel):
     """HTTP security headers analysis result."""
+
     model_config = ConfigDict(extra="allow")
 
     grade: str = Field(..., description="Security grade")
@@ -449,6 +487,7 @@ class HeaderAnalysisResult(BaseModel):
 
 class VulnerabilityResult(BaseModel):
     """Vulnerability test result."""
+
     model_config = ConfigDict(extra="allow")
 
     vuln_type: str = Field(..., description="Vulnerability type")
@@ -462,6 +501,7 @@ class VulnerabilityResult(BaseModel):
 
 class ClientSimulationResult(BaseModel):
     """Client simulation result."""
+
     model_config = ConfigDict(extra="allow")
 
     client_name: str = Field(..., description="Client name")
@@ -474,6 +514,7 @@ class ClientSimulationResult(BaseModel):
 
 class RatingResult(BaseModel):
     """SSL Labs style rating result."""
+
     model_config = ConfigDict(extra="allow")
 
     grade: SecurityGrade = Field(..., description="Overall grade")
@@ -487,6 +528,7 @@ class RatingResult(BaseModel):
 
 class ScanResults(BaseModel):
     """Complete scan results."""
+
     model_config = ConfigDict(extra="allow")
 
     target: str = Field(..., description="Target scanned")
@@ -523,6 +565,7 @@ class ScanResults(BaseModel):
 
 class ComplianceSummary(BaseModel):
     """Compliance check summary."""
+
     model_config = ConfigDict(extra="allow")
 
     total: int = Field(..., description="Total requirements")
@@ -534,6 +577,7 @@ class ComplianceSummary(BaseModel):
 
 class ViolationDetail(BaseModel):
     """Compliance violation detail."""
+
     model_config = ConfigDict(extra="allow")
 
     rule_type: str = Field(..., description="Rule type that was violated")
@@ -543,6 +587,7 @@ class ViolationDetail(BaseModel):
 
 class RequirementResult(BaseModel):
     """Compliance requirement result."""
+
     model_config = ConfigDict(extra="allow")
 
     id: str = Field(..., description="Requirement ID")
@@ -557,6 +602,7 @@ class RequirementResult(BaseModel):
 
 class ComplianceReport(BaseModel):
     """Compliance check report."""
+
     model_config = ConfigDict(extra="allow")
 
     framework_id: str = Field(..., description="Compliance framework ID")
@@ -581,6 +627,7 @@ class ComplianceReport(BaseModel):
 
 class ApiErrorResponse(BaseModel):
     """API error response."""
+
     model_config = ConfigDict(extra="allow")
 
     status: int = Field(..., description="HTTP status code")

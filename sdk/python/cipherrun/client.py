@@ -206,7 +206,7 @@ class CipherRunClient:
 
         Args:
             target: Target to scan (hostname:port or just hostname)
-            options: Scan options (uses default if None)
+            options: Scan options (API defaults to a full scan if None)
             webhook_url: Optional webhook URL to call when scan completes
 
         Returns:
@@ -218,10 +218,10 @@ class CipherRunClient:
         """
         request = ScanRequest(
             target=target,
-            options=options or ScanOptions(),
+            options=options,
             webhook_url=webhook_url,
         )
-        response = self._make_request("POST", "/api/v1/scan", json_data=request.model_dump())
+        response = self._make_request("POST", "/api/v1/scan", json_data=request.model_dump(exclude_none=True))
         return ScanResponse(**response.json())
 
     def get_scan_status(self, scan_id: str) -> ScanStatusResponse:

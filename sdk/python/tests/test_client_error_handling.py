@@ -37,7 +37,7 @@ from cipherrun.client import (
     _safe_error_data,
 )
 from cipherrun.exceptions import APIError, CipherRunError, RateLimitError
-from cipherrun.models import ScanStatusResponse
+from cipherrun.models import ScanOptions, ScanStatusResponse
 from cipherrun.websocket import WebSocketProgressClient, _websocket_header_kwargs
 
 
@@ -180,6 +180,51 @@ def test_sync_client_quotes_path_parameters(monkeypatch):
     assert endpoints == ["/api/v1/scan/scan%2F1"]
 
 
+def test_sync_create_scan_omits_missing_options(monkeypatch):
+    client = CipherRunClient(api_key="k")
+    payloads = []
+
+    def fake_request(_method, _endpoint, **kwargs):
+        payloads.append(kwargs["json_data"])
+        response = MagicMock()
+        response.json.return_value = {
+            "scan_id": "scan-1",
+            "status": "queued",
+            "target": "example.com:443",
+            "queued_at": "2026-01-01T00:00:00Z",
+        }
+        return response
+
+    monkeypatch.setattr(client, "_make_request", fake_request)
+
+    client.create_scan("example.com")
+
+    assert payloads == [{"target": "example.com"}]
+
+
+def test_sync_create_scan_preserves_explicit_options(monkeypatch):
+    client = CipherRunClient(api_key="k")
+    payloads = []
+
+    def fake_request(_method, _endpoint, **kwargs):
+        payloads.append(kwargs["json_data"])
+        response = MagicMock()
+        response.json.return_value = {
+            "scan_id": "scan-1",
+            "status": "queued",
+            "target": "example.com:443",
+            "queued_at": "2026-01-01T00:00:00Z",
+        }
+        return response
+
+    monkeypatch.setattr(client, "_make_request", fake_request)
+
+    client.create_scan("example.com", ScanOptions())
+
+    assert payloads[0]["options"]["timeout_seconds"] == 30
+    assert payloads[0]["options"]["test_protocols"] is False
+
+
 def test_join_url_preserves_base_path_prefix():
     assert _join_url("https://example.com/cipherrun", "/api/v1/health") == "https://example.com/cipherrun/api/v1/health"
     assert (
@@ -238,6 +283,29 @@ def test_async_client_quotes_path_parameters(monkeypatch):
     asyncio.run(run())
 
     assert endpoints == ["/api/v1/scan/scan%2F1"]
+
+
+def test_async_create_scan_omits_missing_options(monkeypatch):
+    client = AsyncCipherRunClient(api_key="k")
+    payloads = []
+
+    async def fake_request(_method, _endpoint, **kwargs):
+        payloads.append(kwargs["json_data"])
+        return {
+            "scan_id": "scan-1",
+            "status": "queued",
+            "target": "example.com:443",
+            "queued_at": "2026-01-01T00:00:00Z",
+        }
+
+    monkeypatch.setattr(client, "_make_request", fake_request)
+
+    async def run():
+        await client.create_scan("example.com")
+
+    asyncio.run(run())
+
+    assert payloads == [{"target": "example.com"}]
 
 
 def test_websocket_client_quotes_scan_id_and_preserves_base_path(monkeypatch):
