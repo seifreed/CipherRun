@@ -110,23 +110,22 @@ impl Rule {
             return true;
         }
 
-        let mut has_valid = false;
         for pattern in &self.allowed_patterns {
             match compile_rule_pattern(pattern) {
                 Ok(re) => {
-                    has_valid = true;
                     if re.is_match(value) {
                         return true;
                     }
                 }
-                Err(e) => tracing::warn!("Invalid allowed_pattern '{}': {}", pattern, e),
+                Err(e) => {
+                    tracing::warn!(
+                        "Invalid allowed_pattern '{}': {}; treating as no match (fail-closed)",
+                        pattern,
+                        e
+                    );
+                    return false;
+                }
             }
-        }
-        if !has_valid {
-            tracing::error!(
-                "All allowed_patterns are invalid regexes — skipping pattern check (fail-open)"
-            );
-            return true;
         }
         false
     }
@@ -286,7 +285,7 @@ mod tests {
             rule_type: "CipherSuite".to_string(),
             allowed: vec![],
             denied: vec![],
-            allowed_patterns: vec!["[invalid".to_string(), "TLS_.*".to_string()],
+            allowed_patterns: vec!["TLS_.*".to_string()],
             denied_patterns: vec![],
             preferred_patterns: vec![],
             min_rsa_bits: None,
@@ -326,7 +325,7 @@ mod tests {
     }
 
     #[test]
-    fn test_rule_allowed_patterns_all_invalid() {
+    fn test_rule_allowed_patterns_invalid_fails_closed() {
         let rule = Rule {
             rule_type: "CipherSuite".to_string(),
             allowed: vec![],
@@ -344,8 +343,7 @@ mod tests {
             custom_params: HashMap::new(),
         };
 
-        // All patterns invalid → fail-open: don't block everything due to misconfiguration
-        assert!(rule.matches_allowed_pattern("TLS_AES_128_GCM_SHA256"));
+        assert!(!rule.matches_allowed_pattern("TLS_AES_128_GCM_SHA256"));
     }
 
     #[test]
