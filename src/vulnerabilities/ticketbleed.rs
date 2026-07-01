@@ -6,7 +6,10 @@
 // session keys, passwords, and other confidential data.
 
 use crate::Result;
-use crate::constants::{CONTENT_TYPE_HANDSHAKE, TLS_HANDSHAKE_TIMEOUT};
+use crate::constants::{
+    BUFFER_SIZE_MAX_WITH_OVERHEAD, CONTENT_TYPE_HANDSHAKE, TLS_HANDSHAKE_TIMEOUT,
+    TLS_RECORD_HEADER_SIZE,
+};
 use crate::protocols::Protocol;
 use crate::protocols::handshake::ClientHelloBuilder;
 use crate::utils::network::Target;
@@ -146,7 +149,7 @@ impl TicketbleedTester {
                 let client_hello = self.build_client_hello_with_session_ticket()?;
                 stream.write_all(&client_hello).await?;
 
-                let mut buffer = vec![0u8; 16384];
+                let mut buffer = vec![0u8; BUFFER_SIZE_MAX_WITH_OVERHEAD];
                 let n = self
                     .read_until_new_session_ticket(&mut stream, &mut buffer, Duration::from_secs(3))
                     .await;
@@ -179,7 +182,7 @@ impl TicketbleedTester {
                             };
                             stream.write_all(&client_hello2).await?;
 
-                            let mut response = vec![0u8; 16384];
+                            let mut response = vec![0u8; BUFFER_SIZE_MAX_WITH_OVERHEAD];
                             match self
                                 .read_complete_tls_record(
                                     &mut stream,
@@ -282,9 +285,24 @@ impl TicketbleedTester {
                 break;
             }
             total += n;
-            if total >= 5 {
+            if total >= TLS_RECORD_HEADER_SIZE {
                 let record_len = u16::from_be_bytes([buffer[3], buffer[4]]) as usize;
-                if total >= 5 + record_len {
+                let record_total =
+                    TLS_RECORD_HEADER_SIZE
+                        .checked_add(record_len)
+                        .ok_or_else(|| {
+                            std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                "Ticketbleed TLS record length overflow",
+                            )
+                        })?;
+                if record_total > buffer.len() {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "Ticketbleed TLS record length exceeds buffer",
+                    ));
+                }
+                if total >= record_total {
                     break;
                 }
             }
@@ -683,6 +701,7 @@ pub struct TicketbleedTestResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::constants::BUFFER_SIZE_MAX_TLS_RECORD;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     #[test]
@@ -1045,6 +1064,52 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_ticketbleed_reads_past_max_size_record_for_new_session_ticket() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener");
+        let port = listener.local_addr().expect("local addr").port();
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept");
+            let mut buf = vec![0u8; 4096];
+            let _ = socket.read(&mut buf).await.expect("read initial hello");
+
+            let max_record_payload = vec![0u8; BUFFER_SIZE_MAX_TLS_RECORD - 4];
+            socket
+                .write_all(&handshake_record(&[handshake_message(
+                    0x0b,
+                    &max_record_payload,
+                )]))
+                .await
+                .expect("write max-size response");
+            socket
+                .write_all(&handshake_record(&[new_session_ticket_message(b"ticket")]))
+                .await
+                .expect("write ticket response");
+
+            let _ = socket.read(&mut buf).await.expect("read follow-up hello");
+        });
+
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+
+        let result = TicketbleedTester::new(target).test().await.unwrap();
+        server.await.expect("server task");
+
+        assert!(!result.vulnerable);
+        assert!(
+            result.inconclusive,
+            "max-size TLS record before NewSessionTicket must not truncate ticket probe; got {result:?}"
+        );
+        assert!(result.details.contains("follow-up ClientHello"));
+    }
+
+    #[tokio::test]
     async fn test_ticketbleed_reads_split_resumed_response_record() {
         use tokio::io::AsyncWriteExt;
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -1057,9 +1122,9 @@ mod tests {
             let mut buf = vec![0u8; 4096];
             let _ = socket.read(&mut buf).await.expect("read request");
 
-            let response = handshake_record(&[
-                server_hello_record_with_session_id(&TICKETBLEED_SESSION_ID_MARKER),
-            ]);
+            let response = handshake_record(&[server_hello_record_with_session_id(
+                &TICKETBLEED_SESSION_ID_MARKER,
+            )]);
             socket
                 .write_all(&response[..4])
                 .await
@@ -1083,7 +1148,7 @@ mod tests {
             .await
             .expect("connect");
         stream.write_all(b"hello").await.expect("write request");
-        let mut buffer = vec![0u8; 64];
+        let mut buffer = vec![0u8; BUFFER_SIZE_MAX_WITH_OVERHEAD];
         let n = tester
             .read_complete_tls_record(&mut stream, &mut buffer, Duration::from_secs(2))
             .await
