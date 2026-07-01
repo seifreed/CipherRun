@@ -47,15 +47,21 @@ fn decode_query_component(value: &str) -> Result<String, ApiError> {
 }
 
 fn api_key_from_headers(headers: &HeaderMap) -> Result<Option<String>, ApiError> {
-    headers
-        .get("X-API-Key")
-        .map(|value| {
-            value
-                .to_str()
-                .map(str::to_string)
-                .map_err(|error| ApiError::BadRequest(format!("Invalid X-API-Key header: {error}")))
-        })
-        .transpose()
+    let mut values = headers.get_all("X-API-Key").iter();
+    let Some(value) = values.next() else {
+        return Ok(None);
+    };
+    if values.next().is_some() {
+        return Err(ApiError::BadRequest(
+            "Duplicate X-API-Key header".to_string(),
+        ));
+    }
+
+    value
+        .to_str()
+        .map(str::to_string)
+        .map(Some)
+        .map_err(|error| ApiError::BadRequest(format!("Invalid X-API-Key header: {error}")))
 }
 
 /// Authentication middleware
@@ -263,5 +269,16 @@ mod tests {
         let err = api_key_from_headers(&headers).expect_err("invalid header should fail");
 
         assert!(err.to_string().contains("Invalid X-API-Key header"));
+    }
+
+    #[test]
+    fn test_api_key_from_headers_rejects_duplicate_headers() {
+        let mut headers = HeaderMap::new();
+        headers.append("X-API-Key", HeaderValue::from_static("one"));
+        headers.append("X-API-Key", HeaderValue::from_static("two"));
+
+        let err = api_key_from_headers(&headers).expect_err("duplicate headers should fail");
+
+        assert!(err.to_string().contains("Duplicate X-API-Key"));
     }
 }
