@@ -50,10 +50,10 @@ impl CtClient {
 
     /// Get the current tree size (STH - Signed Tree Head)
     pub async fn get_tree_size(&self, log_url: &str) -> Result<u64> {
-        let url = format!("{}/ct/v1/get-sth", log_url.trim_end_matches('/'));
+        let url = ct_log_api_url(log_url, "ct/v1/get-sth")?;
 
         let mut response = self
-            .retry_request(|| async { self.client.get(&url).send().await })
+            .retry_request(|| async { self.client.get(url.clone()).send().await })
             .await?;
 
         const MAX_RESPONSE_SIZE: u64 = 1024 * 1024; // 1 MB max for STH response
@@ -111,17 +111,15 @@ impl CtClient {
             });
         }
 
-        let url = format!(
-            "{}/ct/v1/get-entries?start={}&end={}",
-            log_url.trim_end_matches('/'),
-            start,
-            end
-        );
+        let mut url = ct_log_api_url(log_url, "ct/v1/get-entries")?;
+        url.query_pairs_mut()
+            .append_pair("start", &start.to_string())
+            .append_pair("end", &end.to_string());
 
         debug!("Fetching entries from {} to {}", start, end);
 
         let mut response = self
-            .retry_request(|| async { self.client.get(&url).send().await })
+            .retry_request(|| async { self.client.get(url.clone()).send().await })
             .await?;
 
         // Validate response size to prevent memory exhaustion
@@ -261,6 +259,33 @@ impl CtClient {
     }
 }
 
+fn ct_log_api_url(log_url: &str, path: &str) -> Result<url::Url> {
+    let mut base = url::Url::parse(log_url).map_err(|error| TlsError::InvalidInput {
+        message: format!("Invalid CT log URL: {error}"),
+    })?;
+    if !matches!(base.scheme(), "http" | "https") {
+        return Err(TlsError::InvalidInput {
+            message: "CT log URL must use http or https".to_string(),
+        });
+    }
+    if base.host_str().is_none()
+        || !base.username().is_empty()
+        || base.password().is_some()
+        || matches!(base.port(), Some(0))
+    {
+        return Err(TlsError::InvalidInput {
+            message: "Invalid CT log URL authority".to_string(),
+        });
+    }
+
+    base.set_path("/");
+    base.set_query(None);
+    base.set_fragment(None);
+    base.join(path).map_err(|error| TlsError::InvalidInput {
+        message: format!("Invalid CT log API path: {error}"),
+    })
+}
+
 impl Default for CtClient {
     fn default() -> Self {
         Self::new()
@@ -305,6 +330,25 @@ mod tests {
     fn test_client_creation() {
         let client = CtClient::new();
         assert!(std::ptr::addr_of!(client.client) as usize != 0);
+    }
+
+    #[test]
+    fn test_ct_log_api_url_rejects_unsafe_base_urls() {
+        assert!(ct_log_api_url("https://ct.example.com", "ct/v1/get-sth").is_ok());
+        assert!(ct_log_api_url("file:///tmp/log", "ct/v1/get-sth").is_err());
+        assert!(ct_log_api_url("https://user@example.com", "ct/v1/get-sth").is_err());
+        assert!(ct_log_api_url("https://example.com:0", "ct/v1/get-sth").is_err());
+    }
+
+    #[test]
+    fn test_ct_log_api_url_ignores_base_path_query_and_fragment() {
+        let url = ct_log_api_url(
+            "https://ct.example.com/prefix?bad=1#frag",
+            "ct/v1/get-entries",
+        )
+        .expect("valid CT log API URL");
+
+        assert_eq!(url.as_str(), "https://ct.example.com/ct/v1/get-entries");
     }
 
     #[derive(Clone)]
@@ -402,17 +446,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_tree_size_client_error() {
-        let state = TestState {
-            sth_calls: Arc::new(AtomicUsize::new(0)),
-            entries_calls: Arc::new(AtomicUsize::new(0)),
-            fail_parse: Arc::new(AtomicUsize::new(0)),
-        };
-        let (addr, _handle) = start_test_server(state).await;
-
         let client = CtClient::new();
-        let bad = format!("http://{}/bad-path", addr);
-        let err = client.get_tree_size(&bad).await.unwrap_err();
-        assert!(format!("{err}").contains("status"));
+        let err = client.get_tree_size("file:///tmp/log").await.unwrap_err();
+        assert!(format!("{err}").contains("http or https"));
     }
 
     #[tokio::test]
