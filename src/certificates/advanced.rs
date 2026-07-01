@@ -212,28 +212,7 @@ impl CertificateAdvancedTester {
                     let cert = ssl_stream.ssl().peer_certificate();
 
                     if let Some(cert) = cert {
-                        // Get certificate size
-                        let cert_der = cert.to_der()?;
-                        let original_size = cert_der.len();
-
-                        // Note: OpenSSL doesn't expose certificate compression details directly
-                        // We can only estimate based on certificate chain size
-
-                        let details = format!(
-                            "Certificate size: {} bytes. Certificate compression is a TLS 1.3 feature (RFC 8879), \
-                            but OpenSSL doesn't expose compression details directly.",
-                            original_size
-                        );
-
-                        Ok(CertificateCompressionAnalysis {
-                            compression_supported: false,
-                            compression_algorithms: Vec::new(),
-                            original_size: Some(original_size),
-                            compressed_size: None,
-                            compression_ratio: None,
-                            details,
-                            inconclusive: false,
-                        })
+                        Ok(analyze_observed_certificate_compression(&cert)?)
                     } else {
                         Ok(CertificateCompressionAnalysis {
                             compression_supported: false,
@@ -258,7 +237,9 @@ impl CertificateAdvancedTester {
             }
         })
         .await
-        .map_err(|e| crate::TlsError::Other(format!("certificate compression task failed: {}", e)))?
+        .map_err(|e| {
+            crate::TlsError::Other(format!("certificate compression task failed: {}", e))
+        })?
     }
 
     /// Test cipher order enforcement (detailed)
@@ -418,6 +399,27 @@ impl CertificateAdvancedTester {
         .await
         .map_err(|e| crate::TlsError::Other(format!("cipher selection task failed: {}", e)))?
     }
+}
+
+fn analyze_observed_certificate_compression(cert: &X509) -> Result<CertificateCompressionAnalysis> {
+    let cert_der = cert.to_der()?;
+    let original_size = cert_der.len();
+
+    let details = format!(
+        "Certificate size: {} bytes. Certificate compression is a TLS 1.3 feature (RFC 8879), \
+        but OpenSSL doesn't expose compression details directly, so support could not be determined.",
+        original_size
+    );
+
+    Ok(CertificateCompressionAnalysis {
+        compression_supported: false,
+        compression_algorithms: Vec::new(),
+        original_size: Some(original_size),
+        compressed_size: None,
+        compression_ratio: None,
+        details,
+        inconclusive: true,
+    })
 }
 
 fn extract_certificate_info(cert: &X509) -> Result<CertificateInfo> {
@@ -655,6 +657,38 @@ mod tests {
         );
         assert_eq!(decoded.original_size, analysis.original_size);
         assert_eq!(decoded.compressed_size, analysis.compressed_size);
+    }
+
+    #[test]
+    fn test_observed_certificate_compression_is_inconclusive() {
+        let rsa = Rsa::generate(2048).unwrap();
+        let pkey = PKey::from_rsa(rsa).unwrap();
+
+        let mut name = X509NameBuilder::new().unwrap();
+        name.append_entry_by_text("CN", "compression.example")
+            .unwrap();
+        let name = name.build();
+
+        let mut builder = X509Builder::new().unwrap();
+        builder.set_subject_name(&name).unwrap();
+        builder.set_issuer_name(&name).unwrap();
+        builder.set_pubkey(&pkey).unwrap();
+        builder
+            .set_not_before(&Asn1Time::days_from_now(0).unwrap())
+            .unwrap();
+        builder
+            .set_not_after(&Asn1Time::days_from_now(30).unwrap())
+            .unwrap();
+        builder.sign(&pkey, MessageDigest::sha256()).unwrap();
+        let cert = builder.build();
+
+        let analysis =
+            analyze_observed_certificate_compression(&cert).expect("analysis should succeed");
+
+        assert!(analysis.inconclusive);
+        assert!(!analysis.compression_supported);
+        assert!(analysis.original_size.is_some());
+        assert!(analysis.details.contains("could not be determined"));
     }
 
     #[test]
