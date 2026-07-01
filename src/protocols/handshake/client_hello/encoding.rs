@@ -86,14 +86,7 @@ impl ClientHelloBuilder {
             buf.put_slice(&self.session_id);
         }
 
-        let cipher_list_len = self
-            .cipher_suites
-            .len()
-            .checked_mul(2)
-            .and_then(|l| l.try_into().ok())
-            .ok_or(crate::TlsError::Other(
-                "cipher suite list exceeds maximum length".to_string(),
-            ))?;
+        let cipher_list_len = Self::u16_byte_len(self.cipher_suites.len(), "cipher suite list")?;
         buf.put_u16(cipher_list_len);
         for cipher in &self.cipher_suites {
             buf.put_u16(*cipher);

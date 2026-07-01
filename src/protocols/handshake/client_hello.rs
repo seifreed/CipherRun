@@ -286,6 +286,21 @@ mod tests {
     }
 
     #[test]
+    fn test_client_hello_rejects_oversized_cipher_list() {
+        let mut builder = ClientHelloBuilder::new(Protocol::TLS12);
+        builder.add_ciphers(&vec![0x1301; 32768]);
+
+        let err = builder
+            .build()
+            .expect_err("oversized cipher list should fail");
+
+        assert!(
+            err.to_string()
+                .contains("cipher suite list exceeds maximum length")
+        );
+    }
+
+    #[test]
     fn test_client_hello_with_sni() {
         let mut builder = ClientHelloBuilder::new(Protocol::TLS12);
         builder.add_ciphers(&[0xc030]);
