@@ -17,6 +17,7 @@ use crate::application::{
     CertificateInventoryQuery, CertificateInventoryRecord, CertificateInventorySort,
 };
 use crate::security::validate_hostname;
+use crate::utils::network::normalize_dns_hostname;
 use axum::{
     Json,
     extract::{Path, Query, State},
@@ -28,10 +29,13 @@ const MAX_CERTIFICATE_LIMIT: usize = 1000;
 fn inventory_query_from_api(
     query: &CertificateQuery,
 ) -> Result<CertificateInventoryQuery, ApiError> {
-    if let Some(hostname) = query.hostname.as_deref() {
+    let hostname = if let Some(hostname) = query.hostname.as_deref() {
         validate_hostname(hostname)
             .map_err(|err| ApiError::BadRequest(format!("Invalid hostname filter: {}", err)))?;
-    }
+        Some(normalize_dns_hostname(hostname.to_string()))
+    } else {
+        None
+    };
 
     if query.limit == 0 || query.limit > MAX_CERTIFICATE_LIMIT {
         return Err(ApiError::BadRequest(format!(
@@ -62,7 +66,7 @@ fn inventory_query_from_api(
         limit: query.limit,
         offset: query.offset,
         sort,
-        hostname: query.hostname.clone(),
+        hostname,
         expiring_within_days: query.expiring_within_days,
     })
 }
@@ -291,7 +295,9 @@ mod tests {
             ..Default::default()
         };
 
-        assert!(inventory_query_from_api(&query).is_ok());
+        let inventory_query =
+            inventory_query_from_api(&query).expect("rooted FQDN should be accepted");
+        assert_eq!(inventory_query.hostname.as_deref(), Some("example.com"));
     }
 
     #[test]
