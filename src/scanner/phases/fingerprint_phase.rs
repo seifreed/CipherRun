@@ -83,6 +83,24 @@ impl FingerprintPhase {
         Ja3sDatabase::load_default()
     }
 
+    fn load_jarm_database(
+        &self,
+        context: &mut ScanContext,
+    ) -> Result<crate::fingerprint::JarmDatabase> {
+        use crate::fingerprint::JarmDatabase;
+
+        if let Some(db_path) = context.args.fingerprint.jarm_database.clone() {
+            let path = db_path
+                .to_str()
+                .ok_or_else(|| crate::TlsError::InvalidInput {
+                    message: "JARM database path contains invalid UTF-8 characters".to_string(),
+                })?;
+            return JarmDatabase::from_file(path);
+        }
+
+        JarmDatabase::builtin()
+    }
+
     /// Capture JA3 client fingerprint
     ///
     /// JA3 is a method for creating SSL/TLS client fingerprints that are
@@ -226,37 +244,10 @@ impl FingerprintPhase {
     /// - Security appliances (WAF, IPS)
     /// - Malicious infrastructure (C2 servers, phishing sites)
     async fn capture_jarm(&self, context: &mut ScanContext) -> Result<()> {
-        use crate::fingerprint::{JarmDatabase, JarmFingerprinter};
+        use crate::fingerprint::JarmFingerprinter;
         use std::time::Duration;
 
-        // Load custom database if specified, otherwise use builtin
-        let database = if let Some(ref db_path) = context.args.fingerprint.jarm_database {
-            if let Some(path_str) = db_path.to_str() {
-                match JarmDatabase::from_file(path_str) {
-                    Ok(database) => database,
-                    Err(e) => {
-                        context.results.add_human_warning(format!(
-                            "Failed to load custom JARM database: {}",
-                            e
-                        ));
-                        context
-                            .results
-                            .add_human_warning("Falling back to builtin database");
-                        JarmDatabase::builtin()?
-                    }
-                }
-            } else {
-                context
-                    .results
-                    .add_human_warning("JARM database path contains invalid UTF-8 characters");
-                context
-                    .results
-                    .add_human_warning("Falling back to builtin database");
-                JarmDatabase::builtin()?
-            }
-        } else {
-            JarmDatabase::builtin()?
-        };
+        let database = self.load_jarm_database(context)?;
 
         // Use socket timeout if specified, otherwise default to 5 seconds
         let timeout =
@@ -501,6 +492,34 @@ mod tests {
         let err = FingerprintPhase::new()
             .load_ja3s_database(&mut context)
             .expect_err("invalid custom JA3S database path should fail");
+
+        assert!(!err.to_string().is_empty());
+        assert!(context.results.scan_metadata.human_warnings.is_empty());
+    }
+
+    #[test]
+    fn test_load_jarm_database_rejects_invalid_custom_path() {
+        let target = crate::utils::network::Target::with_ips(
+            "localhost".to_string(),
+            443,
+            vec!["127.0.0.1".parse().expect("valid IP")],
+        )
+        .expect("test assertion should succeed");
+
+        let mut args = ScanRequest::default();
+        args.fingerprint.jarm_database = Some(std::env::temp_dir().join(format!(
+            "cipherrun_missing_jarm_{}_{}.json",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        )));
+
+        let mut context = ScanContext::new(target, Arc::new(args), None, None);
+        let err = FingerprintPhase::new()
+            .load_jarm_database(&mut context)
+            .expect_err("invalid custom JARM database path should fail");
 
         assert!(!err.to_string().is_empty());
         assert!(context.results.scan_metadata.human_warnings.is_empty());
