@@ -60,7 +60,11 @@ impl CipherDatabase {
             let cipher = Self::parse_line(line).map_err(|e| TlsError::ParseError {
                 message: format!("Invalid cipher mapping line {}: {}", line_num + 1, e),
             })?;
-            by_hexcode.insert(cipher.hexcode.clone(), cipher);
+            if by_hexcode.insert(cipher.hexcode.clone(), cipher).is_some() {
+                return Err(TlsError::ParseError {
+                    message: format!("Duplicate cipher hexcode on line {}", line_num + 1),
+                });
+            }
         }
 
         Ok(Self { by_hexcode })
@@ -327,6 +331,23 @@ mod tests {
         };
 
         assert!(err.to_string().contains("Invalid cipher mapping line 2"));
+    }
+
+    #[test]
+    fn test_parse_database_rejects_duplicate_hexcode() {
+        let data = "\
+0x13,0x02 - TLS_AES_256_GCM_SHA384 TLS_AES_256_GCM_SHA384 TLSv1.3 Kx=any Au=any Enc=AESGCM(256) Mac=AEAD
+0x13,0x02 - TLS_AES_128_GCM_SHA256 TLS_AES_128_GCM_SHA256 TLSv1.3 Kx=any Au=any Enc=AESGCM(128) Mac=AEAD";
+
+        let err = match CipherDatabase::parse(data) {
+            Ok(_) => panic!("duplicate hexcode should fail"),
+            Err(err) => err,
+        };
+
+        assert!(
+            err.to_string()
+                .contains("Duplicate cipher hexcode on line 2")
+        );
     }
 
     #[test]

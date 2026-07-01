@@ -81,8 +81,19 @@ impl CurvesDatabase {
             let curve = Self::parse_line(line).map_err(|e| TlsError::ParseError {
                 message: format!("Invalid curve mapping line {}: {}", line_num + 1, e),
             })?;
-            by_id.insert(curve.id.clone(), curve.clone());
-            by_name.insert(curve.short_name.to_lowercase(), curve.clone());
+            if by_id.insert(curve.id.clone(), curve.clone()).is_some() {
+                return Err(TlsError::ParseError {
+                    message: format!("Duplicate curve ID on line {}", line_num + 1),
+                });
+            }
+            if by_name
+                .insert(curve.short_name.to_lowercase(), curve.clone())
+                .is_some()
+            {
+                return Err(TlsError::ParseError {
+                    message: format!("Duplicate curve name on line {}", line_num + 1),
+                });
+            }
         }
 
         Ok(Self { by_id, by_name })
@@ -250,6 +261,28 @@ mod tests {
         };
 
         assert!(err.to_string().contains("Invalid curve mapping line 2"));
+    }
+
+    #[test]
+    fn test_parse_database_rejects_duplicate_curve_id() {
+        let data = "0x00,0x1d - X25519  Curve25519\n0x00,0x1d - X448  X448";
+        let err = match CurvesDatabase::parse(data) {
+            Ok(_) => panic!("duplicate curve ID should fail"),
+            Err(err) => err,
+        };
+
+        assert!(err.to_string().contains("Duplicate curve ID on line 2"));
+    }
+
+    #[test]
+    fn test_parse_database_rejects_duplicate_curve_name() {
+        let data = "0x00,0x1d - X25519  Curve25519\n0x00,0x1e - x25519  Duplicate";
+        let err = match CurvesDatabase::parse(data) {
+            Ok(_) => panic!("duplicate curve name should fail"),
+            Err(err) => err,
+        };
+
+        assert!(err.to_string().contains("Duplicate curve name on line 2"));
     }
 
     #[test]
