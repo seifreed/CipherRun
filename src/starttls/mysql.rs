@@ -6,6 +6,8 @@ use async_trait::async_trait;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
+const MAX_MYSQL_STARTTLS_PACKET_SIZE: u32 = 64 * 1024;
+
 /// MySQL STARTTLS negotiator
 pub struct MysqlNegotiator;
 
@@ -33,15 +35,12 @@ impl MysqlNegotiator {
         let length = u32::from_le_bytes([header[0], header[1], header[2], 0]);
         let _sequence = header[3];
 
-        // Guard against unbounded memory allocation from malicious servers
-        // MySQL max packet size is 16MB (0xFFFFFF), but we use a lower limit for safety
-        const MAX_MYSQL_PACKET_SIZE: u32 = 16 * 1024 * 1024; // 16MB
-        if length > MAX_MYSQL_PACKET_SIZE {
+        if length > MAX_MYSQL_STARTTLS_PACKET_SIZE {
             return Err(crate::error::TlsError::StarttlsError {
                 protocol: "MySQL".to_string(),
                 details: format!(
                     "Packet too large: {} bytes (max {})",
-                    length, MAX_MYSQL_PACKET_SIZE
+                    length, MAX_MYSQL_STARTTLS_PACKET_SIZE
                 ),
             });
         }
@@ -244,6 +243,39 @@ mod tests {
         let (_sent_payload, recv_payload, seq) = server.await.unwrap();
         assert_eq!(recv_payload, send_payload);
         assert_eq!(seq, 7);
+    }
+
+    #[tokio::test]
+    async fn test_mysql_read_packet_rejects_oversized_header_before_body() {
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test assertion should succeed");
+        let addr = listener
+            .local_addr()
+            .expect("test assertion should succeed");
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let len = MAX_MYSQL_STARTTLS_PACKET_SIZE + 1;
+            let header = [
+                (len & 0xff) as u8,
+                ((len >> 8) & 0xff) as u8,
+                ((len >> 16) & 0xff) as u8,
+                0x00,
+            ];
+            socket.write_all(&header).await.unwrap();
+        });
+
+        let mut stream = TcpStream::connect(addr)
+            .await
+            .expect("test assertion should succeed");
+
+        let result = MysqlNegotiator::read_packet(&mut stream).await;
+
+        assert!(result.is_err());
+        let _ = server.await;
     }
 
     #[tokio::test]
