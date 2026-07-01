@@ -294,7 +294,10 @@ impl MultiIpScanReport {
             return None;
         }
 
-        let total: u64 = successful.iter().map(|r| r.scan_duration_ms).sum();
+        let total = successful
+            .iter()
+            .map(|r| r.scan_duration_ms)
+            .fold(0u64, u64::saturating_add);
         Some(total / successful.len() as u64)
     }
 }
@@ -501,6 +504,62 @@ mod tests {
         };
 
         assert_eq!(report.avg_scan_duration_ms(), None);
+    }
+
+    #[test]
+    fn test_avg_scan_duration_saturates_overflowing_total() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec![
+                "93.184.216.34".parse().unwrap(),
+                "93.184.216.35".parse().unwrap(),
+            ],
+        )
+        .unwrap();
+
+        let mut per_ip_results = HashMap::new();
+        per_ip_results.insert(
+            "93.184.216.34".parse().unwrap(),
+            SingleIpScanResult {
+                ip: "93.184.216.34".parse().unwrap(),
+                scan_result: ScanResults::default(),
+                scan_duration_ms: u64::MAX,
+                error: None,
+            },
+        );
+        per_ip_results.insert(
+            "93.184.216.35".parse().unwrap(),
+            SingleIpScanResult {
+                ip: "93.184.216.35".parse().unwrap(),
+                scan_result: ScanResults::default(),
+                scan_duration_ms: 1,
+                error: None,
+            },
+        );
+
+        let report = MultiIpScanReport {
+            target,
+            per_ip_results,
+            total_ips: 2,
+            successful_scans: 2,
+            failed_scans: 0,
+            total_duration_ms: u64::MAX,
+            aggregated: AggregatedScanResult {
+                protocols: Vec::new(),
+                ciphers: HashMap::new(),
+                grade: ("F".to_string(), 0),
+                certificate_info: None,
+                certificate_consistent: true,
+                inconsistencies: Vec::new(),
+                alpn_protocols: Vec::new(),
+                session_resumption_caching: Some(false),
+                session_resumption_tickets: Some(false),
+            },
+            inconsistencies: Vec::new(),
+        };
+
+        assert_eq!(report.avg_scan_duration_ms(), Some(u64::MAX / 2));
     }
 
     #[test]
