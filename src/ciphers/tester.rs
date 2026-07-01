@@ -23,8 +23,8 @@ use tokio::time::timeout;
 use super::{CipherStrength, CipherSuite};
 use crate::Result;
 use crate::constants::{
-    BUFFER_SIZE_DEFAULT, CIPHER_TEST_READ_TIMEOUT, CONTENT_TYPE_HANDSHAKE, DEFAULT_CONNECT_TIMEOUT,
-    HANDSHAKE_TYPE_SERVER_HELLO,
+    BUFFER_SIZE_MAX_WITH_OVERHEAD, CIPHER_TEST_READ_TIMEOUT, CONTENT_TYPE_HANDSHAKE,
+    DEFAULT_CONNECT_TIMEOUT, HANDSHAKE_TYPE_SERVER_HELLO,
 };
 use crate::protocols::Protocol;
 use crate::utils::adaptive::AdaptiveController;

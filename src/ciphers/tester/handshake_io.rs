@@ -1,5 +1,5 @@
 use super::{
-    BUFFER_SIZE_DEFAULT, CONTENT_TYPE_HANDSHAKE, CipherTestResult, CipherTester,
+    BUFFER_SIZE_MAX_WITH_OVERHEAD, CONTENT_TYPE_HANDSHAKE, CipherTestResult, CipherTester,
     HANDSHAKE_TYPE_SERVER_HELLO, Result, TlsConnectionPool, timeout,
 };
 use crate::ciphers::CipherSuite;
@@ -185,7 +185,7 @@ impl CipherTester {
     }
 
     pub(super) async fn read_cipher_probe_response(stream: &mut TcpStream) -> Result<Vec<u8>> {
-        let mut response = vec![0u8; BUFFER_SIZE_DEFAULT];
+        let mut response = vec![0u8; BUFFER_SIZE_MAX_WITH_OVERHEAD];
         let mut total = 0usize;
 
         loop {
@@ -254,5 +254,45 @@ impl CipherTester {
 
         self.perform_cipher_handshake(&mut stream, protocol, cipher_hexcode)
             .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::constants::BUFFER_SIZE_DEFAULT;
+
+    #[tokio::test]
+    async fn test_read_cipher_probe_response_accepts_record_above_default_buffer() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("local addr should exist");
+
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept should succeed");
+            let record_len = BUFFER_SIZE_DEFAULT as u16;
+            let header = [
+                CONTENT_TYPE_HANDSHAKE,
+                0x03,
+                0x03,
+                (record_len >> 8) as u8,
+                record_len as u8,
+            ];
+            socket.write_all(&header).await.expect("write header");
+            socket
+                .write_all(&vec![0u8; BUFFER_SIZE_DEFAULT])
+                .await
+                .expect("write body");
+        });
+
+        let mut stream = TcpStream::connect(addr)
+            .await
+            .expect("connect should succeed");
+        let response = CipherTester::read_cipher_probe_response(&mut stream)
+            .await
+            .expect("record should read");
+
+        assert_eq!(response.len(), 5 + BUFFER_SIZE_DEFAULT);
     }
 }
