@@ -2,6 +2,7 @@
 // Handles PostgreSQL and SQLite database configuration
 
 use crate::utils::network::canonical_target;
+use crate::utils::path_ext::PathExt;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -149,19 +150,19 @@ impl DatabaseConfig {
                 }
 
                 // SQLx expects a proper SQLite connection string
-                let path_str = path.to_string_lossy();
+                let path_str = path.to_str_checked()?;
                 if path_str == ":memory:" {
                     // For :memory:, use as-is
                     Ok(format!("sqlite:{}", path_str))
                 } else if path_str.starts_with("/") {
                     // For absolute UNIX paths, use sqlite:// (two slashes) since path starts with /
-                    Ok(format!("sqlite://{}", path.display()))
+                    Ok(format!("sqlite://{}", path_str))
                 } else if cfg!(windows) && path_str.as_bytes().get(1).is_some_and(|b| *b == b':') {
                     // For Windows absolute paths (e.g., C:\...), use sqlite:/// (three slashes)
-                    Ok(format!("sqlite:///{}", path.display()))
+                    Ok(format!("sqlite:///{}", path_str))
                 } else {
                     // For relative paths, use sqlite: (single slash prefix)
-                    Ok(format!("sqlite:{}", path.display()))
+                    Ok(format!("sqlite:{}", path_str))
                 }
             }
         }
@@ -250,6 +251,10 @@ impl Default for RetentionConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    use std::ffi::OsString;
+    #[cfg(unix)]
+    use std::os::unix::ffi::OsStringExt;
 
     #[test]
     fn test_postgres_connection_string() {
@@ -284,6 +289,18 @@ mod tests {
             .expect_err("empty SQLite path should fail");
 
         assert!(err.to_string().contains("SQLite path"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_sqlite_connection_string_rejects_non_utf8_path() {
+        let invalid = OsString::from_vec(vec![b'd', b'b', 0xff]);
+        let config = DatabaseConfig::sqlite(PathBuf::from(invalid));
+        let err = config
+            .connection_string()
+            .expect_err("non-UTF-8 SQLite path should fail");
+
+        assert!(err.to_string().contains("Invalid file path"));
     }
 
     #[test]
