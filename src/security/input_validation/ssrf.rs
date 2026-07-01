@@ -32,6 +32,8 @@ fn is_private_ipv4(ip: &Ipv4Addr) -> bool {
         || ip.octets()[0] >= 240
         // Carrier-grade NAT (100.64.0.0/10, RFC 6598)
         || (ip.octets()[0] == 100 && ip.octets()[1] >= 64 && ip.octets()[1] <= 127)
+        // Benchmarking range (198.18.0.0/15, RFC 2544)
+        || (ip.octets()[0] == 198 && (ip.octets()[1] == 18 || ip.octets()[1] == 19))
 }
 
 /// Check if IPv6 address is private/internal
@@ -136,6 +138,8 @@ mod tests {
         assert!(is_private_ip(&"192.168.1.1".parse().unwrap()));
         assert!(is_private_ip(&"169.254.1.1".parse().unwrap()));
         assert!(is_private_ip(&"100.64.0.1".parse().unwrap()));
+        assert!(is_private_ip(&"198.18.0.1".parse().unwrap()));
+        assert!(is_private_ip(&"198.19.255.255".parse().unwrap()));
 
         assert!(!is_private_ip(&"8.8.8.8".parse().unwrap()));
         assert!(!is_private_ip(&"1.1.1.1".parse().unwrap()));
