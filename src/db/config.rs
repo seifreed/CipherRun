@@ -183,7 +183,7 @@ impl DatabaseConfig {
     }
 
     /// Create example configuration file
-    pub fn create_example_config(path: &str) -> crate::Result<()> {
+    pub fn create_example_config(path: impl AsRef<Path>) -> crate::Result<()> {
         let example = r#"[database]
 # Database type: "postgres" or "sqlite"
 type = "postgres"
@@ -205,7 +205,7 @@ max_connections = 10
 max_age_days = 365
 "#;
 
-        std::fs::write(path, example).map_err(|e| {
+        std::fs::write(path.as_ref(), example).map_err(|e| {
             crate::TlsError::DatabaseError(format!("Failed to write config: {}", e))
         })?;
 
@@ -302,6 +302,20 @@ mod tests {
             .expect_err("non-UTF-8 SQLite path should fail");
 
         assert!(err.to_string().contains("Invalid file path"));
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    #[test]
+    fn test_create_example_config_accepts_non_utf8_path() {
+        let dir = tempfile::tempdir().expect("test assertion should succeed");
+        let filename =
+            OsString::from_vec(vec![b'd', b'b', b'-', 0xff, b'.', b't', b'o', b'm', b'l']);
+        let path = dir.path().join(filename);
+
+        DatabaseConfig::create_example_config(&path).expect("non-UTF-8 output path should work");
+
+        let contents = std::fs::read_to_string(path).expect("config should be written");
+        assert!(contents.contains("[database]"));
     }
 
     #[test]

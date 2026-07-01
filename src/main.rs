@@ -14,7 +14,6 @@
 use cipherrun::Args;
 use cipherrun::commands::{CommandExit, CommandRouter};
 use cipherrun::external::openssl_client::OpenSslClient;
-use cipherrun::utils::PathExt;
 use cipherrun::utils::adaptive::lock_mutex;
 use clap::CommandFactory;
 use colored::control;
@@ -117,7 +116,7 @@ async fn run_cli() -> cipherrun::Result<CommandExit> {
     // Handle --db-config-example (generate example config and exit)
     if let Some(config_path) = &args.database.config_example {
         use cipherrun::db::DatabaseConfig;
-        DatabaseConfig::create_example_config(config_path.to_str_checked()?)?;
+        DatabaseConfig::create_example_config(config_path)?;
         println!(
             "✓ Example database configuration saved to: {}",
             config_path.display()
