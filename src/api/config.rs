@@ -141,6 +141,7 @@ impl ApiConfig {
         let config: ApiConfig = toml::from_str(&content).map_err(|e| TlsError::ConfigError {
             message: format!("Failed to parse API config: {e}"),
         })?;
+        config.validate()?;
         Ok(config)
     }
 
@@ -216,6 +217,55 @@ impl ApiConfig {
     pub fn remove_key(&mut self, key: &str) -> Option<Permission> {
         self.api_keys.remove(key)
     }
+
+    pub(crate) fn validate(&self) -> Result<()> {
+        if self.port == 0 {
+            return Err(TlsError::ConfigError {
+                message: "port must be between 1 and 65535".to_string(),
+            });
+        }
+        if self.rate_limit_per_minute == 0 {
+            return Err(TlsError::ConfigError {
+                message: "rate_limit_per_minute must be greater than 0".to_string(),
+            });
+        }
+        if self.max_concurrent_scans == 0 {
+            return Err(TlsError::ConfigError {
+                message: "max_concurrent_scans must be greater than 0".to_string(),
+            });
+        }
+        if self.job_queue_capacity == 0 {
+            return Err(TlsError::ConfigError {
+                message: "job_queue_capacity must be greater than 0".to_string(),
+            });
+        }
+        if self.request_timeout_seconds == 0 {
+            return Err(TlsError::ConfigError {
+                message: "request_timeout_seconds must be greater than 0".to_string(),
+            });
+        }
+        if self.max_body_size == 0 {
+            return Err(TlsError::ConfigError {
+                message: "max_body_size must be greater than 0".to_string(),
+            });
+        }
+        if self.ws_ping_interval_seconds == 0 {
+            return Err(TlsError::ConfigError {
+                message: "ws_ping_interval_seconds must be greater than 0".to_string(),
+            });
+        }
+        if self.api_keys.is_empty() {
+            return Err(TlsError::ConfigError {
+                message: "api_keys must contain at least one key".to_string(),
+            });
+        }
+        if self.api_keys.keys().any(|key| key.is_empty()) {
+            return Err(TlsError::ConfigError {
+                message: "api_keys must not contain empty keys".to_string(),
+            });
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -257,6 +307,32 @@ mod tests {
         let contents = std::fs::read_to_string(&path).expect("read should succeed");
         assert!(contents.contains("host"));
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_from_file_rejects_invalid_config() {
+        let dir = tempfile::tempdir().expect("tempdir should be created");
+        let path = dir.path().join("api.toml");
+        std::fs::write(
+            &path,
+            r#"
+host = "127.0.0.1"
+port = 8080
+max_concurrent_scans = 0
+api_keys = { "test-key" = "User" }
+enable_cors = false
+rate_limit_per_minute = 100
+max_body_size = 1048576
+request_timeout_seconds = 300
+ws_ping_interval_seconds = 30
+job_queue_capacity = 1000
+enable_swagger = true
+"#,
+        )
+        .expect("config should be written");
+
+        let err = ApiConfig::from_file(&path).expect_err("invalid config should fail at load");
+        assert!(err.to_string().contains("max_concurrent_scans"));
     }
 
     #[cfg(unix)]

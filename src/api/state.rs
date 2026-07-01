@@ -220,51 +220,7 @@ impl ApiStats {
 impl AppState {
     /// Create new application state
     pub fn new(config: ApiConfig) -> Result<Self> {
-        if config.port == 0 {
-            return Err(crate::error::TlsError::ConfigError {
-                message: "port must be between 1 and 65535".to_string(),
-            });
-        }
-        if config.rate_limit_per_minute == 0 {
-            return Err(crate::error::TlsError::ConfigError {
-                message: "rate_limit_per_minute must be greater than 0".to_string(),
-            });
-        }
-        if config.max_concurrent_scans == 0 {
-            return Err(crate::error::TlsError::ConfigError {
-                message: "max_concurrent_scans must be greater than 0".to_string(),
-            });
-        }
-        if config.job_queue_capacity == 0 {
-            return Err(crate::error::TlsError::ConfigError {
-                message: "job_queue_capacity must be greater than 0".to_string(),
-            });
-        }
-        if config.request_timeout_seconds == 0 {
-            return Err(crate::error::TlsError::ConfigError {
-                message: "request_timeout_seconds must be greater than 0".to_string(),
-            });
-        }
-        if config.max_body_size == 0 {
-            return Err(crate::error::TlsError::ConfigError {
-                message: "max_body_size must be greater than 0".to_string(),
-            });
-        }
-        if config.ws_ping_interval_seconds == 0 {
-            return Err(crate::error::TlsError::ConfigError {
-                message: "ws_ping_interval_seconds must be greater than 0".to_string(),
-            });
-        }
-        if config.api_keys.is_empty() {
-            return Err(crate::error::TlsError::ConfigError {
-                message: "api_keys must contain at least one key".to_string(),
-            });
-        }
-        if config.api_keys.keys().any(|key| key.is_empty()) {
-            return Err(crate::error::TlsError::ConfigError {
-                message: "api_keys must not contain empty keys".to_string(),
-            });
-        }
+        config.validate()?;
 
         let config = Arc::new(config);
         let stats = Arc::new(tokio::sync::RwLock::new(ApiStats::default()));
