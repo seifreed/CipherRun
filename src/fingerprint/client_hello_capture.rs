@@ -178,6 +178,11 @@ impl ClientHelloCapture {
                 message: "Handshake length exceeds record length".to_string(),
             });
         }
+        if handshake_end != record_end {
+            return Err(TlsError::ParseError {
+                message: "ClientHello record contains trailing bytes after handshake".to_string(),
+            });
+        }
         let data = data
             .get(..handshake_end)
             .ok_or_else(|| TlsError::ParseError {
@@ -594,6 +599,11 @@ impl ClientHelloCapture {
                 message: "SNI name length exceeds extension data".to_string(),
             });
         }
+        if name_end != list_end {
+            return Err(TlsError::ParseError {
+                message: "SNI server name list contains trailing bytes".to_string(),
+            });
+        }
 
         // Server name
         let name_bytes = Self::slice_range(data, cursor, name_len, "SNI name")?;
@@ -707,20 +717,18 @@ mod tests {
 
         let err =
             ClientHelloCapture::parse(&bytes).expect_err("truncated handshake body must fail");
-        assert!(
-            err.to_string()
-                .contains("Data too short for ClientHello version")
-        );
+        assert!(err.to_string().contains("trailing bytes after handshake"));
     }
 
     #[test]
-    fn test_parse_ignores_extensions_after_handshake_end() {
+    fn test_parse_rejects_trailing_bytes_after_handshake_end() {
         let capture = ClientHelloCapture::synthetic(0x0303, vec![0x1301], vec![(0x0000, vec![])]);
         let mut bytes = capture.to_bytes().expect("ClientHello should serialize");
         bytes[6..9].copy_from_slice(&[0x00, 0x00, 0x29]);
 
-        let parsed = ClientHelloCapture::parse(&bytes).expect("ClientHello body should parse");
-        assert!(parsed.extensions.is_empty());
+        let err = ClientHelloCapture::parse(&bytes)
+            .expect_err("trailing bytes after ClientHello handshake should fail");
+        assert!(err.to_string().contains("trailing bytes after handshake"));
     }
 
     #[test]
@@ -783,6 +791,26 @@ mod tests {
         assert!(
             err.to_string()
                 .contains("Invalid SNI server name list length")
+        );
+    }
+
+    #[test]
+    fn test_get_sni_rejects_trailing_bytes_after_name() {
+        let capture = ClientHelloCapture::synthetic(
+            0x0303,
+            vec![0x1301],
+            vec![(
+                EXTENSION_SERVER_NAME,
+                vec![0x00, 0x05, 0x00, 0x00, 0x01, b'a', b'b'],
+            )],
+        );
+
+        let err = capture
+            .get_sni()
+            .expect_err("SNI name trailing bytes should fail");
+        assert!(
+            err.to_string()
+                .contains("SNI server name list contains trailing bytes")
         );
     }
 
