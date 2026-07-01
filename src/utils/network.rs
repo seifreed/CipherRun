@@ -178,7 +178,7 @@ pub fn split_target_host_port(input: &str) -> Result<(String, Option<u16>)> {
                 return Ok((hostname, None));
             }
             if let Some(port_str) = suffix.strip_prefix(':') {
-                return Ok((hostname, Some(parse_port(port_str)?)));
+                return Ok((hostname, Some(parse_port(port_str.trim())?)));
             }
             return Err(TlsError::Other(
                 "Invalid format after IPv6 address".to_string(),
@@ -196,10 +196,11 @@ pub fn split_target_host_port(input: &str) -> Result<(String, Option<u16>)> {
     if let Some((host, port_str)) = input.rsplit_once(':')
         && !host.contains(':')
     {
+        let host = host.trim();
         if host.is_empty() {
             crate::tls_bail!("Target host cannot be empty");
         }
-        return Ok((host.to_string(), Some(parse_port(port_str)?)));
+        return Ok((host.to_string(), Some(parse_port(port_str.trim())?)));
     }
 
     if input.contains(':') {

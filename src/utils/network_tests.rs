@@ -24,6 +24,20 @@ fn test_split_target_host_port_trims_outer_whitespace() {
     assert_eq!(port, Some(8443));
 }
 
+#[test]
+fn test_split_target_host_port_trims_host_port_components() {
+    let (hostname, port) =
+        split_target_host_port("example.com : 8443").expect("target should be normalized");
+    assert_eq!(hostname, "example.com");
+    assert_eq!(port, Some(8443));
+}
+
+#[test]
+fn test_split_target_host_port_rejects_blank_host_before_port() {
+    let err = split_target_host_port(" :443").expect_err("blank host should fail");
+    assert!(err.to_string().contains("Target host cannot be empty"));
+}
+
 #[tokio::test]
 async fn test_split_target_host_port_url() {
     let (hostname, port) =
