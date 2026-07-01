@@ -47,6 +47,13 @@ fn is_private_ipv6(ip: &Ipv6Addr) -> bool {
         || (ip.segments()[0] & 0xffc0) == 0xfe80
         // Documentation (2001:db8::/32, RFC 3849)
         || (ip.segments()[0] == 0x2001 && ip.segments()[1] == 0x0db8)
+        // Discard-only prefix (100::/64, RFC 6666)
+        || (ip.segments()[0] == 0x0100
+            && ip.segments()[1] == 0
+            && ip.segments()[2] == 0
+            && ip.segments()[3] == 0)
+        // Benchmarking range (2001:2::/48, RFC 5180)
+        || (ip.segments()[0] == 0x2001 && ip.segments()[1] == 0x0002)
         // IPv4-mapped IPv6 addresses (::ffff:x.x.x.x)
         || is_ipv4_mapped_private(ip)
         // IPv4-compatible IPv6 addresses (::x.x.x.x, deprecated)
@@ -165,6 +172,8 @@ mod tests {
         assert!(is_private_ip(&"fe80::1".parse().unwrap()));
         assert!(is_private_ip(&"fc00::1".parse().unwrap()));
         assert!(is_private_ip(&"2001:db8::1".parse().unwrap()));
+        assert!(is_private_ip(&"100::1".parse().unwrap()));
+        assert!(is_private_ip(&"2001:2::1".parse().unwrap()));
 
         assert!(!is_private_ip(&"2001:4860:4860::8888".parse().unwrap()));
     }
