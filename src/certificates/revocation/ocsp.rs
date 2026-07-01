@@ -16,7 +16,7 @@ use x509_parser::prelude::*;
 const OCSP_CLOCK_SKEW_SECS: u32 = 300;
 
 fn is_http_ocsp_url(uri: &str) -> bool {
-    uri.starts_with("http://") || uri.starts_with("https://")
+    url::Url::parse(uri).is_ok_and(|url| matches!(url.scheme(), "http" | "https"))
 }
 
 fn openssl_x509_from_der_exact(der: &[u8], context: &str) -> Result<X509> {
@@ -468,7 +468,10 @@ mod tests {
     fn test_is_http_ocsp_url_rejects_non_http_schemes() {
         assert!(is_http_ocsp_url("http://ocsp.example.com"));
         assert!(is_http_ocsp_url("https://ocsp.example.com"));
+        assert!(is_http_ocsp_url("HTTP://ocsp.example.com"));
+        assert!(is_http_ocsp_url("HTTPS://ocsp.example.com"));
         assert!(!is_http_ocsp_url("ldap://ocsp.example.com"));
         assert!(!is_http_ocsp_url("httpx://ocsp.example.com"));
+        assert!(!is_http_ocsp_url("http://"));
     }
 }

@@ -20,7 +20,7 @@ fn parse_crl_der_exact(der: &[u8]) -> Result<CertificateRevocationList<'_>> {
 }
 
 fn is_http_crl_url(uri: &str) -> bool {
-    uri.starts_with("http://") || uri.starts_with("https://")
+    url::Url::parse(uri).is_ok_and(|url| matches!(url.scheme(), "http" | "https"))
 }
 
 impl RevocationChecker {
@@ -228,8 +228,11 @@ mod tests {
     fn test_is_http_crl_url_rejects_http_prefix_schemes() {
         assert!(is_http_crl_url("http://example.com/root.crl"));
         assert!(is_http_crl_url("https://example.com/root.crl"));
+        assert!(is_http_crl_url("HTTP://example.com/root.crl"));
+        assert!(is_http_crl_url("HTTPS://example.com/root.crl"));
         assert!(!is_http_crl_url("httpx://example.com/root.crl"));
         assert!(!is_http_crl_url("ftp://example.com/root.crl"));
+        assert!(!is_http_crl_url("http://"));
     }
 
     #[test]
