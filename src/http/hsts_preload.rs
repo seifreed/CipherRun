@@ -134,10 +134,15 @@ impl HstsPreloadChecker {
             return Err(format!("API returned status: {}", response.status()));
         }
 
-        // Parse JSON response
-        let api_response: ApiResponse = response
-            .json()
-            .await
+        const MAX_HSTS_PRELOAD_BYTES: u64 = 1024 * 1024;
+        let body = crate::utils::http::read_response_body_capped(
+            response,
+            MAX_HSTS_PRELOAD_BYTES,
+            "HSTS preload response",
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+        let api_response: ApiResponse = serde_json::from_slice(&body)
             .map_err(|e| format!("Failed to parse API response: {}", e))?;
 
         // Convert to PreloadStatus
