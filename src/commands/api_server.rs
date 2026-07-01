@@ -91,7 +91,7 @@ impl Command for ApiServerCommand {
         // Load configuration from file or use CLI args
         let has_config_file = self.args.api_server.config.is_some();
         let mut config = if let Some(config_path) = &self.args.api_server.config {
-            ApiConfig::from_file(config_path)?
+            ApiConfig::from_file_unvalidated(config_path)?
         } else {
             ApiConfig::default()
         };
@@ -174,5 +174,38 @@ mod tests {
         assert_eq!(config.host, DEFAULT_API_HOST);
         assert_eq!(config.port, DEFAULT_API_PORT);
         assert_eq!(config.max_concurrent_scans, DEFAULT_API_MAX_CONCURRENT);
+    }
+
+    #[test]
+    fn test_cli_overrides_apply_before_effective_config_validation() {
+        let dir = tempfile::tempdir().expect("tempdir should be created");
+        let path = dir.path().join("api.toml");
+        std::fs::write(
+            &path,
+            r#"
+host = "127.0.0.1"
+port = 8080
+max_concurrent_scans = 0
+api_keys = { "test-key" = "User" }
+enable_cors = false
+rate_limit_per_minute = 100
+max_body_size = 1048576
+request_timeout_seconds = 300
+ws_ping_interval_seconds = 30
+job_queue_capacity = 1000
+enable_swagger = true
+"#,
+        )
+        .expect("config should be written");
+
+        let mut config = crate::api::ApiConfig::from_file_unvalidated(&path)
+            .expect("raw config should load before CLI overrides");
+        let args = crate::cli::ApiServerArgs {
+            max_concurrent: Some(2),
+            ..Default::default()
+        };
+        apply_cli_overrides(&mut config, &args, true);
+
+        crate::api::ApiServer::new(config).expect("effective config should validate");
     }
 }

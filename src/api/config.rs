@@ -133,16 +133,20 @@ fn generate_secure_api_key() -> String {
 impl ApiConfig {
     /// Create config from file
     pub fn from_file(path: impl AsRef<Path>) -> Result<Self> {
+        let config = Self::from_file_unvalidated(path)?;
+        config.validate()?;
+        Ok(config)
+    }
+
+    pub(crate) fn from_file_unvalidated(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
         let content = std::fs::read_to_string(path).map_err(|e| TlsError::FileSystemError {
             path: path.display().to_string(),
             source: e,
         })?;
-        let config: ApiConfig = toml::from_str(&content).map_err(|e| TlsError::ConfigError {
+        toml::from_str(&content).map_err(|e| TlsError::ConfigError {
             message: format!("Failed to parse API config: {e}"),
-        })?;
-        config.validate()?;
-        Ok(config)
+        })
     }
 
     /// Create example config file
