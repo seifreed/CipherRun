@@ -23,10 +23,14 @@ impl ProxyConfig {
     /// Parse proxy string (host:port, http://host:port, or user:pass@host:port)
     pub fn parse(proxy_str: &str) -> Result<Self> {
         let proxy_str = proxy_str.trim();
-        if proxy_str.contains("://") && !proxy_str.starts_with("http://") {
-            crate::tls_bail!("Unsupported proxy scheme; only http:// proxies are supported");
-        }
-        let proxy_str = proxy_str.strip_prefix("http://").unwrap_or(proxy_str);
+        let proxy_str = if let Some((scheme, rest)) = proxy_str.split_once("://") {
+            if !scheme.eq_ignore_ascii_case("http") {
+                crate::tls_bail!("Unsupported proxy scheme; only http:// proxies are supported");
+            }
+            rest
+        } else {
+            proxy_str
+        };
         // Check for user:pass@host:port format
         if let Some((auth, hostport)) = proxy_str.rsplit_once('@') {
             let (username, password) = if let Some((u, p)) = auth.split_once(':') {
@@ -328,6 +332,14 @@ mod tests {
         assert_eq!(proxy.host, "proxy.example.com");
         assert_eq!(proxy.port, 3128);
         assert!(proxy.username.is_none());
+    }
+
+    #[test]
+    fn test_parse_proxy_accepts_uppercase_http_scheme() {
+        let proxy =
+            ProxyConfig::parse("HTTP://proxy.example.com:3128").expect("proxy URL should parse");
+        assert_eq!(proxy.host, "proxy.example.com");
+        assert_eq!(proxy.port, 3128);
     }
 
     #[test]
