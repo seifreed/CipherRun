@@ -61,6 +61,17 @@ impl ServerHelloParser {
             })
     }
 
+    fn protocol_from_server_hello_version(value: u16) -> Result<Protocol> {
+        match value {
+            0x0300 => Ok(Protocol::SSLv3),
+            0x0301 => Ok(Protocol::TLS10),
+            0x0302 => Ok(Protocol::TLS11),
+            0x0303 => Ok(Protocol::TLS12),
+            0x0304 => Ok(Protocol::TLS13),
+            _ => crate::tls_bail!("Unknown ServerHello protocol version 0x{value:04x}"),
+        }
+    }
+
     pub fn parse(data: &[u8]) -> Result<ServerHello> {
         // Minimum ServerHello: 5 (record header) + 4 (handshake header) + 2 (version) + 32 (random) = 43 bytes
         if data.len() < 43 {
@@ -255,8 +266,11 @@ impl ServerHelloParser {
             secure_renegotiation = Some(false);
         }
 
+        let version =
+            Self::protocol_from_server_hello_version(negotiated_version.unwrap_or(version))?;
+
         Ok(ServerHello {
-            version: Protocol::from(negotiated_version.unwrap_or(version)),
+            version,
             random,
             session_id,
             cipher_suite,
@@ -505,6 +519,43 @@ mod tests {
             ServerHelloParser::parse(&server_hello).expect("test assertion should succeed");
         assert_eq!(parsed.version, Protocol::TLS13);
         assert!(parsed.has_extension(0x002b));
+    }
+
+    #[test]
+    fn test_server_hello_rejects_unknown_legacy_version() {
+        let mut server_hello = vec![
+            0x16, 0x03, 0x03, 0x00, 0x44, 0x02, 0x00, 0x00, 0x40, 0x12, 0x34,
+        ];
+        server_hello.extend_from_slice(&[0u8; 32]);
+        server_hello.push(0x00);
+        server_hello.extend_from_slice(&[0xc0, 0x2f]);
+        server_hello.push(0x00);
+        patch_lengths(&mut server_hello);
+
+        let err = ServerHelloParser::parse(&server_hello).expect_err("parser should reject");
+        assert!(
+            err.to_string()
+                .contains("Unknown ServerHello protocol version")
+        );
+    }
+
+    #[test]
+    fn test_server_hello_rejects_unknown_supported_version() {
+        let mut server_hello = vec![
+            0x16, 0x03, 0x03, 0x00, 0x32, 0x02, 0x00, 0x00, 0x2e, 0x03, 0x03,
+        ];
+        server_hello.extend_from_slice(&[0u8; 32]);
+        server_hello.push(0x00);
+        server_hello.extend_from_slice(&[0x13, 0x01]);
+        server_hello.push(0x00);
+        server_hello.extend_from_slice(&[0x00, 0x06, 0x00, 0x2b, 0x00, 0x02, 0x12, 0x34]);
+        patch_lengths(&mut server_hello);
+
+        let err = ServerHelloParser::parse(&server_hello).expect_err("parser should reject");
+        assert!(
+            err.to_string()
+                .contains("Unknown ServerHello protocol version")
+        );
     }
 
     #[test]
