@@ -4,6 +4,8 @@ use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+const MAX_APPEND_CSV_BYTES: u64 = 16 * 1024 * 1024;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ExportKind {
     Json,
@@ -249,20 +251,21 @@ impl<'a> ScanExporter<'a> {
     }
 
     fn ensure_write_allowed(&self, path: &Path, kind: ExportKind) -> Result<()> {
-        if !path.exists() {
-            return Ok(());
-        }
-
-        if self.args.output.append {
-            if matches!(kind, ExportKind::Csv) {
-                return Ok(());
-            }
+        if self.args.output.append && !matches!(kind, ExportKind::Csv) {
             return Err(crate::TlsError::InvalidInput {
                 message: format!(
                     "--append is only supported for CSV exports; cannot append to {}",
                     path.display()
                 ),
             });
+        }
+
+        if !path.exists() {
+            return Ok(());
+        }
+
+        if self.args.output.append {
+            return Ok(());
         }
 
         if self.args.output.overwrite {
@@ -278,6 +281,18 @@ impl<'a> ScanExporter<'a> {
     }
 
     fn append_csv(&self, path: &Path, content: &str) -> Result<()> {
+        let existing_len = fs::metadata(path)?.len();
+        if existing_len > MAX_APPEND_CSV_BYTES {
+            return Err(crate::TlsError::InvalidInput {
+                message: format!(
+                    "Existing CSV file {} is too large to append safely: {} bytes (max {})",
+                    path.display(),
+                    existing_len,
+                    MAX_APPEND_CSV_BYTES
+                ),
+            });
+        }
+
         let mut existing = fs::read_to_string(path)?;
         if !existing.ends_with('\n') && !existing.is_empty() {
             existing.push('\n');
@@ -537,6 +552,53 @@ mod tests {
 
         let content = fs::read_to_string(&path).expect("csv should be readable");
         assert_eq!(content, "col1,col2\n1,2\n3,4\n");
+    }
+
+    #[test]
+    fn test_write_text_file_rejects_append_for_non_csv_even_when_new() {
+        let temp = tempdir().expect("tempdir should be created");
+        let path = temp.path().join("report.json");
+
+        let args = Args {
+            output: crate::cli::OutputArgs {
+                append: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let exporter = ScanExporter::new(&args);
+        let err = exporter
+            .write_text_file(&path, "{}", "JSON", ExportKind::Json)
+            .expect_err("append must be CSV-only");
+
+        assert!(
+            err.to_string()
+                .contains("--append is only supported for CSV")
+        );
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn test_write_text_file_rejects_oversized_existing_csv_before_append() {
+        let temp = tempdir().expect("tempdir should be created");
+        let path = temp.path().join("report.csv");
+        let file = fs::File::create(&path).expect("seed csv should be created");
+        file.set_len(MAX_APPEND_CSV_BYTES + 1)
+            .expect("seed csv should be oversized");
+
+        let args = Args {
+            output: crate::cli::OutputArgs {
+                append: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let exporter = ScanExporter::new(&args);
+        let err = exporter
+            .write_text_file(&path, "col1,col2\n3,4\n", "CSV", ExportKind::Csv)
+            .expect_err("oversized CSV append should fail before reading");
+
+        assert!(err.to_string().contains("too large to append safely"));
     }
 
     #[test]
