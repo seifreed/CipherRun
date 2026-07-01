@@ -89,8 +89,15 @@ fn present_inventory_record(
 }
 
 fn validate_certificate_fingerprint(fingerprint: &str) -> Result<(), ApiError> {
-    let normalized = fingerprint.replace(':', "");
-    if normalized.len() == 64 && normalized.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+    let is_plain_hex =
+        fingerprint.len() == 64 && fingerprint.bytes().all(|byte| byte.is_ascii_hexdigit());
+    let is_colon_hex = fingerprint.len() == 95
+        && fingerprint
+            .split(':')
+            .all(|part| part.len() == 2 && part.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        && fingerprint.split(':').count() == 32;
+
+    if is_plain_hex || is_colon_hex {
         return Ok(());
     }
 
@@ -324,5 +331,12 @@ mod tests {
         assert!(validate_certificate_fingerprint("abc123").is_err());
         assert!(validate_certificate_fingerprint(&"g".repeat(64)).is_err());
         assert!(validate_certificate_fingerprint("").is_err());
+    }
+
+    #[test]
+    fn certificate_fingerprint_rejects_misplaced_colons() {
+        let malformed = format!("{}:", "a".repeat(64));
+
+        assert!(validate_certificate_fingerprint(&malformed).is_err());
     }
 }
