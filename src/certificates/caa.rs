@@ -36,6 +36,12 @@ impl CaaChecker {
 
     /// Check CAA records for the domain
     pub fn check(&self) -> Result<CaaCheckResult> {
+        crate::security::validate_hostname(&self.domain).map_err(|error| {
+            crate::TlsError::InvalidInput {
+                message: format!("Invalid CAA domain: {error}"),
+            }
+        })?;
+
         let mut result = CaaCheckResult {
             has_caa_records: false,
             records: Vec::new(),
@@ -278,6 +284,16 @@ mod tests {
         checker
             .check()
             .expect_err("CAA query errors should not be hidden in result issues");
+    }
+
+    #[test]
+    fn test_check_rejects_invalid_domain_before_lookup() {
+        let checker = CaaChecker::new("example.com/path".to_string());
+
+        let err = checker
+            .check()
+            .expect_err("invalid CAA domain should fail before lookup");
+        assert!(err.to_string().contains("Invalid CAA domain"));
     }
 
     #[test]
