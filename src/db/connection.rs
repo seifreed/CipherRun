@@ -242,6 +242,11 @@ impl DatabasePool {
             DatabaseType::Postgres => {
                 let connection_string = config.connection_string()?;
                 let max_connections = config.max_connections.unwrap_or(10);
+                if max_connections == 0 {
+                    return Err(crate::TlsError::DatabaseError(
+                        "max_connections must be greater than 0".to_string(),
+                    ));
+                }
 
                 let pool = sqlx::postgres::PgPoolOptions::new()
                     .max_connections(max_connections)
@@ -732,5 +737,24 @@ mod tests {
 
         assert_eq!(pool.db_type(), DatabaseType::Sqlite);
         pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn test_postgres_pool_rejects_zero_max_connections_before_connecting() {
+        let mut config = DatabaseConfig::postgres(
+            "127.0.0.1".to_string(),
+            5432,
+            "cipherrun".to_string(),
+            "user".to_string(),
+            "pass".to_string(),
+        );
+        config.max_connections = Some(0);
+
+        let err = match DatabasePool::new(&config).await {
+            Ok(_) => panic!("zero max_connections should fail before connection"),
+            Err(err) => err,
+        };
+
+        assert!(err.to_string().contains("max_connections"));
     }
 }
