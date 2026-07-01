@@ -58,6 +58,21 @@ fn parse_keys(pem_bytes: &[u8]) -> crate::Result<Vec<PrivateKeyDer<'static>>> {
     Ok(keys)
 }
 
+fn single_private_key(
+    mut keys: Vec<PrivateKeyDer<'static>>,
+    source: &str,
+) -> crate::Result<PrivateKeyDer<'static>> {
+    if keys.is_empty() {
+        crate::tls_bail!("No private key found in {source}");
+    }
+    if keys.len() > 1 {
+        crate::tls_bail!("Multiple private keys found in {source}");
+    }
+    keys.pop().ok_or_else(|| crate::error::TlsError::MtlsError {
+        message: format!("No private key found in {source} (should have been caught earlier)"),
+    })
+}
+
 impl MtlsConfig {
     /// Load mTLS configuration from separate certificate and key files
     pub fn from_separate_files<P: AsRef<Path>>(
@@ -79,18 +94,10 @@ impl MtlsConfig {
                 message: format!("Failed to open private key file: {}", e),
             })?;
         let keys = parse_keys(&key_bytes)?;
-        if keys.is_empty() {
-            crate::tls_bail!("No private key found in key file");
-        }
 
         Ok(Self {
             cert_chain: certs,
-            private_key: keys.into_iter().next().ok_or_else(|| {
-                crate::error::TlsError::MtlsError {
-                    message: "No private key found in key file (should have been caught earlier)"
-                        .to_string(),
-                }
-            })?,
+            private_key: single_private_key(keys, "key file")?,
         })
     }
 
@@ -106,22 +113,10 @@ impl MtlsConfig {
         }
 
         let keys = parse_keys(&pem_bytes)?;
-        if keys.is_empty() {
-            crate::tls_bail!("No private key found in PEM file");
-        }
-
-        if keys.len() > 1 {
-            tracing::warn!("Multiple private keys found in PEM file, using the first one");
-        }
 
         Ok(Self {
             cert_chain: certs,
-            private_key: keys.into_iter().next().ok_or_else(|| {
-                crate::error::TlsError::MtlsError {
-                    message: "No private key found in key file (should have been caught earlier)"
-                        .to_string(),
-                }
-            })?,
+            private_key: single_private_key(keys, "PEM file")?,
         })
     }
 
@@ -223,6 +218,31 @@ KHvHJKYnrKyB
             .err()
             .expect("should fail without private key");
         assert!(err.to_string().contains("No private key"));
+    }
+
+    #[test]
+    fn test_mtls_from_pem_file_rejects_multiple_private_keys() {
+        let mut temp_file = NamedTempFile::new().expect("test assertion should succeed");
+        write!(
+            temp_file,
+            r#"-----BEGIN CERTIFICATE-----
+AQID
+-----END CERTIFICATE-----
+-----BEGIN PRIVATE KEY-----
+BAUG
+-----END PRIVATE KEY-----
+-----BEGIN PRIVATE KEY-----
+BwgJ
+-----END PRIVATE KEY-----"#
+        )
+        .expect("test assertion should succeed");
+        temp_file.flush().expect("test assertion should succeed");
+
+        let err = MtlsConfig::from_pem_file(temp_file.path())
+            .err()
+            .expect("multiple private keys should fail");
+
+        assert!(err.to_string().contains("Multiple private keys"));
     }
 
     #[test]
