@@ -3,21 +3,44 @@ use crate::compliance::framework::ComplianceFramework;
 use crate::compliance::loader::FrameworkLoader;
 use std::path::Path;
 
+const MAX_FRAMEWORK_FILE_BYTES: u64 = 1024 * 1024;
+
 pub struct BuiltinFrameworkSource;
 
 impl BuiltinFrameworkSource {
     pub fn load_from_file<P: AsRef<Path>>(path: P) -> crate::Result<ComplianceFramework> {
+        let path_ref = path.as_ref();
+        let size = std::fs::metadata(path_ref)
+            .map_err(|e| {
+                crate::error::TlsError::Other(format!(
+                    "Failed to inspect framework file '{}': {}",
+                    path_ref.display(),
+                    e
+                ))
+            })?
+            .len();
+        if size > MAX_FRAMEWORK_FILE_BYTES {
+            return Err(crate::error::TlsError::ConfigError {
+                message: format!(
+                    "Framework file '{}' is too large: {} bytes (max {})",
+                    path_ref.display(),
+                    size,
+                    MAX_FRAMEWORK_FILE_BYTES
+                ),
+            });
+        }
+
         let content = std::fs::read_to_string(&path).map_err(|e| {
             crate::error::TlsError::Other(format!(
                 "Failed to read framework file '{}': {}",
-                path.as_ref().display(),
+                path_ref.display(),
                 e
             ))
         })?;
         FrameworkLoader::load_from_string(&content).map_err(|e| {
             crate::error::TlsError::Other(format!(
                 "Failed to parse framework YAML '{}': {}",
-                path.as_ref().display(),
+                path_ref.display(),
                 e
             ))
         })
@@ -132,6 +155,7 @@ impl ComplianceFrameworkSource for BuiltinFrameworkSource {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs::File;
 
     #[test]
     fn test_every_listed_framework_has_a_parseable_embedded_copy() {
@@ -146,5 +170,20 @@ mod tests {
                 panic!("embedded framework '{framework_id}' failed to parse: {e}")
             });
         }
+    }
+
+    #[test]
+    fn test_load_from_file_rejects_oversized_framework_before_read() {
+        let temp_dir = tempfile::tempdir().expect("test assertion should succeed");
+        let path = temp_dir.path().join("oversized-framework.yaml");
+        let file = File::create(&path).expect("test assertion should succeed");
+        file.set_len(MAX_FRAMEWORK_FILE_BYTES + 1)
+            .expect("test assertion should succeed");
+
+        let err = BuiltinFrameworkSource::load_from_file(&path)
+            .expect_err("oversized framework should fail before reading");
+
+        assert!(err.to_string().contains("Framework file"));
+        assert!(err.to_string().contains("too large"));
     }
 }
