@@ -1,11 +1,12 @@
 // Job Storage - Persistence layer for jobs
 
+use crate::Result;
 use crate::api::jobs::ScanJob;
 use crate::api::models::response::ScanStatus;
-use crate::Result;
 use uuid::Uuid;
 
 const MAX_JOB_FILE_BYTES: u64 = 4 * 1024 * 1024;
+const MAX_JOB_FILES: usize = 10_000;
 
 /// Job storage trait for persisting jobs
 pub trait JobStorage: Send + Sync {
@@ -107,6 +108,19 @@ impl FileJobStorage {
         }
         Ok(())
     }
+
+    fn validate_job_file_count(count: usize) -> Result<()> {
+        if count > MAX_JOB_FILES {
+            return Err(crate::TlsError::InvalidInput {
+                message: format!(
+                    "Too many persisted job files: {} (max {})",
+                    count, MAX_JOB_FILES
+                ),
+            });
+        }
+
+        Ok(())
+    }
 }
 
 impl JobStorage for FileJobStorage {
@@ -149,6 +163,7 @@ impl JobStorage for FileJobStorage {
             let path = entry.path();
 
             if path.extension().and_then(|s| s.to_str()) == Some("json") {
+                Self::validate_job_file_count(jobs.len() + 1)?;
                 let expected_id =
                     path.file_stem()
                         .and_then(|stem| stem.to_str())
@@ -264,6 +279,16 @@ mod tests {
 
         assert!(err.to_string().contains("Job file"));
         assert!(err.to_string().contains("too large"));
+    }
+
+    #[test]
+    fn test_validate_job_file_count_rejects_above_limit() {
+        assert!(FileJobStorage::validate_job_file_count(MAX_JOB_FILES).is_ok());
+
+        let err = FileJobStorage::validate_job_file_count(MAX_JOB_FILES + 1)
+            .expect_err("too many persisted jobs should fail");
+
+        assert!(err.to_string().contains("Too many persisted job files"));
     }
 
     #[test]
@@ -421,9 +446,11 @@ mod tests {
         assert!(storage.save_job(&job).is_err());
         assert!(storage.load_job("../outside").is_err());
         assert!(storage.delete_job("../outside").is_err());
-        assert!(storage
-            .load_job("550E8400-E29B-41D4-A716-446655440000")
-            .is_err());
+        assert!(
+            storage
+                .load_job("550E8400-E29B-41D4-A716-446655440000")
+                .is_err()
+        );
         assert!(!temp_dir.path().join("../outside.json").exists());
     }
 }
