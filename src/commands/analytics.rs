@@ -4,6 +4,7 @@
 
 use super::{Command, CommandExit};
 use crate::application::{CompareScanIds, HostPortDaysInput};
+use crate::utils::path_ext::PathExt;
 use crate::{Args, Result, TlsError};
 use async_trait::async_trait;
 
@@ -33,7 +34,8 @@ impl AnalyticsCommand {
             .database
             .config
             .as_ref()
-            .map(|p| p.to_str().unwrap_or("database.toml"))
+            .map(|p| p.to_str_checked())
+            .transpose()?
             .unwrap_or("database.toml");
 
         Ok(Arc::new(
@@ -227,6 +229,10 @@ impl Command for AnalyticsCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    use std::ffi::OsString;
+    #[cfg(unix)]
+    use std::os::unix::ffi::OsStringExt;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -303,5 +309,20 @@ path = \"{}\"\n",
 
         let cmd = AnalyticsCommand::new(args);
         assert!(cmd.execute().await.is_err());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_analytics_rejects_non_utf8_database_config_path() {
+        let mut args = Args::default();
+        args.database.config = Some(PathBuf::from(OsString::from_vec(vec![0x66, 0x80])));
+
+        let cmd = AnalyticsCommand::new(args);
+        let err = match cmd.open_database().await {
+            Ok(_) => panic!("non-UTF-8 config path should fail"),
+            Err(err) => err,
+        };
+
+        assert!(err.to_string().contains("invalid UTF-8"));
     }
 }

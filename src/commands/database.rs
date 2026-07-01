@@ -5,6 +5,7 @@
 use super::{Command, CommandExit};
 use crate::application::HostPortInput;
 use crate::utils::network::canonical_target;
+use crate::utils::path_ext::PathExt;
 use crate::{Args, Result};
 use async_trait::async_trait;
 
@@ -32,7 +33,8 @@ impl DatabaseCommand {
             .database
             .config
             .as_ref()
-            .map(|p| p.to_str().unwrap_or("database.toml"))
+            .map(|p| p.to_str_checked())
+            .transpose()?
             .unwrap_or("database.toml");
 
         CipherRunDatabase::from_config_file(db_config_path).await
@@ -128,6 +130,12 @@ impl Command for DatabaseCommand {
 mod tests {
     use super::*;
     use crate::Args;
+    #[cfg(unix)]
+    use std::ffi::OsString;
+    #[cfg(unix)]
+    use std::os::unix::ffi::OsStringExt;
+    #[cfg(unix)]
+    use std::path::PathBuf;
 
     #[test]
     fn test_database_command_name() {
@@ -142,5 +150,20 @@ mod tests {
         assert_eq!(DatabaseCommand::format_optional_i64(None), "N/A");
         assert_eq!(DatabaseCommand::format_optional_i32(Some(90)), "90");
         assert_eq!(DatabaseCommand::format_optional_i64(Some(1200)), "1200");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_database_rejects_non_utf8_config_path() {
+        let mut args = Args::default();
+        args.database.config = Some(PathBuf::from(OsString::from_vec(vec![0x66, 0x80])));
+
+        let cmd = DatabaseCommand::new(args);
+        let err = match cmd.open_database().await {
+            Ok(_) => panic!("non-UTF-8 config path should fail"),
+            Err(err) => err,
+        };
+
+        assert!(err.to_string().contains("invalid UTF-8"));
     }
 }
