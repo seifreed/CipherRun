@@ -147,6 +147,14 @@ impl ClientDatabase {
 
         Self::append_section_values(&mut all_sections, &mut current_section, &mut current_values);
 
+        for section in all_sections.keys() {
+            if !Self::is_known_section(section) {
+                return Err(crate::TlsError::ParseError {
+                    message: format!("Unknown client data section: {section}"),
+                });
+            }
+        }
+
         // Build client profiles from sections
         if let Some(names) = all_sections.get("names") {
             for (i, name) in names.iter().enumerate() {
@@ -236,6 +244,35 @@ impl ClientDatabase {
         }
 
         Ok(Self { clients, by_id })
+    }
+
+    fn is_known_section(section: &str) -> bool {
+        matches!(
+            section,
+            "names"
+                | "short"
+                | "ch_ciphers"
+                | "ciphersuites"
+                | "ch_sni"
+                | "warning"
+                | "handshakebytes"
+                | "protos"
+                | "tlsvers"
+                | "lowest_protocol"
+                | "highest_protocol"
+                | "service"
+                | "minDhBits"
+                | "maxDhBits"
+                | "minRsaBits"
+                | "maxRsaBits"
+                | "minEcdsaBits"
+                | "curves"
+                | "requiresSha2"
+                | "current"
+                | "alpn"
+                | "ja3"
+                | "ja4"
+        )
     }
 
     fn append_section_values(
@@ -636,6 +673,22 @@ short+=("client_a" "client_a")
             Err(err) => err,
         };
         assert!(err.to_string().contains("Duplicate client data short id"));
+    }
+
+    #[test]
+    fn test_parse_rejects_unknown_section() {
+        let data = r#"
+names+=("Client A")
+short+=("client_a")
+requireseha2+=(true)
+"#;
+
+        let err = match ClientDatabase::parse(data) {
+            Ok(_) => panic!("unknown section should fail"),
+            Err(err) => err,
+        };
+
+        assert!(err.to_string().contains("Unknown client data section"));
     }
 
     #[test]
