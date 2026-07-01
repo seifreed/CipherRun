@@ -347,7 +347,10 @@ fn parse_connection_info(stdout: &str) -> ConnectionInfo {
                 cipher.is_empty()
             };
             if should_set {
-                let value = line.split(':').nth(1).unwrap_or("").trim().to_string();
+                let value = line
+                    .split_once(':')
+                    .map(|(_, value)| value.trim().to_string())
+                    .unwrap_or_default();
                 // "(NONE)" is emitted for a closed/un-negotiated session and is
                 // not a real cipher, so never let it set or clobber the value.
                 if !value.is_empty() && !value.eq_ignore_ascii_case("(none)") {
@@ -356,7 +359,10 @@ fn parse_connection_info(stdout: &str) -> ConnectionInfo {
                 }
             }
         } else if line.contains("Protocol") && line.contains(":") {
-            protocol = line.split(':').nth(1).unwrap_or("").trim().to_string();
+            protocol = line
+                .split_once(':')
+                .map(|(_, value)| value.trim().to_string())
+                .unwrap_or_default();
         } else if line.contains("Verify return code:") {
             verify_result = line.trim().to_string();
         }
@@ -469,6 +475,19 @@ New, (NONE), Cipher is (NONE)
 
         let info = parse_connection_info(stdout);
         assert_eq!(info.cipher, "ECDHE-RSA-AES256-GCM-SHA384");
+    }
+
+    #[test]
+    fn test_parse_connection_info_preserves_colons_in_values() {
+        let stdout = r#"
+SSL-Session:
+    Protocol  : TLSv1.3:draft
+    Cipher    : TLS_AES_128_GCM_SHA256:extra
+"#;
+
+        let info = parse_connection_info(stdout);
+        assert_eq!(info.protocol, "TLSv1.3:draft");
+        assert_eq!(info.cipher, "TLS_AES_128_GCM_SHA256:extra");
     }
 
     #[test]
