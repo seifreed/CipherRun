@@ -166,10 +166,7 @@ impl CipherTester {
                 }
                 Err(error) => {
                     return Err(crate::TlsError::ParseError {
-                        message: format!(
-                            "Invalid cipher hexcode '{}': {}",
-                            cipher.hexcode, error
-                        ),
+                        message: format!("Invalid cipher hexcode '{}': {}", cipher.hexcode, error),
                     });
                 }
             }
@@ -336,11 +333,7 @@ impl CipherTester {
     ) -> Result<ProtocolCipherSummary> {
         let handshake_times: Vec<u64> =
             results.iter().filter_map(|r| r.handshake_time_ms).collect();
-        let avg_handshake_time_ms = if !handshake_times.is_empty() {
-            Some(handshake_times.iter().sum::<u64>() / handshake_times.len() as u64)
-        } else {
-            None
-        };
+        let avg_handshake_time_ms = average_handshake_time(&handshake_times);
 
         let supported: Vec<CipherSuite> = results
             .into_iter()
@@ -415,6 +408,21 @@ impl CipherTester {
             avg_handshake_time_ms,
         })
     }
+}
+
+fn average_handshake_time(handshake_times: &[u64]) -> Option<u64> {
+    let count = u64::try_from(handshake_times.len()).ok()?;
+    if count == 0 {
+        return None;
+    }
+
+    Some(
+        handshake_times
+            .iter()
+            .copied()
+            .fold(0u64, u64::saturating_add)
+            / count,
+    )
 }
 
 #[cfg(test)]
@@ -621,6 +629,34 @@ mod tests {
             .await
             .expect_err("invalid supported cipher hexcode should fail aggregation");
         assert!(err.to_string().contains("Invalid cipher hexcode"));
+    }
+
+    #[tokio::test]
+    async fn aggregate_results_saturates_overflowing_handshake_average() {
+        let tester = CipherTester::new(dummy_target());
+        let results = vec![
+            CipherTestResult {
+                cipher: tls12_cipher("002F", "AES128-CBC", 128),
+                supported: false,
+                protocol: Protocol::TLS12,
+                server_preference: None,
+                handshake_time_ms: Some(u64::MAX),
+            },
+            CipherTestResult {
+                cipher: tls12_cipher("0035", "AES256-CBC", 256),
+                supported: false,
+                protocol: Protocol::TLS12,
+                server_preference: None,
+                handshake_time_ms: Some(1),
+            },
+        ];
+
+        let summary = tester
+            .aggregate_results(Protocol::TLS12, results)
+            .await
+            .expect("aggregation should succeed");
+
+        assert_eq!(summary.avg_handshake_time_ms, Some(u64::MAX / 2));
     }
 
     #[test]
