@@ -17,6 +17,21 @@ const LEGACY_PROBE_CIPHERS: &[u16] = &[
 ];
 const SSLV2_MAX_RECORD_WITH_HEADER: usize = 32767 + 2;
 
+fn sslv2_record_shape(data: &[u8]) -> Option<(usize, usize, usize)> {
+    let first = *data.first()?;
+    let second = *data.get(1)?;
+    if matches!(first, 0x14..=0x18) && second == 0x03 {
+        return None;
+    }
+    if (first & 0x80) != 0 {
+        let record_len = ((first & 0x7f) as usize) << 8 | second as usize;
+        Some((2, record_len, 2 + record_len))
+    } else {
+        let record_len = ((first & 0x3f) as usize) << 8 | second as usize;
+        Some((3, record_len, 3 + record_len))
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ProtocolProbeOutcome {
     Supported,
@@ -304,30 +319,22 @@ impl ProtocolTester {
                 .await
                 {
                     Ok(Ok(response)) if response.len() >= 3 => {
-                        let header =
-                            response
-                                .get(..3)
-                                .ok_or_else(|| crate::TlsError::ParseError {
-                                    message: "SSLv2 probe response truncated before header"
-                                        .to_string(),
-                                })?;
-                        let header: [u8; 3] =
-                            header.try_into().map_err(|_| crate::TlsError::ParseError {
-                                message: "SSLv2 probe response truncated before header".to_string(),
-                            })?;
-                        let [first, second, msg_type] = header;
-                        let is_sslv2_header = (first & 0x80) != 0;
-                        let record_len = ((first & 0x7f) as usize) << 8 | second as usize;
+                        let Some((header_len, record_len, record_total)) =
+                            sslv2_record_shape(&response)
+                        else {
+                            return Ok(ProtocolProbeOutcome::NotSupported);
+                        };
+                        let Some(&msg_type) = response.get(header_len) else {
+                            return Ok(ProtocolProbeOutcome::Inconclusive);
+                        };
                         let reasonable = record_len > 0 && record_len <= 32767;
-                        let complete = 2usize
-                            .checked_add(record_len)
-                            .is_some_and(|record_total| response.len() >= record_total);
+                        let complete = response.len() >= record_total;
                         // Only server-to-client SSLv2 messages prove server support.
                         // Client-only messages indicate protocol confusion, not SSLv2 support.
                         let server_message = matches!(msg_type, 0x04..=0x07);
-                        if is_sslv2_header && reasonable && server_message && complete {
+                        if reasonable && server_message && complete {
                             Ok(ProtocolProbeOutcome::Supported)
-                        } else if is_sslv2_header && reasonable && server_message {
+                        } else if reasonable && server_message {
                             Ok(ProtocolProbeOutcome::Inconclusive)
                         } else {
                             Ok(ProtocolProbeOutcome::NotSupported)
@@ -402,13 +409,14 @@ impl ProtocolTester {
             }
             total += n;
             if total >= 2 {
-                let record_len = (((response[0] & 0x7f) as usize) << 8) | response[1] as usize;
-                let record_total = 2usize.checked_add(record_len).ok_or_else(|| {
-                    std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        "SSLv2 probe response length overflow",
-                    )
-                })?;
+                let Some((header_len, _record_len, record_total)) =
+                    sslv2_record_shape(response.get(..total).unwrap_or(&[]))
+                else {
+                    continue;
+                };
+                if total < header_len {
+                    continue;
+                }
                 if record_total > response.len() {
                     return Err(std::io::Error::new(
                         std::io::ErrorKind::InvalidData,
@@ -1012,6 +1020,43 @@ mod legacy_probe_tests {
             .test_sslv2_on_ip(addr)
             .await
             .expect("large SSLv2 response should be classified");
+
+        assert_eq!(outcome, ProtocolProbeOutcome::Supported);
+    }
+
+    #[tokio::test]
+    async fn test_sslv2_probe_handles_three_byte_header_server_hello() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("local addr should exist");
+
+        tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let mut buffer = vec![0u8; 64];
+                let _ = socket.read(&mut buffer).await.unwrap();
+
+                let record = [0x00, 0x04, 0x00, 0x04, 0x00, 0x00, 0x00];
+                socket
+                    .write_all(&record)
+                    .await
+                    .expect("write SSLv2 response");
+            }
+        });
+
+        let target = Target::with_ips("example.test".to_string(), addr.port(), vec![addr.ip()])
+            .expect("target should build");
+        let tester = ProtocolTester::new(target)
+            .with_connect_timeout(Duration::from_millis(100))
+            .with_read_timeout(Duration::from_millis(100));
+
+        let outcome = tester
+            .test_sslv2_on_ip(addr)
+            .await
+            .expect("SSLv2 response should be classified");
 
         assert_eq!(outcome, ProtocolProbeOutcome::Supported);
     }

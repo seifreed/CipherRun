@@ -33,6 +33,21 @@ use tokio::time::timeout;
 
 const SSLV2_MAX_RECORD_WITH_HEADER: usize = 32767 + 2;
 
+fn sslv2_record_shape(data: &[u8]) -> Option<(usize, usize, usize)> {
+    let first = *data.first()?;
+    let second = *data.get(1)?;
+    if matches!(first, 0x14..=0x18) && second == 0x03 {
+        return None;
+    }
+    if (first & 0x80) != 0 {
+        let record_len = ((first & 0x7f) as usize) << 8 | second as usize;
+        Some((2, record_len, 2 + record_len))
+    } else {
+        let record_len = ((first & 0x3f) as usize) << 8 | second as usize;
+        Some((3, record_len, 3 + record_len))
+    }
+}
+
 /// SSLv2 detection status with granular confidence levels
 ///
 /// # DROWN Vulnerability Context
@@ -230,36 +245,23 @@ impl DrownTester {
             return Ok(Sslv2Status::Inconclusive);
         }
 
-        let Some((&first_byte, rest)) = data.split_first() else {
-            return Ok(Sslv2Status::Inconclusive);
-        };
-        let Some(&second_byte) = rest.first() else {
-            return Ok(Sslv2Status::Inconclusive);
-        };
-
-        // SSLv2 uses 2-byte or 3-byte record headers
-        // 2-byte header: high bit set, length in lower 15 bits
-        let is_sslv2_header = (first_byte & 0x80) != 0;
-
-        if !is_sslv2_header {
+        let Some((header_len, record_len, record_total)) = sslv2_record_shape(data) else {
             return Ok(Sslv2Status::NotSupported);
-        }
-
-        let record_len = ((first_byte & 0x7f) as usize) << 8 | second_byte as usize;
+        };
         let is_reasonable_length = record_len > 0 && record_len <= 32767;
-        let has_enough_data = data.len() >= 3 && data.len() >= record_len.saturating_add(2);
+        let has_enough_data = data.len() > header_len && data.len() >= record_total;
 
         if !is_reasonable_length || !has_enough_data {
             // SSLv2 header present but insufficient data
             tracing::debug!(
                 "DROWN: SSLv2 header detected but response truncated (len={}, expected={})",
                 data.len(),
-                record_len.saturating_add(2)
+                record_total
             );
             return Ok(Sslv2Status::Suspicious);
         }
 
-        let Some(&msg_type) = data.get(2) else {
+        let Some(&msg_type) = data.get(header_len) else {
             return Ok(Sslv2Status::Suspicious);
         };
 
@@ -510,8 +512,14 @@ impl DrownTester {
                 Ok(Ok(n)) => {
                     total += n;
                     if total >= 2 {
-                        let record_len = (((buffer[0] & 0x7f) as usize) << 8) | buffer[1] as usize;
-                        let record_total = 2usize.saturating_add(record_len);
+                        let Some((header_len, _record_len, record_total)) =
+                            sslv2_record_shape(buffer.get(..total).unwrap_or(&[]))
+                        else {
+                            continue;
+                        };
+                        if total < header_len {
+                            continue;
+                        }
                         if record_total > buffer.len() {
                             return Err(std::io::Error::new(
                                 ErrorKind::InvalidData,
@@ -663,6 +671,14 @@ mod tests {
         // Record length 0x40 = 64 bytes, so total = 66 bytes (header + body)
         let mut response = vec![0x80, 0x40, 0x04]; // header (length=64) + msg type
         response.extend(vec![0u8; 63]); // padding to match length
+        let result = DrownTester::analyze_sslv2_response(&response);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), Sslv2Status::Confirmed);
+    }
+
+    #[test]
+    fn test_analyze_sslv2_response_confirmed_with_three_byte_header() {
+        let response = [0x00, 0x04, 0x00, 0x04, 0x00, 0x00, 0x00];
         let result = DrownTester::analyze_sslv2_response(&response);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), Sslv2Status::Confirmed);
