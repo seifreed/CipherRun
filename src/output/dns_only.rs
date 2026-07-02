@@ -91,6 +91,10 @@ impl DnsOnlyMode {
             normalized = stripped.to_string();
         }
 
+        if let Some(stripped) = normalized.strip_suffix('.') {
+            normalized = stripped.to_string();
+        }
+
         normalized.trim().to_string()
     }
 
@@ -270,6 +274,31 @@ mod tests {
         assert_eq!(
             domains,
             vec!["example.com".to_string(), "www.example.com".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_extract_domains_normalizes_absolute_fqdns() {
+        let cert = CertificateInfo {
+            subject: "CN=Example.com.,O=Org,C=US".to_string(),
+            san: vec![
+                "DNS:*.api.example.com.".to_string(),
+                "www.example.com.".to_string(),
+                ".".to_string(),
+                "example.com..".to_string(),
+            ],
+            ..Default::default()
+        };
+
+        let domains = DnsOnlyMode::extract_domains(&cert);
+
+        assert_eq!(
+            domains,
+            vec![
+                "api.example.com".to_string(),
+                "example.com".to_string(),
+                "www.example.com".to_string(),
+            ]
         );
     }
 
