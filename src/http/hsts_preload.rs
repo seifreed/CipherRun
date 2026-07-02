@@ -176,12 +176,27 @@ impl HstsPreloadChecker {
 
     /// Normalize domain for consistent cache keys
     fn normalize_domain(domain: &str) -> String {
-        let mut normalized = domain.trim().to_lowercase();
+        let domain = domain.trim();
+        let mut normalized = if domain.contains("://")
+            && let Ok(url) = url::Url::parse(domain)
+            && matches!(url.scheme(), "http" | "https")
+            && let Some(host) = url.host_str()
+        {
+            host.to_ascii_lowercase()
+        } else {
+            let mut normalized = domain.to_ascii_lowercase();
+            if let Some(stripped) = normalized.strip_prefix("https://") {
+                normalized = stripped.to_string();
+            } else if let Some(stripped) = normalized.strip_prefix("http://") {
+                normalized = stripped.to_string();
+            }
+            normalized
+        };
 
-        if let Some(stripped) = normalized.strip_prefix("https://") {
-            normalized = stripped.to_string();
-        } else if let Some(stripped) = normalized.strip_prefix("http://") {
-            normalized = stripped.to_string();
+        if let Some(stripped) = normalized.strip_prefix('[')
+            && let Some(host) = stripped.strip_suffix(']')
+        {
+            normalized = host.to_string();
         }
 
         if let Some(idx) = normalized.find(['/', '?', '#']) {
@@ -419,6 +434,14 @@ mod tests {
         assert_eq!(
             HstsPreloadChecker::normalize_domain("https://www.example.com:443/path?q=1"),
             "example.com"
+        );
+        assert_eq!(
+            HstsPreloadChecker::normalize_domain("https://user:pass@www.example.com:443/path"),
+            "example.com"
+        );
+        assert_eq!(
+            HstsPreloadChecker::normalize_domain("https://[2001:db8::1]:443/path"),
+            "2001:db8::1"
         );
     }
 
