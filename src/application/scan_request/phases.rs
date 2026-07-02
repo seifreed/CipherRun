@@ -1,4 +1,5 @@
 use super::ScanRequest;
+use crate::utils::network::normalize_dns_hostname;
 
 impl ScanRequest {
     pub fn baseline_scan_requested(&self) -> bool {
@@ -75,7 +76,7 @@ impl ScanRequest {
         self.tls
             .sni_name
             .clone()
-            .unwrap_or_else(|| default_hostname.to_string())
+            .unwrap_or_else(|| normalize_dns_hostname(default_hostname.to_string()))
     }
 
     pub fn should_enumerate_all_ciphers(&self) -> bool {

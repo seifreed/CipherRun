@@ -307,9 +307,10 @@ fn test_vulnerability_flags() {
 fn test_effective_sni() {
     let mut args = Args::default();
     assert_eq!(args.effective_sni("example.com"), "example.com");
+    assert_eq!(args.effective_sni("example.com."), "example.com");
 
     args.tls.sni_name = Some("custom.test".to_string());
-    assert_eq!(args.effective_sni("example.com"), "custom.test");
+    assert_eq!(args.effective_sni("example.com."), "custom.test");
 }
 
 #[test]

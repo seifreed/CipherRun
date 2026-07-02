@@ -69,6 +69,15 @@ fn builds_protocol_filter_from_flags() {
 }
 
 #[test]
+fn effective_sni_normalizes_rooted_default_hostname() {
+    let mut request = ScanRequest::default();
+    assert_eq!(request.effective_sni("example.com."), "example.com");
+
+    request.tls.sni_name = Some("custom.test".to_string());
+    assert_eq!(request.effective_sni("example.com."), "custom.test");
+}
+
+#[test]
 fn rejects_conflicting_ip_scan_modes() {
     let request = ScanRequest {
         ip: Some("127.0.0.1".to_string()),

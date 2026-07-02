@@ -3,7 +3,9 @@
 // Licensed under GPL-3.0
 
 use crate::security::validate_hostname;
-use crate::utils::{custom_resolvers::CustomResolver, proxy::ProxyConfig};
+use crate::utils::{
+    custom_resolvers::CustomResolver, network::normalize_dns_hostname, proxy::ProxyConfig,
+};
 use clap::{CommandFactory, FromArgMatches, Parser, parser::ValueSource};
 use std::path::PathBuf;
 
@@ -557,7 +559,7 @@ impl Args {
         self.tls
             .sni_name
             .clone()
-            .unwrap_or_else(|| default_hostname.to_string())
+            .unwrap_or_else(|| normalize_dns_hostname(default_hostname.to_string()))
     }
 
     /// Get list of protocols to test based on flags
