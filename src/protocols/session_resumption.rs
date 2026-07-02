@@ -51,7 +51,10 @@ impl SessionResumptionTester {
         if timeout == 0 {
             return current_time >= session_time;
         }
-        current_time >= session_time && current_time < session_time.saturating_add(timeout)
+        let Some(expires_at) = session_time.checked_add(timeout) else {
+            return false;
+        };
+        current_time >= session_time && current_time < expires_at
     }
 
     /// Run complete session resumption tests
@@ -406,6 +409,15 @@ mod tests {
     fn test_negative_session_times_are_invalid() {
         assert!(!SessionResumptionTester::session_times_valid(-1, 60, 10));
         assert!(!SessionResumptionTester::session_times_valid(1, -60, 10));
+    }
+
+    #[test]
+    fn test_overflowing_session_expiry_is_invalid() {
+        assert!(!SessionResumptionTester::session_times_valid(
+            i64::MAX,
+            i64::MAX,
+            u64::MAX - 1
+        ));
     }
 
     fn install_crypto_provider() {
