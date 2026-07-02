@@ -1,6 +1,6 @@
 use crate::application::ScanResults;
 use crate::certificates::validator::parse_cert_date;
-use crate::utils::network::split_target_host_port;
+use crate::utils::network::{normalize_dns_hostname, split_target_host_port};
 use chrono::{DateTime, Utc};
 
 fn parse_persisted_cert_date(raw: &str, field: &str) -> crate::Result<DateTime<Utc>> {
@@ -105,6 +105,7 @@ impl PersistedScan {
                 });
             }
         };
+        let target_hostname = normalize_dns_hostname(target_hostname);
 
         let overall_grade = results.ssl_rating().map(|rating| rating.grade.to_string());
         let overall_score = results.ssl_rating().map(|rating| rating.score);
@@ -274,6 +275,19 @@ mod tests {
         assert_eq!(persisted.target_hostname, "example.com");
         assert_eq!(persisted.target_port, 443);
         assert_eq!(persisted.scan_duration_ms, 123);
+    }
+
+    #[test]
+    fn normalizes_rooted_scan_target_hostname() {
+        let results = ScanResults {
+            target: "example.com.:8443".to_string(),
+            ..Default::default()
+        };
+
+        let persisted =
+            PersistedScan::from_scan_results(&results).expect("persistence conversion succeeds");
+        assert_eq!(persisted.target_hostname, "example.com");
+        assert_eq!(persisted.target_port, 8443);
     }
 
     #[test]
