@@ -369,6 +369,16 @@ fn test_validate_ct_logs_and_analytics_conflict() {
 }
 
 #[test]
+fn test_validate_ct_logs_beginning_and_index_conflict() {
+    let error = validate_err(build_args(|args| {
+        args.ct_logs.enable = true;
+        args.ct_logs.beginning = true;
+        args.ct_logs.index = vec!["google=123".to_string()];
+    }));
+    assert!(error.contains("Cannot combine --ct-beginning with --ct-index"));
+}
+
+#[test]
 fn test_validate_test_alert_and_api_server_conflict() {
     let _ = validate_err(build_args(|args| {
         args.monitoring.test_alert = true;

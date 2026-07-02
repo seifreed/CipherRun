@@ -199,6 +199,11 @@ impl CommandRouter {
                 message: "Analytics output supports terminal or JSON only; CSV/HTML/XML exports are not available.".to_string(),
             });
         }
+        if args.ct_logs.enable && args.ct_logs.beginning && !args.ct_logs.index.is_empty() {
+            return Err(TlsError::InvalidInput {
+                message: "Cannot combine --ct-beginning with --ct-index. Choose one CT log start position.".to_string(),
+            });
+        }
 
         let exclusive_mode_active = mode_count == 1;
         let additional_action_requested = args.target.is_some()
