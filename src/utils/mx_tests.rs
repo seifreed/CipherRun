@@ -362,6 +362,21 @@ fn test_aggregate_scan_results_for_domain_is_conservative() {
 }
 
 #[test]
+fn test_aggregate_scan_results_normalizes_rooted_domain() {
+    let results: Vec<(MxRecord, Result<ScanResults>)> = vec![(
+        MxRecord {
+            priority: 10,
+            hostname: "mx1.example.com".to_string(),
+        },
+        Ok(ScanResults::default()),
+    )];
+
+    let aggregate = MxTester::aggregate_scan_results_for_domain("example.com.", &results).unwrap();
+
+    assert_eq!(aggregate.target, "example.com:25");
+}
+
+#[test]
 fn test_aggregate_scan_results_marks_vulnerabilities_inconclusive_when_mx_fails() {
     let results: Vec<(MxRecord, Result<ScanResults>)> = vec![
         (

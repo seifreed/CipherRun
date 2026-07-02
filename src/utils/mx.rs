@@ -9,7 +9,7 @@ use crate::scanner::{
 };
 use crate::scanner::{ScanResults, Scanner};
 use crate::utils::custom_resolvers::CustomResolver;
-use crate::utils::network::canonical_target;
+use crate::utils::network::{canonical_target, normalize_dns_hostname};
 use crate::vulnerabilities::{VulnerabilityResult, merge_vulnerability_result};
 use colored::Colorize;
 use futures::stream::{self, StreamExt};
@@ -37,6 +37,7 @@ impl MxTester {
     }
 
     pub fn with_resolvers(domain: String, resolvers: Vec<String>) -> Self {
+        let domain = normalize_dns_hostname(domain);
         Self { domain, resolvers }
     }
 
@@ -464,7 +465,7 @@ impl MxTester {
         let incomplete_coverage = results.iter().any(|(_, result)| result.is_err());
 
         let mut aggregate = ScanResults {
-            target: canonical_target(domain, 25),
+            target: canonical_target(&normalize_dns_hostname(domain.to_string()), 25),
             scan_time_ms: successful_results
                 .iter()
                 .map(|result| result.scan_time_ms)
