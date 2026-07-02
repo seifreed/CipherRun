@@ -209,15 +209,14 @@ impl CustomResolver {
                 ),
             })?;
 
-        let mut records: Vec<(u16, String)> = response
-            .answers()
-            .iter()
-            .filter_map(|record| match &record.data {
-                RData::MX(mx) => normalize_mx_hostname(&mx.exchange.to_utf8())
-                    .map(|hostname| (mx.preference, hostname)),
-                _ => None,
-            })
-            .collect();
+        let mut records = Vec::new();
+        for record in response.answers() {
+            if let RData::MX(mx) = &record.data
+                && let Some(hostname) = normalize_mx_hostname(&mx.exchange.to_utf8())?
+            {
+                records.push((mx.preference, hostname));
+            }
+        }
         records.sort_by_key(|(priority, hostname)| (*priority, hostname.clone()));
         records.dedup();
 
@@ -281,12 +280,23 @@ impl CustomResolver {
     }
 }
 
-fn normalize_mx_hostname(hostname: &str) -> Option<String> {
+fn normalize_mx_hostname(hostname: &str) -> Result<Option<String>> {
     let hostname = hostname.trim();
     if hostname == "." {
-        return None;
+        return Ok(None);
     }
-    Some(hostname.trim_end_matches('.').to_string())
+    let hostname = hostname.trim_end_matches('.').to_string();
+    crate::security::validate_hostname(&hostname).map_err(|error| {
+        crate::TlsError::InvalidInput {
+            message: format!("Invalid MX hostname: {error}"),
+        }
+    })?;
+    if hostname.parse::<IpAddr>().is_ok() {
+        return Err(crate::TlsError::InvalidInput {
+            message: format!("Invalid MX hostname: IP literal {hostname}"),
+        });
+    }
+    Ok(Some(hostname))
 }
 
 fn validate_custom_resolver_hostname(hostname: &str, label: &str) -> Result<()> {
@@ -325,6 +335,21 @@ mod tests {
         assert_eq!(resolver.count(), 1);
         let expected = SocketAddr::new("8.8.8.8".parse().unwrap(), 53);
         assert_eq!(resolver.primary_resolver().unwrap(), expected);
+    }
+
+    #[test]
+    fn test_normalize_mx_hostname_rejects_invalid_name() {
+        let err = normalize_mx_hostname("bad/host.example.")
+            .expect_err("invalid MX hostname should fail");
+
+        assert!(err.to_string().contains("Invalid MX hostname"));
+    }
+
+    #[test]
+    fn test_normalize_mx_hostname_rejects_ip_literal() {
+        let err = normalize_mx_hostname("127.0.0.1.").expect_err("MX exchange must be a hostname");
+
+        assert!(err.to_string().contains("IP literal"));
     }
 
     #[test]
@@ -460,9 +485,12 @@ mod tests {
 
     #[test]
     fn test_normalize_mx_hostname_skips_null_mx() {
-        assert_eq!(normalize_mx_hostname("."), None);
         assert_eq!(
-            normalize_mx_hostname("mx.example.com."),
+            normalize_mx_hostname(".").expect("null MX should parse"),
+            None
+        );
+        assert_eq!(
+            normalize_mx_hostname("mx.example.com.").expect("hostname should parse"),
             Some("mx.example.com".to_string())
         );
     }

@@ -136,7 +136,7 @@ impl MxTester {
                         message: format!("Invalid dig MX priority: {priority_str}"),
                     })?;
 
-            if let Some(hostname) = normalize_mx_hostname(hostname_raw) {
+            if let Some(hostname) = normalize_mx_hostname(hostname_raw)? {
                 records.push(MxRecord { priority, hostname });
             }
         }
@@ -174,7 +174,7 @@ impl MxTester {
                     }
                 })?;
 
-                if let Some(hostname) = normalize_mx_hostname(hostname_raw) {
+                if let Some(hostname) = normalize_mx_hostname(hostname_raw)? {
                     records.push(MxRecord { priority, hostname });
                 }
             }
@@ -500,12 +500,23 @@ impl MxTester {
     }
 }
 
-fn normalize_mx_hostname(hostname: &str) -> Option<String> {
+fn normalize_mx_hostname(hostname: &str) -> Result<Option<String>> {
     let hostname = hostname.trim();
     if hostname == "." {
-        return None;
+        return Ok(None);
     }
-    Some(hostname.trim_end_matches('.').to_string())
+    let hostname = hostname.trim_end_matches('.').to_string();
+    crate::security::validate_hostname(&hostname).map_err(|error| {
+        crate::error::TlsError::InvalidInput {
+            message: format!("Invalid MX hostname: {error}"),
+        }
+    })?;
+    if hostname.parse::<IpAddr>().is_ok() {
+        return Err(crate::error::TlsError::InvalidInput {
+            message: format!("Invalid MX hostname: IP literal {hostname}"),
+        });
+    }
+    Ok(Some(hostname))
 }
 
 fn synthetic_backend_ip(index: usize) -> IpAddr {

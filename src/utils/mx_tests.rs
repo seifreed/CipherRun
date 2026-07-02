@@ -135,6 +135,26 @@ fn test_parse_dig_output_rejects_invalid_priority() {
 }
 
 #[test]
+fn test_parse_dig_output_rejects_invalid_mx_hostname() {
+    let tester = MxTester::new("example.com".to_string());
+    let err = tester
+        .parse_dig_output(b"10 bad/host.example.\n")
+        .expect_err("invalid MX hostname should fail");
+
+    assert!(err.to_string().contains("Invalid MX hostname"));
+}
+
+#[test]
+fn test_parse_dig_output_rejects_ip_literal_mx_hostname() {
+    let tester = MxTester::new("example.com".to_string());
+    let err = tester
+        .parse_dig_output(b"10 127.0.0.1.\n")
+        .expect_err("MX exchange must be a hostname");
+
+    assert!(err.to_string().contains("IP literal"));
+}
+
+#[test]
 fn test_parse_nslookup_output_rejects_invalid_priority() {
     let tester = MxTester::new("example.com".to_string());
     let output = b"example.com mail exchanger = x mx.example.com.\n";
