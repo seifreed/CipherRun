@@ -18,6 +18,7 @@ impl ConservativeAggregator {
             .filter(|(_, r)| r.error.is_none())
             .collect();
         successful_results.sort_by_key(|(ip, _)| **ip);
+        let had_failed_results = self.results.values().any(|result| result.error.is_some());
 
         if successful_results.is_empty() {
             return aggregated;
@@ -88,7 +89,8 @@ impl ConservativeAggregator {
                 aggregated.push(ProtocolTestResult {
                     protocol,
                     supported: true,
-                    inconclusive: protocol_results.iter().any(|result| result.inconclusive),
+                    inconclusive: had_failed_results
+                        || protocol_results.iter().any(|result| result.inconclusive),
                     preferred,
                     ciphers_count,
                     handshake_time_ms,
@@ -98,7 +100,8 @@ impl ConservativeAggregator {
                     secure_renegotiation,
                 });
             } else {
-                let any_inconclusive = protocol_results.len() < successful_results.len()
+                let any_inconclusive = had_failed_results
+                    || protocol_results.len() < successful_results.len()
                     || protocol_results.iter().any(|result| result.inconclusive);
 
                 // Add as unsupported

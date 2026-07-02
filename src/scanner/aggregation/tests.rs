@@ -906,6 +906,62 @@ fn test_aggregate_protocols_marks_unsupported_when_not_all_support() {
 }
 
 #[test]
+fn test_aggregate_protocols_marks_partial_backend_failure_inconclusive() {
+    let ip1: IpAddr = Ipv4Addr::new(127, 0, 0, 1).into();
+    let ip2: IpAddr = Ipv4Addr::new(127, 0, 0, 2).into();
+
+    let protocols = vec![ProtocolTestResult {
+        protocol: Protocol::TLS13,
+        supported: true,
+        inconclusive: false,
+        preferred: true,
+        ciphers_count: 1,
+        handshake_time_ms: None,
+        heartbeat_enabled: None,
+        session_resumption_caching: None,
+        session_resumption_tickets: None,
+        secure_renegotiation: None,
+    }];
+
+    let mut results = HashMap::new();
+    results.insert(
+        ip1,
+        SingleIpScanResult {
+            ip: ip1,
+            scan_result: make_scan_result(
+                protocols,
+                HashMap::new(),
+                "fp1",
+                Grade::A,
+                90,
+                Vec::new(),
+            ),
+            scan_duration_ms: 1,
+            error: None,
+        },
+    );
+    results.insert(
+        ip2,
+        SingleIpScanResult {
+            ip: ip2,
+            scan_result: ScanResults::default(),
+            scan_duration_ms: 1,
+            error: Some("timeout".to_string()),
+        },
+    );
+
+    let aggregated = ConservativeAggregator::new(results, Vec::new()).aggregate();
+    let tls13 = aggregated
+        .protocols
+        .iter()
+        .find(|p| p.protocol == Protocol::TLS13)
+        .expect("TLS 1.3 entry should exist");
+
+    assert!(tls13.supported);
+    assert!(tls13.inconclusive);
+}
+
+#[test]
 fn test_aggregate_protocols_preserves_inconclusive_when_all_support() {
     let ip1: IpAddr = Ipv4Addr::new(127, 0, 0, 1).into();
     let ip2: IpAddr = Ipv4Addr::new(127, 0, 0, 2).into();
