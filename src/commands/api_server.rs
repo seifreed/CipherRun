@@ -7,8 +7,6 @@ use crate::{Args, Result};
 use async_trait::async_trait;
 use tracing::info;
 
-/// Default bind address when neither a config file nor `--api-host` is given.
-const DEFAULT_API_HOST: &str = "0.0.0.0";
 /// Default port when neither a config file nor `--api-port` is given.
 const DEFAULT_API_PORT: u16 = 8080;
 /// Default concurrency when neither a config file nor `--api-max-concurrent` is given.
@@ -19,8 +17,8 @@ const DEFAULT_API_MAX_CONCURRENT: usize = 10;
 /// CLI flags override the config file, but only when the user actually
 /// supplied them; otherwise the clap defaults would silently clobber the
 /// host/port/concurrency read from `--api-config`. When no config file was
-/// loaded, fall back to the documented CLI defaults so the common `--serve`
-/// invocation behaves unchanged.
+/// loaded, keep `ApiConfig::default()` for host so the common `--serve`
+/// invocation binds to localhost unless the user explicitly exposes it.
 fn apply_cli_overrides(
     config: &mut crate::api::ApiConfig,
     args: &crate::cli::ApiServerArgs,
@@ -28,8 +26,6 @@ fn apply_cli_overrides(
 ) {
     if let Some(host) = &args.host {
         config.host = host.clone();
-    } else if !has_config_file {
-        config.host = DEFAULT_API_HOST.to_string();
     }
     if let Some(port) = args.port {
         config.port = port;
@@ -171,12 +167,12 @@ mod tests {
     }
 
     #[test]
-    fn test_no_config_no_flags_uses_documented_defaults() {
+    fn test_no_config_no_flags_keeps_secure_api_default_host() {
         let mut config = crate::api::ApiConfig::default();
         let args = crate::cli::ApiServerArgs::default();
         apply_cli_overrides(&mut config, &args, false);
 
-        assert_eq!(config.host, DEFAULT_API_HOST);
+        assert_eq!(config.host, "127.0.0.1");
         assert_eq!(config.port, DEFAULT_API_PORT);
         assert_eq!(config.max_concurrent_scans, DEFAULT_API_MAX_CONCURRENT);
     }

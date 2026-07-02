@@ -15,7 +15,7 @@ pub struct ApiServerArgs {
     #[arg(long = "serve", id = "api_enable")]
     pub enable: bool,
 
-    /// API server host address (overrides config file; default: 0.0.0.0)
+    /// API server host address (overrides config file; default: 127.0.0.1)
     #[arg(long = "api-host", value_name = "HOST", id = "api_host")]
     pub host: Option<String>,
 
