@@ -288,6 +288,23 @@ fn rejects_rooted_fqdn_sni_name() {
 }
 
 #[test]
+fn rejects_rooted_fqdn_xmpphost() {
+    let request = ScanRequest {
+        starttls: ScanRequestStarttls {
+            xmpp: true,
+            xmpphost: Some("chat.example.com.".to_string()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let err = request
+        .validate_common()
+        .expect_err("XMPP hostname override with trailing dot should fail validation");
+    assert!(err.to_string().contains("trailing dot"));
+}
+
+#[test]
 fn rejects_ip_literal_sni_name() {
     let request = ScanRequest {
         tls: ScanRequestTls {

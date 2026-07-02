@@ -292,6 +292,9 @@ impl Args {
         if let Some(xmpphost) = &self.starttls.xmpphost {
             validate_hostname(xmpphost)
                 .map_err(|e| crate::error::TlsError::Other(e.to_string()))?;
+            if xmpphost.ends_with('.') {
+                crate::tls_bail!("--xmpphost must not include a trailing dot");
+            }
 
             if !matches!(
                 self.starttls_protocol()?,

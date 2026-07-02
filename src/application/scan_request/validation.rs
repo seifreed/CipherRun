@@ -205,6 +205,12 @@ impl ScanRequest {
                     message: format!("Invalid XMPP hostname: {}", error),
                 }
             })?;
+            if xmpphost.ends_with('.') {
+                return Err(TlsError::InvalidInput {
+                    message: "Invalid XMPP hostname: --xmpphost must not include a trailing dot."
+                        .to_string(),
+                });
+            }
 
             if !matches!(
                 self.starttls_protocol(),

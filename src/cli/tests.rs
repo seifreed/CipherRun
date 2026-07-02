@@ -156,6 +156,29 @@ fn test_validate_xmpphost_requires_xmpp_starttls() {
 }
 
 #[test]
+fn test_validate_rejects_rooted_xmpphost() {
+    let args = Args {
+        target: Some("example.com:5222".to_string()),
+        compliance: ComplianceArgs {
+            format: "terminal".to_string(),
+            policy_format: "terminal".to_string(),
+            ..Default::default()
+        },
+        starttls: StarttlsArgs {
+            xmpp: true,
+            xmpphost: Some("chat.example.com.".to_string()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let err = args
+        .validate()
+        .expect_err("rooted XMPP hostname should fail validation");
+    assert!(err.to_string().contains("trailing dot"));
+}
+
+#[test]
 fn test_validate_invalid_mx_domain() {
     let args = Args {
         mx_domain: Some("example..com".to_string()),
