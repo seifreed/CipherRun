@@ -68,6 +68,12 @@ async fn test_auth_health_endpoint_bypasses_auth() {
     assert_healthy_response(&app, "/api/v1/health", None).await;
 }
 
+#[tokio::test]
+async fn test_auth_docs_prefix_collision_requires_auth() {
+    let app = common::api::test_api_router();
+    assert_auth_error(&app, "/api/docsx", None, "Missing API key").await;
+}
+
 fn scan_payload() -> serde_json::Value {
     common::api::scan_request_payload(
         "example.com:443",

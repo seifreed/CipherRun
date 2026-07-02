@@ -82,7 +82,11 @@ pub async fn authenticate(
     }
 
     // Skip for Swagger UI
-    if path.starts_with("/api/docs") || path.starts_with("/swagger") {
+    if path == "/api/docs"
+        || path.starts_with("/api/docs/")
+        || path == "/swagger"
+        || path.starts_with("/swagger/")
+    {
         return Ok(next.run(req).await);
     }
 

@@ -318,8 +318,10 @@ pub async fn rate_limit(
     let path = req.uri().path();
     if path == "/api/v1/health"
         || path == "/health"
-        || path.starts_with("/api/docs")
-        || path.starts_with("/swagger")
+        || path == "/api/docs"
+        || path.starts_with("/api/docs/")
+        || path == "/swagger"
+        || path.starts_with("/swagger/")
     {
         return Ok(next.run(req).await);
     }
