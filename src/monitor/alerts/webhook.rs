@@ -1,6 +1,7 @@
 // Generic Webhook Alert Channel
 
 use crate::Result;
+use crate::constants::ALERT_SEND_TIMEOUT;
 use crate::error::TlsError;
 use crate::monitor::alerts::{Alert, AlertChannel};
 use crate::monitor::config::WebhookConfig;
@@ -39,10 +40,12 @@ impl WebhookChannel {
             })?;
         }
 
-        Ok(Self {
-            config,
-            client: reqwest::Client::new(),
-        })
+        let client = reqwest::Client::builder()
+            .timeout(ALERT_SEND_TIMEOUT)
+            .redirect(reqwest::redirect::Policy::none())
+            .build()?;
+
+        Ok(Self { config, client })
     }
 
     /// Format alert as JSON for webhook
@@ -234,6 +237,45 @@ mod tests {
             err.to_string()
                 .contains("Webhook error response response too large")
         );
+    }
+
+    #[tokio::test]
+    async fn test_send_alert_does_not_follow_redirects() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test assertion should succeed");
+        let addr = listener
+            .local_addr()
+            .expect("test assertion should succeed");
+        let app = Router::new().route(
+            "/alerts",
+            post(|| async {
+                (
+                    StatusCode::FOUND,
+                    [("Location", "http://127.0.0.1:9/private")],
+                    "",
+                )
+            }),
+        );
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+
+        let channel = WebhookChannel::new(WebhookConfig {
+            enabled: true,
+            url: format!("http://{addr}/alerts"),
+            headers: HashMap::new(),
+        })
+        .expect("test assertion should succeed");
+        let alert =
+            Alert::scan_failure("example.com".to_string(), "Connection refused".to_string());
+
+        let err = channel
+            .send_alert(&alert)
+            .await
+            .expect_err("redirect response should fail without following");
+
+        assert!(err.to_string().contains("302"));
     }
 
     #[test]

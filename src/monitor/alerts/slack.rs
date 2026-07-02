@@ -34,6 +34,7 @@ impl SlackChannel {
         }
         let client = reqwest::Client::builder()
             .timeout(ALERT_SEND_TIMEOUT)
+            .redirect(reqwest::redirect::Policy::none())
             .build()?;
         Ok(Self { config, client })
     }
