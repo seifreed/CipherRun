@@ -1,4 +1,4 @@
-use crate::utils::network::split_target_host_port;
+use crate::utils::network::{normalize_dns_hostname, split_target_host_port};
 use crate::{Result, TlsError};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -102,7 +102,7 @@ impl HostPortDaysInput {
         };
 
         Ok(Self {
-            hostname,
+            hostname: normalize_dns_hostname(hostname),
             port,
             days,
         })
@@ -128,7 +128,7 @@ impl HostPortInput {
         })?;
 
         Ok(Self {
-            hostname,
+            hostname: normalize_dns_hostname(hostname),
             port: port.unwrap_or(default_port),
         })
     }
@@ -169,6 +169,14 @@ mod tests {
     #[test]
     fn parses_host_port_days() {
         let parsed = HostPortDaysInput::parse("example.com:443:7").expect("should parse");
+        assert_eq!(parsed.hostname, "example.com");
+        assert_eq!(parsed.port, 443);
+        assert_eq!(parsed.days, 7);
+    }
+
+    #[test]
+    fn host_port_days_normalizes_rooted_fqdn() {
+        let parsed = HostPortDaysInput::parse("example.com.:443:7").expect("should parse");
         assert_eq!(parsed.hostname, "example.com");
         assert_eq!(parsed.port, 443);
         assert_eq!(parsed.days, 7);
@@ -226,6 +234,14 @@ mod tests {
     fn parses_host_port_with_default_port() {
         let parsed =
             HostPortInput::parse_with_default_port("example.com", 443).expect("should parse");
+        assert_eq!(parsed.hostname, "example.com");
+        assert_eq!(parsed.port, 443);
+    }
+
+    #[test]
+    fn host_port_input_normalizes_rooted_fqdn() {
+        let parsed =
+            HostPortInput::parse_with_default_port("example.com.", 443).expect("should parse");
         assert_eq!(parsed.hostname, "example.com");
         assert_eq!(parsed.port, 443);
     }
