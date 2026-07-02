@@ -171,7 +171,20 @@ impl SchedulingEngine {
 
     /// Get domains scheduled in the next N seconds
     pub fn domains_due_within(&self, seconds: i64) -> Vec<String> {
-        let threshold = Utc::now() + Duration::seconds(seconds);
+        let Some(duration) = Duration::try_seconds(seconds) else {
+            return if seconds.is_negative() {
+                Vec::new()
+            } else {
+                self.next_scan_times.keys().cloned().collect()
+            };
+        };
+        let Some(threshold) = Utc::now().checked_add_signed(duration) else {
+            return if seconds.is_negative() {
+                Vec::new()
+            } else {
+                self.next_scan_times.keys().cloned().collect()
+            };
+        };
 
         self.next_scan_times
             .iter()
@@ -413,6 +426,34 @@ mod tests {
         // Only the immediate domain should be due within 60 seconds
         assert_eq!(due_soon.len(), 1);
         assert!(due_soon.contains(&"immediate.com:443".to_string()));
+    }
+
+    #[test]
+    fn test_domains_due_within_large_positive_window_includes_scheduled_domains() {
+        let mut scheduler = SchedulingEngine::new();
+        scheduler.schedule_immediate("immediate.com:443");
+        scheduler
+            .schedule_next_scan("future.com:443", 36000)
+            .expect("valid interval should schedule");
+
+        let mut due = scheduler.domains_due_within(i64::MAX);
+        due.sort();
+
+        assert_eq!(
+            due,
+            vec![
+                "future.com:443".to_string(),
+                "immediate.com:443".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn test_domains_due_within_large_negative_window_is_empty() {
+        let mut scheduler = SchedulingEngine::new();
+        scheduler.schedule_immediate("immediate.com:443");
+
+        assert!(scheduler.domains_due_within(i64::MIN).is_empty());
     }
 
     #[test]
