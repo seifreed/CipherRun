@@ -729,6 +729,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_all_ip_cipher_probe_errors_if_any_ip_is_inconclusive() {
+        let rejecting = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let rejecting_addr = rejecting.local_addr().expect("local addr should exist");
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = rejecting.accept().await.expect("accept");
+            let mut buf = [0u8; 4096];
+            let _ = socket.read(&mut buf).await.expect("read ClientHello");
+            socket
+                .write_all(&[0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28])
+                .await
+                .expect("write alert");
+        });
+
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            rejecting_addr.port(),
+            vec![IpAddr::from([127, 0, 0, 1]), IpAddr::from([127, 0, 0, 2])],
+        )
+        .expect("target should build");
+
+        let tester = CipherTester::new(target)
+            .with_test_all_ips(true)
+            .with_connect_timeout(Duration::from_millis(100))
+            .with_read_timeout(Duration::from_millis(100));
+
+        let err = tester
+            .try_cipher_handshake_all_ips(Protocol::TLS12, 0xc02f)
+            .await
+            .expect_err("one failed IP keeps union cipher support inconclusive");
+
+        assert!(!err.to_string().is_empty());
+        server.await.expect("server task should finish");
+    }
+
+    #[tokio::test]
     async fn test_protocol_ciphers_with_fake_server() {
         let addr = spawn_fake_tls_server(0xc02f, 0, 200).await;
         let target = Target::with_ips(
