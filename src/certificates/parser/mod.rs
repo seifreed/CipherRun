@@ -36,6 +36,23 @@ pub struct CertificateInfo {
     pub der_bytes: Vec<u8>,
 }
 
+impl CertificateInfo {
+    /// Whether this certificate is barred from signing child certificates by its
+    /// keyUsage extension.
+    ///
+    /// RFC 5280 §4.2.1.3: when the keyUsage extension is present, the subject
+    /// public key MUST NOT be used to verify signatures on certificates unless
+    /// the keyCertSign bit is set. An absent keyUsage extension (an empty list
+    /// here) imposes no such restriction, so it does not forbid signing.
+    pub fn key_usage_forbids_cert_signing(&self) -> bool {
+        !self.key_usage.is_empty()
+            && !self
+                .key_usage
+                .iter()
+                .any(|usage| usage == "Certificate Sign")
+    }
+}
+
 /// Certificate chain
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CertificateChain {
@@ -130,5 +147,35 @@ mod tests {
         assert!(full_chain.is_complete());
         assert_eq!(full_chain.intermediates().len(), 1);
         assert_eq!(full_chain.intermediates()[0].subject, "CN=intermediate");
+    }
+
+    #[test]
+    fn test_key_usage_absent_does_not_forbid_cert_signing() {
+        let cert = CertificateInfo {
+            key_usage: vec![],
+            ..Default::default()
+        };
+        assert!(!cert.key_usage_forbids_cert_signing());
+    }
+
+    #[test]
+    fn test_key_usage_with_cert_sign_does_not_forbid_cert_signing() {
+        let cert = CertificateInfo {
+            key_usage: vec![
+                "Digital Signature".to_string(),
+                "Certificate Sign".to_string(),
+            ],
+            ..Default::default()
+        };
+        assert!(!cert.key_usage_forbids_cert_signing());
+    }
+
+    #[test]
+    fn test_key_usage_present_without_cert_sign_forbids_cert_signing() {
+        let cert = CertificateInfo {
+            key_usage: vec!["Digital Signature".to_string()],
+            ..Default::default()
+        };
+        assert!(cert.key_usage_forbids_cert_signing());
     }
 }

@@ -142,6 +142,23 @@ impl CertificateValidator {
                 return (false, None);
             }
 
+            // The issuer's keyUsage, when present, must permit certificate signing
+            // (RFC 5280 §4.2.1.3). A CA whose keyUsage extension omits keyCertSign
+            // MUST NOT be used to verify a child certificate's signature; browsers
+            // reject such chains, so a "trusted" verdict here would be a false
+            // negative in the same family as the basic-constraints bypass above.
+            if issuer_cert.key_usage_forbids_cert_signing() {
+                issues.push(ValidationIssue {
+                    severity: IssueSeverity::Critical,
+                    issue_type: IssueType::UntrustedCA,
+                    description: format!(
+                        "Chain invalid: issuer '{}' has a keyUsage extension without keyCertSign (RFC 5280 §4.2.1.3)",
+                        issuer_cert.subject
+                    ),
+                });
+                return (false, None);
+            }
+
             // Verify cryptographic signature if DER bytes available
             if !cert.der_bytes.is_empty() && !issuer_cert.der_bytes.is_empty() {
                 match verify_signature(&cert.der_bytes, &issuer_cert.der_bytes) {
@@ -516,6 +533,49 @@ mod tests {
                     && i.description.contains("not a CA certificate")
             }),
             "Expected basic-constraints (non-CA issuer) rejection"
+        );
+    }
+
+    #[test]
+    fn test_validate_trust_chain_rejects_issuer_keyusage_without_keycertsign() {
+        // RFC 5280 §4.2.1.3: an issuer with CA:TRUE but a keyUsage extension that
+        // omits keyCertSign may not sign the leaf. The chain must be rejected
+        // before any signature check.
+        let validator = CertificateValidator::new("leaf.example.com".to_string());
+        let mut issues = Vec::new();
+
+        let mut leaf = base_cert(
+            "2024-01-01 00:00:00 +0000".to_string(),
+            "2025-01-01 00:00:00 +0000".to_string(),
+        );
+        leaf.subject = "CN=leaf.example.com".to_string();
+        leaf.issuer = "CN=constrained-ca.example.com".to_string();
+
+        let mut issuer = base_cert(
+            "2024-01-01 00:00:00 +0000".to_string(),
+            "2025-01-01 00:00:00 +0000".to_string(),
+        );
+        issuer.subject = "CN=constrained-ca.example.com".to_string();
+        issuer.issuer = "CN=Some Root CA".to_string();
+        issuer.is_ca = true;
+        // keyUsage present (Digital Signature) but no keyCertSign bit.
+        issuer.key_usage = vec!["Digital Signature".to_string()];
+
+        let chain = CertificateChain {
+            certificates: vec![leaf, issuer],
+            chain_length: 2,
+            chain_size_bytes: 0,
+        };
+
+        let (valid, ca) = validator.validate_trust_chain(&chain, &mut issues);
+
+        assert!(!valid);
+        assert!(ca.is_none());
+        assert!(
+            issues.iter().any(|i| {
+                i.issue_type == IssueType::UntrustedCA && i.description.contains("keyCertSign")
+            }),
+            "Expected keyUsage-without-keyCertSign rejection"
         );
     }
 }

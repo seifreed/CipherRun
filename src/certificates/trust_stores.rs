@@ -440,6 +440,11 @@ impl TrustStoreValidator {
             if !issuer_cert.is_ca {
                 return Ok(false);
             }
+            // keyUsage, when present, must permit certificate signing
+            // (RFC 5280 §4.2.1.3). Mirrors the chain validator.
+            if issuer_cert.key_usage_forbids_cert_signing() {
+                return Ok(false);
+            }
             if !verify_cert_signature(&cert.der_bytes, &issuer_cert.der_bytes)? {
                 return Ok(false);
             }
