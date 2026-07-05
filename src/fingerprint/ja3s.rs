@@ -538,6 +538,48 @@ mod tests {
     }
 
     #[test]
+    fn test_cdn_detection_from_ja3s_signature_without_headers() {
+        // Standalone fingerprint mode: no HTTP headers were captured, but a JA3S
+        // signature match alone identifies the CDN. The detection must still fire.
+        let ja3s = Ja3sFingerprint {
+            ja3s_string: "771,49199,65281-0-11-35-23".to_string(),
+            ja3s_hash: "098e26e2609212ac1bfac552fbe04127".to_string(),
+            ssl_version: 771,
+            cipher: 49199,
+            extensions: vec![65281, 0, 11, 35, 23],
+        };
+        let signature = Ja3sSignature {
+            name: "Fastly".to_string(),
+            server_type: ServerType::CDN,
+            description: "Fastly CDN".to_string(),
+            common_ports: Vec::new(),
+            indicators: Vec::new(),
+        };
+
+        let detection =
+            CdnDetection::from_ja3s_and_headers(&ja3s, Some(&signature), &HashMap::new());
+
+        assert!(detection.is_cdn);
+        assert_eq!(detection.cdn_provider, Some("Fastly".to_string()));
+    }
+
+    #[test]
+    fn test_load_balancer_detection_from_ja3s_signature_without_headers() {
+        let signature = Ja3sSignature {
+            name: "AWS ELB".to_string(),
+            server_type: ServerType::LoadBalancer,
+            description: "AWS Elastic Load Balancer".to_string(),
+            common_ports: Vec::new(),
+            indicators: Vec::new(),
+        };
+
+        let info = LoadBalancerInfo::from_ja3s_and_headers(Some(&signature), &HashMap::new());
+
+        assert!(info.detected);
+        assert_eq!(info.lb_type, Some("AWS ELB".to_string()));
+    }
+
+    #[test]
     fn test_lb_detection_aws() {
         let mut headers = HashMap::new();
         headers.insert("X-Amzn-Trace-Id".to_string(), "Root=1-123456".to_string());

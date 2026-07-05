@@ -191,9 +191,13 @@ impl FingerprintPhase {
 
         let ja3s_match = ja3s_db.match_fingerprint(&ja3s.ja3s_hash).cloned();
 
-        // CDN detection (requires HTTP headers from previous phase)
-        // Extract headers first to avoid borrow issues
-        let header_map: Option<std::collections::HashMap<String, String>> = context
+        // CDN / load-balancer detection. HTTP headers strengthen the result but
+        // are not required: CdnDetection/LoadBalancerInfo also derive from the
+        // JA3S signature match alone, so this must run even in standalone
+        // fingerprint mode where the HTTP-headers phase did not populate
+        // `context.results.http`. Extract headers first to avoid borrow issues;
+        // fall back to an empty map when absent.
+        let header_map: std::collections::HashMap<String, String> = context
             .results
             .http
             .as_ref()
@@ -204,22 +208,21 @@ impl FingerprintPhase {
                     .iter()
                     .map(|(k, v)| (k.clone(), v.clone()))
                     .collect()
-            });
+            })
+            .unwrap_or_default();
 
-        if let Some(header_map) = header_map {
-            let advanced = context.results.advanced_mut();
-            advanced.cdn_detection = Some(crate::fingerprint::CdnDetection::from_ja3s_and_headers(
-                &ja3s,
+        let advanced = context.results.advanced_mut();
+        advanced.cdn_detection = Some(crate::fingerprint::CdnDetection::from_ja3s_and_headers(
+            &ja3s,
+            ja3s_match.as_ref(),
+            &header_map,
+        ));
+
+        advanced.load_balancer_info =
+            Some(crate::fingerprint::LoadBalancerInfo::from_ja3s_and_headers(
                 ja3s_match.as_ref(),
                 &header_map,
             ));
-
-            advanced.load_balancer_info =
-                Some(crate::fingerprint::LoadBalancerInfo::from_ja3s_and_headers(
-                    ja3s_match.as_ref(),
-                    &header_map,
-                ));
-        }
 
         // Store JA3S fingerprint in the fingerprints sub-struct
         let fingerprints = context.results.fingerprints_mut();
