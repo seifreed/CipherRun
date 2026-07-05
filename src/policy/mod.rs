@@ -228,6 +228,10 @@ impl Policy {
             count += u32::from(rating.min_score.is_some());
         }
 
+        if let Some(ref compliance) = self.compliance {
+            count += u32::try_from(compliance.frameworks.len()).unwrap_or(u32::MAX);
+        }
+
         count
     }
 }

@@ -81,6 +81,16 @@ impl PolicyEvaluator {
             ));
         }
 
+        // Check compliance frameworks
+        if let Some(ref compliance_policy) = self.policy.compliance {
+            let compliance_violations = self.check_compliance(compliance_policy, results)?;
+            violations.extend(self.apply_exceptions(
+                compliance_violations,
+                target,
+                &mut exceptions_applied,
+            ));
+        }
+
         // Build result
         let mut result = PolicyResult::new(self.policy.clone(), violations);
         result.target = target.clone();
@@ -236,6 +246,115 @@ impl PolicyEvaluator {
         }
 
         Ok(violations)
+    }
+
+    /// Check compliance-framework policy.
+    ///
+    /// Each named framework is evaluated against the scan assessment via the
+    /// compliance engine. Semantics:
+    /// - `require_all` = true: every listed framework must be compliant; each
+    ///   framework that hard-fails (overall status Fail) yields one violation.
+    /// - `require_all` = false: the target passes as long as at least one
+    ///   framework is compliant; a single aggregated violation is emitted only
+    ///   when every listed framework hard-fails.
+    ///
+    /// A Warning status (only advisory requirements unmet) satisfies the gate.
+    /// An unknown framework id is a configuration error (fail-closed).
+    fn check_compliance(
+        &self,
+        policy: &crate::policy::CompliancePolicy,
+        results: &ScanAssessment,
+    ) -> Result<Vec<PolicyViolation>> {
+        use crate::application::ComplianceFrameworkSource;
+        use crate::compliance::{BuiltinFrameworkSource, ComplianceEngine};
+
+        let source = BuiltinFrameworkSource;
+        let mut evaluated = Vec::with_capacity(policy.frameworks.len());
+
+        for framework_id in &policy.frameworks {
+            let framework =
+                source
+                    .load_framework(framework_id)
+                    .map_err(|e| crate::TlsError::ConfigError {
+                        message: format!(
+                            "Policy compliance framework '{}' could not be loaded: {}",
+                            framework_id, e
+                        ),
+                    })?;
+            let report = ComplianceEngine::new(framework).evaluate(results)?;
+            evaluated.push((framework_id.as_str(), report));
+        }
+
+        let mut violations = Vec::new();
+
+        if policy.require_all {
+            for (framework_id, report) in &evaluated {
+                if Self::compliance_report_hard_fails(report) {
+                    violations.push(Self::compliance_violation(
+                        framework_id,
+                        report,
+                        policy.action,
+                    ));
+                }
+            }
+        } else if !evaluated.is_empty()
+            && evaluated
+                .iter()
+                .all(|(_, report)| Self::compliance_report_hard_fails(report))
+        {
+            let names = evaluated
+                .iter()
+                .map(|(id, _)| *id)
+                .collect::<Vec<_>>()
+                .join(", ");
+            violations.push(
+                PolicyViolation::new(
+                    "compliance.frameworks",
+                    "Compliance frameworks",
+                    policy.action,
+                    format!(
+                        "Target does not comply with any of the required frameworks: {}",
+                        names
+                    ),
+                )
+                .with_remediation(
+                    "Bring the TLS configuration into compliance with at least one required framework",
+                ),
+            );
+        }
+
+        Ok(violations)
+    }
+
+    fn compliance_report_hard_fails(report: &crate::compliance::ComplianceReport) -> bool {
+        report.overall_status == crate::compliance::ComplianceStatus::Fail
+    }
+
+    fn compliance_violation(
+        framework_id: &str,
+        report: &crate::compliance::ComplianceReport,
+        action: crate::policy::PolicyAction,
+    ) -> PolicyViolation {
+        PolicyViolation::new(
+            format!("compliance.{}", framework_id),
+            format!("Compliance: {}", report.framework.name),
+            action,
+            format!(
+                "Target is not compliant with framework '{}' ({} of {} requirements failed)",
+                framework_id, report.summary.failed, report.summary.total
+            ),
+        )
+        .with_evidence(format!(
+            "{} passed, {} failed, {} warnings, {} not applicable",
+            report.summary.passed,
+            report.summary.failed,
+            report.summary.warnings,
+            report.summary.not_applicable
+        ))
+        .with_remediation(format!(
+            "Remediate the {} failed requirement(s) to achieve {} compliance",
+            report.summary.failed, report.framework.name
+        ))
     }
 
     /// Parse grade string to Grade enum
@@ -578,6 +697,100 @@ mod tests {
                 .violations
                 .iter()
                 .any(|v| v.rule_path == "rating.min_score")
+        );
+    }
+
+    fn assessment_with_sslv2() -> ScanAssessment {
+        let mut results = ScanAssessment {
+            target: "example.com:443".to_string(),
+            ..Default::default()
+        };
+        results.protocols = vec![ProtocolTestResult {
+            protocol: Protocol::SSLv2,
+            supported: true,
+            inconclusive: false,
+            preferred: false,
+            ciphers_count: 0,
+            heartbeat_enabled: None,
+            handshake_time_ms: None,
+            session_resumption_caching: None,
+            session_resumption_tickets: None,
+            secure_renegotiation: None,
+        }];
+        results
+    }
+
+    fn policy_with_compliance(frameworks: Vec<String>, require_all: bool) -> Policy {
+        Policy {
+            name: "Test Policy".to_string(),
+            version: "1.0".to_string(),
+            description: None,
+            organization: None,
+            effective_date: None,
+            extends: None,
+            protocols: None,
+            ciphers: None,
+            certificates: None,
+            vulnerabilities: None,
+            rating: None,
+            compliance: Some(CompliancePolicy {
+                frameworks,
+                require_all,
+                action: PolicyAction::Fail,
+            }),
+            exceptions: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn test_compliance_policy_flags_noncompliant_target() {
+        let policy = policy_with_compliance(vec!["pci-dss-v4".to_string()], true);
+        let evaluator = PolicyEvaluator::new(policy);
+
+        let result = evaluator
+            .evaluate(&assessment_with_sslv2())
+            .expect("evaluation should succeed");
+
+        assert!(result.has_violations());
+        assert!(
+            result
+                .violations
+                .iter()
+                .any(|v| v.rule_path == "compliance.pci-dss-v4"),
+            "expected a compliance violation for the non-compliant framework"
+        );
+    }
+
+    #[test]
+    fn test_compliance_policy_unknown_framework_is_config_error() {
+        let policy = policy_with_compliance(vec!["does-not-exist".to_string()], true);
+        let evaluator = PolicyEvaluator::new(policy);
+
+        let err = evaluator
+            .evaluate(&assessment_with_sslv2())
+            .expect_err("unknown framework should be a configuration error");
+        assert!(err.to_string().contains("does-not-exist"));
+    }
+
+    #[test]
+    fn test_compliance_require_all_false_aggregates_when_all_fail() {
+        let policy = policy_with_compliance(
+            vec!["pci-dss-v4".to_string(), "nist-sp800-52r2".to_string()],
+            false,
+        );
+        let evaluator = PolicyEvaluator::new(policy);
+
+        let result = evaluator
+            .evaluate(&assessment_with_sslv2())
+            .expect("evaluation should succeed");
+
+        assert!(result.has_violations());
+        assert!(
+            result
+                .violations
+                .iter()
+                .any(|v| v.rule_path == "compliance.frameworks"),
+            "expected a single aggregated violation when no framework passes"
         );
     }
 
