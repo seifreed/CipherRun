@@ -294,6 +294,22 @@ impl CertificateValidator {
         let key_strength_ok = self.check_key_strength(leaf, &mut issues);
         valid &= key_strength_ok;
 
+        // 3b. Leaf must be usable for TLS server authentication. A leaf whose
+        //     extendedKeyUsage is present but omits serverAuth (and
+        //     anyExtendedKeyUsage) is rejected by browsers for TLS regardless of
+        //     trust-chain validity (RFC 5280 §4.2.1.12).
+        let server_auth_ok = if leaf.eku_forbids_tls_server_auth() {
+            issues.push(ValidationIssue {
+                severity: IssueSeverity::High,
+                issue_type: IssueType::MissingExtension,
+                description: "Leaf certificate's extendedKeyUsage does not permit TLS server authentication (missing serverAuth)".to_string(),
+            });
+            false
+        } else {
+            true
+        };
+        valid &= server_auth_ok;
+
         // 4. Check signature algorithm (leaf + intermediates; self-signed root
         //    is skipped since its signature is not verified during path building)
         self.check_signature_algorithm(leaf, &mut issues);
@@ -407,6 +423,39 @@ mod tests {
         };
         assert!(result.summary().contains("1 issues"));
         assert_eq!(result.critical_issues().len(), 1);
+    }
+
+    #[test]
+    fn test_validate_chain_rejects_leaf_without_server_auth_eku() {
+        let leaf = CertificateInfo {
+            subject: "CN=leaf.example.com".to_string(),
+            issuer: "CN=leaf.example.com".to_string(),
+            not_before: "2024-01-01 00:00:00 +0000".to_string(),
+            not_after: "2035-01-01 00:00:00 +0000".to_string(),
+            san: vec!["leaf.example.com".to_string()],
+            public_key_size: Some(2048),
+            // EKU present but only client auth — invalid for a TLS server leaf.
+            extended_key_usage: vec!["Client Authentication".to_string()],
+            ..Default::default()
+        };
+        let chain = CertificateChain {
+            certificates: vec![leaf],
+            chain_length: 1,
+            chain_size_bytes: 0,
+        };
+
+        let validator = CertificateValidator::new("leaf.example.com".to_string());
+        let result = validator
+            .validate_chain(&chain)
+            .expect("validation should produce a result");
+
+        assert!(!result.valid);
+        assert!(
+            result.issues.iter().any(|i| {
+                i.issue_type == IssueType::MissingExtension && i.description.contains("serverAuth")
+            }),
+            "Expected leaf serverAuth-EKU rejection"
+        );
     }
 
     #[test]

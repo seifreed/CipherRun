@@ -51,6 +51,22 @@ impl CertificateInfo {
                 .iter()
                 .any(|usage| usage == "Certificate Sign")
     }
+
+    /// Whether this certificate's extendedKeyUsage bars it from TLS server
+    /// authentication.
+    ///
+    /// RFC 5280 §4.2.1.12: when the EKU extension is present, the certificate
+    /// may be used only for the listed purposes. A TLS server leaf must
+    /// therefore carry id-kp-serverAuth (or anyExtendedKeyUsage). An absent EKU
+    /// extension (an empty list here) imposes no restriction. Returns true when
+    /// this certificate may not be used for TLS server authentication.
+    pub fn eku_forbids_tls_server_auth(&self) -> bool {
+        !self.extended_key_usage.is_empty()
+            && !self
+                .extended_key_usage
+                .iter()
+                .any(|usage| usage == "Server Authentication" || usage == "Any")
+    }
 }
 
 /// Certificate chain
@@ -177,5 +193,44 @@ mod tests {
             ..Default::default()
         };
         assert!(cert.key_usage_forbids_cert_signing());
+    }
+
+    #[test]
+    fn test_eku_absent_does_not_forbid_tls_server_auth() {
+        let cert = CertificateInfo {
+            extended_key_usage: vec![],
+            ..Default::default()
+        };
+        assert!(!cert.eku_forbids_tls_server_auth());
+    }
+
+    #[test]
+    fn test_eku_with_server_auth_does_not_forbid_tls_server_auth() {
+        let cert = CertificateInfo {
+            extended_key_usage: vec![
+                "Server Authentication".to_string(),
+                "Client Authentication".to_string(),
+            ],
+            ..Default::default()
+        };
+        assert!(!cert.eku_forbids_tls_server_auth());
+    }
+
+    #[test]
+    fn test_eku_any_does_not_forbid_tls_server_auth() {
+        let cert = CertificateInfo {
+            extended_key_usage: vec!["Any".to_string()],
+            ..Default::default()
+        };
+        assert!(!cert.eku_forbids_tls_server_auth());
+    }
+
+    #[test]
+    fn test_eku_present_without_server_auth_forbids_tls_server_auth() {
+        let cert = CertificateInfo {
+            extended_key_usage: vec!["Client Authentication".to_string()],
+            ..Default::default()
+        };
+        assert!(cert.eku_forbids_tls_server_auth());
     }
 }
