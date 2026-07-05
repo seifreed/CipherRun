@@ -467,6 +467,83 @@ fn test_check_ciphers_exact_lists_are_case_insensitive() {
     assert_eq!(violations[0].violation_type, "Prohibited Cipher Suite");
 }
 
+fn preferred_rule() -> Rule {
+    Rule {
+        rule_type: "CipherSuite".to_string(),
+        allowed: vec![],
+        denied: vec![],
+        allowed_patterns: vec![],
+        denied_patterns: vec![],
+        preferred_patterns: vec![".*_GCM.*".to_string(), ".*_CHACHA20_POLY1305.*".to_string()],
+        min_rsa_bits: None,
+        min_ecc_bits: None,
+        required: None,
+        require_valid_chain: None,
+        require_unexpired: None,
+        require_hostname_match: None,
+        max_days_until_expiration: None,
+        custom_params: HashMap::new(),
+    }
+}
+
+fn assessment_with_single_cipher(iana: &str, openssl: &str) -> ScanAssessment {
+    let cipher = CipherSuite {
+        hexcode: "0x1301".to_string(),
+        openssl_name: openssl.to_string(),
+        iana_name: iana.to_string(),
+        protocol: "TLSv1.2".to_string(),
+        key_exchange: "ECDHE".to_string(),
+        authentication: "RSA".to_string(),
+        encryption: "aes".to_string(),
+        mac: "sha".to_string(),
+        bits: 128,
+        export: false,
+    };
+    let mut ciphers = HashMap::new();
+    ciphers.insert(
+        Protocol::TLS12,
+        ProtocolCipherSummary {
+            protocol: Protocol::TLS12,
+            supported_ciphers: vec![cipher],
+            server_ordered: false,
+            server_preference: vec![],
+            preferred_cipher: None,
+            counts: CipherCounts::default(),
+            avg_handshake_time_ms: None,
+        },
+    );
+    ScanAssessment {
+        ciphers,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn test_check_ciphers_preferred_pattern_matched_yields_no_violation() {
+    let results = assessment_with_single_cipher(
+        "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256",
+        "ECDHE-RSA-AES128-GCM-SHA256",
+    );
+    let violations = ComplianceChecker::check_ciphers(&preferred_rule(), &results)
+        .expect("test assertion should succeed");
+    assert!(violations.is_empty(), "{violations:?}");
+}
+
+#[test]
+fn test_check_ciphers_preferred_pattern_unmatched_yields_medium_warning() {
+    // CBC-only cipher: allowed but not preferred (no GCM/ChaCha).
+    let results =
+        assessment_with_single_cipher("TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA", "ECDHE-RSA-AES128-SHA");
+    let violations = ComplianceChecker::check_ciphers(&preferred_rule(), &results)
+        .expect("test assertion should succeed");
+    assert_eq!(violations.len(), 1);
+    assert_eq!(
+        violations[0].violation_type,
+        "Preferred Cipher Suites Not Used"
+    );
+    assert_eq!(violations[0].severity, Severity::Medium);
+}
+
 #[test]
 fn test_check_signature_denied_matches_hyphenated_alias() {
     let rule = Rule {

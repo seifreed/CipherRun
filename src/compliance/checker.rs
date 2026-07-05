@@ -123,11 +123,20 @@ impl ComplianceChecker {
     /// Check cipher suite compliance
     pub fn check_ciphers(rule: &Rule, results: &ScanAssessment) -> Result<Vec<Violation>> {
         let mut violations = Vec::new();
+        let mut any_cipher_seen = false;
+        let mut any_preferred_matched = false;
 
         for (protocol, cipher_summary) in &results.ciphers {
             for cipher in &cipher_summary.supported_ciphers {
                 let cipher_name = &cipher.iana_name;
                 let openssl_name = &cipher.openssl_name;
+
+                any_cipher_seen = true;
+                if rule.matches_preferred_pattern(cipher_name)
+                    || rule.matches_preferred_pattern(openssl_name)
+                {
+                    any_preferred_matched = true;
+                }
 
                 // Check denied patterns
                 if rule.matches_denied_pattern(cipher_name)
@@ -180,6 +189,20 @@ impl ComplianceChecker {
                     }
                 }
             }
+        }
+
+        // Preferred patterns are advisory: when a rule expresses a cipher
+        // preference and the server offers ciphers but none match it, emit a
+        // Medium-severity violation (which the engine maps to a Warning, not a
+        // Fail) so compliant-but-not-preferred configurations are surfaced
+        // without breaking compliance.
+        if !rule.preferred_patterns.is_empty() && any_cipher_seen && !any_preferred_matched {
+            violations.push(Violation {
+                violation_type: "Preferred Cipher Suites Not Used".to_string(),
+                description: "Server offers no cipher suite matching the preferred set".to_string(),
+                evidence: format!("Preferred patterns: {}", rule.preferred_patterns.join(", ")),
+                severity: Severity::Medium,
+            });
         }
 
         Ok(violations)
