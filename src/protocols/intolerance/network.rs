@@ -46,7 +46,7 @@ impl IntoleranceTester {
                 Err(_) if total == 0 => {
                     return Err(TlsError::Timeout {
                         duration: Some(self.read_timeout),
-                    })
+                    });
                 }
                 Err(_) => break,
             };
