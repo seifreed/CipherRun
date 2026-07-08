@@ -81,14 +81,52 @@ impl CipherRunSchema {
                     "type": ["object", "null"],
                     "description": "Certificate chain information",
                     "properties": {
-                        "chain": { "type": "object" },
+                        "chain": {
+                            "type": "object",
+                            "properties": {
+                                "certificates": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "subject": { "type": "string" },
+                                            "issuer": { "type": "string" },
+                                            "serial_number": { "type": "string" },
+                                            "not_before": { "type": "string" },
+                                            "not_after": { "type": "string" },
+                                            "expiry_countdown": { "type": ["string", "null"] },
+                                            "signature_algorithm": { "type": "string" },
+                                            "public_key_algorithm": { "type": "string" },
+                                            "public_key_size": { "type": ["integer", "null"], "minimum": 0 },
+                                            "rsa_exponent": { "type": ["string", "null"] },
+                                            "san": { "type": "array", "items": { "type": "string" } },
+                                            "is_ca": { "type": "boolean" },
+                                            "key_usage": { "type": "array", "items": { "type": "string" } },
+                                            "extended_key_usage": { "type": "array", "items": { "type": "string" } },
+                                            "extended_validation": { "type": "boolean" },
+                                            "ev_oids": { "type": "array", "items": { "type": "string" } },
+                                            "pin_sha256": { "type": ["string", "null"] },
+                                            "fingerprint_sha256": { "type": ["string", "null"] },
+                                            "debian_weak_key": { "type": ["boolean", "null"] },
+                                            "aia_url": { "type": ["string", "null"] },
+                                            "certificate_transparency": { "type": ["string", "null"] }
+                                        }
+                                    }
+                                },
+                                "chain_length": { "type": "integer", "minimum": 0 },
+                                "chain_size_bytes": { "type": "integer", "minimum": 0 }
+                            }
+                        },
                         "validation": {
                             "type": "object",
                             "properties": {
                                 "valid": { "type": "boolean" },
                                 "not_expired": { "type": "boolean" },
                                 "hostname_match": { "type": "boolean" },
-                                "trust_chain_valid": { "type": "boolean" }
+                                "trust_chain_valid": { "type": "boolean" },
+                                "signature_valid": { "type": "boolean" },
+                                "trusted_ca": { "type": ["object", "null"] },
+                                "platform_trust": { "type": ["object", "null"] }
                             }
                         },
                         "revocation": { "type": ["object", "null"] }
@@ -543,6 +581,38 @@ mod tests {
             .expect("rating grade enum should be present");
         assert!(grade_values.iter().any(|v| v == "Unverified"));
         assert!(!grade_values.iter().any(|v| v == "B+"));
+    }
+
+    #[test]
+    fn test_certificate_chain_schema_includes_leaf_fields() {
+        let schema = CipherRunSchema::get_schema();
+        let certificate_chain = schema
+            .get("properties")
+            .and_then(|v| v.get("certificate_chain"))
+            .and_then(|v| v.get("properties"))
+            .and_then(|v| v.get("chain"))
+            .and_then(|v| v.get("properties"))
+            .and_then(|v| v.get("certificates"))
+            .and_then(|v| v.get("items"))
+            .and_then(|v| v.get("properties"))
+            .and_then(|v| v.as_object())
+            .expect("certificate leaf schema should be present");
+
+        for field in [
+            "subject",
+            "issuer",
+            "serial_number",
+            "public_key_size",
+            "rsa_exponent",
+            "is_ca",
+            "fingerprint_sha256",
+            "certificate_transparency",
+        ] {
+            assert!(
+                certificate_chain.contains_key(field),
+                "missing field {field}"
+            );
+        }
     }
 
     #[test]
