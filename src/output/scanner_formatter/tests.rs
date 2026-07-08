@@ -977,3 +977,18 @@ fn test_cdn_section_renders_without_panic() {
 
     formatter.display_cdn_results(Some(&cdn), Some(&load_balancer));
 }
+
+#[test]
+fn test_cdn_section_renders_sticky_sessions_without_lb_detection() {
+    let args = Args::default();
+    let formatter = ScannerFormatter::new(&args);
+
+    let load_balancer = LoadBalancerInfo {
+        detected: false,
+        lb_type: None,
+        sticky_sessions: true,
+        indicators: vec!["Sticky session cookie detected".to_string()],
+    };
+
+    formatter.display_cdn_results(None, Some(&load_balancer));
+}

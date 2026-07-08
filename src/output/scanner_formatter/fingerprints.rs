@@ -164,6 +164,18 @@ impl<'a> ScannerFormatter<'a> {
                 }
             } else {
                 println!("  Load Balancer:  {}", "No".normal());
+                if lb.sticky_sessions {
+                    println!(
+                        "  Sticky Sessions: {}",
+                        if lb.sticky_sessions { "Yes" } else { "No" }
+                    );
+                }
+                if !lb.indicators.is_empty() {
+                    println!("  LB Indicators:");
+                    for indicator in &lb.indicators {
+                        println!("    - {}", indicator.dimmed());
+                    }
+                }
             }
         }
     }
