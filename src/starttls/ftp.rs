@@ -35,7 +35,7 @@ impl StarttlsNegotiator for FtpNegotiator {
         if code != 234 {
             // Some servers might return 502 (command not implemented)
             if code == 502 {
-                tls_bail!("FTP server does not support AUTH TLS");
+                tls_bail!("FTP server does not support AUTH TLS: {}", response);
             }
             tls_bail!(
                 "FTP AUTH TLS failed: expected 234, got {}: {}",
@@ -156,6 +156,7 @@ mod tests {
             .await
             .unwrap_err();
         assert!(format!("{err}").contains("does not support"));
+        assert!(format!("{err}").contains("502"));
 
         server.await.expect("test server task should complete");
     }
