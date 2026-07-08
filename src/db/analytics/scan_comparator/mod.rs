@@ -246,7 +246,7 @@ impl ScanComparator {
         match self.db.pool() {
             DatabasePool::Postgres(pool) => {
                 let result = sqlx::query_as::<_, ScanRecord>(
-                    "SELECT scan_id, target_hostname, target_port, scan_timestamp, overall_grade, overall_score, scan_duration_ms, scanner_version FROM scans WHERE scan_id = $1"
+                    "SELECT scan_id, target_hostname, target_port, scan_timestamp, overall_grade, overall_score, scan_duration_ms, revocation_json, scanner_version FROM scans WHERE scan_id = $1"
                 )
                 .bind(scan_id)
                 .fetch_optional(pool)
@@ -256,7 +256,7 @@ impl ScanComparator {
             }
             DatabasePool::Sqlite(pool) => {
                 let result = sqlx::query_as::<_, ScanRecord>(
-                    "SELECT scan_id, target_hostname, target_port, scan_timestamp, overall_grade, overall_score, scan_duration_ms, scanner_version FROM scans WHERE scan_id = ?"
+                    "SELECT scan_id, target_hostname, target_port, scan_timestamp, overall_grade, overall_score, scan_duration_ms, revocation_json, scanner_version FROM scans WHERE scan_id = ?"
                 )
                 .bind(scan_id)
                 .fetch_optional(pool)

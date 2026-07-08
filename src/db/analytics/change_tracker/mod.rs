@@ -395,8 +395,8 @@ impl ChangeTracker {
     async fn get_scan_by_id(&self, scan_id: i64) -> crate::Result<Option<ScanRecord>> {
         Ok(dual_query_fetch_optional!(
             self,
-            "SELECT scan_id, target_hostname, target_port, scan_timestamp, overall_grade, overall_score, scan_duration_ms, scanner_version FROM scans WHERE scan_id = $1",
-            "SELECT scan_id, target_hostname, target_port, scan_timestamp, overall_grade, overall_score, scan_duration_ms, scanner_version FROM scans WHERE scan_id = ?",
+            "SELECT scan_id, target_hostname, target_port, scan_timestamp, overall_grade, overall_score, scan_duration_ms, revocation_json, scanner_version FROM scans WHERE scan_id = $1",
+            "SELECT scan_id, target_hostname, target_port, scan_timestamp, overall_grade, overall_score, scan_duration_ms, revocation_json, scanner_version FROM scans WHERE scan_id = ?",
             "Failed to fetch scan",
             scan_id
         )?)

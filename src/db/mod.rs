@@ -253,6 +253,14 @@ mod tests {
             panic!("expected sqlite pool");
         }
 
+        let fetched = db
+            .scan_repo
+            .get_scan_by_id(scan_id)
+            .await
+            .expect("test assertion should succeed")
+            .expect("scan should exist");
+        assert!(fetched.revocation_json.is_some());
+
         db.close().await;
     }
 
