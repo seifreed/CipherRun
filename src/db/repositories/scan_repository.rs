@@ -54,8 +54,8 @@ impl ScanRepository for ScanRepositoryImpl {
             DatabasePool::Postgres(pool) => {
                 let result = sqlx::query(
                     r#"
-                    INSERT INTO scans (target_hostname, target_port, scan_timestamp, overall_grade, overall_score, scan_duration_ms, scanner_version)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7)
+                    INSERT INTO scans (target_hostname, target_port, scan_timestamp, overall_grade, overall_score, scan_duration_ms, revocation_json, scanner_version)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                     RETURNING scan_id
                     "#
                 )
@@ -65,6 +65,7 @@ impl ScanRepository for ScanRepositoryImpl {
                 .bind(&scan.overall_grade)
                 .bind(scan.overall_score)
                 .bind(scan.scan_duration_ms)
+                .bind(&scan.revocation_json)
                 .bind(&scan.scanner_version)
                 .fetch_one(pool)
                 .await
@@ -75,8 +76,8 @@ impl ScanRepository for ScanRepositoryImpl {
             DatabasePool::Sqlite(pool) => {
                 let result = sqlx::query(
                     r#"
-                    INSERT INTO scans (target_hostname, target_port, scan_timestamp, overall_grade, overall_score, scan_duration_ms, scanner_version)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO scans (target_hostname, target_port, scan_timestamp, overall_grade, overall_score, scan_duration_ms, revocation_json, scanner_version)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     "#
                 )
                 .bind(&scan.target_hostname)
@@ -85,6 +86,7 @@ impl ScanRepository for ScanRepositoryImpl {
                 .bind(&scan.overall_grade)
                 .bind(scan.overall_score)
                 .bind(scan.scan_duration_ms)
+                .bind(&scan.revocation_json)
                 .bind(&scan.scanner_version)
                 .execute(pool)
                 .await
@@ -100,7 +102,7 @@ impl ScanRepository for ScanRepositoryImpl {
             DatabasePool::Postgres(pool) => {
                 let result = sqlx::query_as::<_, ScanRecord>(
                     r#"
-                    SELECT scan_id, target_hostname, target_port, scan_timestamp, overall_grade, overall_score, scan_duration_ms, scanner_version
+                    SELECT scan_id, target_hostname, target_port, scan_timestamp, overall_grade, overall_score, scan_duration_ms, revocation_json, scanner_version
                     FROM scans
                     WHERE scan_id = $1
                     "#
@@ -115,7 +117,7 @@ impl ScanRepository for ScanRepositoryImpl {
             DatabasePool::Sqlite(pool) => {
                 let result = sqlx::query_as::<_, ScanRecord>(
                     r#"
-                    SELECT scan_id, target_hostname, target_port, scan_timestamp, overall_grade, overall_score, scan_duration_ms, scanner_version
+                    SELECT scan_id, target_hostname, target_port, scan_timestamp, overall_grade, overall_score, scan_duration_ms, revocation_json, scanner_version
                     FROM scans
                     WHERE scan_id = ?
                     "#
@@ -142,7 +144,7 @@ impl ScanRepository for ScanRepositoryImpl {
             DatabasePool::Postgres(pool) => {
                 let results = sqlx::query_as::<_, ScanRecord>(
                     r#"
-                    SELECT scan_id, target_hostname, target_port, scan_timestamp, overall_grade, overall_score, scan_duration_ms, scanner_version
+                    SELECT scan_id, target_hostname, target_port, scan_timestamp, overall_grade, overall_score, scan_duration_ms, revocation_json, scanner_version
                     FROM scans
                     WHERE target_hostname = $1 AND target_port = $2
                     ORDER BY scan_timestamp DESC, scan_id DESC
@@ -161,7 +163,7 @@ impl ScanRepository for ScanRepositoryImpl {
             DatabasePool::Sqlite(pool) => {
                 let results = sqlx::query_as::<_, ScanRecord>(
                     r#"
-                    SELECT scan_id, target_hostname, target_port, scan_timestamp, overall_grade, overall_score, scan_duration_ms, scanner_version
+                    SELECT scan_id, target_hostname, target_port, scan_timestamp, overall_grade, overall_score, scan_duration_ms, revocation_json, scanner_version
                     FROM scans
                     WHERE target_hostname = ? AND target_port = ?
                     ORDER BY scan_timestamp DESC, scan_id DESC
@@ -192,7 +194,7 @@ impl ScanRepository for ScanRepositoryImpl {
             DatabasePool::Postgres(pool) => {
                 let results = sqlx::query_as::<_, ScanRecord>(
                     r#"
-                    SELECT scan_id, target_hostname, target_port, scan_timestamp, overall_grade, overall_score, scan_duration_ms, scanner_version
+                    SELECT scan_id, target_hostname, target_port, scan_timestamp, overall_grade, overall_score, scan_duration_ms, revocation_json, scanner_version
                     FROM scans
                     WHERE target_hostname = $1 AND target_port = $2 AND scan_timestamp >= $3
                     ORDER BY scan_timestamp DESC, scan_id DESC
@@ -210,7 +212,7 @@ impl ScanRepository for ScanRepositoryImpl {
             DatabasePool::Sqlite(pool) => {
                 let results = sqlx::query_as::<_, ScanRecord>(
                     r#"
-                    SELECT scan_id, target_hostname, target_port, scan_timestamp, overall_grade, overall_score, scan_duration_ms, scanner_version
+                    SELECT scan_id, target_hostname, target_port, scan_timestamp, overall_grade, overall_score, scan_duration_ms, revocation_json, scanner_version
                     FROM scans
                     WHERE target_hostname = ? AND target_port = ? AND scan_timestamp >= ?
                     ORDER BY scan_timestamp DESC, scan_id DESC

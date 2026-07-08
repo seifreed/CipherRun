@@ -514,6 +514,7 @@ async fn test_store_scan_duplicate_certificate_dedupes_to_same_cert_id() {
         overall_grade: None,
         overall_score: None,
         scan_duration_ms: 100,
+        revocation: None,
         protocols: vec![],
         ciphers: vec![],
         vulnerabilities: vec![],

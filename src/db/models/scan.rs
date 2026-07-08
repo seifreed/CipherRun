@@ -16,6 +16,8 @@ pub struct ScanRecord {
     pub overall_grade: Option<String>,
     pub overall_score: Option<i32>,
     pub scan_duration_ms: Option<i64>,
+    #[sqlx(default)]
+    pub revocation_json: Option<String>,
     pub scanner_version: Option<String>,
 }
 
@@ -30,6 +32,7 @@ impl ScanRecord {
             overall_grade: None,
             overall_score: None,
             scan_duration_ms: None,
+            revocation_json: None,
             scanner_version: Some(env!("CARGO_PKG_VERSION").to_string()),
         }
     }
@@ -49,6 +52,12 @@ impl ScanRecord {
             })?;
         self.scan_duration_ms = Some(duration);
         Ok(self)
+    }
+
+    /// Set serialized revocation data for the scan.
+    pub fn with_revocation_json(mut self, revocation_json: Option<String>) -> Self {
+        self.revocation_json = revocation_json;
+        self
     }
 }
 

@@ -1,4 +1,5 @@
 use crate::application::ScanResults;
+use crate::certificates::revocation::RevocationResult;
 use crate::certificates::validator::parse_cert_date;
 use crate::utils::network::{normalize_dns_hostname, split_target_host_port};
 use chrono::{DateTime, Utc};
@@ -25,6 +26,7 @@ pub struct PersistedScan {
     pub overall_grade: Option<String>,
     pub overall_score: Option<u8>,
     pub scan_duration_ms: u64,
+    pub revocation: Option<RevocationResult>,
     pub protocols: Vec<PersistedProtocol>,
     pub ciphers: Vec<PersistedCipher>,
     pub vulnerabilities: Vec<PersistedVulnerability>,
@@ -109,6 +111,10 @@ impl PersistedScan {
 
         let overall_grade = results.ssl_rating().map(|rating| rating.grade.to_string());
         let overall_score = results.ssl_rating().map(|rating| rating.score);
+        let revocation = results
+            .certificate_chain
+            .as_ref()
+            .and_then(|cert| cert.revocation.clone());
 
         let protocols = results
             .protocols
@@ -246,6 +252,7 @@ impl PersistedScan {
             overall_grade,
             overall_score,
             scan_duration_ms: results.scan_time_ms,
+            revocation,
             protocols,
             ciphers,
             vulnerabilities,
@@ -275,6 +282,7 @@ mod tests {
         assert_eq!(persisted.target_hostname, "example.com");
         assert_eq!(persisted.target_port, 443);
         assert_eq!(persisted.scan_duration_ms, 123);
+        assert!(persisted.revocation.is_none());
     }
 
     #[test]
@@ -342,7 +350,14 @@ mod tests {
                     trusted_ca: None,
                     platform_trust: None,
                 },
-                revocation: None,
+                revocation: Some(crate::certificates::revocation::RevocationResult {
+                    status: crate::certificates::revocation::RevocationStatus::Good,
+                    method: crate::certificates::revocation::RevocationMethod::OCSP,
+                    details: "OCSP".to_string(),
+                    ocsp_stapling: true,
+                    ocsp_stapling_details: None,
+                    must_staple: false,
+                }),
             }),
             ..Default::default()
         };
@@ -353,6 +368,7 @@ mod tests {
         assert_eq!(persisted.certificates.len(), 1);
         assert_eq!(persisted.certificates[0].not_before, expected_not_before);
         assert_eq!(persisted.certificates[0].not_after, expected_not_after);
+        assert!(persisted.revocation.is_some());
     }
 
     #[test]

@@ -84,6 +84,15 @@ impl CipherRunDatabase {
             scan = scan.with_rating(grade.clone(), score);
         }
         scan = scan.with_duration(results.scan_duration_ms)?;
+        let revocation_json = match &results.revocation {
+            Some(revocation) => Some(serde_json::to_string(revocation).map_err(|error| {
+                crate::TlsError::ParseError {
+                    message: format!("Failed to serialize revocation for persistence: {}", error),
+                }
+            })?),
+            None => None,
+        };
+        scan = scan.with_revocation_json(revocation_json);
 
         // Insert scan
         let scan_id = self.scan_repo.create_scan(&scan).await?;
@@ -163,6 +172,7 @@ mod tests {
             overall_grade: None,
             overall_score: None,
             scan_duration_ms: 123,
+            revocation: None,
             protocols: Vec::new(),
             ciphers: Vec::new(),
             vulnerabilities: Vec::new(),
@@ -190,6 +200,63 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_store_scan_persists_revocation_json() {
+        use crate::certificates::revocation::{
+            RevocationMethod, RevocationResult, RevocationStatus,
+        };
+
+        let config = DatabaseConfig::sqlite(PathBuf::from(":memory:"));
+        let db = CipherRunDatabase::new(&config)
+            .await
+            .expect("test assertion should succeed");
+
+        let results = PersistedScan {
+            target_hostname: "example.com".to_string(),
+            target_port: 443,
+            overall_grade: None,
+            overall_score: None,
+            scan_duration_ms: 123,
+            revocation: Some(RevocationResult {
+                status: RevocationStatus::Good,
+                method: RevocationMethod::OCSP,
+                details: "OCSP".to_string(),
+                ocsp_stapling: true,
+                ocsp_stapling_details: None,
+                must_staple: false,
+            }),
+            protocols: Vec::new(),
+            ciphers: Vec::new(),
+            vulnerabilities: Vec::new(),
+            ratings: Vec::new(),
+            certificates: Vec::new(),
+        };
+
+        let scan_id = db
+            .store_scan(&results)
+            .await
+            .expect("test assertion should succeed");
+
+        if let DatabasePool::Sqlite(pool) = db.pool() {
+            let row: (Option<String>,) =
+                sqlx::query_as("SELECT revocation_json FROM scans WHERE scan_id = ?")
+                    .bind(scan_id)
+                    .fetch_one(pool)
+                    .await
+                    .expect("test assertion should succeed");
+            assert!(
+                row.0
+                    .as_deref()
+                    .unwrap_or_default()
+                    .contains("\"status\":\"Good\"")
+            );
+        } else {
+            panic!("expected sqlite pool");
+        }
+
+        db.close().await;
+    }
+
+    #[tokio::test]
     async fn test_delete_scan_cascades_to_child_rows() {
         use crate::application::persistence::PersistedProtocol;
 
@@ -204,6 +271,7 @@ mod tests {
             overall_grade: None,
             overall_score: None,
             scan_duration_ms: 1,
+            revocation: None,
             protocols: vec![PersistedProtocol {
                 protocol_name: "TLS 1.2".to_string(),
                 enabled: true,
