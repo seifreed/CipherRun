@@ -181,7 +181,31 @@ impl CipherRunSchema {
                                 }
                             }
                         },
-                        "revocation": { "type": ["object", "null"] }
+                        "revocation": {
+                            "type": ["object", "null"],
+                            "properties": {
+                                "status": {
+                                    "type": "string",
+                                    "enum": ["Good", "Revoked", "Unknown", "Error", "NotChecked"]
+                                },
+                                "method": {
+                                    "type": "string",
+                                    "enum": ["OCSP", "CRL", "OCSPStapling", "None"]
+                                },
+                                "details": { "type": "string" },
+                                "ocsp_stapling": { "type": "boolean" },
+                                "ocsp_stapling_details": {
+                                    "type": ["object", "null"],
+                                    "properties": {
+                                        "stapling_supported": { "type": "boolean" },
+                                        "stapled_response_present": { "type": "boolean" },
+                                        "stapled_response_valid": { "type": ["boolean", "null"] },
+                                        "details": { "type": "string" }
+                                    }
+                                },
+                                "must_staple": { "type": "boolean" }
+                            }
+                        }
                     }
                 },
                 "vulnerabilities": {
@@ -691,6 +715,20 @@ mod tests {
                 .and_then(|v| v.get("properties"))
                 .and_then(|v| v.get("per_certificate"))
                 .is_some()
+        );
+
+        assert_eq!(
+            schema
+                .get("properties")
+                .and_then(|v| v.get("certificate_chain"))
+                .and_then(|v| v.get("properties"))
+                .and_then(|v| v.get("revocation"))
+                .and_then(|v| v.get("properties"))
+                .and_then(|v| v.get("status"))
+                .and_then(|v| v.get("enum"))
+                .and_then(|v| v.as_array())
+                .map(|values| values.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>()),
+            Some(vec!["Good", "Revoked", "Unknown", "Error", "NotChecked"])
         );
     }
 
