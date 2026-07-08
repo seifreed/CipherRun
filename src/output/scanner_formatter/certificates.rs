@@ -37,6 +37,10 @@ impl<'a> ScannerFormatter<'a> {
         println!("  Serial:     {}", cert.serial_number);
         self.display_certificate_key_info(cert);
         println!("  Signature:  {}", cert.signature_algorithm);
+        println!(
+            "  Certificate Authority: {}",
+            if cert.is_ca { "Yes" } else { "No" }
+        );
         self.display_certificate_fingerprints(cert);
         self.display_certificate_usage(cert);
         self.display_certificate_warnings(cert);

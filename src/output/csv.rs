@@ -89,7 +89,7 @@ pub fn generate_csv(results: &ScanResults) -> Result<String> {
     if let Some(cert_data) = &results.certificate_chain {
         output.push_str("=== CERTIFICATE ===\n");
         output.push_str(
-            "Subject,Issuer,Serial,Valid From,Valid To,Expires,Signature Algorithm,Public Key Algorithm,Public Key Size,RSA Exponent,SANs,Key Usage,Extended Key Usage,EV OIDs,Fingerprint SHA256,Pin SHA256,Extended Validation,Debian Weak Key,AIA URL,Certificate Transparency,Valid,Hostname Match,Trust Chain Valid,Not Expired\n",
+            "Subject,Issuer,Serial,Valid From,Valid To,Expires,Signature Algorithm,Certificate Authority,Public Key Algorithm,Public Key Size,RSA Exponent,SANs,Key Usage,Extended Key Usage,EV OIDs,Fingerprint SHA256,Pin SHA256,Extended Validation,Debian Weak Key,AIA URL,Certificate Transparency,Valid,Hostname Match,Trust Chain Valid,Not Expired\n",
         );
         let validation = &cert_data.validation;
         if let Some(leaf) = cert_data.chain.leaf() {
@@ -114,7 +114,7 @@ pub fn generate_csv(results: &ScanResults) -> Result<String> {
                 leaf.ev_oids.join("; ")
             };
             output.push_str(&format!(
-                "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
+                "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
                 csv_cell(&leaf.subject),
                 csv_cell(&leaf.issuer),
                 csv_cell(&leaf.serial_number),
@@ -122,6 +122,7 @@ pub fn generate_csv(results: &ScanResults) -> Result<String> {
                 csv_cell(&leaf.not_after),
                 csv_cell(leaf.expiry_countdown.as_deref().unwrap_or("N/A")),
                 csv_cell(&leaf.signature_algorithm),
+                leaf.is_ca,
                 csv_cell(&leaf.public_key_algorithm),
                 csv_cell(
                     leaf.public_key_size
@@ -385,6 +386,7 @@ mod tests {
             not_after: "2027-01-01".to_string(),
             expiry_countdown: Some("expires in 1 year".to_string()),
             signature_algorithm: "sha256WithRSAEncryption".to_string(),
+            is_ca: false,
             public_key_algorithm: "RSA".to_string(),
             public_key_size: Some(2048),
             rsa_exponent: Some("e 65537".to_string()),
@@ -431,6 +433,7 @@ mod tests {
         assert!(csv.contains("CN=Test CA"));
         assert!(csv.contains("expires in 1 year"));
         assert!(csv.contains("sha256WithRSAEncryption"));
+        assert!(csv.contains("false"));
         assert!(csv.contains("RSA"));
         assert!(csv.contains("2048"));
         assert!(csv.contains("e 65537"));

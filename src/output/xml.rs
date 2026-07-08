@@ -59,6 +59,7 @@ pub fn generate_xml_report(results: &ScanResults) -> Result<String> {
                 "    <signature_algorithm>{}</signature_algorithm>\n",
                 escape_xml(&leaf.signature_algorithm)
             ));
+            xml.push_str(&format!("    <is_ca>{}</is_ca>\n", leaf.is_ca));
             xml.push_str(&format!(
                 "    <public_key_algorithm>{}</public_key_algorithm>\n",
                 escape_xml(&leaf.public_key_algorithm)
@@ -311,6 +312,7 @@ mod tests {
                         not_after: "2027-01-01".to_string(),
                         expiry_countdown: Some("expires in 1 year".to_string()),
                         signature_algorithm: "sha256WithRSAEncryption".to_string(),
+                        is_ca: false,
                         public_key_algorithm: "RSA".to_string(),
                         public_key_size: Some(2048),
                         rsa_exponent: Some("e 65537".to_string()),
@@ -355,6 +357,7 @@ mod tests {
         assert!(xml.contains("<secure_renegotiation>true</secure_renegotiation>"));
         assert!(xml.contains("<expires>expires in 1 year</expires>"));
         assert!(xml.contains("<signature_algorithm>sha256WithRSAEncryption</signature_algorithm>"));
+        assert!(xml.contains("<is_ca>false</is_ca>"));
         assert!(xml.contains("<public_key_algorithm>RSA</public_key_algorithm>"));
         assert!(xml.contains("<public_key_size>2048</public_key_size>"));
         assert!(xml.contains("<rsa_exponent>e 65537</rsa_exponent>"));
