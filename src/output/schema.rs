@@ -125,7 +125,7 @@ impl CipherRunSchema {
                                 "hostname_match": { "type": "boolean" },
                                 "trust_chain_valid": { "type": "boolean" },
                                 "signature_valid": { "type": "boolean" },
-                                "trusted_ca": { "type": ["object", "null"] },
+                                "trusted_ca": { "type": ["string", "null"] },
                                 "platform_trust": { "type": ["object", "null"] }
                             }
                         },
@@ -613,6 +613,20 @@ mod tests {
                 "missing field {field}"
             );
         }
+
+        assert_eq!(
+            schema
+                .get("properties")
+                .and_then(|v| v.get("certificate_chain"))
+                .and_then(|v| v.get("properties"))
+                .and_then(|v| v.get("validation"))
+                .and_then(|v| v.get("properties"))
+                .and_then(|v| v.get("trusted_ca"))
+                .and_then(|v| v.get("type"))
+                .and_then(|v| v.as_array())
+                .map(|types| types.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>()),
+            Some(vec!["string", "null"])
+        );
     }
 
     #[test]
