@@ -45,16 +45,8 @@ impl<'a> ScannerFormatter<'a> {
 
     /// Display certificate key information
     fn display_certificate_key_info(&self, cert: &CertificateInfo) {
-        if let Some(key_size) = cert.public_key_size {
-            let key_color = format_key_size(key_size, &cert.public_key_algorithm);
-            print!(
-                "  Key Size:   {} bits ({})",
-                key_color, cert.public_key_algorithm
-            );
-            if let Some(ref exponent) = cert.rsa_exponent {
-                print!(", {}", exponent);
-            }
-            println!();
+        for line in certificate_key_info_lines(cert) {
+            println!("{}", line);
         }
     }
 
@@ -151,11 +143,12 @@ impl<'a> ScannerFormatter<'a> {
             println!("     Issuer:     {}", cert.issuer);
             println!("     Valid From: {}", cert.not_before);
             println!("     Valid To:   {}", cert.not_after);
-            if let Some(key_size) = cert.public_key_size {
-                println!(
-                    "     Key:        {} {} bits",
-                    cert.public_key_algorithm, key_size
-                );
+            for line in certificate_key_info_lines(cert) {
+                if let Some(stripped) = line.strip_prefix("  ") {
+                    println!("     {}", stripped);
+                } else {
+                    println!("     {}", line);
+                }
             }
             println!("     Signature:  {}", cert.signature_algorithm);
         }
@@ -423,4 +416,24 @@ impl<'a> ScannerFormatter<'a> {
             );
         }
     }
+}
+
+pub(crate) fn certificate_key_info_lines(cert: &CertificateInfo) -> Vec<String> {
+    let mut lines = Vec::new();
+
+    if let Some(key_size) = cert.public_key_size {
+        let key_color = format_key_size(key_size, &cert.public_key_algorithm);
+        let mut line = format!(
+            "  Key Size:   {} bits ({})",
+            key_color, cert.public_key_algorithm
+        );
+        if let Some(ref exponent) = cert.rsa_exponent {
+            line.push_str(&format!(", {}", exponent));
+        }
+        lines.push(line);
+    } else if let Some(ref exponent) = cert.rsa_exponent {
+        lines.push(format!("  RSA Exponent: {}", exponent));
+    }
+
+    lines
 }

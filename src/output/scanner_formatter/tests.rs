@@ -998,3 +998,15 @@ fn test_cdn_section_renders_sticky_sessions_without_lb_detection() {
 
     formatter.display_cdn_results(None, Some(&load_balancer));
 }
+
+#[test]
+fn test_certificate_key_info_lines_includes_rsa_exponent_without_key_size() {
+    let cert = CertificateInfo {
+        rsa_exponent: Some("e 3".to_string()),
+        ..Default::default()
+    };
+
+    let lines = crate::output::scanner_formatter::certificates::certificate_key_info_lines(&cert);
+
+    assert_eq!(lines, vec!["  RSA Exponent: e 3".to_string()]);
+}
