@@ -145,11 +145,7 @@ impl CertificateStatus {
 
     /// Detect if certificate is revoked
     fn detect_revoked(revocation: Option<&RevocationResult>) -> bool {
-        if let Some(rev) = revocation {
-            matches!(rev.status, RevocationStatus::Revoked)
-        } else {
-            false
-        }
+        revocation.is_some_and(RevocationResult::is_problematic)
     }
 
     /// Detect if certificate is untrusted
@@ -316,6 +312,20 @@ mod tests {
     #[test]
     fn test_detect_revoked_none() {
         assert!(!CertificateStatus::detect_revoked(None));
+    }
+
+    #[test]
+    fn test_detect_revoked_treats_error_as_problematic() {
+        let revocation = RevocationResult {
+            status: RevocationStatus::Error,
+            method: crate::certificates::revocation::RevocationMethod::None,
+            details: "error".to_string(),
+            ocsp_stapling: false,
+            ocsp_stapling_details: None,
+            must_staple: false,
+        };
+
+        assert!(CertificateStatus::detect_revoked(Some(&revocation)));
     }
 
     #[test]
