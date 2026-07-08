@@ -55,10 +55,28 @@ pub fn generate_xml_report(results: &ScanResults) -> Result<String> {
                     escape_xml(countdown)
                 ));
             }
+            if let Some(ref fingerprint) = leaf.fingerprint_sha256 {
+                xml.push_str(&format!(
+                    "    <fingerprint_sha256>{}</fingerprint_sha256>\n",
+                    escape_xml(fingerprint)
+                ));
+            }
+            if let Some(ref pin) = leaf.pin_sha256 {
+                xml.push_str(&format!(
+                    "    <pin_sha256>{}</pin_sha256>\n",
+                    escape_xml(pin)
+                ));
+            }
             xml.push_str(&format!(
                 "    <extended_validation>{}</extended_validation>\n",
                 leaf.extended_validation
             ));
+            if let Some(debian_weak_key) = leaf.debian_weak_key {
+                xml.push_str(&format!(
+                    "    <debian_weak_key>{}</debian_weak_key>\n",
+                    debian_weak_key
+                ));
+            }
             if let Some(ref aia_url) = leaf.aia_url {
                 xml.push_str(&format!("    <aia_url>{}</aia_url>\n", escape_xml(aia_url)));
             }
@@ -244,6 +262,9 @@ mod tests {
                         not_before: "2026-01-01".to_string(),
                         not_after: "2027-01-01".to_string(),
                         expiry_countdown: Some("expires in 1 year".to_string()),
+                        fingerprint_sha256: Some("AA:BB".to_string()),
+                        pin_sha256: Some("pin".to_string()),
+                        debian_weak_key: Some(true),
                         aia_url: Some("http://ca.example.com".to_string()),
                         certificate_transparency: Some("Yes (certificate)".to_string()),
                         extended_validation: false,
@@ -274,6 +295,9 @@ mod tests {
         assert!(xml.contains("<name>TLS 1.2</name>"));
         assert!(xml.contains("<secure_renegotiation>true</secure_renegotiation>"));
         assert!(xml.contains("<expires>expires in 1 year</expires>"));
+        assert!(xml.contains("<fingerprint_sha256>AA:BB</fingerprint_sha256>"));
+        assert!(xml.contains("<pin_sha256>pin</pin_sha256>"));
+        assert!(xml.contains("<debian_weak_key>true</debian_weak_key>"));
         assert!(xml.contains("<aia_url>http://ca.example.com</aia_url>"));
         assert!(
             xml.contains("<certificate_transparency>Yes (certificate)</certificate_transparency>")

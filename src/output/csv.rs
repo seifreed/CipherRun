@@ -89,19 +89,26 @@ pub fn generate_csv(results: &ScanResults) -> Result<String> {
     if let Some(cert_data) = &results.certificate_chain {
         output.push_str("=== CERTIFICATE ===\n");
         output.push_str(
-            "Subject,Issuer,Serial,Valid From,Valid To,Expires,Extended Validation,AIA URL,Certificate Transparency,Valid,Hostname Match,Trust Chain Valid,Not Expired\n",
+            "Subject,Issuer,Serial,Valid From,Valid To,Expires,Fingerprint SHA256,Pin SHA256,Extended Validation,Debian Weak Key,AIA URL,Certificate Transparency,Valid,Hostname Match,Trust Chain Valid,Not Expired\n",
         );
         let validation = &cert_data.validation;
         if let Some(leaf) = cert_data.chain.leaf() {
             output.push_str(&format!(
-                "{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
+                "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
                 csv_cell(&leaf.subject),
                 csv_cell(&leaf.issuer),
                 csv_cell(&leaf.serial_number),
                 csv_cell(&leaf.not_before),
                 csv_cell(&leaf.not_after),
                 csv_cell(leaf.expiry_countdown.as_deref().unwrap_or("N/A")),
+                csv_cell(leaf.fingerprint_sha256.as_deref().unwrap_or("N/A")),
+                csv_cell(leaf.pin_sha256.as_deref().unwrap_or("N/A")),
                 leaf.extended_validation,
+                csv_cell(match leaf.debian_weak_key {
+                    Some(true) => "Yes",
+                    Some(false) => "No",
+                    None => "N/A",
+                }),
                 csv_cell(leaf.aia_url.as_deref().unwrap_or("N/A")),
                 csv_cell(leaf.certificate_transparency.as_deref().unwrap_or("N/A")),
                 validation.valid,
@@ -344,7 +351,10 @@ mod tests {
             not_before: "2026-01-01".to_string(),
             not_after: "2027-01-01".to_string(),
             expiry_countdown: Some("expires in 1 year".to_string()),
+            fingerprint_sha256: Some("AA:BB".to_string()),
+            pin_sha256: Some("pin".to_string()),
             extended_validation: false,
+            debian_weak_key: Some(true),
             aia_url: Some("http://ca.example.com".to_string()),
             certificate_transparency: Some("Yes (certificate)".to_string()),
             ..Default::default()
@@ -376,6 +386,9 @@ mod tests {
         assert!(csv.contains("CN=example.com"));
         assert!(csv.contains("CN=Test CA"));
         assert!(csv.contains("expires in 1 year"));
+        assert!(csv.contains("AA:BB"));
+        assert!(csv.contains("pin"));
+        assert!(csv.contains("Yes"));
         assert!(csv.contains("http://ca.example.com"));
         assert!(csv.contains("Yes (certificate)"));
     }
