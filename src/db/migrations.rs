@@ -77,7 +77,12 @@ async fn run_sqlite_migrations_manual(
                 crate::TlsError::DatabaseError(format!("Failed to read migration entry: {}", e))
             })?
             .path();
-        if path.extension().is_some_and(|ext| ext == "sql") {
+        if path.extension().is_some_and(|ext| ext == "sql")
+            && !path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.ends_with(".down.sql"))
+        {
             migration_files.push(path);
         }
     }
@@ -222,7 +227,9 @@ async fn revert_sqlite_migration_manual(
     let down_filename = description.replace(".sql", ".down.sql");
     let down_path = migrations_path.join(&down_filename);
 
-    if down_path.exists() {
+    if version == 20250109008 {
+        revert_scan_revocation_json_sqlite(pool).await?;
+    } else if down_path.exists() {
         let sql_content = fs::read_to_string(&down_path).map_err(|e| {
             crate::TlsError::DatabaseError(format!(
                 "Failed to read down migration {}: {}",
@@ -255,10 +262,50 @@ async fn revert_sqlite_migration_manual(
     Ok(())
 }
 
+async fn revert_scan_revocation_json_sqlite(pool: &sqlx::SqlitePool) -> crate::Result<()> {
+    sqlx::raw_sql(
+        r#"
+        CREATE TABLE scans_revert (
+            scan_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            target_hostname VARCHAR(255) NOT NULL,
+            target_port INTEGER NOT NULL DEFAULT 443,
+            scan_timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            overall_grade VARCHAR(5),
+            overall_score INTEGER,
+            scan_duration_ms INTEGER,
+            scanner_version VARCHAR(50)
+        );
+        INSERT INTO scans_revert (
+            scan_id, target_hostname, target_port, scan_timestamp, overall_grade,
+            overall_score, scan_duration_ms, scanner_version
+        )
+        SELECT
+            scan_id, target_hostname, target_port, scan_timestamp, overall_grade,
+            overall_score, scan_duration_ms, scanner_version
+        FROM scans;
+        DROP TABLE scans;
+        ALTER TABLE scans_revert RENAME TO scans;
+        CREATE INDEX IF NOT EXISTS idx_scans_composite ON scans(target_hostname, target_port, scan_timestamp DESC);
+        CREATE INDEX IF NOT EXISTS idx_scans_timestamp ON scans(scan_timestamp DESC);
+        "#,
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| {
+        crate::TlsError::DatabaseError(format!(
+            "Failed to revert revocation_json SQLite migration: {}",
+            e
+        ))
+    })?;
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::db::config::DatabaseConfig;
+    use sqlx::Row;
     use std::path::PathBuf;
 
     #[tokio::test]
@@ -271,6 +318,41 @@ mod tests {
 
         // Note: This test will only work if migrations directory exists
         // In a real scenario, you would have proper test fixtures
+
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn test_revert_last_sqlite_migration_drops_revocation_json() {
+        let config = DatabaseConfig::sqlite(PathBuf::from(":memory:"));
+        let pool = DatabasePool::new(&config)
+            .await
+            .expect("test assertion should succeed");
+
+        run_migrations(&pool)
+            .await
+            .expect("migrations should succeed");
+
+        revert_migration(&pool)
+            .await
+            .expect("revert should succeed");
+
+        if let DatabasePool::Sqlite(sqlite_pool) = &pool {
+            let columns = sqlx::query("PRAGMA table_info(scans)")
+                .fetch_all(sqlite_pool)
+                .await
+                .expect("test assertion should succeed");
+
+            assert!(
+                !columns
+                    .iter()
+                    .any(|row| row.try_get::<String, _>("name").ok().as_deref()
+                        == Some("revocation_json")),
+                "revocation_json column should be removed by revert"
+            );
+        } else {
+            panic!("expected sqlite pool");
+        }
 
         pool.close().await;
     }
