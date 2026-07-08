@@ -140,6 +140,46 @@ pub fn generate_xml_report(results: &ScanResults) -> Result<String> {
             "    <valid>{}</valid>\n",
             cert_data.validation.valid
         ));
+        if let Some(revocation) = &cert_data.revocation {
+            xml.push_str("    <revocation>\n");
+            xml.push_str(&format!("      <status>{:?}</status>\n", revocation.status));
+            xml.push_str(&format!("      <method>{:?}</method>\n", revocation.method));
+            xml.push_str(&format!(
+                "      <details>{}</details>\n",
+                escape_xml(&revocation.details)
+            ));
+            xml.push_str(&format!(
+                "      <ocsp_stapling>{}</ocsp_stapling>\n",
+                revocation.ocsp_stapling
+            ));
+            xml.push_str(&format!(
+                "      <must_staple>{}</must_staple>\n",
+                revocation.must_staple
+            ));
+            if let Some(stapling) = &revocation.ocsp_stapling_details {
+                xml.push_str("      <ocsp_stapling_details>\n");
+                xml.push_str(&format!(
+                    "        <stapling_supported>{}</stapling_supported>\n",
+                    stapling.stapling_supported
+                ));
+                xml.push_str(&format!(
+                    "        <stapled_response_present>{}</stapled_response_present>\n",
+                    stapling.stapled_response_present
+                ));
+                if let Some(valid) = stapling.stapled_response_valid {
+                    xml.push_str(&format!(
+                        "        <stapled_response_valid>{}</stapled_response_valid>\n",
+                        valid
+                    ));
+                }
+                xml.push_str(&format!(
+                    "        <details>{}</details>\n",
+                    escape_xml(&stapling.details)
+                ));
+                xml.push_str("      </ocsp_stapling_details>\n");
+            }
+            xml.push_str("    </revocation>\n");
+        }
         xml.push_str("  </certificate>\n");
     }
 
@@ -270,6 +310,7 @@ fn option_status_label(value: Option<bool>) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::certificates::revocation::{RevocationMethod, RevocationResult, RevocationStatus};
     use crate::protocols::{Protocol, ProtocolTestResult};
     use crate::rating::{Grade, RatingResult};
     use crate::scanner::RatingResults;
@@ -344,7 +385,14 @@ mod tests {
                     trusted_ca: None,
                     platform_trust: None,
                 },
-                revocation: None,
+                revocation: Some(RevocationResult {
+                    status: RevocationStatus::Good,
+                    method: RevocationMethod::OCSP,
+                    details: "OCSP check via https://ocsp.example.com".to_string(),
+                    ocsp_stapling: true,
+                    ocsp_stapling_details: None,
+                    must_staple: false,
+                }),
             }),
             ..Default::default()
         };
@@ -374,6 +422,10 @@ mod tests {
         assert!(
             xml.contains("<certificate_transparency>Yes (certificate)</certificate_transparency>")
         );
+        assert!(xml.contains("<revocation>"));
+        assert!(xml.contains("<status>Good</status>"));
+        assert!(xml.contains("<method>OCSP</method>"));
+        assert!(xml.contains("<details>OCSP check via https://ocsp.example.com</details>"));
         assert!(xml.contains("<details>detail &amp; &lt;tag&gt;</details>"));
         assert!(xml.contains("<cve>CVE-2014-0160</cve>"));
         assert!(xml.contains("<status>Not Vulnerable</status>"));

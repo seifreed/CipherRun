@@ -152,6 +152,47 @@ pub fn generate_csv(results: &ScanResults) -> Result<String> {
             ));
         }
         output.push('\n');
+
+        if let Some(revocation) = &cert_data.revocation {
+            output.push_str("=== REVOCATION ===\n");
+            output.push_str(
+                "Status,Method,Details,OCSP Stapling,Must Staple,Stapling Supported,Stapled Response Present,Stapled Response Valid,Stapling Details\n",
+            );
+            let stapling_details = revocation
+                .ocsp_stapling_details
+                .as_ref()
+                .map(|details| details.details.as_str())
+                .unwrap_or("N/A");
+            let stapling_supported = revocation
+                .ocsp_stapling_details
+                .as_ref()
+                .map(|details| details.stapling_supported)
+                .unwrap_or(false);
+            let stapled_response_present = revocation
+                .ocsp_stapling_details
+                .as_ref()
+                .map(|details| details.stapled_response_present)
+                .unwrap_or(false);
+            let stapled_response_valid = revocation
+                .ocsp_stapling_details
+                .as_ref()
+                .and_then(|details| details.stapled_response_valid)
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "N/A".to_string());
+            output.push_str(&format!(
+                "{},{},{},{},{},{},{},{},{}\n",
+                csv_cell(&format!("{:?}", revocation.status)),
+                csv_cell(&format!("{:?}", revocation.method)),
+                csv_cell(&revocation.details),
+                revocation.ocsp_stapling,
+                revocation.must_staple,
+                stapling_supported,
+                stapled_response_present,
+                stapled_response_valid,
+                csv_cell(stapling_details)
+            ));
+            output.push('\n');
+        }
     }
 
     // Vulnerabilities
@@ -360,6 +401,7 @@ pub fn generate_vulnerabilities_csv(results: &ScanResults) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::certificates::revocation::{RevocationMethod, RevocationResult, RevocationStatus};
     use crate::client_sim::simulator::ClientSimulationResult;
     use crate::http::headers::{HeaderIssue, IssueSeverity, IssueType};
     use crate::http::headers_advanced::{
@@ -422,7 +464,14 @@ mod tests {
                     trusted_ca: None,
                     platform_trust: None,
                 },
-                revocation: None,
+                revocation: Some(RevocationResult {
+                    status: RevocationStatus::Good,
+                    method: RevocationMethod::OCSP,
+                    details: "OCSP check via https://ocsp.example.com".to_string(),
+                    ocsp_stapling: true,
+                    ocsp_stapling_details: None,
+                    must_staple: false,
+                }),
             }),
             ..Default::default()
         };
@@ -446,6 +495,10 @@ mod tests {
         assert!(csv.contains("Yes"));
         assert!(csv.contains("http://ca.example.com"));
         assert!(csv.contains("Yes (certificate)"));
+        assert!(csv.contains("=== REVOCATION ==="));
+        assert!(csv.contains("Good"));
+        assert!(csv.contains("OCSP"));
+        assert!(csv.contains("OCSP check via https://ocsp.example.com"));
     }
 
     #[test]
