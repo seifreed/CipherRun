@@ -53,6 +53,12 @@ pub fn generate_xml_report(results: &ScanResults) -> Result<String> {
                 "    <extended_validation>{}</extended_validation>\n",
                 leaf.extended_validation
             ));
+            if let Some(ref ct) = leaf.certificate_transparency {
+                xml.push_str(&format!(
+                    "    <certificate_transparency>{}</certificate_transparency>\n",
+                    escape_xml(ct)
+                ));
+            }
         }
         xml.push_str(&format!(
             "    <valid>{}</valid>\n",
@@ -220,6 +226,33 @@ mod tests {
                 cwe: None,
                 severity: Severity::High,
             }],
+            certificate_chain: Some(crate::scanner::CertificateAnalysisResult {
+                chain: crate::certificates::parser::CertificateChain {
+                    certificates: vec![crate::certificates::parser::CertificateInfo {
+                        subject: "CN=example.com".to_string(),
+                        issuer: "CN=Test CA".to_string(),
+                        serial_number: "01AB".to_string(),
+                        not_before: "2026-01-01".to_string(),
+                        not_after: "2027-01-01".to_string(),
+                        certificate_transparency: Some("Yes (certificate)".to_string()),
+                        extended_validation: false,
+                        ..Default::default()
+                    }],
+                    chain_length: 1,
+                    chain_size_bytes: 1,
+                },
+                validation: crate::certificates::validator::ValidationResult {
+                    valid: true,
+                    issues: Vec::new(),
+                    trust_chain_valid: true,
+                    hostname_match: true,
+                    not_expired: true,
+                    signature_valid: true,
+                    trusted_ca: None,
+                    platform_trust: None,
+                },
+                revocation: None,
+            }),
             ..Default::default()
         };
 
@@ -229,6 +262,9 @@ mod tests {
         assert!(xml.contains("<scantime_ms>123</scantime_ms>"));
         assert!(xml.contains("<name>TLS 1.2</name>"));
         assert!(xml.contains("<secure_renegotiation>true</secure_renegotiation>"));
+        assert!(
+            xml.contains("<certificate_transparency>Yes (certificate)</certificate_transparency>")
+        );
         assert!(xml.contains("<details>detail &amp; &lt;tag&gt;</details>"));
         assert!(xml.contains("<cve>CVE-2014-0160</cve>"));
         assert!(xml.contains("<status>Not Vulnerable</status>"));
