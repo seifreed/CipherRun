@@ -16,6 +16,11 @@ impl ScanResultsPresenter<'_> {
         if let Some(jarm) = view.jarm_results() {
             formatter.display_jarm_results(jarm);
         }
+        let cdn = view.cdn_detection();
+        let load_balancer = view.load_balancer_info();
+        if cdn.is_some() || load_balancer.is_some() {
+            formatter.display_cdn_results(cdn, load_balancer);
+        }
         if let Some(alpn) = view.alpn_results() {
             formatter.display_alpn_results(alpn);
         }

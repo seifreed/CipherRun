@@ -114,6 +114,60 @@ impl<'a> ScannerFormatter<'a> {
         }
     }
 
+    /// Display CDN and load-balancer detection results
+    pub fn display_cdn_results(
+        &self,
+        cdn: Option<&crate::fingerprint::CdnDetection>,
+        load_balancer: Option<&crate::fingerprint::LoadBalancerInfo>,
+    ) {
+        if cdn.is_none() && load_balancer.is_none() {
+            return;
+        }
+        self.print_section("CDN / Load Balancer:", 50);
+
+        if let Some(cdn) = cdn {
+            let status = if cdn.is_cdn {
+                "Yes".green().bold()
+            } else {
+                "No".normal()
+            };
+            println!("  CDN Detected:   {}", status);
+            if let Some(ref provider) = cdn.cdn_provider {
+                println!("  Provider:       {}", provider.cyan());
+            }
+            if cdn.is_cdn {
+                println!("  Confidence:     {:.0}%", cdn.confidence * 100.0);
+            }
+            if !cdn.indicators.is_empty() {
+                println!("  Indicators:");
+                for indicator in &cdn.indicators {
+                    println!("    - {}", indicator.dimmed());
+                }
+            }
+        }
+
+        if let Some(lb) = load_balancer {
+            if lb.detected {
+                println!("  Load Balancer:  {}", "Detected".yellow().bold());
+                if let Some(ref lb_type) = lb.lb_type {
+                    println!("  LB Type:        {}", lb_type.cyan());
+                }
+                println!(
+                    "  Sticky Sessions: {}",
+                    if lb.sticky_sessions { "Yes" } else { "No" }
+                );
+                if !lb.indicators.is_empty() {
+                    println!("  LB Indicators:");
+                    for indicator in &lb.indicators {
+                        println!("    - {}", indicator.dimmed());
+                    }
+                }
+            } else {
+                println!("  Load Balancer:  {}", "No".normal());
+            }
+        }
+    }
+
     /// Display JARM fingerprint results
     pub fn display_jarm_results(&self, jarm: &JarmFingerprint) {
         self.print_section("JARM Fingerprint:", 80);

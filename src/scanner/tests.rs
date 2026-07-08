@@ -3,7 +3,7 @@ use crate::Args;
 use crate::certificates::parser::{CertificateChain, CertificateInfo};
 use crate::certificates::validator::ValidationResult;
 use crate::client_sim::simulator::ClientSimulationResult;
-use crate::fingerprint::{Ja3Fingerprint, Ja3Signature};
+use crate::fingerprint::{CdnDetection, Ja3Fingerprint, Ja3Signature, LoadBalancerInfo};
 use crate::http::tester::{HeaderAnalysisResult, SecurityGrade};
 use crate::protocols::{Protocol, ProtocolTestResult};
 use crate::utils::network::Target;
@@ -199,6 +199,38 @@ fn test_scan_results_connection_evidence_treats_completed_vulnerability_batch_as
         }],
         ..Default::default()
     };
+
+    assert!(results.has_connection_evidence());
+}
+
+#[test]
+fn test_scan_results_connection_evidence_includes_cdn_detection() {
+    let mut results = ScanResults::default();
+    results.advanced = Some(crate::scanner::results::AdvancedResults {
+        cdn_detection: Some(CdnDetection {
+            is_cdn: true,
+            cdn_provider: Some("Cloudflare".to_string()),
+            confidence: 0.9,
+            indicators: vec!["Header: cf-ray".to_string()],
+        }),
+        ..Default::default()
+    });
+
+    assert!(results.has_connection_evidence());
+}
+
+#[test]
+fn test_scan_results_connection_evidence_includes_load_balancer_detection() {
+    let mut results = ScanResults::default();
+    results.advanced = Some(crate::scanner::results::AdvancedResults {
+        load_balancer_info: Some(LoadBalancerInfo {
+            detected: true,
+            lb_type: Some("AWS ELB/ALB".to_string()),
+            sticky_sessions: false,
+            indicators: vec!["AWS header: x-amzn-trace-id".to_string()],
+        }),
+        ..Default::default()
+    });
 
     assert!(results.has_connection_evidence());
 }

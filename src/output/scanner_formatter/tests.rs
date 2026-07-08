@@ -10,7 +10,8 @@ use crate::ciphers::tester::{CipherCounts, ProtocolCipherSummary};
 use crate::client_sim::simulator::ClientSimulationResult;
 use crate::fingerprint::ja3s::ServerType;
 use crate::fingerprint::{
-    Ja3Fingerprint, Ja3Signature, Ja3sFingerprint, Ja3sSignature, JarmFingerprint, JarmSignature,
+    CdnDetection, Ja3Fingerprint, Ja3Signature, Ja3sFingerprint, Ja3sSignature, JarmFingerprint,
+    JarmSignature, LoadBalancerInfo,
 };
 use crate::http::headers::{
     HeaderIssue, IssueSeverity as HeaderSeverity, IssueType as HeaderIssueType,
@@ -954,4 +955,25 @@ fn test_pqc_section_with_recommendations_renders_without_panic() {
         ],
     };
     formatter.display_pqc_readiness_results(&assessment);
+}
+
+#[test]
+fn test_cdn_section_renders_without_panic() {
+    let args = Args::default();
+    let formatter = ScannerFormatter::new(&args);
+
+    let cdn = CdnDetection {
+        is_cdn: true,
+        cdn_provider: Some("Cloudflare".to_string()),
+        confidence: 0.9,
+        indicators: vec!["Header: cf-ray".to_string()],
+    };
+    let load_balancer = LoadBalancerInfo {
+        detected: true,
+        lb_type: Some("AWS ELB/ALB".to_string()),
+        sticky_sessions: true,
+        indicators: vec!["AWS header: x-amzn-trace-id".to_string()],
+    };
+
+    formatter.display_cdn_results(Some(&cdn), Some(&load_balancer));
 }

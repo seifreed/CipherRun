@@ -284,6 +284,8 @@ impl ScanResults {
             || self
                 .alpn_result()
                 .is_some_and(|report| report.alpn_enabled)
+            || self.cdn_detection().is_some()
+            || self.load_balancer_info().is_some()
     }
 
     /// Ensure fingerprints sub-struct exists and return mutable reference
