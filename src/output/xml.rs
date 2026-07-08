@@ -55,6 +55,29 @@ pub fn generate_xml_report(results: &ScanResults) -> Result<String> {
                     escape_xml(countdown)
                 ));
             }
+            xml.push_str(&format!(
+                "    <public_key_algorithm>{}</public_key_algorithm>\n",
+                escape_xml(&leaf.public_key_algorithm)
+            ));
+            if let Some(key_size) = leaf.public_key_size {
+                xml.push_str(&format!(
+                    "    <public_key_size>{}</public_key_size>\n",
+                    key_size
+                ));
+            }
+            if let Some(ref exponent) = leaf.rsa_exponent {
+                xml.push_str(&format!(
+                    "    <rsa_exponent>{}</rsa_exponent>\n",
+                    escape_xml(exponent)
+                ));
+            }
+            if !leaf.san.is_empty() {
+                xml.push_str("    <sans>\n");
+                for san in &leaf.san {
+                    xml.push_str(&format!("      <san>{}</san>\n", escape_xml(san)));
+                }
+                xml.push_str("    </sans>\n");
+            }
             if let Some(ref fingerprint) = leaf.fingerprint_sha256 {
                 xml.push_str(&format!(
                     "    <fingerprint_sha256>{}</fingerprint_sha256>\n",
@@ -262,6 +285,10 @@ mod tests {
                         not_before: "2026-01-01".to_string(),
                         not_after: "2027-01-01".to_string(),
                         expiry_countdown: Some("expires in 1 year".to_string()),
+                        public_key_algorithm: "RSA".to_string(),
+                        public_key_size: Some(2048),
+                        rsa_exponent: Some("e 65537".to_string()),
+                        san: vec!["example.com".to_string(), "www.example.com".to_string()],
                         fingerprint_sha256: Some("AA:BB".to_string()),
                         pin_sha256: Some("pin".to_string()),
                         debian_weak_key: Some(true),
@@ -295,6 +322,11 @@ mod tests {
         assert!(xml.contains("<name>TLS 1.2</name>"));
         assert!(xml.contains("<secure_renegotiation>true</secure_renegotiation>"));
         assert!(xml.contains("<expires>expires in 1 year</expires>"));
+        assert!(xml.contains("<public_key_algorithm>RSA</public_key_algorithm>"));
+        assert!(xml.contains("<public_key_size>2048</public_key_size>"));
+        assert!(xml.contains("<rsa_exponent>e 65537</rsa_exponent>"));
+        assert!(xml.contains("<sans>"));
+        assert!(xml.contains("<san>example.com</san>"));
         assert!(xml.contains("<fingerprint_sha256>AA:BB</fingerprint_sha256>"));
         assert!(xml.contains("<pin_sha256>pin</pin_sha256>"));
         assert!(xml.contains("<debian_weak_key>true</debian_weak_key>"));
