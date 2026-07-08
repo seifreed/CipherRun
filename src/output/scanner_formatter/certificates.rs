@@ -38,6 +38,7 @@ impl<'a> ScannerFormatter<'a> {
         self.display_certificate_key_info(cert);
         println!("  Signature:  {}", cert.signature_algorithm);
         self.display_certificate_fingerprints(cert);
+        self.display_certificate_usage(cert);
         self.display_certificate_warnings(cert);
         self.display_certificate_sans(cert);
     }
@@ -67,6 +68,25 @@ impl<'a> ScannerFormatter<'a> {
         }
         if let Some(ref aia_url) = cert.aia_url {
             println!("  AIA URL:            {}", aia_url);
+        }
+        if let Some(ref ct) = cert.certificate_transparency {
+            println!("  Cert Transparency:  {}", ct);
+        }
+    }
+
+    /// Display certificate usage constraints
+    fn display_certificate_usage(&self, cert: &CertificateInfo) {
+        if !cert.key_usage.is_empty() {
+            println!("  Key Usage:        {}", cert.key_usage.join(", "));
+        }
+        if !cert.extended_key_usage.is_empty() {
+            println!(
+                "  Extended Key Usage: {}",
+                cert.extended_key_usage.join(", ")
+            );
+        }
+        if !cert.ev_oids.is_empty() {
+            println!("  EV OIDs:          {}", cert.ev_oids.join(", "));
         }
     }
 

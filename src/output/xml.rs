@@ -78,6 +78,27 @@ pub fn generate_xml_report(results: &ScanResults) -> Result<String> {
                 }
                 xml.push_str("    </sans>\n");
             }
+            if !leaf.key_usage.is_empty() {
+                xml.push_str("    <key_usage>\n");
+                for usage in &leaf.key_usage {
+                    xml.push_str(&format!("      <usage>{}</usage>\n", escape_xml(usage)));
+                }
+                xml.push_str("    </key_usage>\n");
+            }
+            if !leaf.extended_key_usage.is_empty() {
+                xml.push_str("    <extended_key_usage>\n");
+                for usage in &leaf.extended_key_usage {
+                    xml.push_str(&format!("      <usage>{}</usage>\n", escape_xml(usage)));
+                }
+                xml.push_str("    </extended_key_usage>\n");
+            }
+            if !leaf.ev_oids.is_empty() {
+                xml.push_str("    <ev_oids>\n");
+                for oid in &leaf.ev_oids {
+                    xml.push_str(&format!("      <oid>{}</oid>\n", escape_xml(oid)));
+                }
+                xml.push_str("    </ev_oids>\n");
+            }
             if let Some(ref fingerprint) = leaf.fingerprint_sha256 {
                 xml.push_str(&format!(
                     "    <fingerprint_sha256>{}</fingerprint_sha256>\n",
@@ -289,6 +310,12 @@ mod tests {
                         public_key_size: Some(2048),
                         rsa_exponent: Some("e 65537".to_string()),
                         san: vec!["example.com".to_string(), "www.example.com".to_string()],
+                        key_usage: vec![
+                            "Digital Signature".to_string(),
+                            "Key Encipherment".to_string(),
+                        ],
+                        extended_key_usage: vec!["Server Authentication".to_string()],
+                        ev_oids: vec!["1.2.3.4".to_string()],
                         fingerprint_sha256: Some("AA:BB".to_string()),
                         pin_sha256: Some("pin".to_string()),
                         debian_weak_key: Some(true),
@@ -327,6 +354,10 @@ mod tests {
         assert!(xml.contains("<rsa_exponent>e 65537</rsa_exponent>"));
         assert!(xml.contains("<sans>"));
         assert!(xml.contains("<san>example.com</san>"));
+        assert!(xml.contains("<key_usage>"));
+        assert!(xml.contains("<usage>Digital Signature</usage>"));
+        assert!(xml.contains("<extended_key_usage>"));
+        assert!(xml.contains("<ev_oids>"));
         assert!(xml.contains("<fingerprint_sha256>AA:BB</fingerprint_sha256>"));
         assert!(xml.contains("<pin_sha256>pin</pin_sha256>"));
         assert!(xml.contains("<debian_weak_key>true</debian_weak_key>"));

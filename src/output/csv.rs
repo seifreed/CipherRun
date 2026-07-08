@@ -89,7 +89,7 @@ pub fn generate_csv(results: &ScanResults) -> Result<String> {
     if let Some(cert_data) = &results.certificate_chain {
         output.push_str("=== CERTIFICATE ===\n");
         output.push_str(
-            "Subject,Issuer,Serial,Valid From,Valid To,Expires,Public Key Algorithm,Public Key Size,RSA Exponent,SANs,Fingerprint SHA256,Pin SHA256,Extended Validation,Debian Weak Key,AIA URL,Certificate Transparency,Valid,Hostname Match,Trust Chain Valid,Not Expired\n",
+            "Subject,Issuer,Serial,Valid From,Valid To,Expires,Public Key Algorithm,Public Key Size,RSA Exponent,SANs,Key Usage,Extended Key Usage,EV OIDs,Fingerprint SHA256,Pin SHA256,Extended Validation,Debian Weak Key,AIA URL,Certificate Transparency,Valid,Hostname Match,Trust Chain Valid,Not Expired\n",
         );
         let validation = &cert_data.validation;
         if let Some(leaf) = cert_data.chain.leaf() {
@@ -98,8 +98,23 @@ pub fn generate_csv(results: &ScanResults) -> Result<String> {
             } else {
                 leaf.san.join("; ")
             };
+            let key_usage = if leaf.key_usage.is_empty() {
+                "N/A".to_string()
+            } else {
+                leaf.key_usage.join("; ")
+            };
+            let extended_key_usage = if leaf.extended_key_usage.is_empty() {
+                "N/A".to_string()
+            } else {
+                leaf.extended_key_usage.join("; ")
+            };
+            let ev_oids = if leaf.ev_oids.is_empty() {
+                "N/A".to_string()
+            } else {
+                leaf.ev_oids.join("; ")
+            };
             output.push_str(&format!(
-                "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
+                "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
                 csv_cell(&leaf.subject),
                 csv_cell(&leaf.issuer),
                 csv_cell(&leaf.serial_number),
@@ -115,6 +130,9 @@ pub fn generate_csv(results: &ScanResults) -> Result<String> {
                 ),
                 csv_cell(leaf.rsa_exponent.as_deref().unwrap_or("N/A")),
                 csv_cell(&sans),
+                csv_cell(&key_usage),
+                csv_cell(&extended_key_usage),
+                csv_cell(&ev_oids),
                 csv_cell(leaf.fingerprint_sha256.as_deref().unwrap_or("N/A")),
                 csv_cell(leaf.pin_sha256.as_deref().unwrap_or("N/A")),
                 leaf.extended_validation,
@@ -369,6 +387,12 @@ mod tests {
             public_key_size: Some(2048),
             rsa_exponent: Some("e 65537".to_string()),
             san: vec!["example.com".to_string(), "www.example.com".to_string()],
+            key_usage: vec![
+                "Digital Signature".to_string(),
+                "Key Encipherment".to_string(),
+            ],
+            extended_key_usage: vec!["Server Authentication".to_string()],
+            ev_oids: vec!["1.2.3.4".to_string()],
             fingerprint_sha256: Some("AA:BB".to_string()),
             pin_sha256: Some("pin".to_string()),
             extended_validation: false,
@@ -408,6 +432,9 @@ mod tests {
         assert!(csv.contains("2048"));
         assert!(csv.contains("e 65537"));
         assert!(csv.contains("example.com; www.example.com"));
+        assert!(csv.contains("Digital Signature; Key Encipherment"));
+        assert!(csv.contains("Server Authentication"));
+        assert!(csv.contains("1.2.3.4"));
         assert!(csv.contains("AA:BB"));
         assert!(csv.contains("pin"));
         assert!(csv.contains("Yes"));

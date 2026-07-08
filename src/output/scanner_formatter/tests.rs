@@ -385,6 +385,12 @@ fn test_display_sections_smoke() {
         public_key_size: Some(2048),
         rsa_exponent: Some("e 65537".to_string()),
         san: vec!["example.com".to_string()],
+        key_usage: vec![
+            "Digital Signature".to_string(),
+            "Key Encipherment".to_string(),
+        ],
+        extended_key_usage: vec!["Server Authentication".to_string()],
+        ev_oids: vec!["1.2.3.4".to_string()],
         debian_weak_key: Some(true),
         fingerprint_sha256: Some("AA:BB".to_string()),
         pin_sha256: Some("pin".to_string()),
