@@ -53,6 +53,9 @@ pub fn generate_xml_report(results: &ScanResults) -> Result<String> {
                 "    <extended_validation>{}</extended_validation>\n",
                 leaf.extended_validation
             ));
+            if let Some(ref aia_url) = leaf.aia_url {
+                xml.push_str(&format!("    <aia_url>{}</aia_url>\n", escape_xml(aia_url)));
+            }
             if let Some(ref ct) = leaf.certificate_transparency {
                 xml.push_str(&format!(
                     "    <certificate_transparency>{}</certificate_transparency>\n",
@@ -234,6 +237,7 @@ mod tests {
                         serial_number: "01AB".to_string(),
                         not_before: "2026-01-01".to_string(),
                         not_after: "2027-01-01".to_string(),
+                        aia_url: Some("http://ca.example.com".to_string()),
                         certificate_transparency: Some("Yes (certificate)".to_string()),
                         extended_validation: false,
                         ..Default::default()
@@ -262,6 +266,7 @@ mod tests {
         assert!(xml.contains("<scantime_ms>123</scantime_ms>"));
         assert!(xml.contains("<name>TLS 1.2</name>"));
         assert!(xml.contains("<secure_renegotiation>true</secure_renegotiation>"));
+        assert!(xml.contains("<aia_url>http://ca.example.com</aia_url>"));
         assert!(
             xml.contains("<certificate_transparency>Yes (certificate)</certificate_transparency>")
         );
