@@ -49,6 +49,12 @@ pub fn generate_xml_report(results: &ScanResults) -> Result<String> {
                 "    <valid_to>{}</valid_to>\n",
                 escape_xml(&leaf.not_after)
             ));
+            if let Some(ref countdown) = leaf.expiry_countdown {
+                xml.push_str(&format!(
+                    "    <expires>{}</expires>\n",
+                    escape_xml(countdown)
+                ));
+            }
             xml.push_str(&format!(
                 "    <extended_validation>{}</extended_validation>\n",
                 leaf.extended_validation
@@ -237,6 +243,7 @@ mod tests {
                         serial_number: "01AB".to_string(),
                         not_before: "2026-01-01".to_string(),
                         not_after: "2027-01-01".to_string(),
+                        expiry_countdown: Some("expires in 1 year".to_string()),
                         aia_url: Some("http://ca.example.com".to_string()),
                         certificate_transparency: Some("Yes (certificate)".to_string()),
                         extended_validation: false,
@@ -266,6 +273,7 @@ mod tests {
         assert!(xml.contains("<scantime_ms>123</scantime_ms>"));
         assert!(xml.contains("<name>TLS 1.2</name>"));
         assert!(xml.contains("<secure_renegotiation>true</secure_renegotiation>"));
+        assert!(xml.contains("<expires>expires in 1 year</expires>"));
         assert!(xml.contains("<aia_url>http://ca.example.com</aia_url>"));
         assert!(
             xml.contains("<certificate_transparency>Yes (certificate)</certificate_transparency>")
