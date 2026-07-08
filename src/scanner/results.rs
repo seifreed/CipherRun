@@ -85,10 +85,6 @@ pub struct AdvancedResults {
     pub client_cas: Option<crate::protocols::client_cas::ClientCAsResult>,
     pub cdn_detection: Option<crate::fingerprint::CdnDetection>,
     pub load_balancer_info: Option<crate::fingerprint::LoadBalancerInfo>,
-    /// CT log source (if certificate discovered via CT logs)
-    pub ct_log_source: Option<String>,
-    /// CT log index (if certificate discovered via CT logs)
-    pub ct_log_index: Option<u64>,
     pub pqc_readiness: Option<crate::pqc::PqcReadinessAssessment>,
 }
 
