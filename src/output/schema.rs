@@ -126,7 +126,59 @@ impl CipherRunSchema {
                                 "trust_chain_valid": { "type": "boolean" },
                                 "signature_valid": { "type": "boolean" },
                                 "trusted_ca": { "type": ["string", "null"] },
-                                "platform_trust": { "type": ["object", "null"] }
+                                "platform_trust": {
+                                    "type": ["object", "null"],
+                                    "properties": {
+                                        "platform_status": {
+                                            "type": "object",
+                                            "patternProperties": {
+                                                "^.*$": {
+                                                    "type": "object",
+                                                    "properties": {
+                                                        "platform": { "type": "string" },
+                                                        "trusted": { "type": "boolean" },
+                                                        "trusted_root": { "type": ["string", "null"] },
+                                                        "message": { "type": "string" },
+                                                        "details": {
+                                                            "type": "object",
+                                                            "properties": {
+                                                                "chain_verified": { "type": "boolean" },
+                                                                "root_in_store": { "type": "boolean" },
+                                                                "signatures_valid": { "type": "boolean" },
+                                                                "trust_anchor": { "type": ["string", "null"] }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        },
+                                        "overall_trusted": { "type": "boolean" },
+                                        "trusted_count": { "type": "integer", "minimum": 0 },
+                                        "total_platforms": { "type": "integer", "minimum": 0 },
+                                        "per_certificate": {
+                                            "type": "array",
+                                            "items": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "subject": { "type": "string" },
+                                                    "issuer": { "type": "string" },
+                                                    "role": {
+                                                        "type": "string",
+                                                        "enum": ["Leaf", "Intermediate", "Root"]
+                                                    },
+                                                    "in_trust_stores": { "type": "boolean" },
+                                                    "platforms": {
+                                                        "type": "array",
+                                                        "items": {
+                                                            "type": "string",
+                                                            "enum": ["Mozilla", "Apple", "Android", "Java", "Windows"]
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         },
                         "revocation": { "type": ["object", "null"] }
@@ -626,6 +678,19 @@ mod tests {
                 .and_then(|v| v.as_array())
                 .map(|types| types.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>()),
             Some(vec!["string", "null"])
+        );
+
+        assert!(
+            schema
+                .get("properties")
+                .and_then(|v| v.get("certificate_chain"))
+                .and_then(|v| v.get("properties"))
+                .and_then(|v| v.get("validation"))
+                .and_then(|v| v.get("properties"))
+                .and_then(|v| v.get("platform_trust"))
+                .and_then(|v| v.get("properties"))
+                .and_then(|v| v.get("per_certificate"))
+                .is_some()
         );
     }
 
