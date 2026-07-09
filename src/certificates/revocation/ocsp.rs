@@ -18,7 +18,11 @@ use x509_parser::prelude::*;
 const OCSP_CLOCK_SKEW_SECS: u32 = 300;
 
 fn is_http_ocsp_url(uri: &str) -> bool {
-    url::Url::parse(uri).is_ok_and(|url| matches!(url.scheme(), "http" | "https"))
+    url::Url::parse(uri).is_ok_and(|url| {
+        matches!(url.scheme(), "http" | "https")
+            && url.username().is_empty()
+            && url.password().is_none()
+    })
 }
 
 fn openssl_x509_from_der_exact(der: &[u8], context: &str) -> Result<X509> {
@@ -441,6 +445,11 @@ mod tests {
             .expect_err("trailing certificate DER bytes should fail");
 
         assert!(format!("{err}").contains("trailing bytes"));
+    }
+
+    #[test]
+    fn test_is_http_ocsp_url_rejects_credentials() {
+        assert!(!is_http_ocsp_url("https://user:pass@example.com/ocsp"));
     }
 
     #[test]

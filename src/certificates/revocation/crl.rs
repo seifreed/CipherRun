@@ -22,7 +22,11 @@ fn parse_crl_der_exact(der: &[u8]) -> Result<CertificateRevocationList<'_>> {
 }
 
 fn is_http_crl_url(uri: &str) -> bool {
-    url::Url::parse(uri).is_ok_and(|url| matches!(url.scheme(), "http" | "https"))
+    url::Url::parse(uri).is_ok_and(|url| {
+        matches!(url.scheme(), "http" | "https")
+            && url.username().is_empty()
+            && url.password().is_none()
+    })
 }
 
 impl RevocationChecker {
@@ -237,6 +241,7 @@ mod tests {
         assert!(!is_http_crl_url("httpx://example.com/root.crl"));
         assert!(!is_http_crl_url("ftp://example.com/root.crl"));
         assert!(!is_http_crl_url("http://"));
+        assert!(!is_http_crl_url("https://user:pass@example.com/root.crl"));
     }
 
     #[tokio::test]

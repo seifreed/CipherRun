@@ -1,7 +1,6 @@
 // XML Output Format
 
 use crate::Result;
-use crate::fingerprint::{CdnDetection, LoadBalancerInfo};
 use crate::scanner::ScanResults;
 
 pub fn generate_xml_report(results: &ScanResults) -> Result<String> {
