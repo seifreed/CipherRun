@@ -55,6 +55,15 @@ pub(crate) async fn validate_revocation_http_url(
         validate_hostname(host).map_err(|error| TlsError::InvalidInput {
             message: format!("Invalid revocation URL host: {error}"),
         })?;
+        let normalized_host = host.trim_end_matches('.').to_ascii_lowercase();
+        if normalized_host == "localhost"
+            || normalized_host.ends_with(".local")
+            || normalized_host.ends_with(".internal")
+        {
+            return Err(TlsError::InvalidInput {
+                message: "Revocation URL must not use private/local hosts".to_string(),
+            });
+        }
     }
 
     let port = url
@@ -122,6 +131,19 @@ mod tests {
             .expect_err("private revocation URL should be rejected");
 
         assert!(err.to_string().contains("private/internal IP"));
+    }
+
+    #[tokio::test]
+    async fn test_validate_revocation_http_url_rejects_private_hosts() {
+        let err = validate_revocation_http_url("http://localhost/crl", Duration::from_secs(1))
+            .await
+            .expect_err("localhost should be rejected");
+        assert!(err.to_string().contains("private/local hosts"));
+
+        let err = validate_revocation_http_url("http://crl.internal/crl", Duration::from_secs(1))
+            .await
+            .expect_err("internal host should be rejected");
+        assert!(err.to_string().contains("private/local hosts"));
     }
 
     #[tokio::test]
