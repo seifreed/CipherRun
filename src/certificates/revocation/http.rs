@@ -1,5 +1,6 @@
 use crate::security::{is_private_ip, validate_hostname};
 use crate::{Result, TlsError};
+use std::net::SocketAddr;
 use std::time::Duration;
 use tokio::net::lookup_host;
 use url::Url;
@@ -69,7 +70,7 @@ pub(crate) async fn validate_revocation_http_url(
     let mut client_builder = reqwest::Client::builder()
         .timeout(timeout)
         .redirect(reqwest::redirect::Policy::none());
-    for addr in addrs {
+    for addr in ordered_addrs(&addrs) {
         client_builder = client_builder.resolve(host, addr);
     }
 
@@ -79,9 +80,16 @@ pub(crate) async fn validate_revocation_http_url(
     })
 }
 
+fn ordered_addrs(addrs: &[SocketAddr]) -> Vec<SocketAddr> {
+    let mut addrs = addrs.to_vec();
+    addrs.sort_by_key(|addr| addr.ip().is_ipv6());
+    addrs
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::SocketAddr;
 
     #[tokio::test]
     async fn test_validate_revocation_http_url_rejects_private_ip() {
@@ -102,5 +110,18 @@ mod tests {
         .expect_err("credentialed revocation URL should be rejected");
 
         assert!(err.to_string().contains("credentials"));
+    }
+
+    #[test]
+    fn test_ordered_addrs_prefers_ipv4() {
+        let addrs = vec![
+            "[::1]:443".parse::<SocketAddr>().expect("ipv6 should parse"),
+            "127.0.0.1:443".parse::<SocketAddr>().expect("ipv4 should parse"),
+        ];
+
+        let ordered = ordered_addrs(&addrs);
+
+        assert!(!ordered[0].ip().is_ipv6());
+        assert!(ordered[1].ip().is_ipv6());
     }
 }
