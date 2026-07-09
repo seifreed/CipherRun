@@ -85,6 +85,20 @@ fn starttls_protocol_supports_telnet() {
 }
 
 #[test]
+fn rejects_rdp_with_string_starttls_protocol() {
+    let request = ScanRequest {
+        starttls: ScanRequestStarttls {
+            protocol: Some("telnet".to_string()),
+            rdp: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    assert!(request.validate_common().is_err());
+}
+
+#[test]
 fn effective_sni_normalizes_rooted_default_hostname() {
     let mut request = ScanRequest::default();
     assert_eq!(request.effective_sni("example.com."), "example.com");
