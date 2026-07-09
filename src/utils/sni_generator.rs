@@ -2,6 +2,7 @@
 // Generates random valid-looking SNI hostnames for IP address scanning
 
 use rand::RngExt;
+use std::net::IpAddr;
 
 /// SNI Generator for creating random hostnames
 pub struct SniGenerator;
@@ -92,6 +93,12 @@ impl SniGenerator {
     /// Validate if SNI is a valid hostname format
     pub fn is_valid_hostname(hostname: &str) -> bool {
         if hostname.is_empty() || hostname.len() > 253 {
+            return false;
+        }
+
+        if hostname.parse::<IpAddr>().is_ok()
+            || crate::security::input_validation::looks_like_obfuscated_ip(hostname)
+        {
             return false;
         }
 
@@ -187,6 +194,8 @@ mod tests {
         assert!(SniGenerator::is_valid_hostname("example.com"));
         assert!(SniGenerator::is_valid_hostname("sub.example.com"));
         assert!(SniGenerator::is_valid_hostname("my-site.example.org"));
+        assert!(!SniGenerator::is_valid_hostname("127.0.0.1"));
+        assert!(!SniGenerator::is_valid_hostname("127.1"));
 
         assert!(!SniGenerator::is_valid_hostname(""));
         assert!(!SniGenerator::is_valid_hostname("example"));

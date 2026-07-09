@@ -232,6 +232,12 @@ mod tests {
     }
 
     #[test]
+    fn test_sni_generator_rejects_ip_literals() {
+        assert!(!SniGenerator::is_valid_hostname("127.0.0.1"));
+        assert!(!SniGenerator::is_valid_hostname("127.1"));
+    }
+
+    #[test]
     fn test_try_common_patterns_aws() {
         let ip: IpAddr = "52.1.2.3".parse().expect("test assertion should succeed");
         let pattern = ReversePtrLookup::try_common_patterns(&ip);
