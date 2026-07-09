@@ -175,7 +175,12 @@ impl ProtocolDetector {
             let (consume, done) = {
                 let available = reader.fill_buf().await?;
                 if available.is_empty() {
-                    break;
+                    if bytes.is_empty() {
+                        break;
+                    }
+                    return Err(crate::TlsError::ParseError {
+                        message: "HTTP status line ended without newline".to_string(),
+                    });
                 }
 
                 let newline = available.iter().position(|&byte| byte == b'\n');
@@ -516,6 +521,29 @@ mod tests {
             .expect_err("oversized status line should fail");
 
         assert!(err.to_string().contains("HTTP status line too long"));
+    }
+
+    #[tokio::test]
+    async fn test_detect_http_rejects_partial_status_line_without_newline() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        tokio::spawn(async move {
+            if let Ok((mut stream, _)) = listener.accept().await {
+                let mut buf = [0u8; 256];
+                let _ = stream.read(&mut buf).await;
+                let _ = stream.write_all(b"HTTP/1.1 200 OK").await;
+            }
+        });
+
+        let mut stream = TcpStream::connect(("127.0.0.1", port))
+            .await
+            .expect("test assertion should succeed");
+        let err = ProtocolDetector::detect_http(&mut stream)
+            .await
+            .expect_err("partial status line should fail");
+
+        assert!(err.to_string().contains("without newline"));
     }
 
     #[tokio::test]
