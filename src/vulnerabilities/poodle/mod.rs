@@ -166,6 +166,7 @@ impl<'a> PoodleTester<'a> {
             .with_connect_timeout(Duration::from_secs(5))
             .with_read_timeout(Duration::from_secs(5))
             .with_test_all_ips(true)
+            .with_starttls(self.starttls)
             .test_protocol(Protocol::SSLv3)
             .await?;
 
