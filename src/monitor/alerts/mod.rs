@@ -73,8 +73,9 @@ pub(crate) async fn validated_webhook_target(
         message: format!("Invalid webhook url: {error}"),
     })?;
     let normalized_host = host.trim_end_matches('.').to_ascii_lowercase();
-    if normalized_host != "localhost"
-        && (normalized_host.ends_with(".local") || normalized_host.ends_with(".internal"))
+    if normalized_host == "localhost"
+        || normalized_host.ends_with(".local")
+        || normalized_host.ends_with(".internal")
     {
         return Err(crate::error::TlsError::ConfigError {
             message: "Webhook URL must not use private/local hosts".to_string(),
@@ -442,14 +443,18 @@ mod tests_extra {
     }
 
     #[tokio::test]
-    async fn test_validated_webhook_target_allows_localhost() {
-        let target = validated_webhook_target(
+    async fn test_validated_webhook_target_rejects_localhost() {
+        let err = match validated_webhook_target(
             "https://localhost/alerts",
             std::time::Duration::from_secs(1),
         )
-        .await;
+        .await
+        {
+            Ok(_) => panic!("localhost should fail"),
+            Err(err) => err,
+        };
 
-        assert!(target.is_ok());
+        assert!(err.to_string().contains("private/local hosts"));
     }
 
     #[test]
