@@ -32,7 +32,7 @@ fn inventory_query_from_api(
     let hostname = if let Some(hostname) = query.hostname.as_deref() {
         validate_hostname(hostname)
             .map_err(|err| ApiError::BadRequest(format!("Invalid hostname filter: {}", err)))?;
-        Some(normalize_dns_hostname(hostname.to_string()))
+        Some(normalize_dns_hostname(hostname.to_string()).to_ascii_lowercase())
     } else {
         None
     };
@@ -304,6 +304,19 @@ mod tests {
 
         let inventory_query =
             inventory_query_from_api(&query).expect("rooted FQDN should be accepted");
+        assert_eq!(inventory_query.hostname.as_deref(), Some("example.com"));
+    }
+
+    #[test]
+    fn inventory_query_normalizes_hostname_filter_case() {
+        let query = CertificateQuery {
+            hostname: Some("EXAMPLE.COM".to_string()),
+            ..Default::default()
+        };
+
+        let inventory_query =
+            inventory_query_from_api(&query).expect("uppercase hostname should be valid");
+
         assert_eq!(inventory_query.hostname.as_deref(), Some("example.com"));
     }
 

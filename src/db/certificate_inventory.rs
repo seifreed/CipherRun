@@ -119,7 +119,7 @@ fn build_certificate_list_query_for_dialect(
     if let Some(ref hostname) = query.hostname {
         let placeholder = dialect.placeholder(params.len() + 1);
         where_clauses.push(format!(
-            "EXISTS (SELECT 1 FROM scan_certificates sc JOIN scans s ON sc.scan_id = s.scan_id WHERE sc.cert_id = c.cert_id AND s.target_hostname = {})",
+            "EXISTS (SELECT 1 FROM scan_certificates sc JOIN scans s ON sc.scan_id = s.scan_id WHERE sc.cert_id = c.cert_id AND LOWER(s.target_hostname) = {})",
             placeholder
         ));
         params.push(hostname.clone());
@@ -482,7 +482,7 @@ mod tests {
         };
         let built = build_certificate_list_query(&query).expect("query should build");
 
-        assert!(built.where_clause.contains("s.target_hostname = ?"));
+        assert!(built.where_clause.contains("LOWER(s.target_hostname) = ?"));
         assert!(
             built
                 .where_clause
@@ -491,6 +491,21 @@ mod tests {
         assert_eq!(built.params.len(), 2);
         assert_eq!(built.params[0], "example.com");
         assert_eq!(built.order_by, "c.not_before DESC");
+    }
+
+    #[test]
+    fn query_builder_uses_case_insensitive_hostname_filter() {
+        let query = CertificateInventoryQuery {
+            limit: 10,
+            offset: 0,
+            sort: CertificateInventorySort::ExpiryAsc,
+            hostname: Some("example.com".to_string()),
+            expiring_within_days: None,
+        };
+
+        let built = build_certificate_list_query(&query).expect("query should build");
+
+        assert!(built.where_clause.contains("LOWER(s.target_hostname) = ?"));
     }
 
     #[test]
@@ -506,7 +521,7 @@ mod tests {
         let built = build_certificate_list_query_for_dialect(&query, SqlDialect::Postgres)
             .expect("query should build");
 
-        assert!(built.where_clause.contains("s.target_hostname = $1"));
+        assert!(built.where_clause.contains("LOWER(s.target_hostname) = $1"));
         assert!(built.where_clause.contains("c.not_after <= $2"));
         assert!(!built.where_clause.contains('?'));
         assert_eq!(built.params.len(), 2);
