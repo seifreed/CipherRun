@@ -4,6 +4,7 @@ use crate::Result;
 use crate::monitor::inventory::{
     MonitoredDomain, canonical_inventory_key, validate_monitor_interval_seconds,
 };
+use crate::security::validate_hostname;
 use crate::utils::network::split_target_host_port;
 use chrono::{DateTime, Duration, Utc};
 use rand::RngExt;
@@ -137,7 +138,7 @@ impl SchedulingEngine {
 
     /// Get next scan time for a domain
     pub fn next_scan_time(&self, identifier: &str) -> Option<DateTime<Utc>> {
-        let identifier = canonical_schedule_key(identifier);
+        let identifier = try_canonical_schedule_key(identifier).ok()?;
         self.next_scan_times.get(&identifier).copied()
     }
 
@@ -149,7 +150,9 @@ impl SchedulingEngine {
 
     /// Clear schedule for a domain
     pub fn clear_schedule(&mut self, identifier: &str) {
-        let identifier = canonical_schedule_key(identifier);
+        let Some(identifier) = try_canonical_schedule_key(identifier).ok() else {
+            return;
+        };
         self.next_scan_times.remove(&identifier);
     }
 
@@ -165,7 +168,9 @@ impl SchedulingEngine {
 
     /// Reschedule a domain for immediate scan
     pub fn schedule_immediate(&mut self, identifier: &str) {
-        let identifier = canonical_schedule_key(identifier);
+        let Some(identifier) = try_canonical_schedule_key(identifier).ok() else {
+            return;
+        };
         self.next_scan_times.insert(identifier, Utc::now());
     }
 
@@ -194,12 +199,11 @@ impl SchedulingEngine {
     }
 }
 
-fn canonical_schedule_key(identifier: &str) -> String {
-    try_canonical_schedule_key(identifier).unwrap_or_else(|_| identifier.to_ascii_lowercase())
-}
-
 fn try_canonical_schedule_key(identifier: &str) -> Result<String> {
     let (hostname, port) = split_target_host_port(identifier)?;
+    validate_hostname(&hostname).map_err(|error| crate::TlsError::InvalidInput {
+        message: error.to_string(),
+    })?;
     Ok(canonical_inventory_key(&hostname, port.unwrap_or(443)))
 }
 
@@ -407,6 +411,18 @@ mod tests {
 
         // Should be scheduled for now (within 1 second tolerance)
         assert!((next_scan - now).num_seconds().abs() < 1);
+    }
+
+    #[test]
+    fn test_invalid_identifier_does_not_create_schedule_entry() {
+        let mut scheduler = SchedulingEngine::new();
+
+        scheduler.schedule_immediate("example.com/path");
+        assert_eq!(scheduler.scheduled_count(), 0);
+        assert!(scheduler.next_scan_time("example.com/path").is_none());
+
+        scheduler.clear_schedule("example.com/path");
+        assert_eq!(scheduler.scheduled_count(), 0);
     }
 
     #[test]
