@@ -269,6 +269,20 @@ fn test_ssl_grade_d_and_e_are_orange() {
 }
 
 #[test]
+fn test_http_grade_d_is_orange() {
+    use colored::Color;
+
+    assert_eq!(
+        format_http_grade(&crate::http::tester::SecurityGrade::D).fgcolor,
+        Some(Color::TrueColor {
+            r: 255,
+            g: 165,
+            b: 0,
+        })
+    );
+}
+
+#[test]
 fn test_certificate_helpers() {
     let good_key = format_key_size(2048, "rsaEncryption");
     let bad_key = format_key_size(1024, "rsaEncryption");

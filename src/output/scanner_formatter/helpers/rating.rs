@@ -18,7 +18,7 @@ pub(crate) fn format_http_grade(grade: &crate::http::tester::SecurityGrade) -> C
         SecurityGrade::A => grade_str.green().bold(),
         SecurityGrade::B => grade_str.blue().bold(),
         SecurityGrade::C => grade_str.yellow().bold(),
-        SecurityGrade::D => grade_str.yellow(),
+        SecurityGrade::D => grade_str.truecolor(255, 165, 0),
         SecurityGrade::F => grade_str.red().bold(),
     }
 }
