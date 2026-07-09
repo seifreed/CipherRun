@@ -1,6 +1,7 @@
 // STARTTLS Protocol Definitions and Trait
 
 use crate::Result;
+use crate::error::TlsError;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
@@ -136,6 +137,24 @@ pub trait StarttlsNegotiator: Send + Sync {
     }
 }
 
+struct ImplicitTlsNegotiator {
+    protocol: StarttlsProtocol,
+}
+
+#[async_trait]
+impl StarttlsNegotiator for ImplicitTlsNegotiator {
+    async fn negotiate_starttls(&self, _stream: &mut TcpStream) -> Result<()> {
+        Err(TlsError::StarttlsError {
+            protocol: self.protocol.to_string(),
+            details: "Implicit TLS protocol (no STARTTLS negotiation)".to_string(),
+        })
+    }
+
+    fn protocol(&self) -> StarttlsProtocol {
+        self.protocol
+    }
+}
+
 use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio::time::timeout;
@@ -158,31 +177,27 @@ pub fn get_negotiator(protocol: StarttlsProtocol, hostname: String) -> Box<dyn S
         StarttlsProtocol::SMTP => {
             Box::new(crate::starttls::smtp::SmtpNegotiator::new(hostname.clone()))
         }
-        StarttlsProtocol::SMTPS => {
-            Box::new(crate::starttls::smtp::SmtpNegotiator::new(hostname.clone()))
-        }
+        StarttlsProtocol::SMTPS => Box::new(ImplicitTlsNegotiator { protocol }),
         StarttlsProtocol::IMAP => Box::new(crate::starttls::imap::ImapNegotiator::new()),
-        StarttlsProtocol::IMAPS => Box::new(crate::starttls::imap::ImapNegotiator::new()),
+        StarttlsProtocol::IMAPS => Box::new(ImplicitTlsNegotiator { protocol }),
         StarttlsProtocol::POP3 => Box::new(crate::starttls::pop3::Pop3Negotiator::new()),
-        StarttlsProtocol::POP3S => Box::new(crate::starttls::pop3::Pop3Negotiator::new()),
+        StarttlsProtocol::POP3S => Box::new(ImplicitTlsNegotiator { protocol }),
         StarttlsProtocol::FTP => Box::new(crate::starttls::ftp::FtpNegotiator::new()),
-        StarttlsProtocol::FTPS => Box::new(crate::starttls::ftp::FtpNegotiator::new()),
+        StarttlsProtocol::FTPS => Box::new(ImplicitTlsNegotiator { protocol }),
         StarttlsProtocol::LDAP => Box::new(crate::starttls::ldap::LdapNegotiator::new()),
-        StarttlsProtocol::LDAPS => Box::new(crate::starttls::ldap::LdapNegotiator::new()),
+        StarttlsProtocol::LDAPS => Box::new(ImplicitTlsNegotiator { protocol }),
         StarttlsProtocol::XMPP => {
             Box::new(crate::starttls::xmpp::XmppNegotiator::new(hostname.clone()))
         }
-        StarttlsProtocol::XMPPS => {
-            Box::new(crate::starttls::xmpp::XmppNegotiator::new(hostname.clone()))
-        }
+        StarttlsProtocol::XMPPS => Box::new(ImplicitTlsNegotiator { protocol }),
         StarttlsProtocol::POSTGRES => {
             Box::new(crate::starttls::postgres::PostgresNegotiator::new())
         }
         StarttlsProtocol::MYSQL => Box::new(crate::starttls::mysql::MysqlNegotiator::new()),
         StarttlsProtocol::IRC => Box::new(crate::starttls::irc::IrcNegotiator::new()),
-        StarttlsProtocol::IRCS => Box::new(crate::starttls::irc::IrcNegotiator::new()),
+        StarttlsProtocol::IRCS => Box::new(ImplicitTlsNegotiator { protocol }),
         StarttlsProtocol::NNTP => Box::new(crate::starttls::nntp::NntpNegotiator::new()),
-        StarttlsProtocol::NNTPS => Box::new(crate::starttls::nntp::NntpNegotiator::new()),
+        StarttlsProtocol::NNTPS => Box::new(ImplicitTlsNegotiator { protocol }),
         StarttlsProtocol::SIEVE => Box::new(crate::starttls::sieve::SieveNegotiator::new()),
         StarttlsProtocol::LMTP => {
             Box::new(crate::starttls::lmtp::LmtpNegotiator::new(hostname.clone()))
@@ -251,6 +266,12 @@ mod tests {
 
         let postgres = get_negotiator(StarttlsProtocol::POSTGRES, hostname);
         assert_eq!(postgres.protocol(), StarttlsProtocol::POSTGRES);
+    }
+
+    #[test]
+    fn test_get_negotiator_implicit_tls_returns_erroring_negotiator() {
+        let negotiator = get_negotiator(StarttlsProtocol::SMTPS, "example.com".to_string());
+        assert_eq!(negotiator.protocol(), StarttlsProtocol::SMTPS);
     }
 
     #[test]
