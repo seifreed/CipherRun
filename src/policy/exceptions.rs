@@ -2,6 +2,7 @@
 
 use crate::policy::PolicyException;
 use crate::utils::network::split_target_host_port;
+use crate::utils::network::normalize_dns_hostname;
 use chrono::{NaiveDate, Utc};
 
 /// Exception matcher for policy rules
@@ -49,8 +50,8 @@ impl ExceptionMatcher {
         let Ok((hostname, _)) = split_target_host_port(target) else {
             return false;
         };
-        let hostname_lower = hostname.trim().trim_end_matches('.').to_ascii_lowercase();
-        let pattern_lower = pattern.trim().trim_end_matches('.').to_ascii_lowercase();
+        let hostname_lower = normalize_dns_hostname(hostname.trim().to_string()).to_ascii_lowercase();
+        let pattern_lower = normalize_dns_hostname(pattern.trim().to_string()).to_ascii_lowercase();
         let hostname = hostname_lower.as_str();
         let pattern = pattern_lower.as_str();
 
@@ -367,6 +368,23 @@ mod tests {
         assert!(matcher.matches_domain("example.com.", "example.com."));
         assert!(matcher.matches_domain("api.example.com.", "*.example.com."));
         assert!(matcher.is_exception("example.com.:443", "protocols.prohibited").is_some());
+    }
+
+    #[test]
+    fn test_malformed_double_dot_target_does_not_match() {
+        let exception = PolicyException {
+            domain: Some("example.com".to_string()),
+            rules: vec!["protocols.prohibited".to_string()],
+            reason: "Malformed target".to_string(),
+            expires: None,
+            approved_by: "Admin".to_string(),
+            ticket: None,
+        };
+
+        let matcher = ExceptionMatcher::new(vec![exception]);
+
+        assert!(!matcher.matches_domain("example.com..", "example.com"));
+        assert!(matcher.is_exception("example.com..:443", "protocols.prohibited").is_none());
     }
 
     #[test]
