@@ -78,6 +78,16 @@ impl HstsPreloadChecker {
 
     /// Check if domain is in HSTS preload lists
     pub async fn check_preload_status(&self, domain: &str) -> Result<PreloadStatus, String> {
+        if domain.contains("://") {
+            let url = url::Url::parse(domain)
+                .map_err(|error| format!("Invalid HSTS preload lookup target: {error}"))?;
+            if !matches!(url.scheme(), "http" | "https") {
+                return Err(format!(
+                    "HSTS preload lookup does not accept unsupported URL scheme: {}",
+                    url.scheme()
+                ));
+            }
+        }
         if domain.trim().parse::<IpAddr>().is_ok() {
             return Err("HSTS preload lookup does not accept IP literals".to_string());
         }
@@ -523,6 +533,16 @@ mod tests {
             .await
             .expect_err("IP literal URL should be rejected");
         assert!(err.contains("IP literals"));
+    }
+
+    #[tokio::test]
+    async fn test_check_preload_status_rejects_unsupported_url_schemes() {
+        let checker = HstsPreloadChecker::new();
+        let err = checker
+            .check_preload_status("ftp://example.com")
+            .await
+            .expect_err("unsupported URL scheme should be rejected");
+        assert!(err.contains("unsupported URL scheme"));
     }
 
     #[test]
