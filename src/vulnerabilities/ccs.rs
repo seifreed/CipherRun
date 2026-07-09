@@ -20,6 +20,7 @@ use tokio::time::timeout;
 pub struct CcsInjectionTester {
     target: Target,
     starttls: Option<crate::starttls::StarttlsProtocol>,
+    starttls_server_mode: bool,
     starttls_hostname: Option<String>,
 }
 
@@ -28,6 +29,7 @@ impl CcsInjectionTester {
         Self {
             target,
             starttls: None,
+            starttls_server_mode: false,
             starttls_hostname: None,
         }
     }
@@ -37,9 +39,11 @@ impl CcsInjectionTester {
         mut self,
         protocol: Option<crate::starttls::StarttlsProtocol>,
         hostname: Option<String>,
+        server_mode: bool,
     ) -> Self {
         self.starttls = protocol;
         self.starttls_hostname = hostname;
+        self.starttls_server_mode = server_mode;
         self
     }
 
@@ -91,7 +95,7 @@ impl CcsInjectionTester {
             TLS_HANDSHAKE_TIMEOUT,
             self.starttls,
             &hostname,
-            false,
+            self.starttls_server_mode,
         )
         .await
         {

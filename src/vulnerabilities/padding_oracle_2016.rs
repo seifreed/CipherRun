@@ -73,6 +73,7 @@ pub struct PaddingOracle2016Tester<'a> {
     target: &'a Target,
     connect_timeout: Duration,
     starttls: Option<crate::starttls::StarttlsProtocol>,
+    starttls_server_mode: bool,
     starttls_hostname: Option<String>,
 }
 
@@ -83,6 +84,7 @@ impl<'a> PaddingOracle2016Tester<'a> {
             target,
             connect_timeout: Duration::from_secs(10),
             starttls: None,
+            starttls_server_mode: false,
             starttls_hostname: None,
         }
     }
@@ -92,9 +94,11 @@ impl<'a> PaddingOracle2016Tester<'a> {
         mut self,
         protocol: Option<crate::starttls::StarttlsProtocol>,
         hostname: Option<String>,
+        server_mode: bool,
     ) -> Self {
         self.starttls = protocol;
         self.starttls_hostname = hostname;
+        self.starttls_server_mode = server_mode;
         self
     }
 
@@ -113,7 +117,7 @@ impl<'a> PaddingOracle2016Tester<'a> {
             timeout,
             self.starttls,
             &hostname,
-            false,
+            self.starttls_server_mode,
         )
         .await
     }

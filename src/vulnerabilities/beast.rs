@@ -53,6 +53,7 @@ fn ssl3_setup_inconclusive() -> BeastProbeStatus {
 pub struct BeastTester {
     target: Target,
     starttls: Option<crate::starttls::StarttlsProtocol>,
+    starttls_server_mode: bool,
     starttls_hostname: Option<String>,
 }
 
@@ -61,6 +62,7 @@ impl BeastTester {
         Self {
             target,
             starttls: None,
+            starttls_server_mode: false,
             starttls_hostname: None,
         }
     }
@@ -70,9 +72,11 @@ impl BeastTester {
         mut self,
         protocol: Option<crate::starttls::StarttlsProtocol>,
         hostname: Option<String>,
+        server_mode: bool,
     ) -> Self {
         self.starttls = protocol;
         self.starttls_hostname = hostname;
+        self.starttls_server_mode = server_mode;
         self
     }
 
@@ -91,7 +95,7 @@ impl BeastTester {
             timeout,
             self.starttls,
             &hostname,
-            false,
+            self.starttls_server_mode,
         )
         .await
     }

@@ -12,6 +12,7 @@ use crate::utils::network::Target;
 pub struct Lucky13Tester {
     target: Target,
     starttls: Option<crate::starttls::StarttlsProtocol>,
+    starttls_server_mode: bool,
     starttls_hostname: Option<String>,
 }
 
@@ -26,6 +27,7 @@ impl Lucky13Tester {
         Self {
             target,
             starttls: None,
+            starttls_server_mode: false,
             starttls_hostname: None,
         }
     }
@@ -35,9 +37,11 @@ impl Lucky13Tester {
         mut self,
         protocol: Option<crate::starttls::StarttlsProtocol>,
         hostname: Option<String>,
+        server_mode: bool,
     ) -> Self {
         self.starttls = protocol;
         self.starttls_hostname = hostname;
+        self.starttls_server_mode = server_mode;
         self
     }
 
@@ -56,7 +60,7 @@ impl Lucky13Tester {
             timeout,
             self.starttls,
             &hostname,
-            false,
+            self.starttls_server_mode,
         )
         .await
     }

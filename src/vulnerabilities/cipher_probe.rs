@@ -54,6 +54,7 @@ pub(crate) async fn probe_cipher_suite(
     starttls: Option<crate::starttls::StarttlsProtocol>,
     sni_override: Option<&str>,
     starttls_hostname: Option<&str>,
+    starttls_server_mode: bool,
 ) -> CipherProbeStatus {
     let mut saw_inconclusive = false;
     for &protocol in protocols {
@@ -64,6 +65,7 @@ pub(crate) async fn probe_cipher_suite(
             starttls,
             sni_override,
             starttls_hostname,
+            starttls_server_mode,
         )
         .await
         {
@@ -97,6 +99,7 @@ pub(crate) async fn probe_supported_suites(
     starttls: Option<crate::starttls::StarttlsProtocol>,
     sni_override: Option<&str>,
     starttls_hostname: Option<&str>,
+    starttls_server_mode: bool,
 ) -> (Vec<String>, bool) {
     let mut supported = Vec::new();
     let mut inconclusive = false;
@@ -108,6 +111,7 @@ pub(crate) async fn probe_supported_suites(
             starttls,
             sni_override,
             starttls_hostname,
+            starttls_server_mode,
         )
         .await
         {
@@ -127,6 +131,7 @@ async fn probe_cipher_at_protocol(
     starttls: Option<crate::starttls::StarttlsProtocol>,
     sni_override: Option<&str>,
     starttls_hostname: Option<&str>,
+    starttls_server_mode: bool,
 ) -> CipherProbeStatus {
     let Some(addr) = target.socket_addrs().first().copied() else {
         return CipherProbeStatus::Inconclusive;
@@ -140,7 +145,7 @@ async fn probe_cipher_at_protocol(
         PROBE_CONNECT_TIMEOUT,
         starttls,
         starttls_host,
-        false,
+        starttls_server_mode,
     )
     .await
     {
@@ -418,8 +423,16 @@ mod tests {
         let target =
             Target::with_ips("example.test".to_string(), addr.port(), vec![addr.ip()]).unwrap();
 
-        let status =
-            probe_cipher_at_protocol(&target, 0x1301, Protocol::TLS12, None, None, None).await;
+        let status = probe_cipher_at_protocol(
+            &target,
+            0x1301,
+            Protocol::TLS12,
+            None,
+            None,
+            None,
+            false,
+        )
+        .await;
 
         assert_eq!(status, CipherProbeStatus::Supported);
         server.await.unwrap();
@@ -442,8 +455,16 @@ mod tests {
         let target =
             Target::with_ips("example.test".to_string(), addr.port(), vec![addr.ip()]).unwrap();
 
-        let status =
-            probe_cipher_at_protocol(&target, 0x1301, Protocol::TLS12, None, None, None).await;
+        let status = probe_cipher_at_protocol(
+            &target,
+            0x1301,
+            Protocol::TLS12,
+            None,
+            None,
+            None,
+            false,
+        )
+        .await;
 
         assert_eq!(status, CipherProbeStatus::Supported);
         server.await.unwrap();

@@ -6,7 +6,11 @@ impl VulnerabilityScanner {
         use crate::vulnerabilities::drown::{DrownTester, Sslv2Status};
 
         let tester = DrownTester::new(self.target.clone())
-            .with_starttls(self.starttls, self.starttls_hostname.clone());
+            .with_starttls(
+                self.starttls,
+                self.starttls_hostname.clone(),
+                self.starttls_server_mode,
+            );
         let result = tester.test().await?;
         // A server that speaks SSLv2 but rejected our probe (Probable) is not a
         // confirmed DROWN oracle, but it is not clean either — report it as
@@ -42,6 +46,7 @@ impl VulnerabilityScanner {
                 self.starttls,
                 self.sni_hostname.as_deref(),
                 self.starttls_hostname.as_deref(),
+                self.starttls_server_mode,
             )
             .await;
         Ok(super::cipher_checks::rc4_probe_verdict(
@@ -59,6 +64,7 @@ impl VulnerabilityScanner {
                 self.starttls,
                 self.sni_hostname.as_deref(),
                 self.starttls_hostname.as_deref(),
+                self.starttls_server_mode,
             )
             .await;
         Ok(super::cipher_checks::null_probe_verdict(
@@ -119,7 +125,8 @@ impl VulnerabilityScanner {
     pub async fn test_poodle_variants(&self) -> Result<Vec<VulnerabilityResult>> {
         use crate::vulnerabilities::poodle::{PoodleTester, PoodleVariant};
 
-        let tester = PoodleTester::new(&self.target).with_starttls(self.starttls);
+        let tester =
+            PoodleTester::new(&self.target).with_starttls(self.starttls, self.starttls_server_mode);
         let test_result = tester.test_all_variants().await?;
 
         Ok(test_result
@@ -302,7 +309,11 @@ impl VulnerabilityScanner {
         use crate::vulnerabilities::crime::CrimeTester;
 
         let tester = CrimeTester::new(&self.target)
-            .with_starttls(self.starttls, self.starttls_hostname.clone());
+            .with_starttls(
+                self.starttls,
+                self.starttls_hostname.clone(),
+                self.starttls_server_mode,
+            );
         let result = tester.test().await?;
 
         Ok(VulnerabilityResult {
@@ -325,7 +336,11 @@ impl VulnerabilityScanner {
 
         let tester = HeartbleedTester::new(&self.target)
             .with_sni(self.sni_hostname.clone())
-            .with_starttls(self.starttls, self.starttls_hostname.clone());
+            .with_starttls(
+                self.starttls,
+                self.starttls_hostname.clone(),
+                self.starttls_server_mode,
+            );
         let result = tester.test().await?;
 
         Ok(VulnerabilityResult {
@@ -348,7 +363,11 @@ impl VulnerabilityScanner {
         use crate::vulnerabilities::ccs::CcsInjectionTester;
 
         let tester = CcsInjectionTester::new(self.target.clone())
-            .with_starttls(self.starttls, self.starttls_hostname.clone());
+            .with_starttls(
+                self.starttls,
+                self.starttls_hostname.clone(),
+                self.starttls_server_mode,
+            );
         let result = tester.test().await?;
 
         Ok(VulnerabilityResult {
@@ -370,7 +389,11 @@ impl VulnerabilityScanner {
         use crate::vulnerabilities::ticketbleed::TicketbleedTester;
 
         let tester = TicketbleedTester::new(self.target.clone())
-            .with_starttls(self.starttls, self.starttls_hostname.clone());
+            .with_starttls(
+                self.starttls,
+                self.starttls_hostname.clone(),
+                self.starttls_server_mode,
+            );
         let result = tester.test().await?;
 
         Ok(VulnerabilityResult {
@@ -392,7 +415,11 @@ impl VulnerabilityScanner {
         use crate::vulnerabilities::robot::{RobotStatus, RobotTester};
 
         let tester = RobotTester::new(self.target.clone())
-            .with_starttls(self.starttls, self.starttls_hostname.clone());
+            .with_starttls(
+                self.starttls,
+                self.starttls_hostname.clone(),
+                self.starttls_server_mode,
+            );
         let result = tester.test().await?;
 
         Ok(VulnerabilityResult {
@@ -485,7 +512,11 @@ impl VulnerabilityScanner {
 
         let tester = LogjamTester::new(self.target.clone())
             .with_sni(self.sni_hostname.clone())
-            .with_starttls(self.starttls, self.starttls_hostname.clone());
+            .with_starttls(
+                self.starttls,
+                self.starttls_hostname.clone(),
+                self.starttls_server_mode,
+            );
         let result = tester.test().await?;
 
         Ok(VulnerabilityResult {
@@ -507,7 +538,11 @@ impl VulnerabilityScanner {
         use crate::vulnerabilities::lucky13::Lucky13Tester;
 
         let tester = Lucky13Tester::new(self.target.clone())
-            .with_starttls(self.starttls, self.starttls_hostname.clone());
+            .with_starttls(
+                self.starttls,
+                self.starttls_hostname.clone(),
+                self.starttls_server_mode,
+            );
         let result = tester.test().await?;
 
         Ok(VulnerabilityResult {
@@ -531,7 +566,11 @@ impl VulnerabilityScanner {
         use crate::vulnerabilities::early_data::EarlyDataTester;
 
         let tester = EarlyDataTester::new(&self.target)
-            .with_starttls(self.starttls, self.starttls_hostname.clone());
+            .with_starttls(
+                self.starttls,
+                self.starttls_hostname.clone(),
+                self.starttls_server_mode,
+            );
         let result = tester.test().await?;
 
         Ok(VulnerabilityResult {
@@ -553,7 +592,11 @@ impl VulnerabilityScanner {
         use crate::vulnerabilities::padding_oracle_2016::PaddingOracle2016Tester;
 
         let tester = PaddingOracle2016Tester::new(&self.target)
-            .with_starttls(self.starttls, self.starttls_hostname.clone());
+            .with_starttls(
+                self.starttls,
+                self.starttls_hostname.clone(),
+                self.starttls_server_mode,
+            );
         let result = tester.test().await?;
 
         if !result.cbc_supported && !self.target_accepts_tcp().await? {
@@ -593,7 +636,11 @@ impl VulnerabilityScanner {
         use crate::vulnerabilities::opossum::OpossumTester;
 
         let tester = OpossumTester::new(self.target.clone())
-            .with_starttls(self.starttls, self.starttls_hostname.clone());
+            .with_starttls(
+                self.starttls,
+                self.starttls_hostname.clone(),
+                self.starttls_server_mode,
+            );
         let result = tester.test().await?;
 
         // V2: severity must track `vulnerable`, not `inconclusive`. The Opossum

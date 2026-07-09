@@ -112,6 +112,7 @@ pub struct VulnerabilityScanner {
     skip_heartbleed: bool,
     skip_renegotiation: bool,
     starttls: Option<crate::starttls::StarttlsProtocol>,
+    starttls_server_mode: bool,
     starttls_hostname: Option<String>,
 }
 
@@ -133,6 +134,7 @@ impl VulnerabilityScanner {
             skip_heartbleed: false,
             skip_renegotiation: false,
             starttls: None,
+            starttls_server_mode: false,
             starttls_hostname: None,
         }
     }
@@ -151,11 +153,14 @@ impl VulnerabilityScanner {
         cipher_tester = cipher_tester.with_sni(sni_hostname.clone());
 
         let starttls = args.starttls_protocol();
+        let starttls_server_mode = args.starttls_server_mode();
         let starttls_hostname = args.starttls.xmpphost.clone();
         if let Some(protocol) = starttls {
             protocol_tester = protocol_tester.with_starttls(Some(protocol));
+            protocol_tester = protocol_tester.with_starttls_server_mode(starttls_server_mode);
             protocol_tester = protocol_tester.with_starttls_hostname(starttls_hostname.clone());
             cipher_tester = cipher_tester.with_starttls(Some(protocol));
+            cipher_tester = cipher_tester.with_starttls_server_mode(starttls_server_mode);
             cipher_tester = cipher_tester.with_starttls_hostname(starttls_hostname.clone());
         }
 
@@ -172,6 +177,7 @@ impl VulnerabilityScanner {
             skip_heartbleed: args.scan.vulns.no_heartbleed,
             skip_renegotiation: args.scan.vulns.no_renegotiation,
             starttls,
+            starttls_server_mode,
             starttls_hostname,
         }
     }

@@ -60,6 +60,7 @@ pub struct HeartbleedTester<'a> {
     connect_timeout: Duration,
     read_timeout: Duration,
     starttls: Option<crate::starttls::StarttlsProtocol>,
+    starttls_server_mode: bool,
     starttls_hostname: Option<String>,
 }
 
@@ -72,6 +73,7 @@ impl<'a> HeartbleedTester<'a> {
             connect_timeout: Duration::from_secs(10),
             read_timeout: TLS_HANDSHAKE_TIMEOUT,
             starttls: None,
+            starttls_server_mode: false,
             starttls_hostname: None,
         }
     }
@@ -86,9 +88,11 @@ impl<'a> HeartbleedTester<'a> {
         mut self,
         protocol: Option<crate::starttls::StarttlsProtocol>,
         hostname: Option<String>,
+        server_mode: bool,
     ) -> Self {
         self.starttls = protocol;
         self.starttls_hostname = hostname;
+        self.starttls_server_mode = server_mode;
         self
     }
 
@@ -141,7 +145,7 @@ impl<'a> HeartbleedTester<'a> {
             self.connect_timeout,
             self.starttls,
             &self.starttls_negotiation_hostname(),
-            false,
+            self.starttls_server_mode,
         )
         .await
         {
@@ -857,6 +861,7 @@ mod tests {
             connect_timeout: Duration::from_millis(200),
             read_timeout: Duration::from_millis(200),
             starttls: None,
+            starttls_server_mode: false,
             starttls_hostname: None,
         };
         let result = tester.test_protocol(Protocol::TLS12).await.unwrap();
@@ -893,6 +898,7 @@ mod tests {
             connect_timeout: Duration::from_millis(200),
             read_timeout: Duration::from_millis(200),
             starttls: None,
+            starttls_server_mode: false,
             starttls_hostname: None,
         };
         let result = tester.test_protocol(Protocol::TLS12).await.unwrap();
@@ -917,6 +923,7 @@ mod tests {
             connect_timeout: Duration::from_secs(5),
             read_timeout: Duration::from_secs(5),
             starttls: None,
+            starttls_server_mode: false,
             starttls_hostname: None,
         };
 
@@ -991,6 +998,7 @@ mod tests {
             connect_timeout: Duration::from_secs(5),
             read_timeout: Duration::from_secs(5),
             starttls: None,
+            starttls_server_mode: false,
             starttls_hostname: None,
         };
 
@@ -1035,6 +1043,7 @@ mod tests {
             connect_timeout: Duration::from_secs(5),
             read_timeout: Duration::from_secs(5),
             starttls: None,
+            starttls_server_mode: false,
             starttls_hostname: None,
         };
 
@@ -1055,6 +1064,7 @@ mod tests {
             connect_timeout: Duration::from_secs(5),
             read_timeout: Duration::from_secs(5),
             starttls: None,
+            starttls_server_mode: false,
             starttls_hostname: None,
         };
 
@@ -1078,6 +1088,7 @@ mod tests {
             connect_timeout: Duration::from_secs(5),
             read_timeout: Duration::from_secs(5),
             starttls: None,
+            starttls_server_mode: false,
             starttls_hostname: None,
         };
 
@@ -1111,6 +1122,7 @@ mod tests {
             connect_timeout: Duration::from_secs(5),
             read_timeout: Duration::from_secs(5),
             starttls: None,
+            starttls_server_mode: false,
             starttls_hostname: None,
         };
 
@@ -1134,6 +1146,7 @@ mod tests {
             connect_timeout: Duration::from_secs(5),
             read_timeout: Duration::from_secs(5),
             starttls: None,
+            starttls_server_mode: false,
             starttls_hostname: None,
         };
 
@@ -1155,6 +1168,7 @@ mod tests {
             connect_timeout: Duration::from_secs(5),
             read_timeout: Duration::from_secs(5),
             starttls: None,
+            starttls_server_mode: false,
             starttls_hostname: None,
         };
 

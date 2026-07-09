@@ -666,6 +666,8 @@ pub struct VulnSslConfig {
     /// STARTTLS protocol to negotiate before the TLS handshake (plaintext-first
     /// services); `None` connects directly.
     pub starttls: Option<crate::starttls::StarttlsProtocol>,
+    /// Whether STARTTLS should use the XMPP server-to-server stream dialect.
+    pub starttls_server_mode: bool,
 }
 
 impl Default for VulnSslConfig {
@@ -677,6 +679,7 @@ impl Default for VulnSslConfig {
             timeout_secs: 5,
             verify_hostname: true,
             starttls: None,
+            starttls_server_mode: false,
         }
     }
 }
@@ -730,6 +733,11 @@ impl VulnSslConfig {
         self.starttls = starttls;
         self
     }
+
+    pub fn with_starttls_server_mode(mut self, server_mode: bool) -> Self {
+        self.starttls_server_mode = server_mode;
+        self
+    }
 }
 
 /// Result of a vulnerability SSL connection attempt
@@ -781,7 +789,7 @@ pub async fn try_vuln_ssl_connection(
         Duration::from_secs(config.timeout_secs),
         config.starttls,
         &hostname,
-        false,
+        config.starttls_server_mode,
     )
     .await
     {

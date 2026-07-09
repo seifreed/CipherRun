@@ -201,6 +201,7 @@ fn alert_description_code(response: &[u8]) -> Option<u8> {
 pub struct RobotTester {
     target: Target,
     starttls: Option<crate::starttls::StarttlsProtocol>,
+    starttls_server_mode: bool,
     starttls_hostname: Option<String>,
 }
 
@@ -209,6 +210,7 @@ impl RobotTester {
         Self {
             target,
             starttls: None,
+            starttls_server_mode: false,
             starttls_hostname: None,
         }
     }
@@ -218,9 +220,11 @@ impl RobotTester {
         mut self,
         protocol: Option<crate::starttls::StarttlsProtocol>,
         hostname: Option<String>,
+        server_mode: bool,
     ) -> Self {
         self.starttls = protocol;
         self.starttls_hostname = hostname;
+        self.starttls_server_mode = server_mode;
         self
     }
 
@@ -489,7 +493,7 @@ impl RobotTester {
             TLS_HANDSHAKE_TIMEOUT,
             self.starttls,
             &hostname,
-            false,
+            self.starttls_server_mode,
         )
         .await
         {

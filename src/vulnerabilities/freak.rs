@@ -109,6 +109,7 @@ impl FreakTester {
                 self.starttls,
                 self.sni_hostname.as_deref(),
                 self.starttls_hostname.as_deref(),
+                false,
             )
             .await
             {
