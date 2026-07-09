@@ -5,7 +5,9 @@
 use super::Result;
 use crate::error::TlsError;
 use crate::security::input_validation::{looks_like_dotted_ip_literal, looks_like_obfuscated_ip};
+use crate::security::is_private_ip;
 use serde::{Deserialize, Serialize};
+use std::net::IpAddr;
 use std::time::Duration;
 use tracing::{debug, warn};
 
@@ -262,10 +264,13 @@ impl CtClient {
 
 fn ct_log_api_url(log_url: &str, path: &str) -> Result<url::Url> {
     if raw_ct_log_host(log_url).is_some_and(|host| {
-        looks_like_obfuscated_ip(host) || looks_like_dotted_ip_literal(host)
+        looks_like_obfuscated_ip(host)
+            || looks_like_dotted_ip_literal(host)
+            || host.parse::<IpAddr>().is_ok_and(|ip| is_private_ip(&ip))
     }) {
         return Err(TlsError::InvalidInput {
-            message: "Invalid CT log URL: obfuscated IP notation is not allowed".to_string(),
+            message: "Invalid CT log URL: private or obfuscated IP notation is not allowed"
+                .to_string(),
         });
     }
 
@@ -284,6 +289,18 @@ fn ct_log_api_url(log_url: &str, path: &str) -> Result<url::Url> {
     {
         return Err(TlsError::InvalidInput {
             message: "Invalid CT log URL authority".to_string(),
+        });
+    }
+
+    let host = base.host_str().unwrap().trim_end_matches('.').to_ascii_lowercase();
+    if host == "localhost" || host.ends_with(".local") || host.ends_with(".internal") {
+        return Err(TlsError::InvalidInput {
+            message: "Invalid CT log URL: private or local hosts are not allowed".to_string(),
+        });
+    }
+    if host.parse::<IpAddr>().is_ok_and(|ip| is_private_ip(&ip)) {
+        return Err(TlsError::InvalidInput {
+            message: "Invalid CT log URL: private or local hosts are not allowed".to_string(),
         });
     }
 
@@ -370,6 +387,16 @@ mod tests {
     #[test]
     fn test_ct_log_api_url_rejects_dotted_ip_literal() {
         assert!(ct_log_api_url("https://10.0.0.1.", "ct/v1/get-sth").is_err());
+    }
+
+    #[test]
+    fn test_ct_log_api_url_rejects_private_or_local_hosts() {
+        assert!(ct_log_api_url("https://localhost", "ct/v1/get-sth").is_err());
+        assert!(ct_log_api_url("https://localhost.", "ct/v1/get-sth").is_err());
+        assert!(ct_log_api_url("https://ct.internal", "ct/v1/get-sth").is_err());
+        assert!(ct_log_api_url("https://ct.local", "ct/v1/get-sth").is_err());
+        assert!(ct_log_api_url("https://127.0.0.1", "ct/v1/get-sth").is_err());
+        assert!(ct_log_api_url("https://[::1]", "ct/v1/get-sth").is_err());
     }
 
     #[test]
