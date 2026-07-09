@@ -135,7 +135,7 @@ impl OpenSslClient {
             })?;
             cmd.arg("-starttls");
             let normalized_protocol = match protocol.trim().to_ascii_lowercase().as_str() {
-                "postgresql" => "postgres".to_string(),
+                "postgresql" | "psql" => "postgres".to_string(),
                 other => other.to_string(),
             };
             cmd.arg(normalized_protocol);
@@ -636,6 +636,16 @@ SSL-Session:
         let options = OpenSslClientOptions {
             host: "example.com".to_string(),
             starttls: Some("postgresql".to_string()),
+            ..Default::default()
+        };
+        let result = client.run(&options).expect("script should run");
+
+        assert!(result.stdout.contains("-starttls\npostgres"));
+        assert!(result.success);
+
+        let options = OpenSslClientOptions {
+            host: "example.com".to_string(),
+            starttls: Some("psql".to_string()),
             ..Default::default()
         };
         let result = client.run(&options).expect("script should run");
