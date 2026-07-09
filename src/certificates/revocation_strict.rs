@@ -100,19 +100,7 @@ impl StrictRevocationChecker {
                         details: format!("Hard fail mode: revocation check error: {}", e),
                     })
                 } else {
-                    // Soft fail: return Unknown status
-                    Ok(StrictRevocationResult {
-                        base_result: RevocationResult {
-                            status: RevocationStatus::Unknown,
-                            method: super::revocation::RevocationMethod::None,
-                            details: format!("Revocation check error (soft fail): {}", e),
-                            ocsp_stapling: false,
-                            ocsp_stapling_details: None,
-                            must_staple: false,
-                        },
-                        hard_fail_mode_enabled: false,
-                        error_details: Some(e.to_string()),
-                    })
+                    Ok(self.soft_fail_result(cert, e.to_string()))
                 }
             }
         }
@@ -148,18 +136,7 @@ impl StrictRevocationChecker {
                         return Err(e);
                     }
                     // Soft fail: continue with remaining certificates
-                    results.push(StrictRevocationResult {
-                        base_result: RevocationResult {
-                            status: RevocationStatus::Unknown,
-                            method: super::revocation::RevocationMethod::None,
-                            details: format!("Chain check error (soft fail): {}", e),
-                            ocsp_stapling: false,
-                            ocsp_stapling_details: None,
-                            must_staple: false,
-                        },
-                        hard_fail_mode_enabled: false,
-                        error_details: Some(e.to_string()),
-                    });
+                    results.push(self.soft_fail_result(cert, e.to_string()));
                 }
             }
         }
@@ -175,6 +152,23 @@ impl StrictRevocationChecker {
     /// Check if phone-out is enabled
     pub fn is_phone_out_enabled(&self) -> bool {
         self.base_checker.is_phone_out_enabled()
+    }
+
+    fn soft_fail_result(&self, cert: &CertificateInfo, error: String) -> StrictRevocationResult {
+        let must_staple = self.base_checker.check_must_staple(cert).unwrap_or(false);
+
+        StrictRevocationResult {
+            base_result: RevocationResult {
+                status: RevocationStatus::Unknown,
+                method: super::revocation::RevocationMethod::None,
+                details: format!("Revocation check error (soft fail): {}", error),
+                ocsp_stapling: false,
+                ocsp_stapling_details: None,
+                must_staple,
+            },
+            hard_fail_mode_enabled: false,
+            error_details: Some(error),
+        }
     }
 }
 
@@ -268,6 +262,52 @@ impl StrictRevocationCheckerBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use openssl::asn1::{Asn1Object, Asn1OctetString, Asn1Time};
+    use openssl::hash::MessageDigest as OpensslMessageDigest;
+    use openssl::pkey::PKey;
+    use openssl::rsa::Rsa;
+    use openssl::x509::{X509Builder, X509Extension, X509NameBuilder};
+
+    fn cert_with_must_staple_and_malformed_aia() -> crate::certificates::parser::CertificateInfo {
+        let rsa = Rsa::generate(2048).unwrap();
+        let pkey = PKey::from_rsa(rsa).unwrap();
+        let mut name = X509NameBuilder::new().unwrap();
+        name.append_entry_by_text("CN", "revocation.example.com")
+            .unwrap();
+        let name = name.build();
+
+        let mut builder = X509Builder::new().unwrap();
+        builder.set_subject_name(&name).unwrap();
+        builder.set_issuer_name(&name).unwrap();
+        builder.set_pubkey(&pkey).unwrap();
+        builder
+            .set_not_before(&Asn1Time::days_from_now(0).unwrap())
+            .unwrap();
+        builder
+            .set_not_after(&Asn1Time::days_from_now(30).unwrap())
+            .unwrap();
+
+        let must_staple_oid = Asn1Object::from_str("1.3.6.1.5.5.7.1.24").unwrap();
+        let must_staple = Asn1OctetString::new_from_bytes(b"\x30\x03\x02\x01\x05").unwrap();
+        builder
+            .append_extension(
+                X509Extension::new_from_der(&must_staple_oid, false, &must_staple).unwrap(),
+            )
+            .unwrap();
+
+        let aia_oid = Asn1Object::from_str("1.3.6.1.5.5.7.1.1").unwrap();
+        let malformed_aia = Asn1OctetString::new_from_bytes(b"\x05\x00").unwrap();
+        builder
+            .append_extension(X509Extension::new_from_der(&aia_oid, false, &malformed_aia).unwrap())
+            .unwrap();
+
+        builder.sign(&pkey, OpensslMessageDigest::sha256()).unwrap();
+
+        crate::certificates::parser::CertificateInfo {
+            der_bytes: builder.build().to_der().unwrap(),
+            ..Default::default()
+        }
+    }
 
     #[test]
     fn test_builder_defaults() {
@@ -281,6 +321,24 @@ mod tests {
             .with_hard_fail(true)
             .build();
         assert!(checker.is_hard_fail_enabled());
+    }
+
+    #[tokio::test]
+    async fn test_soft_fail_preserves_must_staple() {
+        let checker = StrictRevocationCheckerBuilder::new()
+            .with_phone_out(true)
+            .with_hard_fail(false)
+            .build();
+        let cert = cert_with_must_staple_and_malformed_aia();
+
+        let result = checker
+            .check_revocation_with_hardfail(&cert, None)
+            .await
+            .expect("soft fail should return a result");
+
+        assert!(result.is_unknown());
+        assert!(result.base_result.must_staple);
+        assert!(result.error_details.is_some());
     }
 
     #[test]
