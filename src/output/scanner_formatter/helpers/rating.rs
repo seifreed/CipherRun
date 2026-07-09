@@ -6,7 +6,7 @@ pub(crate) fn format_ssl_grade(grade: &crate::rating::Grade) -> ColoredString {
         Grade::APlus | Grade::A => grade_str.green().bold(),
         Grade::AMinus | Grade::B => grade_str.blue().bold(),
         Grade::C | Grade::Unverified => grade_str.yellow(),
-        Grade::D | Grade::E => grade_str.yellow(),
+        Grade::D | Grade::E => grade_str.truecolor(255, 165, 0),
         Grade::F | Grade::T | Grade::M => grade_str.red().bold(),
     }
 }

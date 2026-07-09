@@ -247,6 +247,28 @@ fn test_advanced_grade_mid_range() {
 }
 
 #[test]
+fn test_ssl_grade_d_and_e_are_orange() {
+    use colored::Color;
+
+    assert_eq!(
+        format_ssl_grade(&crate::rating::Grade::D).fgcolor,
+        Some(Color::TrueColor {
+            r: 255,
+            g: 165,
+            b: 0,
+        })
+    );
+    assert_eq!(
+        format_ssl_grade(&crate::rating::Grade::E).fgcolor,
+        Some(Color::TrueColor {
+            r: 255,
+            g: 165,
+            b: 0,
+        })
+    );
+}
+
+#[test]
 fn test_certificate_helpers() {
     let good_key = format_key_size(2048, "rsaEncryption");
     let bad_key = format_key_size(1024, "rsaEncryption");
