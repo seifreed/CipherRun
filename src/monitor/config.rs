@@ -330,6 +330,11 @@ impl MonitorConfig {
                 message: format!("Invalid {label}: port must be between 1 and 65535"),
             });
         }
+        if !url.username().is_empty() || url.password().is_some() {
+            return Err(TlsError::ConfigError {
+                message: format!("Invalid {label}: must not contain credentials"),
+            });
+        }
         Ok(())
     }
 }
@@ -635,5 +640,24 @@ webhook_url = "https://webhook.example.com:0/alerts"
         let err = MonitorConfig::from_file(&path).expect_err("zero port Slack URL should fail");
 
         assert!(err.to_string().contains("port must be between 1 and 65535"));
+    }
+
+    #[test]
+    fn test_from_file_rejects_enabled_teams_credentials() {
+        let dir = tempfile::tempdir().expect("test assertion should succeed");
+        let path = dir.path().join("monitor.toml");
+        fs::write(
+            &path,
+            r#"
+[monitor.alerts.teams]
+enabled = true
+webhook_url = "https://user:pass@outlook.office.com/webhook/TEST"
+"#,
+        )
+        .expect("test assertion should succeed");
+
+        let err = MonitorConfig::from_file(&path).expect_err("credentials should fail");
+
+        assert!(err.to_string().contains("must not contain credentials"));
     }
 }
