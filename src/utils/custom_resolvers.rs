@@ -291,6 +291,15 @@ fn normalize_mx_hostname(hostname: &str) -> Result<Option<String>> {
             message: format!("Invalid MX hostname: {error}"),
         }
     })?;
+    let normalized_host = hostname.to_ascii_lowercase();
+    if normalized_host == "localhost"
+        || normalized_host.ends_with(".local")
+        || normalized_host.ends_with(".internal")
+    {
+        return Err(crate::TlsError::InvalidInput {
+            message: format!("Invalid MX hostname: private/local host {hostname}"),
+        });
+    }
     if hostname.parse::<IpAddr>().is_ok() || looks_like_obfuscated_ip(&hostname) {
         return Err(crate::TlsError::InvalidInput {
             message: format!("Invalid MX hostname: IP-like host {hostname}"),
@@ -358,6 +367,14 @@ mod tests {
             .expect_err("obfuscated MX exchange must be a hostname");
 
         assert!(err.to_string().contains("obfuscated IP"));
+    }
+
+    #[test]
+    fn test_normalize_mx_hostname_rejects_private_host() {
+        let err = normalize_mx_hostname("localhost.")
+            .expect_err("private MX exchange must be rejected");
+
+        assert!(err.to_string().contains("private/local host"));
     }
 
     #[test]

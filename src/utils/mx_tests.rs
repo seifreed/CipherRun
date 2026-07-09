@@ -165,6 +165,16 @@ fn test_parse_dig_output_rejects_obfuscated_ip_hostname() {
 }
 
 #[test]
+fn test_parse_dig_output_rejects_private_mx_hostname() {
+    let tester = MxTester::new("example.com".to_string());
+    let err = tester
+        .parse_dig_output(b"10 localhost.\n")
+        .expect_err("private MX exchange must be rejected");
+
+    assert!(err.to_string().contains("private/local host"));
+}
+
+#[test]
 fn test_parse_nslookup_output_rejects_invalid_priority() {
     let tester = MxTester::new("example.com".to_string());
     let output = b"example.com mail exchanger = x mx.example.com.\n";

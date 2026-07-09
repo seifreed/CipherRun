@@ -512,6 +512,15 @@ fn normalize_mx_hostname(hostname: &str) -> Result<Option<String>> {
             message: format!("Invalid MX hostname: {error}"),
         }
     })?;
+    let normalized_host = hostname.to_ascii_lowercase();
+    if normalized_host == "localhost"
+        || normalized_host.ends_with(".local")
+        || normalized_host.ends_with(".internal")
+    {
+        return Err(crate::error::TlsError::InvalidInput {
+            message: format!("Invalid MX hostname: private/local host {hostname}"),
+        });
+    }
     if hostname.parse::<IpAddr>().is_ok() || looks_like_obfuscated_ip(&hostname) {
         return Err(crate::error::TlsError::InvalidInput {
             message: format!("Invalid MX hostname: IP-like host {hostname}"),
