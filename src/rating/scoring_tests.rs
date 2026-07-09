@@ -19,8 +19,27 @@ fn test_overall_score_calculation() {
 
 #[test]
 fn test_certificate_score_expired() {
-    // Test with expired certificate would require building a ValidationResult
-    // Leaving as placeholder for integration tests
+    use crate::certificates::validator::{
+        IssueSeverity, IssueType, ValidationIssue, ValidationResult,
+    };
+
+    let cert = ValidationResult {
+        valid: false,
+        issues: vec![ValidationIssue {
+            severity: IssueSeverity::Critical,
+            issue_type: IssueType::Expired,
+            description: "expired".to_string(),
+        }],
+        trust_chain_valid: true,
+        hostname_match: true,
+        not_expired: false,
+        signature_valid: true,
+        trusted_ca: None,
+        platform_trust: None,
+    };
+
+    let score = RatingCalculator::calculate_certificate_score(Some(&cert));
+    assert_eq!(score, 0);
 }
 
 #[test]
