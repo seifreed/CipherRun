@@ -8,6 +8,7 @@ use crate::api::presenters::target_input::scan_request_from_target_and_options;
 use crate::api::state::ApiStats;
 use crate::application::ScanRequest;
 use crate::error::TlsError;
+use crate::security::input_validation::looks_like_obfuscated_ip;
 use crate::scanner::{ScanResults, Scanner};
 use crate::utils::network::canonical_target;
 use std::net::SocketAddr;
@@ -520,6 +521,12 @@ fn ordered_resolved_addrs(addrs: &[SocketAddr]) -> Vec<SocketAddr> {
 
 pub(crate) async fn validate_webhook_url(webhook_url: &str) -> Result<ValidatedWebhook> {
     // Parse and validate webhook URL to prevent SSRF
+    if raw_webhook_host(webhook_url).is_some_and(looks_like_obfuscated_ip) {
+        return Err(TlsError::InvalidInput {
+            message: "Webhook URL uses obfuscated IP notation".to_string(),
+        });
+    }
+
     let url: url::Url = webhook_url.parse().map_err(|e| TlsError::InvalidInput {
         message: format!("Invalid webhook URL: {e}"),
     })?;
@@ -562,6 +569,11 @@ pub(crate) async fn validate_webhook_url(webhook_url: &str) -> Result<ValidatedW
     {
         return Err(TlsError::InvalidInput {
             message: format!("Webhook URL points to private/local host: {host}"),
+        });
+    }
+    if looks_like_obfuscated_ip(&host) {
+        return Err(TlsError::InvalidInput {
+            message: format!("Webhook URL uses obfuscated IP notation: {host}"),
         });
     }
 
@@ -610,6 +622,18 @@ pub(crate) async fn validate_webhook_url(webhook_url: &str) -> Result<ValidatedW
         host,
         resolved_addrs: ordered_resolved_addrs(&resolved_addrs),
     })
+}
+
+fn raw_webhook_host(webhook_url: &str) -> Option<&str> {
+    let authority = webhook_url.split_once("://")?.1;
+    let authority = authority.split(['/', '?', '#']).next().unwrap_or(authority);
+    let host = authority.rsplit_once('@').map(|(_, host)| host).unwrap_or(authority);
+
+    if let Some(host) = host.strip_prefix('[') {
+        host.split_once(']').map(|(host, _)| host)
+    } else {
+        Some(host.split_once(':').map_or(host, |(hostname, _)| hostname))
+    }
 }
 
 fn webhook_lookup_target(host: &str, port: u16) -> String {
@@ -741,6 +765,16 @@ mod tests {
             .expect_err("localhost should fail");
 
         assert!(err.to_string().contains("private/local host"));
+    }
+
+    #[tokio::test]
+    async fn test_validate_webhook_url_rejects_obfuscated_ip_notation() {
+        let err = match validate_webhook_url("https://127.1/callback").await {
+            Ok(_) => panic!("obfuscated IP should fail"),
+            Err(err) => err,
+        };
+
+        assert!(err.to_string().contains("obfuscated IP notation"));
     }
 
     #[tokio::test]

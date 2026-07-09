@@ -11,6 +11,7 @@ pub mod webhook;
 use crate::Result;
 use crate::monitor::config::MonitorConfig;
 use crate::monitor::detector::{ChangeEvent, ChangeSeverity};
+use crate::security::input_validation::looks_like_obfuscated_ip;
 use crate::security::is_private_ip;
 use chrono::{DateTime, Duration, Utc};
 use reqwest::Url;
@@ -34,6 +35,12 @@ pub(crate) async fn validated_webhook_target(
     webhook_url: &str,
     timeout: std::time::Duration,
 ) -> Result<ValidatedWebhookTarget> {
+    if raw_webhook_host(webhook_url).is_some_and(looks_like_obfuscated_ip) {
+        return Err(crate::error::TlsError::ConfigError {
+            message: "Webhook URL must not use obfuscated IP notation".to_string(),
+        });
+    }
+
     let url = Url::parse(webhook_url).map_err(|error| crate::error::TlsError::ConfigError {
         message: format!("Invalid webhook url: {error}"),
     })?;
@@ -62,6 +69,11 @@ pub(crate) async fn validated_webhook_target(
     {
         return Err(crate::error::TlsError::ConfigError {
             message: "Webhook URL must not use private/local hosts".to_string(),
+        });
+    }
+    if looks_like_obfuscated_ip(host) {
+        return Err(crate::error::TlsError::ConfigError {
+            message: "Webhook URL must not use obfuscated IP notation".to_string(),
         });
     }
     let host_ip = host.parse::<IpAddr>().ok();
@@ -101,6 +113,18 @@ pub(crate) async fn validated_webhook_target(
         url,
         client: client_builder.build()?,
     })
+}
+
+fn raw_webhook_host(webhook_url: &str) -> Option<&str> {
+    let authority = webhook_url.split_once("://")?.1;
+    let authority = authority.split(['/', '?', '#']).next().unwrap_or(authority);
+    let host = authority.rsplit_once('@').map(|(_, host)| host).unwrap_or(authority);
+
+    if let Some(host) = host.strip_prefix('[') {
+        host.split_once(']').map(|(host, _)| host)
+    } else {
+        Some(host.split_once(':').map_or(host, |(hostname, _)| hostname))
+    }
 }
 
 fn validate_webhook_addrs(
@@ -376,6 +400,21 @@ mod tests_extra {
         };
 
         assert!(err.to_string().contains("private/internal IP literal"));
+    }
+
+    #[tokio::test]
+    async fn test_validated_webhook_target_rejects_obfuscated_ip_notation() {
+        let err = match validated_webhook_target(
+            "https://127.1/alerts",
+            std::time::Duration::from_secs(1),
+        )
+        .await
+        {
+            Ok(_) => panic!("obfuscated IP should fail"),
+            Err(err) => err,
+        };
+
+        assert!(err.to_string().contains("obfuscated IP notation"));
     }
 
     #[tokio::test]
