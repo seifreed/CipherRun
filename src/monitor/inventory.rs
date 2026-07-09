@@ -4,6 +4,7 @@ use crate::Result;
 use crate::certificates::parser::CertificateInfo;
 use crate::error::TlsError;
 use crate::security::validate_hostname;
+use crate::security::input_validation::looks_like_dotted_ip_literal;
 use crate::utils::network::{canonical_target, normalize_dns_hostname, split_target_host_port};
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
@@ -142,6 +143,14 @@ impl CertificateInventory {
         validate_hostname(&hostname).map_err(|error| TlsError::InvalidInput {
             message: error.to_string(),
         })?;
+        if looks_like_dotted_ip_literal(&hostname) {
+            return Err(TlsError::InvalidInput {
+                message: format!(
+                    "Monitored domain hostname must not be an IP literal with a trailing dot: {}",
+                    hostname
+                ),
+            });
+        }
         let normalized_hostname = hostname.trim_end_matches('.').to_ascii_lowercase();
         if normalized_hostname == "localhost"
             || normalized_hostname.ends_with(".local")
@@ -538,6 +547,11 @@ mod tests {
         assert!(
             inventory
                 .add_domain(MonitoredDomain::new("2130706433".to_string(), 443))
+                .is_err()
+        );
+        assert!(
+            inventory
+                .add_domain(MonitoredDomain::new("127.0.0.1.".to_string(), 443))
                 .is_err()
         );
 
