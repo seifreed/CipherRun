@@ -2,9 +2,8 @@
 
 use crate::Result;
 use crate::error::TlsError;
-use crate::monitor::alerts::raw_webhook_host;
+use crate::monitor::alerts::{raw_webhook_host, reject_private_webhook_host};
 use crate::security::input_validation::{looks_like_dotted_ip_literal, looks_like_obfuscated_ip};
-use crate::security::is_private_ip;
 use crate::security::validate_hostname;
 use crate::monitor::types::AlertThresholds;
 use lettre::message::Mailbox;
@@ -372,20 +371,7 @@ impl MonitorConfig {
         validate_hostname(host).map_err(|error| TlsError::ConfigError {
             message: format!("Invalid {label}: {error}"),
         })?;
-        let normalized_host = host.trim_end_matches('.').to_ascii_lowercase();
-        if normalized_host == "localhost"
-            || normalized_host.ends_with(".local")
-            || normalized_host.ends_with(".internal")
-        {
-            return Err(TlsError::ConfigError {
-                message: format!("Invalid {label}: private/local hosts are not allowed"),
-            });
-        }
-        if host.parse::<std::net::IpAddr>().is_ok_and(|ip| is_private_ip(&ip)) {
-            return Err(TlsError::ConfigError {
-                message: format!("Invalid {label}: private/local IP literals are not allowed"),
-            });
-        }
+        reject_private_webhook_host(host, label)?;
         Ok(())
     }
 }

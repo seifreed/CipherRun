@@ -1,13 +1,13 @@
 // Microsoft Teams Alert Channel - Webhook integration
 
-use super::{raw_webhook_host, validated_webhook_target};
-use crate::Result;
+use super::{raw_webhook_host, reject_private_webhook_host, validated_webhook_target};
 use crate::error::TlsError;
 use crate::monitor::alerts::{Alert, AlertChannel, AlertType};
 use crate::monitor::config::TeamsConfig;
 use crate::monitor::detector::ChangeSeverity;
-use crate::security::validate_hostname;
 use crate::security::input_validation::{looks_like_dotted_ip_literal, looks_like_obfuscated_ip};
+use crate::security::validate_hostname;
+use crate::Result;
 use async_trait::async_trait;
 use serde_json::json;
 
@@ -53,6 +53,7 @@ impl TeamsChannel {
         validate_hostname(url.host_str().unwrap_or("")).map_err(|error| TlsError::ConfigError {
             message: format!("Invalid Teams webhook_url: {error}"),
         })?;
+        reject_private_webhook_host(url.host_str().unwrap_or(""), "Teams webhook_url")?;
         Ok(Self { config })
     }
 
@@ -132,11 +133,9 @@ impl TeamsChannel {
 impl AlertChannel for TeamsChannel {
     async fn send_alert(&self, alert: &Alert) -> Result<()> {
         let message = self.format_message(alert);
-        let validated = validated_webhook_target(
-            &self.config.webhook_url,
-            std::time::Duration::from_secs(10),
-        )
-        .await?;
+        let validated =
+            validated_webhook_target(&self.config.webhook_url, std::time::Duration::from_secs(10))
+                .await?;
         let response = validated
             .client
             .post(validated.url)
@@ -168,11 +167,9 @@ impl AlertChannel for TeamsChannel {
             "title": "CipherRun Monitor - Connection Test",
             "text": "Test message from CipherRun monitoring - connection successful!"
         });
-        let validated = validated_webhook_target(
-            &self.config.webhook_url,
-            std::time::Duration::from_secs(10),
-        )
-        .await?;
+        let validated =
+            validated_webhook_target(&self.config.webhook_url, std::time::Duration::from_secs(10))
+                .await?;
         let response = validated
             .client
             .post(validated.url)
@@ -245,6 +242,14 @@ mod tests {
     fn test_teams_channel_rejects_dotted_ip_webhook_url() {
         let mut config = create_test_config();
         config.webhook_url = "https://10.0.0.1./webhook/TEST".to_string();
+
+        assert!(TeamsChannel::new(config).is_err());
+    }
+
+    #[test]
+    fn test_teams_channel_rejects_localhost_webhook_url() {
+        let mut config = create_test_config();
+        config.webhook_url = "https://localhost/webhook/TEST".to_string();
 
         assert!(TeamsChannel::new(config).is_err());
     }

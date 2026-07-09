@@ -72,26 +72,14 @@ pub(crate) async fn validated_webhook_target(
     validate_hostname(host).map_err(|error| crate::error::TlsError::ConfigError {
         message: format!("Invalid webhook url: {error}"),
     })?;
-    let normalized_host = host.trim_end_matches('.').to_ascii_lowercase();
-    if normalized_host == "localhost"
-        || normalized_host.ends_with(".local")
-        || normalized_host.ends_with(".internal")
-    {
-        return Err(crate::error::TlsError::ConfigError {
-            message: "Webhook URL must not use private/local hosts".to_string(),
-        });
-    }
     if looks_like_obfuscated_ip(host) {
         return Err(crate::error::TlsError::ConfigError {
             message: "Webhook URL must not use obfuscated IP notation".to_string(),
         });
     }
+    reject_private_webhook_host(host, "Webhook URL")?;
+    let normalized_host = host.trim_end_matches('.').to_ascii_lowercase();
     let host_ip = host.parse::<IpAddr>().ok();
-    if let Some(ip) = host_ip.filter(|ip| !ip.is_loopback() && is_private_ip(ip)) {
-        return Err(crate::error::TlsError::ConfigError {
-            message: format!("Webhook URL uses private/internal IP literal {ip}"),
-        });
-    }
     let port = url.port_or_known_default().unwrap_or(80);
     let addrs: Vec<_> = lookup_host((host, port))
         .await
@@ -135,6 +123,26 @@ pub(crate) fn raw_webhook_host(webhook_url: &str) -> Option<&str> {
     } else {
         Some(host.split_once(':').map_or(host, |(hostname, _)| hostname))
     }
+}
+
+pub(crate) fn reject_private_webhook_host(host: &str, label: &str) -> Result<()> {
+    let normalized_host = host.trim_end_matches('.').to_ascii_lowercase();
+    if normalized_host == "localhost"
+        || normalized_host.ends_with(".local")
+        || normalized_host.ends_with(".internal")
+    {
+        return Err(crate::error::TlsError::ConfigError {
+            message: format!("Invalid {label}: private/local hosts are not allowed"),
+        });
+    }
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        if is_private_ip(&ip) {
+            return Err(crate::error::TlsError::ConfigError {
+                message: format!("Invalid {label}: private/internal IP literal {ip}"),
+            });
+        }
+    }
+    Ok(())
 }
 
 fn validate_webhook_addrs(

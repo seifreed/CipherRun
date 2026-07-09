@@ -1,12 +1,12 @@
 // Slack Alert Channel - Webhook integration
 
-use super::{formatting, raw_webhook_host, validated_webhook_target};
-use crate::Result;
+use super::{formatting, raw_webhook_host, reject_private_webhook_host, validated_webhook_target};
 use crate::error::TlsError;
 use crate::monitor::alerts::{Alert, AlertChannel, AlertType};
 use crate::monitor::config::SlackConfig;
-use crate::security::validate_hostname;
 use crate::security::input_validation::{looks_like_dotted_ip_literal, looks_like_obfuscated_ip};
+use crate::security::validate_hostname;
+use crate::Result;
 use async_trait::async_trait;
 use serde_json::json;
 
@@ -52,6 +52,7 @@ impl SlackChannel {
         validate_hostname(url.host_str().unwrap_or("")).map_err(|error| TlsError::ConfigError {
             message: format!("Invalid Slack webhook_url: {error}"),
         })?;
+        reject_private_webhook_host(url.host_str().unwrap_or(""), "Slack webhook_url")?;
         Ok(Self { config })
     }
 
@@ -168,11 +169,9 @@ impl SlackChannel {
 impl AlertChannel for SlackChannel {
     async fn send_alert(&self, alert: &Alert) -> Result<()> {
         let message = self.format_message(alert);
-        let validated = validated_webhook_target(
-            &self.config.webhook_url,
-            std::time::Duration::from_secs(10),
-        )
-        .await?;
+        let validated =
+            validated_webhook_target(&self.config.webhook_url, std::time::Duration::from_secs(10))
+                .await?;
         let response = validated
             .client
             .post(validated.url)
@@ -200,11 +199,9 @@ impl AlertChannel for SlackChannel {
         let test_message = json!({
             "text": "Test message from CipherRun monitoring - connection successful!"
         });
-        let validated = validated_webhook_target(
-            &self.config.webhook_url,
-            std::time::Duration::from_secs(10),
-        )
-        .await?;
+        let validated =
+            validated_webhook_target(&self.config.webhook_url, std::time::Duration::from_secs(10))
+                .await?;
         let response = validated
             .client
             .post(validated.url)
@@ -282,6 +279,14 @@ mod tests {
     }
 
     #[test]
+    fn test_slack_channel_rejects_localhost_webhook_url() {
+        let mut config = create_test_config();
+        config.webhook_url = "https://localhost/services/TEST".to_string();
+
+        assert!(SlackChannel::new(config).is_err());
+    }
+
+    #[test]
     fn test_format_message() {
         let config = create_test_config();
         let channel = SlackChannel::new(config).expect("test channel construction should succeed");
@@ -292,18 +297,14 @@ mod tests {
         let message = channel.format_message(&alert);
 
         assert!(message["attachments"].is_array());
-        assert!(
-            message["attachments"][0]["title"]
-                .as_str()
-                .unwrap()
-                .contains("Alert")
-        );
-        assert!(
-            message["attachments"][0]["text"]
-                .as_str()
-                .unwrap()
-                .contains("example.com")
-        );
+        assert!(message["attachments"][0]["title"]
+            .as_str()
+            .unwrap()
+            .contains("Alert"));
+        assert!(message["attachments"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("example.com"));
     }
 
     #[test]
