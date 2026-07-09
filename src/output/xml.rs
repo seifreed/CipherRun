@@ -1,6 +1,7 @@
 // XML Output Format
 
 use crate::Result;
+use crate::fingerprint::{CdnDetection, LoadBalancerInfo};
 use crate::scanner::ScanResults;
 
 pub fn generate_xml_report(results: &ScanResults) -> Result<String> {
@@ -191,6 +192,58 @@ pub fn generate_xml_report(results: &ScanResults) -> Result<String> {
         xml.push_str("  </rating>\n");
     }
 
+    if let Some(cdn) = results.cdn_detection() {
+        xml.push_str("  <cdn_detection>\n");
+        xml.push_str(&format!("    <is_cdn>{}</is_cdn>\n", cdn.is_cdn));
+        if let Some(provider) = &cdn.cdn_provider {
+            xml.push_str(&format!(
+                "    <provider>{}</provider>\n",
+                escape_xml(provider)
+            ));
+        }
+        xml.push_str(&format!(
+            "    <confidence>{}</confidence>\n",
+            cdn.confidence
+        ));
+        if !cdn.indicators.is_empty() {
+            xml.push_str("    <indicators>\n");
+            for indicator in &cdn.indicators {
+                xml.push_str(&format!(
+                    "      <indicator>{}</indicator>\n",
+                    escape_xml(indicator)
+                ));
+            }
+            xml.push_str("    </indicators>\n");
+        }
+        xml.push_str("  </cdn_detection>\n");
+    }
+
+    if let Some(load_balancer) = results.load_balancer_info() {
+        xml.push_str("  <load_balancer_info>\n");
+        xml.push_str(&format!(
+            "    <detected>{}</detected>\n",
+            load_balancer.detected
+        ));
+        if let Some(lb_type) = &load_balancer.lb_type {
+            xml.push_str(&format!("    <type>{}</type>\n", escape_xml(lb_type)));
+        }
+        xml.push_str(&format!(
+            "    <sticky_sessions>{}</sticky_sessions>\n",
+            load_balancer.sticky_sessions
+        ));
+        if !load_balancer.indicators.is_empty() {
+            xml.push_str("    <indicators>\n");
+            for indicator in &load_balancer.indicators {
+                xml.push_str(&format!(
+                    "      <indicator>{}</indicator>\n",
+                    escape_xml(indicator)
+                ));
+            }
+            xml.push_str("    </indicators>\n");
+        }
+        xml.push_str("  </load_balancer_info>\n");
+    }
+
     xml.push_str("</document>\n");
 
     Ok(xml)
@@ -310,6 +363,7 @@ fn option_status_label(value: Option<bool>) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fingerprint::{CdnDetection, LoadBalancerInfo};
     use crate::certificates::revocation::{RevocationMethod, RevocationResult, RevocationStatus};
     use crate::protocols::{Protocol, ProtocolTestResult};
     use crate::rating::{Grade, RatingResult};
@@ -510,6 +564,35 @@ mod tests {
         assert!(xml.contains("<rating>"));
         assert!(xml.contains("<grade>A</grade>"));
         assert!(xml.contains("<score>90</score>"));
+    }
+
+    #[test]
+    fn test_xml_includes_cdn_and_load_balancer_sections() {
+        let results = ScanResults {
+            target: "example.com:443".to_string(),
+            advanced: Some(crate::scanner::AdvancedResults {
+                cdn_detection: Some(CdnDetection {
+                    is_cdn: true,
+                    cdn_provider: Some("Cloudflare".to_string()),
+                    confidence: 0.95,
+                    indicators: vec!["cdn".to_string()],
+                }),
+                load_balancer_info: Some(LoadBalancerInfo {
+                    detected: true,
+                    lb_type: Some("AWS ALB".to_string()),
+                    sticky_sessions: true,
+                    indicators: vec!["sticky sessions".to_string()],
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let xml = generate_xml_report(&results).expect("test assertion should succeed");
+        assert!(xml.contains("<cdn_detection>"));
+        assert!(xml.contains("<provider>Cloudflare</provider>"));
+        assert!(xml.contains("<load_balancer_info>"));
+        assert!(xml.contains("<type>AWS ALB</type>"));
     }
 
     #[test]
