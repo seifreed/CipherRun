@@ -48,6 +48,13 @@ pub fn validate_target(
         )));
     }
 
+    if looks_like_obfuscated_ip(&hostname) {
+        return Err(ValidationError::InvalidHostname(format!(
+            "Target cannot use obfuscated IP notation: {}",
+            hostname
+        )));
+    }
+
     Ok((hostname, port))
 }
 
@@ -167,6 +174,24 @@ fn parse_host_port(target: &str) -> std::result::Result<(String, Option<u16>), V
     Ok((hostname.to_string(), Some(port)))
 }
 
+fn looks_like_obfuscated_ip(hostname: &str) -> bool {
+    if hostname.parse::<IpAddr>().is_ok() {
+        return false;
+    }
+
+    let labels: Vec<&str> = hostname.split('.').collect();
+    if labels.len() == 1 {
+        return labels[0].chars().all(|ch| ch.is_ascii_digit());
+    }
+
+    labels.iter().all(|label| {
+        !label.is_empty()
+            && (label.chars().all(|ch| ch.is_ascii_digit())
+                || label.starts_with("0x")
+                && label.chars().skip(2).all(|ch| ch.is_ascii_hexdigit()))
+    }) && labels.len() <= 4
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -191,6 +216,18 @@ mod tests {
     fn test_validate_target_private_ipv6() {
         assert!(validate_target("fc00::1", false).is_err());
         assert!(validate_target("fc00::1", true).is_ok());
+    }
+
+    #[test]
+    fn test_validate_target_rejects_obfuscated_ip_notation() {
+        assert!(validate_target("2130706433", false).is_err());
+        assert!(validate_target("127.1", false).is_err());
+        assert!(validate_target("0x7f.0x0.0x0.0x1", false).is_err());
+    }
+
+    #[test]
+    fn test_validate_target_keeps_normal_numeric_hostnames() {
+        assert!(validate_target("123.example.com", false).is_ok());
     }
 
     #[test]
