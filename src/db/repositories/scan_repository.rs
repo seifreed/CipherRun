@@ -146,7 +146,7 @@ impl ScanRepository for ScanRepositoryImpl {
                     r#"
                     SELECT scan_id, target_hostname, target_port, scan_timestamp, overall_grade, overall_score, scan_duration_ms, revocation_json, scanner_version
                     FROM scans
-                    WHERE target_hostname = $1 AND target_port = $2
+                    WHERE LOWER(target_hostname) = $1 AND target_port = $2
                     ORDER BY scan_timestamp DESC, scan_id DESC
                     LIMIT $3
                     "#
@@ -165,7 +165,7 @@ impl ScanRepository for ScanRepositoryImpl {
                     r#"
                     SELECT scan_id, target_hostname, target_port, scan_timestamp, overall_grade, overall_score, scan_duration_ms, revocation_json, scanner_version
                     FROM scans
-                    WHERE target_hostname = ? AND target_port = ?
+                    WHERE LOWER(target_hostname) = ? AND target_port = ?
                     ORDER BY scan_timestamp DESC, scan_id DESC
                     LIMIT ?
                     "#
@@ -196,7 +196,7 @@ impl ScanRepository for ScanRepositoryImpl {
                     r#"
                     SELECT scan_id, target_hostname, target_port, scan_timestamp, overall_grade, overall_score, scan_duration_ms, revocation_json, scanner_version
                     FROM scans
-                    WHERE target_hostname = $1 AND target_port = $2 AND scan_timestamp >= $3
+                    WHERE LOWER(target_hostname) = $1 AND target_port = $2 AND scan_timestamp >= $3
                     ORDER BY scan_timestamp DESC, scan_id DESC
                     "#
                 )
@@ -214,7 +214,7 @@ impl ScanRepository for ScanRepositoryImpl {
                     r#"
                     SELECT scan_id, target_hostname, target_port, scan_timestamp, overall_grade, overall_score, scan_duration_ms, revocation_json, scanner_version
                     FROM scans
-                    WHERE target_hostname = ? AND target_port = ? AND scan_timestamp >= ?
+                    WHERE LOWER(target_hostname) = ? AND target_port = ? AND scan_timestamp >= ?
                     ORDER BY scan_timestamp DESC, scan_id DESC
                     "#
                 )
@@ -360,6 +360,38 @@ mod tests {
             .expect("test assertion should succeed");
         assert!(fetched.is_some());
         assert_eq!(fetched.unwrap().target_hostname, "example.com");
+
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn test_scan_repository_matches_hostname_case_insensitively() {
+        let config = DatabaseConfig::sqlite(PathBuf::from(":memory:"));
+        let pool = DatabasePool::new(&config)
+            .await
+            .expect("test assertion should succeed");
+
+        run_migrations(&pool)
+            .await
+            .expect("test assertion should succeed");
+
+        let repo = ScanRepositoryImpl::new(pool.clone());
+
+        let scan = ScanRecord::new("EXAMPLE.COM".to_string(), 443);
+        let scan_id = repo
+            .create_scan(&scan)
+            .await
+            .expect("test assertion should succeed");
+
+        assert!(scan_id > 0);
+
+        let scans = repo
+            .get_scans_by_hostname("example.com", 443, 10)
+            .await
+            .expect("test assertion should succeed");
+
+        assert_eq!(scans.len(), 1);
+        assert_eq!(scans[0].target_hostname, "EXAMPLE.COM");
 
         pool.close().await;
     }
