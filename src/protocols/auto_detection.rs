@@ -217,7 +217,7 @@ impl ProtocolDetector {
     pub fn starttls_command(protocol: ApplicationProtocol) -> Option<&'static str> {
         match protocol {
             ApplicationProtocol::SmtpStartTls => Some("STARTTLS\r\n"),
-            ApplicationProtocol::ImapStartTls => Some(". STARTTLS\r\n"),
+            ApplicationProtocol::ImapStartTls => Some("a002 STARTTLS\r\n"),
             ApplicationProtocol::Pop3StartTls => Some("STLS\r\n"),
             ApplicationProtocol::FtpStartTls => Some("AUTH TLS\r\n"),
             ApplicationProtocol::XmppStartTls => {
@@ -344,7 +344,7 @@ mod tests {
         );
         assert_eq!(
             ProtocolDetector::starttls_command(ApplicationProtocol::ImapStartTls),
-            Some(". STARTTLS\r\n")
+            Some("a002 STARTTLS\r\n")
         );
         assert_eq!(
             ProtocolDetector::starttls_command(ApplicationProtocol::Pop3StartTls),
