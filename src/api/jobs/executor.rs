@@ -551,11 +551,12 @@ pub(crate) async fn validate_webhook_url(webhook_url: &str) -> Result<ValidatedW
             message: "Webhook URL has no host".to_string(),
         })?
         .to_string();
+    let normalized_host = host.trim_end_matches('.').to_ascii_lowercase();
 
     // Block obvious private hostnames and IP literals
-    if host == "localhost"
-        || host.ends_with(".local")
-        || host.ends_with(".internal")
+    if normalized_host == "localhost"
+        || normalized_host.ends_with(".local")
+        || normalized_host.ends_with(".internal")
         || host == "127.0.0.1"
         || host == "::1"
     {
@@ -738,6 +739,15 @@ mod tests {
         let err = validate_webhook_url("https://localhost/callback")
             .await
             .expect_err("localhost should fail");
+
+        assert!(err.to_string().contains("private/local host"));
+    }
+
+    #[tokio::test]
+    async fn test_validate_webhook_url_rejects_trailing_dot_localhost() {
+        let err = validate_webhook_url("https://localhost./callback")
+            .await
+            .expect_err("localhost with trailing dot should fail");
 
         assert!(err.to_string().contains("private/local host"));
     }
