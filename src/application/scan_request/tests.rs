@@ -321,6 +321,22 @@ fn rejects_ip_literal_sni_name() {
 }
 
 #[test]
+fn rejects_private_local_sni_name() {
+    let request = ScanRequest {
+        tls: ScanRequestTls {
+            sni_name: Some("localhost".to_string()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let err = request
+        .validate_common()
+        .expect_err("private SNI override should fail validation");
+    assert!(err.to_string().contains("private/local hostnames"));
+}
+
+#[test]
 fn rejects_incomplete_separate_mtls_files() {
     let missing_certs = ScanRequest {
         tls: ScanRequestTls {

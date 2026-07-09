@@ -100,6 +100,16 @@ impl ScanRequest {
                     message: format!("Invalid SNI hostname: {}", error),
                 }
             })?;
+            let normalized_sni_name = sni_name.trim_end_matches('.').to_ascii_lowercase();
+            if normalized_sni_name == "localhost"
+                || normalized_sni_name.ends_with(".local")
+                || normalized_sni_name.ends_with(".internal")
+            {
+                return Err(TlsError::InvalidInput {
+                    message: "Invalid SNI hostname: private/local hostnames are not allowed"
+                        .to_string(),
+                });
+            }
             if sni_name.ends_with('.') {
                 return Err(TlsError::InvalidInput {
                     message: "Invalid SNI hostname: SNI must not include a trailing dot."
