@@ -46,6 +46,17 @@ impl WebhookChannel {
                 message: "Webhook URL must not contain credentials".to_string(),
             });
         }
+        if !url
+            .host_str()
+            .unwrap_or("")
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback())
+        {
+            crate::monitor::alerts::reject_private_webhook_host(
+                url.host_str().unwrap_or(""),
+                "Webhook URL",
+            )?;
+        }
         for (name, value) in &config.headers {
             HeaderName::from_bytes(name.as_bytes()).map_err(|error| TlsError::ConfigError {
                 message: format!("Invalid webhook header name '{name}': {error}"),

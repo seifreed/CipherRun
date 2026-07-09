@@ -266,7 +266,9 @@ fn ct_log_api_url(log_url: &str, path: &str) -> Result<url::Url> {
     if raw_ct_log_host(log_url).is_some_and(|host| {
         looks_like_obfuscated_ip(host)
             || looks_like_dotted_ip_literal(host)
-            || host.parse::<IpAddr>().is_ok_and(|ip| is_private_ip(&ip))
+            || host
+                .parse::<IpAddr>()
+                .is_ok_and(|ip| is_private_ip(&ip) && !ip.is_loopback())
     }) {
         return Err(TlsError::InvalidInput {
             message: "Invalid CT log URL: private or obfuscated IP notation is not allowed"
@@ -298,7 +300,10 @@ fn ct_log_api_url(log_url: &str, path: &str) -> Result<url::Url> {
             message: "Invalid CT log URL: private or local hosts are not allowed".to_string(),
         });
     }
-    if host.parse::<IpAddr>().is_ok_and(|ip| is_private_ip(&ip)) {
+    if host
+        .parse::<IpAddr>()
+        .is_ok_and(|ip| is_private_ip(&ip) && !ip.is_loopback())
+    {
         return Err(TlsError::InvalidInput {
             message: "Invalid CT log URL: private or local hosts are not allowed".to_string(),
         });
@@ -395,8 +400,10 @@ mod tests {
         assert!(ct_log_api_url("https://localhost.", "ct/v1/get-sth").is_err());
         assert!(ct_log_api_url("https://ct.internal", "ct/v1/get-sth").is_err());
         assert!(ct_log_api_url("https://ct.local", "ct/v1/get-sth").is_err());
-        assert!(ct_log_api_url("https://127.0.0.1", "ct/v1/get-sth").is_err());
-        assert!(ct_log_api_url("https://[::1]", "ct/v1/get-sth").is_err());
+        assert!(ct_log_api_url("https://10.0.0.1", "ct/v1/get-sth").is_err());
+        assert!(ct_log_api_url("https://[fe80::1]", "ct/v1/get-sth").is_err());
+        assert!(ct_log_api_url("https://127.0.0.1", "ct/v1/get-sth").is_ok());
+        assert!(ct_log_api_url("https://[::1]", "ct/v1/get-sth").is_ok());
     }
 
     #[test]

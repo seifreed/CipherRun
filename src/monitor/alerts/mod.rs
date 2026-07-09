@@ -77,7 +77,12 @@ pub(crate) async fn validated_webhook_target(
             message: "Webhook URL must not use obfuscated IP notation".to_string(),
         });
     }
-    reject_private_webhook_host(host, "Webhook URL")?;
+    if !host
+        .parse::<IpAddr>()
+        .is_ok_and(|ip| ip.is_loopback())
+    {
+        reject_private_webhook_host(host, "Webhook URL")?;
+    }
     let normalized_host = host.trim_end_matches('.').to_ascii_lowercase();
     let host_ip = host.parse::<IpAddr>().ok();
     let port = url.port_or_known_default().unwrap_or(80);
