@@ -34,6 +34,22 @@ fn test_policy_forces_full_scan_and_vulnerability_phase() {
 }
 
 #[test]
+fn test_starttls_protocol_enables_protocol_phase() {
+    let mut args = Args::default();
+    args.target = Some("mail.example.com".to_string());
+    args.starttls.protocol = Some("smtp".to_string());
+
+    let request = args.to_scan_request().expect("scan request should build");
+
+    assert!(request.scan.proto.enabled);
+    assert_eq!(
+        request.starttls_protocol(),
+        Some(crate::starttls::StarttlsProtocol::SMTP)
+    );
+    assert!(request.validate_for_scan().is_ok());
+}
+
+#[test]
 fn test_default_scan_without_compliance_does_not_force_full() {
     let args = Args::default();
     let request = args.to_scan_request().expect("scan request should build");

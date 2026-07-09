@@ -387,7 +387,7 @@ impl Args {
                         || self.compliance.policy.is_some(),
                 },
                 proto: crate::application::scan_request::ScanRequestProto {
-                    enabled: self.scan.protocols,
+                    enabled: self.scan.protocols || self.starttls.starttls_protocol().is_some(),
                     ssl2: self.scan.ssl2,
                     ssl3: self.scan.ssl3,
                     tls10: self.scan.tls10,
