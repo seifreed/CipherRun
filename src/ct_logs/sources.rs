@@ -4,8 +4,10 @@
 
 use super::Result;
 use crate::error::TlsError;
+use crate::security::is_private_ip;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::net::IpAddr;
 use tracing::{debug, info, warn};
 
 /// Google CT log list URL (v3 format)
@@ -208,6 +210,11 @@ fn is_valid_ct_log_url(url: &str) -> bool {
             && url.username().is_empty()
             && url.password().is_none()
             && !matches!(url.port(), Some(0))
+            && !matches!(url.host_str(), Some(host) if {
+                let host = host.to_ascii_lowercase();
+                host == "localhost" || host.ends_with(".local") || host.ends_with(".internal")
+            })
+            && !matches!(url.host_str(), Some(host) if host.parse::<IpAddr>().is_ok_and(|ip| is_private_ip(&ip)))
     })
 }
 
@@ -322,6 +329,8 @@ mod tests {
         assert!(!is_valid_ct_log_url("https://user@example.com"));
         assert!(!is_valid_ct_log_url("https://example.com:0"));
         assert!(!is_valid_ct_log_url("https://"));
+        assert!(!is_valid_ct_log_url("https://localhost"));
+        assert!(!is_valid_ct_log_url("https://127.0.0.1"));
     }
 
     #[test]
