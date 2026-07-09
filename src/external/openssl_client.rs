@@ -134,7 +134,11 @@ impl OpenSslClient {
                 crate::error::TlsError::Other(format!("Invalid STARTTLS protocol: {}", e))
             })?;
             cmd.arg("-starttls");
-            cmd.arg(protocol);
+            let normalized_protocol = match protocol.trim().to_ascii_lowercase().as_str() {
+                "postgresql" => "postgres".to_string(),
+                _ => protocol.trim().to_string(),
+            };
+            cmd.arg(normalized_protocol);
         }
 
         if let Some(ref xmpphost) = options.xmpphost {
@@ -598,6 +602,36 @@ SSL-Session:
         };
         let err = client.run(&options).expect_err("should fail");
         assert!(err.to_string().contains("Invalid proxy"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_run_normalizes_postgresql_starttls_alias() {
+        use std::fs;
+        use std::os::unix::fs::PermissionsExt;
+        use tempfile::tempdir;
+
+        let dir = tempdir().expect("tempdir should be created");
+        let script = dir.path().join("openssl");
+        fs::write(
+            &script,
+            "#!/bin/sh\nprintf '%s\\n' \"$@\"\nexit 0\n",
+        )
+        .expect("script should be written");
+        let mut perms = fs::metadata(&script).expect("script metadata should exist").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&script, perms).expect("script should be executable");
+
+        let client = OpenSslClient::with_path(&script);
+        let options = OpenSslClientOptions {
+            host: "example.com".to_string(),
+            starttls: Some("postgresql".to_string()),
+            ..Default::default()
+        };
+        let result = client.run(&options).expect("script should run");
+
+        assert!(result.stdout.contains("-starttls\npostgres"));
+        assert!(result.success);
     }
 
     #[test]
