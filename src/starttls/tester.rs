@@ -10,6 +10,7 @@ use std::time::Duration;
 pub struct StarttlsTester {
     target: Target,
     connect_timeout: Duration,
+    server_mode: bool,
 }
 
 impl StarttlsTester {
@@ -18,7 +19,13 @@ impl StarttlsTester {
         Self {
             target,
             connect_timeout: Duration::from_secs(10),
+            server_mode: false,
         }
+    }
+
+    pub fn with_server_mode(mut self, server_mode: bool) -> Self {
+        self.server_mode = server_mode;
+        self
     }
 
     /// Test STARTTLS for a specific protocol
@@ -39,7 +46,11 @@ impl StarttlsTester {
         // with an implementation (SMTP, IMAP, POP3, FTP, XMPP, LDAP, IRC,
         // PostgreSQL, MySQL, NNTP, Sieve, LMTP, Telnet) is exercised.
         let negotiator: Arc<dyn StarttlsNegotiator> =
-            Arc::from(get_negotiator(protocol, self.target.hostname.clone(), port));
+            Arc::from(get_negotiator(
+                protocol,
+                self.target.hostname.clone(),
+                self.server_mode,
+            ));
 
         // Test STARTTLS
         match self.test_starttls_with_negotiator(port, negotiator).await {
@@ -188,6 +199,7 @@ mod tests {
         let tester = StarttlsTester {
             target,
             connect_timeout: Duration::from_millis(50),
+            server_mode: false,
         };
         let result = tester.test_protocol(StarttlsProtocol::LDAP).await;
         assert!(!result.starttls_supported);
@@ -206,6 +218,7 @@ mod tests {
         let tester = StarttlsTester {
             target,
             connect_timeout: Duration::from_millis(50),
+            server_mode: false,
         };
         let result = tester.test_protocol(StarttlsProtocol::IRC).await;
         assert!(!result.starttls_supported);
@@ -223,6 +236,7 @@ mod tests {
         let tester = StarttlsTester {
             target,
             connect_timeout: Duration::from_millis(50),
+            server_mode: false,
         };
 
         let result = tester.test_protocol(StarttlsProtocol::SMTP).await;
@@ -256,6 +270,7 @@ mod tests {
         let tester = StarttlsTester {
             target,
             connect_timeout: Duration::from_millis(50),
+            server_mode: false,
         };
 
         let result = tester.test_protocol(StarttlsProtocol::IMAP).await;

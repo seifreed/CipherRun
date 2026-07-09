@@ -70,7 +70,8 @@ impl ScanPhase for ClientSimPhase {
         let simulator = ClientSimulator::new(context.target()).with_starttls(
             context.args.starttls_protocol(),
             context.args.starttls.xmpphost.clone(),
-        );
+        )
+        .with_starttls_server_mode(context.args.starttls_server_mode());
 
         // Simulate popular clients for faster scanning
         // This tests a representative sample of:

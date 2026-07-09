@@ -58,6 +58,7 @@ pub struct CertificateParser {
     read_timeout: Duration,
     mtls_config: Option<MtlsConfig>,
     starttls: Option<crate::starttls::StarttlsProtocol>,
+    starttls_server_mode: bool,
     starttls_hostname: Option<String>,
 }
 
@@ -79,6 +80,7 @@ impl CertificateParser {
             read_timeout: Duration::from_secs(5),
             mtls_config: None,
             starttls: None,
+            starttls_server_mode: false,
             starttls_hostname: None,
         }
     }
@@ -91,6 +93,7 @@ impl CertificateParser {
             read_timeout: Duration::from_secs(5),
             mtls_config: Some(mtls_config),
             starttls: None,
+            starttls_server_mode: false,
             starttls_hostname: None,
         }
     }
@@ -108,6 +111,11 @@ impl CertificateParser {
     ) -> Self {
         self.starttls = protocol;
         self.starttls_hostname = hostname;
+        self
+    }
+
+    pub fn with_starttls_server_mode(mut self, server_mode: bool) -> Self {
+        self.starttls_server_mode = server_mode;
         self
     }
 
@@ -139,7 +147,7 @@ impl CertificateParser {
             let negotiator = crate::starttls::protocols::get_negotiator(
                 starttls_proto,
                 hostname,
-                self.target.port,
+                self.starttls_server_mode,
             );
             crate::starttls::protocols::negotiate_starttls_with_timeout(
                 negotiator.as_ref(),

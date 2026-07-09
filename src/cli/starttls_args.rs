@@ -174,6 +174,16 @@ impl StarttlsArgs {
             }
         }
     }
+
+    /// Whether the requested XMPP STARTTLS mode is the server-to-server variant.
+    pub fn xmpp_server_mode(&self) -> bool {
+        self.xmpp_server
+            || self
+                .protocol
+                .as_deref()
+                .map(str::trim)
+                .is_some_and(|protocol| protocol.eq_ignore_ascii_case("xmpp-server"))
+    }
 }
 
 #[cfg(test)]
@@ -283,5 +293,14 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(args.starttls_port(), Some(5269));
+    }
+
+    #[test]
+    fn test_xmpp_server_mode_detects_alias() {
+        let args = StarttlsArgs {
+            protocol: Some(" xmpp-server ".to_string()),
+            ..Default::default()
+        };
+        assert!(args.xmpp_server_mode());
     }
 }

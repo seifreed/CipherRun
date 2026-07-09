@@ -140,6 +140,7 @@ async fn probe_cipher_at_protocol(
         PROBE_CONNECT_TIMEOUT,
         starttls,
         starttls_host,
+        false,
     )
     .await
     {

@@ -76,7 +76,8 @@ impl CertificatePhase {
         .with_starttls(
             context.args.starttls_protocol(),
             context.args.starttls.xmpphost.clone(),
-        );
+        )
+        .with_starttls_server_mode(context.args.starttls_server_mode());
 
         // Extract certificate chain from TLS handshake
         parser.get_certificate_chain().await

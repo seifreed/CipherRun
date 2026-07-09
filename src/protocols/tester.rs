@@ -26,6 +26,7 @@ pub struct ProtocolTester {
     pub(super) use_rdp: bool,
     pub(super) enable_bugs_mode: bool,
     pub(super) starttls_protocol: Option<crate::starttls::StarttlsProtocol>,
+    pub(super) starttls_server_mode: bool,
     pub(super) starttls_hostname: Option<String>,
     pub(super) sni_hostname: Option<String>,
     pub(super) protocol_filter: Option<Vec<Protocol>>,
@@ -45,6 +46,7 @@ impl ProtocolTester {
             use_rdp,
             enable_bugs_mode: false,
             starttls_protocol: None,
+            starttls_server_mode: false,
             starttls_hostname: None,
             sni_hostname: None,
             protocol_filter: None,
@@ -64,6 +66,7 @@ impl ProtocolTester {
             use_rdp,
             enable_bugs_mode: false,
             starttls_protocol: None,
+            starttls_server_mode: false,
             starttls_hostname: None,
             sni_hostname: None,
             protocol_filter: None,
@@ -79,6 +82,11 @@ impl ProtocolTester {
 
     pub fn with_starttls(mut self, protocol: Option<crate::starttls::StarttlsProtocol>) -> Self {
         self.starttls_protocol = protocol;
+        self
+    }
+
+    pub fn with_starttls_server_mode(mut self, server_mode: bool) -> Self {
+        self.starttls_server_mode = server_mode;
         self
     }
 
@@ -491,11 +499,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_test_all_ips_reports_not_supported_when_any_ip_rejects_and_others_are_inconclusive() {
+    async fn test_test_all_ips_reports_not_supported_when_any_ip_rejects_and_others_are_inconclusive()
+     {
         let close_listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("close listener should bind");
-        let port = close_listener.local_addr().expect("local addr should exist").port();
+        let port = close_listener
+            .local_addr()
+            .expect("local addr should exist")
+            .port();
 
         tokio::spawn(async move {
             if let Ok((_, _)) = close_listener.accept().await {

@@ -143,6 +143,16 @@ impl ScanRequest {
         }
     }
 
+    pub fn starttls_server_mode(&self) -> bool {
+        self.starttls.xmpp_server
+            || self
+                .starttls
+                .protocol
+                .as_deref()
+                .map(str::trim)
+                .is_some_and(|protocol| protocol.eq_ignore_ascii_case("xmpp-server"))
+    }
+
     pub fn has_specific_scan_focus(&self) -> bool {
         self.scan.proto.enabled
             || self.protocols_to_test().is_some()
@@ -212,5 +222,23 @@ impl ScanRequest {
             Duration::from_millis(self.connection.retry_backoff_ms),
             Duration::from_millis(self.connection.max_backoff_ms),
         ))
+    }
+}
+
+#[cfg(test)]
+mod extra_tests {
+    use super::*;
+
+    #[test]
+    fn starttls_server_mode_detects_xmpp_server_alias() {
+        let request = ScanRequest {
+            starttls: crate::application::scan_request::ScanRequestStarttls {
+                protocol: Some(" xmpp-server ".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        assert!(request.starttls_server_mode());
     }
 }

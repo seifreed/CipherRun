@@ -489,6 +489,7 @@ impl RobotTester {
             TLS_HANDSHAKE_TIMEOUT,
             self.starttls,
             &hostname,
+            false,
         )
         .await
         {
@@ -929,10 +930,13 @@ mod tests {
         let record_len = u16::from_be_bytes([header[3], header[4]]) as usize;
         let mut response = vec![0u8; 5 + record_len];
         response[..5].copy_from_slice(&header);
-        timeout(Duration::from_secs(2), client.read_exact(&mut response[5..]))
-            .await
-            .unwrap()
-            .unwrap();
+        timeout(
+            Duration::from_secs(2),
+            client.read_exact(&mut response[5..]),
+        )
+        .await
+        .unwrap()
+        .unwrap();
         assert_eq!(&response, &[0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x46]);
 
         writer.await.unwrap();

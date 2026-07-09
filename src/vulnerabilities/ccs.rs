@@ -91,6 +91,7 @@ impl CcsInjectionTester {
             TLS_HANDSHAKE_TIMEOUT,
             self.starttls,
             &hostname,
+            false,
         )
         .await
         {

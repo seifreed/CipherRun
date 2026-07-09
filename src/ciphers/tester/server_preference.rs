@@ -161,7 +161,7 @@ impl CipherTester {
             let negotiator = crate::starttls::protocols::get_negotiator(
                 starttls_proto,
                 self.starttls_negotiation_hostname(),
-                self.target.port,
+                self.starttls_server_mode,
             );
             crate::starttls::protocols::negotiate_starttls_with_timeout(
                 negotiator.as_ref(),

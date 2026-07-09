@@ -20,6 +20,8 @@ pub struct ProtocolTestConfig {
     pub protocols: Option<Vec<Protocol>>,
     /// STARTTLS protocol for application-layer negotiation
     pub starttls: Option<StarttlsProtocol>,
+    /// Whether STARTTLS uses the XMPP server-to-server stream variant
+    pub starttls_server_mode: bool,
     /// Custom SNI hostname
     pub sni_name: Option<String>,
     /// Enable OpenSSL bug workarounds
@@ -34,6 +36,7 @@ impl ProtocolTestConfig {
         Self {
             protocols: request.protocols_to_test(),
             starttls: request.starttls_protocol(),
+            starttls_server_mode: request.starttls_server_mode(),
             sni_name: request.tls.sni_name.clone(),
             bugs_mode: request.tls.bugs,
             timeout: Duration::from_secs(request.connection.connect_timeout.unwrap_or(10)),
@@ -52,6 +55,8 @@ pub struct CipherTestConfig {
     pub max_concurrent: usize,
     /// Connection timeout
     pub timeout: Duration,
+    /// Whether STARTTLS uses the XMPP server-to-server stream variant
+    pub starttls_server_mode: bool,
 }
 
 impl CipherTestConfig {
@@ -70,6 +75,7 @@ impl CipherTestConfig {
             test_all_ciphers: request.scan.ciphers.each_cipher,
             max_concurrent,
             timeout: Duration::from_secs(request.connection.connect_timeout.unwrap_or(10)),
+            starttls_server_mode: request.starttls_server_mode(),
         }
     }
 }

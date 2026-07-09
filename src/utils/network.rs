@@ -508,11 +508,15 @@ pub async fn connect_with_starttls(
     connect_timeout: Duration,
     starttls: Option<crate::starttls::StarttlsProtocol>,
     hostname: &str,
+    server_mode: bool,
 ) -> Result<TcpStream> {
     let mut stream = connect_with_timeout(addr, connect_timeout, None).await?;
     if let Some(protocol) = starttls {
-        let negotiator =
-            crate::starttls::protocols::get_negotiator(protocol, hostname.to_string(), addr.port());
+        let negotiator = crate::starttls::protocols::get_negotiator(
+            protocol,
+            hostname.to_string(),
+            server_mode,
+        );
         crate::starttls::protocols::negotiate_starttls_with_timeout(
             negotiator.as_ref(),
             &mut stream,
@@ -777,6 +781,7 @@ pub async fn try_vuln_ssl_connection(
         Duration::from_secs(config.timeout_secs),
         config.starttls,
         &hostname,
+        false,
     )
     .await
     {

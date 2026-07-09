@@ -141,6 +141,7 @@ impl<'a> HeartbleedTester<'a> {
             self.connect_timeout,
             self.starttls,
             &self.starttls_negotiation_hostname(),
+            false,
         )
         .await
         {

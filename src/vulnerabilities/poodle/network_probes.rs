@@ -102,6 +102,7 @@ pub(super) async fn send_malformed_record(
         TLS_HANDSHAKE_TIMEOUT,
         starttls,
         &target.hostname,
+        false,
     )
     .await
     {
@@ -276,8 +277,18 @@ mod tests {
     #[test]
     fn test_find_alert_description_skips_zero_length_record_before_alert() {
         let response = [
-            0x16, 0x03, 0x03, 0x00, 0x00, // zero-length handshake record
-            CONTENT_TYPE_ALERT, 0x03, 0x03, 0x00, 0x02, 0x02, 0x46,
+            0x16,
+            0x03,
+            0x03,
+            0x00,
+            0x00, // zero-length handshake record
+            CONTENT_TYPE_ALERT,
+            0x03,
+            0x03,
+            0x00,
+            0x02,
+            0x02,
+            0x46,
         ];
         assert_eq!(
             find_alert_description(&response, response.len()).expect("alert should parse"),

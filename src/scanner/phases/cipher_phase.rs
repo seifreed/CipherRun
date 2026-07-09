@@ -107,7 +107,9 @@ impl CipherPhase {
         // Enable STARTTLS if specified
         // Must perform application protocol handshake before TLS
         if let Some(starttls_proto) = context.args.starttls_protocol() {
-            tester = tester.with_starttls(Some(starttls_proto));
+            tester = tester
+                .with_starttls(Some(starttls_proto))
+                .with_starttls_server_mode(context.args.starttls_server_mode());
             tester = tester.with_starttls_hostname(context.args.starttls.xmpphost.clone());
         }
 

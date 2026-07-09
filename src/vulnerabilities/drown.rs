@@ -135,7 +135,14 @@ impl DrownTester {
             .starttls_hostname
             .clone()
             .unwrap_or_else(|| self.target.hostname.clone());
-        crate::utils::network::connect_with_starttls(addr, timeout, self.starttls, &hostname).await
+        crate::utils::network::connect_with_starttls(
+            addr,
+            timeout,
+            self.starttls,
+            &hostname,
+            false,
+        )
+        .await
     }
 
     fn detailed_status(status: Sslv2Status) -> Option<Sslv2Status> {
