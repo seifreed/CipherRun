@@ -145,7 +145,10 @@ pub async fn scan_websocket_handler(socket: WebSocket, scan_id: String, state: A
     });
 
     if let Ok(json) = serde_json::to_string(&init_msg) {
-        let _ = sender.send(Message::Text(json.into())).await;
+        if sender.send(Message::Text(json.into())).await.is_err() {
+            debug!("Client disconnected before initial scan message");
+            return;
+        }
     }
 
     // Spawn task to send progress updates for this specific scan
@@ -185,7 +188,9 @@ pub async fn scan_websocket_handler(socket: WebSocket, scan_id: String, state: A
                                 || progress.msg_type == "cancelled"
                             {
                                 debug!("Scan {} finished, closing WebSocket", scan_id_clone);
-                                let _ = sender.send(Message::Close(None)).await;
+                                if sender.send(Message::Close(None)).await.is_err() {
+                                    debug!("Client disconnected while closing scan stream");
+                                }
                                 break;
                             }
                         }
@@ -210,9 +215,14 @@ pub async fn scan_websocket_handler(socket: WebSocket, scan_id: String, state: A
                                             reconnect or poll the scan status endpoint for the final result",
                             });
                             if let Ok(json) = serde_json::to_string(&notice) {
-                                let _ = sender.send(Message::Text(json.into())).await;
+                                if sender.send(Message::Text(json.into())).await.is_err() {
+                                    debug!("Client disconnected while sending lagged notice");
+                                    break;
+                                }
                             }
-                            let _ = sender.send(Message::Close(None)).await;
+                            if sender.send(Message::Close(None)).await.is_err() {
+                                debug!("Client disconnected while closing lagged scan stream");
+                            }
                             break;
                         }
                         Err(broadcast::error::RecvError::Closed) => break,
