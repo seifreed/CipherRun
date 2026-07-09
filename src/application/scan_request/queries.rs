@@ -84,6 +84,7 @@ impl ScanRequest {
                 "nntp" => Some(NNTP),
                 "sieve" => Some(SIEVE),
                 "lmtp" => Some(LMTP),
+                "telnet" => Some(Telnet),
                 _ => None,
             }
         }

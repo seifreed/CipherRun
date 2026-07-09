@@ -1,5 +1,6 @@
 use super::*;
 use crate::protocols::Protocol;
+use crate::starttls::StarttlsProtocol;
 #[cfg(unix)]
 use std::ffi::OsString;
 #[cfg(unix)]
@@ -66,6 +67,21 @@ fn builds_protocol_filter_from_flags() {
         request.protocols_to_test(),
         Some(vec![Protocol::SSLv2, Protocol::TLS13])
     );
+}
+
+#[test]
+fn starttls_protocol_supports_telnet() {
+    let request = ScanRequest {
+        starttls: ScanRequestStarttls {
+            protocol: Some("telnet".to_string()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    assert_eq!(request.starttls_protocol(), Some(StarttlsProtocol::Telnet));
+    assert!(request.has_starttls_negotiation_request());
+    assert!(request.validate_common().is_ok());
 }
 
 #[test]
