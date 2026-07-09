@@ -102,6 +102,14 @@ impl SniGenerator {
             return false;
         }
 
+        let normalized_host = hostname.trim_end_matches('.').to_ascii_lowercase();
+        if normalized_host == "localhost"
+            || normalized_host.ends_with(".local")
+            || normalized_host.ends_with(".internal")
+        {
+            return false;
+        }
+
         let labels: Vec<&str> = hostname.split('.').collect();
 
         if labels.len() < 2 {
@@ -196,6 +204,9 @@ mod tests {
         assert!(SniGenerator::is_valid_hostname("my-site.example.org"));
         assert!(!SniGenerator::is_valid_hostname("127.0.0.1"));
         assert!(!SniGenerator::is_valid_hostname("127.1"));
+        assert!(!SniGenerator::is_valid_hostname("localhost"));
+        assert!(!SniGenerator::is_valid_hostname("service.local"));
+        assert!(!SniGenerator::is_valid_hostname("service.internal"));
 
         assert!(!SniGenerator::is_valid_hostname(""));
         assert!(!SniGenerator::is_valid_hostname("example"));
