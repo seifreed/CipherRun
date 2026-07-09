@@ -210,6 +210,7 @@ fn test_canonical_target_strips_existing_brackets() {
 fn test_sni_hostname_for_target_omits_ip_literals_without_override() {
     assert_eq!(sni_hostname_for_target("93.184.216.34", None), None);
     assert_eq!(sni_hostname_for_target("2001:db8::1", None), None);
+    assert_eq!(sni_hostname_for_target("127.1", None), None);
     assert_eq!(
         sni_hostname_for_target("example.com", None),
         Some("example.com".to_string())
@@ -571,6 +572,11 @@ fn test_server_name_for_hostname_accepts_normalized_fqdn() {
     // After normalization a rooted FQDN must yield a valid rustls ServerName.
     let normalized = normalize_dns_hostname("example.com.".to_string());
     assert!(server_name_for_hostname(&normalized).is_ok());
+}
+
+#[test]
+fn test_server_name_for_hostname_rejects_obfuscated_ip() {
+    assert!(server_name_for_hostname("127.1").is_err());
 }
 
 #[test]

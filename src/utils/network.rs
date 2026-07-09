@@ -12,7 +12,9 @@ use tokio::net::TcpStream;
 use tokio::time::timeout;
 
 // Import SSRF validation for DNS rebinding protection
-use crate::security::input_validation::{validate_hostname, validate_resolved_ips};
+use crate::security::input_validation::{
+    looks_like_obfuscated_ip, validate_hostname, validate_resolved_ips,
+};
 use crate::utils::{network_runtime, proxy::connect_via_proxy};
 
 /// Target information
@@ -69,6 +71,12 @@ pub fn server_name_for_hostname(
         .and_then(|value| value.strip_suffix(']'))
         .unwrap_or(hostname);
 
+    if looks_like_obfuscated_ip(hostname) {
+        return Err(crate::error::TlsError::ParseError {
+            message: "Invalid DNS name".into(),
+        });
+    }
+
     if let Ok(ip) = hostname.parse::<IpAddr>() {
         return Ok(rustls_pki_types::ServerName::from(ip).to_owned());
     }
@@ -112,7 +120,7 @@ pub fn sni_hostname_for_target(hostname: &str, override_hostname: Option<&str>) 
         .and_then(|value| value.strip_suffix(']'))
         .unwrap_or(hostname);
 
-    if hostname.parse::<IpAddr>().is_ok() {
+    if hostname.parse::<IpAddr>().is_ok() || looks_like_obfuscated_ip(hostname) {
         None
     } else {
         Some(hostname.to_string())
