@@ -90,6 +90,9 @@ impl HstsPreloadChecker {
 
         // Normalize domain (remove www. prefix, lowercase)
         let normalized = Self::normalize_domain(domain);
+        if normalized.parse::<IpAddr>().is_ok() {
+            return Err("HSTS preload lookup does not accept IP literals".to_string());
+        }
         if normalized == "localhost"
             || normalized.ends_with(".local")
             || normalized.ends_with(".internal")
@@ -510,6 +513,16 @@ mod tests {
             .await
             .expect_err("internal host should be rejected");
         assert!(err.contains("private/local hostnames"));
+    }
+
+    #[tokio::test]
+    async fn test_check_preload_status_rejects_ip_literal_urls() {
+        let checker = HstsPreloadChecker::new();
+        let err = checker
+            .check_preload_status("https://[2001:db8::1]/path")
+            .await
+            .expect_err("IP literal URL should be rejected");
+        assert!(err.contains("IP literals"));
     }
 
     #[test]
