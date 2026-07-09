@@ -1,9 +1,8 @@
 // Generic Webhook Alert Channel
 
 use crate::Result;
-use crate::constants::ALERT_SEND_TIMEOUT;
 use crate::error::TlsError;
-use crate::monitor::alerts::{Alert, AlertChannel};
+use crate::monitor::alerts::{Alert, AlertChannel, validated_webhook_target};
 use crate::monitor::config::WebhookConfig;
 use async_trait::async_trait;
 use reqwest::header::{HeaderName, HeaderValue};
@@ -12,7 +11,6 @@ use serde_json::json;
 /// Generic webhook alert channel
 pub struct WebhookChannel {
     config: WebhookConfig,
-    client: reqwest::Client,
 }
 
 impl WebhookChannel {
@@ -45,12 +43,7 @@ impl WebhookChannel {
             })?;
         }
 
-        let client = reqwest::Client::builder()
-            .timeout(ALERT_SEND_TIMEOUT)
-            .redirect(reqwest::redirect::Policy::none())
-            .build()?;
-
-        Ok(Self { config, client })
+        Ok(Self { config })
     }
 
     /// Format alert as JSON for webhook
@@ -80,8 +73,8 @@ impl WebhookChannel {
 impl AlertChannel for WebhookChannel {
     async fn send_alert(&self, alert: &Alert) -> Result<()> {
         let payload = self.format_payload(alert);
-
-        let mut request = self.client.post(&self.config.url).json(&payload);
+        let validated = validated_webhook_target(&self.config.url, std::time::Duration::from_secs(10)).await?;
+        let mut request = validated.client.post(validated.url).json(&payload);
 
         // Add custom headers
         for (key, value) in &self.config.headers {
@@ -113,8 +106,8 @@ impl AlertChannel for WebhookChannel {
             "test": true,
             "message": "Test webhook from CipherRun monitoring"
         });
-
-        let mut request = self.client.post(&self.config.url).json(&test_payload);
+        let validated = validated_webhook_target(&self.config.url, std::time::Duration::from_secs(10)).await?;
+        let mut request = validated.client.post(validated.url).json(&test_payload);
 
         for (key, value) in &self.config.headers {
             request = request.header(key, value);

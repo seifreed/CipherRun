@@ -12,14 +12,73 @@ use crate::Result;
 use crate::monitor::config::MonitorConfig;
 use crate::monitor::detector::{ChangeEvent, ChangeSeverity};
 use chrono::{DateTime, Duration, Utc};
+use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use tokio::net::lookup_host;
 
 pub use channels::AlertChannel;
 
 const ALERT_ERROR_BODY_LIMIT: u64 = 64 * 1024;
+
+pub(crate) struct ValidatedWebhookTarget {
+    pub(crate) url: Url,
+    pub(crate) client: reqwest::Client,
+}
+
+pub(crate) async fn validated_webhook_target(
+    webhook_url: &str,
+    timeout: std::time::Duration,
+) -> Result<ValidatedWebhookTarget> {
+    let url = Url::parse(webhook_url).map_err(|error| crate::error::TlsError::ConfigError {
+        message: format!("Invalid webhook url: {error}"),
+    })?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err(crate::error::TlsError::ConfigError {
+            message: "Invalid webhook url: scheme must be http or https".to_string(),
+        });
+    }
+    if matches!(url.port(), Some(0)) {
+        return Err(crate::error::TlsError::ConfigError {
+            message: "Invalid webhook url: port must be between 1 and 65535".to_string(),
+        });
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err(crate::error::TlsError::ConfigError {
+            message: "Webhook URL must not contain credentials".to_string(),
+        });
+    }
+
+    let host = url.host_str().ok_or_else(|| crate::error::TlsError::ConfigError {
+        message: "Invalid webhook url: host required".to_string(),
+    })?;
+    let port = url.port_or_known_default().unwrap_or(80);
+    let addrs: Vec<_> = lookup_host((host, port))
+        .await
+        .map_err(|error| crate::error::TlsError::Other(format!(
+            "Webhook DNS resolution failed for {host}: {error}"
+        )))?
+        .collect();
+    if addrs.is_empty() {
+        return Err(crate::error::TlsError::ConfigError {
+            message: format!("Webhook DNS resolution returned no addresses for {host}"),
+        });
+    }
+
+    let mut client_builder = reqwest::Client::builder()
+        .timeout(timeout)
+        .redirect(reqwest::redirect::Policy::none());
+    for addr in addrs {
+        client_builder = client_builder.resolve(host, addr);
+    }
+
+    Ok(ValidatedWebhookTarget {
+        url,
+        client: client_builder.build()?,
+    })
+}
 
 async fn alert_error_body(response: reqwest::Response, context: &str) -> Result<String> {
     let body =

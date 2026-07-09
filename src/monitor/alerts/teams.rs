@@ -1,7 +1,7 @@
 // Microsoft Teams Alert Channel - Webhook integration
 
+use super::validated_webhook_target;
 use crate::Result;
-use crate::constants::ALERT_SEND_TIMEOUT;
 use crate::error::TlsError;
 use crate::monitor::alerts::{Alert, AlertChannel, AlertType};
 use crate::monitor::config::TeamsConfig;
@@ -12,7 +12,6 @@ use serde_json::json;
 /// Microsoft Teams alert channel
 pub struct TeamsChannel {
     config: TeamsConfig,
-    client: reqwest::Client,
 }
 
 impl TeamsChannel {
@@ -37,11 +36,7 @@ impl TeamsChannel {
                 message: "Teams webhook_url must not contain credentials".to_string(),
             });
         }
-        let client = reqwest::Client::builder()
-            .timeout(ALERT_SEND_TIMEOUT)
-            .redirect(reqwest::redirect::Policy::none())
-            .build()?;
-        Ok(Self { config, client })
+        Ok(Self { config })
     }
 
     /// Format alert as Teams Adaptive Card message
@@ -120,10 +115,14 @@ impl TeamsChannel {
 impl AlertChannel for TeamsChannel {
     async fn send_alert(&self, alert: &Alert) -> Result<()> {
         let message = self.format_message(alert);
-
-        let response = self
+        let validated = validated_webhook_target(
+            &self.config.webhook_url,
+            std::time::Duration::from_secs(10),
+        )
+        .await?;
+        let response = validated
             .client
-            .post(&self.config.webhook_url)
+            .post(validated.url)
             .json(&message)
             .send()
             .await?;
@@ -152,10 +151,14 @@ impl AlertChannel for TeamsChannel {
             "title": "CipherRun Monitor - Connection Test",
             "text": "Test message from CipherRun monitoring - connection successful!"
         });
-
-        let response = self
+        let validated = validated_webhook_target(
+            &self.config.webhook_url,
+            std::time::Duration::from_secs(10),
+        )
+        .await?;
+        let response = validated
             .client
-            .post(&self.config.webhook_url)
+            .post(validated.url)
             .json(&test_message)
             .send()
             .await?;
