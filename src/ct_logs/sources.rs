@@ -4,6 +4,7 @@
 
 use super::Result;
 use crate::error::TlsError;
+use crate::security::validate_hostname;
 use crate::security::input_validation::looks_like_obfuscated_ip;
 use crate::security::is_private_ip;
 use serde::{Deserialize, Serialize};
@@ -220,7 +221,9 @@ impl SourceManager {
 }
 
 fn is_valid_ct_log_url(url: &str) -> bool {
-    if raw_ct_log_host(url).is_some_and(looks_like_obfuscated_ip) {
+    if raw_ct_log_host(url).is_some_and(|host| {
+        looks_like_obfuscated_ip(host) || validate_hostname(host).is_err()
+    }) {
         return false;
     }
 
@@ -252,11 +255,15 @@ fn raw_ct_log_host(url: &str) -> Option<&str> {
 }
 
 async fn ct_log_url_resolves_publicly(url: &str) -> Result<bool> {
+    if let Some(host) = raw_ct_log_host(url) {
+        validate_hostname(host).map_err(|error| TlsError::Other(format!("Invalid CT log host: {error}")))?;
+    }
     let parsed = url::Url::parse(url).map_err(|error| TlsError::Other(format!("{error}")))?;
-    let host = parsed
+    let raw_host = parsed
         .host_str()
         .ok_or_else(|| TlsError::Other("CT log URL missing host".to_string()))?
-        .trim_end_matches('.');
+        .to_string();
+    let host = raw_host.trim_end_matches('.');
     let port = parsed.port_or_known_default().unwrap_or(443);
     let addrs: Vec<_> = lookup_host((host, port))
         .await
@@ -387,11 +394,23 @@ mod tests {
         assert!(!is_valid_ct_log_url("https://0x7f000001"));
     }
 
+    #[test]
+    fn test_is_valid_ct_log_url_rejects_dotted_ip_literal() {
+        assert!(!is_valid_ct_log_url("https://10.0.0.1./log"));
+    }
+
     #[tokio::test]
     async fn test_ct_log_url_resolves_publicly_rejects_localhost() {
         assert!(!ct_log_url_resolves_publicly("https://localhost")
             .await
             .expect("resolution check should succeed"));
+    }
+
+    #[tokio::test]
+    async fn test_ct_log_url_resolves_publicly_rejects_dotted_ip_literal() {
+        assert!(ct_log_url_resolves_publicly("https://10.0.0.1./log")
+            .await
+            .is_err());
     }
 
     #[tokio::test]
