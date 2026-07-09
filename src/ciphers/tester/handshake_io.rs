@@ -86,6 +86,7 @@ impl CipherTester {
             return Ok(false);
         }
 
+        let mut any_not_supported = false;
         let mut last_error: Option<crate::TlsError> = None;
         for addr in &addrs {
             match self
@@ -93,15 +94,20 @@ impl CipherTester {
                 .await
             {
                 Ok(true) => return Ok(true),
-                Ok(false) => {}
+                Ok(false) => any_not_supported = true,
                 Err(e) => {
                     last_error = Some(e);
                 }
             }
         }
 
-        // Union semantics: without a positive result, every IP must reject the
-        // cipher before we can say the target does not support it.
+        // Union semantics: if any IP definitively rejects the cipher, the
+        // target does not support it overall even when other IPs are
+        // inconclusive. Only all-inconclusive probes should bubble an error.
+        if any_not_supported {
+            return Ok(false);
+        }
+
         if let Some(err) = last_error {
             return Err(err);
         }
