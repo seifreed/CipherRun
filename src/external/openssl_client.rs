@@ -2,6 +2,7 @@
 // Complete wrapper around OpenSSL s_client for advanced testing
 
 use crate::Result;
+use crate::security::is_private_ip;
 use crate::security::{
     validate_cipher, validate_hostname, validate_port, validate_starttls_protocol,
 };
@@ -114,6 +115,7 @@ impl OpenSslClient {
         // SECURITY: Validate all inputs to prevent command injection (CWE-78)
         validate_hostname(&options.host)
             .map_err(|e| crate::error::TlsError::Other(format!("Invalid hostname: {}", e)))?;
+        reject_private_or_local_host(&options.host, "hostname", true)?;
 
         validate_port(options.port)
             .map_err(|e| crate::error::TlsError::Other(format!("Invalid port: {}", e)))?;
@@ -138,6 +140,7 @@ impl OpenSslClient {
         if let Some(ref xmpphost) = options.xmpphost {
             validate_hostname(xmpphost)
                 .map_err(|e| crate::error::TlsError::Other(format!("Invalid xmpphost: {}", e)))?;
+            reject_private_or_local_host(xmpphost, "xmpphost", false)?;
             cmd.arg("-xmpphost");
             cmd.arg(xmpphost);
         }
@@ -147,6 +150,7 @@ impl OpenSslClient {
             // SECURITY: Validate servername to prevent command injection
             validate_hostname(servername)
                 .map_err(|e| crate::error::TlsError::Other(format!("Invalid servername: {}", e)))?;
+            reject_private_or_local_host(servername, "servername", false)?;
             cmd.arg("-servername");
             cmd.arg(servername);
         }
@@ -332,6 +336,31 @@ fn validate_file_path_arg(value: &std::ffi::OsStr, flag: &str) -> crate::Result<
             value.to_string_lossy()
         );
     }
+    Ok(())
+}
+
+fn reject_private_or_local_host(
+    host: &str,
+    label: &str,
+    allow_ip_literals: bool,
+) -> crate::Result<()> {
+    let normalized_host = host.trim_end_matches('.').to_ascii_lowercase();
+    if normalized_host == "localhost"
+        || normalized_host.ends_with(".local")
+        || normalized_host.ends_with(".internal")
+    {
+        crate::tls_bail!("Invalid {}: private/local hosts are not allowed", label);
+    }
+
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        if !allow_ip_literals {
+            crate::tls_bail!("Invalid {}: IP literals are not allowed", label);
+        }
+        if is_private_ip(&ip) {
+            crate::tls_bail!("Invalid {}: private/internal IP literals are not allowed", label);
+        }
+    }
+
     Ok(())
 }
 
@@ -569,6 +598,40 @@ SSL-Session:
         };
         let err = client.run(&options).expect_err("should fail");
         assert!(err.to_string().contains("Invalid proxy"));
+    }
+
+    #[test]
+    fn test_run_rejects_private_or_local_targets_and_sni() {
+        let client = OpenSslClient::new();
+
+        let options = OpenSslClientOptions {
+            host: "localhost".to_string(),
+            ..Default::default()
+        };
+        let err = client
+            .run(&options)
+            .expect_err("localhost host should fail");
+        assert!(err.to_string().contains("private/local hosts"));
+
+        let options = OpenSslClientOptions {
+            host: "example.com".to_string(),
+            servername: Some("127.0.0.1".to_string()),
+            ..Default::default()
+        };
+        let err = client
+            .run(&options)
+            .expect_err("IP literal SNI should fail");
+        assert!(err.to_string().contains("IP literals"));
+
+        let options = OpenSslClientOptions {
+            host: "example.com".to_string(),
+            xmpphost: Some("localhost".to_string()),
+            ..Default::default()
+        };
+        let err = client
+            .run(&options)
+            .expect_err("localhost xmpphost should fail");
+        assert!(err.to_string().contains("private/local hosts"));
     }
 
     #[test]
