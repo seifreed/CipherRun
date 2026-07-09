@@ -265,6 +265,7 @@ async fn revert_sqlite_migration_manual(
 async fn revert_scan_revocation_json_sqlite(pool: &sqlx::SqlitePool) -> crate::Result<()> {
     sqlx::raw_sql(
         r#"
+        PRAGMA foreign_keys = OFF;
         CREATE TABLE scans_revert (
             scan_id INTEGER PRIMARY KEY AUTOINCREMENT,
             target_hostname VARCHAR(255) NOT NULL,
@@ -287,6 +288,7 @@ async fn revert_scan_revocation_json_sqlite(pool: &sqlx::SqlitePool) -> crate::R
         ALTER TABLE scans_revert RENAME TO scans;
         CREATE INDEX IF NOT EXISTS idx_scans_composite ON scans(target_hostname, target_port, scan_timestamp DESC);
         CREATE INDEX IF NOT EXISTS idx_scans_timestamp ON scans(scan_timestamp DESC);
+        PRAGMA foreign_keys = ON;
         "#,
     )
     .execute(pool)
@@ -349,6 +351,75 @@ mod tests {
                     .any(|row| row.try_get::<String, _>("name").ok().as_deref()
                         == Some("revocation_json")),
                 "revocation_json column should be removed by revert"
+            );
+        } else {
+            panic!("expected sqlite pool");
+        }
+
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn test_revert_last_sqlite_migration_preserves_child_rows() {
+        let config = DatabaseConfig::sqlite(PathBuf::from(":memory:"));
+        let pool = DatabasePool::new(&config)
+            .await
+            .expect("test assertion should succeed");
+
+        run_migrations(&pool)
+            .await
+            .expect("migrations should succeed");
+
+        if let DatabasePool::Sqlite(sqlite_pool) = &pool {
+            sqlx::query(
+                r#"
+                INSERT INTO scans (
+                    target_hostname, target_port, scan_timestamp, overall_grade,
+                    overall_score, scan_duration_ms, revocation_json, scanner_version
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                "#,
+            )
+            .bind("child.test")
+            .bind(443_i32)
+            .bind(chrono::Utc::now())
+            .bind("A")
+            .bind(95_i32)
+            .bind(1200_i64)
+            .bind(Some("{\"status\":\"Good\"}"))
+            .bind("test")
+            .execute(sqlite_pool)
+            .await
+            .expect("scan row should insert");
+
+            sqlx::query(
+                r#"
+                INSERT INTO protocols (scan_id, protocol_name, enabled, preferred)
+                VALUES (?, ?, ?, ?)
+                "#,
+            )
+            .bind(1_i64)
+            .bind("TLS 1.3")
+            .bind(true)
+            .bind(true)
+            .execute(sqlite_pool)
+            .await
+            .expect("protocol row should insert");
+        } else {
+            panic!("expected sqlite pool");
+        }
+
+        revert_migration(&pool)
+            .await
+            .expect("revert should succeed");
+
+        if let DatabasePool::Sqlite(sqlite_pool) = &pool {
+            let protocol_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM protocols")
+                .fetch_one(sqlite_pool)
+                .await
+                .expect("protocol count should query");
+            assert_eq!(
+                protocol_count, 1,
+                "child rows should survive the table swap"
             );
         } else {
             panic!("expected sqlite pool");
