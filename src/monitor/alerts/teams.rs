@@ -53,7 +53,14 @@ impl TeamsChannel {
         validate_hostname(url.host_str().unwrap_or("")).map_err(|error| TlsError::ConfigError {
             message: format!("Invalid Teams webhook_url: {error}"),
         })?;
-        reject_private_webhook_host(url.host_str().unwrap_or(""), "Teams webhook_url")?;
+        if !url
+            .host_str()
+            .unwrap_or("")
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback())
+        {
+            reject_private_webhook_host(url.host_str().unwrap_or(""), "Teams webhook_url")?;
+        }
         Ok(Self { config })
     }
 
@@ -252,6 +259,14 @@ mod tests {
         config.webhook_url = "https://localhost/webhook/TEST".to_string();
 
         assert!(TeamsChannel::new(config).is_err());
+    }
+
+    #[test]
+    fn test_teams_channel_allows_loopback_ip_webhook_url() {
+        let mut config = create_test_config();
+        config.webhook_url = "https://127.0.0.1/webhook/TEST".to_string();
+
+        assert!(TeamsChannel::new(config).is_ok());
     }
 
     #[test]
