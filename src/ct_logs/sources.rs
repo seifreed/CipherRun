@@ -220,6 +220,10 @@ impl SourceManager {
 }
 
 fn is_valid_ct_log_url(url: &str) -> bool {
+    if raw_ct_log_host(url).is_some_and(looks_like_obfuscated_ip) {
+        return false;
+    }
+
     url::Url::parse(url).is_ok_and(|url| {
         let host = url.host_str().unwrap_or("").trim_end_matches('.').to_ascii_lowercase();
         matches!(url.scheme(), "http" | "https")
@@ -233,6 +237,18 @@ fn is_valid_ct_log_url(url: &str) -> bool {
             && !matches!(url.host_str(), Some(host) if host.parse::<IpAddr>().is_ok_and(|ip| is_private_ip(&ip)))
             && !looks_like_obfuscated_ip(&host)
     })
+}
+
+fn raw_ct_log_host(url: &str) -> Option<&str> {
+    let authority = url.split_once("://")?.1;
+    let authority = authority.split(['/', '?', '#']).next().unwrap_or(authority);
+    let host = authority.rsplit_once('@').map(|(_, host)| host).unwrap_or(authority);
+
+    if let Some(host) = host.strip_prefix('[') {
+        host.split_once(']').map(|(host, _)| host)
+    } else {
+        Some(host.split_once(':').map_or(host, |(hostname, _)| hostname))
+    }
 }
 
 async fn ct_log_url_resolves_publicly(url: &str) -> Result<bool> {
@@ -368,6 +384,7 @@ mod tests {
         assert!(!is_valid_ct_log_url("https://127.0.0.1"));
         assert!(!is_valid_ct_log_url("https://2130706433"));
         assert!(!is_valid_ct_log_url("https://127.1"));
+        assert!(!is_valid_ct_log_url("https://0x7f000001"));
     }
 
     #[tokio::test]
