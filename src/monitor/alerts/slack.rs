@@ -1,10 +1,11 @@
 // Slack Alert Channel - Webhook integration
 
-use super::{formatting, validated_webhook_target};
+use super::{formatting, raw_webhook_host, validated_webhook_target};
 use crate::Result;
 use crate::error::TlsError;
 use crate::monitor::alerts::{Alert, AlertChannel, AlertType};
 use crate::monitor::config::SlackConfig;
+use crate::security::input_validation::looks_like_obfuscated_ip;
 use async_trait::async_trait;
 use serde_json::json;
 
@@ -16,6 +17,12 @@ pub struct SlackChannel {
 impl SlackChannel {
     /// Create new Slack channel
     pub fn new(config: SlackConfig) -> Result<Self> {
+        if raw_webhook_host(&config.webhook_url).is_some_and(looks_like_obfuscated_ip) {
+            return Err(TlsError::ConfigError {
+                message: "Invalid Slack webhook_url: obfuscated IP notation is not allowed"
+                    .to_string(),
+            });
+        }
         let url =
             reqwest::Url::parse(&config.webhook_url).map_err(|error| TlsError::ConfigError {
                 message: format!("Invalid Slack webhook_url: {error}"),
@@ -242,6 +249,18 @@ mod tests {
             Err(err) => err,
         };
         assert!(err.to_string().contains("credentials"));
+    }
+
+    #[test]
+    fn test_slack_channel_rejects_obfuscated_ip_webhook_url() {
+        let mut config = create_test_config();
+        config.webhook_url = "https://127.1/services/TEST".to_string();
+
+        let err = match SlackChannel::new(config) {
+            Ok(_) => panic!("obfuscated IP should fail"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("obfuscated IP notation"));
     }
 
     #[test]

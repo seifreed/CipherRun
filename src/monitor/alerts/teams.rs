@@ -1,11 +1,12 @@
 // Microsoft Teams Alert Channel - Webhook integration
 
-use super::validated_webhook_target;
+use super::{raw_webhook_host, validated_webhook_target};
 use crate::Result;
 use crate::error::TlsError;
 use crate::monitor::alerts::{Alert, AlertChannel, AlertType};
 use crate::monitor::config::TeamsConfig;
 use crate::monitor::detector::ChangeSeverity;
+use crate::security::input_validation::looks_like_obfuscated_ip;
 use async_trait::async_trait;
 use serde_json::json;
 
@@ -17,6 +18,12 @@ pub struct TeamsChannel {
 impl TeamsChannel {
     /// Create new Teams channel
     pub fn new(config: TeamsConfig) -> Result<Self> {
+        if raw_webhook_host(&config.webhook_url).is_some_and(looks_like_obfuscated_ip) {
+            return Err(TlsError::ConfigError {
+                message: "Invalid Teams webhook_url: obfuscated IP notation is not allowed"
+                    .to_string(),
+            });
+        }
         let url =
             reqwest::Url::parse(&config.webhook_url).map_err(|error| TlsError::ConfigError {
                 message: format!("Invalid Teams webhook_url: {error}"),
@@ -210,6 +217,18 @@ mod tests {
             Err(err) => err,
         };
         assert!(err.to_string().contains("credentials"));
+    }
+
+    #[test]
+    fn test_teams_channel_rejects_obfuscated_ip_webhook_url() {
+        let mut config = create_test_config();
+        config.webhook_url = "https://127.1/webhook/TEST".to_string();
+
+        let err = match TeamsChannel::new(config) {
+            Ok(_) => panic!("obfuscated IP should fail"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("obfuscated IP notation"));
     }
 
     #[test]

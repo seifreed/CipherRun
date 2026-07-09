@@ -2,6 +2,8 @@
 
 use crate::Result;
 use crate::error::TlsError;
+use crate::monitor::alerts::raw_webhook_host;
+use crate::security::input_validation::looks_like_obfuscated_ip;
 use crate::security::validate_hostname;
 use crate::monitor::types::AlertThresholds;
 use lettre::message::Mailbox;
@@ -337,6 +339,11 @@ impl MonitorConfig {
                 message: format!("enabled {label} must not be empty"),
             });
         }
+        if raw_webhook_host(value).is_some_and(looks_like_obfuscated_ip) {
+            return Err(TlsError::ConfigError {
+                message: format!("Invalid {label}: obfuscated IP notation is not allowed"),
+            });
+        }
         let url = reqwest::Url::parse(value).map_err(|error| TlsError::ConfigError {
             message: format!("Invalid {label}: {error}"),
         })?;
@@ -641,6 +648,25 @@ webhook_url = "file:///tmp/hook"
         let err = MonitorConfig::from_file(&path).expect_err("bad Slack URL should fail");
 
         assert!(err.to_string().contains("scheme must be http or https"));
+    }
+
+    #[test]
+    fn test_from_file_rejects_enabled_slack_obfuscated_ip_url() {
+        let dir = tempfile::tempdir().expect("test assertion should succeed");
+        let path = dir.path().join("monitor.toml");
+        fs::write(
+            &path,
+            r#"
+[monitor.alerts.slack]
+enabled = true
+webhook_url = "https://127.1/services/TEST"
+"#,
+        )
+        .expect("test assertion should succeed");
+
+        let err = MonitorConfig::from_file(&path).expect_err("obfuscated Slack URL should fail");
+
+        assert!(err.to_string().contains("obfuscated IP notation"));
     }
 
     #[test]

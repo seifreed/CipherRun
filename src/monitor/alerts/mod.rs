@@ -115,7 +115,7 @@ pub(crate) async fn validated_webhook_target(
     })
 }
 
-fn raw_webhook_host(webhook_url: &str) -> Option<&str> {
+pub(crate) fn raw_webhook_host(webhook_url: &str) -> Option<&str> {
     let authority = webhook_url.split_once("://")?.1;
     let authority = authority.split(['/', '?', '#']).next().unwrap_or(authority);
     let host = authority.rsplit_once('@').map(|(_, host)| host).unwrap_or(authority);

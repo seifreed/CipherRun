@@ -1,8 +1,10 @@
 // Generic Webhook Alert Channel
 
+use super::raw_webhook_host;
 use crate::Result;
 use crate::error::TlsError;
 use crate::monitor::alerts::{Alert, AlertChannel, validated_webhook_target};
+use crate::security::input_validation::looks_like_obfuscated_ip;
 use crate::monitor::config::WebhookConfig;
 use async_trait::async_trait;
 use reqwest::header::{HeaderName, HeaderValue};
@@ -16,6 +18,11 @@ pub struct WebhookChannel {
 impl WebhookChannel {
     /// Create new webhook channel
     pub fn new(config: WebhookConfig) -> Result<Self> {
+        if raw_webhook_host(&config.url).is_some_and(looks_like_obfuscated_ip) {
+            return Err(TlsError::ConfigError {
+                message: "Webhook URL must not use obfuscated IP notation".to_string(),
+            });
+        }
         let url = reqwest::Url::parse(&config.url).map_err(|error| TlsError::ConfigError {
             message: format!("Invalid webhook url: {error}"),
         })?;
@@ -150,6 +157,18 @@ mod tests {
         let config = create_test_config();
         let channel = WebhookChannel::new(config).expect("test assertion should succeed");
         assert_eq!(channel.channel_name(), "webhook");
+    }
+
+    #[test]
+    fn test_webhook_channel_rejects_obfuscated_ip_url() {
+        let mut config = create_test_config();
+        config.url = "https://127.1/alerts".to_string();
+
+        let err = match WebhookChannel::new(config) {
+            Ok(_) => panic!("obfuscated IP should fail"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("obfuscated IP notation"));
     }
 
     #[test]
