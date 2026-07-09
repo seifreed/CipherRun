@@ -491,6 +491,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_test_all_ips_reports_not_supported_when_any_ip_rejects_and_others_are_inconclusive() {
+        let close_listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("close listener should bind");
+        let port = close_listener.local_addr().expect("local addr should exist").port();
+
+        tokio::spawn(async move {
+            if let Ok((_, _)) = close_listener.accept().await {
+                // Drop the socket immediately to force a clean handshake refusal.
+            }
+        });
+
+        let target = Target::with_ips(
+            "example.test".to_string(),
+            port,
+            vec![
+                "127.0.0.1".parse().expect("valid IP"),
+                "192.0.2.1".parse().expect("valid IP"),
+            ],
+        )
+        .expect("target should build");
+        let tester = ProtocolTester::new(target)
+            .with_test_all_ips(true)
+            .with_connect_timeout(Duration::from_millis(100))
+            .with_read_timeout(Duration::from_millis(100));
+
+        let result = tester
+            .test_protocol(Protocol::SSLv3)
+            .await
+            .expect("test assertion should succeed");
+
+        assert!(!result.supported);
+        assert!(!result.inconclusive);
+    }
+
+    #[tokio::test]
     async fn test_detect_heartbeat_extension_returns_none_on_close() {
         let addr = spawn_close_server().await;
         let target = Target::with_ips("example.test".to_string(), addr.port(), vec![addr.ip()])

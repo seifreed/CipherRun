@@ -194,6 +194,7 @@ impl ProtocolTester {
         );
 
         let mut any_supported = false;
+        let mut any_not_supported = false;
         let mut any_inconclusive = false;
         let mut per_ip_results = Vec::new();
 
@@ -218,6 +219,8 @@ impl ProtocolTester {
 
             if ip_outcome.is_supported() {
                 any_supported = true;
+            } else if matches!(ip_outcome, ProtocolProbeOutcome::NotSupported) {
+                any_not_supported = true;
             } else if ip_outcome.is_inconclusive() {
                 any_inconclusive = true;
             }
@@ -248,6 +251,8 @@ impl ProtocolTester {
 
         if any_supported {
             Ok(ProtocolProbeOutcome::Supported)
+        } else if any_not_supported {
+            Ok(ProtocolProbeOutcome::NotSupported)
         } else if any_inconclusive {
             Ok(ProtocolProbeOutcome::Inconclusive)
         } else {
