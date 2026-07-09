@@ -8,6 +8,7 @@ use crate::api::presenters::target_input::scan_request_from_target_and_options;
 use crate::api::state::ApiStats;
 use crate::application::ScanRequest;
 use crate::error::TlsError;
+use crate::security::validate_hostname;
 use crate::security::input_validation::looks_like_obfuscated_ip;
 use crate::scanner::{ScanResults, Scanner};
 use crate::utils::network::canonical_target;
@@ -558,6 +559,9 @@ pub(crate) async fn validate_webhook_url(webhook_url: &str) -> Result<ValidatedW
             message: "Webhook URL has no host".to_string(),
         })?
         .to_string();
+    validate_hostname(&host).map_err(|error| TlsError::InvalidInput {
+        message: format!("Invalid webhook URL: {error}"),
+    })?;
     let normalized_host = host.trim_end_matches('.').to_ascii_lowercase();
 
     // Block obvious private hostnames and IP literals
@@ -775,6 +779,15 @@ mod tests {
         };
 
         assert!(err.to_string().contains("obfuscated IP notation"));
+    }
+
+    #[tokio::test]
+    async fn test_validate_webhook_url_rejects_dotted_ip_literal() {
+        let err = validate_webhook_url("https://10.0.0.1./callback")
+            .await
+            .expect_err("dotted IP should fail");
+
+        assert!(!err.to_string().is_empty());
     }
 
     #[tokio::test]

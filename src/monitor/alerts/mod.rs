@@ -11,6 +11,7 @@ pub mod webhook;
 use crate::Result;
 use crate::monitor::config::MonitorConfig;
 use crate::monitor::detector::{ChangeEvent, ChangeSeverity};
+use crate::security::validate_hostname;
 use crate::security::input_validation::looks_like_obfuscated_ip;
 use crate::security::is_private_ip;
 use chrono::{DateTime, Duration, Utc};
@@ -62,6 +63,9 @@ pub(crate) async fn validated_webhook_target(
 
     let host = url.host_str().ok_or_else(|| crate::error::TlsError::ConfigError {
         message: "Invalid webhook url: host required".to_string(),
+    })?;
+    validate_hostname(host).map_err(|error| crate::error::TlsError::ConfigError {
+        message: format!("Invalid webhook url: {error}"),
     })?;
     let normalized_host = host.trim_end_matches('.').to_ascii_lowercase();
     if normalized_host != "localhost"
@@ -400,6 +404,21 @@ mod tests_extra {
         };
 
         assert!(err.to_string().contains("private/internal IP literal"));
+    }
+
+    #[tokio::test]
+    async fn test_validated_webhook_target_rejects_dotted_ip_literal() {
+        let err = match validated_webhook_target(
+            "https://10.0.0.1./alerts",
+            std::time::Duration::from_secs(1),
+        )
+        .await
+        {
+            Ok(_) => panic!("dotted IP literal should fail"),
+            Err(err) => err,
+        };
+
+        assert!(!err.to_string().is_empty());
     }
 
     #[tokio::test]
