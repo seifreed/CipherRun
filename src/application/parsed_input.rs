@@ -9,6 +9,15 @@ fn normalize_host_for_input(hostname: String) -> Result<String> {
             message: "Obfuscated IP notation is not allowed".to_string(),
         });
     }
+    let normalized_host = hostname.trim_end_matches('.').to_ascii_lowercase();
+    if normalized_host == "localhost"
+        || normalized_host.ends_with(".local")
+        || normalized_host.ends_with(".internal")
+    {
+        return Err(TlsError::InvalidInput {
+            message: "Private/local hostnames are not allowed".to_string(),
+        });
+    }
     Ok(hostname)
 }
 
@@ -256,6 +265,13 @@ mod tests {
     }
 
     #[test]
+    fn rejects_private_host_port_days() {
+        assert!(HostPortDaysInput::parse("localhost:443:7").is_err());
+        assert!(HostPortDaysInput::parse("service.local:443:7").is_err());
+        assert!(HostPortDaysInput::parse("service.internal:443:7").is_err());
+    }
+
+    #[test]
     fn parses_host_port_with_default_port() {
         let parsed =
             HostPortInput::parse_with_default_port("example.com", 443).expect("should parse");
@@ -291,6 +307,13 @@ mod tests {
     fn rejects_obfuscated_ip_host_port_with_default_port() {
         assert!(HostPortInput::parse_with_default_port("127.1", 443).is_err());
         assert!(HostPortInput::parse_with_default_port("2130706433", 443).is_err());
+    }
+
+    #[test]
+    fn rejects_private_host_port_with_default_port() {
+        assert!(HostPortInput::parse_with_default_port("localhost", 443).is_err());
+        assert!(HostPortInput::parse_with_default_port("service.local", 443).is_err());
+        assert!(HostPortInput::parse_with_default_port("service.internal", 443).is_err());
     }
 
     #[test]
