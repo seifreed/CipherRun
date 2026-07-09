@@ -1,14 +1,12 @@
-use crate::security::input_validation::looks_like_obfuscated_ip;
+use crate::security::input_validation::validate_hostname;
 use crate::utils::network::{normalize_dns_hostname, split_target_host_port};
 use crate::{Result, TlsError};
 
 fn normalize_host_for_input(hostname: String) -> Result<String> {
     let hostname = normalize_dns_hostname(hostname);
-    if looks_like_obfuscated_ip(&hostname) {
-        return Err(TlsError::InvalidInput {
-            message: "Obfuscated IP notation is not allowed".to_string(),
-        });
-    }
+    validate_hostname(&hostname).map_err(|error| TlsError::InvalidInput {
+        message: error.to_string(),
+    })?;
     let normalized_host = hostname.trim_end_matches('.').to_ascii_lowercase();
     if normalized_host == "localhost"
         || normalized_host.ends_with(".local")
@@ -203,6 +201,11 @@ mod tests {
     }
 
     #[test]
+    fn rejects_dotted_ip_literal_host_port_days() {
+        assert!(HostPortDaysInput::parse("192.0.2.1.:443:7").is_err());
+    }
+
+    #[test]
     fn host_port_days_normalizes_rooted_fqdn() {
         let parsed = HostPortDaysInput::parse("example.com.:443:7").expect("should parse");
         assert_eq!(parsed.hostname, "example.com");
@@ -285,6 +288,11 @@ mod tests {
             HostPortInput::parse_with_default_port("192.0.2.1", 443).expect("should parse");
         assert_eq!(parsed.hostname, "192.0.2.1");
         assert_eq!(parsed.port, 443);
+    }
+
+    #[test]
+    fn rejects_dotted_ip_literal_host_port_with_default_port() {
+        assert!(HostPortInput::parse_with_default_port("192.0.2.1.", 443).is_err());
     }
 
     #[test]
