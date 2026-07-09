@@ -70,8 +70,9 @@ pub fn server_name_for_hostname(
         .strip_prefix('[')
         .and_then(|value| value.strip_suffix(']'))
         .unwrap_or(hostname);
+    let hostname = normalize_dns_hostname(hostname.to_string());
 
-    if looks_like_obfuscated_ip(hostname) {
+    if looks_like_obfuscated_ip(&hostname) {
         return Err(crate::error::TlsError::ParseError {
             message: "Invalid DNS name".into(),
         });

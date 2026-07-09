@@ -619,6 +619,11 @@ fn test_server_name_for_hostname_accepts_normalized_fqdn() {
 }
 
 #[test]
+fn test_server_name_for_hostname_normalizes_rooted_fqdn() {
+    assert!(server_name_for_hostname("example.com.").is_ok());
+}
+
+#[test]
 fn test_server_name_for_hostname_rejects_obfuscated_ip() {
     assert!(server_name_for_hostname("127.1").is_err());
 }
