@@ -371,7 +371,12 @@ impl MonitorConfig {
         validate_hostname(host).map_err(|error| TlsError::ConfigError {
             message: format!("Invalid {label}: {error}"),
         })?;
-        reject_private_webhook_host(host, label)?;
+        if !host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback())
+        {
+            reject_private_webhook_host(host, label)?;
+        }
         Ok(())
     }
 }
@@ -492,6 +497,7 @@ expiry_7d = false
         assert!(MonitorConfig::validate_url("webhook url", "https://ct.internal").is_err());
         assert!(MonitorConfig::validate_url("webhook url", "https://10.0.0.1").is_err());
         assert!(MonitorConfig::validate_url("webhook url", "https://[::1]").is_err());
+        assert!(MonitorConfig::validate_url("webhook url", "https://127.0.0.1").is_ok());
     }
 
     #[test]
