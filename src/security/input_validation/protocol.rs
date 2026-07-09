@@ -15,6 +15,7 @@ pub fn validate_starttls_protocol(protocol: &str) -> std::result::Result<(), Val
         "xmpp-server",
         "irc",
         "postgres",
+        "postgresql",
         "mysql",
         "lmtp",
         "nntp",
@@ -45,6 +46,7 @@ mod tests {
         assert!(validate_starttls_protocol("smtp").is_ok());
         assert!(validate_starttls_protocol("imap").is_ok());
         assert!(validate_starttls_protocol(" SMTP ").is_ok());
+        assert!(validate_starttls_protocol("postgresql").is_ok());
         assert!(validate_starttls_protocol("xmpp-server").is_ok());
         assert!(validate_starttls_protocol("telnet").is_ok());
         assert!(validate_starttls_protocol("invalid").is_err());
