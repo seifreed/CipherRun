@@ -4,7 +4,7 @@ use crate::utils::network::normalize_dns_hostname;
 
 pub fn history_query_from_api(domain: String, query: &HistoryQuery) -> ScanHistoryQuery {
     ScanHistoryQuery {
-        hostname: normalize_dns_hostname(domain),
+        hostname: normalize_dns_hostname(domain).to_ascii_lowercase(),
         port: query.port,
         limit: query.limit,
     }
@@ -36,6 +36,20 @@ mod tests {
         };
 
         let mapped = history_query_from_api("example.com.".to_string(), &api_query);
+
+        assert_eq!(mapped.hostname, "example.com");
+        assert_eq!(mapped.port, 443);
+        assert_eq!(mapped.limit, 10);
+    }
+
+    #[test]
+    fn history_query_from_api_normalizes_hostname_case() {
+        let api_query = HistoryQuery {
+            port: 443,
+            limit: 10,
+        };
+
+        let mapped = history_query_from_api("EXAMPLE.COM".to_string(), &api_query);
 
         assert_eq!(mapped.hostname, "example.com");
         assert_eq!(mapped.port, 443);

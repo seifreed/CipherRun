@@ -38,7 +38,7 @@ async fn fetch_history_postgres(
         r#"
         SELECT scan_id, scan_timestamp, overall_grade, overall_score, scan_duration_ms
         FROM scans
-        WHERE target_hostname = $1 AND target_port = $2
+        WHERE LOWER(target_hostname) = $1 AND target_port = $2
         ORDER BY scan_timestamp DESC, scan_id DESC
         LIMIT $3
         "#,
@@ -62,7 +62,7 @@ async fn fetch_history_sqlite(
         r#"
         SELECT scan_id, scan_timestamp, overall_grade, overall_score, scan_duration_ms
         FROM scans
-        WHERE target_hostname = ? AND target_port = ?
+        WHERE LOWER(target_hostname) = ? AND target_port = ?
         ORDER BY scan_timestamp DESC, scan_id DESC
         LIMIT ?
         "#,
@@ -85,7 +85,7 @@ async fn count_history_postgres(
         r#"
         SELECT COUNT(*)
         FROM scans
-        WHERE target_hostname = $1 AND target_port = $2
+        WHERE LOWER(target_hostname) = $1 AND target_port = $2
         "#,
     )
     .bind(&query.hostname)
@@ -108,7 +108,7 @@ async fn count_history_sqlite(
         r#"
         SELECT COUNT(*)
         FROM scans
-        WHERE target_hostname = ? AND target_port = ?
+        WHERE LOWER(target_hostname) = ? AND target_port = ?
         "#,
     )
     .bind(&query.hostname)
@@ -306,6 +306,49 @@ mod tests {
         assert_eq!(page.scans.len(), 2);
         assert_eq!(page.scans[0].grade.as_deref(), Some("A"));
         assert_eq!(page.scans[1].grade.as_deref(), Some("B"));
+    }
+
+    #[tokio::test]
+    async fn sqlite_scan_history_matches_hostname_case_insensitively() {
+        let config = DatabaseConfig::sqlite(PathBuf::from(":memory:"));
+        let pool = DatabasePool::new(&config)
+            .await
+            .expect("pool should be created");
+        run_migrations(&pool).await.expect("migrations should run");
+
+        let DatabasePool::Sqlite(sqlite) = &pool else {
+            panic!("expected sqlite pool");
+        };
+
+        sqlx::query(
+            r#"
+            INSERT INTO scans (
+                target_hostname, target_port, scan_timestamp, overall_grade, overall_score, scan_duration_ms
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind("EXAMPLE.COM")
+        .bind(443_i32)
+        .bind(chrono::Utc::now())
+        .bind("A")
+        .bind(95_i32)
+        .bind(1200_i64)
+        .execute(sqlite)
+        .await
+        .expect("row should insert");
+
+        let service = ScanHistoryService::new(&pool);
+        let page = service
+            .get_history(&ScanHistoryQuery {
+                hostname: "example.com".to_string(),
+                port: 443,
+                limit: 10,
+            })
+            .await
+            .expect("history should load");
+
+        assert_eq!(page.total_scans, 1);
+        assert_eq!(page.scans.len(), 1);
     }
 
     #[tokio::test]
