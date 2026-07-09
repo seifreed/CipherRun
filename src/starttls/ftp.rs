@@ -44,6 +44,9 @@ impl StarttlsNegotiator for FtpNegotiator {
                     response
                 );
             }
+            if code == 534 {
+                tls_bail!("FTP server refused AUTH TLS for policy reasons: {}", response);
+            }
             tls_bail!(
                 "FTP AUTH TLS failed: expected 234, got {}: {}",
                 code,
@@ -248,6 +251,48 @@ mod tests {
             .unwrap_err();
         assert!(format!("{err}").contains("does not support"));
         assert!(format!("{err}").contains("(502)"));
+
+        server.await.expect("test server task should complete");
+    }
+
+    #[tokio::test]
+    async fn test_ftp_negotiate_starttls_534_policy_refused_reports_policy_reason() {
+        use tokio::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test listener should bind to localhost");
+        let addr = listener
+            .local_addr()
+            .expect("test listener should have local addr");
+
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener
+                .accept()
+                .await
+                .expect("test server should accept connection");
+            stream
+                .write_all(b"220 ready\r\n")
+                .await
+                .expect("test server should write response");
+
+            let mut buf = [0u8; 16];
+            let _ = stream.read(&mut buf).await.expect("test should read data");
+            stream
+                .write_all(b"534 policy requires TLS first\r\n")
+                .await
+                .expect("test server should write response");
+        });
+
+        let mut client = tokio::net::TcpStream::connect(addr)
+            .await
+            .expect("test client should connect");
+        let negotiator = FtpNegotiator::new();
+        let err = negotiator
+            .negotiate_starttls(&mut client)
+            .await
+            .unwrap_err();
+        assert!(format!("{err}").contains("policy reasons"));
+        assert!(format!("{err}").contains("534"));
 
         server.await.expect("test server task should complete");
     }
