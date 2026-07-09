@@ -23,26 +23,38 @@ impl ProxyConfig {
     /// Parse proxy string (host:port, http://host:port, or user:pass@host:port)
     pub fn parse(proxy_str: &str) -> Result<Self> {
         let proxy_str = proxy_str.trim();
-        let proxy_str = if let Some((scheme, rest)) = proxy_str.split_once("://") {
+        let (proxy_str, url_form) = if let Some((scheme, rest)) = proxy_str.split_once("://") {
             if !scheme.eq_ignore_ascii_case("http") {
                 crate::tls_bail!("Unsupported proxy scheme; only http:// proxies are supported");
             }
-            rest
+            (rest, true)
         } else {
-            proxy_str
+            (proxy_str, false)
         };
         // Check for user:pass@host:port format
         if let Some((auth, hostport)) = proxy_str.rsplit_once('@') {
+            let decode = |value: &str| -> Result<String> {
+                if url_form {
+                    urlencoding::decode(value)
+                        .map(|decoded| decoded.into_owned())
+                        .map_err(|error| crate::TlsError::InvalidInput {
+                            message: format!("Invalid proxy credentials: {error}"),
+                        })
+                } else {
+                    Ok(value.to_string())
+                }
+            };
+
             let (username, password) = if let Some((u, p)) = auth.split_once(':') {
                 if u.is_empty() {
                     crate::tls_bail!("Proxy username cannot be empty");
                 }
-                (Some(u.to_string()), Some(p.to_string()))
+                (Some(decode(u)?), Some(decode(p)?))
             } else {
                 if auth.is_empty() {
                     crate::tls_bail!("Proxy username cannot be empty");
                 }
-                (Some(auth.to_string()), None)
+                (Some(decode(auth)?), None)
             };
 
             let (host, port) = Self::parse_hostport(hostport)?;
@@ -397,6 +409,16 @@ mod tests {
         assert!(url.contains("user%20name"));
         assert!(url.contains("pa%3Ass%40word"));
         assert!(reqwest::Url::parse(&url).is_ok());
+    }
+
+    #[test]
+    fn test_parse_proxy_decodes_url_credentials() {
+        let proxy = ProxyConfig::parse("http://user%20name:pa%3Ass@proxy.example.com:3128")
+            .expect("proxy URL should parse");
+
+        assert_eq!(proxy.username.as_deref(), Some("user name"));
+        assert_eq!(proxy.password.as_deref(), Some("pa:ss"));
+        assert_eq!(proxy.url(), "http://user%20name:pa%3Ass@proxy.example.com:3128");
     }
 
     #[test]
