@@ -46,16 +46,22 @@ impl WebhookChannel {
                 message: "Webhook URL must not contain credentials".to_string(),
             });
         }
-        if !url
+        let host = url
             .host_str()
             .unwrap_or("")
+            .strip_prefix('[')
+            .and_then(|value| value.strip_suffix(']'))
+            .unwrap_or(url.host_str().unwrap_or(""));
+        if host.parse::<std::net::IpAddr>().is_err() {
+            crate::security::validate_hostname(host).map_err(|error| TlsError::ConfigError {
+                message: format!("Invalid webhook url: {error}"),
+            })?;
+        }
+        if !host
             .parse::<std::net::IpAddr>()
             .is_ok_and(|ip| ip.is_loopback())
         {
-            crate::monitor::alerts::reject_private_webhook_host(
-                url.host_str().unwrap_or(""),
-                "Webhook URL",
-            )?;
+            crate::monitor::alerts::reject_private_webhook_host(host, "Webhook URL")?;
         }
         for (name, value) in &config.headers {
             HeaderName::from_bytes(name.as_bytes()).map_err(|error| TlsError::ConfigError {
@@ -193,6 +199,14 @@ mod tests {
         config.url = "https://127.0.0.1./alerts".to_string();
 
         assert!(WebhookChannel::new(config).is_err());
+    }
+
+    #[test]
+    fn test_webhook_channel_allows_loopback_ipv6_url() {
+        let mut config = create_test_config();
+        config.url = "https://[::1]/alerts".to_string();
+
+        assert!(WebhookChannel::new(config).is_ok());
     }
 
     #[test]

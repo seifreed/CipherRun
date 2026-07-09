@@ -69,22 +69,21 @@ pub(crate) async fn validated_webhook_target(
     let host = url.host_str().ok_or_else(|| crate::error::TlsError::ConfigError {
         message: "Invalid webhook url: host required".to_string(),
     })?;
-    validate_hostname(host).map_err(|error| crate::error::TlsError::ConfigError {
-        message: format!("Invalid webhook url: {error}"),
-    })?;
+    let host_ip = host.parse::<IpAddr>().ok();
+    if host_ip.is_none() {
+        validate_hostname(host).map_err(|error| crate::error::TlsError::ConfigError {
+            message: format!("Invalid webhook url: {error}"),
+        })?;
+    }
     if looks_like_obfuscated_ip(host) {
         return Err(crate::error::TlsError::ConfigError {
             message: "Webhook URL must not use obfuscated IP notation".to_string(),
         });
     }
-    if !host
-        .parse::<IpAddr>()
-        .is_ok_and(|ip| ip.is_loopback())
-    {
+    if !host_ip.is_some_and(|ip| ip.is_loopback()) {
         reject_private_webhook_host(host, "Webhook URL")?;
     }
     let normalized_host = host.trim_end_matches('.').to_ascii_lowercase();
-    let host_ip = host.parse::<IpAddr>().ok();
     let port = url.port_or_known_default().unwrap_or(80);
     let addrs: Vec<_> = lookup_host((host, port))
         .await
@@ -131,6 +130,10 @@ pub(crate) fn raw_webhook_host(webhook_url: &str) -> Option<&str> {
 }
 
 pub(crate) fn reject_private_webhook_host(host: &str, label: &str) -> Result<()> {
+    let host = host
+        .strip_prefix('[')
+        .and_then(|value| value.strip_suffix(']'))
+        .unwrap_or(host);
     let normalized_host = host.trim_end_matches('.').to_ascii_lowercase();
     if normalized_host == "localhost"
         || normalized_host.ends_with(".local")

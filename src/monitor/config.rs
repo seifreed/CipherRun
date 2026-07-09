@@ -367,14 +367,19 @@ impl MonitorConfig {
                 message: format!("Invalid {label}: must not contain credentials"),
             });
         }
-        let host = url.host_str().unwrap_or("");
-        validate_hostname(host).map_err(|error| TlsError::ConfigError {
-            message: format!("Invalid {label}: {error}"),
-        })?;
-        if !host
-            .parse::<std::net::IpAddr>()
-            .is_ok_and(|ip| ip.is_loopback())
-        {
+        let host = url
+            .host_str()
+            .unwrap_or("")
+            .strip_prefix('[')
+            .and_then(|value| value.strip_suffix(']'))
+            .unwrap_or(url.host_str().unwrap_or(""));
+        let host_ip = host.parse::<std::net::IpAddr>().ok();
+        if host_ip.is_none() {
+            validate_hostname(host).map_err(|error| TlsError::ConfigError {
+                message: format!("Invalid {label}: {error}"),
+            })?;
+        }
+        if !host_ip.is_some_and(|ip| ip.is_loopback()) {
             reject_private_webhook_host(host, label)?;
         }
         Ok(())
@@ -496,8 +501,8 @@ expiry_7d = false
         assert!(MonitorConfig::validate_url("webhook url", "https://localhost.").is_err());
         assert!(MonitorConfig::validate_url("webhook url", "https://ct.internal").is_err());
         assert!(MonitorConfig::validate_url("webhook url", "https://10.0.0.1").is_err());
-        assert!(MonitorConfig::validate_url("webhook url", "https://[::1]").is_err());
         assert!(MonitorConfig::validate_url("webhook url", "https://127.0.0.1").is_ok());
+        assert!(MonitorConfig::validate_url("webhook url", "https://[::1]").is_ok());
     }
 
     #[test]
