@@ -7,7 +7,7 @@ use crate::monitor::alerts::{Alert, AlertChannel, AlertType};
 use crate::monitor::config::TeamsConfig;
 use crate::monitor::detector::ChangeSeverity;
 use crate::security::validate_hostname;
-use crate::security::input_validation::looks_like_obfuscated_ip;
+use crate::security::input_validation::{looks_like_dotted_ip_literal, looks_like_obfuscated_ip};
 use async_trait::async_trait;
 use serde_json::json;
 
@@ -22,6 +22,12 @@ impl TeamsChannel {
         if raw_webhook_host(&config.webhook_url).is_some_and(looks_like_obfuscated_ip) {
             return Err(TlsError::ConfigError {
                 message: "Invalid Teams webhook_url: obfuscated IP notation is not allowed"
+                    .to_string(),
+            });
+        }
+        if raw_webhook_host(&config.webhook_url).is_some_and(looks_like_dotted_ip_literal) {
+            return Err(TlsError::ConfigError {
+                message: "Invalid Teams webhook_url: dotted IP literals are not allowed"
                     .to_string(),
             });
         }

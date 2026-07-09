@@ -1,4 +1,4 @@
-use crate::security::input_validation::looks_like_obfuscated_ip;
+use crate::security::input_validation::{looks_like_dotted_ip_literal, looks_like_obfuscated_ip};
 use crate::security::{is_private_ip, validate_hostname};
 use crate::{Result, TlsError};
 use std::net::SocketAddr;
@@ -19,6 +19,11 @@ pub(crate) async fn validate_revocation_http_url(
     if raw_revocation_host(uri).is_some_and(looks_like_obfuscated_ip) {
         return Err(TlsError::InvalidInput {
             message: "Revocation URL must not use obfuscated IP notation".to_string(),
+        });
+    }
+    if raw_revocation_host(uri).is_some_and(looks_like_dotted_ip_literal) {
+        return Err(TlsError::InvalidInput {
+            message: "Revocation URL must not use dotted IP literals".to_string(),
         });
     }
 
@@ -126,6 +131,15 @@ mod tests {
             .expect_err("obfuscated revocation URL should be rejected");
 
         assert!(err.to_string().contains("obfuscated IP"));
+    }
+
+    #[tokio::test]
+    async fn test_validate_revocation_http_url_rejects_dotted_ip() {
+        let err = validate_revocation_http_url("http://127.0.0.1./crl", Duration::from_secs(1))
+            .await
+            .expect_err("dotted revocation URL should be rejected");
+
+        assert!(err.to_string().contains("dotted IP"));
     }
 
     #[tokio::test]

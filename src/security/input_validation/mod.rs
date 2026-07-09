@@ -95,13 +95,30 @@ pub fn looks_like_obfuscated_ip(hostname: &str) -> bool {
         })
 }
 
+pub fn looks_like_dotted_ip_literal(hostname: &str) -> bool {
+    if hostname.parse::<std::net::IpAddr>().is_ok() {
+        return false;
+    }
+    hostname
+        .strip_suffix('.')
+        .is_some_and(|candidate| candidate.parse::<std::net::IpAddr>().is_ok())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::looks_like_obfuscated_ip;
+    use super::{looks_like_dotted_ip_literal, looks_like_obfuscated_ip};
 
     #[test]
     fn test_looks_like_obfuscated_ip_rejects_single_label_hex() {
         assert!(looks_like_obfuscated_ip("0x7f000001"));
         assert!(looks_like_obfuscated_ip("0X7f000001"));
+    }
+
+    #[test]
+    fn test_looks_like_dotted_ip_literal_detects_rooted_ip() {
+        assert!(looks_like_dotted_ip_literal("127.0.0.1."));
+        assert!(looks_like_dotted_ip_literal("2001:db8::1."));
+        assert!(!looks_like_dotted_ip_literal("example.com."));
+        assert!(!looks_like_dotted_ip_literal("127.0.0.1"));
     }
 }

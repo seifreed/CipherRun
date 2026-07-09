@@ -4,8 +4,7 @@
 
 use super::Result;
 use crate::error::TlsError;
-use crate::security::validate_hostname;
-use crate::security::input_validation::looks_like_obfuscated_ip;
+use crate::security::input_validation::{looks_like_dotted_ip_literal, looks_like_obfuscated_ip};
 use crate::security::is_private_ip;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -222,7 +221,7 @@ impl SourceManager {
 
 fn is_valid_ct_log_url(url: &str) -> bool {
     if raw_ct_log_host(url).is_some_and(|host| {
-        looks_like_obfuscated_ip(host) || validate_hostname(host).is_err()
+        looks_like_obfuscated_ip(host) || looks_like_dotted_ip_literal(host)
     }) {
         return false;
     }
@@ -256,7 +255,9 @@ fn raw_ct_log_host(url: &str) -> Option<&str> {
 
 async fn ct_log_url_resolves_publicly(url: &str) -> Result<bool> {
     if let Some(host) = raw_ct_log_host(url) {
-        validate_hostname(host).map_err(|error| TlsError::Other(format!("Invalid CT log host: {error}")))?;
+        if looks_like_dotted_ip_literal(host) {
+            return Err(TlsError::Other("Invalid CT log host: dotted IP literal".to_string()));
+        }
     }
     let parsed = url::Url::parse(url).map_err(|error| TlsError::Other(format!("{error}")))?;
     let raw_host = parsed

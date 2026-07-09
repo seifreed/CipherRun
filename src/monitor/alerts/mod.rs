@@ -12,7 +12,7 @@ use crate::Result;
 use crate::monitor::config::MonitorConfig;
 use crate::monitor::detector::{ChangeEvent, ChangeSeverity};
 use crate::security::validate_hostname;
-use crate::security::input_validation::looks_like_obfuscated_ip;
+use crate::security::input_validation::{looks_like_dotted_ip_literal, looks_like_obfuscated_ip};
 use crate::security::is_private_ip;
 use chrono::{DateTime, Duration, Utc};
 use reqwest::Url;
@@ -39,6 +39,11 @@ pub(crate) async fn validated_webhook_target(
     if raw_webhook_host(webhook_url).is_some_and(looks_like_obfuscated_ip) {
         return Err(crate::error::TlsError::ConfigError {
             message: "Webhook URL must not use obfuscated IP notation".to_string(),
+        });
+    }
+    if raw_webhook_host(webhook_url).is_some_and(looks_like_dotted_ip_literal) {
+        return Err(crate::error::TlsError::ConfigError {
+            message: "Webhook URL must not use dotted IP literals".to_string(),
         });
     }
 

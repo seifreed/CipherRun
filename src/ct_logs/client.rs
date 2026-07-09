@@ -4,8 +4,7 @@
 
 use super::Result;
 use crate::error::TlsError;
-use crate::security::validate_hostname;
-use crate::security::input_validation::looks_like_obfuscated_ip;
+use crate::security::input_validation::{looks_like_dotted_ip_literal, looks_like_obfuscated_ip};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tracing::{debug, warn};
@@ -263,7 +262,7 @@ impl CtClient {
 
 fn ct_log_api_url(log_url: &str, path: &str) -> Result<url::Url> {
     if raw_ct_log_host(log_url).is_some_and(|host| {
-        looks_like_obfuscated_ip(host) || validate_hostname(host).is_err()
+        looks_like_obfuscated_ip(host) || looks_like_dotted_ip_literal(host)
     }) {
         return Err(TlsError::InvalidInput {
             message: "Invalid CT log URL: obfuscated IP notation is not allowed".to_string(),
