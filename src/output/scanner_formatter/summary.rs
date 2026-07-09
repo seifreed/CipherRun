@@ -2,6 +2,7 @@ use super::{
     CertificateAnalysisResult, ClientSimulationResult, Ja3Fingerprint, Ja3Signature, RatingResult,
     ScannerFormatter, format_client_sim_summary, format_http_grade, format_ssl_grade,
 };
+use crate::fingerprint::{CdnDetection, LoadBalancerInfo};
 use crate::http::tester::HeaderAnalysisResult;
 use crate::output::probe_status::ProbeStatusTerminalExt;
 use crate::utils::network::{display_target_host, split_target_host_port};
@@ -42,6 +43,9 @@ impl<'a> ScannerFormatter<'a> {
         self.display_client_sim_summary(results.client_simulations());
         self.display_rating_summary(results.ssl_rating());
         self.display_ja3_summary(results.ja3_fingerprint(), results.ja3_match());
+        for line in self.cdn_summary_lines(results.cdn_detection(), results.load_balancer_info()) {
+            println!("{line}");
+        }
 
         if matches!(self.warning_mode(), super::WarningMode::Batch) {
             self.display_batched_warnings(results);
@@ -137,6 +141,29 @@ impl<'a> ScannerFormatter<'a> {
         }
     }
 
+    fn cdn_summary_lines(
+        &self,
+        cdn: Option<&CdnDetection>,
+        load_balancer: Option<&LoadBalancerInfo>,
+    ) -> Vec<String> {
+        let mut lines = Vec::new();
+        if let Some(cdn) = cdn {
+            let status = if cdn.is_cdn { "Detected" } else { "No" };
+            lines.push(format!("CDN Detection:   {}", status));
+        }
+
+        if let Some(load_balancer) = load_balancer {
+            let status = if load_balancer.detected {
+                "Detected"
+            } else {
+                "No"
+            };
+            lines.push(format!("Load Balancer:   {}", status));
+        }
+
+        lines
+    }
+
     fn display_batched_warnings(&self, results: &crate::scanner::ScanResults) {
         let warnings = self.collect_human_warnings(results);
 
@@ -149,5 +176,36 @@ impl<'a> ScannerFormatter<'a> {
         for warning in warnings {
             println!("  ! {}", warning.yellow());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::fingerprint::{CdnDetection, LoadBalancerInfo};
+
+    #[test]
+    fn test_cdn_summary_lines_include_detection_and_load_balancer() {
+        let args = crate::Args::default();
+        let formatter = ScannerFormatter::new(&args);
+
+        let lines = formatter.cdn_summary_lines(
+            Some(&CdnDetection {
+                is_cdn: true,
+                cdn_provider: Some("Cloudflare".to_string()),
+                confidence: 0.95,
+                indicators: vec!["cf-ray".to_string()],
+            }),
+            Some(&LoadBalancerInfo {
+                detected: true,
+                lb_type: Some("AWS ALB".to_string()),
+                sticky_sessions: true,
+                indicators: vec!["sticky sessions".to_string()],
+            }),
+        );
+
+        assert_eq!(lines.len(), 2);
+        assert!(lines.iter().any(|line| line.contains("CDN Detection")));
+        assert!(lines.iter().any(|line| line.contains("Load Balancer")));
     }
 }
