@@ -23,6 +23,7 @@ mod oracle_detection;
 mod record_builder;
 
 use crate::Result;
+use crate::protocols::{Protocol, ProtocolTester};
 use crate::utils::network::Target;
 use crate::utils::timing::{TimingOracleConfig, TimingSampleSet, detect_timing_oracle};
 use crate::utils::{VulnSslConfig, test_vuln_ssl_connection_outcome};
@@ -161,11 +162,20 @@ impl<'a> PoodleTester<'a> {
 
     /// Test if SSL 3.0 is supported
     async fn test_ssl3(&self) -> Result<Option<bool>> {
-        test_vuln_ssl_connection_outcome(
-            self.target,
-            VulnSslConfig::ssl3_only().with_starttls(self.starttls),
-        )
-        .await
+        let protocol = ProtocolTester::new(self.target.clone())
+            .with_connect_timeout(Duration::from_secs(5))
+            .with_read_timeout(Duration::from_secs(5))
+            .with_test_all_ips(true)
+            .test_protocol(Protocol::SSLv3)
+            .await?;
+
+        Ok(if protocol.supported {
+            Some(true)
+        } else if protocol.inconclusive {
+            None
+        } else {
+            Some(false)
+        })
     }
 
     /// Test for TLS POODLE vulnerability

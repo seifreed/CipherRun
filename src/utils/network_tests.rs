@@ -435,7 +435,7 @@ async fn test_vuln_ssl_connection_outcome_closed_port_is_inconclusive() {
 }
 
 #[tokio::test]
-async fn test_vuln_ssl_connection_outcome_handshake_failure_is_inconclusive() {
+async fn test_vuln_ssl_connection_outcome_handshake_failure_is_not_supported() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("test assertion should succeed");
@@ -444,7 +444,8 @@ async fn test_vuln_ssl_connection_outcome_handshake_failure_is_inconclusive() {
         .expect("test assertion should succeed")
         .port();
     let accept_task = tokio::spawn(async move {
-        let _ = listener.accept().await;
+        let (_socket, _) = listener.accept().await.expect("test assertion should succeed");
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     });
 
     let target = Target::with_ips(
@@ -460,7 +461,41 @@ async fn test_vuln_ssl_connection_outcome_handshake_failure_is_inconclusive() {
             .expect("test assertion should succeed");
     accept_task.await.expect("test assertion should succeed");
 
-    assert_eq!(outcome, None);
+    assert_eq!(outcome, Some(false));
+}
+
+#[tokio::test]
+async fn test_vuln_ssl_connection_outcome_tls_alert_is_not_supported() {
+    use tokio::io::AsyncWriteExt;
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("test assertion should succeed");
+    let port = listener
+        .local_addr()
+        .expect("test assertion should succeed")
+        .port();
+    let accept_task = tokio::spawn(async move {
+        if let Ok((mut socket, _)) = listener.accept().await {
+            let alert = [0x15, 0x03, 0x01, 0x00, 0x02, 0x02, 0x28];
+            let _ = socket.write_all(&alert).await;
+        }
+    });
+
+    let target = Target::with_ips(
+        "localhost".to_string(),
+        port,
+        vec!["127.0.0.1".parse().expect("valid IP")],
+    )
+    .expect("test assertion should succeed");
+
+    let outcome =
+        test_vuln_ssl_connection_outcome(&target, VulnSslConfig::ssl3_only().with_timeout(1))
+            .await
+            .expect("test assertion should succeed");
+    accept_task.await.expect("test assertion should succeed");
+
+    assert_eq!(outcome, Some(false));
 }
 
 #[tokio::test]

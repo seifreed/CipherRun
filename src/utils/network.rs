@@ -5,7 +5,7 @@ use crate::error::TlsError;
 use hickory_resolver::TokioResolver;
 use hickory_resolver::config::*;
 use hickory_resolver::net::runtime::TokioRuntimeProvider;
-use openssl::ssl::{SslConnector, SslMethod, SslStream, SslVerifyMode, SslVersion};
+use openssl::ssl::{HandshakeError, SslConnector, SslMethod, SslStream, SslVerifyMode, SslVersion};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpStream as StdTcpStream};
 use std::time::Duration;
 use tokio::net::TcpStream;
@@ -723,7 +723,7 @@ pub enum VulnSslResult {
     Connected(SslStream<StdTcpStream>),
     /// Probe could not complete (transport/STARTTLS/local setup failure)
     Inconclusive,
-    /// Connection failed (handshake rejected, timeout, etc.)
+    /// Connection failed definitively enough to mean "not supported" for the probe.
     Failed,
 }
 
@@ -801,13 +801,24 @@ pub async fn try_vuln_ssl_connection(
 
         match connector.connect(&hostname, std_stream) {
             Ok(ssl_stream) => Ok(VulnSslResult::Connected(ssl_stream)),
-            Err(_) => Ok(VulnSslResult::Failed),
+            Err(error) => Ok(classify_vuln_ssl_handshake_error(error)),
         }
     })
     .await
     .map_err(|e| TlsError::Other(format!("Spawn blocking failed: {e}")))??;
 
     Ok(result)
+}
+
+fn classify_vuln_ssl_handshake_error(
+    error: HandshakeError<StdTcpStream>,
+) -> VulnSslResult {
+    match error {
+        HandshakeError::SetupFailure(_) | HandshakeError::WouldBlock(_) => {
+            VulnSslResult::Inconclusive
+        }
+        HandshakeError::Failure(_) => VulnSslResult::Failed,
+    }
 }
 
 /// Simplified helper that returns a boolean for basic vulnerability checks.
@@ -829,7 +840,7 @@ pub async fn test_vuln_ssl_connection_outcome(
     } else {
         Ok(match result {
             VulnSslResult::Connected(_) => Some(true),
-            VulnSslResult::Failed => None,
+            VulnSslResult::Failed => Some(false),
             VulnSslResult::Inconclusive => None,
         })
     }
