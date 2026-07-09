@@ -559,17 +559,25 @@ pub(crate) async fn validate_webhook_url(webhook_url: &str) -> Result<ValidatedW
             message: "Webhook URL has no host".to_string(),
         })?
         .to_string();
-    validate_hostname(&host).map_err(|error| TlsError::InvalidInput {
-        message: format!("Invalid webhook URL: {error}"),
-    })?;
+    let host = host
+        .strip_prefix('[')
+        .and_then(|value| value.strip_suffix(']'))
+        .unwrap_or(&host)
+        .to_string();
+    let host_ip = host.parse::<std::net::IpAddr>().ok();
+    if host_ip.is_none() {
+        validate_hostname(&host).map_err(|error| TlsError::InvalidInput {
+            message: format!("Invalid webhook URL: {error}"),
+        })?;
+    }
     let normalized_host = host.trim_end_matches('.').to_ascii_lowercase();
+    let allow_loopback_only = normalized_host == "localhost"
+        || host_ip.is_some_and(|ip| ip.is_loopback());
 
     // Block obvious private hostnames and IP literals
     if normalized_host == "localhost"
         || normalized_host.ends_with(".local")
         || normalized_host.ends_with(".internal")
-        || host == "127.0.0.1"
-        || host == "::1"
     {
         return Err(TlsError::InvalidInput {
             message: format!("Webhook URL points to private/local host: {host}"),
@@ -582,8 +590,9 @@ pub(crate) async fn validate_webhook_url(webhook_url: &str) -> Result<ValidatedW
     }
 
     // Also check if host is an IP literal pointing to a private address
-    if let Ok(ip) = host.parse::<std::net::IpAddr>()
+    if let Some(ip) = host_ip
         && crate::security::input_validation::is_private_ip(&ip)
+        && !ip.is_loopback()
     {
         return Err(TlsError::InvalidInput {
             message: format!("Webhook URL uses private/internal IP literal {ip} (SSRF blocked)"),
@@ -612,6 +621,15 @@ pub(crate) async fn validate_webhook_url(webhook_url: &str) -> Result<ValidatedW
     }
 
     for addr in &resolved_addrs {
+        if allow_loopback_only {
+            if !addr.ip().is_loopback() {
+                return Err(TlsError::InvalidInput {
+                    message: "Webhook URL must resolve only to loopback addresses".to_string(),
+                });
+            }
+            continue;
+        }
+
         if crate::security::input_validation::is_private_ip(&addr.ip()) {
             return Err(TlsError::InvalidInput {
                 message: format!(
@@ -824,6 +842,13 @@ mod tests {
             .expect_err("credentials should fail");
 
         assert!(err.to_string().contains("credentials"));
+    }
+
+    #[tokio::test]
+    async fn test_validate_webhook_url_allows_loopback_ipv6_literal() {
+        assert!(validate_webhook_url("https://[::1]/callback")
+            .await
+            .is_ok());
     }
 
     #[tokio::test]
