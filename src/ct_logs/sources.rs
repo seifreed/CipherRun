@@ -230,6 +230,7 @@ fn is_valid_ct_log_url(url: &str) -> bool {
             && !host.ends_with(".local")
             && !host.ends_with(".internal")
             && !matches!(url.host_str(), Some(host) if host.parse::<IpAddr>().is_ok_and(|ip| is_private_ip(&ip)))
+            && !looks_like_obfuscated_ip(&host)
     })
 }
 
@@ -248,6 +249,25 @@ async fn ct_log_url_resolves_publicly(url: &str) -> Result<bool> {
         return Ok(false);
     }
     Ok(addrs.iter().all(|addr| !is_private_ip(&addr.ip())))
+}
+
+fn looks_like_obfuscated_ip(host: &str) -> bool {
+    if host.parse::<IpAddr>().is_ok() {
+        return false;
+    }
+
+    let labels: Vec<&str> = host.split('.').collect();
+    if labels.len() == 1 {
+        return labels[0].chars().all(|ch| ch.is_ascii_digit());
+    }
+
+    labels.len() <= 4
+        && labels.iter().all(|label| {
+            !label.is_empty()
+                && (label.chars().all(|ch| ch.is_ascii_digit())
+                    || (label.starts_with("0x")
+                        && label.chars().skip(2).all(|ch| ch.is_ascii_hexdigit())))
+        })
 }
 
 impl Default for SourceManager {
@@ -364,6 +384,8 @@ mod tests {
         assert!(!is_valid_ct_log_url("https://localhost"));
         assert!(!is_valid_ct_log_url("https://localhost."));
         assert!(!is_valid_ct_log_url("https://127.0.0.1"));
+        assert!(!is_valid_ct_log_url("https://2130706433"));
+        assert!(!is_valid_ct_log_url("https://127.1"));
     }
 
     #[tokio::test]
