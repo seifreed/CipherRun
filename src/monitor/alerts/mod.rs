@@ -16,7 +16,7 @@ use chrono::{DateTime, Duration, Utc};
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::net::lookup_host;
@@ -64,12 +64,11 @@ pub(crate) async fn validated_webhook_target(
             message: "Webhook URL must not use private/local hosts".to_string(),
         });
     }
-    if let Ok(ip) = host.parse::<IpAddr>() {
-        if !ip.is_loopback() && is_private_ip(&ip) {
-            return Err(crate::error::TlsError::ConfigError {
-                message: format!("Webhook URL uses private/internal IP literal {ip}"),
-            });
-        }
+    let host_ip = host.parse::<IpAddr>().ok();
+    if let Some(ip) = host_ip.filter(|ip| !ip.is_loopback() && is_private_ip(ip)) {
+        return Err(crate::error::TlsError::ConfigError {
+            message: format!("Webhook URL uses private/internal IP literal {ip}"),
+        });
     }
     let port = url.port_or_known_default().unwrap_or(80);
     let addrs: Vec<_> = lookup_host((host, port))
@@ -85,15 +84,11 @@ pub(crate) async fn validated_webhook_target(
     }
     let mut addrs = addrs;
     addrs.sort_by_key(|addr| addr.ip().is_ipv6());
-    if normalized_host != "localhost"
-        && addrs
-            .iter()
-            .any(|addr| !addr.ip().is_loopback() && is_private_ip(&addr.ip()))
-    {
-        return Err(crate::error::TlsError::ConfigError {
-            message: "Webhook URL resolves to private/internal IP".to_string(),
-        });
-    }
+    validate_webhook_addrs(
+        &normalized_host,
+        host_ip.is_some_and(|ip| ip.is_loopback()),
+        &addrs,
+    )?;
 
     let mut client_builder = reqwest::Client::builder()
         .timeout(timeout)
@@ -106,6 +101,30 @@ pub(crate) async fn validated_webhook_target(
         url,
         client: client_builder.build()?,
     })
+}
+
+fn validate_webhook_addrs(
+    normalized_host: &str,
+    allow_loopback_only: bool,
+    addrs: &[SocketAddr],
+) -> Result<()> {
+    if normalized_host == "localhost" || allow_loopback_only {
+        if addrs.iter().any(|addr| !addr.ip().is_loopback()) {
+            return Err(crate::error::TlsError::ConfigError {
+                message: "Webhook URL must resolve only to loopback addresses"
+                    .to_string(),
+            });
+        }
+        return Ok(());
+    }
+
+    if addrs.iter().any(|addr| is_private_ip(&addr.ip())) {
+        return Err(crate::error::TlsError::ConfigError {
+            message: "Webhook URL resolves to private/internal IP".to_string(),
+        });
+    }
+
+    Ok(())
 }
 
 async fn alert_error_body(response: reqwest::Response, context: &str) -> Result<String> {
@@ -368,6 +387,44 @@ mod tests_extra {
         .await;
 
         assert!(target.is_ok());
+    }
+
+    #[test]
+    fn test_validate_webhook_addrs_rejects_localhost_offloopback() {
+        let addrs = [SocketAddr::from(([8, 8, 8, 8], 443))];
+
+        let err = match validate_webhook_addrs("localhost", false, &addrs) {
+            Ok(_) => panic!("localhost must not resolve to public IPs"),
+            Err(err) => err,
+        };
+
+        assert!(err
+            .to_string()
+            .contains("resolve only to loopback addresses"));
+    }
+
+    #[test]
+    fn test_validate_webhook_addrs_rejects_private_resolution() {
+        let addrs = [SocketAddr::from(([10, 0, 0, 1], 443))];
+
+        let err = match validate_webhook_addrs("example.com", false, &addrs) {
+            Ok(_) => panic!("private resolution should fail"),
+            Err(err) => err,
+        };
+
+        assert!(err.to_string().contains("private/internal IP"));
+    }
+
+    #[test]
+    fn test_validate_webhook_addrs_rejects_loopback_resolution_for_public_host() {
+        let addrs = [SocketAddr::from(([127, 0, 0, 1], 443))];
+
+        let err = match validate_webhook_addrs("example.com", false, &addrs) {
+            Ok(_) => panic!("loopback resolution should fail for public hosts"),
+            Err(err) => err,
+        };
+
+        assert!(err.to_string().contains("private/internal IP"));
     }
 }
 
