@@ -1,10 +1,10 @@
-use crate::application::ScanResults;
 use crate::application::scan_execution::post_processing::{
     ScanNoticeView, ScanPostProcessingView, ScanPostView,
 };
 use crate::application::scan_execution::section_views::{
     ScanExportView, ScanFeatureView, ScanFingerprintView, ScanPrimaryTlsView,
 };
+use crate::application::ScanResults;
 
 pub struct ScanCliView<'a> {
     pub(crate) results: &'a ScanResults,
@@ -61,7 +61,13 @@ impl<'a> ScanCliView<'a> {
     }
 
     pub fn has_fingerprint_results(&self) -> bool {
-        self.has_ja3_results() || self.has_ja3s_results() || self.has_jarm_results()
+        self.has_ja3_results()
+            || self.has_ja3s_results()
+            || self.has_jarm_results()
+            || self.has_cdn_detection_results()
+            || self.has_load_balancer_info_results()
+            || self.has_alpn_results()
+            || self.has_rating_results()
     }
 
     pub fn should_render_primary_tls_sections(&self) -> bool {
@@ -303,8 +309,8 @@ impl<'a> ScanCliView<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::application::ScanResults;
     use crate::application::scan_execution::post_processing::ScanPostProcessingView;
+    use crate::application::ScanResults;
     use crate::fingerprint::{CdnDetection, LoadBalancerInfo};
     use crate::protocols::{Protocol, ProtocolTestResult};
 
@@ -404,6 +410,34 @@ mod tests {
         assert!(view.should_render_fingerprint_and_summary_sections());
         assert!(view.should_render_fingerprint_view());
         assert!(view.should_render_tls_sections());
+    }
+
+    #[test]
+    fn test_has_fingerprint_results_includes_advanced_fingerprint_data() {
+        let results = ScanResults {
+            advanced: Some(crate::scanner::AdvancedResults {
+                cdn_detection: Some(CdnDetection {
+                    is_cdn: false,
+                    cdn_provider: None,
+                    confidence: 0.1,
+                    indicators: vec![],
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let post_processing = ScanPostProcessingView {
+            compliance_report: None,
+            policy_result: None,
+            stored_scan_id: None,
+            should_fail_exit: false,
+        };
+        let view = ScanCliView {
+            results: &results,
+            post_processing,
+        };
+
+        assert!(view.has_fingerprint_results());
     }
 
     #[test]
