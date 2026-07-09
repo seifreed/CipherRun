@@ -5,7 +5,9 @@ use crate::error::TlsError;
 use hickory_resolver::TokioResolver;
 use hickory_resolver::config::*;
 use hickory_resolver::net::runtime::TokioRuntimeProvider;
-use openssl::ssl::{ErrorCode, HandshakeError, SslConnector, SslMethod, SslStream, SslVerifyMode, SslVersion};
+use openssl::ssl::{
+    ErrorCode, HandshakeError, SslConnector, SslMethod, SslStream, SslVerifyMode, SslVersion,
+};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpStream as StdTcpStream};
 use std::time::Duration;
 use tokio::net::TcpStream;
@@ -509,7 +511,8 @@ pub async fn connect_with_starttls(
 ) -> Result<TcpStream> {
     let mut stream = connect_with_timeout(addr, connect_timeout, None).await?;
     if let Some(protocol) = starttls {
-        let negotiator = crate::starttls::protocols::get_negotiator(protocol, hostname.to_string());
+        let negotiator =
+            crate::starttls::protocols::get_negotiator(protocol, hostname.to_string(), addr.port());
         crate::starttls::protocols::negotiate_starttls_with_timeout(
             negotiator.as_ref(),
             &mut stream,
@@ -624,8 +627,7 @@ pub fn is_transport_anomaly_error(error: &str) -> bool {
 pub fn is_starttls_port(port: u16) -> bool {
     matches!(
         port,
-        21 | 23 | 24 | 25 | 110 | 119 | 143 | 389 | 587 | 2525 | 4190 | 5222 | 5269 | 5432
-            | 3306
+        21 | 23 | 24 | 25 | 110 | 119 | 143 | 389 | 587 | 2525 | 4190 | 5222 | 5269 | 5432 | 3306
     )
 }
 
@@ -820,9 +822,7 @@ pub async fn try_vuln_ssl_connection(
     Ok(result)
 }
 
-fn classify_vuln_ssl_handshake_error(
-    error: HandshakeError<StdTcpStream>,
-) -> VulnSslResult {
+fn classify_vuln_ssl_handshake_error(error: HandshakeError<StdTcpStream>) -> VulnSslResult {
     match error {
         HandshakeError::SetupFailure(_) | HandshakeError::WouldBlock(_) => {
             VulnSslResult::Inconclusive

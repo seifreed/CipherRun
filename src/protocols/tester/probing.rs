@@ -301,6 +301,7 @@ impl ProtocolTester {
                     let negotiator = crate::starttls::protocols::get_negotiator(
                         starttls_proto,
                         self.starttls_negotiation_hostname(),
+                        self.target.port,
                     );
                     if crate::starttls::protocols::negotiate_starttls_with_timeout(
                         negotiator.as_ref(),
@@ -472,6 +473,7 @@ impl ProtocolTester {
             let negotiator = crate::starttls::protocols::get_negotiator(
                 starttls_proto,
                 self.starttls_negotiation_hostname(),
+                self.target.port,
             );
             if crate::starttls::protocols::negotiate_starttls_with_timeout(
                 negotiator.as_ref(),
@@ -576,6 +578,7 @@ impl ProtocolTester {
             let negotiator = crate::starttls::protocols::get_negotiator(
                 starttls_proto,
                 self.starttls_negotiation_hostname(),
+                self.target.port,
             );
             if crate::starttls::protocols::negotiate_starttls_with_timeout(
                 negotiator.as_ref(),
@@ -641,6 +644,7 @@ impl ProtocolTester {
             let negotiator = crate::starttls::protocols::get_negotiator(
                 starttls_proto,
                 self.starttls_negotiation_hostname(),
+                self.target.port,
             );
             if crate::starttls::protocols::negotiate_starttls_with_timeout(
                 negotiator.as_ref(),

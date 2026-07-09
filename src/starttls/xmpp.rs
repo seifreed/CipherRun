@@ -8,13 +8,40 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 /// XMPP STARTTLS negotiator
 pub struct XmppNegotiator {
     hostname: String,
+    server_mode: bool,
 }
 
 const MAX_XMPP_RESPONSE_LEN: usize = 65536;
 
 impl XmppNegotiator {
-    pub fn new(hostname: String) -> Self {
-        Self { hostname }
+    pub fn new(hostname: String, server_mode: bool) -> Self {
+        Self {
+            hostname,
+            server_mode,
+        }
+    }
+
+    fn stream_namespace(&self) -> &'static str {
+        if self.server_mode {
+            "jabber:server"
+        } else {
+            "jabber:client"
+        }
+    }
+
+    fn stream_header(&self) -> String {
+        let safe_hostname = self
+            .hostname
+            .replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+            .replace('\'', "&apos;")
+            .replace('"', "&quot;");
+        format!(
+            "<?xml version='1.0'?><stream:stream to='{}' xmlns='{}' xmlns:stream='http://etherx.jabber.org/streams' version='1.0'>",
+            safe_hostname,
+            self.stream_namespace()
+        )
     }
 
     fn contains_xml_start_tag(response: &str, tag: &str) -> bool {
@@ -156,19 +183,7 @@ impl XmppNegotiator {
 impl StarttlsNegotiator for XmppNegotiator {
     async fn negotiate_starttls(&self, stream: &mut tokio::net::TcpStream) -> Result<()> {
         // 1. Send XMPP stream header
-        // Escape hostname for safe XML attribute interpolation
-        let safe_hostname = self
-            .hostname
-            .replace('&', "&amp;")
-            .replace('<', "&lt;")
-            .replace('>', "&gt;")
-            .replace('\'', "&apos;")
-            .replace('"', "&quot;");
-        let stream_header = format!(
-            "<?xml version='1.0'?><stream:stream to='{}' xmlns='jabber:client' xmlns:stream='http://etherx.jabber.org/streams' version='1.0'>",
-            safe_hostname
-        );
-        stream.write_all(stream_header.as_bytes()).await?;
+        stream.write_all(self.stream_header().as_bytes()).await?;
         stream.flush().await?;
 
         // 2. Read server stream features
@@ -254,9 +269,15 @@ mod tests {
 
     #[test]
     fn test_xmpp_negotiator_creation() {
-        let negotiator = XmppNegotiator::new("example.com".to_string());
+        let negotiator = XmppNegotiator::new("example.com".to_string(), false);
         assert_eq!(negotiator.protocol(), StarttlsProtocol::XMPP);
         assert_eq!(negotiator.expected_greeting(), Some("<?xml"));
+    }
+
+    #[test]
+    fn test_xmpp_server_mode_uses_server_namespace() {
+        let negotiator = XmppNegotiator::new("example.com".to_string(), true);
+        assert!(negotiator.stream_header().contains("xmlns='jabber:server'"));
     }
 
     #[test]
@@ -419,7 +440,7 @@ mod tests {
         });
 
         let mut client = TcpStream::connect(addr).await.unwrap();
-        let negotiator = XmppNegotiator::new("example.com".to_string());
+        let negotiator = XmppNegotiator::new("example.com".to_string(), false);
         let result = negotiator.negotiate_starttls(&mut client).await;
         assert!(result.is_ok());
 
@@ -451,7 +472,7 @@ mod tests {
         });
 
         let mut client = TcpStream::connect(addr).await.unwrap();
-        let negotiator = XmppNegotiator::new("example.com".to_string());
+        let negotiator = XmppNegotiator::new("example.com".to_string(), false);
         let result = negotiator.negotiate_starttls(&mut client).await;
         assert!(result.is_err());
 
@@ -483,7 +504,7 @@ mod tests {
         });
 
         let mut client = TcpStream::connect(addr).await.unwrap();
-        let negotiator = XmppNegotiator::new("example.com".to_string());
+        let negotiator = XmppNegotiator::new("example.com".to_string(), false);
         let result = negotiator.negotiate_starttls(&mut client).await;
         assert!(result.is_ok());
 

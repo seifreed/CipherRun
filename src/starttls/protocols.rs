@@ -172,7 +172,11 @@ pub async fn negotiate_starttls_with_timeout(
 }
 
 /// Get a negotiator instance for the given protocol and hostname
-pub fn get_negotiator(protocol: StarttlsProtocol, hostname: String) -> Box<dyn StarttlsNegotiator> {
+pub fn get_negotiator(
+    protocol: StarttlsProtocol,
+    hostname: String,
+    port: u16,
+) -> Box<dyn StarttlsNegotiator> {
     match protocol {
         StarttlsProtocol::SMTP => {
             Box::new(crate::starttls::smtp::SmtpNegotiator::new(hostname.clone()))
@@ -186,9 +190,10 @@ pub fn get_negotiator(protocol: StarttlsProtocol, hostname: String) -> Box<dyn S
         StarttlsProtocol::FTPS => Box::new(ImplicitTlsNegotiator { protocol }),
         StarttlsProtocol::LDAP => Box::new(crate::starttls::ldap::LdapNegotiator::new()),
         StarttlsProtocol::LDAPS => Box::new(ImplicitTlsNegotiator { protocol }),
-        StarttlsProtocol::XMPP => {
-            Box::new(crate::starttls::xmpp::XmppNegotiator::new(hostname.clone()))
-        }
+        StarttlsProtocol::XMPP => Box::new(crate::starttls::xmpp::XmppNegotiator::new(
+            hostname.clone(),
+            port == 5269,
+        )),
         StarttlsProtocol::XMPPS => Box::new(ImplicitTlsNegotiator { protocol }),
         StarttlsProtocol::POSTGRES => {
             Box::new(crate::starttls::postgres::PostgresNegotiator::new())
@@ -252,25 +257,25 @@ mod tests {
     fn test_get_negotiator_protocols() {
         let hostname = "example.com".to_string();
 
-        let smtp = get_negotiator(StarttlsProtocol::SMTP, hostname.clone());
+        let smtp = get_negotiator(StarttlsProtocol::SMTP, hostname.clone(), 25);
         assert_eq!(smtp.protocol(), StarttlsProtocol::SMTP);
 
-        let imap = get_negotiator(StarttlsProtocol::IMAP, hostname.clone());
+        let imap = get_negotiator(StarttlsProtocol::IMAP, hostname.clone(), 143);
         assert_eq!(imap.protocol(), StarttlsProtocol::IMAP);
 
-        let pop3 = get_negotiator(StarttlsProtocol::POP3, hostname.clone());
+        let pop3 = get_negotiator(StarttlsProtocol::POP3, hostname.clone(), 110);
         assert_eq!(pop3.protocol(), StarttlsProtocol::POP3);
 
-        let lmtp = get_negotiator(StarttlsProtocol::LMTP, hostname.clone());
+        let lmtp = get_negotiator(StarttlsProtocol::LMTP, hostname.clone(), 24);
         assert_eq!(lmtp.protocol(), StarttlsProtocol::LMTP);
 
-        let postgres = get_negotiator(StarttlsProtocol::POSTGRES, hostname);
+        let postgres = get_negotiator(StarttlsProtocol::POSTGRES, hostname, 5432);
         assert_eq!(postgres.protocol(), StarttlsProtocol::POSTGRES);
     }
 
     #[test]
     fn test_get_negotiator_implicit_tls_returns_erroring_negotiator() {
-        let negotiator = get_negotiator(StarttlsProtocol::SMTPS, "example.com".to_string());
+        let negotiator = get_negotiator(StarttlsProtocol::SMTPS, "example.com".to_string(), 465);
         assert_eq!(negotiator.protocol(), StarttlsProtocol::SMTPS);
     }
 

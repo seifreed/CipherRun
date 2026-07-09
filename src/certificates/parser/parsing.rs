@@ -136,7 +136,11 @@ impl CertificateParser {
                 .starttls_hostname
                 .clone()
                 .unwrap_or_else(|| self.target.hostname.clone());
-            let negotiator = crate::starttls::protocols::get_negotiator(starttls_proto, hostname);
+            let negotiator = crate::starttls::protocols::get_negotiator(
+                starttls_proto,
+                hostname,
+                self.target.port,
+            );
             crate::starttls::protocols::negotiate_starttls_with_timeout(
                 negotiator.as_ref(),
                 &mut stream,
