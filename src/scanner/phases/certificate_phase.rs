@@ -191,6 +191,7 @@ impl CertificatePhase {
             Some(crate::starttls::StarttlsProtocol::NNTP) => Some("nntp".to_string()),
             Some(crate::starttls::StarttlsProtocol::SIEVE) => Some("sieve".to_string()),
             Some(crate::starttls::StarttlsProtocol::LMTP) => Some("lmtp".to_string()),
+            Some(crate::starttls::StarttlsProtocol::Telnet) => Some("telnet".to_string()),
             _ => None,
         }
     }
@@ -395,6 +396,24 @@ mod tests {
         let context = ScanContext::new(target, Arc::new(args), None, None);
 
         assert_eq!(CertificatePhase::tls_hostname(&context), "cdn.example");
+    }
+
+    #[test]
+    fn test_openssl_starttls_maps_telnet() {
+        let target = crate::utils::network::Target::with_ips(
+            "example.com".to_string(),
+            23,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+        let mut args = ScanRequest::default();
+        args.starttls.protocol = Some("telnet".to_string());
+        let context = ScanContext::new(target, Arc::new(args), None, None);
+
+        assert_eq!(
+            CertificatePhase::openssl_starttls(&context),
+            Some("telnet".to_string())
+        );
     }
 
     #[tokio::test]
