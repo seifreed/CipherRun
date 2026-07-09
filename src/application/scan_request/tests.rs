@@ -72,6 +72,7 @@ fn builds_protocol_filter_from_flags() {
 #[test]
 fn starttls_protocol_supports_telnet() {
     let request = ScanRequest {
+        target: Some("mail.example.com".to_string()),
         starttls: ScanRequestStarttls {
             protocol: Some("telnet".to_string()),
             ..Default::default()
@@ -80,8 +81,10 @@ fn starttls_protocol_supports_telnet() {
     };
 
     assert_eq!(request.starttls_protocol(), Some(StarttlsProtocol::Telnet));
+    assert!(request.should_run_protocol_phase());
     assert!(request.has_starttls_negotiation_request());
     assert!(request.validate_common().is_ok());
+    assert!(request.validate_for_scan().is_ok());
 }
 
 #[test]

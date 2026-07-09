@@ -19,6 +19,7 @@ impl ScanRequest {
         // spurious "Enable TLS 1.3" recommendation.
         self.scan.proto.enabled
             || self.protocols_to_test().is_some()
+            || self.has_starttls_negotiation_request()
             || self.baseline_scan_requested()
             || self.should_run_cipher_phase()
             || self.scan.ciphers.pqc_readiness
