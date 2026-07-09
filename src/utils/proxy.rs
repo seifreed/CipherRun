@@ -112,9 +112,16 @@ impl ProxyConfig {
     pub fn url(&self) -> String {
         match (&self.username, &self.password) {
             (Some(username), Some(password)) => {
-                format!("http://{}:{}@{}", username, password, self.authority())
+                format!(
+                    "http://{}:{}@{}",
+                    urlencoding::encode(username),
+                    urlencoding::encode(password),
+                    self.authority()
+                )
             }
-            (Some(username), None) => format!("http://{}@{}", username, self.authority()),
+            (Some(username), None) => {
+                format!("http://{}@{}", urlencoding::encode(username), self.authority())
+            }
             _ => format!("http://{}", self.authority()),
         }
     }
@@ -375,6 +382,21 @@ mod tests {
         assert_eq!(proxy.port, 3128);
         assert_eq!(proxy.username.as_deref(), Some("user"));
         assert_eq!(proxy.password.as_deref(), Some("pass"));
+    }
+
+    #[test]
+    fn test_proxy_url_encodes_credentials() {
+        let proxy = ProxyConfig {
+            host: "proxy.example.com".to_string(),
+            port: 3128,
+            username: Some("user name".to_string()),
+            password: Some("pa:ss@word".to_string()),
+        };
+
+        let url = proxy.url();
+        assert!(url.contains("user%20name"));
+        assert!(url.contains("pa%3Ass%40word"));
+        assert!(reqwest::Url::parse(&url).is_ok());
     }
 
     #[test]
