@@ -108,6 +108,8 @@ pub struct CertificatePolicy {
     pub require_san: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub require_hostname_match: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub require_revocation_check: Option<bool>,
     pub action: PolicyAction,
 }
 
@@ -213,6 +215,7 @@ impl Policy {
             count += u32::from(certificates.require_valid_trust_chain == Some(true));
             count += u32::from(certificates.require_san == Some(true));
             count += u32::from(certificates.require_hostname_match == Some(true));
+            count += u32::from(certificates.require_revocation_check == Some(true));
         }
 
         if let Some(ref vulnerabilities) = self.vulnerabilities {

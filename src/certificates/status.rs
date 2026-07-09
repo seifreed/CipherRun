@@ -1,7 +1,7 @@
 // Certificate Status - Detect certificate validation status for filtering
 
 use super::parser::CertificateInfo;
-use super::revocation::{RevocationResult, RevocationStatus};
+use super::revocation::RevocationResult;
 use super::validator::{IssueType, ValidationResult, parse_cert_date};
 use crate::application::CertificateFilters;
 use chrono::Utc;
@@ -180,6 +180,7 @@ impl CertificateStatus {
 mod tests {
     use super::*;
     use crate::application::CertificateFilters;
+    use crate::certificates::revocation::RevocationStatus;
     use crate::certificates::validator::{IssueSeverity, ValidationIssue};
 
     #[test]

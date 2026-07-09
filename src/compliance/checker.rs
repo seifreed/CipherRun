@@ -2,6 +2,7 @@
 
 use crate::Result;
 use crate::application::ScanAssessment;
+use crate::certificates::revocation::RevocationStatus;
 use crate::certificates::validator::parse_cert_date;
 use crate::compliance::{Rule, Severity, Violation};
 use crate::protocols::Protocol;
@@ -399,13 +400,37 @@ impl ComplianceChecker {
                     severity: Severity::High,
                 });
             }
+
+            // Check if revocation status must be successfully verified
+            if rule.require_revocation_check.unwrap_or(false) {
+                match cert_analysis.revocation.as_ref() {
+                    Some(revocation) if revocation.status == RevocationStatus::Good => {}
+                    Some(revocation) => {
+                        violations.push(Violation {
+                            violation_type: "Revoked Certificate".to_string(),
+                            description: "Certificate revocation check failed".to_string(),
+                            evidence: revocation.summary(),
+                            severity: Severity::Critical,
+                        });
+                    }
+                    None => {
+                        violations.push(Violation {
+                            violation_type: "Missing Revocation Status".to_string(),
+                            description: "Certificate revocation status is unavailable".to_string(),
+                            evidence: "Revocation check was not performed".to_string(),
+                            severity: Severity::Critical,
+                        });
+                    }
+                }
+            }
         } else {
             // No certificate analysis available: any certificate requirement is
             // unsatisfiable, so a missing measurement must fail closed rather than
             // silently pass.
             let requires_certificate = rule.require_valid_chain.unwrap_or(false)
                 || rule.require_unexpired.unwrap_or(false)
-                || rule.require_hostname_match.unwrap_or(false);
+                || rule.require_hostname_match.unwrap_or(false)
+                || rule.require_revocation_check.unwrap_or(false);
             if requires_certificate {
                 violations.push(Violation {
                     violation_type: "Missing Certificate".to_string(),

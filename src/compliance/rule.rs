@@ -76,6 +76,10 @@ pub struct Rule {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub require_hostname_match: Option<bool>,
 
+    /// Require successful revocation check with a non-revoked certificate
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub require_revocation_check: Option<bool>,
+
     /// Maximum days until expiration (for early warning)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_days_until_expiration: Option<i64>,
@@ -199,6 +203,7 @@ mod tests {
             require_valid_chain: None,
             require_unexpired: None,
             require_hostname_match: None,
+            require_revocation_check: None,
             max_days_until_expiration: None,
             custom_params: HashMap::new(),
         };
@@ -223,6 +228,7 @@ mod tests {
             require_valid_chain: None,
             require_unexpired: None,
             require_hostname_match: None,
+            require_revocation_check: None,
             max_days_until_expiration: None,
             custom_params: HashMap::new(),
         };
@@ -247,6 +253,7 @@ mod tests {
             require_valid_chain: None,
             require_unexpired: None,
             require_hostname_match: None,
+            require_revocation_check: None,
             max_days_until_expiration: None,
             custom_params: HashMap::new(),
         };
@@ -271,6 +278,7 @@ mod tests {
             require_valid_chain: None,
             require_unexpired: None,
             require_hostname_match: None,
+            require_revocation_check: None,
             max_days_until_expiration: None,
             custom_params: HashMap::new(),
         };
@@ -294,6 +302,7 @@ mod tests {
             require_valid_chain: None,
             require_unexpired: None,
             require_hostname_match: None,
+            require_revocation_check: None,
             max_days_until_expiration: None,
             custom_params: HashMap::new(),
         };
@@ -317,6 +326,7 @@ mod tests {
             require_valid_chain: None,
             require_unexpired: None,
             require_hostname_match: None,
+            require_revocation_check: None,
             max_days_until_expiration: None,
             custom_params: HashMap::new(),
         };
@@ -339,6 +349,7 @@ mod tests {
             require_valid_chain: None,
             require_unexpired: None,
             require_hostname_match: None,
+            require_revocation_check: None,
             max_days_until_expiration: None,
             custom_params: HashMap::new(),
         };
@@ -361,6 +372,7 @@ mod tests {
             require_valid_chain: None,
             require_unexpired: None,
             require_hostname_match: None,
+            require_revocation_check: None,
             max_days_until_expiration: None,
             custom_params: HashMap::new(),
         };
@@ -384,6 +396,7 @@ mod tests {
             require_valid_chain: None,
             require_unexpired: None,
             require_hostname_match: None,
+            require_revocation_check: None,
             max_days_until_expiration: None,
             custom_params: HashMap::new(),
         };

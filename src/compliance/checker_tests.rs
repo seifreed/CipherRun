@@ -1,6 +1,7 @@
 use super::*;
 use crate::application::ScanAssessment;
 use crate::certificates::parser::{CertificateChain, CertificateInfo};
+use crate::certificates::revocation::{RevocationMethod, RevocationResult, RevocationStatus};
 use crate::certificates::validator::ValidationResult;
 use crate::ciphers::CipherSuite;
 use crate::ciphers::tester::{CipherCounts, ProtocolCipherSummary};
@@ -11,6 +12,14 @@ use crate::vulnerabilities::{Severity as VulnSeverity, VulnerabilityResult, Vuln
 use std::collections::HashMap;
 
 fn create_certificate_assessment(not_after: String, not_expired: bool) -> ScanAssessment {
+    create_certificate_assessment_with_revocation(not_after, not_expired, None)
+}
+
+fn create_certificate_assessment_with_revocation(
+    not_after: String,
+    not_expired: bool,
+    revocation: Option<RevocationResult>,
+) -> ScanAssessment {
     let cert = CertificateInfo {
         subject: "CN=example.com".to_string(),
         issuer: "CN=Test CA".to_string(),
@@ -53,7 +62,7 @@ fn create_certificate_assessment(not_after: String, not_expired: bool) -> ScanAs
                 trusted_ca: None,
                 platform_trust: None,
             },
-            revocation: None,
+            revocation,
         }),
         ..Default::default()
     }
@@ -74,6 +83,7 @@ fn test_check_protocols_denied() {
         require_valid_chain: None,
         require_unexpired: None,
         require_hostname_match: None,
+        require_revocation_check: None,
         max_days_until_expiration: None,
         custom_params: HashMap::new(),
     };
@@ -129,6 +139,7 @@ fn test_check_protocols_allowed() {
         require_valid_chain: None,
         require_unexpired: None,
         require_hostname_match: None,
+        require_revocation_check: None,
         max_days_until_expiration: None,
         custom_params: HashMap::new(),
     };
@@ -184,6 +195,7 @@ fn test_check_protocols_allowed_names_are_normalized() {
         require_valid_chain: None,
         require_unexpired: None,
         require_hostname_match: None,
+        require_revocation_check: None,
         max_days_until_expiration: None,
         custom_params: HashMap::new(),
     };
@@ -224,6 +236,7 @@ fn test_check_protocols_denied_names_are_normalized() {
         require_valid_chain: None,
         require_unexpired: None,
         require_hostname_match: None,
+        require_revocation_check: None,
         max_days_until_expiration: None,
         custom_params: HashMap::new(),
     };
@@ -265,6 +278,7 @@ fn test_check_key_size_flags_ec_public_key_algorithm() {
         require_valid_chain: None,
         require_unexpired: None,
         require_hostname_match: None,
+        require_revocation_check: None,
         max_days_until_expiration: None,
         custom_params: HashMap::new(),
     };
@@ -300,6 +314,7 @@ fn test_check_forward_secrecy_treats_tls13_cipher_metadata_case_insensitively() 
         require_valid_chain: None,
         require_unexpired: None,
         require_hostname_match: None,
+        require_revocation_check: None,
         max_days_until_expiration: None,
         custom_params: HashMap::new(),
     };
@@ -354,6 +369,7 @@ fn test_check_forward_secrecy_uses_protocol_bucket_for_tls13_ciphers() {
         require_valid_chain: None,
         require_unexpired: None,
         require_hostname_match: None,
+        require_revocation_check: None,
         max_days_until_expiration: None,
         custom_params: HashMap::new(),
     };
@@ -438,6 +454,7 @@ fn test_check_ciphers_exact_lists_are_case_insensitive() {
         require_valid_chain: None,
         require_unexpired: None,
         require_hostname_match: None,
+        require_revocation_check: None,
         max_days_until_expiration: None,
         custom_params: HashMap::new(),
     };
@@ -458,6 +475,7 @@ fn test_check_ciphers_exact_lists_are_case_insensitive() {
         require_valid_chain: None,
         require_unexpired: None,
         require_hostname_match: None,
+        require_revocation_check: None,
         max_days_until_expiration: None,
         custom_params: HashMap::new(),
     };
@@ -481,6 +499,7 @@ fn preferred_rule() -> Rule {
         require_valid_chain: None,
         require_unexpired: None,
         require_hostname_match: None,
+        require_revocation_check: None,
         max_days_until_expiration: None,
         custom_params: HashMap::new(),
     }
@@ -559,6 +578,7 @@ fn test_check_signature_denied_matches_hyphenated_alias() {
         require_valid_chain: None,
         require_unexpired: None,
         require_hostname_match: None,
+        require_revocation_check: None,
         max_days_until_expiration: None,
         custom_params: HashMap::new(),
     };
@@ -595,6 +615,7 @@ fn test_check_signature_allowed_matches_separator_alias() {
         require_valid_chain: None,
         require_unexpired: None,
         require_hostname_match: None,
+        require_revocation_check: None,
         max_days_until_expiration: None,
         custom_params: HashMap::new(),
     };
@@ -627,6 +648,7 @@ fn test_check_signature_denied_rejects_partial_match() {
         require_valid_chain: None,
         require_unexpired: None,
         require_hostname_match: None,
+        require_revocation_check: None,
         max_days_until_expiration: None,
         custom_params: HashMap::new(),
     };
@@ -645,6 +667,45 @@ fn test_check_signature_denied_rejects_partial_match() {
 }
 
 #[test]
+fn test_check_cert_validation_requires_revocation_check() {
+    let rule = Rule {
+        rule_type: "CertificateValidation".to_string(),
+        allowed: vec![],
+        denied: vec![],
+        allowed_patterns: vec![],
+        denied_patterns: vec![],
+        preferred_patterns: vec![],
+        min_rsa_bits: None,
+        min_ecc_bits: None,
+        required: None,
+        require_valid_chain: None,
+        require_unexpired: None,
+        require_hostname_match: None,
+        require_revocation_check: Some(true),
+        max_days_until_expiration: None,
+        custom_params: HashMap::new(),
+    };
+
+    let results = create_certificate_assessment_with_revocation(
+        "2027-01-01 00:00:00 +0000".to_string(),
+        true,
+        Some(RevocationResult {
+            status: RevocationStatus::Revoked,
+            method: RevocationMethod::OCSP,
+            details: "test revocation result".to_string(),
+            ocsp_stapling: false,
+            ocsp_stapling_details: None,
+            must_staple: false,
+        }),
+    );
+
+    let violations = ComplianceChecker::check_cert_validation(&rule, &results)
+        .expect("test assertion should succeed");
+    assert_eq!(violations.len(), 1);
+    assert_eq!(violations[0].violation_type, "Revoked Certificate");
+}
+
+#[test]
 fn test_check_cert_expiration_does_not_warn_for_recently_expired_certificates() {
     let rule = Rule {
         rule_type: "CertificateExpiration".to_string(),
@@ -659,6 +720,7 @@ fn test_check_cert_expiration_does_not_warn_for_recently_expired_certificates() 
         require_valid_chain: None,
         require_unexpired: None,
         require_hostname_match: None,
+        require_revocation_check: None,
         max_days_until_expiration: Some(30),
         custom_params: HashMap::new(),
     };
@@ -687,6 +749,7 @@ fn test_check_vulnerabilities_maps_severity_and_evidence() {
         require_valid_chain: None,
         require_unexpired: None,
         require_hostname_match: None,
+        require_revocation_check: None,
         max_days_until_expiration: None,
         custom_params: HashMap::new(),
     };
@@ -740,6 +803,7 @@ fn test_check_vulnerabilities_ignores_inconclusive_findings() {
         require_valid_chain: None,
         require_unexpired: None,
         require_hostname_match: None,
+        require_revocation_check: None,
         max_days_until_expiration: None,
         custom_params: HashMap::new(),
     };

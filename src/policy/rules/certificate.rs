@@ -1,6 +1,7 @@
 // Certificate policy rules
 
 use crate::Result;
+use crate::certificates::revocation::RevocationStatus;
 use crate::certificates::validator::parse_cert_date;
 use crate::policy::violation::PolicyViolation;
 use crate::policy::{CertificatePolicy, PolicyAction};
@@ -181,6 +182,41 @@ impl<'a> CertificateRule<'a> {
             );
         }
 
+        // Check revocation status
+        if let Some(true) = self.policy.require_revocation_check {
+            match cert_result.revocation.as_ref() {
+                Some(revocation) if revocation.status == RevocationStatus::Good => {}
+                Some(revocation) => {
+                    violations.push(
+                        PolicyViolation::new(
+                            "certificates.require_revocation_check",
+                            "Revocation Check",
+                            self.policy.action,
+                            "Certificate revocation check failed",
+                        )
+                        .with_evidence(revocation.summary())
+                        .with_remediation(
+                            "Revoke or replace the certificate and re-run revocation checks",
+                        ),
+                    );
+                }
+                None => {
+                    violations.push(
+                        PolicyViolation::new(
+                            "certificates.require_revocation_check",
+                            "Revocation Check",
+                            self.policy.action,
+                            "Certificate revocation status is unavailable",
+                        )
+                        .with_evidence("Revocation check was not performed")
+                        .with_remediation(
+                            "Enable revocation checking or provide a fresh scan with revocation data",
+                        ),
+                    );
+                }
+            }
+        }
+
         // Check SAN requirement
         if let Some(true) = self.policy.require_san
             && leaf_cert.san.is_empty()
@@ -256,6 +292,7 @@ fn signature_algorithm_matches(signature_algorithm: &str, prohibited: &str) -> b
 mod tests {
     use super::*;
     use crate::certificates::parser::{CertificateChain, CertificateInfo};
+    use crate::certificates::revocation::{RevocationMethod, RevocationResult, RevocationStatus};
     use crate::certificates::validator::ValidationResult;
 
     fn create_test_cert_result() -> CertificateAnalysisResult {
@@ -304,6 +341,17 @@ mod tests {
         }
     }
 
+    fn create_revocation_result(status: RevocationStatus) -> RevocationResult {
+        RevocationResult {
+            status,
+            method: RevocationMethod::OCSP,
+            details: "test revocation result".to_string(),
+            ocsp_stapling: false,
+            ocsp_stapling_details: None,
+            must_staple: false,
+        }
+    }
+
     #[test]
     fn test_min_key_size_violation() {
         let policy = CertificatePolicy {
@@ -313,6 +361,7 @@ mod tests {
             require_valid_trust_chain: None,
             require_san: None,
             require_hostname_match: None,
+            require_revocation_check: None,
             action: PolicyAction::Fail,
         };
 
@@ -335,6 +384,7 @@ mod tests {
             require_valid_trust_chain: None,
             require_san: None,
             require_hostname_match: None,
+            require_revocation_check: None,
             action: PolicyAction::Fail,
         };
 
@@ -356,6 +406,7 @@ mod tests {
             require_valid_trust_chain: Some(true),
             require_san: Some(true),
             require_hostname_match: Some(true),
+            require_revocation_check: None,
             action: PolicyAction::Fail,
         };
 
@@ -381,6 +432,7 @@ mod tests {
             require_valid_trust_chain: None,
             require_san: Some(true),
             require_hostname_match: None,
+            require_revocation_check: None,
             action: PolicyAction::Fail,
         };
 
@@ -405,6 +457,7 @@ mod tests {
             require_valid_trust_chain: None,
             require_san: None,
             require_hostname_match: None,
+            require_revocation_check: None,
             action: PolicyAction::Fail,
         };
 
@@ -439,6 +492,7 @@ mod tests {
             require_valid_trust_chain: None,
             require_san: None,
             require_hostname_match: None,
+            require_revocation_check: None,
             action: PolicyAction::Fail,
         };
 
@@ -466,6 +520,7 @@ mod tests {
             require_valid_trust_chain: None,
             require_san: None,
             require_hostname_match: None,
+            require_revocation_check: None,
             action: PolicyAction::Fail,
         };
 
@@ -486,6 +541,7 @@ mod tests {
             require_valid_trust_chain: None,
             require_san: None,
             require_hostname_match: None,
+            require_revocation_check: None,
             action: PolicyAction::Fail,
         };
 
@@ -512,6 +568,7 @@ mod tests {
             require_valid_trust_chain: None,
             require_san: None,
             require_hostname_match: None,
+            require_revocation_check: None,
             action: PolicyAction::Fail,
         };
 
@@ -538,6 +595,7 @@ mod tests {
             require_valid_trust_chain: None,
             require_san: None,
             require_hostname_match: None,
+            require_revocation_check: None,
             action: PolicyAction::Fail,
         };
 
@@ -565,6 +623,7 @@ mod tests {
             require_valid_trust_chain: None,
             require_san: None,
             require_hostname_match: None,
+            require_revocation_check: None,
             action: PolicyAction::Fail,
         };
 
@@ -588,6 +647,7 @@ mod tests {
             require_valid_trust_chain: Some(true),
             require_san: None,
             require_hostname_match: None,
+            require_revocation_check: None,
             action: PolicyAction::Fail,
         };
 
@@ -602,6 +662,34 @@ mod tests {
         assert_eq!(
             violations[0].rule_path,
             "certificates.require_valid_trust_chain"
+        );
+    }
+
+    #[test]
+    fn test_require_revocation_check_violation_for_revoked_certificate() {
+        let policy = CertificatePolicy {
+            min_key_size: None,
+            max_days_until_expiry: None,
+            prohibited_signature_algorithms: None,
+            require_valid_trust_chain: None,
+            require_san: None,
+            require_hostname_match: None,
+            require_revocation_check: Some(true),
+            action: PolicyAction::Fail,
+        };
+
+        let mut cert_result = create_test_cert_result();
+        cert_result.revocation = Some(create_revocation_result(RevocationStatus::Revoked));
+
+        let rule = CertificateRule::new(&policy, Some(&cert_result));
+        let violations = rule
+            .evaluate("example.com:443")
+            .expect("test assertion should succeed");
+
+        assert_eq!(violations.len(), 1);
+        assert_eq!(
+            violations[0].rule_path,
+            "certificates.require_revocation_check"
         );
     }
 }
