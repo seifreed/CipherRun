@@ -362,6 +362,9 @@ impl MonitorConfig {
                 message: format!("Invalid {label}: must not contain credentials"),
             });
         }
+        validate_hostname(url.host_str().unwrap_or("")).map_err(|error| TlsError::ConfigError {
+            message: format!("Invalid {label}: {error}"),
+        })?;
         Ok(())
     }
 }
@@ -667,6 +670,25 @@ webhook_url = "https://127.1/services/TEST"
         let err = MonitorConfig::from_file(&path).expect_err("obfuscated Slack URL should fail");
 
         assert!(err.to_string().contains("obfuscated IP notation"));
+    }
+
+    #[test]
+    fn test_from_file_rejects_enabled_slack_dotted_ip_url() {
+        let dir = tempfile::tempdir().expect("test assertion should succeed");
+        let path = dir.path().join("monitor.toml");
+        fs::write(
+            &path,
+            r#"
+[monitor.alerts.slack]
+enabled = true
+webhook_url = "https://10.0.0.1./services/TEST"
+"#,
+        )
+        .expect("test assertion should succeed");
+
+        let err = MonitorConfig::from_file(&path).expect_err("dotted Slack URL should fail");
+
+        assert!(err.to_string().contains("Invalid Slack webhook_url"));
     }
 
     #[test]

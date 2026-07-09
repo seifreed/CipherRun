@@ -6,6 +6,7 @@ use crate::error::TlsError;
 use crate::monitor::alerts::{Alert, AlertChannel, AlertType};
 use crate::monitor::config::TeamsConfig;
 use crate::monitor::detector::ChangeSeverity;
+use crate::security::validate_hostname;
 use crate::security::input_validation::looks_like_obfuscated_ip;
 use async_trait::async_trait;
 use serde_json::json;
@@ -43,6 +44,9 @@ impl TeamsChannel {
                 message: "Teams webhook_url must not contain credentials".to_string(),
             });
         }
+        validate_hostname(url.host_str().unwrap_or("")).map_err(|error| TlsError::ConfigError {
+            message: format!("Invalid Teams webhook_url: {error}"),
+        })?;
         Ok(Self { config })
     }
 
@@ -229,6 +233,14 @@ mod tests {
             Err(err) => err,
         };
         assert!(err.to_string().contains("obfuscated IP notation"));
+    }
+
+    #[test]
+    fn test_teams_channel_rejects_dotted_ip_webhook_url() {
+        let mut config = create_test_config();
+        config.webhook_url = "https://10.0.0.1./webhook/TEST".to_string();
+
+        assert!(TeamsChannel::new(config).is_err());
     }
 
     #[test]
