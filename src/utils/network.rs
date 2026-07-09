@@ -381,6 +381,12 @@ async fn resolve_hostname_with_ssrf_check(
         return Ok(vec![ip]);
     }
 
+    if looks_like_obfuscated_ip(hostname) {
+        return Err(TlsError::InvalidInput {
+            message: format!("Invalid hostname: obfuscated IP notation is not allowed: {hostname}"),
+        });
+    }
+
     // Check DNS cache first
     let cache = super::dns_cache::global_cache();
     if let Some(cached_ips) = cache.get(hostname).await {

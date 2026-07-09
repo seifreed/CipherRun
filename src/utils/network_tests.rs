@@ -473,6 +473,15 @@ async fn test_resolve_hostname_short_circuit_ip() {
     assert_eq!(ips[0], "8.8.8.8".parse::<IpAddr>().unwrap());
 }
 
+#[tokio::test]
+async fn test_resolve_hostname_rejects_obfuscated_ip_notation() {
+    let err = resolve_hostname("127.1")
+        .await
+        .expect_err("obfuscated IP notation should be rejected");
+
+    assert!(err.to_string().contains("obfuscated IP notation"));
+}
+
 #[test]
 fn test_primary_ip() {
     let target = Target::with_ips(
