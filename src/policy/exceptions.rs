@@ -49,8 +49,8 @@ impl ExceptionMatcher {
         let Ok((hostname, _)) = split_target_host_port(target) else {
             return false;
         };
-        let hostname_lower = hostname.trim().to_ascii_lowercase();
-        let pattern_lower = pattern.trim().to_ascii_lowercase();
+        let hostname_lower = hostname.trim().trim_end_matches('.').to_ascii_lowercase();
+        let pattern_lower = pattern.trim().trim_end_matches('.').to_ascii_lowercase();
         let hostname = hostname_lower.as_str();
         let pattern = pattern_lower.as_str();
 
@@ -348,6 +348,25 @@ mod tests {
                 .is_exception("example.com:8443", "certificates.max_days_until_expiry")
                 .is_some()
         );
+    }
+
+    #[test]
+    fn test_rooted_fqdn_domain_matching() {
+        let exception = PolicyException {
+            domain: Some("example.com.".to_string()),
+            rules: vec!["protocols.prohibited".to_string()],
+            reason: "Rooted FQDN".to_string(),
+            expires: None,
+            approved_by: "Admin".to_string(),
+            ticket: None,
+        };
+
+        let matcher = ExceptionMatcher::new(vec![exception]);
+
+        assert!(matcher.matches_domain("example.com.", "example.com"));
+        assert!(matcher.matches_domain("example.com.", "example.com."));
+        assert!(matcher.matches_domain("api.example.com.", "*.example.com."));
+        assert!(matcher.is_exception("example.com.:443", "protocols.prohibited").is_some());
     }
 
     #[test]
