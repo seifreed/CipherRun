@@ -90,7 +90,11 @@ impl<'a> ScanCliView<'a> {
     }
 
     pub fn should_render_fingerprint_and_summary_sections(&self) -> bool {
-        self.has_fingerprint_results() || self.has_alpn_results() || self.has_rating_results()
+        self.has_fingerprint_results()
+            || self.has_cdn_detection_results()
+            || self.has_load_balancer_info_results()
+            || self.has_alpn_results()
+            || self.has_rating_results()
     }
 
     pub fn should_render_fingerprint_view(&self) -> bool {
@@ -108,6 +112,14 @@ impl<'a> ScanCliView<'a> {
 
     pub fn has_jarm_results(&self) -> bool {
         self.results.jarm_fingerprint().is_some()
+    }
+
+    pub fn has_cdn_detection_results(&self) -> bool {
+        self.results.cdn_detection().is_some()
+    }
+
+    pub fn has_load_balancer_info_results(&self) -> bool {
+        self.results.load_balancer_info().is_some()
     }
 
     pub fn has_alpn_results(&self) -> bool {
@@ -131,6 +143,8 @@ impl<'a> ScanCliView<'a> {
             || self.has_intolerance_results()
             || self.has_pqc_readiness_results()
             || self.has_fingerprint_results()
+            || self.has_cdn_detection_results()
+            || self.has_load_balancer_info_results()
             || self.has_alpn_results()
             || self.has_rating_results()
     }
@@ -291,6 +305,7 @@ impl<'a> ScanCliView<'a> {
 mod tests {
     use crate::application::ScanResults;
     use crate::application::scan_execution::post_processing::ScanPostProcessingView;
+    use crate::fingerprint::{CdnDetection, LoadBalancerInfo};
     use crate::protocols::{Protocol, ProtocolTestResult};
 
     use super::ScanCliView;
@@ -353,6 +368,40 @@ mod tests {
         assert!(!view.should_render_results_summary_only());
         assert!(view.should_render_results());
         assert!(view.should_render_results_summary());
+    }
+
+    #[test]
+    fn test_should_render_flags_with_cdn_detection_results_are_detailed() {
+        let mut results = ScanResults::default();
+        results.advanced = Some(crate::scanner::AdvancedResults {
+            cdn_detection: Some(CdnDetection {
+                is_cdn: true,
+                cdn_provider: Some("Cloudflare".to_string()),
+                confidence: 0.95,
+                indicators: vec!["cdn".to_string()],
+            }),
+            load_balancer_info: Some(LoadBalancerInfo {
+                detected: true,
+                lb_type: Some("AWS ALB".to_string()),
+                sticky_sessions: true,
+                indicators: vec!["sticky sessions".to_string()],
+            }),
+            ..Default::default()
+        });
+        let post_processing = ScanPostProcessingView {
+            compliance_report: None,
+            policy_result: None,
+            stored_scan_id: None,
+            should_fail_exit: false,
+        };
+        let view = ScanCliView {
+            results: &results,
+            post_processing,
+        };
+
+        assert!(view.should_render_fingerprint_and_summary_sections());
+        assert!(view.should_render_fingerprint_view());
+        assert!(view.should_render_tls_sections());
     }
 
     #[test]
