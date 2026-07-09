@@ -14,6 +14,7 @@ use crate::utils::network::Target;
 pub struct FreakTester {
     target: Target,
     starttls: Option<crate::starttls::StarttlsProtocol>,
+    starttls_server_mode: bool,
     starttls_hostname: Option<String>,
     sni_hostname: Option<String>,
 }
@@ -43,6 +44,7 @@ impl FreakTester {
         Self {
             target,
             starttls: None,
+            starttls_server_mode: false,
             starttls_hostname: None,
             sni_hostname: None,
         }
@@ -54,9 +56,11 @@ impl FreakTester {
         mut self,
         protocol: Option<crate::starttls::StarttlsProtocol>,
         hostname: Option<String>,
+        server_mode: bool,
     ) -> Self {
         self.starttls = protocol;
         self.starttls_hostname = hostname;
+        self.starttls_server_mode = server_mode;
         self
     }
 
@@ -109,7 +113,7 @@ impl FreakTester {
                 self.starttls,
                 self.sni_hostname.as_deref(),
                 self.starttls_hostname.as_deref(),
-                false,
+                self.starttls_server_mode,
             )
             .await
             {
