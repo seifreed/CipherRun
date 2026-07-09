@@ -6,6 +6,7 @@
 /// the wildcard prefix.
 use crate::certificates::parser::CertificateInfo;
 use crate::scanner::ScanResults;
+use crate::security::input_validation::looks_like_obfuscated_ip;
 use std::collections::HashSet;
 use std::net::IpAddr;
 
@@ -115,7 +116,7 @@ impl DnsOnlyMode {
             return None;
         }
 
-        if normalized.parse::<IpAddr>().is_ok() {
+        if normalized.parse::<IpAddr>().is_ok() || looks_like_obfuscated_ip(&normalized) {
             return None;
         }
 
@@ -309,6 +310,24 @@ mod tests {
             san: vec![
                 "192.0.2.1".to_string(),
                 "2001:db8::1".to_string(),
+                "IP:0a000001".to_string(),
+                "DNS:example.com".to_string(),
+            ],
+            ..Default::default()
+        };
+
+        let domains = DnsOnlyMode::extract_domains(&cert);
+
+        assert_eq!(domains, vec!["example.com".to_string()]);
+    }
+
+    #[test]
+    fn test_extract_domains_skips_obfuscated_ip_sans_and_ip_cn() {
+        let cert = CertificateInfo {
+            subject: "CN=127.1,O=Org,C=US".to_string(),
+            san: vec![
+                "127.1".to_string(),
+                "2130706433".to_string(),
                 "IP:0a000001".to_string(),
                 "DNS:example.com".to_string(),
             ],
