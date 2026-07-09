@@ -35,6 +35,19 @@ pub fn validate_target(
 
     validate_hostname(&hostname)?;
 
+    if !allow_private_ips {
+        let normalized_host = hostname.trim_end_matches('.').to_ascii_lowercase();
+        if normalized_host == "localhost"
+            || normalized_host.ends_with(".local")
+            || normalized_host.ends_with(".internal")
+        {
+            return Err(ValidationError::SsrfAttempt(format!(
+                "Access to private hostnames is not allowed: {}",
+                hostname
+            )));
+        }
+    }
+
     if let Some(p) = port {
         validate_port(p)?;
     }
@@ -199,6 +212,13 @@ mod tests {
     fn test_validate_target_private_ipv6() {
         assert!(validate_target("fc00::1", false).is_err());
         assert!(validate_target("fc00::1", true).is_ok());
+    }
+
+    #[test]
+    fn test_validate_target_rejects_private_hostnames() {
+        assert!(validate_target("localhost", false).is_err());
+        assert!(validate_target("service.local", false).is_err());
+        assert!(validate_target("service.internal", false).is_err());
     }
 
     #[test]
