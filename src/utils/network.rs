@@ -5,7 +5,7 @@ use crate::error::TlsError;
 use hickory_resolver::TokioResolver;
 use hickory_resolver::config::*;
 use hickory_resolver::net::runtime::TokioRuntimeProvider;
-use openssl::ssl::{HandshakeError, SslConnector, SslMethod, SslStream, SslVerifyMode, SslVersion};
+use openssl::ssl::{ErrorCode, HandshakeError, SslConnector, SslMethod, SslStream, SslVerifyMode, SslVersion};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpStream as StdTcpStream};
 use std::time::Duration;
 use tokio::net::TcpStream;
@@ -817,7 +817,19 @@ fn classify_vuln_ssl_handshake_error(
         HandshakeError::SetupFailure(_) | HandshakeError::WouldBlock(_) => {
             VulnSslResult::Inconclusive
         }
-        HandshakeError::Failure(_) => VulnSslResult::Failed,
+        HandshakeError::Failure(stream) => match stream.error().code() {
+            ErrorCode::SYSCALL
+            | ErrorCode::ZERO_RETURN
+            | ErrorCode::WANT_READ
+            | ErrorCode::WANT_WRITE => VulnSslResult::Inconclusive,
+            _ => {
+                if is_transport_anomaly_error(&stream.error().to_string()) {
+                    VulnSslResult::Inconclusive
+                } else {
+                    VulnSslResult::Failed
+                }
+            }
+        },
     }
 }
 

@@ -435,7 +435,7 @@ async fn test_vuln_ssl_connection_outcome_closed_port_is_inconclusive() {
 }
 
 #[tokio::test]
-async fn test_vuln_ssl_connection_outcome_handshake_failure_is_not_supported() {
+async fn test_vuln_ssl_connection_outcome_handshake_failure_is_inconclusive() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("test assertion should succeed");
@@ -461,11 +461,11 @@ async fn test_vuln_ssl_connection_outcome_handshake_failure_is_not_supported() {
             .expect("test assertion should succeed");
     accept_task.await.expect("test assertion should succeed");
 
-    assert_eq!(outcome, Some(false));
+    assert_eq!(outcome, None);
 }
 
 #[tokio::test]
-async fn test_vuln_ssl_connection_outcome_tls_alert_is_not_supported() {
+async fn test_vuln_ssl_connection_outcome_tls_alert_is_inconclusive() {
     use tokio::io::AsyncWriteExt;
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -495,7 +495,7 @@ async fn test_vuln_ssl_connection_outcome_tls_alert_is_not_supported() {
             .expect("test assertion should succeed");
     accept_task.await.expect("test assertion should succeed");
 
-    assert_eq!(outcome, Some(false));
+    assert_eq!(outcome, None);
 }
 
 #[tokio::test]
