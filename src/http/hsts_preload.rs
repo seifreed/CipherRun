@@ -1,6 +1,7 @@
 // HSTS Preload List Checker - Verify if domain is in browser preload lists
 
 use crate::security::input_validation::{looks_like_dotted_ip_literal, looks_like_obfuscated_ip};
+use std::net::IpAddr;
 use crate::constants::HTTP_REQUEST_TIMEOUT;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -77,6 +78,9 @@ impl HstsPreloadChecker {
 
     /// Check if domain is in HSTS preload lists
     pub async fn check_preload_status(&self, domain: &str) -> Result<PreloadStatus, String> {
+        if domain.trim().parse::<IpAddr>().is_ok() {
+            return Err("HSTS preload lookup does not accept IP literals".to_string());
+        }
         if looks_like_obfuscated_ip(domain.trim()) {
             return Err("HSTS preload lookup does not accept obfuscated IP notation".to_string());
         }
@@ -473,6 +477,17 @@ mod tests {
             .expect_err("dotted IP should be rejected");
 
         assert!(err.contains("dotted IP literals"));
+    }
+
+    #[tokio::test]
+    async fn test_check_preload_status_rejects_plain_ip_literal() {
+        let checker = HstsPreloadChecker::new();
+        let err = checker
+            .check_preload_status("127.0.0.1")
+            .await
+            .expect_err("plain IP should be rejected");
+
+        assert!(err.contains("IP literals"));
     }
 
     #[test]
