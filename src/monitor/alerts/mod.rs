@@ -11,10 +11,12 @@ pub mod webhook;
 use crate::Result;
 use crate::monitor::config::MonitorConfig;
 use crate::monitor::detector::{ChangeEvent, ChangeSeverity};
+use crate::security::is_private_ip;
 use chrono::{DateTime, Duration, Utc};
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::net::IpAddr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::net::lookup_host;
@@ -54,6 +56,21 @@ pub(crate) async fn validated_webhook_target(
     let host = url.host_str().ok_or_else(|| crate::error::TlsError::ConfigError {
         message: "Invalid webhook url: host required".to_string(),
     })?;
+    let normalized_host = host.trim_end_matches('.').to_ascii_lowercase();
+    if normalized_host != "localhost"
+        && (normalized_host.ends_with(".local") || normalized_host.ends_with(".internal"))
+    {
+        return Err(crate::error::TlsError::ConfigError {
+            message: "Webhook URL must not use private/local hosts".to_string(),
+        });
+    }
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        if !ip.is_loopback() && is_private_ip(&ip) {
+            return Err(crate::error::TlsError::ConfigError {
+                message: format!("Webhook URL uses private/internal IP literal {ip}"),
+            });
+        }
+    }
     let port = url.port_or_known_default().unwrap_or(80);
     let addrs: Vec<_> = lookup_host((host, port))
         .await
@@ -64,6 +81,17 @@ pub(crate) async fn validated_webhook_target(
     if addrs.is_empty() {
         return Err(crate::error::TlsError::ConfigError {
             message: format!("Webhook DNS resolution returned no addresses for {host}"),
+        });
+    }
+    let mut addrs = addrs;
+    addrs.sort_by_key(|addr| addr.ip().is_ipv6());
+    if normalized_host != "localhost"
+        && addrs
+            .iter()
+            .any(|addr| !addr.ip().is_loopback() && is_private_ip(&addr.ip()))
+    {
+        return Err(crate::error::TlsError::ConfigError {
+            message: "Webhook URL resolves to private/internal IP".to_string(),
         });
     }
 
@@ -314,6 +342,32 @@ mod tests_extra {
         assert_eq!(alert.severity, ChangeSeverity::High);
         assert_eq!(alert.dedup_key(), "example.com:expiry-week");
         matches!(alert.alert_type, AlertType::ExpiryWarning { .. });
+    }
+
+    #[tokio::test]
+    async fn test_validated_webhook_target_rejects_private_ip_literal() {
+        let err = match validated_webhook_target(
+            "https://10.0.0.1/alerts",
+            std::time::Duration::from_secs(1),
+        )
+        .await
+        {
+            Ok(_) => panic!("private IP literal should fail"),
+            Err(err) => err,
+        };
+
+        assert!(err.to_string().contains("private/internal IP literal"));
+    }
+
+    #[tokio::test]
+    async fn test_validated_webhook_target_allows_localhost() {
+        let target = validated_webhook_target(
+            "https://localhost/alerts",
+            std::time::Duration::from_secs(1),
+        )
+        .await;
+
+        assert!(target.is_ok());
     }
 }
 
