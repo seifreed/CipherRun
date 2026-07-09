@@ -20,6 +20,7 @@ pub fn validate_starttls_protocol(protocol: &str) -> std::result::Result<(), Val
         "nntp",
         "sieve",
         "ldap",
+        "telnet",
     ];
 
     let normalized = protocol.trim().to_ascii_lowercase();
@@ -45,6 +46,7 @@ mod tests {
         assert!(validate_starttls_protocol("imap").is_ok());
         assert!(validate_starttls_protocol(" SMTP ").is_ok());
         assert!(validate_starttls_protocol("xmpp-server").is_ok());
+        assert!(validate_starttls_protocol("telnet").is_ok());
         assert!(validate_starttls_protocol("invalid").is_err());
         assert!(validate_starttls_protocol("smtp; whoami").is_err());
     }

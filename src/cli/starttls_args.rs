@@ -120,6 +120,7 @@ impl StarttlsArgs {
                 "nntp" => Some(StarttlsProtocol::NNTP),
                 "sieve" => Some(StarttlsProtocol::SIEVE),
                 "lmtp" => Some(StarttlsProtocol::LMTP),
+                "telnet" => Some(StarttlsProtocol::Telnet),
                 _ => None,
             }
         }
@@ -206,6 +207,14 @@ mod tests {
             }
             .starttls_protocol(),
             Some(StarttlsProtocol::LMTP)
+        );
+        assert_eq!(
+            StarttlsArgs {
+                protocol: Some(" telnet ".to_string()),
+                ..Default::default()
+            }
+            .starttls_protocol(),
+            Some(StarttlsProtocol::Telnet)
         );
     }
 
