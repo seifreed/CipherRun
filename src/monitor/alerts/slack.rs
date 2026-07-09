@@ -32,6 +32,11 @@ impl SlackChannel {
                 message: "Invalid Slack webhook_url: port must be between 1 and 65535".to_string(),
             });
         }
+        if !url.username().is_empty() || url.password().is_some() {
+            return Err(TlsError::ConfigError {
+                message: "Slack webhook_url must not contain credentials".to_string(),
+            });
+        }
         let client = reqwest::Client::builder()
             .timeout(ALERT_SEND_TIMEOUT)
             .redirect(reqwest::redirect::Policy::none())
@@ -223,6 +228,18 @@ mod tests {
         config.webhook_url = "ftp://hooks.slack.com/services/TEST".to_string();
 
         assert!(SlackChannel::new(config).is_err());
+    }
+
+    #[test]
+    fn test_slack_channel_rejects_credentials() {
+        let mut config = create_test_config();
+        config.webhook_url = "https://user:pass@hooks.slack.com/services/TEST".to_string();
+
+        let err = match SlackChannel::new(config) {
+            Ok(_) => panic!("credentials should fail"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("credentials"));
     }
 
     #[test]

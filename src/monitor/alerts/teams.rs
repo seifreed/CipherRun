@@ -32,6 +32,11 @@ impl TeamsChannel {
                 message: "Invalid Teams webhook_url: port must be between 1 and 65535".to_string(),
             });
         }
+        if !url.username().is_empty() || url.password().is_some() {
+            return Err(TlsError::ConfigError {
+                message: "Teams webhook_url must not contain credentials".to_string(),
+            });
+        }
         let client = reqwest::Client::builder()
             .timeout(ALERT_SEND_TIMEOUT)
             .redirect(reqwest::redirect::Policy::none())
@@ -190,6 +195,18 @@ mod tests {
         config.webhook_url = "file:///tmp/hook".to_string();
 
         assert!(TeamsChannel::new(config).is_err());
+    }
+
+    #[test]
+    fn test_teams_channel_rejects_credentials() {
+        let mut config = create_test_config();
+        config.webhook_url = "https://user:pass@outlook.office.com/webhook/TEST".to_string();
+
+        let err = match TeamsChannel::new(config) {
+            Ok(_) => panic!("credentials should fail"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("credentials"));
     }
 
     #[test]
