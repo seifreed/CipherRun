@@ -90,6 +90,12 @@ impl HstsPreloadChecker {
 
         // Normalize domain (remove www. prefix, lowercase)
         let normalized = Self::normalize_domain(domain);
+        if normalized == "localhost"
+            || normalized.ends_with(".local")
+            || normalized.ends_with(".internal")
+        {
+            return Err("HSTS preload lookup does not accept private/local hostnames".to_string());
+        }
 
         // Check cache first
         if let Some(cached) = self.get_from_cache(&normalized)? {
@@ -488,6 +494,22 @@ mod tests {
             .expect_err("plain IP should be rejected");
 
         assert!(err.contains("IP literals"));
+    }
+
+    #[tokio::test]
+    async fn test_check_preload_status_rejects_private_hostnames() {
+        let checker = HstsPreloadChecker::new();
+        let err = checker
+            .check_preload_status("localhost")
+            .await
+            .expect_err("localhost should be rejected");
+        assert!(err.contains("private/local hostnames"));
+
+        let err = checker
+            .check_preload_status("https://ct.internal/path")
+            .await
+            .expect_err("internal host should be rejected");
+        assert!(err.contains("private/local hostnames"));
     }
 
     #[test]
