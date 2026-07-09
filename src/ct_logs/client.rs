@@ -4,6 +4,7 @@
 
 use super::Result;
 use crate::error::TlsError;
+use crate::security::input_validation::looks_like_obfuscated_ip;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tracing::{debug, warn};
@@ -260,6 +261,12 @@ impl CtClient {
 }
 
 fn ct_log_api_url(log_url: &str, path: &str) -> Result<url::Url> {
+    if raw_ct_log_host(log_url).is_some_and(looks_like_obfuscated_ip) {
+        return Err(TlsError::InvalidInput {
+            message: "Invalid CT log URL: obfuscated IP notation is not allowed".to_string(),
+        });
+    }
+
     let mut base = url::Url::parse(log_url).map_err(|error| TlsError::InvalidInput {
         message: format!("Invalid CT log URL: {error}"),
     })?;
@@ -284,6 +291,18 @@ fn ct_log_api_url(log_url: &str, path: &str) -> Result<url::Url> {
     base.join(path).map_err(|error| TlsError::InvalidInput {
         message: format!("Invalid CT log API path: {error}"),
     })
+}
+
+fn raw_ct_log_host(url: &str) -> Option<&str> {
+    let authority = url.split_once("://")?.1;
+    let authority = authority.split(['/', '?', '#']).next().unwrap_or(authority);
+    let host = authority.rsplit_once('@').map(|(_, host)| host).unwrap_or(authority);
+
+    if let Some(host) = host.strip_prefix('[') {
+        host.split_once(']').map(|(host, _)| host)
+    } else {
+        Some(host.split_once(':').map_or(host, |(hostname, _)| hostname))
+    }
 }
 
 impl Default for CtClient {
@@ -338,6 +357,12 @@ mod tests {
         assert!(ct_log_api_url("file:///tmp/log", "ct/v1/get-sth").is_err());
         assert!(ct_log_api_url("https://user@example.com", "ct/v1/get-sth").is_err());
         assert!(ct_log_api_url("https://example.com:0", "ct/v1/get-sth").is_err());
+    }
+
+    #[test]
+    fn test_ct_log_api_url_rejects_obfuscated_ip_notation() {
+        assert!(ct_log_api_url("https://127.1", "ct/v1/get-sth").is_err());
+        assert!(ct_log_api_url("https://0x7f000001", "ct/v1/get-sth").is_err());
     }
 
     #[test]
@@ -448,7 +473,7 @@ mod tests {
     async fn test_get_tree_size_client_error() {
         let client = CtClient::new();
         let err = client.get_tree_size("file:///tmp/log").await.unwrap_err();
-        assert!(format!("{err}").contains("http or https"));
+        assert!(format!("{err}").contains("Invalid CT log URL"));
     }
 
     #[tokio::test]
