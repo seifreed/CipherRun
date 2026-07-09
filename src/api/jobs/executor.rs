@@ -532,6 +532,11 @@ pub(crate) async fn validate_webhook_url(webhook_url: &str) -> Result<ValidatedW
             message: "Webhook URL port must be between 1 and 65535".to_string(),
         });
     }
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err(TlsError::InvalidInput {
+            message: "Webhook URL must not contain credentials".to_string(),
+        });
+    }
 
     // Resolve hostname and check all IPs against SSRF blocklist
     let host = url
@@ -750,6 +755,15 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_validate_webhook_url_rejects_credentials() {
+        let err = validate_webhook_url("https://user:pass@example.com/callback")
+            .await
+            .expect_err("credentials should fail");
+
+        assert!(err.to_string().contains("credentials"));
+    }
+
+    #[tokio::test]
     async fn test_webhook_client_does_not_follow_redirects() {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -760,7 +774,10 @@ mod tests {
         let server = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.expect("client should connect");
             let mut request = [0_u8; 1024];
-            let _ = socket.read(&mut request).await.expect("request should read");
+            let _ = socket
+                .read(&mut request)
+                .await
+                .expect("request should read");
             socket
                 .write_all(
                     b"HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:9/private\r\nContent-Length: 0\r\n\r\n",
