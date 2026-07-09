@@ -76,6 +76,11 @@ fn normalize_target_hostname(hostname: String) -> String {
     if hostname.parse::<IpAddr>().is_ok() {
         return hostname;
     }
+    if let Some(stripped) = hostname.strip_suffix('.') {
+        if stripped.parse::<IpAddr>().is_ok() {
+            return hostname;
+        }
+    }
     match hostname.strip_suffix('.') {
         _ if hostname.ends_with("..") => hostname,
         Some(stripped) if !stripped.is_empty() => stripped.to_string(),
@@ -303,6 +308,13 @@ mod tests {
 
         assert_eq!(host, "example.com");
         assert_eq!(port, Some(443));
+    }
+
+    #[test]
+    fn test_validate_target_rejects_dotted_ip_literal() {
+        let result = validate_target("192.0.2.1.:443", true);
+
+        assert!(result.is_err());
     }
 
     #[test]

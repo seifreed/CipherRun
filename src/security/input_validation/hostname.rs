@@ -18,7 +18,7 @@ const MAX_LABEL_LENGTH: usize = 63;
 pub fn validate_hostname(hostname: &str) -> std::result::Result<(), ValidationError> {
     let hostname = match hostname.strip_suffix('.') {
         _ if hostname.ends_with("..") => hostname,
-        Some(stripped) if !stripped.is_empty() => stripped,
+        Some(stripped) if !stripped.is_empty() && stripped.parse::<IpAddr>().is_err() => stripped,
         _ => hostname,
     };
 
@@ -114,6 +114,11 @@ mod tests {
         assert!(validate_hostname("192.168.1.1").is_ok());
         assert!(validate_hostname("localhost").is_ok());
         assert!(validate_hostname("test-server-01.example.com").is_ok());
+    }
+
+    #[test]
+    fn test_validate_hostname_rejects_dotted_ip_literal() {
+        assert!(validate_hostname("192.168.1.1.").is_err());
     }
 
     #[test]

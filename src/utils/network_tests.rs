@@ -605,6 +605,11 @@ fn test_normalize_dns_hostname_preserves_ip_literal() {
 }
 
 #[test]
+fn test_normalize_dns_hostname_preserves_dotted_ip_literal() {
+    assert_eq!(normalize_dns_hostname("192.0.2.1.".to_string()), "192.0.2.1.");
+}
+
+#[test]
 fn test_normalize_dns_hostname_keeps_bare_root_dot() {
     // "." is not a scannable host; leave it so resolution fails loudly rather
     // than collapsing to an empty hostname.

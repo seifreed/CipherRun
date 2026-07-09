@@ -101,6 +101,11 @@ pub fn normalize_dns_hostname(hostname: String) -> String {
     if hostname.parse::<IpAddr>().is_ok() {
         return hostname;
     }
+    if let Some(stripped) = hostname.strip_suffix('.') {
+        if stripped.parse::<IpAddr>().is_ok() {
+            return hostname;
+        }
+    }
     match hostname.strip_suffix('.') {
         Some(stripped) if !stripped.is_empty() => stripped.to_string(),
         _ => hostname,
