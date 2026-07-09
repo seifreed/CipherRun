@@ -142,6 +142,18 @@ impl CertificateInventory {
         validate_hostname(&hostname).map_err(|error| TlsError::InvalidInput {
             message: error.to_string(),
         })?;
+        let normalized_hostname = hostname.trim_end_matches('.').to_ascii_lowercase();
+        if normalized_hostname == "localhost"
+            || normalized_hostname.ends_with(".local")
+            || normalized_hostname.ends_with(".internal")
+        {
+            return Err(TlsError::InvalidInput {
+                message: format!(
+                    "Monitored domain hostname must not use private/local hostnames: {}",
+                    hostname
+                ),
+            });
+        }
         domain.hostname = hostname;
 
         let key = domain.identifier();
@@ -689,7 +701,7 @@ mod tests {
         let mut temp_file = NamedTempFile::new()?;
         writeln!(
             temp_file,
-            "# Test domains file\nexample.com\ntest.com:8443 30m\ninternal.local 1h"
+            "# Test domains file\nexample.com\ntest.com:8443 30m\nwww.example.org 1h"
         )?;
 
         let mut inventory = CertificateInventory::new();
@@ -698,12 +710,25 @@ mod tests {
         assert_eq!(inventory.len(), 3);
         assert!(inventory.get_domain("example.com").is_some());
         assert!(inventory.get_domain("test.com:8443").is_some());
+        assert!(inventory.get_domain("www.example.org").is_some());
 
         let test_domain = inventory
             .get_domain("test.com:8443")
             .expect("test assertion should succeed");
         assert_eq!(test_domain.interval_seconds, 1800); // 30 minutes
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_load_from_file_rejects_private_hostname() -> Result<()> {
+        let mut temp_file = NamedTempFile::new()?;
+        writeln!(temp_file, "localhost")?;
+
+        let mut inventory = CertificateInventory::new();
+        let result = inventory.load_from_file(temp_file.path(), 3600);
+
+        assert!(result.is_err());
         Ok(())
     }
 
