@@ -1,3 +1,4 @@
+use crate::security::input_validation::looks_like_obfuscated_ip;
 use crate::security::{is_private_ip, validate_hostname};
 use crate::{Result, TlsError};
 use std::net::SocketAddr;
@@ -15,6 +16,12 @@ pub(crate) async fn validate_revocation_http_url(
     uri: &str,
     timeout: Duration,
 ) -> Result<ValidatedRevocationHttp> {
+    if raw_revocation_host(uri).is_some_and(looks_like_obfuscated_ip) {
+        return Err(TlsError::InvalidInput {
+            message: "Revocation URL must not use obfuscated IP notation".to_string(),
+        });
+    }
+
     let url = Url::parse(uri).map_err(|error| TlsError::InvalidInput {
         message: format!("Invalid revocation URL: {error}"),
     })?;
@@ -80,6 +87,18 @@ pub(crate) async fn validate_revocation_http_url(
     })
 }
 
+fn raw_revocation_host(uri: &str) -> Option<&str> {
+    let authority = uri.split_once("://")?.1;
+    let authority = authority.split(['/', '?', '#']).next().unwrap_or(authority);
+    let host = authority.rsplit_once('@').map(|(_, host)| host).unwrap_or(authority);
+
+    if let Some(host) = host.strip_prefix('[') {
+        host.split_once(']').map(|(host, _)| host)
+    } else {
+        Some(host.split_once(':').map_or(host, |(hostname, _)| hostname))
+    }
+}
+
 fn ordered_addrs(addrs: &[SocketAddr]) -> Vec<SocketAddr> {
     let mut addrs = addrs.to_vec();
     addrs.sort_by_key(|addr| addr.ip().is_ipv6());
@@ -98,6 +117,15 @@ mod tests {
             .expect_err("private revocation URL should be rejected");
 
         assert!(err.to_string().contains("private/internal IP"));
+    }
+
+    #[tokio::test]
+    async fn test_validate_revocation_http_url_rejects_obfuscated_ip() {
+        let err = validate_revocation_http_url("http://127.1/crl", Duration::from_secs(1))
+            .await
+            .expect_err("obfuscated revocation URL should be rejected");
+
+        assert!(err.to_string().contains("obfuscated IP"));
     }
 
     #[tokio::test]
