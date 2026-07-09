@@ -144,6 +144,8 @@ impl<'a> ScanFingerprintView<'a> {
         self.ja3_results().is_some()
             || self.ja3s_results().is_some()
             || self.jarm_results().is_some()
+            || self.cdn_detection().is_some()
+            || self.load_balancer_info().is_some()
             || self.alpn_results().is_some()
             || self.rating_results().is_some()
     }
@@ -174,11 +176,53 @@ impl<'a> ScanFingerprintView<'a> {
         self.results.jarm_fingerprint()
     }
 
+    pub fn cdn_detection(&self) -> Option<&'a crate::fingerprint::CdnDetection> {
+        self.results.cdn_detection()
+    }
+
+    pub fn load_balancer_info(&self) -> Option<&'a crate::fingerprint::LoadBalancerInfo> {
+        self.results.load_balancer_info()
+    }
+
     pub fn alpn_results(&self) -> Option<&'a crate::protocols::alpn::AlpnReport> {
         self.results.alpn_result()
     }
 
     pub fn rating_results(&self) -> Option<&'a crate::rating::RatingResult> {
         self.results.ssl_rating()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ScanFingerprintView;
+    use crate::scanner::results::AdvancedResults;
+    use crate::scanner::ScanResults;
+
+    #[test]
+    fn test_should_render_for_cdn_or_load_balancer_only_results() {
+        let results = ScanResults {
+            advanced: Some(AdvancedResults {
+                cdn_detection: Some(crate::fingerprint::CdnDetection {
+                    is_cdn: true,
+                    cdn_provider: Some("Cloudflare".to_string()),
+                    confidence: 0.95,
+                    indicators: vec!["cf-ray".to_string()],
+                }),
+                load_balancer_info: Some(crate::fingerprint::LoadBalancerInfo {
+                    detected: true,
+                    lb_type: Some("AWS ALB".to_string()),
+                    sticky_sessions: true,
+                    indicators: vec!["sticky sessions".to_string()],
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let view = ScanFingerprintView { results: &results };
+
+        assert!(view.should_render());
+        assert!(view.cdn_detection().is_some());
+        assert!(view.load_balancer_info().is_some());
     }
 }
