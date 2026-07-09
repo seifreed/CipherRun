@@ -9,7 +9,7 @@ use crate::Result;
 use crate::error::TlsError;
 use crate::scanner::ScanResults;
 use crate::security::input_validation::validate_resolved_ips;
-use crate::utils::network::{Target, build_system_resolver, canonical_target};
+use crate::utils::network::{Target, build_system_resolver, canonical_target, normalize_dns_hostname};
 use hickory_resolver::TokioResolver;
 use hickory_resolver::proto::rr::RData;
 use serde::{Deserialize, Serialize};
@@ -33,7 +33,7 @@ impl AnycastScanner {
     /// Create new anycast scanner
     pub fn new(hostname: String, port: u16, args: Args) -> Self {
         Self {
-            hostname,
+            hostname: normalize_dns_hostname(hostname),
             port,
             args,
         }
@@ -351,6 +351,12 @@ mod tests {
             .await
             .expect_err("invalid anycast hostname should fail before lookup");
         assert!(err.to_string().contains("Invalid anycast hostname"));
+    }
+
+    #[test]
+    fn test_anycast_scanner_normalizes_rooted_hostname() {
+        let scanner = AnycastScanner::new("example.com.".to_string(), 443, Args::default());
+        assert_eq!(scanner.hostname, "example.com");
     }
 
     #[test]
