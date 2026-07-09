@@ -1,5 +1,16 @@
+use crate::security::input_validation::looks_like_obfuscated_ip;
 use crate::utils::network::{normalize_dns_hostname, split_target_host_port};
 use crate::{Result, TlsError};
+
+fn normalize_host_for_input(hostname: String) -> Result<String> {
+    let hostname = normalize_dns_hostname(hostname);
+    if looks_like_obfuscated_ip(&hostname) {
+        return Err(TlsError::InvalidInput {
+            message: "Obfuscated IP notation is not allowed".to_string(),
+        });
+    }
+    Ok(hostname)
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompareScanIds {
@@ -102,7 +113,7 @@ impl HostPortDaysInput {
         };
 
         Ok(Self {
-            hostname: normalize_dns_hostname(hostname),
+            hostname: normalize_host_for_input(hostname)?,
             port,
             days,
         })
@@ -128,7 +139,7 @@ impl HostPortInput {
         })?;
 
         Ok(Self {
-            hostname: normalize_dns_hostname(hostname),
+            hostname: normalize_host_for_input(hostname)?,
             port: port.unwrap_or(default_port),
         })
     }
@@ -170,6 +181,14 @@ mod tests {
     fn parses_host_port_days() {
         let parsed = HostPortDaysInput::parse("example.com:443:7").expect("should parse");
         assert_eq!(parsed.hostname, "example.com");
+        assert_eq!(parsed.port, 443);
+        assert_eq!(parsed.days, 7);
+    }
+
+    #[test]
+    fn parses_ip_literal_host_port_days() {
+        let parsed = HostPortDaysInput::parse("192.0.2.1:443:7").expect("should parse");
+        assert_eq!(parsed.hostname, "192.0.2.1");
         assert_eq!(parsed.port, 443);
         assert_eq!(parsed.days, 7);
     }
@@ -231,10 +250,24 @@ mod tests {
     }
 
     #[test]
+    fn rejects_obfuscated_ip_host_port_days() {
+        assert!(HostPortDaysInput::parse("127.1:443:7").is_err());
+        assert!(HostPortDaysInput::parse("2130706433:443:7").is_err());
+    }
+
+    #[test]
     fn parses_host_port_with_default_port() {
         let parsed =
             HostPortInput::parse_with_default_port("example.com", 443).expect("should parse");
         assert_eq!(parsed.hostname, "example.com");
+        assert_eq!(parsed.port, 443);
+    }
+
+    #[test]
+    fn parses_ip_literal_host_port_with_default_port() {
+        let parsed =
+            HostPortInput::parse_with_default_port("192.0.2.1", 443).expect("should parse");
+        assert_eq!(parsed.hostname, "192.0.2.1");
         assert_eq!(parsed.port, 443);
     }
 
@@ -252,6 +285,12 @@ mod tests {
             HostPortInput::parse_with_default_port("[::1]:8443", 443).expect("should parse");
         assert_eq!(parsed.hostname, "::1");
         assert_eq!(parsed.port, 8443);
+    }
+
+    #[test]
+    fn rejects_obfuscated_ip_host_port_with_default_port() {
+        assert!(HostPortInput::parse_with_default_port("127.1", 443).is_err());
+        assert!(HostPortInput::parse_with_default_port("2130706433", 443).is_err());
     }
 
     #[test]
