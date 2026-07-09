@@ -42,12 +42,7 @@ impl MassScanCommand {
     fn scan_port(&self) -> u16 {
         self.args
             .port
-            .or_else(|| {
-                self.args
-                    .starttls
-                    .starttls_protocol()
-                    .map(|protocol| protocol.default_port())
-            })
+            .or_else(|| self.args.starttls.starttls_port())
             .unwrap_or(crate::constants::PORT_HTTPS)
     }
 

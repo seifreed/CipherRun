@@ -25,11 +25,7 @@ impl AnycastScanCommand {
     }
 
     fn port_override(args: &Args) -> Option<u16> {
-        args.port.or_else(|| {
-            args.starttls
-                .starttls_protocol()
-                .map(|protocol| protocol.default_port())
-        })
+        args.port.or_else(|| args.starttls.starttls_port())
     }
 
     fn exit_for_results(results: &AnycastScanResults) -> CommandExit {
@@ -88,6 +84,19 @@ mod tests {
         };
 
         assert_eq!(AnycastScanCommand::port_override(&args), Some(25));
+    }
+
+    #[test]
+    fn test_port_override_uses_xmpp_server_port() {
+        let args = Args {
+            starttls: crate::cli::StarttlsArgs {
+                xmpp_server: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        assert_eq!(AnycastScanCommand::port_override(&args), Some(5269));
     }
 
     #[test]

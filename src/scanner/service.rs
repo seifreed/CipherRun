@@ -46,7 +46,7 @@ impl Scanner {
         request
             .port
             .or(embedded_port)
-            .or_else(|| request.starttls_protocol().map(|protocol| protocol.default_port()))
+            .or_else(|| request.starttls_port())
             .unwrap_or(443)
     }
 
@@ -54,7 +54,7 @@ impl Scanner {
         request.port.or_else(|| {
             embedded_port
                 .is_none()
-                .then(|| request.starttls_protocol().map(|protocol| protocol.default_port()))
+                .then(|| request.starttls_port())
                 .flatten()
         })
     }
@@ -789,7 +789,10 @@ mod tests {
         let target = scanner.get_target_owned();
         assert_eq!(target.hostname, "example.com");
         assert_eq!(target.port, 443);
-        assert_eq!(target.ip_addresses, vec!["8.8.8.8".parse::<IpAddr>().unwrap()]);
+        assert_eq!(
+            target.ip_addresses,
+            vec!["8.8.8.8".parse::<IpAddr>().unwrap()]
+        );
     }
 
     #[tokio::test]

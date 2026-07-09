@@ -78,8 +78,7 @@ pub fn scan_request_from_target_and_options(
             },
             ..Default::default()
         }
-        .starttls_protocol()
-        .map(|protocol| protocol.default_port())
+        .starttls_port()
     });
     let port = parsed_port.or(starttls_port).unwrap_or(PORT_HTTPS);
     let request = ScanRequest {
@@ -252,6 +251,20 @@ mod tests {
 
         assert_eq!(request.target.as_deref(), Some("mail.example.com:25"));
         assert_eq!(request.port, Some(25));
+    }
+
+    #[test]
+    fn starttls_only_request_uses_xmpp_server_port() {
+        let options = ScanOptions {
+            starttls_protocol: Some(" xmpp-server ".to_string()),
+            ..Default::default()
+        };
+
+        let request = scan_request_from_target_and_options("chat.example.com", &options)
+            .expect("starttls-only request should build");
+
+        assert_eq!(request.target.as_deref(), Some("chat.example.com:5269"));
+        assert_eq!(request.port, Some(5269));
     }
 
     #[test]

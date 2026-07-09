@@ -90,6 +90,59 @@ impl ScanRequest {
         }
     }
 
+    pub fn starttls_port(&self) -> Option<u16> {
+        if self.starttls.smtp {
+            Some(25)
+        } else if self.starttls.imap {
+            Some(143)
+        } else if self.starttls.pop3 {
+            Some(110)
+        } else if self.starttls.ftp {
+            Some(21)
+        } else if self.starttls.ldap {
+            Some(389)
+        } else if self.starttls.xmpp {
+            Some(5222)
+        } else if self.starttls.xmpp_server {
+            Some(5269)
+        } else if self.starttls.psql {
+            Some(5432)
+        } else if self.starttls.mysql {
+            Some(3306)
+        } else if self.starttls.irc {
+            Some(6667)
+        } else if self.starttls.nntp {
+            Some(119)
+        } else if self.starttls.sieve {
+            Some(4190)
+        } else if self.starttls.lmtp {
+            Some(24)
+        } else {
+            let protocol = self
+                .starttls
+                .protocol
+                .as_deref()?
+                .trim()
+                .to_ascii_lowercase();
+            match protocol.as_str() {
+                "smtp" => Some(25),
+                "imap" => Some(143),
+                "pop3" => Some(110),
+                "ftp" => Some(21),
+                "ldap" => Some(389),
+                "xmpp" => Some(5222),
+                "xmpp-server" => Some(5269),
+                "postgres" | "postgresql" | "psql" => Some(5432),
+                "mysql" => Some(3306),
+                "irc" => Some(6667),
+                "nntp" => Some(119),
+                "sieve" => Some(4190),
+                "lmtp" => Some(24),
+                _ => None,
+            }
+        }
+    }
+
     pub fn has_specific_scan_focus(&self) -> bool {
         self.scan.proto.enabled
             || self.protocols_to_test().is_some()

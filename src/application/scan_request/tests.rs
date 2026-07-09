@@ -782,6 +782,19 @@ fn starttls_protocol_string_is_normalized() {
 }
 
 #[test]
+fn starttls_port_uses_xmpp_server_port() {
+    let request = ScanRequest {
+        starttls: ScanRequestStarttls {
+            protocol: Some("xmpp-server".to_string()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    assert_eq!(request.starttls_port(), Some(5269));
+}
+
+#[test]
 fn all_false_disables_baseline_scan_even_with_target() {
     let request = ScanRequest {
         target: Some("example.com:443".to_string()),

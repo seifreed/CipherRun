@@ -125,6 +125,55 @@ impl StarttlsArgs {
             }
         }
     }
+
+    /// Detect which port should be used for the requested STARTTLS mode.
+    pub fn starttls_port(&self) -> Option<u16> {
+        if self.smtp {
+            Some(25)
+        } else if self.imap {
+            Some(143)
+        } else if self.pop3 {
+            Some(110)
+        } else if self.ftp {
+            Some(21)
+        } else if self.ldap {
+            Some(389)
+        } else if self.xmpp {
+            Some(5222)
+        } else if self.xmpp_server {
+            Some(5269)
+        } else if self.psql {
+            Some(5432)
+        } else if self.mysql {
+            Some(3306)
+        } else if self.irc {
+            Some(6667)
+        } else if self.nntp {
+            Some(119)
+        } else if self.sieve {
+            Some(4190)
+        } else if self.lmtp {
+            Some(24)
+        } else {
+            let protocol = self.protocol.as_deref()?.trim().to_ascii_lowercase();
+            match protocol.as_str() {
+                "smtp" => Some(25),
+                "imap" => Some(143),
+                "pop3" => Some(110),
+                "ftp" => Some(21),
+                "ldap" => Some(389),
+                "xmpp" => Some(5222),
+                "xmpp-server" => Some(5269),
+                "postgres" | "postgresql" | "psql" => Some(5432),
+                "mysql" => Some(3306),
+                "irc" => Some(6667),
+                "nntp" => Some(119),
+                "sieve" => Some(4190),
+                "lmtp" => Some(24),
+                _ => None,
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -225,5 +274,14 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(args.starttls_protocol(), Some(StarttlsProtocol::POSTGRES));
+    }
+
+    #[test]
+    fn test_starttls_port_xmpp_server() {
+        let args = StarttlsArgs {
+            xmpp_server: true,
+            ..Default::default()
+        };
+        assert_eq!(args.starttls_port(), Some(5269));
     }
 }
