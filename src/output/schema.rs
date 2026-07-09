@@ -208,6 +208,37 @@ impl CipherRunSchema {
                         }
                     }
                 },
+                "fingerprints": {
+                    "type": ["object", "null"],
+                    "description": "TLS fingerprinting data",
+                    "properties": {
+                        "ja3_fingerprint": { "type": ["object", "null"] },
+                        "ja3_match": { "type": ["object", "null"] },
+                        "ja3s_fingerprint": { "type": ["object", "null"] },
+                        "ja3s_match": { "type": ["object", "null"] },
+                        "jarm_fingerprint": { "type": ["object", "null"] },
+                        "client_hello_raw": { "type": ["array", "null"], "items": { "type": "integer", "minimum": 0, "maximum": 255 } },
+                        "server_hello_raw": { "type": ["array", "null"], "items": { "type": "integer", "minimum": 0, "maximum": 255 } }
+                    }
+                },
+                "advanced": {
+                    "type": ["object", "null"],
+                    "description": "Optional advanced analysis data",
+                    "properties": {
+                        "intolerance": { "type": ["object", "null"] },
+                        "alpn_result": { "type": ["object", "null"] },
+                        "signature_algorithms": { "type": ["object", "null"] },
+                        "key_exchange_groups": { "type": ["object", "null"] },
+                        "client_simulations": {
+                            "type": ["array", "null"],
+                            "items": { "type": "object" }
+                        },
+                        "client_cas": { "type": ["object", "null"] },
+                        "cdn_detection": { "type": ["object", "null"] },
+                        "load_balancer_info": { "type": ["object", "null"] },
+                        "pqc_readiness": { "type": ["object", "null"] }
+                    }
+                },
                 "vulnerabilities": {
                     "type": "array",
                     "description": "Detected vulnerabilities",
@@ -632,11 +663,34 @@ mod tests {
         assert!(!properties.contains_key("http_headers"));
         assert!(properties.contains_key("certificate_chain"));
         assert!(!properties.contains_key("certificate"));
+        assert!(properties.contains_key("fingerprints"));
+        assert!(properties.contains_key("advanced"));
         assert!(
             properties
                 .get("http")
                 .and_then(|v| v.get("properties"))
                 .and_then(|v| v.get("http_headers"))
+                .is_some()
+        );
+        assert!(
+            properties
+                .get("fingerprints")
+                .and_then(|v| v.get("properties"))
+                .and_then(|v| v.get("ja3_fingerprint"))
+                .is_some()
+        );
+        assert!(
+            properties
+                .get("advanced")
+                .and_then(|v| v.get("properties"))
+                .and_then(|v| v.get("cdn_detection"))
+                .is_some()
+        );
+        assert!(
+            properties
+                .get("advanced")
+                .and_then(|v| v.get("properties"))
+                .and_then(|v| v.get("load_balancer_info"))
                 .is_some()
         );
         assert!(
