@@ -647,7 +647,7 @@ webhook_url = "file:///tmp/hook"
 
         let err = MonitorConfig::from_file(&path).expect_err("bad Slack URL should fail");
 
-        assert!(err.to_string().contains("scheme must be http or https"));
+        assert!(err.to_string().contains("Invalid Slack webhook_url"));
     }
 
     #[test]
