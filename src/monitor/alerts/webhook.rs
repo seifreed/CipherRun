@@ -31,6 +31,11 @@ impl WebhookChannel {
                 message: "Invalid webhook url: port must be between 1 and 65535".to_string(),
             });
         }
+        if !url.username().is_empty() || url.password().is_some() {
+            return Err(TlsError::ConfigError {
+                message: "Webhook URL must not contain credentials".to_string(),
+            });
+        }
         for (name, value) in &config.headers {
             HeaderName::from_bytes(name.as_bytes()).map_err(|error| TlsError::ConfigError {
                 message: format!("Invalid webhook header name '{name}': {error}"),
@@ -294,5 +299,20 @@ mod tests {
         };
 
         assert!(err.to_string().contains("Invalid webhook header name"));
+    }
+
+    #[test]
+    fn test_webhook_channel_rejects_credentials() {
+        let result = WebhookChannel::new(WebhookConfig {
+            enabled: true,
+            url: "https://user:pass@webhook.example.com/alerts".to_string(),
+            headers: HashMap::new(),
+        });
+        let err = match result {
+            Ok(_) => panic!("credentials should fail"),
+            Err(err) => err,
+        };
+
+        assert!(err.to_string().contains("credentials"));
     }
 }
