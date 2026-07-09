@@ -221,7 +221,9 @@ impl SourceManager {
 
 fn is_valid_ct_log_url(url: &str) -> bool {
     if raw_ct_log_host(url).is_some_and(|host| {
-        looks_like_obfuscated_ip(host) || looks_like_dotted_ip_literal(host)
+        looks_like_obfuscated_ip(host)
+            || looks_like_dotted_ip_literal(host)
+            || host.parse::<IpAddr>().is_ok()
     }) {
         return false;
     }
@@ -234,17 +236,20 @@ fn is_valid_ct_log_url(url: &str) -> bool {
             && url.password().is_none()
             && !matches!(url.port(), Some(0))
             && host != "localhost"
-            && !host.ends_with(".local")
-            && !host.ends_with(".internal")
-            && !matches!(url.host_str(), Some(host) if host.parse::<IpAddr>().is_ok_and(|ip| is_private_ip(&ip)))
-            && !looks_like_obfuscated_ip(&host)
+        && !host.ends_with(".local")
+        && !host.ends_with(".internal")
+        && !matches!(url.host_str(), Some(host) if host.parse::<IpAddr>().is_ok_and(|ip| is_private_ip(&ip)))
+        && !looks_like_obfuscated_ip(&host)
     })
 }
 
 fn raw_ct_log_host(url: &str) -> Option<&str> {
     let authority = url.split_once("://")?.1;
     let authority = authority.split(['/', '?', '#']).next().unwrap_or(authority);
-    let host = authority.rsplit_once('@').map(|(_, host)| host).unwrap_or(authority);
+    let host = authority
+        .rsplit_once('@')
+        .map(|(_, host)| host)
+        .unwrap_or(authority);
 
     if let Some(host) = host.strip_prefix('[') {
         host.split_once(']').map(|(host, _)| host)
@@ -256,7 +261,14 @@ fn raw_ct_log_host(url: &str) -> Option<&str> {
 async fn ct_log_url_resolves_publicly(url: &str) -> Result<bool> {
     if let Some(host) = raw_ct_log_host(url) {
         if looks_like_dotted_ip_literal(host) {
-            return Err(TlsError::Other("Invalid CT log host: dotted IP literal".to_string()));
+            return Err(TlsError::Other(
+                "Invalid CT log host: dotted IP literal".to_string(),
+            ));
+        }
+        if host.parse::<IpAddr>().is_ok() {
+            return Err(TlsError::Other(
+                "Invalid CT log host: IP literal".to_string(),
+            ));
         }
         let normalized_host = host.trim_end_matches('.').to_ascii_lowercase();
         if normalized_host == "localhost"
@@ -406,6 +418,7 @@ mod tests {
         assert!(!is_valid_ct_log_url("https://localhost"));
         assert!(!is_valid_ct_log_url("https://localhost."));
         assert!(!is_valid_ct_log_url("https://127.0.0.1"));
+        assert!(!is_valid_ct_log_url("https://8.8.8.8"));
         assert!(!is_valid_ct_log_url("https://2130706433"));
         assert!(!is_valid_ct_log_url("https://127.1"));
         assert!(!is_valid_ct_log_url("https://0x7f000001"));
@@ -418,33 +431,52 @@ mod tests {
 
     #[tokio::test]
     async fn test_ct_log_url_resolves_publicly_rejects_localhost() {
-        assert!(ct_log_url_resolves_publicly("https://localhost")
-            .await
-            .is_err());
+        assert!(
+            ct_log_url_resolves_publicly("https://localhost")
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
     async fn test_ct_log_url_resolves_publicly_rejects_private_hostnames() {
-        assert!(ct_log_url_resolves_publicly("https://ct.internal/log")
-            .await
-            .is_err());
-        assert!(ct_log_url_resolves_publicly("https://10.0.0.1/log")
-            .await
-            .is_err());
+        assert!(
+            ct_log_url_resolves_publicly("https://ct.internal/log")
+                .await
+                .is_err()
+        );
+        assert!(
+            ct_log_url_resolves_publicly("https://10.0.0.1/log")
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_ct_log_url_resolves_publicly_rejects_ip_literals() {
+        assert!(
+            ct_log_url_resolves_publicly("https://8.8.8.8/log")
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
     async fn test_ct_log_url_resolves_publicly_rejects_dotted_ip_literal() {
-        assert!(ct_log_url_resolves_publicly("https://10.0.0.1./log")
-            .await
-            .is_err());
+        assert!(
+            ct_log_url_resolves_publicly("https://10.0.0.1./log")
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
     async fn test_ct_log_url_resolves_publicly_errors_on_unresolved_host() {
-        assert!(ct_log_url_resolves_publicly("https://invalid.invalid")
-            .await
-            .is_err());
+        assert!(
+            ct_log_url_resolves_publicly("https://invalid.invalid")
+                .await
+                .is_err()
+        );
     }
 
     #[test]
