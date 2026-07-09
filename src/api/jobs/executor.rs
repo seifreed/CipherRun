@@ -506,10 +506,16 @@ fn webhook_http_client(validated: &ValidatedWebhook) -> Result<reqwest::Client> 
     let mut client_builder = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
         .redirect(reqwest::redirect::Policy::none());
-    for addr in &validated.resolved_addrs {
-        client_builder = client_builder.resolve(&validated.host, *addr);
+    for addr in ordered_resolved_addrs(&validated.resolved_addrs) {
+        client_builder = client_builder.resolve(&validated.host, addr);
     }
     Ok(client_builder.build()?)
+}
+
+fn ordered_resolved_addrs(addrs: &[SocketAddr]) -> Vec<SocketAddr> {
+    let mut addrs = addrs.to_vec();
+    addrs.sort_by_key(|addr| addr.ip().is_ipv6());
+    addrs
 }
 
 pub(crate) async fn validate_webhook_url(webhook_url: &str) -> Result<ValidatedWebhook> {
@@ -601,7 +607,7 @@ pub(crate) async fn validate_webhook_url(webhook_url: &str) -> Result<ValidatedW
 
     Ok(ValidatedWebhook {
         host,
-        resolved_addrs,
+        resolved_addrs: ordered_resolved_addrs(&resolved_addrs),
     })
 }
 
@@ -799,5 +805,18 @@ mod tests {
 
         assert_eq!(response.status(), reqwest::StatusCode::FOUND);
         server.await.expect("server task should finish");
+    }
+
+    #[test]
+    fn test_ordered_resolved_addrs_prefers_ipv4() {
+        let addrs = vec![
+            "[::1]:443".parse::<SocketAddr>().expect("ipv6 should parse"),
+            "127.0.0.1:443".parse::<SocketAddr>().expect("ipv4 should parse"),
+        ];
+
+        let ordered = ordered_resolved_addrs(&addrs);
+
+        assert!(!ordered[0].ip().is_ipv6());
+        assert!(ordered[1].ip().is_ipv6());
     }
 }
