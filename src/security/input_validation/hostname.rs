@@ -1,4 +1,5 @@
 use super::ValidationError;
+use super::looks_like_obfuscated_ip;
 use std::net::IpAddr;
 
 /// Maximum length for hostname (RFC 1035)
@@ -57,6 +58,13 @@ pub fn validate_hostname(hostname: &str) -> std::result::Result<(), ValidationEr
     // Validate as either IP address or DNS hostname
     if hostname.parse::<IpAddr>().is_ok() {
         return Ok(());
+    }
+
+    if looks_like_obfuscated_ip(hostname) {
+        return Err(ValidationError::InvalidHostname(format!(
+            "Hostname cannot use obfuscated IP notation: {}",
+            hostname
+        )));
     }
 
     // Validate DNS hostname format
@@ -121,6 +129,8 @@ mod tests {
         assert!(validate_hostname("").is_err());
         assert!(validate_hostname(".").is_err());
         assert!(validate_hostname(&"a".repeat(300)).is_err());
+        assert!(validate_hostname("127.1").is_err());
+        assert!(validate_hostname("2130706433").is_err());
     }
 
     #[test]
