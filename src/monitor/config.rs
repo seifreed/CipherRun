@@ -2,6 +2,7 @@
 
 use crate::Result;
 use crate::error::TlsError;
+use crate::security::validate_hostname;
 use crate::monitor::types::AlertThresholds;
 use reqwest::header::{HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
@@ -276,6 +277,13 @@ impl MonitorConfig {
             return Err(TlsError::ConfigError {
                 message: "enabled email alerts require SMTP server, port, sender, recipients, and username".to_string(),
             });
+        }
+        if let Some(email) = &self.monitor.alerts.email
+            && email.enabled
+        {
+            validate_hostname(&email.smtp_server).map_err(|error| TlsError::ConfigError {
+                message: format!("Invalid email smtp_server: {error}"),
+            })?;
         }
         if let Some(slack) = &self.monitor.alerts.slack
             && slack.enabled

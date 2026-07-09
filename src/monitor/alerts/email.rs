@@ -5,6 +5,7 @@ use crate::Result;
 use crate::error::TlsError;
 use crate::monitor::alerts::{Alert, AlertChannel, AlertDetails, AlertType};
 use crate::monitor::config::EmailConfig;
+use crate::security::validate_hostname;
 use async_trait::async_trait;
 use lettre::message::{MultiPart, SinglePart, header};
 use lettre::transport::smtp::authentication::Credentials;
@@ -32,6 +33,9 @@ impl EmailChannel {
                 message: "enabled email alerts require SMTP server, port, sender, recipients, and username".to_string(),
             });
         }
+        validate_hostname(&config.smtp_server).map_err(|error| TlsError::ConfigError {
+            message: format!("Invalid email smtp_server: {error}"),
+        })?;
         config.from_address.parse::<lettre::message::Mailbox>()?;
         for to_addr in &config.to_addresses {
             to_addr.parse::<lettre::message::Mailbox>()?;
@@ -333,6 +337,18 @@ mod tests {
         config.to_addresses = vec!["not an email".to_string()];
 
         assert!(EmailChannel::new(config).is_err());
+    }
+
+    #[test]
+    fn test_email_channel_rejects_invalid_smtp_server() {
+        let mut config = create_test_config();
+        config.smtp_server = "smtp://example.com".to_string();
+
+        let err = match EmailChannel::new(config) {
+            Ok(_) => panic!("invalid SMTP server should fail"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("smtp_server"));
     }
 
     #[test]
