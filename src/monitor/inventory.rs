@@ -3,6 +3,7 @@
 use crate::Result;
 use crate::certificates::parser::CertificateInfo;
 use crate::error::TlsError;
+use crate::security::validate_hostname;
 use crate::utils::network::{canonical_target, normalize_dns_hostname, split_target_host_port};
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
@@ -138,6 +139,9 @@ impl CertificateInventory {
                 message: "Monitored domain hostname must not include a port".to_string(),
             });
         }
+        validate_hostname(&hostname).map_err(|error| TlsError::InvalidInput {
+            message: error.to_string(),
+        })?;
         domain.hostname = hostname;
 
         let key = domain.identifier();
@@ -514,6 +518,16 @@ mod tests {
                 .add_domain(MonitoredDomain::new("example.com:8443".to_string(), 443))
                 .is_err()
         );
+        assert!(
+            inventory
+                .add_domain(MonitoredDomain::new("127.1".to_string(), 443))
+                .is_err()
+        );
+        assert!(
+            inventory
+                .add_domain(MonitoredDomain::new("2130706433".to_string(), 443))
+                .is_err()
+        );
 
         let domain = MonitoredDomain::new("example.com".to_string(), 443).with_interval(0);
         assert!(inventory.add_domain(domain).is_err());
@@ -761,6 +775,19 @@ mod tests {
     }
 
     #[test]
+    fn test_load_from_file_rejects_obfuscated_ip_notation() -> Result<()> {
+        let mut temp_file = NamedTempFile::new()?;
+        writeln!(temp_file, "127.1")?;
+
+        let mut inventory = CertificateInventory::new();
+        let result = inventory.load_from_file(temp_file.path(), 3600);
+
+        assert!(result.is_err());
+        assert!(inventory.is_empty());
+        Ok(())
+    }
+
+    #[test]
     fn test_load_from_file_error_keeps_existing_inventory_unchanged() -> Result<()> {
         let mut temp_file = NamedTempFile::new()?;
         writeln!(temp_file, "new.example\nbad.example 30m unexpected")?;
@@ -826,6 +853,38 @@ mod tests {
             r#"{{
                 "bad": {{
                     "hostname": "",
+                    "port": 443,
+                    "enabled": true,
+                    "interval_seconds": 3600,
+                    "alert_thresholds": {{
+                        "expiry_30d": true,
+                        "expiry_14d": true,
+                        "expiry_7d": true,
+                        "expiry_1d": true,
+                        "on_change": true
+                    }},
+                    "last_scan": null,
+                    "last_certificate": null
+                }}
+            }}"#
+        )?;
+
+        let mut inventory = CertificateInventory::new();
+        let result = inventory.load_from_json(temp_file.path());
+
+        assert!(result.is_err());
+        assert!(inventory.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn test_load_json_rejects_obfuscated_ip_notation() -> Result<()> {
+        let mut temp_file = NamedTempFile::new()?;
+        writeln!(
+            temp_file,
+            r#"{{
+                "127.1:443": {{
+                    "hostname": "127.1",
                     "port": 443,
                     "enabled": true,
                     "interval_seconds": 3600,
