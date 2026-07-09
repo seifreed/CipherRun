@@ -4,6 +4,7 @@ use crate::Result;
 use crate::error::TlsError;
 use crate::monitor::alerts::raw_webhook_host;
 use crate::security::input_validation::{looks_like_dotted_ip_literal, looks_like_obfuscated_ip};
+use crate::security::is_private_ip;
 use crate::security::validate_hostname;
 use crate::monitor::types::AlertThresholds;
 use lettre::message::Mailbox;
@@ -367,9 +368,24 @@ impl MonitorConfig {
                 message: format!("Invalid {label}: must not contain credentials"),
             });
         }
-        validate_hostname(url.host_str().unwrap_or("")).map_err(|error| TlsError::ConfigError {
+        let host = url.host_str().unwrap_or("");
+        validate_hostname(host).map_err(|error| TlsError::ConfigError {
             message: format!("Invalid {label}: {error}"),
         })?;
+        let normalized_host = host.trim_end_matches('.').to_ascii_lowercase();
+        if normalized_host == "localhost"
+            || normalized_host.ends_with(".local")
+            || normalized_host.ends_with(".internal")
+        {
+            return Err(TlsError::ConfigError {
+                message: format!("Invalid {label}: private/local hosts are not allowed"),
+            });
+        }
+        if host.parse::<std::net::IpAddr>().is_ok_and(|ip| is_private_ip(&ip)) {
+            return Err(TlsError::ConfigError {
+                message: format!("Invalid {label}: private/local IP literals are not allowed"),
+            });
+        }
         Ok(())
     }
 }
@@ -481,6 +497,15 @@ expiry_7d = false
     fn test_deduplication_default_window() {
         let dedup = DeduplicationConfig::default();
         assert_eq!(dedup.window_hours, 24);
+    }
+
+    #[test]
+    fn test_validate_url_rejects_private_and_local_hosts() {
+        assert!(MonitorConfig::validate_url("webhook url", "https://localhost").is_err());
+        assert!(MonitorConfig::validate_url("webhook url", "https://localhost.").is_err());
+        assert!(MonitorConfig::validate_url("webhook url", "https://ct.internal").is_err());
+        assert!(MonitorConfig::validate_url("webhook url", "https://10.0.0.1").is_err());
+        assert!(MonitorConfig::validate_url("webhook url", "https://[::1]").is_err());
     }
 
     #[test]
