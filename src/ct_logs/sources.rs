@@ -131,12 +131,19 @@ impl SourceManager {
                         warn!("Skipping CT log with invalid URL: {}", log.url);
                         continue;
                     }
-                    if !ct_log_url_resolves_publicly(&log.url).await? {
-                        warn!(
-                            "Skipping CT log with private/internal resolution: {}",
-                            log.url
-                        );
-                        continue;
+                    match ct_log_url_resolves_publicly(&log.url).await {
+                        Ok(true) => {}
+                        Ok(false) => {
+                            warn!(
+                                "Skipping CT log with private/internal resolution: {}",
+                                log.url
+                            );
+                            continue;
+                        }
+                        Err(error) => {
+                            warn!("Skipping CT log with unresolved URL {}: {}", log.url, error);
+                            continue;
+                        }
                     }
 
                     let log_id = log.log_id.clone();
@@ -364,6 +371,13 @@ mod tests {
         assert!(!ct_log_url_resolves_publicly("https://localhost")
             .await
             .expect("resolution check should succeed"));
+    }
+
+    #[tokio::test]
+    async fn test_ct_log_url_resolves_publicly_errors_on_unresolved_host() {
+        assert!(ct_log_url_resolves_publicly("https://invalid.invalid")
+            .await
+            .is_err());
     }
 
     #[test]
