@@ -473,6 +473,7 @@ impl MultiIpScanReport {
             "C" => grade.yellow(),
             "D" | "E" | "F" => grade.red(),
             "T" | "M" => grade.red().bold(),
+            "Unverified" => grade.yellow(),
             _ => grade.normal(),
         }
     }
@@ -498,6 +499,12 @@ mod tests {
         let grade = MultiIpScanReport::color_grade("T", 95).to_string();
         assert!(grade.contains('T'));
         assert!(!grade.contains("A+"));
+    }
+
+    #[test]
+    fn test_color_grade_handles_unverified() {
+        let grade = MultiIpScanReport::color_grade("Unverified", 0).to_string();
+        assert!(grade.contains("Unverified"));
     }
 
     #[test]
