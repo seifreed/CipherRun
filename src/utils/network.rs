@@ -624,7 +624,8 @@ pub fn is_transport_anomaly_error(error: &str) -> bool {
 pub fn is_starttls_port(port: u16) -> bool {
     matches!(
         port,
-        21 | 25 | 110 | 119 | 143 | 389 | 587 | 2525 | 5222 | 5269 | 5432 | 3306
+        21 | 23 | 24 | 25 | 110 | 119 | 143 | 389 | 587 | 2525 | 4190 | 5222 | 5269 | 5432
+            | 3306
     )
 }
 
@@ -637,8 +638,11 @@ pub fn default_starttls_protocol(port: u16) -> Option<&'static str> {
         119 => Some("nntp"),
         143 => Some("imap"),
         389 => Some("ldap"),
+        4190 => Some("sieve"),
         5222 => Some("xmpp"),
         5269 => Some("xmpp-server"),
+        24 => Some("lmtp"),
+        23 => Some("telnet"),
         5432 => Some("postgres"),
         3306 => Some("mysql"),
         _ => None,

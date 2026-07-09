@@ -229,6 +229,7 @@ fn test_sni_hostname_for_target_prefers_override() {
 fn test_starttls_port_detection() {
     assert!(is_starttls_port(25)); // SMTP
     assert!(is_starttls_port(143)); // IMAP
+    assert!(is_starttls_port(4190)); // Sieve
     assert!(!is_starttls_port(443)); // HTTPS
     assert!(!is_starttls_port(465)); // SMTPS
 }
@@ -237,6 +238,7 @@ fn test_starttls_port_detection() {
 fn test_default_starttls_protocol() {
     assert_eq!(default_starttls_protocol(25), Some("smtp"));
     assert_eq!(default_starttls_protocol(143), Some("imap"));
+    assert_eq!(default_starttls_protocol(4190), Some("sieve"));
     assert_eq!(default_starttls_protocol(443), None);
 }
 
@@ -578,9 +580,14 @@ fn test_starttls_port_and_protocol_mappings() {
     assert!(is_starttls_port(21));
     assert!(is_starttls_port(389));
     assert!(is_starttls_port(587));
+    assert!(is_starttls_port(4190));
+    assert!(is_starttls_port(24));
+    assert!(is_starttls_port(23));
     assert_eq!(default_starttls_protocol(21), Some("ftp"));
     assert_eq!(default_starttls_protocol(389), Some("ldap"));
     assert_eq!(default_starttls_protocol(465), None);
+    assert_eq!(default_starttls_protocol(24), Some("lmtp"));
+    assert_eq!(default_starttls_protocol(23), Some("telnet"));
 }
 
 #[test]
