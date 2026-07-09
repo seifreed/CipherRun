@@ -76,14 +76,32 @@ pub fn looks_like_obfuscated_ip(hostname: &str) -> bool {
 
     let labels: Vec<&str> = hostname.split('.').collect();
     if labels.len() == 1 {
-        return labels[0].chars().all(|ch| ch.is_ascii_digit());
+        let label = labels[0];
+        let is_hex = label
+            .get(..2)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("0x"))
+            && label.chars().skip(2).all(|ch| ch.is_ascii_hexdigit());
+        return label.chars().all(|ch| ch.is_ascii_digit()) || is_hex;
     }
 
     labels.len() <= 4
         && labels.iter().all(|label| {
             !label.is_empty()
                 && (label.chars().all(|ch| ch.is_ascii_digit())
-                    || (label.starts_with("0x")
+                    || (label
+                        .get(..2)
+                        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("0x"))
                         && label.chars().skip(2).all(|ch| ch.is_ascii_hexdigit())))
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::looks_like_obfuscated_ip;
+
+    #[test]
+    fn test_looks_like_obfuscated_ip_rejects_single_label_hex() {
+        assert!(looks_like_obfuscated_ip("0x7f000001"));
+        assert!(looks_like_obfuscated_ip("0X7f000001"));
+    }
 }

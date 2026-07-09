@@ -357,7 +357,7 @@ mod tests {
         let err = normalize_mx_hostname("127.1.")
             .expect_err("obfuscated MX exchange must be a hostname");
 
-        assert!(err.to_string().contains("IP-like host"));
+        assert!(err.to_string().contains("obfuscated IP"));
     }
 
     #[test]

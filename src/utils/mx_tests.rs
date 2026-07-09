@@ -161,7 +161,7 @@ fn test_parse_dig_output_rejects_obfuscated_ip_hostname() {
         .parse_dig_output(b"10 127.1.\n")
         .expect_err("obfuscated MX exchange must be a hostname");
 
-    assert!(err.to_string().contains("IP-like host"));
+    assert!(err.to_string().contains("obfuscated IP"));
 }
 
 #[test]
