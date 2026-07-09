@@ -144,11 +144,11 @@ pub async fn scan_websocket_handler(socket: WebSocket, scan_id: String, state: A
         "message": "Connected to scan progress stream"
     });
 
-    if let Ok(json) = serde_json::to_string(&init_msg) {
-        if sender.send(Message::Text(json.into())).await.is_err() {
-            debug!("Client disconnected before initial scan message");
-            return;
-        }
+    if let Ok(json) = serde_json::to_string(&init_msg)
+        && sender.send(Message::Text(json.into())).await.is_err()
+    {
+        debug!("Client disconnected before initial scan message");
+        return;
     }
 
     // Spawn task to send progress updates for this specific scan
@@ -214,11 +214,11 @@ pub async fn scan_websocket_handler(socket: WebSocket, scan_id: String, state: A
                                 "message": "Progress stream fell behind and was closed; \
                                             reconnect or poll the scan status endpoint for the final result",
                             });
-                            if let Ok(json) = serde_json::to_string(&notice) {
-                                if sender.send(Message::Text(json.into())).await.is_err() {
-                                    debug!("Client disconnected while sending lagged notice");
-                                    break;
-                                }
+                            if let Ok(json) = serde_json::to_string(&notice)
+                                && sender.send(Message::Text(json.into())).await.is_err()
+                            {
+                                debug!("Client disconnected while sending lagged notice");
+                                break;
                             }
                             if sender.send(Message::Close(None)).await.is_err() {
                                 debug!("Client disconnected while closing lagged scan stream");

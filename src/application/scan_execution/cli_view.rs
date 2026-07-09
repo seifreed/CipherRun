@@ -372,22 +372,24 @@ mod tests {
 
     #[test]
     fn test_should_render_flags_with_cdn_detection_results_are_detailed() {
-        let mut results = ScanResults::default();
-        results.advanced = Some(crate::scanner::AdvancedResults {
-            cdn_detection: Some(CdnDetection {
-                is_cdn: true,
-                cdn_provider: Some("Cloudflare".to_string()),
-                confidence: 0.95,
-                indicators: vec!["cdn".to_string()],
-            }),
-            load_balancer_info: Some(LoadBalancerInfo {
-                detected: true,
-                lb_type: Some("AWS ALB".to_string()),
-                sticky_sessions: true,
-                indicators: vec!["sticky sessions".to_string()],
+        let results = ScanResults {
+            advanced: Some(crate::scanner::AdvancedResults {
+                cdn_detection: Some(CdnDetection {
+                    is_cdn: true,
+                    cdn_provider: Some("Cloudflare".to_string()),
+                    confidence: 0.95,
+                    indicators: vec!["cdn".to_string()],
+                }),
+                load_balancer_info: Some(LoadBalancerInfo {
+                    detected: true,
+                    lb_type: Some("AWS ALB".to_string()),
+                    sticky_sessions: true,
+                    indicators: vec!["sticky sessions".to_string()],
+                }),
+                ..Default::default()
             }),
             ..Default::default()
-        });
+        };
         let post_processing = ScanPostProcessingView {
             compliance_report: None,
             policy_result: None,
