@@ -68,3 +68,22 @@ pub use port::validate_port;
 pub use protocol::validate_starttls_protocol;
 pub use ssrf::{is_private_ip, validate_resolved_ips};
 pub use target::validate_target;
+
+pub fn looks_like_obfuscated_ip(hostname: &str) -> bool {
+    if hostname.parse::<std::net::IpAddr>().is_ok() {
+        return false;
+    }
+
+    let labels: Vec<&str> = hostname.split('.').collect();
+    if labels.len() == 1 {
+        return labels[0].chars().all(|ch| ch.is_ascii_digit());
+    }
+
+    labels.len() <= 4
+        && labels.iter().all(|label| {
+            !label.is_empty()
+                && (label.chars().all(|ch| ch.is_ascii_digit())
+                    || (label.starts_with("0x")
+                        && label.chars().skip(2).all(|ch| ch.is_ascii_hexdigit())))
+        })
+}

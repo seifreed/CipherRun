@@ -151,7 +151,17 @@ fn test_parse_dig_output_rejects_ip_literal_mx_hostname() {
         .parse_dig_output(b"10 127.0.0.1.\n")
         .expect_err("MX exchange must be a hostname");
 
-    assert!(err.to_string().contains("IP literal"));
+    assert!(err.to_string().contains("IP-like host"));
+}
+
+#[test]
+fn test_parse_dig_output_rejects_obfuscated_ip_hostname() {
+    let tester = MxTester::new("example.com".to_string());
+    let err = tester
+        .parse_dig_output(b"10 127.1.\n")
+        .expect_err("obfuscated MX exchange must be a hostname");
+
+    assert!(err.to_string().contains("IP-like host"));
 }
 
 #[test]

@@ -2,6 +2,7 @@ use super::ValidationError;
 use super::hostname::validate_hostname;
 use super::port::validate_port;
 use super::ssrf::is_private_ip;
+use super::looks_like_obfuscated_ip;
 use std::net::{IpAddr, Ipv6Addr};
 
 /// Validate target format and check for SSRF
@@ -172,24 +173,6 @@ fn parse_host_port(target: &str) -> std::result::Result<(String, Option<u16>), V
         .parse::<u16>()
         .map_err(|_| ValidationError::InvalidPort("Invalid port format".to_string()))?;
     Ok((hostname.to_string(), Some(port)))
-}
-
-fn looks_like_obfuscated_ip(hostname: &str) -> bool {
-    if hostname.parse::<IpAddr>().is_ok() {
-        return false;
-    }
-
-    let labels: Vec<&str> = hostname.split('.').collect();
-    if labels.len() == 1 {
-        return labels[0].chars().all(|ch| ch.is_ascii_digit());
-    }
-
-    labels.iter().all(|label| {
-        !label.is_empty()
-            && (label.chars().all(|ch| ch.is_ascii_digit())
-                || label.starts_with("0x")
-                && label.chars().skip(2).all(|ch| ch.is_ascii_hexdigit()))
-    }) && labels.len() <= 4
 }
 
 #[cfg(test)]

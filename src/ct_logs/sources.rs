@@ -4,6 +4,7 @@
 
 use super::Result;
 use crate::error::TlsError;
+use crate::security::input_validation::looks_like_obfuscated_ip;
 use crate::security::is_private_ip;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -249,25 +250,6 @@ async fn ct_log_url_resolves_publicly(url: &str) -> Result<bool> {
         return Ok(false);
     }
     Ok(addrs.iter().all(|addr| !is_private_ip(&addr.ip())))
-}
-
-fn looks_like_obfuscated_ip(host: &str) -> bool {
-    if host.parse::<IpAddr>().is_ok() {
-        return false;
-    }
-
-    let labels: Vec<&str> = host.split('.').collect();
-    if labels.len() == 1 {
-        return labels[0].chars().all(|ch| ch.is_ascii_digit());
-    }
-
-    labels.len() <= 4
-        && labels.iter().all(|label| {
-            !label.is_empty()
-                && (label.chars().all(|ch| ch.is_ascii_digit())
-                    || (label.starts_with("0x")
-                        && label.chars().skip(2).all(|ch| ch.is_ascii_hexdigit())))
-        })
 }
 
 impl Default for SourceManager {

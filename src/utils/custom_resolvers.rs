@@ -7,7 +7,7 @@
 /// - Testing behind corporate proxies with custom DNS
 /// - Avoiding DNS spoofing or poisoning from ISP DNS
 use crate::Result;
-use crate::security::input_validation::validate_resolved_ips;
+use crate::security::input_validation::{looks_like_obfuscated_ip, validate_resolved_ips};
 use hickory_resolver::TokioResolver;
 use hickory_resolver::config::{ConnectionConfig, NameServerConfig, ResolverConfig};
 use hickory_resolver::net::runtime::TokioRuntimeProvider;
@@ -291,9 +291,9 @@ fn normalize_mx_hostname(hostname: &str) -> Result<Option<String>> {
             message: format!("Invalid MX hostname: {error}"),
         }
     })?;
-    if hostname.parse::<IpAddr>().is_ok() {
+    if hostname.parse::<IpAddr>().is_ok() || looks_like_obfuscated_ip(&hostname) {
         return Err(crate::TlsError::InvalidInput {
-            message: format!("Invalid MX hostname: IP literal {hostname}"),
+            message: format!("Invalid MX hostname: IP-like host {hostname}"),
         });
     }
     Ok(Some(hostname))
@@ -349,7 +349,15 @@ mod tests {
     fn test_normalize_mx_hostname_rejects_ip_literal() {
         let err = normalize_mx_hostname("127.0.0.1.").expect_err("MX exchange must be a hostname");
 
-        assert!(err.to_string().contains("IP literal"));
+        assert!(err.to_string().contains("IP-like host"));
+    }
+
+    #[test]
+    fn test_normalize_mx_hostname_rejects_obfuscated_ip() {
+        let err = normalize_mx_hostname("127.1.")
+            .expect_err("obfuscated MX exchange must be a hostname");
+
+        assert!(err.to_string().contains("IP-like host"));
     }
 
     #[test]

@@ -3,6 +3,7 @@
 use crate::Result;
 use crate::application::ScanRequest;
 use crate::rating::RatingCalculator;
+use crate::security::input_validation::looks_like_obfuscated_ip;
 use crate::scanner::{
     CertificateAnalysisResult, RatingResults, aggregation::ConservativeAggregator,
     inconsistency::SingleIpScanResult,
@@ -511,9 +512,9 @@ fn normalize_mx_hostname(hostname: &str) -> Result<Option<String>> {
             message: format!("Invalid MX hostname: {error}"),
         }
     })?;
-    if hostname.parse::<IpAddr>().is_ok() {
+    if hostname.parse::<IpAddr>().is_ok() || looks_like_obfuscated_ip(&hostname) {
         return Err(crate::error::TlsError::InvalidInput {
-            message: format!("Invalid MX hostname: IP literal {hostname}"),
+            message: format!("Invalid MX hostname: IP-like host {hostname}"),
         });
     }
     Ok(Some(hostname))
