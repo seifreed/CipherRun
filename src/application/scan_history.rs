@@ -15,3 +15,9 @@ pub struct ScanHistoryEntry {
     pub score: Option<u8>,
     pub duration_ms: Option<u64>,
 }
+
+#[derive(Debug, Clone)]
+pub struct ScanHistoryPage {
+    pub total_scans: usize,
+    pub scans: Vec<ScanHistoryEntry>,
+}

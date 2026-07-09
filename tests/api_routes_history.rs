@@ -127,7 +127,7 @@ async fn test_history_route_applies_limit_and_desc_order() {
     .unwrap();
 
     let json = serde_json::to_value(response.0).unwrap();
-    assert_eq!(json["total_scans"], Value::from(2));
+    assert_eq!(json["total_scans"], Value::from(3));
     assert_eq!(json["scans"][0]["grade"], Value::from("A"));
     assert_eq!(json["scans"][1]["grade"], Value::from("B"));
 }
@@ -172,7 +172,7 @@ async fn test_history_route_applies_limit_with_matching_port_only() {
     .unwrap();
 
     let json = serde_json::to_value(response.0).unwrap();
-    assert_eq!(json["total_scans"], Value::from(1));
+    assert_eq!(json["total_scans"], Value::from(2));
     assert_eq!(json["scans"][0]["grade"], Value::from("A"));
 }
 
@@ -217,7 +217,7 @@ async fn test_history_route_limit_preserves_desc_order_for_same_port() {
     .unwrap();
 
     let json = serde_json::to_value(response.0).unwrap();
-    assert_eq!(json["total_scans"], Value::from(3));
+    assert_eq!(json["total_scans"], Value::from(4));
     assert_eq!(json["scans"][0]["grade"], Value::from("A"));
     assert_eq!(json["scans"][1]["grade"], Value::from("B"));
     assert_eq!(json["scans"][2]["grade"], Value::from("C"));
@@ -242,7 +242,7 @@ async fn test_history_route_limit_one_returns_latest_scan_for_port() {
     .unwrap();
 
     let json = serde_json::to_value(response.0).unwrap();
-    assert_eq!(json["total_scans"], Value::from(1));
+    assert_eq!(json["total_scans"], Value::from(3));
     assert_eq!(json["scans"][0]["grade"], Value::from("A"));
 }
 
@@ -514,7 +514,7 @@ async fn test_history_route_limit_one_ignores_newer_other_domain_and_other_port_
     .unwrap();
 
     let json = serde_json::to_value(response.0).unwrap();
-    assert_eq!(json["total_scans"], Value::from(1));
+    assert_eq!(json["total_scans"], Value::from(2));
     assert_eq!(json["scans"][0]["grade"], Value::from("B"));
 }
 
@@ -579,7 +579,7 @@ async fn test_history_route_limit_two_ignores_other_domain_and_other_port_even_w
     .unwrap();
 
     let json = serde_json::to_value(response.0).unwrap();
-    assert_eq!(json["total_scans"], Value::from(2));
+    assert_eq!(json["total_scans"], Value::from(3));
     assert_eq!(json["scans"][0]["grade"], Value::from("B"));
     assert_eq!(json["scans"][1]["grade"], Value::from("C"));
 }
@@ -629,7 +629,7 @@ async fn test_history_route_limit_one_for_non_default_port_ignores_newer_other_p
     .unwrap();
 
     let json = serde_json::to_value(response.0).unwrap();
-    assert_eq!(json["total_scans"], Value::from(1));
+    assert_eq!(json["total_scans"], Value::from(2));
     assert_eq!(json["scans"][0]["grade"], Value::from("B"));
 }
 
@@ -700,7 +700,7 @@ async fn test_history_route_limit_one_for_default_port_ignores_newer_non_default
     .unwrap();
 
     let json = serde_json::to_value(response.0).unwrap();
-    assert_eq!(json["total_scans"], Value::from(1));
+    assert_eq!(json["total_scans"], Value::from(2));
     assert_eq!(json["scans"][0]["grade"], Value::from("B"));
 }
 
@@ -725,7 +725,7 @@ async fn test_history_route_limit_two_for_default_port_ignores_newer_non_default
     .unwrap();
 
     let json = serde_json::to_value(response.0).unwrap();
-    assert_eq!(json["total_scans"], Value::from(2));
+    assert_eq!(json["total_scans"], Value::from(3));
     assert_eq!(json["scans"][0]["grade"], Value::from("B"));
     assert_eq!(json["scans"][1]["grade"], Value::from("C"));
 }
@@ -839,7 +839,7 @@ async fn test_history_route_limit_one_for_default_port_ignores_same_domain_newer
     .unwrap();
 
     let json = serde_json::to_value(response.0).unwrap();
-    assert_eq!(json["total_scans"], Value::from(1));
+    assert_eq!(json["total_scans"], Value::from(2));
     assert_eq!(json["scans"][0]["grade"], Value::from("B"));
 }
 
@@ -886,6 +886,6 @@ async fn test_history_route_limit_one_for_default_port_ignores_only_other_domain
     .unwrap();
 
     let json = serde_json::to_value(response.0).unwrap();
-    assert_eq!(json["total_scans"], Value::from(1));
+    assert_eq!(json["total_scans"], Value::from(2));
     assert_eq!(json["scans"][0]["grade"], Value::from("B"));
 }

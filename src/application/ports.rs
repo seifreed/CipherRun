@@ -1,6 +1,6 @@
 use crate::application::{
     CertificateInventoryPage, CertificateInventoryQuery, CertificateInventoryRecord, PersistedScan,
-    ScanAssessment, ScanHistoryEntry, ScanHistoryQuery, ScanRequest,
+    ScanAssessment, ScanHistoryPage, ScanHistoryQuery, ScanRequest,
 };
 use async_trait::async_trait;
 use std::path::Path;
@@ -41,7 +41,7 @@ pub trait CertificateInventoryPort: Send + Sync {
 
 #[async_trait]
 pub trait ScanHistoryPort: Send + Sync {
-    async fn get_history(&self, query: &ScanHistoryQuery) -> crate::Result<Vec<ScanHistoryEntry>>;
+    async fn get_history(&self, query: &ScanHistoryQuery) -> crate::Result<ScanHistoryPage>;
 }
 
 #[async_trait]

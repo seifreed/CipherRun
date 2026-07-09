@@ -28,7 +28,7 @@ pub use scan_execution::{
     ScanCliView, ScanExecutionReport, ScanExportView, ScanFeatureView, ScanFingerprintView,
     ScanNoticeView, ScanPostProcessingView, ScanPostView, ScanPrimaryTlsView,
 };
-pub use scan_history::{ScanHistoryEntry, ScanHistoryQuery};
+pub use scan_history::{ScanHistoryEntry, ScanHistoryPage, ScanHistoryQuery};
 pub use scan_request::ScanRequest;
 
 // Domain types re-exported from infrastructure modules

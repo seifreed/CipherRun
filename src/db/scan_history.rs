@@ -1,4 +1,4 @@
-use crate::application::{ScanHistoryEntry, ScanHistoryPort, ScanHistoryQuery};
+use crate::application::{ScanHistoryEntry, ScanHistoryPage, ScanHistoryPort, ScanHistoryQuery};
 use crate::db::DatabasePool;
 use sqlx::{Row, postgres::PgRow, sqlite::SqliteRow};
 
@@ -14,7 +14,7 @@ impl<'a> ScanHistoryService<'a> {
 
 #[async_trait::async_trait]
 impl<'a> ScanHistoryPort for ScanHistoryService<'a> {
-    async fn get_history(&self, query: &ScanHistoryQuery) -> crate::Result<Vec<ScanHistoryEntry>> {
+    async fn get_history(&self, query: &ScanHistoryQuery) -> crate::Result<ScanHistoryPage> {
         get_scan_history(self.pool, query).await
     }
 }
@@ -22,7 +22,7 @@ impl<'a> ScanHistoryPort for ScanHistoryService<'a> {
 pub async fn get_scan_history(
     pool: &DatabasePool,
     query: &ScanHistoryQuery,
-) -> crate::Result<Vec<ScanHistoryEntry>> {
+) -> crate::Result<ScanHistoryPage> {
     match pool {
         DatabasePool::Postgres(pool) => fetch_history_postgres(pool, query).await,
         DatabasePool::Sqlite(pool) => fetch_history_sqlite(pool, query).await,
@@ -32,7 +32,8 @@ pub async fn get_scan_history(
 async fn fetch_history_postgres(
     pool: &sqlx::PgPool,
     query: &ScanHistoryQuery,
-) -> crate::Result<Vec<ScanHistoryEntry>> {
+) -> crate::Result<ScanHistoryPage> {
+    let total_scans = count_history_postgres(pool, query).await?;
     let rows = sqlx::query(
         r#"
         SELECT scan_id, scan_timestamp, overall_grade, overall_score, scan_duration_ms
@@ -49,15 +50,14 @@ async fn fetch_history_postgres(
     .await
     .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to query scan history: {}", e)))?;
 
-    rows.into_iter()
-        .map(scan_history_entry_from_pg_row)
-        .collect()
+    collect_page(total_scans, rows, scan_history_entry_from_pg_row)
 }
 
 async fn fetch_history_sqlite(
     pool: &sqlx::SqlitePool,
     query: &ScanHistoryQuery,
-) -> crate::Result<Vec<ScanHistoryEntry>> {
+) -> crate::Result<ScanHistoryPage> {
+    let total_scans = count_history_sqlite(pool, query).await?;
     let rows = sqlx::query(
         r#"
         SELECT scan_id, scan_timestamp, overall_grade, overall_score, scan_duration_ms
@@ -74,9 +74,53 @@ async fn fetch_history_sqlite(
     .await
     .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to query scan history: {}", e)))?;
 
-    rows.into_iter()
-        .map(scan_history_entry_from_sqlite_row)
-        .collect()
+    collect_page(total_scans, rows, scan_history_entry_from_sqlite_row)
+}
+
+async fn count_history_postgres(
+    pool: &sqlx::PgPool,
+    query: &ScanHistoryQuery,
+) -> crate::Result<usize> {
+    let count: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*)
+        FROM scans
+        WHERE target_hostname = $1 AND target_port = $2
+        "#,
+    )
+    .bind(&query.hostname)
+    .bind(query.port as i32)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| {
+        crate::TlsError::DatabaseError(format!("Failed to query scan history count: {}", e))
+    })?;
+
+    usize::try_from(count)
+        .map_err(|e| crate::TlsError::DatabaseError(format!("Invalid scan history count: {}", e)))
+}
+
+async fn count_history_sqlite(
+    pool: &sqlx::SqlitePool,
+    query: &ScanHistoryQuery,
+) -> crate::Result<usize> {
+    let count: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*)
+        FROM scans
+        WHERE target_hostname = ? AND target_port = ?
+        "#,
+    )
+    .bind(&query.hostname)
+    .bind(query.port as i32)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| {
+        crate::TlsError::DatabaseError(format!("Failed to query scan history count: {}", e))
+    })?;
+
+    usize::try_from(count)
+        .map_err(|e| crate::TlsError::DatabaseError(format!("Invalid scan history count: {}", e)))
 }
 
 fn scan_history_field_error(field: &str, error: impl std::fmt::Display) -> crate::TlsError {
@@ -117,6 +161,21 @@ fn normalize_duration(duration_ms: i64) -> crate::Result<u64> {
         )));
     }
     u64::try_from(duration_ms).map_err(|e| scan_history_field_error("scan_duration_ms", e))
+}
+
+fn collect_page<T, F>(
+    total_scans: usize,
+    rows: Vec<T>,
+    mut mapper: F,
+) -> crate::Result<ScanHistoryPage>
+where
+    F: FnMut(T) -> crate::Result<ScanHistoryEntry>,
+{
+    let scans = rows
+        .into_iter()
+        .map(&mut mapper)
+        .collect::<crate::Result<Vec<_>>>()?;
+    Ok(ScanHistoryPage { total_scans, scans })
 }
 
 fn scan_history_entry_from_pg_row(row: PgRow) -> crate::Result<ScanHistoryEntry> {
@@ -234,7 +293,7 @@ mod tests {
         .expect("second row");
 
         let service = ScanHistoryService::new(&pool);
-        let entries = service
+        let page = service
             .get_history(&ScanHistoryQuery {
                 hostname: "example.com".to_string(),
                 port: 443,
@@ -243,9 +302,10 @@ mod tests {
             .await
             .expect("history should load");
 
-        assert_eq!(entries.len(), 2);
-        assert_eq!(entries[0].grade.as_deref(), Some("A"));
-        assert_eq!(entries[1].grade.as_deref(), Some("B"));
+        assert_eq!(page.total_scans, 2);
+        assert_eq!(page.scans.len(), 2);
+        assert_eq!(page.scans[0].grade.as_deref(), Some("A"));
+        assert_eq!(page.scans[1].grade.as_deref(), Some("B"));
     }
 
     #[tokio::test]
@@ -291,6 +351,51 @@ mod tests {
             err.to_string()
                 .contains("Invalid scan history field scan_timestamp")
         );
+    }
+
+    #[tokio::test]
+    async fn sqlite_scan_history_reports_total_count_independently_of_limit() {
+        let config = DatabaseConfig::sqlite(PathBuf::from(":memory:"));
+        let pool = DatabasePool::new(&config)
+            .await
+            .expect("pool should be created");
+        run_migrations(&pool).await.expect("migrations should run");
+
+        let DatabasePool::Sqlite(sqlite) = &pool else {
+            panic!("expected sqlite pool");
+        };
+
+        for i in 0..3 {
+            sqlx::query(
+                r#"
+                INSERT INTO scans (
+                    target_hostname, target_port, scan_timestamp, overall_grade, overall_score, scan_duration_ms
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                "#,
+            )
+            .bind("paged-history.test")
+            .bind(443_i32)
+            .bind(chrono::Utc::now() - chrono::Duration::minutes(i))
+            .bind("A")
+            .bind(95_i32)
+            .bind(1200_i64)
+            .execute(sqlite)
+            .await
+            .expect("row should insert");
+        }
+
+        let service = ScanHistoryService::new(&pool);
+        let page = service
+            .get_history(&ScanHistoryQuery {
+                hostname: "paged-history.test".to_string(),
+                port: 443,
+                limit: 1,
+            })
+            .await
+            .expect("history should load");
+
+        assert_eq!(page.total_scans, 3);
+        assert_eq!(page.scans.len(), 1);
     }
 
     #[test]

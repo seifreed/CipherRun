@@ -134,14 +134,14 @@ pub async fn get_history(
 
     let service = history_service_from_state(&state)?;
     let history_query = history_query_from_api(domain.clone(), &query);
-    let scans = load_scan_history(&service, &history_query).await?;
+    let page = load_scan_history(&service, &history_query).await?;
 
-    if scans.is_empty() {
+    if page.scans.is_empty() {
         return Err(ApiError::NotFound(format!(
             "No scan history found for {}:{}",
             domain, query.port
         )));
     }
 
-    Ok(Json(present_scan_history(domain, query.port, scans)))
+    Ok(Json(present_scan_history(domain, query.port, page)))
 }
