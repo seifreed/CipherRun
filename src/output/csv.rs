@@ -343,6 +343,42 @@ pub fn generate_csv(results: &ScanResults) -> Result<String> {
         output.push('\n');
     }
 
+    if let Some(cdn) = results.cdn_detection() {
+        let indicators = if cdn.indicators.is_empty() {
+            "N/A".to_string()
+        } else {
+            cdn.indicators.join("; ")
+        };
+        output.push_str("=== CDN DETECTION ===\n");
+        output.push_str("Is CDN,Provider,Confidence,Indicators\n");
+        output.push_str(&format!(
+            "{},{},{},{}\n",
+            cdn.is_cdn,
+            csv_cell(cdn.cdn_provider.as_deref().unwrap_or("N/A")),
+            cdn.confidence,
+            csv_cell(&indicators)
+        ));
+        output.push('\n');
+    }
+
+    if let Some(load_balancer) = results.load_balancer_info() {
+        let indicators = if load_balancer.indicators.is_empty() {
+            "N/A".to_string()
+        } else {
+            load_balancer.indicators.join("; ")
+        };
+        output.push_str("=== LOAD BALANCER INFO ===\n");
+        output.push_str("Detected,Type,Sticky Sessions,Indicators\n");
+        output.push_str(&format!(
+            "{},{},{},{}\n",
+            load_balancer.detected,
+            csv_cell(load_balancer.lb_type.as_deref().unwrap_or("N/A")),
+            load_balancer.sticky_sessions,
+            csv_cell(&indicators)
+        ));
+        output.push('\n');
+    }
+
     // Client Simulations (if available)
     if let Some(clients) = results.client_simulations() {
         output.push_str("=== CLIENT COMPATIBILITY ===\n");
@@ -408,6 +444,7 @@ mod tests {
         BannerDetection, CookieAnalysis, CookieInfo, DateTimeCheck, Grade as HeaderGrade,
         HstsAnalysis, ReverseProxyDetection,
     };
+    use crate::fingerprint::{CdnDetection, LoadBalancerInfo};
     use crate::http::tester::{HeaderAnalysisResult, SecurityGrade};
     use crate::protocols::{Protocol, ProtocolTestResult};
     use crate::rating::RatingResult;
@@ -509,6 +546,35 @@ mod tests {
         };
         let csv = generate_csv(&results).expect("test assertion should succeed");
         assert!(!csv.contains("=== CERTIFICATE ==="));
+    }
+
+    #[test]
+    fn test_csv_includes_cdn_and_load_balancer_sections() {
+        let results = ScanResults {
+            target: "example.com:443".to_string(),
+            advanced: Some(AdvancedResults {
+                cdn_detection: Some(CdnDetection {
+                    is_cdn: true,
+                    cdn_provider: Some("Cloudflare".to_string()),
+                    confidence: 0.95,
+                    indicators: vec!["cdn".to_string()],
+                }),
+                load_balancer_info: Some(LoadBalancerInfo {
+                    detected: true,
+                    lb_type: Some("AWS ALB".to_string()),
+                    sticky_sessions: true,
+                    indicators: vec!["sticky sessions".to_string()],
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let csv = generate_csv(&results).expect("test assertion should succeed");
+        assert!(csv.contains("=== CDN DETECTION ==="));
+        assert!(csv.contains("Cloudflare"));
+        assert!(csv.contains("=== LOAD BALANCER INFO ==="));
+        assert!(csv.contains("AWS ALB"));
     }
 
     #[test]
