@@ -1,5 +1,6 @@
 // HSTS Preload List Checker - Verify if domain is in browser preload lists
 
+use crate::security::input_validation::looks_like_obfuscated_ip;
 use crate::constants::HTTP_REQUEST_TIMEOUT;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -76,6 +77,10 @@ impl HstsPreloadChecker {
 
     /// Check if domain is in HSTS preload lists
     pub async fn check_preload_status(&self, domain: &str) -> Result<PreloadStatus, String> {
+        if looks_like_obfuscated_ip(domain.trim()) {
+            return Err("HSTS preload lookup does not accept obfuscated IP notation".to_string());
+        }
+
         // Normalize domain (remove www. prefix, lowercase)
         let normalized = Self::normalize_domain(domain);
 
@@ -443,6 +448,17 @@ mod tests {
             HstsPreloadChecker::normalize_domain("https://[2001:db8::1]:443/path"),
             "2001:db8::1"
         );
+    }
+
+    #[tokio::test]
+    async fn test_check_preload_status_rejects_obfuscated_ip_notation() {
+        let checker = HstsPreloadChecker::new();
+        let err = checker
+            .check_preload_status("127.1")
+            .await
+            .expect_err("obfuscated IP should be rejected");
+
+        assert!(err.contains("obfuscated IP notation"));
     }
 
     #[test]
