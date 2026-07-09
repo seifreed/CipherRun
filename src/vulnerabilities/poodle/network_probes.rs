@@ -58,7 +58,7 @@ fn find_alert_description(response: &[u8], n: usize) -> Result<Option<u8>> {
         let Some(next) = header_end.checked_add(record_len) else {
             break;
         };
-        if record_len == 0 || next > response.len() {
+        if next > response.len() {
             break;
         }
         i = next;
@@ -221,7 +221,7 @@ mod tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
-    use tokio::time::{sleep, Duration};
+    use tokio::time::{Duration, sleep};
 
     #[test]
     fn test_find_alert_description_rejects_truncated_alert() {
@@ -266,6 +266,18 @@ mod tests {
             0x03,
             0x00,
             0x00,
+        ];
+        assert_eq!(
+            find_alert_description(&response, response.len()).expect("alert should parse"),
+            Some(0x46)
+        );
+    }
+
+    #[test]
+    fn test_find_alert_description_skips_zero_length_record_before_alert() {
+        let response = [
+            0x16, 0x03, 0x03, 0x00, 0x00, // zero-length handshake record
+            CONTENT_TYPE_ALERT, 0x03, 0x03, 0x00, 0x02, 0x02, 0x46,
         ];
         assert_eq!(
             find_alert_description(&response, response.len()).expect("alert should parse"),
