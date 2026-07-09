@@ -8,6 +8,7 @@ use crate::security::is_private_ip;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::IpAddr;
+use tokio::net::lookup_host;
 use tracing::{debug, info, warn};
 
 /// Google CT log list URL (v3 format)
@@ -130,6 +131,13 @@ impl SourceManager {
                         warn!("Skipping CT log with invalid URL: {}", log.url);
                         continue;
                     }
+                    if !ct_log_url_resolves_publicly(&log.url).await? {
+                        warn!(
+                            "Skipping CT log with private/internal resolution: {}",
+                            log.url
+                        );
+                        continue;
+                    }
 
                     let log_id = log.log_id.clone();
                     let source = LogSource {
@@ -205,17 +213,34 @@ impl SourceManager {
 
 fn is_valid_ct_log_url(url: &str) -> bool {
     url::Url::parse(url).is_ok_and(|url| {
+        let host = url.host_str().unwrap_or("").trim_end_matches('.').to_ascii_lowercase();
         matches!(url.scheme(), "http" | "https")
             && url.host_str().is_some()
             && url.username().is_empty()
             && url.password().is_none()
             && !matches!(url.port(), Some(0))
-            && !matches!(url.host_str(), Some(host) if {
-                let host = host.to_ascii_lowercase();
-                host == "localhost" || host.ends_with(".local") || host.ends_with(".internal")
-            })
+            && host != "localhost"
+            && !host.ends_with(".local")
+            && !host.ends_with(".internal")
             && !matches!(url.host_str(), Some(host) if host.parse::<IpAddr>().is_ok_and(|ip| is_private_ip(&ip)))
     })
+}
+
+async fn ct_log_url_resolves_publicly(url: &str) -> Result<bool> {
+    let parsed = url::Url::parse(url).map_err(|error| TlsError::Other(format!("{error}")))?;
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| TlsError::Other("CT log URL missing host".to_string()))?
+        .trim_end_matches('.');
+    let port = parsed.port_or_known_default().unwrap_or(443);
+    let addrs: Vec<_> = lookup_host((host, port))
+        .await
+        .map_err(|error| TlsError::Other(format!("Failed to resolve CT log host {host}: {error}")))?
+        .collect();
+    if addrs.is_empty() {
+        return Ok(false);
+    }
+    Ok(addrs.iter().all(|addr| !is_private_ip(&addr.ip())))
 }
 
 impl Default for SourceManager {
@@ -330,7 +355,15 @@ mod tests {
         assert!(!is_valid_ct_log_url("https://example.com:0"));
         assert!(!is_valid_ct_log_url("https://"));
         assert!(!is_valid_ct_log_url("https://localhost"));
+        assert!(!is_valid_ct_log_url("https://localhost."));
         assert!(!is_valid_ct_log_url("https://127.0.0.1"));
+    }
+
+    #[tokio::test]
+    async fn test_ct_log_url_resolves_publicly_rejects_localhost() {
+        assert!(!ct_log_url_resolves_publicly("https://localhost")
+            .await
+            .expect("resolution check should succeed"));
     }
 
     #[test]
