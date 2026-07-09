@@ -4,6 +4,7 @@ use crate::Result;
 use crate::error::TlsError;
 use crate::security::validate_hostname;
 use crate::monitor::types::AlertThresholds;
+use lettre::message::Mailbox;
 use reqwest::header::{HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -284,6 +285,17 @@ impl MonitorConfig {
             validate_hostname(&email.smtp_server).map_err(|error| TlsError::ConfigError {
                 message: format!("Invalid email smtp_server: {error}"),
             })?;
+            email
+                .from_address
+                .parse::<Mailbox>()
+                .map_err(|error| TlsError::ConfigError {
+                    message: format!("Invalid email from_address: {error}"),
+                })?;
+            for addr in &email.to_addresses {
+                addr.parse::<Mailbox>().map_err(|error| TlsError::ConfigError {
+                    message: format!("Invalid email to_addresses entry: {error}"),
+                })?;
+            }
         }
         if let Some(slack) = &self.monitor.alerts.slack
             && slack.enabled
@@ -648,6 +660,31 @@ webhook_url = "https://webhook.example.com:0/alerts"
         let err = MonitorConfig::from_file(&path).expect_err("zero port Slack URL should fail");
 
         assert!(err.to_string().contains("port must be between 1 and 65535"));
+    }
+
+    #[test]
+    fn test_from_file_rejects_enabled_email_invalid_addresses() {
+        let dir = tempfile::tempdir().expect("test assertion should succeed");
+        let path = dir.path().join("monitor.toml");
+        fs::write(
+            &path,
+            r#"
+[monitor.alerts.email]
+enabled = true
+smtp_server = "smtp.example.com"
+smtp_port = 587
+from_address = "invalid sender"
+to_addresses = ["admin@example.com"]
+username = "user"
+password = "pass"
+use_tls = true
+"#,
+        )
+        .expect("test assertion should succeed");
+
+        let err = MonitorConfig::from_file(&path).expect_err("invalid email address should fail");
+
+        assert!(err.to_string().contains("from_address"));
     }
 
     #[test]
