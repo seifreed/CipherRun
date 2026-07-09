@@ -56,7 +56,7 @@ const HTML_TEMPLATE: &str = r#"<!DOCTYPE html>
         <section>
             <h2>Overall Security Rating</h2>
             <div style="text-align: center;">
-                <div class="grade-box grade-{{rating.grade}}">{{rating.grade}}</div>
+                <div class="grade-box grade-{{rating.grade_class}}">{{rating.grade}}</div>
                 <div class="score-bar">
                     <div class="score-fill" style="width: {{rating.score}}%">{{rating.score}}/100</div>
                 </div>
@@ -187,7 +187,8 @@ pub fn generate_html_report(results: &ScanResults) -> Result<String> {
                 other => other,
             };
             json!({
-                "grade": grade_class,
+                "grade": grade_str,
+                "grade_class": grade_class,
                 "score": r.score,
                 "certificate_score": r.certificate_score,
                 "protocol_score": r.protocol_score,
@@ -454,6 +455,7 @@ mod tests {
 
         let html = generate_html_report(&results).expect("test assertion should succeed");
         assert!(html.contains("grade-A-plus"));
+        assert!(html.contains(">A+<"));
     }
 
     #[test]
