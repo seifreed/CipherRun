@@ -4,7 +4,7 @@ use super::raw_webhook_host;
 use crate::Result;
 use crate::error::TlsError;
 use crate::monitor::alerts::{Alert, AlertChannel, validated_webhook_target};
-use crate::security::input_validation::looks_like_obfuscated_ip;
+use crate::security::input_validation::{looks_like_dotted_ip_literal, looks_like_obfuscated_ip};
 use crate::monitor::config::WebhookConfig;
 use async_trait::async_trait;
 use reqwest::header::{HeaderName, HeaderValue};
@@ -21,6 +21,11 @@ impl WebhookChannel {
         if raw_webhook_host(&config.url).is_some_and(looks_like_obfuscated_ip) {
             return Err(TlsError::ConfigError {
                 message: "Webhook URL must not use obfuscated IP notation".to_string(),
+            });
+        }
+        if raw_webhook_host(&config.url).is_some_and(looks_like_dotted_ip_literal) {
+            return Err(TlsError::ConfigError {
+                message: "Webhook URL must not use dotted IP literals".to_string(),
             });
         }
         let url = reqwest::Url::parse(&config.url).map_err(|error| TlsError::ConfigError {
@@ -169,6 +174,14 @@ mod tests {
             Err(err) => err,
         };
         assert!(err.to_string().contains("obfuscated IP notation"));
+    }
+
+    #[test]
+    fn test_webhook_channel_rejects_dotted_ip_url() {
+        let mut config = create_test_config();
+        config.url = "https://127.0.0.1./alerts".to_string();
+
+        assert!(WebhookChannel::new(config).is_err());
     }
 
     #[test]
