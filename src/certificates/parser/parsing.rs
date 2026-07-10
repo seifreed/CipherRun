@@ -185,7 +185,7 @@ impl CertificateParser {
         };
 
         // Connect with TLS
-        let domain = Self::server_name_for_hostname(self.starttls_hostname())?;
+        let domain = Self::server_name_for_hostname(&self.target.hostname)?;
 
         let tls_stream = timeout(self.read_timeout, connector.connect(domain, stream)).await??;
 
