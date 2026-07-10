@@ -245,7 +245,7 @@ impl BreachTester {
         let std_stream =
             crate::utils::network::into_blocking_std_stream(stream, TLS_HANDSHAKE_TIMEOUT)?;
 
-        let hostname = self.target.hostname.clone();
+        let (hostname, use_sni) = openssl_hostname_and_sni(&self.target.hostname);
         tokio::task::spawn_blocking(move || -> Result<Option<bool>> {
             use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
             use std::io::Write;
@@ -257,7 +257,11 @@ impl BreachTester {
             builder.set_verify(SslVerifyMode::NONE);
             let connector = builder.build();
 
-            match connector.connect(&hostname, std_stream) {
+            match connector
+                .configure()?
+                .use_server_name_indication(use_sni)
+                .connect(&hostname, std_stream)
+            {
                 Ok(mut ssl_stream) => {
                     // Send request with Cookie header
                     let request = format!(

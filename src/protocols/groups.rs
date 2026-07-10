@@ -328,7 +328,10 @@ impl GroupTester {
                 }
             };
 
-            let hostname = self.target.hostname.clone();
+            let (hostname, use_sni) = openssl_hostname_and_sni(
+                &self.target.hostname,
+                self.starttls_hostname.as_deref(),
+            );
             let openssl_name = openssl_name.clone();
             let outcome = match tokio::task::spawn_blocking(move || {
                 let mut builder = match SslConnector::builder(SslMethod::tls()) {
@@ -348,7 +351,14 @@ impl GroupTester {
                 }
 
                 let connector = builder.build();
-                match connector.connect(&hostname, std_stream) {
+                let configured = match connector.configure() {
+                    Ok(configured) => configured,
+                    Err(_) => return GroupProbeOutcome::Inconclusive,
+                };
+                match configured
+                    .use_server_name_indication(use_sni)
+                    .connect(&hostname, std_stream)
+                {
                     Ok(_) => GroupProbeOutcome::Supported,
                     Err(error) => {
                         if is_operational_tls_error(&error.to_string()) {
@@ -385,6 +395,20 @@ impl GroupTester {
             GroupProbeOutcome::Inconclusive
         }
     }
+}
+
+fn openssl_hostname_and_sni(
+    target_hostname: &str,
+    override_hostname: Option<&str>,
+) -> (String, bool) {
+    let sni_hostname = crate::utils::network::sni_hostname_for_target(
+        target_hostname,
+        override_hostname,
+    );
+    let hostname = sni_hostname
+        .clone()
+        .unwrap_or_else(|| target_hostname.to_string());
+    (hostname, sni_hostname.is_some())
 }
 
 /// Build the human-readable summary for a group enumeration result.
@@ -529,5 +553,12 @@ mod tests {
 
         let tester = GroupTester::new(target).with_test_all_ips(true);
         assert!(tester.test_all_ips);
+    }
+
+    #[test]
+    fn test_openssl_hostname_and_sni_omits_sni_for_ip_targets() {
+        let (hostname, use_sni) = openssl_hostname_and_sni("93.184.216.34", None);
+        assert_eq!(hostname, "93.184.216.34");
+        assert!(!use_sni);
     }
 }

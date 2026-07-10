@@ -301,7 +301,7 @@ impl ProtocolTester {
                     let negotiator = crate::starttls::protocols::get_negotiator(
                         starttls_proto,
                         self.starttls_negotiation_hostname(),
-                        self.target.port,
+                        self.starttls_server_mode,
                     );
                     if crate::starttls::protocols::negotiate_starttls_with_timeout(
                         negotiator.as_ref(),
@@ -470,11 +470,11 @@ impl ProtocolTester {
         }
 
         if let Some(starttls_proto) = self.starttls_protocol {
-            let negotiator = crate::starttls::protocols::get_negotiator(
-                starttls_proto,
-                self.starttls_negotiation_hostname(),
-                self.target.port,
-            );
+                    let negotiator = crate::starttls::protocols::get_negotiator(
+                        starttls_proto,
+                        self.starttls_negotiation_hostname(),
+                        self.starttls_server_mode,
+                    );
             if crate::starttls::protocols::negotiate_starttls_with_timeout(
                 negotiator.as_ref(),
                 &mut stream,
@@ -578,7 +578,7 @@ impl ProtocolTester {
             let negotiator = crate::starttls::protocols::get_negotiator(
                 starttls_proto,
                 self.starttls_negotiation_hostname(),
-                self.target.port,
+                self.starttls_server_mode,
             );
             if crate::starttls::protocols::negotiate_starttls_with_timeout(
                 negotiator.as_ref(),
@@ -596,10 +596,10 @@ impl ProtocolTester {
         let std_stream = crate::utils::network::into_blocking_std_stream(stream, socket_timeout)?;
 
         let enable_bugs_mode = self.enable_bugs_mode;
-        let sni_host = self
-            .sni_hostname
-            .clone()
-            .unwrap_or_else(|| self.target.hostname.clone());
+        let (sni_host, use_sni) = openssl_hostname_and_sni(
+            &self.target.hostname,
+            self.sni_hostname.as_deref(),
+        );
         tokio::task::spawn_blocking(move || -> Result<ProtocolProbeOutcome> {
             let mut builder = SslConnector::builder(SslMethod::tls())?;
             builder.set_verify(SslVerifyMode::NONE);
@@ -613,7 +613,11 @@ impl ProtocolTester {
 
             let connector = builder.build();
 
-            match connector.connect(&sni_host, std_stream) {
+            match connector
+                .configure()?
+                .use_server_name_indication(use_sni)
+                .connect(&sni_host, std_stream)
+            {
                 Ok(_) => Ok(ProtocolProbeOutcome::Supported),
                 Err(error) => Ok(classify_tls12_handshake_error(&error)),
             }
@@ -644,7 +648,7 @@ impl ProtocolTester {
             let negotiator = crate::starttls::protocols::get_negotiator(
                 starttls_proto,
                 self.starttls_negotiation_hostname(),
-                self.target.port,
+                self.starttls_server_mode,
             );
             if crate::starttls::protocols::negotiate_starttls_with_timeout(
                 negotiator.as_ref(),
@@ -752,6 +756,20 @@ fn classify_tls12_handshake_error(
     }
 }
 
+fn openssl_hostname_and_sni(
+    target_hostname: &str,
+    override_hostname: Option<&str>,
+) -> (String, bool) {
+    let sni_hostname = crate::utils::network::sni_hostname_for_target(
+        target_hostname,
+        override_hostname,
+    );
+    let hostname = sni_hostname
+        .clone()
+        .unwrap_or_else(|| target_hostname.to_string());
+    (hostname, sni_hostname.is_some())
+}
+
 /// Classify a raw legacy-protocol ClientHello response.
 ///
 /// `Supported` only when the server returns a ServerHello whose negotiated
@@ -815,6 +833,13 @@ mod legacy_probe_tests {
                 .expect("length should parse"),
             Some(TLS_RECORD_HEADER_SIZE + BUFFER_SIZE_MAX_TLS_RECORD)
         );
+    }
+
+    #[test]
+    fn test_openssl_hostname_and_sni_omits_sni_for_ip_targets() {
+        let (hostname, use_sni) = openssl_hostname_and_sni("93.184.216.34", None);
+        assert_eq!(hostname, "93.184.216.34");
+        assert!(!use_sni);
     }
 
     /// Build a minimal ServerHello record advertising `version` in the legacy

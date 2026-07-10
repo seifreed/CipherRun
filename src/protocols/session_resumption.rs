@@ -220,10 +220,15 @@ impl SessionResumptionTester {
         crate::utils::network::into_blocking_std_stream(stream, self.connect_timeout)
     }
 
-    fn tls_hostname(&self) -> String {
-        self.sni_hostname
+    fn openssl_hostname_and_sni(&self) -> (String, bool) {
+        let sni_hostname = crate::utils::network::sni_hostname_for_target(
+            &self.target.hostname,
+            self.sni_hostname.as_deref(),
+        );
+        let hostname = sni_hostname
             .clone()
-            .unwrap_or_else(|| self.target.hostname.clone())
+            .unwrap_or_else(|| self.target.hostname.clone());
+        (hostname, sni_hostname.is_some())
     }
 
     fn build_connector(&self) -> Result<SslConnector> {
@@ -238,7 +243,11 @@ impl SessionResumptionTester {
 
     fn establish_session_sync(&self, stream: std::net::TcpStream) -> Result<Option<SslSession>> {
         let connector = self.build_connector()?;
-        let ssl_stream = connector.connect(&self.tls_hostname(), stream)?;
+        let (hostname, use_sni) = self.openssl_hostname_and_sni();
+        let ssl_stream = connector
+            .configure()?
+            .use_server_name_indication(use_sni)
+            .connect(&hostname, stream)?;
         Ok(ssl_stream.ssl().session().map(|session| session.to_owned()))
     }
 
@@ -256,7 +265,11 @@ impl SessionResumptionTester {
         }
 
         let connector = self.build_connector()?;
-        let mut ssl = connector.configure()?.into_ssl(&self.tls_hostname())?;
+        let (hostname, use_sni) = self.openssl_hostname_and_sni();
+        let mut ssl = connector
+            .configure()?
+            .use_server_name_indication(use_sni)
+            .into_ssl(&hostname)?;
         // SAFETY: Setting a session is safe as long as the session is valid.
         // We've validated the session hasn't expired above. The session must not
         // be used concurrently (which we ensure by not sharing it across threads).
@@ -512,6 +525,21 @@ mod tests {
         assert!(tester.starttls_server_mode);
         assert_eq!(tester.sni_hostname.as_deref(), Some("tls.example.com"));
         assert_eq!(tester.connect_timeout, Duration::from_secs(7));
+    }
+
+    #[test]
+    fn test_openssl_hostname_and_sni_omits_sni_for_ip_targets() {
+        let target = Target::with_ips(
+            "93.184.216.34".to_string(),
+            443,
+            vec![IpAddr::from([93, 184, 216, 34])],
+        )
+        .unwrap();
+
+        let tester = SessionResumptionTester::new(target);
+        let (hostname, use_sni) = tester.openssl_hostname_and_sni();
+        assert_eq!(hostname, "93.184.216.34");
+        assert!(!use_sni);
     }
 
     fn install_crypto_provider() {
