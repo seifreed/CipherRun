@@ -154,7 +154,8 @@ impl CertificateAdvancedTester {
 
         let std_stream = crate::utils::network::into_blocking_std_stream(stream, connect_timeout)?;
 
-        let hostname_to_use = sni_hostname.unwrap_or(&self.target.hostname).to_string();
+        let (hostname_to_use, use_sni) =
+            openssl_hostname_and_sni(&self.target.hostname, sni_hostname);
         tokio::task::spawn_blocking(move || -> Result<CertificateInfo> {
             let mut builder = SslConnector::builder(SslMethod::tls())?;
             // The scanner must retrieve and inspect certificates from hosts whose
@@ -164,7 +165,10 @@ impl CertificateAdvancedTester {
             builder.set_verify(SslVerifyMode::NONE);
 
             let connector = builder.build();
-            let ssl_stream = connector.connect(&hostname_to_use, std_stream)?;
+            let ssl_stream = connector
+                .configure()?
+                .use_server_name_indication(use_sni)
+                .connect(&hostname_to_use, std_stream)?;
 
             let cert = ssl_stream
                 .ssl()
@@ -195,7 +199,7 @@ impl CertificateAdvancedTester {
 
         let std_stream = crate::utils::network::into_blocking_std_stream(stream, connect_timeout)?;
 
-        let hostname = self.target.hostname.clone();
+        let (hostname, use_sni) = openssl_hostname_and_sni(&self.target.hostname, None);
         tokio::task::spawn_blocking(move || -> Result<CertificateCompressionAnalysis> {
             let mut builder = SslConnector::builder(SslMethod::tls())?;
             // Certificate compression is independent of certificate validity; the
@@ -207,7 +211,11 @@ impl CertificateAdvancedTester {
 
             let connector = builder.build();
 
-            match connector.connect(&hostname, std_stream) {
+            match connector
+                .configure()?
+                .use_server_name_indication(use_sni)
+                .connect(&hostname, std_stream)
+            {
                 Ok(ssl_stream) => {
                     let cert = ssl_stream.ssl().peer_certificate();
 
@@ -364,7 +372,7 @@ impl CertificateAdvancedTester {
 
         let std_stream = crate::utils::network::into_blocking_std_stream(stream, connect_timeout)?;
 
-        let hostname = self.target.hostname.clone();
+        let (hostname, use_sni) = openssl_hostname_and_sni(&self.target.hostname, None);
         let cipher_string = cipher_list.join(":");
         tokio::task::spawn_blocking(move || -> Result<String> {
             let mut builder = SslConnector::builder(SslMethod::tls())?;
@@ -380,7 +388,11 @@ impl CertificateAdvancedTester {
 
             let connector = builder.build();
 
-            match connector.connect(&hostname, std_stream) {
+            match connector
+                .configure()?
+                .use_server_name_indication(use_sni)
+                .connect(&hostname, std_stream)
+            {
                 Ok(ssl_stream) => {
                     let cipher = ssl_stream.ssl().current_cipher().ok_or_else(|| {
                         crate::error::TlsError::InvalidHandshake {
@@ -420,6 +432,20 @@ fn analyze_observed_certificate_compression(cert: &X509) -> Result<CertificateCo
         details,
         inconclusive: true,
     })
+}
+
+fn openssl_hostname_and_sni(
+    target_hostname: &str,
+    override_hostname: Option<&str>,
+) -> (String, bool) {
+    let sni_hostname = crate::utils::network::sni_hostname_for_target(
+        target_hostname,
+        override_hostname,
+    );
+    let hostname = sni_hostname
+        .clone()
+        .unwrap_or_else(|| target_hostname.to_string());
+    (hostname, sni_hostname.is_some())
 }
 
 fn extract_certificate_info(cert: &X509) -> Result<CertificateInfo> {
@@ -714,6 +740,21 @@ mod tests {
         assert!(decoded.server_enforces_order);
         assert_eq!(decoded.test_results.len(), 1);
         assert_eq!(decoded.consistency_score, 100.0);
+    }
+
+    #[test]
+    fn test_openssl_hostname_and_sni_omits_sni_for_ip_targets() {
+        let (hostname, use_sni) = openssl_hostname_and_sni("93.184.216.34", None);
+        assert_eq!(hostname, "93.184.216.34");
+        assert!(!use_sni);
+    }
+
+    #[test]
+    fn test_openssl_hostname_and_sni_uses_override() {
+        let (hostname, use_sni) =
+            openssl_hostname_and_sni("93.184.216.34", Some("example.com"));
+        assert_eq!(hostname, "example.com");
+        assert!(use_sni);
     }
 
     #[tokio::test]
