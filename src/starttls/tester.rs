@@ -16,11 +16,10 @@ pub struct StarttlsTester {
 impl StarttlsTester {
     /// Create new STARTTLS tester
     pub fn new(target: Target) -> Self {
-        let server_mode = target.port == 5269;
         Self {
             target,
             connect_timeout: Duration::from_secs(10),
-            server_mode,
+            server_mode: false,
         }
     }
 
@@ -157,6 +156,7 @@ mod tests {
         .unwrap();
         let tester = StarttlsTester::new(target);
         assert_eq!(tester.connect_timeout, Duration::from_secs(10));
+        assert!(!tester.server_mode);
     }
 
     #[test]
