@@ -20,6 +20,7 @@ pub struct SessionResumptionTester {
     starttls: Option<crate::starttls::StarttlsProtocol>,
     starttls_server_mode: bool,
     starttls_hostname: Option<String>,
+    sni_hostname: Option<String>,
 }
 
 impl SessionResumptionTester {
@@ -29,6 +30,7 @@ impl SessionResumptionTester {
             starttls: None,
             starttls_server_mode: false,
             starttls_hostname: None,
+            sni_hostname: None,
         }
     }
 
@@ -44,6 +46,11 @@ impl SessionResumptionTester {
 
     pub fn with_starttls_server_mode(mut self, server_mode: bool) -> Self {
         self.starttls_server_mode = server_mode;
+        self
+    }
+
+    pub fn with_sni(mut self, hostname: Option<String>) -> Self {
+        self.sni_hostname = hostname;
         self
     }
 
@@ -198,6 +205,12 @@ impl SessionResumptionTester {
         crate::utils::network::into_blocking_std_stream(stream, Duration::from_secs(10))
     }
 
+    fn tls_hostname(&self) -> String {
+        self.sni_hostname
+            .clone()
+            .unwrap_or_else(|| self.target.hostname.clone())
+    }
+
     fn build_connector(&self) -> Result<SslConnector> {
         let mut builder = SslConnector::builder(SslMethod::tls())?;
         // Certificate validity is irrelevant to whether a server offers session
@@ -210,7 +223,7 @@ impl SessionResumptionTester {
 
     fn establish_session_sync(&self, stream: std::net::TcpStream) -> Result<Option<SslSession>> {
         let connector = self.build_connector()?;
-        let ssl_stream = connector.connect(&self.target.hostname, stream)?;
+        let ssl_stream = connector.connect(&self.tls_hostname(), stream)?;
         Ok(ssl_stream.ssl().session().map(|session| session.to_owned()))
     }
 
@@ -228,7 +241,7 @@ impl SessionResumptionTester {
         }
 
         let connector = self.build_connector()?;
-        let mut ssl = connector.configure()?.into_ssl(&self.target.hostname)?;
+        let mut ssl = connector.configure()?.into_ssl(&self.tls_hostname())?;
         // SAFETY: Setting a session is safe as long as the session is valid.
         // We've validated the session hasn't expired above. The session must not
         // be used concurrently (which we ensure by not sharing it across threads).
@@ -474,7 +487,8 @@ mod tests {
 
         let tester = SessionResumptionTester::new(target)
             .with_starttls(Some(crate::starttls::StarttlsProtocol::XMPP), Some("xmpp.example.com".to_string()))
-            .with_starttls_server_mode(true);
+            .with_starttls_server_mode(true)
+            .with_sni(Some("tls.example.com".to_string()));
 
         assert_eq!(tester.starttls, Some(crate::starttls::StarttlsProtocol::XMPP));
         assert_eq!(
@@ -482,6 +496,7 @@ mod tests {
             Some("xmpp.example.com")
         );
         assert!(tester.starttls_server_mode);
+        assert_eq!(tester.sni_hostname.as_deref(), Some("tls.example.com"));
     }
 
     fn install_crypto_provider() {
