@@ -219,7 +219,7 @@ impl<'a> PaddingOracle2016Tester<'a> {
         let std_stream =
             crate::utils::network::into_blocking_std_stream(stream, self.connect_timeout)?;
 
-        let hostname = self.target.hostname.clone();
+        let (hostname, use_sni) = openssl_hostname_and_sni(&self.target.hostname);
         tokio::task::spawn_blocking(move || -> Result<CbcSupportStatus> {
             let mut builder = SslConnector::builder(SslMethod::tls())?;
             // Certificate validity is irrelevant to CBC cipher support; a verifying
@@ -247,7 +247,11 @@ impl<'a> PaddingOracle2016Tester<'a> {
 
             let connector = builder.build();
 
-            match connector.connect(&hostname, std_stream) {
+            match connector
+                .configure()?
+                .use_server_name_indication(use_sni)
+                .connect(&hostname, std_stream)
+            {
                 Ok(_ssl_stream) => {
                     // Successfully connected with AES-CBC cipher
                     Ok(CbcSupportStatus::Supported)
@@ -282,6 +286,14 @@ impl<'a> PaddingOracle2016Tester<'a> {
                 .to_string(),
         })
     }
+}
+
+fn openssl_hostname_and_sni(target_hostname: &str) -> (String, bool) {
+    let sni_hostname = crate::utils::network::sni_hostname_for_target(target_hostname, None);
+    let hostname = sni_hostname
+        .clone()
+        .unwrap_or_else(|| target_hostname.to_string());
+    (hostname, sni_hostname.is_some())
 }
 
 /// Padding Oracle 2016 test result
@@ -365,6 +377,13 @@ mod tests {
             average_invalid_timing_ms: 0.0,
         };
         assert!(result.details.contains("Not vulnerable"));
+    }
+
+    #[test]
+    fn test_openssl_hostname_and_sni_omits_sni_for_ip_targets() {
+        let (hostname, use_sni) = openssl_hostname_and_sni("93.184.216.34");
+        assert_eq!(hostname, "93.184.216.34");
+        assert!(!use_sni);
     }
 
     async fn spawn_dummy_server() -> SocketAddr {
