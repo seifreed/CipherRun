@@ -35,6 +35,8 @@ impl ProtocolTester {
         let tester = crate::protocols::session_resumption::SessionResumptionTester::new(
             self.target.clone(),
         )
+        .with_connect_timeout(self.connect_timeout)
+        .with_retry_config(self.retry_config.clone())
         .with_sni(self.sni_hostname.clone())
         .with_starttls(
             self.starttls_protocol,

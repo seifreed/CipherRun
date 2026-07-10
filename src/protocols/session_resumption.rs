@@ -22,6 +22,8 @@ pub struct SessionResumptionTester {
     starttls_server_mode: bool,
     starttls_hostname: Option<String>,
     sni_hostname: Option<String>,
+    connect_timeout: Duration,
+    retry_config: Option<crate::utils::retry::RetryConfig>,
 }
 
 impl SessionResumptionTester {
@@ -32,6 +34,8 @@ impl SessionResumptionTester {
             starttls_server_mode: false,
             starttls_hostname: None,
             sni_hostname: None,
+            connect_timeout: Duration::from_secs(10),
+            retry_config: None,
         }
     }
 
@@ -52,6 +56,16 @@ impl SessionResumptionTester {
 
     pub fn with_sni(mut self, hostname: Option<String>) -> Self {
         self.sni_hostname = hostname;
+        self
+    }
+
+    pub fn with_connect_timeout(mut self, timeout: Duration) -> Self {
+        self.connect_timeout = timeout;
+        self
+    }
+
+    pub fn with_retry_config(mut self, config: Option<crate::utils::retry::RetryConfig>) -> Self {
+        self.retry_config = config;
         self
     }
 
@@ -176,8 +190,8 @@ impl SessionResumptionTester {
 
         let mut stream = crate::utils::network::connect_with_timeout(
             addr,
-            Duration::from_secs(10),
-            None,
+            self.connect_timeout,
+            self.retry_config.as_ref(),
         )
         .await?;
 
@@ -194,7 +208,7 @@ impl SessionResumptionTester {
             crate::starttls::protocols::negotiate_starttls_with_timeout(
                 negotiator.as_ref(),
                 &mut stream,
-                Duration::from_secs(10),
+                self.connect_timeout,
             )
             .await
             .map_err(|error| TlsError::StarttlsError {
@@ -203,7 +217,7 @@ impl SessionResumptionTester {
             })?;
         }
 
-        crate::utils::network::into_blocking_std_stream(stream, Duration::from_secs(10))
+        crate::utils::network::into_blocking_std_stream(stream, self.connect_timeout)
     }
 
     fn tls_hostname(&self) -> String {
@@ -487,7 +501,8 @@ mod tests {
         let tester = SessionResumptionTester::new(target)
             .with_starttls(Some(crate::starttls::StarttlsProtocol::XMPP), Some("xmpp.example.com".to_string()))
             .with_starttls_server_mode(true)
-            .with_sni(Some("tls.example.com".to_string()));
+            .with_sni(Some("tls.example.com".to_string()))
+            .with_connect_timeout(Duration::from_secs(7));
 
         assert_eq!(tester.starttls, Some(crate::starttls::StarttlsProtocol::XMPP));
         assert_eq!(
@@ -496,6 +511,7 @@ mod tests {
         );
         assert!(tester.starttls_server_mode);
         assert_eq!(tester.sni_hostname.as_deref(), Some("tls.example.com"));
+        assert_eq!(tester.connect_timeout, Duration::from_secs(7));
     }
 
     fn install_crypto_provider() {
