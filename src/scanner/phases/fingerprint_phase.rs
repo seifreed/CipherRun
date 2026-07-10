@@ -170,8 +170,17 @@ impl FingerprintPhase {
         let target = context.target();
 
         // Capture ServerHello and generate JA3S fingerprint
-        let capturer = ServerHelloNetworkCapture::new(target);
-        let server_hello = capturer.capture()?;
+        let capturer = ServerHelloNetworkCapture::new(target)
+            .with_starttls(
+                context.args.starttls_protocol(),
+                context.args.starttls.xmpphost.clone(),
+            )
+            .with_starttls_server_mode(context.args.starttls_server_mode());
+        let server_hello = if context.args.starttls_protocol().is_some() {
+            capturer.capture_async().await?
+        } else {
+            capturer.capture()?
+        };
         let server_hello_raw = server_hello.to_bytes()?;
         let ja3s = Ja3sFingerprint::from_server_hello(&server_hello);
 

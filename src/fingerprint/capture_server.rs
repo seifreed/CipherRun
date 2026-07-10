@@ -7,6 +7,8 @@ use crate::Result;
 use crate::error::TlsError;
 use crate::fingerprint::server_hello::ServerHelloCapture;
 use crate::utils::network::Target;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::time::timeout;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::time::Duration;
@@ -15,6 +17,9 @@ use std::time::Duration;
 pub struct ServerHelloNetworkCapture {
     target: Target,
     timeout: Duration,
+    starttls: Option<crate::starttls::StarttlsProtocol>,
+    starttls_hostname: Option<String>,
+    starttls_server_mode: bool,
 }
 
 impl ServerHelloNetworkCapture {
@@ -23,12 +28,30 @@ impl ServerHelloNetworkCapture {
         Self {
             target,
             timeout: crate::constants::DEFAULT_CONNECT_TIMEOUT,
+            starttls: None,
+            starttls_hostname: None,
+            starttls_server_mode: false,
         }
     }
 
     /// Set connection timeout
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
+        self
+    }
+
+    pub fn with_starttls(
+        mut self,
+        starttls: Option<crate::starttls::StarttlsProtocol>,
+        hostname: Option<String>,
+    ) -> Self {
+        self.starttls = starttls;
+        self.starttls_hostname = hostname;
+        self
+    }
+
+    pub fn with_starttls_server_mode(mut self, server_mode: bool) -> Self {
+        self.starttls_server_mode = server_mode;
         self
     }
 
@@ -88,6 +111,83 @@ impl ServerHelloNetworkCapture {
         buffer.extend_from_slice(&payload);
 
         // Parse ServerHello
+        ServerHelloCapture::parse(&buffer)
+    }
+
+    pub async fn capture_async(&self) -> Result<ServerHelloCapture> {
+        let ip = self
+            .target
+            .ip_addresses
+            .first()
+            .ok_or_else(|| TlsError::ParseError {
+                message: format!(
+                    "No IP addresses resolved for target {}",
+                    self.target.hostname
+                ),
+            })?;
+
+        let socket_addr = std::net::SocketAddr::new(*ip, self.target.port);
+        let mut stream = if let Some(starttls) = self.starttls {
+            crate::utils::network::connect_with_starttls(
+                socket_addr,
+                self.timeout,
+                Some(starttls),
+                self.starttls_hostname
+                    .as_deref()
+                    .unwrap_or(self.target.hostname.as_str()),
+                self.starttls_server_mode,
+            )
+            .await?
+        } else {
+            timeout(
+                self.timeout,
+                crate::utils::network::connect_with_timeout(socket_addr, self.timeout, None),
+            )
+                .await
+                .map_err(|_| TlsError::Timeout {
+                    duration: Some(self.timeout),
+                })??
+        };
+
+        stream
+            .set_nodelay(true)
+            .map_err(|e| TlsError::IoError { source: e })?;
+
+        let client_hello = self.build_client_hello()?;
+        timeout(self.timeout, stream.write_all(&client_hello))
+            .await
+            .map_err(|_| TlsError::Timeout {
+                duration: Some(self.timeout),
+            })?
+            .map_err(|e| TlsError::IoError { source: e })?;
+
+        let mut header = [0u8; 5];
+        timeout(self.timeout, stream.read_exact(&mut header))
+            .await
+            .map_err(|_| TlsError::Timeout {
+                duration: Some(self.timeout),
+            })?
+            .map_err(|e| TlsError::IoError { source: e })?;
+
+        let record_len = u16::from_be_bytes([header[3], header[4]]) as usize;
+        if record_len > 16384 {
+            return Err(TlsError::ParseError {
+                message: format!("TLS record too large: {} bytes", record_len),
+            });
+        }
+
+        let mut payload = vec![0u8; record_len];
+        timeout(self.timeout, stream.read_exact(&mut payload))
+            .await
+            .map_err(|_| TlsError::Timeout {
+                duration: Some(self.timeout),
+            })?
+            .map_err(|e| TlsError::IoError { source: e })?;
+
+        let mut buffer = Vec::with_capacity(5 + record_len);
+        buffer.extend_from_slice(&header);
+        buffer.extend_from_slice(&payload);
+
         ServerHelloCapture::parse(&buffer)
     }
 
