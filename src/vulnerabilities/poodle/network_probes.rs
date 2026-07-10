@@ -216,8 +216,9 @@ pub(super) async fn measure_response_time(
     target: &Target,
     record_type: MalformedRecordType,
     starttls: Option<crate::starttls::StarttlsProtocol>,
+    starttls_server_mode: bool,
 ) -> Result<f64> {
-    let response = send_malformed_record(target, record_type, starttls, false).await?;
+    let response = send_malformed_record(target, record_type, starttls, starttls_server_mode).await?;
     Ok(response.response_time_ms)
 }
 

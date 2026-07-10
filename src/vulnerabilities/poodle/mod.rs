@@ -344,6 +344,7 @@ impl<'a> PoodleTester<'a> {
                 self.target,
                 MalformedRecordType::ValidPaddingInvalidMac,
                 self.starttls,
+                self.starttls_server_mode,
             )
             .await
             {
@@ -353,6 +354,7 @@ impl<'a> PoodleTester<'a> {
                 self.target,
                 MalformedRecordType::InvalidPaddingInvalidMac,
                 self.starttls,
+                self.starttls_server_mode,
             )
             .await
             {
