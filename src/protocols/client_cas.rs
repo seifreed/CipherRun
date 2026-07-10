@@ -7,6 +7,7 @@ pub use model::{ClientCA, ClientCAsResult};
 
 use crate::Result;
 use crate::utils::network::Target;
+use std::collections::HashSet;
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::time::timeout;
@@ -16,6 +17,10 @@ const MAX_CLIENT_CA_HANDSHAKE_BYTES: usize = 32 * 1024;
 pub struct ClientCAsTester {
     target: Target,
     sni_hostname: Option<String>,
+    starttls: Option<crate::starttls::StarttlsProtocol>,
+    starttls_hostname: Option<String>,
+    starttls_server_mode: bool,
+    test_all_ips: bool,
 }
 
 impl ClientCAsTester {
@@ -23,6 +28,10 @@ impl ClientCAsTester {
         Self {
             target,
             sni_hostname: None,
+            starttls: None,
+            starttls_hostname: None,
+            starttls_server_mode: false,
+            test_all_ips: false,
         }
     }
 
@@ -31,89 +40,133 @@ impl ClientCAsTester {
         self
     }
 
+    pub fn with_starttls(
+        mut self,
+        starttls: Option<crate::starttls::StarttlsProtocol>,
+        hostname: Option<String>,
+    ) -> Self {
+        self.starttls = starttls;
+        self.starttls_hostname = hostname;
+        self
+    }
+
+    pub fn with_starttls_server_mode(mut self, server_mode: bool) -> Self {
+        self.starttls_server_mode = server_mode;
+        self
+    }
+
+    pub fn with_test_all_ips(mut self, enable: bool) -> Self {
+        self.test_all_ips = enable;
+        self
+    }
+
     pub async fn enumerate_client_cas(&self) -> Result<ClientCAsResult> {
-        let addr = self
-            .target
-            .socket_addrs()
-            .first()
-            .copied()
-            .ok_or(crate::TlsError::NoSocketAddresses)?;
+        let addrs = self.target.socket_addrs();
+        if addrs.is_empty() {
+            return Ok(ClientCAsResult {
+                cas: Vec::new(),
+                requires_client_auth: false,
+                inconclusive: true,
+            });
+        }
+        let probe_addrs: Vec<_> = if self.test_all_ips {
+            addrs
+        } else {
+            addrs.first().copied().into_iter().collect()
+        };
         let connect_timeout = Duration::from_secs(10);
         let overall_read_timeout = Duration::from_secs(10);
         let read_timeout = Duration::from_secs(2);
-
-        let mut stream =
-            match crate::utils::network::connect_with_timeout(addr, connect_timeout, None).await {
-                Ok(stream) => stream,
-                _ => {
-                    return Ok(ClientCAsResult {
-                        cas: Vec::new(),
-                        requires_client_auth: false,
-                        inconclusive: true,
-                    });
-                }
-            };
-
-        let mut builder =
-            crate::protocols::handshake::ClientHelloBuilder::new(crate::protocols::Protocol::TLS12);
-        builder.add_cipher(0xc030);
-
         let sni_hostname = crate::utils::network::sni_hostname_for_target(
             &self.target.hostname,
             self.sni_hostname.as_deref(),
         );
+        let starttls_hostname = self
+            .starttls_hostname
+            .clone()
+            .unwrap_or_else(|| self.target.hostname.clone());
 
-        if let Ok(client_hello) = builder.build_with_defaults(sni_hostname.as_deref())
-            && let Ok(response) = timeout(overall_read_timeout, async {
+        let mut cas = Vec::new();
+        let mut seen_dns = HashSet::new();
+        let mut requires_client_auth = false;
+        let mut saw_inconclusive = false;
+
+        for addr in probe_addrs {
+            let mut stream = if let Some(starttls) = self.starttls {
+                match crate::utils::network::connect_with_starttls(
+                    addr,
+                    connect_timeout,
+                    Some(starttls),
+                    &starttls_hostname,
+                    self.starttls_server_mode,
+                )
+                .await
+                {
+                    Ok(stream) => stream,
+                    Err(_) => {
+                        saw_inconclusive = true;
+                        continue;
+                    }
+                }
+            } else {
+                match crate::utils::network::connect_with_timeout(addr, connect_timeout, None).await
+                {
+                    Ok(stream) => stream,
+                    Err(_) => {
+                        saw_inconclusive = true;
+                        continue;
+                    }
+                }
+            };
+
+            let mut builder = crate::protocols::handshake::ClientHelloBuilder::new(
+                crate::protocols::Protocol::TLS12,
+            );
+            builder.add_cipher(0xc030);
+
+            let Ok(client_hello) = builder.build_with_defaults(sni_hostname.as_deref()) else {
+                saw_inconclusive = true;
+                continue;
+            };
+
+            let Ok(response) = timeout(overall_read_timeout, async {
                 stream.write_all(&client_hello).await?;
                 self.read_tls_handshake_bytes(&mut stream, read_timeout)
                     .await
             })
-            .await
-            && let Ok(data) = response
-        {
+            .await else {
+                saw_inconclusive = true;
+                continue;
+            };
+
+            let Ok(data) = response else {
+                saw_inconclusive = true;
+                continue;
+            };
+
             let cert_request = match self.find_certificate_request(&data) {
                 Ok(request) => request,
                 Err(_) => {
-                    return Ok(ClientCAsResult {
-                        cas: Vec::new(),
-                        requires_client_auth: false,
-                        inconclusive: true,
-                    });
+                    saw_inconclusive = true;
+                    continue;
                 }
             };
-            let cas = cert_request.clone().unwrap_or_default();
 
-            let inconclusive = data.is_empty() || !Self::has_complete_tls_record(&data);
-
-            return Ok(ClientCAsResult {
-                requires_client_auth: cert_request.is_some(),
-                cas,
-                inconclusive,
-            });
+            if let Some(request_cas) = cert_request {
+                requires_client_auth = true;
+                for ca in request_cas {
+                    if seen_dns.insert(ca.distinguished_name.clone()) {
+                        cas.push(ca);
+                    }
+                }
+            }
         }
 
         Ok(ClientCAsResult {
-            cas: Vec::new(),
-            requires_client_auth: false,
-            inconclusive: true,
+            requires_client_auth,
+            cas,
+            inconclusive: !requires_client_auth && saw_inconclusive,
         })
-    }
-
-    fn has_complete_tls_record(data: &[u8]) -> bool {
-        if data.len() < 5 || data.first() != Some(&0x16) {
-            return false;
-        }
-
-        let Some(record_len) = data
-            .get(3..5)
-            .and_then(|bytes| <[u8; 2]>::try_from(bytes).ok())
-            .map(u16::from_be_bytes)
-        else {
-            return false;
-        };
-        let record_len = record_len as usize;
-        data.len() >= 5 + record_len
     }
 
     async fn read_tls_handshake_bytes<S>(
@@ -216,6 +269,26 @@ mod tests {
         dn.extend_from_slice(org_bytes);
 
         dn
+    }
+
+    #[test]
+    fn test_starttls_configuration_is_stored() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec![std::net::IpAddr::from([127, 0, 0, 1])],
+        )
+        .unwrap();
+
+        let tester = ClientCAsTester::new(target)
+            .with_starttls(Some(crate::starttls::StarttlsProtocol::XMPP), Some("xmpp.example.com".to_string()))
+            .with_starttls_server_mode(true)
+            .with_test_all_ips(true);
+
+        assert_eq!(tester.starttls, Some(crate::starttls::StarttlsProtocol::XMPP));
+        assert_eq!(tester.starttls_hostname.as_deref(), Some("xmpp.example.com"));
+        assert!(tester.starttls_server_mode);
+        assert!(tester.test_all_ips);
     }
 
     fn build_certificate_request(dn: &[u8]) -> Vec<u8> {

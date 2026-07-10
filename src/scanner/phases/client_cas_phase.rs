@@ -67,7 +67,14 @@ impl ScanPhase for ClientCasPhase {
     async fn execute(&self, context: &mut ScanContext) -> Result<()> {
         // Create client CA tester with target
         let tester =
-            ClientCAsTester::new(context.target()).with_sni(context.args.tls.sni_name.clone());
+            ClientCAsTester::new(context.target())
+                .with_sni(context.args.tls.sni_name.clone())
+                .with_starttls(
+                    context.args.starttls_protocol(),
+                    context.args.starttls.xmpphost.clone(),
+                )
+                .with_starttls_server_mode(context.args.starttls_server_mode())
+                .with_test_all_ips(context.args.network.test_all_ips);
 
         // Enumerate accepted client CAs
         // This extracts:
