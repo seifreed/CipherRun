@@ -73,7 +73,8 @@ impl ScanPhase for SignaturePhase {
                     context.args.starttls_protocol(),
                     context.args.starttls.xmpphost.clone(),
                 )
-                .with_starttls_server_mode(context.args.starttls_server_mode());
+                .with_starttls_server_mode(context.args.starttls_server_mode())
+                .with_test_all_ips(context.args.network.test_all_ips);
 
         // Enumerate all supported signature algorithms
         // This tests:

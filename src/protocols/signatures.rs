@@ -25,6 +25,7 @@ pub struct SignatureTester {
     starttls: Option<crate::starttls::StarttlsProtocol>,
     starttls_hostname: Option<String>,
     starttls_server_mode: bool,
+    test_all_ips: bool,
 }
 
 impl SignatureTester {
@@ -35,6 +36,7 @@ impl SignatureTester {
             starttls: None,
             starttls_hostname: None,
             starttls_server_mode: false,
+            test_all_ips: false,
         }
     }
 
@@ -56,6 +58,20 @@ impl SignatureTester {
     pub fn with_starttls_server_mode(mut self, server_mode: bool) -> Self {
         self.starttls_server_mode = server_mode;
         self
+    }
+
+    pub fn with_test_all_ips(mut self, enable: bool) -> Self {
+        self.test_all_ips = enable;
+        self
+    }
+
+    fn probe_addrs(&self) -> Vec<std::net::SocketAddr> {
+        let addrs = self.target.socket_addrs();
+        if self.test_all_ips {
+            addrs
+        } else {
+            addrs.first().copied().into_iter().collect()
+        }
     }
 
     fn tls_record_total_len(
@@ -83,12 +99,7 @@ impl SignatureTester {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         use tokio::time::timeout;
 
-        let addr = self
-            .target
-            .socket_addrs()
-            .first()
-            .copied()
-            .ok_or(crate::TlsError::NoSocketAddresses)?;
+        let addrs = self.probe_addrs();
         let connect_timeout = Duration::from_secs(10);
         let read_timeout = Duration::from_secs(5);
 
@@ -124,84 +135,97 @@ impl SignatureTester {
         let mut saw_conclusive_probe = false;
 
         for &(iana_value, hash_byte, sig_byte) in algo_pairs {
-            let stream = if let Some(starttls) = self.starttls {
-                crate::utils::network::connect_with_starttls(
-                    addr,
-                    connect_timeout,
-                    Some(starttls),
-                    &starttls_hostname,
-                    self.starttls_server_mode,
-                )
-                .await
-            } else {
-                crate::utils::network::connect_with_timeout(addr, connect_timeout, None).await
-            };
-            let Ok(mut stream) = stream else {
-                saw_inconclusive_probe = true;
-                continue;
-            };
+            let mut algo_supported = false;
+            let mut algo_conclusive = false;
 
-            // Build ClientHello with only this one signature algorithm so the server
-            // must use a certificate signed with a compatible algorithm or reject.
-            let mut builder = ClientHelloBuilder::new(Protocol::TLS12);
-            builder.add_cipher(0xc030); // ECDHE-RSA-AES256-GCM-SHA384
-            if let Some(sni) = sni_hostname.as_deref()
-                && builder.add_sni(sni).is_err()
-            {
-                saw_inconclusive_probe = true;
-                continue;
-            }
-            if builder
-                .add_supported_groups(&[0x001d, 0x0017, 0x0018, 0x0019])
-                .and_then(|builder| builder.add_signature_algorithms(&[(hash_byte, sig_byte)]))
-                .is_err()
-            {
-                saw_inconclusive_probe = true;
-                continue;
-            }
-            builder.add_session_ticket();
-            builder.add_renegotiation_info();
-
-            let Ok(client_hello) = builder.build() else {
-                saw_inconclusive_probe = true;
-                continue;
-            };
-
-            let probe = timeout(read_timeout, async {
-                stream.write_all(&client_hello).await?;
-                let mut header = [0u8; 5];
-                if stream.read_exact(&mut header).await.is_err() {
-                    return Ok::<Option<Vec<u8>>, std::io::Error>(None);
-                }
-
-                let Some(total_len) = Self::tls_record_total_len(&header)? else {
-                    return Ok::<Option<Vec<u8>>, std::io::Error>(None);
-                };
-                let mut response = vec![0u8; total_len];
-                response[..TLS_RECORD_HEADER_SIZE].copy_from_slice(&header);
-                if stream
-                    .read_exact(&mut response[TLS_RECORD_HEADER_SIZE..])
+            for addr in addrs.iter().copied() {
+                let stream = if let Some(starttls) = self.starttls {
+                    crate::utils::network::connect_with_starttls(
+                        addr,
+                        connect_timeout,
+                        Some(starttls),
+                        &starttls_hostname,
+                        self.starttls_server_mode,
+                    )
                     .await
+                } else {
+                    crate::utils::network::connect_with_timeout(addr, connect_timeout, None).await
+                };
+                let Ok(mut stream) = stream else {
+                    saw_inconclusive_probe = true;
+                    continue;
+                };
+
+                // Build ClientHello with only this one signature algorithm so the server
+                // must use a certificate signed with a compatible algorithm or reject.
+                let mut builder = ClientHelloBuilder::new(Protocol::TLS12);
+                builder.add_cipher(0xc030); // ECDHE-RSA-AES256-GCM-SHA384
+                if let Some(sni) = sni_hostname.as_deref()
+                    && builder.add_sni(sni).is_err()
+                {
+                    saw_inconclusive_probe = true;
+                    continue;
+                }
+                if builder
+                    .add_supported_groups(&[0x001d, 0x0017, 0x0018, 0x0019])
+                    .and_then(|builder| builder.add_signature_algorithms(&[(hash_byte, sig_byte)]))
                     .is_err()
                 {
-                    return Ok::<Option<Vec<u8>>, std::io::Error>(None);
-                }
-
-                Ok::<Option<Vec<u8>>, std::io::Error>(Some(response))
-            })
-            .await;
-
-            match probe {
-                Ok(Ok(Some(response))) if ServerHelloParser::parse(&response).is_ok() => {
-                    saw_conclusive_probe = true;
-                    detected_sigs.push(iana_value);
-                }
-                Ok(Ok(Some(response))) if response.first() == Some(&0x15) => {
-                    saw_conclusive_probe = true;
-                }
-                Ok(Ok(_)) | Ok(Err(_)) | Err(_) => {
                     saw_inconclusive_probe = true;
+                    continue;
                 }
+                builder.add_session_ticket();
+                builder.add_renegotiation_info();
+
+                let Ok(client_hello) = builder.build() else {
+                    saw_inconclusive_probe = true;
+                    continue;
+                };
+
+                let probe = timeout(read_timeout, async {
+                    stream.write_all(&client_hello).await?;
+                    let mut header = [0u8; 5];
+                    if stream.read_exact(&mut header).await.is_err() {
+                        return Ok::<Option<Vec<u8>>, std::io::Error>(None);
+                    }
+
+                    let Some(total_len) = Self::tls_record_total_len(&header)? else {
+                        return Ok::<Option<Vec<u8>>, std::io::Error>(None);
+                    };
+                    let mut response = vec![0u8; total_len];
+                    response[..TLS_RECORD_HEADER_SIZE].copy_from_slice(&header);
+                    if stream
+                        .read_exact(&mut response[TLS_RECORD_HEADER_SIZE..])
+                        .await
+                        .is_err()
+                    {
+                        return Ok::<Option<Vec<u8>>, std::io::Error>(None);
+                    }
+
+                    Ok::<Option<Vec<u8>>, std::io::Error>(Some(response))
+                })
+                .await;
+
+                match probe {
+                    Ok(Ok(Some(response))) if ServerHelloParser::parse(&response).is_ok() => {
+                        algo_conclusive = true;
+                        algo_supported = true;
+                        break;
+                    }
+                    Ok(Ok(Some(response))) if response.first() == Some(&0x15) => {
+                        algo_conclusive = true;
+                    }
+                    Ok(Ok(_)) | Ok(Err(_)) | Err(_) => {
+                        saw_inconclusive_probe = true;
+                    }
+                }
+            }
+
+            if algo_supported {
+                saw_conclusive_probe = true;
+                detected_sigs.push(iana_value);
+            } else if algo_conclusive {
+                saw_conclusive_probe = true;
             }
         }
 
@@ -427,6 +451,25 @@ mod tests {
         assert_eq!(tester.starttls, Some(crate::starttls::StarttlsProtocol::XMPP));
         assert_eq!(tester.starttls_hostname.as_deref(), Some("xmpp.example.com"));
         assert!(tester.starttls_server_mode);
+    }
+
+    #[test]
+    fn test_probe_addrs_respects_all_ips_flag() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec![
+                std::net::IpAddr::from([127, 0, 0, 1]),
+                std::net::IpAddr::from([127, 0, 0, 2]),
+            ],
+        )
+        .unwrap();
+
+        let single = SignatureTester::new(target.clone()).probe_addrs();
+        assert_eq!(single.len(), 1);
+
+        let all = SignatureTester::new(target).with_test_all_ips(true).probe_addrs();
+        assert_eq!(all.len(), 2);
     }
 
     #[test]
