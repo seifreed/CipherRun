@@ -258,7 +258,11 @@ impl VulnerabilityScanner {
         use crate::protocols::renegotiation::RenegotiationTester;
 
         let tester = RenegotiationTester::new(&self.target)
-            .with_starttls(self.starttls, self.starttls_hostname.clone());
+            .with_starttls(
+                self.starttls,
+                self.starttls_hostname.clone(),
+                self.starttls_server_mode,
+            );
         let result = tester.test().await?;
 
         Ok(VulnerabilityResult {
@@ -281,7 +285,11 @@ impl VulnerabilityScanner {
 
         let mut tester = FallbackScsvTester::new(&self.target)
             .with_sni(self.sni_hostname.clone())
-            .with_starttls(self.starttls, self.starttls_hostname.clone());
+            .with_starttls(
+                self.starttls,
+                self.starttls_hostname.clone(),
+                self.starttls_server_mode,
+            );
         let result = tester.test().await?;
 
         let severity = if result.vulnerable {

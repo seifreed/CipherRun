@@ -21,6 +21,7 @@ pub struct FallbackScsvTester<'a> {
     test_all_ips: bool,
     starttls: Option<crate::starttls::StarttlsProtocol>,
     starttls_hostname: Option<String>,
+    starttls_server_mode: bool,
 }
 
 impl<'a> FallbackScsvTester<'a> {
@@ -32,6 +33,7 @@ impl<'a> FallbackScsvTester<'a> {
             test_all_ips: false,
             starttls: None,
             starttls_hostname: None,
+            starttls_server_mode: false,
         }
     }
 
@@ -45,9 +47,11 @@ impl<'a> FallbackScsvTester<'a> {
         mut self,
         protocol: Option<crate::starttls::StarttlsProtocol>,
         hostname: Option<String>,
+        server_mode: bool,
     ) -> Self {
         self.starttls = protocol;
         self.starttls_hostname = hostname;
+        self.starttls_server_mode = server_mode;
         self
     }
 
@@ -66,7 +70,7 @@ impl<'a> FallbackScsvTester<'a> {
             timeout,
             self.starttls,
             &hostname,
-            false,
+            self.starttls_server_mode,
         )
         .await
     }
@@ -81,7 +85,8 @@ impl<'a> FallbackScsvTester<'a> {
         let protocol_tester = ProtocolTester::new(self.target.clone())
             .with_sni(self.sni_hostname.clone())
             .with_starttls(self.starttls)
-            .with_starttls_hostname(self.starttls_hostname.clone());
+            .with_starttls_hostname(self.starttls_hostname.clone())
+            .with_starttls_server_mode(self.starttls_server_mode);
 
         match protocol_tester.get_preferred_protocol().await? {
             Some(max_protocol) => {

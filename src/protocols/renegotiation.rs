@@ -17,6 +17,7 @@ pub struct RenegotiationTester<'a> {
     target: &'a Target,
     starttls: Option<crate::starttls::StarttlsProtocol>,
     starttls_hostname: Option<String>,
+    starttls_server_mode: bool,
 }
 
 /// Result of insecure renegotiation detection
@@ -114,6 +115,7 @@ impl<'a> RenegotiationTester<'a> {
             target,
             starttls: None,
             starttls_hostname: None,
+            starttls_server_mode: false,
         }
     }
 
@@ -122,9 +124,11 @@ impl<'a> RenegotiationTester<'a> {
         mut self,
         protocol: Option<crate::starttls::StarttlsProtocol>,
         hostname: Option<String>,
+        server_mode: bool,
     ) -> Self {
         self.starttls = protocol;
         self.starttls_hostname = hostname;
+        self.starttls_server_mode = server_mode;
         self
     }
 
@@ -143,7 +147,7 @@ impl<'a> RenegotiationTester<'a> {
             timeout,
             self.starttls,
             &hostname,
-            false,
+            self.starttls_server_mode,
         )
         .await
     }
