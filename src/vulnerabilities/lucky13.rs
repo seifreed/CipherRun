@@ -123,7 +123,7 @@ impl Lucky13Tester {
                 let std_stream =
                     crate::utils::network::into_blocking_std_stream(stream, TLS_HANDSHAKE_TIMEOUT)?;
 
-                let hostname = self.target.hostname.clone();
+                let (hostname, use_sni) = openssl_hostname_and_sni(&self.target.hostname);
                 tokio::task::spawn_blocking(move || -> Result<CbcCipherSupportStatus> {
                     let mut builder = SslConnector::builder(SslMethod::tls())?;
                     // The scanner must determine cipher support even on hosts with
@@ -136,7 +136,11 @@ impl Lucky13Tester {
                     builder.set_max_proto_version(Some(SslVersion::TLS1_2))?;
 
                     let connector = builder.build();
-                    match connector.connect(&hostname, std_stream) {
+                    match connector
+                        .configure()?
+                        .use_server_name_indication(use_sni)
+                        .connect(&hostname, std_stream)
+                    {
                         Ok(_) => Ok(CbcCipherSupportStatus::Supported),
                         Err(_) => Ok(CbcCipherSupportStatus::Inconclusive),
                     }
@@ -147,6 +151,14 @@ impl Lucky13Tester {
             _ => Ok(CbcCipherSupportStatus::Inconclusive),
         }
     }
+}
+
+fn openssl_hostname_and_sni(target_hostname: &str) -> (String, bool) {
+    let sni_hostname = crate::utils::network::sni_hostname_for_target(target_hostname, None);
+    let hostname = sni_hostname
+        .clone()
+        .unwrap_or_else(|| target_hostname.to_string());
+    (hostname, sni_hostname.is_some())
 }
 
 /// Lucky13 test result
@@ -238,5 +250,12 @@ mod tests {
 
         assert!(!result.cbc_supported);
         assert!(result.inconclusive, "{result:?}");
+    }
+
+    #[test]
+    fn test_openssl_hostname_and_sni_omits_sni_for_ip_targets() {
+        let (hostname, use_sni) = openssl_hostname_and_sni("93.184.216.34");
+        assert_eq!(hostname, "93.184.216.34");
+        assert!(!use_sni);
     }
 }
