@@ -29,11 +29,34 @@ enum AlpnProbeOutcome {
 /// ALPN protocol tester
 pub struct AlpnTester {
     target: Target,
+    starttls: Option<crate::starttls::StarttlsProtocol>,
+    starttls_hostname: Option<String>,
+    starttls_server_mode: bool,
 }
 
 impl AlpnTester {
     pub fn new(target: Target) -> Self {
-        Self { target }
+        Self {
+            target,
+            starttls: None,
+            starttls_hostname: None,
+            starttls_server_mode: false,
+        }
+    }
+
+    pub fn with_starttls(
+        mut self,
+        starttls: Option<crate::starttls::StarttlsProtocol>,
+        hostname: Option<String>,
+    ) -> Self {
+        self.starttls = starttls;
+        self.starttls_hostname = hostname;
+        self
+    }
+
+    pub fn with_starttls_server_mode(mut self, server_mode: bool) -> Self {
+        self.starttls_server_mode = server_mode;
+        self
     }
 
     fn http3_validation_note() -> &'static str {
@@ -123,15 +146,33 @@ impl AlpnTester {
             .first()
             .copied()
             .ok_or(crate::TlsError::NoSocketAddresses)?;
+        let hostname = self
+            .starttls_hostname
+            .clone()
+            .unwrap_or_else(|| self.target.hostname.clone());
 
         // Connect to server
-        let stream =
+        let stream = if let Some(starttls) = self.starttls {
+            match crate::utils::network::connect_with_starttls(
+                addr,
+                Duration::from_secs(5),
+                Some(starttls),
+                &hostname,
+                self.starttls_server_mode,
+            )
+            .await
+            {
+                Ok(s) => s,
+                Err(_) => return Ok(AlpnProbeOutcome::Inconclusive),
+            }
+        } else {
             match crate::utils::network::connect_with_timeout(addr, Duration::from_secs(5), None)
                 .await
             {
                 Ok(s) => s,
                 Err(_) => return Ok(AlpnProbeOutcome::Inconclusive),
-            };
+            }
+        };
 
         // ALPN negotiation is independent of certificate validity, so use the
         // non-verifying connector (certificate trust is assessed separately).
@@ -333,6 +374,24 @@ mod tests {
         assert_eq!(decoded.http3_supported, result.http3_supported);
         assert_eq!(decoded.negotiated_protocol, result.negotiated_protocol);
         assert_eq!(decoded.details, result.details);
+    }
+
+    #[test]
+    fn test_starttls_configuration_is_stored() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .unwrap();
+
+        let tester = AlpnTester::new(target)
+            .with_starttls(Some(crate::starttls::StarttlsProtocol::XMPP), Some("xmpp.example.com".to_string()))
+            .with_starttls_server_mode(true);
+
+        assert_eq!(tester.starttls, Some(crate::starttls::StarttlsProtocol::XMPP));
+        assert_eq!(tester.starttls_hostname.as_deref(), Some("xmpp.example.com"));
+        assert!(tester.starttls_server_mode);
     }
 
     #[test]

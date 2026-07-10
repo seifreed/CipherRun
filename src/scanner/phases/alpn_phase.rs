@@ -67,7 +67,12 @@ impl ScanPhase for AlpnPhase {
 
     async fn execute(&self, context: &mut ScanContext) -> Result<()> {
         // Create ALPN tester with target
-        let tester = AlpnTester::new(context.target());
+        let tester = AlpnTester::new(context.target())
+            .with_starttls(
+                context.args.starttls_protocol(),
+                context.args.starttls.xmpphost.clone(),
+            )
+            .with_starttls_server_mode(context.args.starttls_server_mode());
 
         // Get comprehensive ALPN report
         // This tests:
