@@ -77,6 +77,7 @@ fn find_alert_description(response: &[u8], n: usize) -> Result<Option<u8>> {
 pub(super) async fn supports_cbc_ciphers(
     target: &Target,
     starttls: Option<crate::starttls::StarttlsProtocol>,
+    starttls_hostname: Option<&str>,
     starttls_server_mode: bool,
 ) -> Result<Option<bool>> {
     const CBC_CIPHERS: &str = "AES128-SHA:AES256-SHA:AES128-SHA256:AES256-SHA256:DES-CBC3-SHA";
@@ -84,6 +85,7 @@ pub(super) async fn supports_cbc_ciphers(
         target,
         VulnSslConfig::with_ciphers(CBC_CIPHERS)
             .with_starttls(starttls)
+            .with_starttls_hostname(starttls_hostname.map(str::to_owned))
             .with_starttls_server_mode(starttls_server_mode),
     )
     .await
@@ -94,6 +96,7 @@ pub(super) async fn send_malformed_record(
     target: &Target,
     record_type: MalformedRecordType,
     starttls: Option<crate::starttls::StarttlsProtocol>,
+    starttls_hostname: Option<&str>,
     starttls_server_mode: bool,
 ) -> Result<ServerResponse> {
     let addr = target
@@ -101,11 +104,12 @@ pub(super) async fn send_malformed_record(
         .first()
         .copied()
         .ok_or(crate::TlsError::NoSocketAddresses)?;
+    let starttls_host = starttls_hostname.unwrap_or(target.hostname.as_str());
     match crate::utils::network::connect_with_starttls(
         addr,
         TLS_HANDSHAKE_TIMEOUT,
         starttls,
-        &target.hostname,
+        starttls_host,
         starttls_server_mode,
     )
     .await
@@ -216,9 +220,17 @@ pub(super) async fn measure_response_time(
     target: &Target,
     record_type: MalformedRecordType,
     starttls: Option<crate::starttls::StarttlsProtocol>,
+    starttls_hostname: Option<&str>,
     starttls_server_mode: bool,
 ) -> Result<f64> {
-    let response = send_malformed_record(target, record_type, starttls, starttls_server_mode).await?;
+    let response = send_malformed_record(
+        target,
+        record_type,
+        starttls,
+        starttls_hostname,
+        starttls_server_mode,
+    )
+    .await?;
     Ok(response.response_time_ms)
 }
 

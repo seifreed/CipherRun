@@ -126,7 +126,11 @@ impl VulnerabilityScanner {
         use crate::vulnerabilities::poodle::{PoodleTester, PoodleVariant};
 
         let tester =
-            PoodleTester::new(&self.target).with_starttls(self.starttls, self.starttls_server_mode);
+            PoodleTester::new(&self.target).with_starttls(
+                self.starttls,
+                self.starttls_hostname.clone(),
+                self.starttls_server_mode,
+            );
         let test_result = tester.test_all_variants().await?;
 
         Ok(test_result

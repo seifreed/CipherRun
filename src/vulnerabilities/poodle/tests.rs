@@ -147,6 +147,29 @@ fn test_malformed_record_building() {
 }
 
 #[test]
+fn test_with_starttls_sets_hostname_and_mode() {
+    let target = crate::utils::network::Target::with_ips(
+        "example.com".to_string(),
+        443,
+        vec!["127.0.0.1".parse().unwrap()],
+    )
+    .unwrap();
+
+    let tester = PoodleTester::new(&target).with_starttls(
+        Some(crate::starttls::StarttlsProtocol::XMPP),
+        Some("xmpp.example.com".to_string()),
+        true,
+    );
+
+    assert_eq!(tester.starttls, Some(crate::starttls::StarttlsProtocol::XMPP));
+    assert_eq!(
+        tester.starttls_hostname.as_deref(),
+        Some("xmpp.example.com")
+    );
+    assert!(tester.starttls_server_mode);
+}
+
+#[test]
 fn test_client_hello_cbc_structure() {
     let hello = record_builder::build_client_hello_cbc().expect("CBC ClientHello should build");
 

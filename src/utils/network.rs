@@ -666,6 +666,9 @@ pub struct VulnSslConfig {
     /// STARTTLS protocol to negotiate before the TLS handshake (plaintext-first
     /// services); `None` connects directly.
     pub starttls: Option<crate::starttls::StarttlsProtocol>,
+    /// Hostname to present during STARTTLS negotiation when the protocol uses
+    /// a stream-level target distinct from the TCP hostname.
+    pub starttls_hostname: Option<String>,
     /// Whether STARTTLS should use the XMPP server-to-server stream dialect.
     pub starttls_server_mode: bool,
 }
@@ -679,6 +682,7 @@ impl Default for VulnSslConfig {
             timeout_secs: 5,
             verify_hostname: true,
             starttls: None,
+            starttls_hostname: None,
             starttls_server_mode: false,
         }
     }
@@ -734,6 +738,11 @@ impl VulnSslConfig {
         self
     }
 
+    pub fn with_starttls_hostname(mut self, hostname: Option<String>) -> Self {
+        self.starttls_hostname = hostname;
+        self
+    }
+
     pub fn with_starttls_server_mode(mut self, server_mode: bool) -> Self {
         self.starttls_server_mode = server_mode;
         self
@@ -781,7 +790,10 @@ pub async fn try_vuln_ssl_connection(
         .first()
         .copied()
         .ok_or(TlsError::NoSocketAddresses)?;
-    let hostname = target.hostname.clone();
+    let hostname = config
+        .starttls_hostname
+        .clone()
+        .unwrap_or_else(|| target.hostname.clone());
 
     // For plaintext-first services, upgrade via STARTTLS before the TLS handshake.
     let stream = match connect_with_starttls(

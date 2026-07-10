@@ -33,6 +33,7 @@ use std::time::Duration;
 pub struct PoodleTester<'a> {
     target: &'a Target,
     starttls: Option<crate::starttls::StarttlsProtocol>,
+    starttls_hostname: Option<String>,
     starttls_server_mode: bool,
 }
 
@@ -41,6 +42,7 @@ impl<'a> PoodleTester<'a> {
         Self {
             target,
             starttls: None,
+            starttls_hostname: None,
             starttls_server_mode: false,
         }
     }
@@ -49,9 +51,11 @@ impl<'a> PoodleTester<'a> {
     pub fn with_starttls(
         mut self,
         protocol: Option<crate::starttls::StarttlsProtocol>,
+        hostname: Option<String>,
         server_mode: bool,
     ) -> Self {
         self.starttls = protocol;
+        self.starttls_hostname = hostname;
         self.starttls_server_mode = server_mode;
         self
     }
@@ -88,6 +92,7 @@ impl<'a> PoodleTester<'a> {
         // Check CBC connectivity once (same check test_tls_poodle does internally).
         let config = VulnSslConfig::tls10_with_ciphers("AES128-SHA:AES256-SHA:DES-CBC3-SHA")
             .with_starttls(self.starttls)
+            .with_starttls_hostname(self.starttls_hostname.clone())
             .with_starttls_server_mode(self.starttls_server_mode);
         let cbc_connected = test_vuln_ssl_connection_outcome(self.target, config).await?;
 
@@ -244,6 +249,7 @@ impl<'a> PoodleTester<'a> {
         match network_probes::supports_cbc_ciphers(
             self.target,
             self.starttls,
+            self.starttls_hostname.as_deref(),
             self.starttls_server_mode,
         )
         .await?
@@ -264,6 +270,7 @@ impl<'a> PoodleTester<'a> {
                     self.target,
                     record_type_a,
                     self.starttls,
+                    self.starttls_hostname.as_deref(),
                     self.starttls_server_mode,
                 )
                 .await
@@ -275,6 +282,7 @@ impl<'a> PoodleTester<'a> {
                     self.target,
                     record_type_b,
                     self.starttls,
+                    self.starttls_hostname.as_deref(),
                     self.starttls_server_mode,
                 )
                 .await
@@ -319,6 +327,7 @@ impl<'a> PoodleTester<'a> {
         match network_probes::supports_cbc_ciphers(
             self.target,
             self.starttls,
+            self.starttls_hostname.as_deref(),
             self.starttls_server_mode,
         )
         .await?
@@ -344,6 +353,7 @@ impl<'a> PoodleTester<'a> {
                 self.target,
                 MalformedRecordType::ValidPaddingInvalidMac,
                 self.starttls,
+                self.starttls_hostname.as_deref(),
                 self.starttls_server_mode,
             )
             .await
@@ -354,6 +364,7 @@ impl<'a> PoodleTester<'a> {
                 self.target,
                 MalformedRecordType::InvalidPaddingInvalidMac,
                 self.starttls,
+                self.starttls_hostname.as_deref(),
                 self.starttls_server_mode,
             )
             .await
@@ -500,6 +511,7 @@ impl<'a> PoodleTester<'a> {
         match network_probes::supports_cbc_ciphers(
             self.target,
             self.starttls,
+            self.starttls_hostname.as_deref(),
             self.starttls_server_mode,
         )
         .await?
@@ -526,6 +538,7 @@ impl<'a> PoodleTester<'a> {
                 self.target,
                 MalformedRecordType::ZeroLengthFragment,
                 self.starttls,
+                self.starttls_hostname.as_deref(),
                 self.starttls_server_mode,
             )
             .await
