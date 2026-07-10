@@ -190,6 +190,7 @@ pub struct GroupTester {
     starttls: Option<crate::starttls::StarttlsProtocol>,
     starttls_hostname: Option<String>,
     starttls_server_mode: bool,
+    test_all_ips: bool,
 }
 
 impl GroupTester {
@@ -199,6 +200,7 @@ impl GroupTester {
             starttls: None,
             starttls_hostname: None,
             starttls_server_mode: false,
+            test_all_ips: false,
         }
     }
 
@@ -217,18 +219,23 @@ impl GroupTester {
         self
     }
 
+    pub fn with_test_all_ips(mut self, enable: bool) -> Self {
+        self.test_all_ips = enable;
+        self
+    }
+
     pub async fn enumerate_groups(&self) -> Result<GroupEnumerationResult> {
         let mut groups = Vec::with_capacity(GROUP_SPECS.len());
-        let mut saw_conclusive = false;
+        let mut saw_supported = false;
+        let mut saw_not_supported = false;
         let mut saw_inconclusive = false;
         let mut unprobeable = Vec::new();
 
         for spec in GROUP_SPECS {
             let outcome = self.probe_group(spec.openssl_name).await;
             match outcome {
-                GroupProbeOutcome::Supported | GroupProbeOutcome::NotSupported => {
-                    saw_conclusive = true;
-                }
+                GroupProbeOutcome::Supported => saw_supported = true,
+                GroupProbeOutcome::NotSupported => saw_not_supported = true,
                 GroupProbeOutcome::Inconclusive => saw_inconclusive = true,
                 GroupProbeOutcome::Unprobeable => unprobeable.push(spec.name),
             }
@@ -242,7 +249,7 @@ impl GroupTester {
             });
         }
 
-        let measured = saw_conclusive;
+        let measured = saw_supported || saw_not_supported;
         let supported: Vec<&str> = groups
             .iter()
             .filter(|g| g.supported)
@@ -260,79 +267,122 @@ impl GroupTester {
     /// Probe whether the server supports a single key exchange group by offering
     /// only that group (and group-using ciphers) in a handshake.
     async fn probe_group(&self, openssl_name: &str) -> GroupProbeOutcome {
-        let Some(addr) = self.target.socket_addrs().first().copied() else {
+        let addrs = self.target.socket_addrs();
+        if addrs.is_empty() {
             return GroupProbeOutcome::Inconclusive;
-        };
+        }
 
         let hostname = self
             .starttls_hostname
             .clone()
             .unwrap_or_else(|| self.target.hostname.clone());
-        let stream = if let Some(starttls) = self.starttls {
-            match crate::utils::network::connect_with_starttls(
-                addr,
-                PROBE_CONNECT_TIMEOUT,
-                Some(starttls),
-                &hostname,
-                self.starttls_server_mode,
-            )
-            .await
-            {
-                Ok(stream) => stream,
-                Err(_) => return GroupProbeOutcome::Inconclusive,
-            }
+        let probe_addrs: Vec<_> = if self.test_all_ips {
+            addrs
         } else {
-            match crate::utils::network::connect_with_timeout(addr, PROBE_CONNECT_TIMEOUT, None)
-                .await
-            {
-                Ok(stream) => stream,
-                Err(_) => return GroupProbeOutcome::Inconclusive,
-            }
+            addrs.first().copied().into_iter().collect()
         };
 
-        let std_stream = match crate::utils::network::into_blocking_std_stream(
-            stream,
-            PROBE_HANDSHAKE_TIMEOUT,
-        ) {
-            Ok(stream) => stream,
-            Err(_) => return GroupProbeOutcome::Inconclusive,
-        };
-
-        let hostname = self.target.hostname.clone();
         let openssl_name = openssl_name.to_string();
-        match tokio::task::spawn_blocking(move || {
-            let mut builder = match SslConnector::builder(SslMethod::tls()) {
-                Ok(builder) => builder,
-                Err(_) => return GroupProbeOutcome::Inconclusive,
-            };
-            builder.set_verify(SslVerifyMode::NONE);
+        let mut saw_supported = false;
+        let mut saw_not_supported = false;
+        let mut saw_unprobeable = false;
+        let mut saw_inconclusive = false;
 
-            // If the local OpenSSL cannot offer this group (e.g. a post-quantum group
-            // on an older build), the server's support cannot be determined — report
-            // it as unprobeable rather than falsely claiming it is unsupported.
-            if builder.set_groups_list(&openssl_name).is_err() {
-                return GroupProbeOutcome::Unprobeable;
-            }
-            if builder.set_cipher_list(GROUP_KX_CIPHER_LIST).is_err() {
-                return GroupProbeOutcome::Inconclusive;
-            }
-
-            let connector = builder.build();
-            match connector.connect(&hostname, std_stream) {
-                Ok(_) => GroupProbeOutcome::Supported,
-                Err(error) => {
-                    if is_operational_tls_error(&error.to_string()) {
-                        GroupProbeOutcome::Inconclusive
-                    } else {
-                        GroupProbeOutcome::NotSupported
+        for addr in probe_addrs {
+            let stream = if let Some(starttls) = self.starttls {
+                match crate::utils::network::connect_with_starttls(
+                    addr,
+                    PROBE_CONNECT_TIMEOUT,
+                    Some(starttls),
+                    &hostname,
+                    self.starttls_server_mode,
+                )
+                .await
+                {
+                    Ok(stream) => stream,
+                    Err(_) => {
+                        saw_inconclusive = true;
+                        continue;
                     }
                 }
+            } else {
+                match crate::utils::network::connect_with_timeout(addr, PROBE_CONNECT_TIMEOUT, None)
+                    .await
+                {
+                    Ok(stream) => stream,
+                    Err(_) => {
+                        saw_inconclusive = true;
+                        continue;
+                    }
+                }
+            };
+
+            let std_stream = match crate::utils::network::into_blocking_std_stream(
+                stream,
+                PROBE_HANDSHAKE_TIMEOUT,
+            ) {
+                Ok(stream) => stream,
+                Err(_) => {
+                    saw_inconclusive = true;
+                    continue;
+                }
+            };
+
+            let hostname = self.target.hostname.clone();
+            let openssl_name = openssl_name.clone();
+            let outcome = match tokio::task::spawn_blocking(move || {
+                let mut builder = match SslConnector::builder(SslMethod::tls()) {
+                    Ok(builder) => builder,
+                    Err(_) => return GroupProbeOutcome::Inconclusive,
+                };
+                builder.set_verify(SslVerifyMode::NONE);
+
+                // If the local OpenSSL cannot offer this group (e.g. a post-quantum group
+                // on an older build), the server's support cannot be determined — report
+                // it as unprobeable rather than falsely claiming it is unsupported.
+                if builder.set_groups_list(&openssl_name).is_err() {
+                    return GroupProbeOutcome::Unprobeable;
+                }
+                if builder.set_cipher_list(GROUP_KX_CIPHER_LIST).is_err() {
+                    return GroupProbeOutcome::Inconclusive;
+                }
+
+                let connector = builder.build();
+                match connector.connect(&hostname, std_stream) {
+                    Ok(_) => GroupProbeOutcome::Supported,
+                    Err(error) => {
+                        if is_operational_tls_error(&error.to_string()) {
+                            GroupProbeOutcome::Inconclusive
+                        } else {
+                            GroupProbeOutcome::NotSupported
+                        }
+                    }
+                }
+            })
+            .await
+            {
+                Ok(outcome) => outcome,
+                Err(_) => GroupProbeOutcome::Inconclusive,
+            };
+
+            match outcome {
+                GroupProbeOutcome::Supported => saw_supported = true,
+                GroupProbeOutcome::NotSupported => saw_not_supported = true,
+                GroupProbeOutcome::Unprobeable => saw_unprobeable = true,
+                GroupProbeOutcome::Inconclusive => saw_inconclusive = true,
             }
-        })
-        .await
-        {
-            Ok(outcome) => outcome,
-            Err(_) => GroupProbeOutcome::Inconclusive,
+        }
+
+        if saw_supported {
+            GroupProbeOutcome::Supported
+        } else if saw_not_supported {
+            GroupProbeOutcome::NotSupported
+        } else if saw_unprobeable {
+            GroupProbeOutcome::Unprobeable
+        } else if saw_inconclusive {
+            GroupProbeOutcome::Inconclusive
+        } else {
+            GroupProbeOutcome::Inconclusive
         }
     }
 }
@@ -463,5 +513,21 @@ mod tests {
         assert_eq!(tester.starttls, Some(crate::starttls::StarttlsProtocol::XMPP));
         assert_eq!(tester.starttls_hostname.as_deref(), Some("xmpp.example.com"));
         assert!(tester.starttls_server_mode);
+    }
+
+    #[test]
+    fn test_test_all_ips_flag_is_stored() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec![
+                std::net::IpAddr::from([127, 0, 0, 1]),
+                std::net::IpAddr::from([127, 0, 0, 2]),
+            ],
+        )
+        .unwrap();
+
+        let tester = GroupTester::new(target).with_test_all_ips(true);
+        assert!(tester.test_all_ips);
     }
 }

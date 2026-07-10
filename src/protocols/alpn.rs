@@ -32,6 +32,7 @@ pub struct AlpnTester {
     starttls: Option<crate::starttls::StarttlsProtocol>,
     starttls_hostname: Option<String>,
     starttls_server_mode: bool,
+    test_all_ips: bool,
 }
 
 impl AlpnTester {
@@ -41,6 +42,7 @@ impl AlpnTester {
             starttls: None,
             starttls_hostname: None,
             starttls_server_mode: false,
+            test_all_ips: false,
         }
     }
 
@@ -57,6 +59,20 @@ impl AlpnTester {
     pub fn with_starttls_server_mode(mut self, server_mode: bool) -> Self {
         self.starttls_server_mode = server_mode;
         self
+    }
+
+    pub fn with_test_all_ips(mut self, enable: bool) -> Self {
+        self.test_all_ips = enable;
+        self
+    }
+
+    fn probe_addrs(&self) -> Vec<std::net::SocketAddr> {
+        let addrs = self.target.socket_addrs();
+        if self.test_all_ips {
+            addrs
+        } else {
+            addrs.first().copied().into_iter().collect()
+        }
     }
 
     fn http3_validation_note() -> &'static str {
@@ -140,68 +156,85 @@ impl AlpnTester {
 
     /// Test a specific ALPN protocol
     async fn test_protocol(&self, protocols: Vec<Vec<u8>>) -> Result<AlpnProbeOutcome> {
-        let addr = self
-            .target
-            .socket_addrs()
-            .first()
-            .copied()
-            .ok_or(crate::TlsError::NoSocketAddresses)?;
+        let addrs = self.probe_addrs();
+        if addrs.is_empty() {
+            return Ok(AlpnProbeOutcome::Inconclusive);
+        }
         let hostname = self
             .starttls_hostname
             .clone()
             .unwrap_or_else(|| self.target.hostname.clone());
 
         // Connect to server
-        let stream = if let Some(starttls) = self.starttls {
-            match crate::utils::network::connect_with_starttls(
-                addr,
-                Duration::from_secs(5),
-                Some(starttls),
-                &hostname,
-                self.starttls_server_mode,
+        let mut saw_not_negotiated = false;
+
+        for addr in addrs {
+            let stream = if let Some(starttls) = self.starttls {
+                match crate::utils::network::connect_with_starttls(
+                    addr,
+                    Duration::from_secs(5),
+                    Some(starttls),
+                    &hostname,
+                    self.starttls_server_mode,
+                )
+                .await
+                {
+                    Ok(s) => s,
+                    Err(_) => {
+                        continue;
+                    }
+                }
+            } else {
+                match crate::utils::network::connect_with_timeout(addr, Duration::from_secs(5), None)
+                    .await
+                {
+                    Ok(s) => s,
+                    Err(_) => {
+                        continue;
+                    }
+                }
+            };
+
+            // ALPN negotiation is independent of certificate validity, so use the
+            // non-verifying connector (certificate trust is assessed separately).
+            // A verifying config would make ALPN undetectable (inconclusive) on
+            // self-signed/expired/untrusted hosts.
+            let mut config = crate::utils::insecure_tls::insecure_client_config();
+            config.alpn_protocols = protocols.clone();
+
+            let connector = tokio_rustls::TlsConnector::from(Arc::new(config));
+
+            let server_name = match crate::utils::network::server_name_for_hostname(&self.target.hostname) {
+                Ok(name) => name,
+                Err(_) => {
+                    continue;
+                }
+            };
+
+            // Attempt TLS handshake with ALPN
+            match timeout(
+                Duration::from_secs(10),
+                connector.connect(server_name, stream),
             )
             .await
             {
-                Ok(s) => s,
-                Err(_) => return Ok(AlpnProbeOutcome::Inconclusive),
-            }
-        } else {
-            match crate::utils::network::connect_with_timeout(addr, Duration::from_secs(5), None)
-                .await
-            {
-                Ok(s) => s,
-                Err(_) => return Ok(AlpnProbeOutcome::Inconclusive),
-            }
-        };
-
-        // ALPN negotiation is independent of certificate validity, so use the
-        // non-verifying connector (certificate trust is assessed separately).
-        // A verifying config would make ALPN undetectable (inconclusive) on
-        // self-signed/expired/untrusted hosts.
-        let mut config = crate::utils::insecure_tls::insecure_client_config();
-        config.alpn_protocols = protocols;
-
-        let connector = tokio_rustls::TlsConnector::from(Arc::new(config));
-
-        let server_name = crate::utils::network::server_name_for_hostname(&self.target.hostname)?;
-
-        // Attempt TLS handshake with ALPN
-        match timeout(
-            Duration::from_secs(10),
-            connector.connect(server_name, stream),
-        )
-        .await
-        {
-            Ok(Ok(tls_stream)) => {
-                // Check which protocol was negotiated
-                let (_, connection) = tls_stream.get_ref();
-                if let Some(protocol) = connection.alpn_protocol() {
-                    let proto_str = String::from_utf8_lossy(protocol).to_string();
-                    return Ok(AlpnProbeOutcome::Negotiated(proto_str));
+                Ok(Ok(tls_stream)) => {
+                    // Check which protocol was negotiated
+                    let (_, connection) = tls_stream.get_ref();
+                    if let Some(protocol) = connection.alpn_protocol() {
+                        let proto_str = String::from_utf8_lossy(protocol).to_string();
+                        return Ok(AlpnProbeOutcome::Negotiated(proto_str));
+                    }
+                    saw_not_negotiated = true;
                 }
-                Ok(AlpnProbeOutcome::NotNegotiated)
+                _ => {}
             }
-            _ => Ok(AlpnProbeOutcome::Inconclusive),
+        }
+
+        if saw_not_negotiated {
+            Ok(AlpnProbeOutcome::NotNegotiated)
+        } else {
+            Ok(AlpnProbeOutcome::Inconclusive)
         }
     }
 
@@ -392,6 +425,19 @@ mod tests {
         assert_eq!(tester.starttls, Some(crate::starttls::StarttlsProtocol::XMPP));
         assert_eq!(tester.starttls_hostname.as_deref(), Some("xmpp.example.com"));
         assert!(tester.starttls_server_mode);
+    }
+
+    #[test]
+    fn test_test_all_ips_flag_is_stored() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec![IpAddr::from([127, 0, 0, 1]), IpAddr::from([127, 0, 0, 2])],
+        )
+        .unwrap();
+
+        let tester = AlpnTester::new(target).with_test_all_ips(true);
+        assert!(tester.test_all_ips);
     }
 
     #[test]

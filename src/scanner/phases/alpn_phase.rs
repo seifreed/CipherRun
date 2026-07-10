@@ -72,7 +72,8 @@ impl ScanPhase for AlpnPhase {
                 context.args.starttls_protocol(),
                 context.args.starttls.xmpphost.clone(),
             )
-            .with_starttls_server_mode(context.args.starttls_server_mode());
+            .with_starttls_server_mode(context.args.starttls_server_mode())
+            .with_test_all_ips(context.args.network.test_all_ips);
 
         // Get comprehensive ALPN report
         // This tests:
