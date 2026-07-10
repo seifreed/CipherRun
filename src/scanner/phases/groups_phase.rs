@@ -73,7 +73,12 @@ impl ScanPhase for GroupsPhase {
 
     async fn execute(&self, context: &mut ScanContext) -> Result<()> {
         // Create group tester with target
-        let tester = GroupTester::new(context.target());
+        let tester = GroupTester::new(context.target())
+            .with_starttls(
+                context.args.starttls_protocol(),
+                context.args.starttls.xmpphost.clone(),
+            )
+            .with_starttls_server_mode(context.args.starttls_server_mode());
 
         // Enumerate all supported key exchange groups
         // This tests:

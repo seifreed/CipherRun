@@ -187,11 +187,34 @@ fn is_operational_tls_error(error: &str) -> bool {
 
 pub struct GroupTester {
     target: Target,
+    starttls: Option<crate::starttls::StarttlsProtocol>,
+    starttls_hostname: Option<String>,
+    starttls_server_mode: bool,
 }
 
 impl GroupTester {
     pub fn new(target: Target) -> Self {
-        Self { target }
+        Self {
+            target,
+            starttls: None,
+            starttls_hostname: None,
+            starttls_server_mode: false,
+        }
+    }
+
+    pub fn with_starttls(
+        mut self,
+        starttls: Option<crate::starttls::StarttlsProtocol>,
+        hostname: Option<String>,
+    ) -> Self {
+        self.starttls = starttls;
+        self.starttls_hostname = hostname;
+        self
+    }
+
+    pub fn with_starttls_server_mode(mut self, server_mode: bool) -> Self {
+        self.starttls_server_mode = server_mode;
+        self
     }
 
     pub async fn enumerate_groups(&self) -> Result<GroupEnumerationResult> {
@@ -241,13 +264,31 @@ impl GroupTester {
             return GroupProbeOutcome::Inconclusive;
         };
 
-        let stream =
+        let hostname = self
+            .starttls_hostname
+            .clone()
+            .unwrap_or_else(|| self.target.hostname.clone());
+        let stream = if let Some(starttls) = self.starttls {
+            match crate::utils::network::connect_with_starttls(
+                addr,
+                PROBE_CONNECT_TIMEOUT,
+                Some(starttls),
+                &hostname,
+                self.starttls_server_mode,
+            )
+            .await
+            {
+                Ok(stream) => stream,
+                Err(_) => return GroupProbeOutcome::Inconclusive,
+            }
+        } else {
             match crate::utils::network::connect_with_timeout(addr, PROBE_CONNECT_TIMEOUT, None)
                 .await
             {
                 Ok(stream) => stream,
                 Err(_) => return GroupProbeOutcome::Inconclusive,
-            };
+            }
+        };
 
         let std_stream = match crate::utils::network::into_blocking_std_stream(
             stream,
@@ -404,5 +445,23 @@ mod tests {
             details: String::new(),
         };
         assert!(result.groups.is_empty());
+    }
+
+    #[test]
+    fn test_starttls_configuration_is_stored() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec![std::net::IpAddr::from([127, 0, 0, 1])],
+        )
+        .unwrap();
+
+        let tester = GroupTester::new(target)
+            .with_starttls(Some(crate::starttls::StarttlsProtocol::XMPP), Some("xmpp.example.com".to_string()))
+            .with_starttls_server_mode(true);
+
+        assert_eq!(tester.starttls, Some(crate::starttls::StarttlsProtocol::XMPP));
+        assert_eq!(tester.starttls_hostname.as_deref(), Some("xmpp.example.com"));
+        assert!(tester.starttls_server_mode);
     }
 }
