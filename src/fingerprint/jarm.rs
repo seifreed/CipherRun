@@ -165,6 +165,9 @@ pub struct JarmFingerprinter {
 
     /// Signature database
     database: JarmDatabase,
+    starttls: Option<crate::starttls::StarttlsProtocol>,
+    starttls_hostname: Option<String>,
+    starttls_server_mode: bool,
 }
 
 impl JarmFingerprinter {
@@ -173,12 +176,36 @@ impl JarmFingerprinter {
         Ok(Self {
             timeout,
             database: JarmDatabase::builtin()?,
+            starttls: None,
+            starttls_hostname: None,
+            starttls_server_mode: false,
         })
     }
 
     /// Create with custom database
     pub fn with_database(timeout: Duration, database: JarmDatabase) -> Self {
-        Self { timeout, database }
+        Self {
+            timeout,
+            database,
+            starttls: None,
+            starttls_hostname: None,
+            starttls_server_mode: false,
+        }
+    }
+
+    pub fn with_starttls(
+        mut self,
+        starttls: Option<crate::starttls::StarttlsProtocol>,
+        hostname: Option<String>,
+    ) -> Self {
+        self.starttls = starttls;
+        self.starttls_hostname = hostname;
+        self
+    }
+
+    pub fn with_starttls_server_mode(mut self, server_mode: bool) -> Self {
+        self.starttls_server_mode = server_mode;
+        self
     }
 
     /// Fingerprint a target
@@ -187,7 +214,7 @@ impl JarmFingerprinter {
         let mut raw_responses = Vec::new();
 
         for probe in &probes {
-            let response = self.send_probe(addr, probe).await?;
+            let response = self.send_probe(addr, hostname, probe).await?;
             raw_responses.push(response);
         }
 
@@ -202,12 +229,37 @@ impl JarmFingerprinter {
     }
 
     /// Send single probe and parse response
-    async fn send_probe(&self, addr: SocketAddr, probe: &JarmProbe) -> Result<String> {
-        // Connect with timeout
-        let stream = match timeout(self.timeout, TcpStream::connect(addr)).await {
-            Ok(Ok(s)) => s,
-            Ok(Err(_e)) => return Ok("|||".to_string()), // Connection failed
-            Err(_) => return Ok("|||".to_string()),      // Timeout
+    async fn send_probe(
+        &self,
+        addr: SocketAddr,
+        hostname: &str,
+        probe: &JarmProbe,
+    ) -> Result<String> {
+        let hostname = self
+            .starttls_hostname
+            .as_deref()
+            .unwrap_or(hostname);
+
+        // Connect with timeout, optionally upgrading with STARTTLS first.
+        let stream = if let Some(starttls) = self.starttls {
+            match crate::utils::network::connect_with_starttls(
+                addr,
+                self.timeout,
+                Some(starttls),
+                &hostname,
+                self.starttls_server_mode,
+            )
+            .await
+            {
+                Ok(stream) => stream,
+                Err(_) => return Ok("|||".to_string()),
+            }
+        } else {
+            match timeout(self.timeout, TcpStream::connect(addr)).await {
+                Ok(Ok(s)) => s,
+                Ok(Err(_e)) => return Ok("|||".to_string()),
+                Err(_) => return Ok("|||".to_string()),
+            }
         };
 
         // Build Client Hello packet

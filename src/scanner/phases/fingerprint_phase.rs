@@ -264,7 +264,12 @@ impl FingerprintPhase {
         let timeout =
             Duration::from_secs(context.args.connection.socket_timeout.unwrap_or(5).max(1));
 
-        let fingerprinter = JarmFingerprinter::with_database(timeout, database);
+        let fingerprinter = JarmFingerprinter::with_database(timeout, database)
+            .with_starttls(
+                context.args.starttls_protocol(),
+                context.args.starttls.xmpphost.clone(),
+            )
+            .with_starttls_server_mode(context.args.starttls_server_mode());
 
         // Get first IP address for JARM fingerprinting
         let ip = context.target.ip_addresses.first().ok_or_else(|| {
