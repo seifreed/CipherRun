@@ -250,7 +250,14 @@ impl ServerHelloNetworkCapture {
         // Extensions
         let extensions_start = client_hello.len();
         client_hello.extend_from_slice(&[0x00, 0x00]); // Placeholder for extensions length
-        Self::build_extensions(&mut client_hello, self.sni_hostname())?;
+        Self::build_extensions(
+            &mut client_hello,
+            crate::utils::network::sni_hostname_for_target(
+                &self.target.hostname,
+                self.starttls_hostname.as_deref(),
+            )
+            .as_deref(),
+        )?;
 
         // Update extensions length
         let extensions_len =
@@ -279,19 +286,15 @@ impl ServerHelloNetworkCapture {
         Ok(client_hello)
     }
 
-    fn sni_hostname(&self) -> &str {
-        self.starttls_hostname
-            .as_deref()
-            .unwrap_or(self.target.hostname.as_str())
-    }
-
     /// Append all TLS extensions to the ClientHello buffer.
-    fn build_extensions(client_hello: &mut Vec<u8>, hostname: &str) -> Result<()> {
+    fn build_extensions(client_hello: &mut Vec<u8>, hostname: Option<&str>) -> Result<()> {
         use rand::Rng;
 
-        // SNI
-        let sni_extension = Self::build_sni_extension(hostname.as_bytes())?;
-        client_hello.extend_from_slice(&sni_extension);
+        if let Some(hostname) = hostname {
+            // SNI
+            let sni_extension = Self::build_sni_extension(hostname.as_bytes())?;
+            client_hello.extend_from_slice(&sni_extension);
+        }
 
         // supported_groups
         client_hello.extend_from_slice(&[
@@ -482,6 +485,27 @@ mod tests {
             !client_hello
                 .windows(b"example.com".len())
                 .any(|window| window == b"example.com")
+        );
+    }
+
+    #[test]
+    fn test_build_client_hello_omits_sni_for_ip_targets() {
+        let target = Target::with_ips(
+            "93.184.216.34".to_string(),
+            443,
+            vec!["93.184.216.34".parse().unwrap()],
+        )
+        .unwrap();
+
+        let capture = ServerHelloNetworkCapture::new(target);
+        let client_hello = capture
+            .build_client_hello()
+            .expect("ClientHello should build");
+
+        assert!(
+            !client_hello
+                .windows(b"93.184.216.34".len())
+                .any(|window| window == b"93.184.216.34")
         );
     }
 
