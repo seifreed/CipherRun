@@ -96,7 +96,7 @@ impl BreachTester {
         let std_stream =
             crate::utils::network::into_blocking_std_stream(stream, TLS_HANDSHAKE_TIMEOUT)?;
 
-        let hostname = self.target.hostname.clone();
+        let (hostname, use_sni) = openssl_hostname_and_sni(&self.target.hostname);
         tokio::task::spawn_blocking(move || -> Result<Option<bool>> {
             use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
             use std::io::Write;
@@ -108,7 +108,11 @@ impl BreachTester {
             builder.set_verify(SslVerifyMode::NONE);
             let connector = builder.build();
 
-            match connector.connect(&hostname, std_stream) {
+            match connector
+                .configure()?
+                .use_server_name_indication(use_sni)
+                .connect(&hostname, std_stream)
+            {
                 Ok(mut ssl_stream) => {
                     // Send HTTP request with Accept-Encoding header
                     let request = format!(
@@ -168,7 +172,7 @@ impl BreachTester {
         let std_stream =
             crate::utils::network::into_blocking_std_stream(stream, TLS_HANDSHAKE_TIMEOUT)?;
 
-        let hostname = self.target.hostname.clone();
+        let (hostname, use_sni) = openssl_hostname_and_sni(&self.target.hostname);
         tokio::task::spawn_blocking(move || {
             use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
             // Certificate validity is irrelevant to HTTP response compression; a
@@ -177,7 +181,11 @@ impl BreachTester {
             builder.set_verify(SslVerifyMode::NONE);
             let connector = builder.build();
 
-            match connector.connect(&hostname, std_stream) {
+            match connector
+                .configure()?
+                .use_server_name_indication(use_sni)
+                .connect(&hostname, std_stream)
+            {
                 Ok(mut ssl_stream) => {
                     use std::io::Write;
 
@@ -411,6 +419,14 @@ impl BreachTester {
     }
 }
 
+fn openssl_hostname_and_sni(target_hostname: &str) -> (String, bool) {
+    let sni_hostname = crate::utils::network::sni_hostname_for_target(target_hostname, None);
+    let hostname = sni_hostname
+        .clone()
+        .unwrap_or_else(|| target_hostname.to_string());
+    (hostname, sni_hostname.is_some())
+}
+
 /// BREACH test result
 #[derive(Debug, Clone)]
 pub struct BreachTestResult {
@@ -620,6 +636,13 @@ mod tests {
         );
 
         assert!(BreachTester::detect_sensitive_patterns(&response));
+    }
+
+    #[test]
+    fn test_openssl_hostname_and_sni_omits_sni_for_ip_targets() {
+        let (hostname, use_sni) = openssl_hostname_and_sni("93.184.216.34");
+        assert_eq!(hostname, "93.184.216.34");
+        assert!(!use_sni);
     }
 
     #[tokio::test]
