@@ -94,14 +94,6 @@ impl LogjamTester {
         self
     }
 
-    /// Effective SNI hostname for OpenSSL-based probes: the explicit override if
-    /// set, otherwise the target hostname.
-    fn effective_sni(&self) -> &str {
-        self.sni_hostname
-            .as_deref()
-            .unwrap_or(self.target.hostname.as_str())
-    }
-
     /// Connect, upgrading via STARTTLS first for plaintext-first services.
     async fn starttls_connect(
         &self,
@@ -213,8 +205,6 @@ impl LogjamTester {
             .first()
             .copied()
             .ok_or(crate::TlsError::NoSocketAddresses)?;
-        let hostname = self.effective_sni().to_string();
-
         let stream = match self.starttls_connect(addr, TLS_HANDSHAKE_TIMEOUT).await {
             Ok(s) => s,
             Err(_) => return Ok(WeakDhStatus::Inconclusive),
@@ -222,6 +212,8 @@ impl LogjamTester {
 
         let std_stream =
             crate::utils::network::into_blocking_std_stream(stream, TLS_HANDSHAKE_TIMEOUT)?;
+        let (hostname, use_sni) =
+            openssl_hostname_and_sni(&self.target.hostname, self.sni_hostname.as_deref());
 
         // Wrap blocking SSL operations in spawn_blocking
         let result = tokio::task::spawn_blocking(move || -> crate::Result<WeakDhStatus> {
@@ -246,7 +238,11 @@ impl LogjamTester {
             builder.set_max_proto_version(Some(SslVersion::TLS1_2))?;
 
             let connector = builder.build();
-            match connector.connect(&hostname, std_stream) {
+            match connector
+                .configure()?
+                .use_server_name_indication(use_sni)
+                .connect(&hostname, std_stream)
+            {
                 Ok(ssl_stream) => match ssl_stream.ssl().peer_tmp_key() {
                     Ok(tmp_key) => {
                         if tmp_key.id() == Id::DH {
@@ -329,7 +325,6 @@ impl LogjamTester {
             .first()
             .copied()
             .ok_or(crate::TlsError::NoSocketAddresses)?;
-        let hostname = self.effective_sni().to_string();
         let cipher = cipher.to_string();
 
         let handshake_timeout = Duration::from_secs(3);
@@ -340,6 +335,8 @@ impl LogjamTester {
 
         let std_stream =
             crate::utils::network::into_blocking_std_stream(stream, handshake_timeout)?;
+        let (hostname, use_sni) =
+            openssl_hostname_and_sni(&self.target.hostname, self.sni_hostname.as_deref());
 
         // Wrap blocking SSL operations in spawn_blocking
         let result = tokio::task::spawn_blocking(move || -> Result<LogjamProbeStatus> {
@@ -368,7 +365,11 @@ impl LogjamTester {
                     // Keep per-DHE probes on TLS <= 1.2.
                     builder.set_max_proto_version(Some(SslVersion::TLS1_2))?;
                     let connector = builder.build();
-                    match connector.connect(&hostname, std_stream) {
+                    match connector
+                        .configure()?
+                        .use_server_name_indication(use_sni)
+                        .connect(&hostname, std_stream)
+                    {
                         Ok(_) => Ok(LogjamProbeStatus::Supported),
                         Err(e) => {
                             if crate::utils::network::is_transport_anomaly_error(&e.to_string()) {
@@ -398,6 +399,20 @@ pub struct LogjamTestResult {
     pub weak_dh_params: bool,
     pub dhe_ciphers: Vec<String>,
     pub details: String,
+}
+
+fn openssl_hostname_and_sni(
+    target_hostname: &str,
+    override_hostname: Option<&str>,
+) -> (String, bool) {
+    let sni_hostname = crate::utils::network::sni_hostname_for_target(
+        target_hostname,
+        override_hostname,
+    );
+    let hostname = sni_hostname
+        .clone()
+        .unwrap_or_else(|| target_hostname.to_string());
+    (hostname, sni_hostname.is_some())
 }
 
 #[cfg(test)]
@@ -462,6 +477,21 @@ mod tests {
         };
         assert!(result.vulnerable);
         assert!(result.details.contains("Export-grade"));
+    }
+
+    #[test]
+    fn test_openssl_hostname_and_sni_omits_sni_for_ip_targets() {
+        let (hostname, use_sni) = openssl_hostname_and_sni("93.184.216.34", None);
+        assert_eq!(hostname, "93.184.216.34");
+        assert!(!use_sni);
+    }
+
+    #[test]
+    fn test_openssl_hostname_and_sni_uses_override() {
+        let (hostname, use_sni) =
+            openssl_hostname_and_sni("93.184.216.34", Some("example.com"));
+        assert_eq!(hostname, "example.com");
+        assert!(use_sni);
     }
 
     async fn spawn_dummy_server(max_accepts: usize) -> SocketAddr {
