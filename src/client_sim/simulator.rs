@@ -82,9 +82,20 @@ impl ClientSimulator {
         self
     }
 
+    pub fn with_starttls_hostname(mut self, hostname: Option<String>) -> Self {
+        self.starttls_hostname = hostname;
+        self
+    }
+
     pub fn with_starttls_server_mode(mut self, server_mode: bool) -> Self {
         self.starttls_server_mode = server_mode;
         self
+    }
+
+    fn starttls_hostname(&self) -> &str {
+        self.starttls_hostname
+            .as_deref()
+            .unwrap_or(&self.target.hostname)
     }
 
     /// Simulate all current clients
@@ -169,13 +180,9 @@ impl ClientSimulator {
 
         // Upgrade plaintext-first services via STARTTLS before the handshake.
         if let Some(starttls_proto) = self.starttls {
-            let hostname = self
-                .starttls_hostname
-                .clone()
-                .unwrap_or_else(|| self.target.hostname.clone());
             let negotiator = crate::starttls::protocols::get_negotiator(
                 starttls_proto,
-                hostname,
+                self.starttls_hostname().to_string(),
                 self.starttls_server_mode,
             );
             crate::starttls::protocols::negotiate_starttls_with_timeout(
@@ -195,7 +202,7 @@ impl ClientSimulator {
         let connector = TlsConnector::from(Arc::new(config));
 
         // Connect with TLS
-        let domain = crate::utils::network::server_name_for_hostname(&self.target.hostname)?;
+        let domain = crate::utils::network::server_name_for_hostname(self.starttls_hostname())?;
 
         let tls_stream = timeout(self.read_timeout, connector.connect(domain, stream)).await??;
 
@@ -615,6 +622,18 @@ mod tests {
             &[],
         );
         assert_eq!(kex.as_deref(), Some("ECDH x25519"));
+    }
+
+    #[test]
+    fn test_starttls_hostname_prefers_override() {
+        let simulator = sample_simulator().with_starttls_hostname(Some("xmpp.example.com".into()));
+        assert_eq!(simulator.starttls_hostname(), "xmpp.example.com");
+    }
+
+    #[test]
+    fn test_starttls_hostname_falls_back_to_target() {
+        let simulator = sample_simulator();
+        assert_eq!(simulator.starttls_hostname(), "localhost");
     }
 
     #[test]

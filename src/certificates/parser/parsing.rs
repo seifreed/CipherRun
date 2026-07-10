@@ -114,9 +114,20 @@ impl CertificateParser {
         self
     }
 
+    pub fn with_starttls_hostname(mut self, hostname: Option<String>) -> Self {
+        self.starttls_hostname = hostname;
+        self
+    }
+
     pub fn with_starttls_server_mode(mut self, server_mode: bool) -> Self {
         self.starttls_server_mode = server_mode;
         self
+    }
+
+    fn starttls_hostname(&self) -> &str {
+        self.starttls_hostname
+            .as_deref()
+            .unwrap_or(&self.target.hostname)
     }
 
     /// Get certificate chain from server
@@ -140,13 +151,9 @@ impl CertificateParser {
         // before the TLS handshake; otherwise rustls speaks TLS to the
         // plaintext greeting and aborts with an InvalidContentType error.
         if let Some(starttls_proto) = self.starttls {
-            let hostname = self
-                .starttls_hostname
-                .clone()
-                .unwrap_or_else(|| self.target.hostname.clone());
             let negotiator = crate::starttls::protocols::get_negotiator(
                 starttls_proto,
-                hostname,
+                self.starttls_hostname().to_string(),
                 self.starttls_server_mode,
             );
             crate::starttls::protocols::negotiate_starttls_with_timeout(
@@ -178,7 +185,7 @@ impl CertificateParser {
         };
 
         // Connect with TLS
-        let domain = Self::server_name_for_hostname(&self.target.hostname)?;
+        let domain = Self::server_name_for_hostname(self.starttls_hostname())?;
 
         let tls_stream = timeout(self.read_timeout, connector.connect(domain, stream)).await??;
 
@@ -499,6 +506,31 @@ mod tests {
         builder.sign(&pkey, OpensslMessageDigest::sha256()).unwrap();
 
         builder.build().to_der().unwrap()
+    }
+
+    #[test]
+    fn test_starttls_hostname_prefers_override() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+        let parser = CertificateParser::new(target)
+            .with_starttls_hostname(Some("xmpp.example.com".to_string()));
+        assert_eq!(parser.starttls_hostname(), "xmpp.example.com");
+    }
+
+    #[test]
+    fn test_starttls_hostname_falls_back_to_target() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+        let parser = CertificateParser::new(target);
+        assert_eq!(parser.starttls_hostname(), "example.com");
     }
 
     #[tokio::test]
