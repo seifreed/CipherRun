@@ -15,6 +15,7 @@ use openssl::ssl::{
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Session resumption tester
+#[derive(Clone)]
 pub struct SessionResumptionTester {
     target: Target,
     starttls: Option<crate::starttls::StarttlsProtocol>,
@@ -258,10 +259,9 @@ impl SessionResumptionTester {
     }
 
     async fn establish_session(&self) -> Result<Option<SslSession>> {
-        let target = self.target.clone();
         let std_stream = self.prepare_stream().await?;
+        let tester = self.clone();
         tokio::task::spawn_blocking(move || {
-            let tester = SessionResumptionTester::new(target);
             tester.establish_session_sync(std_stream)
         })
         .await
@@ -271,10 +271,9 @@ impl SessionResumptionTester {
     }
 
     async fn try_resume_with_session(&self, session: SslSession) -> Result<bool> {
-        let target = self.target.clone();
         let std_stream = self.prepare_stream().await?;
+        let tester = self.clone();
         tokio::task::spawn_blocking(move || {
-            let tester = SessionResumptionTester::new(target);
             tester.resume_with_session_sync(std_stream, &session)
         })
         .await
