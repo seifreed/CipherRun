@@ -275,7 +275,7 @@ impl<'a> RenegotiationTester<'a> {
                 let std_stream =
                     crate::utils::network::into_blocking_std_stream(stream, DEFAULT_READ_TIMEOUT)?;
 
-                let hostname = self.target.hostname.clone();
+                let (hostname, use_sni) = openssl_hostname_and_sni(&self.target.hostname);
                 tokio::task::spawn_blocking(move || -> Result<RenegotiationSupport> {
                     let mut builder = SslConnector::builder(SslMethod::tls())?;
                     // Certificate validity is irrelevant to RFC 5746 secure
@@ -286,7 +286,11 @@ impl<'a> RenegotiationTester<'a> {
 
                     let connector = builder.build();
 
-                    match connector.connect(&hostname, std_stream) {
+                    match connector
+                        .configure()?
+                        .use_server_name_indication(use_sni)
+                        .connect(&hostname, std_stream)
+                    {
                         Ok(_ssl_stream) => {
                             // OpenSSL client with RFC 5746 connected successfully
                             // Server supports secure renegotiation
@@ -755,6 +759,14 @@ impl<'a> RenegotiationTester<'a> {
         }
         Ok(false)
     }
+}
+
+fn openssl_hostname_and_sni(target_hostname: &str) -> (String, bool) {
+    let sni_hostname = crate::utils::network::sni_hostname_for_target(target_hostname, None);
+    let hostname = sni_hostname
+        .clone()
+        .unwrap_or_else(|| target_hostname.to_string());
+    (hostname, sni_hostname.is_some())
 }
 
 /// Renegotiation test result
@@ -1393,5 +1405,12 @@ mod tests {
 
         assert_eq!(secure, Some(true));
         server.await.expect("server task should complete");
+    }
+
+    #[test]
+    fn test_openssl_hostname_and_sni_omits_sni_for_ip_targets() {
+        let (hostname, use_sni) = openssl_hostname_and_sni("93.184.216.34");
+        assert_eq!(hostname, "93.184.216.34");
+        assert!(!use_sni);
     }
 }
