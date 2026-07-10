@@ -5,27 +5,13 @@ use std::time::Instant;
 
 impl SessionResumptionTester {
     pub(super) async fn measure_performance_gain(&self) -> Result<f64> {
-        let target = self.target.clone();
-        let gain = tokio::task::spawn_blocking(move || {
-            let tester = SessionResumptionTester { target };
-            tester.measure_performance_gain_sync()
-        })
-        .await
-        .map_err(|err| {
-            crate::error::TlsError::Other(format!("Performance gain join error: {err}"))
-        })??;
-
-        Ok(gain)
-    }
-
-    fn measure_performance_gain_sync(&self) -> Result<f64> {
         let mut full_handshake_times = Vec::new();
         let mut last_error = None;
 
         for _ in 0..5 {
             let start = Instant::now();
-            match self.perform_full_handshake_sync() {
-                Ok(()) => full_handshake_times.push(start.elapsed().as_secs_f64()),
+            match self.establish_session().await {
+                Ok(_) => full_handshake_times.push(start.elapsed().as_secs_f64()),
                 Err(error) => last_error = Some(error.to_string()),
             }
         }
@@ -45,7 +31,7 @@ impl SessionResumptionTester {
         let mut last_error = None;
 
         for _ in 0..5 {
-            let session = match self.establish_session_sync() {
+            let session = match self.establish_session().await {
                 Ok(Some(session)) => session,
                 Ok(None) => {
                     last_error = Some("server did not provide a resumable session".to_string());
@@ -58,7 +44,7 @@ impl SessionResumptionTester {
             };
 
             let start = Instant::now();
-            match self.resume_with_session_sync(&session) {
+            match self.try_resume_with_session(session).await {
                 Ok(true) => resumed_handshake_times.push(start.elapsed().as_secs_f64()),
                 Ok(false) => last_error = Some("session was not reused".to_string()),
                 Err(error) => last_error = Some(error.to_string()),
@@ -84,9 +70,5 @@ impl SessionResumptionTester {
         };
 
         Ok(improvement)
-    }
-
-    fn perform_full_handshake_sync(&self) -> Result<()> {
-        self.establish_session_sync().map(|_| ())
     }
 }

@@ -32,8 +32,14 @@ impl ProtocolTester {
         // probe, which reports (session-id caching, session tickets) and yields
         // honest `None`s on connection failure instead of a false negative.
         let _ = protocol;
-        let tester =
-            crate::protocols::session_resumption::SessionResumptionTester::new(self.target.clone());
+        let tester = crate::protocols::session_resumption::SessionResumptionTester::new(
+            self.target.clone(),
+        )
+        .with_starttls(
+            self.starttls_protocol,
+            Some(self.starttls_negotiation_hostname()),
+        )
+        .with_starttls_server_mode(self.starttls_server_mode);
         Ok(tester.quick_probe().await)
     }
 
@@ -78,7 +84,7 @@ impl ProtocolTester {
             let negotiator = crate::starttls::protocols::get_negotiator(
                 starttls_proto,
                 self.starttls_negotiation_hostname(),
-                self.target.port,
+                self.starttls_server_mode,
             );
             if crate::starttls::protocols::negotiate_starttls_with_timeout(
                 negotiator.as_ref(),

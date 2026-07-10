@@ -17,11 +17,34 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 /// Session resumption tester
 pub struct SessionResumptionTester {
     target: Target,
+    starttls: Option<crate::starttls::StarttlsProtocol>,
+    starttls_server_mode: bool,
+    starttls_hostname: Option<String>,
 }
 
 impl SessionResumptionTester {
     pub fn new(target: Target) -> Self {
-        Self { target }
+        Self {
+            target,
+            starttls: None,
+            starttls_server_mode: false,
+            starttls_hostname: None,
+        }
+    }
+
+    pub fn with_starttls(
+        mut self,
+        protocol: Option<crate::starttls::StarttlsProtocol>,
+        hostname: Option<String>,
+    ) -> Self {
+        self.starttls = protocol;
+        self.starttls_hostname = hostname;
+        self
+    }
+
+    pub fn with_starttls_server_mode(mut self, server_mode: bool) -> Self {
+        self.starttls_server_mode = server_mode;
+        self
     }
 
     /// Check if an SSL session is still valid (not expired)
@@ -135,6 +158,46 @@ impl SessionResumptionTester {
         }
     }
 
+    async fn prepare_stream(&self) -> Result<std::net::TcpStream> {
+        let addr = self
+            .target
+            .socket_addrs()
+            .first()
+            .copied()
+            .ok_or(crate::TlsError::NoSocketAddresses)?;
+
+        let mut stream = crate::utils::network::connect_with_timeout(
+            addr,
+            Duration::from_secs(10),
+            None,
+        )
+        .await?;
+
+        if let Some(starttls_proto) = self.starttls {
+            let hostname = self
+                .starttls_hostname
+                .clone()
+                .unwrap_or_else(|| self.target.hostname.clone());
+            let negotiator = crate::starttls::protocols::get_negotiator(
+                starttls_proto,
+                hostname,
+                self.starttls_server_mode,
+            );
+            crate::starttls::protocols::negotiate_starttls_with_timeout(
+                negotiator.as_ref(),
+                &mut stream,
+                Duration::from_secs(10),
+            )
+            .await
+            .map_err(|error| TlsError::StarttlsError {
+                protocol: starttls_proto.to_string(),
+                details: format!("STARTTLS negotiation failed before session resumption test: {error}"),
+            })?;
+        }
+
+        crate::utils::network::into_blocking_std_stream(stream, Duration::from_secs(10))
+    }
+
     fn build_connector(&self) -> Result<SslConnector> {
         let mut builder = SslConnector::builder(SslMethod::tls())?;
         // Certificate validity is irrelevant to whether a server offers session
@@ -145,26 +208,17 @@ impl SessionResumptionTester {
         Ok(builder.build())
     }
 
-    fn establish_session_sync(&self) -> Result<Option<SslSession>> {
-        use std::net::TcpStream as StdTcpStream;
-
-        let addr = self
-            .target
-            .socket_addrs()
-            .first()
-            .copied()
-            .ok_or(crate::TlsError::NoSocketAddresses)?;
-        let stream = StdTcpStream::connect_timeout(&addr, Duration::from_secs(10))?;
-        stream.set_nonblocking(false)?;
-        stream.set_read_timeout(Some(Duration::from_secs(10)))?;
-        stream.set_write_timeout(Some(Duration::from_secs(10)))?;
-
+    fn establish_session_sync(&self, stream: std::net::TcpStream) -> Result<Option<SslSession>> {
         let connector = self.build_connector()?;
         let ssl_stream = connector.connect(&self.target.hostname, stream)?;
         Ok(ssl_stream.ssl().session().map(|session| session.to_owned()))
     }
 
-    fn resume_with_session_sync(&self, session: &SslSession) -> Result<bool> {
+    fn resume_with_session_sync(
+        &self,
+        stream: std::net::TcpStream,
+        session: &SslSession,
+    ) -> Result<bool> {
         // Validate session hasn't expired before attempting resumption
         // This prevents false negatives from using stale sessions
         if !Self::is_session_valid(session) {
@@ -172,19 +226,6 @@ impl SessionResumptionTester {
                 details: "Session has expired and cannot be used for resumption".to_string(),
             });
         }
-
-        use std::net::TcpStream as StdTcpStream;
-
-        let addr = self
-            .target
-            .socket_addrs()
-            .first()
-            .copied()
-            .ok_or(crate::TlsError::NoSocketAddresses)?;
-        let stream = StdTcpStream::connect_timeout(&addr, Duration::from_secs(10))?;
-        stream.set_nonblocking(false)?;
-        stream.set_read_timeout(Some(Duration::from_secs(10)))?;
-        stream.set_write_timeout(Some(Duration::from_secs(10)))?;
 
         let connector = self.build_connector()?;
         let mut ssl = connector.configure()?.into_ssl(&self.target.hostname)?;
@@ -205,9 +246,10 @@ impl SessionResumptionTester {
 
     async fn establish_session(&self) -> Result<Option<SslSession>> {
         let target = self.target.clone();
+        let std_stream = self.prepare_stream().await?;
         tokio::task::spawn_blocking(move || {
-            let tester = SessionResumptionTester { target };
-            tester.establish_session_sync()
+            let tester = SessionResumptionTester::new(target);
+            tester.establish_session_sync(std_stream)
         })
         .await
         .map_err(|err| {
@@ -217,9 +259,10 @@ impl SessionResumptionTester {
 
     async fn try_resume_with_session(&self, session: SslSession) -> Result<bool> {
         let target = self.target.clone();
+        let std_stream = self.prepare_stream().await?;
         tokio::task::spawn_blocking(move || {
-            let tester = SessionResumptionTester { target };
-            tester.resume_with_session_sync(&session)
+            let tester = SessionResumptionTester::new(target);
+            tester.resume_with_session_sync(std_stream, &session)
         })
         .await
         .map_err(|err| crate::error::TlsError::Other(format!("Session resume join error: {err}")))?
@@ -418,6 +461,27 @@ mod tests {
             i64::MAX,
             u64::MAX - 1
         ));
+    }
+
+    #[test]
+    fn test_starttls_configuration_is_stored() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .unwrap();
+
+        let tester = SessionResumptionTester::new(target)
+            .with_starttls(Some(crate::starttls::StarttlsProtocol::XMPP), Some("xmpp.example.com".to_string()))
+            .with_starttls_server_mode(true);
+
+        assert_eq!(tester.starttls, Some(crate::starttls::StarttlsProtocol::XMPP));
+        assert_eq!(
+            tester.starttls_hostname.as_deref(),
+            Some("xmpp.example.com")
+        );
+        assert!(tester.starttls_server_mode);
     }
 
     fn install_crypto_provider() {
