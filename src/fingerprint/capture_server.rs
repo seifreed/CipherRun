@@ -250,7 +250,7 @@ impl ServerHelloNetworkCapture {
         // Extensions
         let extensions_start = client_hello.len();
         client_hello.extend_from_slice(&[0x00, 0x00]); // Placeholder for extensions length
-        Self::build_extensions(&mut client_hello, &self.target.hostname)?;
+        Self::build_extensions(&mut client_hello, self.sni_hostname())?;
 
         // Update extensions length
         let extensions_len =
@@ -277,6 +277,12 @@ impl ServerHelloNetworkCapture {
         }
 
         Ok(client_hello)
+    }
+
+    fn sni_hostname(&self) -> &str {
+        self.starttls_hostname
+            .as_deref()
+            .unwrap_or(self.target.hostname.as_str())
     }
 
     /// Append all TLS extensions to the ClientHello buffer.
@@ -447,6 +453,36 @@ mod tests {
         // Should have reasonable length
         assert!(client_hello.len() > 50);
         assert!(client_hello.len() < 1024);
+    }
+
+    #[test]
+    fn test_build_client_hello_uses_starttls_hostname_override() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["93.184.216.34".parse().unwrap()],
+        )
+        .unwrap();
+
+        let capture = ServerHelloNetworkCapture::new(target)
+            .with_starttls(
+                Some(crate::starttls::StarttlsProtocol::XMPP),
+                Some("xmpp.example.net".to_string()),
+            );
+        let client_hello = capture
+            .build_client_hello()
+            .expect("ClientHello should build");
+
+        assert!(
+            client_hello
+                .windows(b"xmpp.example.net".len())
+                .any(|window| window == b"xmpp.example.net")
+        );
+        assert!(
+            !client_hello
+                .windows(b"example.com".len())
+                .any(|window| window == b"example.com")
+        );
     }
 
     #[test]
