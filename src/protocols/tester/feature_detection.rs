@@ -32,18 +32,52 @@ impl ProtocolTester {
         // probe, which reports (session-id caching, session tickets) and yields
         // honest `None`s on connection failure instead of a false negative.
         let _ = protocol;
-        let tester = crate::protocols::session_resumption::SessionResumptionTester::new(
-            self.target.clone(),
-        )
-        .with_connect_timeout(self.connect_timeout)
-        .with_retry_config(self.retry_config.clone())
-        .with_sni(self.sni_hostname.clone())
-        .with_starttls(
-            self.starttls_protocol,
-            Some(self.starttls_negotiation_hostname()),
-        )
-        .with_starttls_server_mode(self.starttls_server_mode);
+        if self.test_all_ips {
+            return Ok(self.detect_session_resumption_all_ips().await);
+        }
+
+        let tester = self.session_resumption_tester(self.target.clone());
         Ok(tester.quick_probe().await)
+    }
+
+    fn session_resumption_tester(
+        &self,
+        target: crate::utils::network::Target,
+    ) -> crate::protocols::session_resumption::SessionResumptionTester {
+        crate::protocols::session_resumption::SessionResumptionTester::new(target)
+            .with_connect_timeout(self.connect_timeout)
+            .with_retry_config(self.retry_config.clone())
+            .with_sni(self.sni_hostname.clone())
+            .with_starttls(
+                self.starttls_protocol,
+                Some(self.starttls_negotiation_hostname()),
+            )
+            .with_starttls_server_mode(self.starttls_server_mode)
+    }
+
+    async fn detect_session_resumption_all_ips(&self) -> (Option<bool>, Option<bool>) {
+        let mut caching = ProbeAggregate::default();
+        let mut tickets = ProbeAggregate::default();
+
+        for addr in self.target.socket_addrs() {
+            let Ok(target) = crate::utils::network::Target::with_ips(
+                self.target.hostname.clone(),
+                self.target.port,
+                vec![addr.ip()],
+            ) else {
+                continue;
+            };
+
+            let (probe_caching, probe_tickets) = self.session_resumption_tester(target).quick_probe().await;
+            caching.record(probe_caching);
+            tickets.record(probe_tickets);
+
+            if caching.supported && tickets.supported {
+                break;
+            }
+        }
+
+        (caching.result(), tickets.result())
     }
 
     pub(super) async fn detect_secure_renegotiation(
@@ -245,9 +279,35 @@ impl ProtocolTester {
     }
 }
 
+#[derive(Default)]
+struct ProbeAggregate {
+    supported: bool,
+    rejected: bool,
+}
+
+impl ProbeAggregate {
+    fn record(&mut self, value: Option<bool>) {
+        match value {
+            Some(true) => self.supported = true,
+            Some(false) => self.rejected = true,
+            None => {}
+        }
+    }
+
+    fn result(&self) -> Option<bool> {
+        if self.supported {
+            Some(true)
+        } else if self.rejected {
+            Some(false)
+        } else {
+            None
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{ProbeAggregate, *};
 
     #[test]
     fn test_tls_record_total_len_accepts_full_fragment_with_header() {
@@ -280,5 +340,28 @@ mod tests {
             ProtocolTester::server_hello_payload_len(&record),
             Some(BUFFER_SIZE_MAX_TLS_RECORD)
         );
+    }
+
+    #[test]
+    fn probe_aggregate_prefers_support_over_rejection() {
+        let mut aggregate = ProbeAggregate::default();
+        aggregate.record(Some(false));
+        aggregate.record(None);
+        aggregate.record(Some(true));
+        assert_eq!(aggregate.result(), Some(true));
+    }
+
+    #[test]
+    fn probe_aggregate_reports_rejection_when_no_support() {
+        let mut aggregate = ProbeAggregate::default();
+        aggregate.record(None);
+        aggregate.record(Some(false));
+        assert_eq!(aggregate.result(), Some(false));
+    }
+
+    #[test]
+    fn probe_aggregate_reports_unknown_when_no_signal() {
+        let aggregate = ProbeAggregate::default();
+        assert_eq!(aggregate.result(), None);
     }
 }
