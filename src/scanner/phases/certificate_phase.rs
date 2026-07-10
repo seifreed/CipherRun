@@ -199,7 +199,13 @@ impl CertificatePhase {
                 Some(crate::starttls::StarttlsProtocol::POP3) => Some("pop3".to_string()),
                 Some(crate::starttls::StarttlsProtocol::IMAP) => Some("imap".to_string()),
                 Some(crate::starttls::StarttlsProtocol::FTP) => Some("ftp".to_string()),
-                Some(crate::starttls::StarttlsProtocol::XMPP) => Some("xmpp".to_string()),
+                Some(crate::starttls::StarttlsProtocol::XMPP) => {
+                    if context.args.starttls_server_mode() {
+                        Some("xmpp-server".to_string())
+                    } else {
+                        Some("xmpp".to_string())
+                    }
+                }
                 Some(crate::starttls::StarttlsProtocol::LDAP) => Some("ldap".to_string()),
                 Some(crate::starttls::StarttlsProtocol::IRC) => Some("irc".to_string()),
                 Some(crate::starttls::StarttlsProtocol::POSTGRES) => Some("postgres".to_string()),
@@ -443,6 +449,24 @@ mod tests {
         .unwrap();
         let mut args = ScanRequest::default();
         args.starttls.protocol = Some(" xmpp-server ".to_string());
+        let context = ScanContext::new(target, Arc::new(args), None, None);
+
+        assert_eq!(
+            CertificatePhase::openssl_starttls(&context),
+            Some("xmpp-server".to_string())
+        );
+    }
+
+    #[test]
+    fn test_openssl_starttls_maps_xmpp_server_flag() {
+        let target = crate::utils::network::Target::with_ips(
+            "example.com".to_string(),
+            5269,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+        let mut args = ScanRequest::default();
+        args.starttls.xmpp_server = true;
         let context = ScanContext::new(target, Arc::new(args), None, None);
 
         assert_eq!(
