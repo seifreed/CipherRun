@@ -732,26 +732,37 @@ impl VulnerabilityScanner {
     }
 
     async fn target_accepts_tcp(&self) -> Result<bool> {
-        let addr = self
-            .target
-            .socket_addrs()
-            .first()
-            .copied()
-            .ok_or(crate::TlsError::NoSocketAddresses)?;
+        let addrs: Vec<_> = if self.test_all_ips {
+            self.target.socket_addrs()
+        } else {
+            self.target.socket_addrs().first().copied().into_iter().collect()
+        };
+        if addrs.is_empty() {
+            return Err(crate::TlsError::NoSocketAddresses);
+        }
 
-        match crate::utils::network::connect_with_timeout(
-            addr,
-            crate::constants::DEFAULT_CONNECT_TIMEOUT,
-            None,
-        )
-        .await
-        {
-            Ok(stream) => {
-                drop(stream);
-                Ok(true)
+        let mut last_error = None;
+        for addr in addrs {
+            match crate::utils::network::connect_with_timeout(
+                addr,
+                crate::constants::DEFAULT_CONNECT_TIMEOUT,
+                None,
+            )
+            .await
+            {
+                Ok(stream) => {
+                    drop(stream);
+                    return Ok(true);
+                }
+                Err(crate::TlsError::ConnectionRefused { .. }) => {}
+                Err(error) => last_error = Some(error),
             }
-            Err(crate::TlsError::ConnectionRefused { .. }) => Ok(false),
-            Err(error) => Err(error),
+        }
+
+        if let Some(error) = last_error {
+            Err(error)
+        } else {
+            Ok(false)
         }
     }
 }

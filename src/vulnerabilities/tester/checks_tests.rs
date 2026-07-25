@@ -98,6 +98,29 @@ async fn test_poodle_ssl_inactive_target_is_inconclusive() {
     assert!(result.details.to_ascii_lowercase().contains("inconclusive"));
 }
 
+#[tokio::test]
+async fn test_target_accepts_tcp_all_ips_uses_any_reachable_ip() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let _ = listener.accept().await;
+    });
+
+    let target = Target::with_ips(
+        "localhost".to_string(),
+        addr.port(),
+        vec!["127.0.0.2".parse().unwrap(), addr.ip()],
+    )
+    .unwrap();
+
+    let mut scanner = super::VulnerabilityScanner::new(target);
+    scanner.test_all_ips = true;
+
+    assert!(scanner.target_accepts_tcp().await.unwrap());
+}
+
 // --- test_renegotiation ---
 
 #[tokio::test]

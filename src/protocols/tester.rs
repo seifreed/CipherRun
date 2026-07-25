@@ -137,23 +137,37 @@ impl ProtocolTester {
     }
 
     pub async fn target_accepts_tcp(&self) -> Result<bool> {
-        let Some(addr) = self.target.socket_addrs().first().copied() else {
+        let addrs: Vec<_> = if self.test_all_ips {
+            self.target.socket_addrs()
+        } else {
+            self.target.socket_addrs().first().copied().into_iter().collect()
+        };
+        if addrs.is_empty() {
             return Ok(false);
         };
 
-        match crate::utils::network::connect_with_timeout(
-            addr,
-            self.connect_timeout,
-            self.retry_config.as_ref(),
-        )
-        .await
-        {
-            Ok(stream) => {
-                drop(stream);
-                Ok(true)
+        let mut last_error = None;
+        for addr in addrs {
+            match crate::utils::network::connect_with_timeout(
+                addr,
+                self.connect_timeout,
+                self.retry_config.as_ref(),
+            )
+            .await
+            {
+                Ok(stream) => {
+                    drop(stream);
+                    return Ok(true);
+                }
+                Err(crate::TlsError::ConnectionRefused { .. }) => {}
+                Err(error) => last_error = Some(error),
             }
-            Err(crate::TlsError::ConnectionRefused { .. }) => Ok(false),
-            Err(error) => Err(error),
+        }
+
+        if let Some(error) = last_error {
+            Err(error)
+        } else {
+            Ok(false)
         }
     }
 
@@ -688,6 +702,34 @@ mod tests {
         let target = Target::with_ips("example.test".to_string(), addr.port(), vec![addr.ip()])
             .expect("target should build");
         let tester = ProtocolTester::new(target).with_connect_timeout(Duration::from_millis(100));
+
+        let accepts_tcp = tester
+            .target_accepts_tcp()
+            .await
+            .expect("target TCP probe should succeed");
+
+        assert!(accepts_tcp);
+    }
+
+    #[tokio::test]
+    async fn test_target_accepts_tcp_all_ips_uses_any_reachable_ip() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("local addr should exist");
+        tokio::spawn(async move {
+            let _ = listener.accept().await;
+        });
+
+        let target = Target::with_ips(
+            "example.test".to_string(),
+            addr.port(),
+            vec!["127.0.0.2".parse().unwrap(), addr.ip()],
+        )
+        .expect("target should build");
+        let tester = ProtocolTester::new(target)
+            .with_test_all_ips(true)
+            .with_connect_timeout(Duration::from_millis(100));
 
         let accepts_tcp = tester
             .target_accepts_tcp()

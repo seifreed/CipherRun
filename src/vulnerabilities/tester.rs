@@ -114,6 +114,7 @@ pub struct VulnerabilityScanner {
     starttls: Option<crate::starttls::StarttlsProtocol>,
     starttls_server_mode: bool,
     starttls_hostname: Option<String>,
+    test_all_ips: bool,
 }
 
 impl VulnerabilityScanner {
@@ -136,6 +137,7 @@ impl VulnerabilityScanner {
             starttls: None,
             starttls_server_mode: false,
             starttls_hostname: None,
+            test_all_ips: false,
         }
     }
 
@@ -179,6 +181,7 @@ impl VulnerabilityScanner {
             starttls,
             starttls_server_mode,
             starttls_hostname,
+            test_all_ips: args.network.test_all_ips,
         }
     }
 
