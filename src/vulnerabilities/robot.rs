@@ -197,6 +197,46 @@ fn alert_description_code(response: &[u8]) -> Option<u8> {
     None
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum RobotAlertCodeSignal {
+    ConfirmedOracle,
+    Inconclusive,
+    None,
+}
+
+fn robot_alert_code_signal(
+    per_vector: &[Vec<Vec<u8>>],
+    confirmation_rounds: usize,
+) -> RobotAlertCodeSignal {
+    let mut stable_codes: std::collections::HashSet<u8> = std::collections::HashSet::new();
+    let mut missing_confirmation = false;
+    for probes in per_vector {
+        let codes: std::collections::HashSet<u8> = probes
+            .iter()
+            .filter_map(|response| alert_description_code(response))
+            .collect();
+        if codes.is_empty() {
+            continue;
+        }
+        if probes.len() < confirmation_rounds {
+            missing_confirmation = true;
+            continue;
+        }
+        match codes.len() {
+            1 => stable_codes.extend(codes),
+            _ => return RobotAlertCodeSignal::Inconclusive,
+        }
+    }
+
+    if stable_codes.len() > 1 {
+        RobotAlertCodeSignal::ConfirmedOracle
+    } else if missing_confirmation {
+        RobotAlertCodeSignal::Inconclusive
+    } else {
+        RobotAlertCodeSignal::None
+    }
+}
+
 /// ROBOT vulnerability tester
 pub struct RobotTester {
     target: Target,
@@ -343,27 +383,15 @@ impl RobotTester {
         // Bleichenbacher oracle. A vector whose alert code VARIES across rounds is
         // backend variance on a load-balanced deployment (e.g. a multi-backend CDN),
         // not an oracle, and must never produce a "vulnerable" verdict.
-        let mut stable_codes: std::collections::HashSet<u8> = std::collections::HashSet::new();
-        let mut saw_unstable_code = false;
-        for probes in &per_vector {
-            let codes: std::collections::HashSet<u8> = probes
-                .iter()
-                .filter_map(|response| alert_description_code(response))
-                .collect();
-            match codes.len() {
-                0 => {}
-                1 => stable_codes.extend(codes),
-                _ => saw_unstable_code = true,
+        match robot_alert_code_signal(&per_vector, CONFIRMATION_ROUNDS) {
+            RobotAlertCodeSignal::ConfirmedOracle => return Ok(RobotStatus::Vulnerable),
+            RobotAlertCodeSignal::Inconclusive => {
+                // The same malformed input produced different alerts across connections:
+                // multi-backend variance, not a deterministic padding oracle. A lone
+                // alert sample is also unconfirmed, so it cannot prove determinism.
+                return Ok(RobotStatus::Inconclusive);
             }
-        }
-
-        if stable_codes.len() > 1 {
-            return Ok(RobotStatus::Vulnerable);
-        }
-        if saw_unstable_code {
-            // The same malformed input produced different alerts across connections:
-            // multi-backend variance, not a deterministic padding oracle.
-            return Ok(RobotStatus::Inconclusive);
+            RobotAlertCodeSignal::None => {}
         }
 
         // Weak oracle: Two or more distinct response patterns indicate observable differences.
@@ -914,6 +942,33 @@ mod tests {
     fn test_alert_description_code_rejects_trailing_bytes() {
         let response = [0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x46, 0x00];
         assert_eq!(alert_description_code(&response), None);
+    }
+
+    #[test]
+    fn test_robot_alert_code_signal_requires_confirmed_samples() {
+        let alert_46 = vec![0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x46];
+        let alert_47 = vec![0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x47];
+        let per_vector = vec![vec![alert_46], vec![alert_47]];
+
+        assert_eq!(
+            robot_alert_code_signal(&per_vector, 2),
+            RobotAlertCodeSignal::Inconclusive
+        );
+    }
+
+    #[test]
+    fn test_robot_alert_code_signal_flags_confirmed_oracle() {
+        let alert_46 = vec![0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x46];
+        let alert_47 = vec![0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x47];
+        let per_vector = vec![
+            vec![alert_46.clone(), alert_46],
+            vec![alert_47.clone(), alert_47],
+        ];
+
+        assert_eq!(
+            robot_alert_code_signal(&per_vector, 2),
+            RobotAlertCodeSignal::ConfirmedOracle
+        );
     }
 
     #[tokio::test]
