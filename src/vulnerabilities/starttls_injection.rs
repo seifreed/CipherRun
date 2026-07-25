@@ -9,6 +9,8 @@ use tokio::io::{AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::time::{Duration, timeout};
 
+mod response_analysis;
+
 /// Test for STARTTLS injection vulnerabilities
 ///
 /// This vulnerability allows attackers to inject commands before the TLS handshake
@@ -48,44 +50,6 @@ impl StarttlsInjectionProtocol {
 impl StarttlsInjectionTester {
     pub fn new(target: Target) -> Self {
         Self { target }
-    }
-
-    /// Check if a response code appears at the start of any line in the response.
-    /// This prevents false positives from codes appearing in the middle of text
-    /// (e.g., in hostnames, error messages, or certificate data).
-    ///
-    /// SMTP/IMAP/POP3 response codes must appear at the beginning of a line
-    /// per their respective RFCs.
-    fn response_code_at_line_start(response: &str, code: &str) -> bool {
-        response.lines().any(|line| line.starts_with(code))
-    }
-
-    /// Find the position of a response code at the start of a line.
-    /// Returns the byte position if found, or None if not found.
-    /// This is used to verify the order of responses in multi-line responses.
-    fn find_response_code_at_line_start(response: &str, code: &str) -> Option<usize> {
-        let mut pos = 0;
-        for line in response.lines() {
-            if let Some(after) = line.strip_prefix(code)
-                && (after.is_empty() || after.starts_with(' ') || after.starts_with('-'))
-            {
-                return Some(pos);
-            }
-            // +1 for the newline character that .lines() removes
-            pos += line.len() + 1;
-        }
-        None
-    }
-
-    fn line_has_ascii_token(line: &str, token: &str) -> bool {
-        line.split(|c: char| !c.is_ascii_alphanumeric())
-            .any(|part| part.eq_ignore_ascii_case(token))
-    }
-
-    fn response_has_ascii_token(response: &str, token: &str) -> bool {
-        response
-            .lines()
-            .any(|line| Self::line_has_ascii_token(line, token))
     }
 
     /// Test SMTP STARTTLS injection
@@ -182,8 +146,8 @@ impl StarttlsInjectionTester {
         // IMPORTANT: We check that codes appear at the START of lines to avoid
         // false positives from these strings appearing in hostnames, banners, or
         // other parts of the response.
-        if let Some(pos_220) = Self::find_response_code_at_line_start(&response, "220")
-            && let Some(pos_250) = Self::find_response_code_at_line_start(&response, "250")
+        if let Some(pos_220) = response_analysis::find_code_at_line_start(&response, "220")
+            && let Some(pos_250) = response_analysis::find_code_at_line_start(&response, "250")
             && pos_250 > pos_220
         {
             return Ok(StarttlsInjectionStatus::Vulnerable);
@@ -244,7 +208,7 @@ impl StarttlsInjectionTester {
             _ => return Ok(StarttlsInjectionStatus::Inconclusive),
         };
 
-        if !Self::response_has_ascii_token(&response, "STARTTLS") {
+        if !response_analysis::has_ascii_token(&response, "STARTTLS") {
             return Ok(StarttlsInjectionStatus::NotVulnerable);
         }
 
@@ -274,7 +238,7 @@ impl StarttlsInjectionTester {
         // IMAP responses are tagged with the command tag at the start of the line
         // Format: "a003 STATUS message" - we check for this at line start to avoid
         // false positives from the tag appearing in other parts of the response
-        if Self::response_code_at_line_start(&response, "a003") {
+        if response_analysis::has_code_at_line_start(&response, "a003") {
             return Ok(StarttlsInjectionStatus::Vulnerable);
         }
 
@@ -348,7 +312,7 @@ impl StarttlsInjectionTester {
             }
         }
 
-        if !Self::response_has_ascii_token(&response, "STLS") {
+        if !response_analysis::has_ascii_token(&response, "STLS") {
             return Ok(StarttlsInjectionStatus::NotVulnerable);
         }
 
@@ -383,14 +347,7 @@ impl StarttlsInjectionTester {
         // 3. Close the connection
 
         // Count positive POP3 responses in the plaintext stream.
-        let ok_responses: Vec<&str> = response
-            .lines()
-            .filter(|line| line.starts_with("+OK"))
-            .collect();
-
-        // Vulnerable if we got more than one +OK response
-        // (one for STLS, one for the injected USER command)
-        if ok_responses.len() >= 2 {
+        if response_analysis::has_multiple_pop3_ok_lines(&response) {
             return Ok(StarttlsInjectionStatus::Vulnerable);
         }
 
