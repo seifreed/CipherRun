@@ -12,6 +12,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::time::timeout;
 
+mod heartbeat_response;
 mod server_hello;
 
 fn read_u16_at(data: &[u8], offset: usize) -> Option<u16> {
@@ -269,87 +270,6 @@ impl<'a> HeartbleedTester<'a> {
         self.send_malicious_heartbeat(&mut stream).await
     }
 
-    /// Validate that the response is a proper Heartbeat Response (not a TLS alert or other response).
-    /// Returns true if the response structure indicates a valid heartbeat response.
-    fn validate_heartbeat_response(&self, response: &[u8]) -> bool {
-        // Minimum valid heartbeat response: 5 (TLS record header) + 3 (heartbeat header) = 8 bytes
-        if response.len() < 8 {
-            return false;
-        }
-
-        // Check TLS record header
-        // Content type must be Heartbeat (0x18)
-        let Some(content_type) = response.first().copied() else {
-            return false;
-        };
-        if content_type != CONTENT_TYPE_HEARTBEAT {
-            tracing::debug!(
-                "Heartbleed: Response content type is not Heartbeat (0x{:02x}, expected 0x18)",
-                content_type
-            );
-            return false;
-        }
-
-        // Version check (should be TLS 1.0, 1.1, or 1.2)
-        let Some((&major, rest)) = response.get(1..).and_then(|tail| tail.split_first()) else {
-            return false;
-        };
-        let Some(&minor) = rest.first() else {
-            return false;
-        };
-        if major != 0x03 || !(0x01..=0x03).contains(&minor) {
-            tracing::debug!(
-                "Heartbleed: Response has unexpected TLS version 0x{:02x}{:02x}",
-                major,
-                minor
-            );
-            return false;
-        }
-
-        let Some(record_len) = read_u16_at(response, 3).map(usize::from) else {
-            return false;
-        };
-        if record_len + 5 != response.len() {
-            tracing::debug!(
-                "Heartbleed: Response record length {} does not match buffer length {}",
-                record_len,
-                response.len()
-            );
-            return false;
-        }
-
-        // Heartbeat message type must be Response (0x02), not Request (0x01)
-        // Response structure: type (1 byte) + length (2 bytes) + payload
-        let Some(heartbeat_type) = response.get(5).copied() else {
-            return false;
-        };
-        if heartbeat_type != 0x02 {
-            tracing::debug!(
-                "Heartbleed: Response type is not HeartbeatResponse (0x{:02x}, expected 0x02)",
-                heartbeat_type
-            );
-            return false;
-        }
-
-        let Some(heartbeat_len) = read_u16_at(response, 6).map(usize::from) else {
-            return false;
-        };
-        if heartbeat_len + 3 != record_len {
-            tracing::debug!(
-                "Heartbleed: Heartbeat payload length {} does not match record length {}",
-                heartbeat_len,
-                record_len
-            );
-            return false;
-        }
-
-        // If we got here, the response structure is valid
-        // Note: The actual vulnerability check compares the received length with our sent length
-        // A legitimate response would have a small length field, a vulnerable server would have
-        // a much larger length field (claiming 16384 bytes)
-        true
-    }
-
     /// Send malicious heartbeat request and check for memory leak
     async fn send_malicious_heartbeat(&self, stream: &mut TcpStream) -> Result<HeartbleedResult> {
         const HEARTBEAT_CLAIMED_PAYLOAD_LEN: usize = 16387; // claimed in TLS record header (3 + 16384)
@@ -433,7 +353,7 @@ impl<'a> HeartbleedTester<'a> {
         let n = result.len();
 
         // Validate response structure
-        let is_valid_heartbeat_response = self.validate_heartbeat_response(&result);
+        let is_valid_heartbeat_response = heartbeat_response::is_valid(&result);
 
         // If response doesn't look like a valid heartbeat response, it's suspicious
         // (server might be returning an error or TLS alert)
@@ -974,25 +894,8 @@ mod tests {
 
     #[test]
     fn test_validate_heartbeat_response_rejects_mismatched_lengths() {
-        let target = Target::with_ips(
-            "test.com".to_string(),
-            443,
-            vec!["127.0.0.1".parse().unwrap()],
-        )
-        .unwrap();
-        let tester = HeartbleedTester {
-            target: &target,
-            sni_hostname: None,
-            connect_timeout: Duration::from_secs(5),
-            read_timeout: Duration::from_secs(5),
-            starttls: None,
-            starttls_server_mode: false,
-            starttls_hostname: None,
-            test_all_ips: false,
-        };
-
         let response = [0x18, 0x03, 0x03, 0x00, 0x04, 0x02, 0x00, 0x01];
-        assert!(!tester.validate_heartbeat_response(&response));
+        assert!(!heartbeat_response::is_valid(&response));
     }
 
     #[test]
