@@ -4,8 +4,8 @@
 
 use crate::Result;
 use crate::constants::{
-    BUFFER_SIZE_MAX_WITH_OVERHEAD, CONTENT_TYPE_HANDSHAKE, DEFAULT_READ_TIMEOUT,
-    EXTENSION_RENEGOTIATION_INFO, SHORT_TIMEOUT, TLS_RECORD_HEADER_SIZE,
+    BUFFER_SIZE_MAX_WITH_OVERHEAD, CONTENT_TYPE_HANDSHAKE, DEFAULT_READ_TIMEOUT, SHORT_TIMEOUT,
+    TLS_RECORD_HEADER_SIZE,
 };
 use crate::utils::network::Target;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -13,6 +13,7 @@ use tokio::time::timeout;
 
 mod bytes;
 mod client_hello;
+mod server_hello;
 
 /// Renegotiation tester
 pub struct RenegotiationTester<'a> {
@@ -370,7 +371,7 @@ impl<'a> RenegotiationTester<'a> {
                         if response.first() == Some(&CONTENT_TYPE_HANDSHAKE) && response.len() > 5 {
                             // Check if server's ServerHello includes renegotiation_info
                             let has_reneg_info =
-                                match self.has_renegotiation_info_extension(&response) {
+                                match server_hello::has_renegotiation_info_extension(&response) {
                                     Ok(value) => value,
                                     Err(_) => return Ok(InsecureRenegotiationResult::Inconclusive),
                                 };
@@ -442,10 +443,11 @@ impl<'a> RenegotiationTester<'a> {
                 match timeout(SHORT_TIMEOUT, Self::read_tls_record(&mut stream)).await {
                     Ok(Ok(Some(buffer))) => {
                         // Look for renegotiation_info extension (0xff01)
-                        let has_extension = match self.has_renegotiation_info_extension(&buffer) {
-                            Ok(value) => value,
-                            Err(_) => return Ok(None),
-                        };
+                        let has_extension =
+                            match server_hello::has_renegotiation_info_extension(&buffer) {
+                                Ok(value) => value,
+                                Err(_) => return Ok(None),
+                            };
                         Ok(Some(has_extension))
                     }
                     _ => Ok(None),
@@ -495,146 +497,6 @@ impl<'a> RenegotiationTester<'a> {
             return Ok(None);
         }
         Ok(Some(total_len))
-    }
-
-    /// Check if ServerHello response contains renegotiation_info extension (0xff01).
-    ///
-    /// Parses the TLS record structure to search only within the extensions section,
-    /// avoiding false positives from matching bytes in random/certificate data.
-    fn has_renegotiation_info_extension(&self, response: &[u8]) -> Result<bool> {
-        const HANDSHAKE_TYPE_SERVER_HELLO: u8 = 0x02;
-
-        // Minimum ServerHello: 5 (record) + 4 (handshake) + 2 (version) + 32 (random) + 1 (sid len) = 44
-        if response.first() != Some(&CONTENT_TYPE_HANDSHAKE)
-            || bytes::read_u8_at(response, 5, "ServerHello handshake type")?
-                != HANDSHAKE_TYPE_SERVER_HELLO
-        {
-            return Err(crate::TlsError::ParseError {
-                message: "ServerHello handshake type missing or invalid".to_string(),
-            });
-        }
-
-        if response.len() < 44 {
-            return Err(crate::TlsError::ParseError {
-                message: "ServerHello truncated before minimum renegotiation extension length"
-                    .to_string(),
-            });
-        }
-
-        let record_len = bytes::read_u16_at(response, 3, "TLS record length")? as usize;
-        let record_end = 5 + record_len;
-        if record_end > response.len() {
-            return Err(crate::TlsError::ParseError {
-                message: "TLS record length exceeds available data".to_string(),
-            });
-        }
-        let handshake_len = bytes::read_u24_at(response, 6, "ServerHello handshake length")?;
-        let handshake_end =
-            9usize
-                .checked_add(handshake_len)
-                .ok_or_else(|| crate::TlsError::ParseError {
-                    message: "ServerHello handshake length overflow".to_string(),
-                })?;
-        if handshake_end > record_end {
-            return Err(crate::TlsError::ParseError {
-                message: "ServerHello handshake length exceeds record length".to_string(),
-            });
-        }
-
-        // Skip TLS record header (5 bytes) + handshake header (4 bytes)
-        // ServerHello: version(2) + random(32) + session_id_length(1)
-        let sid_len_offset = 5 + 4 + 2 + 32;
-        if sid_len_offset >= handshake_end {
-            return Err(crate::TlsError::ParseError {
-                message: "ServerHello truncated before session_id_len".to_string(),
-            });
-        }
-        let sid_len =
-            bytes::read_u8_at(response, sid_len_offset, "ServerHello session_id_len")? as usize;
-
-        // After session_id: cipher_suite(2) + compression(1) + extensions_length(2)
-        let ext_len_offset = sid_len_offset
-            .checked_add(1)
-            .and_then(|offset| offset.checked_add(sid_len))
-            .and_then(|offset| offset.checked_add(2 + 1))
-            .ok_or_else(|| crate::TlsError::ParseError {
-                message: "ServerHello extensions offset overflow".to_string(),
-            })?;
-        if ext_len_offset == handshake_end {
-            return Err(crate::TlsError::ParseError {
-                message: "ServerHello truncated before extensions length".to_string(),
-            });
-        }
-        let ext_start =
-            ext_len_offset
-                .checked_add(2)
-                .ok_or_else(|| crate::TlsError::ParseError {
-                    message: "ServerHello extensions length overflow".to_string(),
-                })?;
-        if ext_start > handshake_end {
-            return Err(crate::TlsError::ParseError {
-                message: "ServerHello truncated before extensions length".to_string(),
-            });
-        }
-        let ext_total =
-            bytes::read_u16_at(response, ext_len_offset, "ServerHello extensions length")? as usize;
-
-        // Search only within the extensions section
-        let ext_end =
-            ext_start
-                .checked_add(ext_total)
-                .ok_or_else(|| crate::TlsError::ParseError {
-                    message: "ServerHello extension block length overflow".to_string(),
-                })?;
-        if ext_end > handshake_end {
-            return Err(crate::TlsError::ParseError {
-                message: "ServerHello extension block extends beyond declared length".to_string(),
-            });
-        }
-        if ext_end != handshake_end {
-            return Err(crate::TlsError::ParseError {
-                message: "ServerHello extension block contains trailing bytes".to_string(),
-            });
-        }
-        if ext_start >= ext_end {
-            return Ok(false);
-        }
-
-        // Parse extensions structurally instead of using byte pattern scan
-        // to avoid false positives from extension data containing 0xff01
-        let mut pos = ext_start;
-        while let Some(ext_header_end) = pos.checked_add(4).filter(|&end| end <= ext_end) {
-            let ext_type = bytes::read_u16_at(response, pos, "ServerHello extension type")?;
-            let ext_len_offset = pos
-                .checked_add(2)
-                .ok_or_else(|| crate::TlsError::ParseError {
-                    message: "ServerHello extension length offset overflow".to_string(),
-                })?;
-            let ext_len =
-                bytes::read_u16_at(response, ext_len_offset, "ServerHello extension length")?
-                    as usize;
-            let ext_data_end =
-                ext_header_end
-                    .checked_add(ext_len)
-                    .ok_or_else(|| crate::TlsError::ParseError {
-                        message: "ServerHello extension data length overflow".to_string(),
-                    })?;
-            if ext_data_end > ext_end {
-                return Err(crate::TlsError::ParseError {
-                    message: "ServerHello truncated in renegotiation extension data".to_string(),
-                });
-            }
-            if ext_type == EXTENSION_RENEGOTIATION_INFO {
-                return Ok(true);
-            }
-            pos = ext_data_end;
-        }
-        if pos != ext_end {
-            return Err(crate::TlsError::ParseError {
-                message: "ServerHello extension block contains trailing bytes".to_string(),
-            });
-        }
-        Ok(false)
     }
 }
 
@@ -865,27 +727,12 @@ mod tests {
 
     #[test]
     fn test_has_renegotiation_info_extension_detects_absent() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().unwrap()],
-        )
-        .unwrap();
-        let tester = RenegotiationTester::new(&target);
         let response = vec![0x01, 0x02, 0x03, 0x04];
-        assert!(tester.has_renegotiation_info_extension(&response).is_err());
+        assert!(server_hello::has_renegotiation_info_extension(&response).is_err());
     }
 
     #[test]
     fn test_has_renegotiation_info_extension_detects_present() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().unwrap()],
-        )
-        .unwrap();
-        let tester = RenegotiationTester::new(&target);
-
         // Build a minimal valid ServerHello with renegotiation_info extension
         let mut response = vec![0u8; 0];
         // TLS record header: type=handshake(0x16), version=TLS1.2, length placeholder
@@ -909,19 +756,11 @@ mod tests {
 
         patch_test_server_hello_lengths(&mut response);
 
-        assert!(tester.has_renegotiation_info_extension(&response).unwrap());
+        assert!(server_hello::has_renegotiation_info_extension(&response).unwrap());
     }
 
     #[test]
     fn test_has_renegotiation_info_extension_ignores_bytes_after_handshake() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().unwrap()],
-        )
-        .unwrap();
-        let tester = RenegotiationTester::new(&target);
-
         let mut response = vec![
             0x16, 0x03, 0x03, 0x00, 0x00, // record
             0x02, 0x00, 0x00, 0x00, // ServerHello
@@ -947,7 +786,7 @@ mod tests {
         .expect("test ServerHello should contain record length placeholder");
         response[6..9].copy_from_slice(&handshake_len);
 
-        assert!(!tester.has_renegotiation_info_extension(&response).unwrap());
+        assert!(!server_hello::has_renegotiation_info_extension(&response).unwrap());
     }
 
     #[test]
@@ -961,27 +800,12 @@ mod tests {
 
     #[test]
     fn test_has_renegotiation_info_extension_partial_bytes() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().unwrap()],
-        )
-        .unwrap();
-        let tester = RenegotiationTester::new(&target);
         let response = vec![0xff];
-        assert!(tester.has_renegotiation_info_extension(&response).is_err());
+        assert!(server_hello::has_renegotiation_info_extension(&response).is_err());
     }
 
     #[test]
     fn test_has_renegotiation_info_extension_rejects_truncated_serverhello() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().unwrap()],
-        )
-        .unwrap();
-        let tester = RenegotiationTester::new(&target);
-
         let response = vec![
             0x16, 0x03, 0x03, 0x00, 0x1a, // handshake record claims 26 bytes
             0x02, 0x00, 0x00, 0x16, // ServerHello, handshake length 22
@@ -989,8 +813,7 @@ mod tests {
             0x00, 0x00, 0x00, 0x00, // truncated before random/session_id
         ];
 
-        let err = tester
-            .has_renegotiation_info_extension(&response)
+        let err = server_hello::has_renegotiation_info_extension(&response)
             .expect_err("truncated ServerHello should fail");
         assert!(
             err.to_string()
@@ -1000,14 +823,6 @@ mod tests {
 
     #[test]
     fn test_has_renegotiation_info_extension_rejects_truncated_extension_data() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().unwrap()],
-        )
-        .unwrap();
-        let tester = RenegotiationTester::new(&target);
-
         let mut response = vec![0x16, 0x03, 0x03, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00];
         response.extend_from_slice(&[0x03, 0x03]);
         response.extend_from_slice(&[0x00; 32]);
@@ -1018,9 +833,7 @@ mod tests {
 
         patch_test_server_hello_lengths(&mut response);
 
-        let err = tester
-            .has_renegotiation_info_extension(&response)
-            .unwrap_err();
+        let err = server_hello::has_renegotiation_info_extension(&response).unwrap_err();
         assert!(
             err.to_string()
                 .contains("truncated in renegotiation extension data")
@@ -1029,14 +842,6 @@ mod tests {
 
     #[test]
     fn test_has_renegotiation_info_extension_rejects_truncated_extension_block() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().unwrap()],
-        )
-        .unwrap();
-        let tester = RenegotiationTester::new(&target);
-
         let mut response = vec![
             0x16, 0x03, 0x03, 0x00, 0x00, // record
             0x02, 0x00, 0x00, 0x00, // ServerHello
@@ -1051,8 +856,7 @@ mod tests {
 
         patch_test_server_hello_lengths(&mut response);
 
-        let err = tester
-            .has_renegotiation_info_extension(&response)
+        let err = server_hello::has_renegotiation_info_extension(&response)
             .expect_err("truncated extension block should fail");
         assert!(
             err.to_string()
@@ -1062,14 +866,6 @@ mod tests {
 
     #[test]
     fn test_has_renegotiation_info_extension_rejects_trailing_bytes_in_record() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().unwrap()],
-        )
-        .unwrap();
-        let tester = RenegotiationTester::new(&target);
-
         let mut response = vec![
             0x16, 0x03, 0x03, 0x00, 0x00, // record
             0x02, 0x00, 0x00, 0x00, // ServerHello
@@ -1084,8 +880,7 @@ mod tests {
 
         patch_test_server_hello_lengths(&mut response);
 
-        let err = tester
-            .has_renegotiation_info_extension(&response)
+        let err = server_hello::has_renegotiation_info_extension(&response)
             .expect_err("trailing bytes in ServerHello record should fail");
         assert!(
             err.to_string()
@@ -1095,14 +890,6 @@ mod tests {
 
     #[test]
     fn test_has_renegotiation_info_extension_rejects_partial_extension_header() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().unwrap()],
-        )
-        .unwrap();
-        let tester = RenegotiationTester::new(&target);
-
         let mut response = vec![
             0x16, 0x03, 0x03, 0x00, 0x00, // record
             0x02, 0x00, 0x00, 0x00, // ServerHello
@@ -1116,8 +903,7 @@ mod tests {
 
         patch_test_server_hello_lengths(&mut response);
 
-        let err = tester
-            .has_renegotiation_info_extension(&response)
+        let err = server_hello::has_renegotiation_info_extension(&response)
             .expect_err("partial extension header should fail");
         assert!(
             err.to_string()
@@ -1127,30 +913,15 @@ mod tests {
 
     #[test]
     fn test_has_renegotiation_info_extension_rejects_non_serverhello() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().unwrap()],
-        )
-        .unwrap();
-        let tester = RenegotiationTester::new(&target);
-
-        let err = tester
-            .has_renegotiation_info_extension(&[0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28])
-            .expect_err("alert responses must be rejected");
+        let err = server_hello::has_renegotiation_info_extension(&[
+            0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28,
+        ])
+        .expect_err("alert responses must be rejected");
         assert!(err.to_string().contains("handshake type"));
     }
 
     #[test]
     fn test_has_renegotiation_info_extension_rejects_truncation_before_extensions_length() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().unwrap()],
-        )
-        .unwrap();
-        let tester = RenegotiationTester::new(&target);
-
         let mut response = vec![
             0x16, 0x03, 0x03, 0x00, 0x00, // record
             0x02, 0x00, 0x00, 0x00, // ServerHello
@@ -1173,8 +944,7 @@ mod tests {
         response[7] = ((handshake_len >> 8) & 0xff) as u8;
         response[8] = (handshake_len & 0xff) as u8;
 
-        let err = tester
-            .has_renegotiation_info_extension(&response)
+        let err = server_hello::has_renegotiation_info_extension(&response)
             .expect_err("truncated extensions length must fail");
         assert!(
             err.to_string()
