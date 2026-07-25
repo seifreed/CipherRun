@@ -8,6 +8,7 @@ use tokio::time::timeout;
 mod legacy_tls;
 mod openssl_tls12;
 pub(super) mod sslv2;
+mod tls13;
 
 /// Legacy-protocol cipher suites offered when probing SSLv3/TLS1.0/TLS1.1 by a
 /// raw ClientHello. The vendored OpenSSL build cannot negotiate these protocol
@@ -524,9 +525,6 @@ impl ProtocolTester {
         &self,
         addr: std::net::SocketAddr,
     ) -> Result<ProtocolProbeOutcome> {
-        use std::sync::Arc;
-        use tokio_rustls::TlsConnector;
-
         let mut stream = match crate::utils::network::connect_with_timeout(
             addr,
             self.connect_timeout,
@@ -556,34 +554,15 @@ impl ProtocolTester {
             }
         }
 
-        let connector = if let Some(ref mtls_config) = self.mtls_config {
-            mtls_config.build_tls_connector()?
-        } else {
-            // The scanner must detect TLS 1.3 support regardless of certificate
-            // validity (certificate trust is assessed separately). A verifying
-            // config would fail the handshake at cert validation on
-            // self-signed/expired/untrusted hosts and report TLS 1.3 as
-            // unsupported. The negotiated protocol version is checked below.
-            TlsConnector::from(Arc::new(
-                crate::utils::insecure_tls::insecure_client_config(),
-            ))
-        };
+        let connector = tls13::connector(self.mtls_config.as_ref())?;
 
         let sni_host = self.sni_hostname.as_ref().unwrap_or(&self.target.hostname);
         let domain = crate::utils::network::server_name_for_hostname(sni_host)?;
 
         match timeout(self.read_timeout, connector.connect(domain, stream)).await {
-            // The connector advertises both TLS 1.3 and TLS 1.2 (rustls default, and the
-            // mTLS connector uses safe defaults too), so a successful handshake may have
-            // negotiated TLS 1.2 on a server that has TLS 1.3 disabled. Confirm the
-            // negotiated version is actually TLS 1.3 before reporting it as supported.
             Ok(Ok(tls_stream)) => {
                 let negotiated = tls_stream.get_ref().1.protocol_version();
-                if negotiated == Some(rustls::ProtocolVersion::TLSv1_3) {
-                    Ok(ProtocolProbeOutcome::Supported)
-                } else {
-                    Ok(ProtocolProbeOutcome::NotSupported)
-                }
+                Ok(tls13::classify_negotiated_version(negotiated))
             }
             Ok(Err(_)) => Ok(ProtocolProbeOutcome::Inconclusive),
             Err(_) => Ok(ProtocolProbeOutcome::Inconclusive),
