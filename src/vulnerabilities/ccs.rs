@@ -22,6 +22,7 @@ pub struct CcsInjectionTester {
     starttls: Option<crate::starttls::StarttlsProtocol>,
     starttls_server_mode: bool,
     starttls_hostname: Option<String>,
+    test_all_ips: bool,
 }
 
 impl CcsInjectionTester {
@@ -31,6 +32,7 @@ impl CcsInjectionTester {
             starttls: None,
             starttls_server_mode: false,
             starttls_hostname: None,
+            test_all_ips: false,
         }
     }
 
@@ -45,6 +47,38 @@ impl CcsInjectionTester {
         self.starttls_hostname = hostname;
         self.starttls_server_mode = server_mode;
         self
+    }
+
+    pub fn with_test_all_ips(mut self, test_all_ips: bool) -> Self {
+        self.test_all_ips = test_all_ips;
+        self
+    }
+
+    fn probe_addrs(&self) -> Result<Vec<std::net::SocketAddr>> {
+        let addrs: Vec<_> = if self.test_all_ips {
+            self.target.socket_addrs()
+        } else {
+            self.target
+                .socket_addrs()
+                .first()
+                .copied()
+                .into_iter()
+                .collect()
+        };
+        if addrs.is_empty() {
+            Err(crate::TlsError::NoSocketAddresses)
+        } else {
+            Ok(addrs)
+        }
+    }
+
+    fn merge_status(current: TestStatus, next: TestStatus) -> TestStatus {
+        match (current, next) {
+            (TestStatus::Vulnerable, _) | (_, TestStatus::Vulnerable) => TestStatus::Vulnerable,
+            (status, _) if status.is_inconclusive() => status,
+            (_, status) if status.is_inconclusive() => status,
+            _ => TestStatus::NotVulnerable,
+        }
     }
 
     /// Test for CCS Injection vulnerability
@@ -79,13 +113,17 @@ impl CcsInjectionTester {
 
     /// Test CCS injection by sending early ChangeCipherSpec
     async fn test_ccs_injection(&self) -> Result<TestStatus> {
-        let addr = self
-            .target
-            .socket_addrs()
-            .first()
-            .copied()
-            .ok_or(crate::TlsError::NoSocketAddresses)?;
+        let mut status = TestStatus::NotVulnerable;
+        for addr in self.probe_addrs()? {
+            status = Self::merge_status(status, self.test_ccs_injection_addr(addr).await?);
+            if status == TestStatus::Vulnerable {
+                break;
+            }
+        }
+        Ok(status)
+    }
 
+    async fn test_ccs_injection_addr(&self, addr: std::net::SocketAddr) -> Result<TestStatus> {
         let hostname = self
             .starttls_hostname
             .clone()
@@ -389,6 +427,38 @@ mod tests {
     use std::net::TcpListener;
     use std::time::Duration;
     use tokio::net::TcpListener as TokioTcpListener;
+
+    #[test]
+    fn test_ccs_probe_addrs_honors_all_ips() {
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            443,
+            vec!["127.0.0.2".parse().unwrap(), "127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+
+        let single = CcsInjectionTester::new(target.clone())
+            .probe_addrs()
+            .unwrap();
+        let all = CcsInjectionTester::new(target)
+            .with_test_all_ips(true)
+            .probe_addrs()
+            .unwrap();
+
+        assert_eq!(single.len(), 1);
+        assert_eq!(all.len(), 2);
+    }
+
+    #[test]
+    fn test_ccs_merge_keeps_inconclusive_over_clean() {
+        assert_eq!(
+            CcsInjectionTester::merge_status(
+                TestStatus::NotVulnerable,
+                TestStatus::HandshakeFailed
+            ),
+            TestStatus::HandshakeFailed
+        );
+    }
 
     #[test]
     fn test_client_hello_build() {
