@@ -22,6 +22,7 @@ pub struct CrimeTester<'a> {
     starttls: Option<crate::starttls::StarttlsProtocol>,
     starttls_server_mode: bool,
     starttls_hostname: Option<String>,
+    test_all_ips: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -82,6 +83,7 @@ impl<'a> CrimeTester<'a> {
             starttls: None,
             starttls_server_mode: false,
             starttls_hostname: None,
+            test_all_ips: false,
         }
     }
 
@@ -96,6 +98,43 @@ impl<'a> CrimeTester<'a> {
         self.starttls_hostname = hostname;
         self.starttls_server_mode = server_mode;
         self
+    }
+
+    pub fn with_test_all_ips(mut self, test_all_ips: bool) -> Self {
+        self.test_all_ips = test_all_ips;
+        self
+    }
+
+    fn probe_addrs(&self) -> Result<Vec<std::net::SocketAddr>> {
+        let addrs: Vec<_> = if self.test_all_ips {
+            self.target.socket_addrs()
+        } else {
+            self.target
+                .socket_addrs()
+                .first()
+                .copied()
+                .into_iter()
+                .collect()
+        };
+        if addrs.is_empty() {
+            Err(crate::TlsError::NoSocketAddresses)
+        } else {
+            Ok(addrs)
+        }
+    }
+
+    fn merge_probe_status(
+        current: CompressionProbeStatus,
+        next: CompressionProbeStatus,
+    ) -> CompressionProbeStatus {
+        match (current, next) {
+            (CompressionProbeStatus::Enabled, _) | (_, CompressionProbeStatus::Enabled) => {
+                CompressionProbeStatus::Enabled
+            }
+            (CompressionProbeStatus::Inconclusive, _)
+            | (_, CompressionProbeStatus::Inconclusive) => CompressionProbeStatus::Inconclusive,
+            _ => CompressionProbeStatus::Disabled,
+        }
     }
 
     /// Connect, upgrading via STARTTLS first for plaintext-first services.
@@ -159,19 +198,26 @@ impl<'a> CrimeTester<'a> {
     /// Modern OpenSSL disables compression by default due to CRIME vulnerability.
     /// This test attempts to negotiate compression and checks if it was enabled.
     async fn test_tls_compression(&self) -> Result<CompressionProbeStatus> {
+        let mut status = CompressionProbeStatus::Disabled;
+        for addr in self.probe_addrs()? {
+            status = Self::merge_probe_status(status, self.test_tls_compression_addr(addr).await?);
+            if status == CompressionProbeStatus::Enabled {
+                break;
+            }
+        }
+        Ok(status)
+    }
+
+    async fn test_tls_compression_addr(
+        &self,
+        addr: std::net::SocketAddr,
+    ) -> Result<CompressionProbeStatus> {
         // Modern OpenSSL (1.1.0+) disables compression by default.
         // OpenSSL 3.x removes it entirely. Most servers will have compression disabled.
         //
         // For legacy systems, we attempt to detect compression via the handshake.
         // We send a ClientHello offering DEFLATE compression and check if the
         // server accepts it by looking at the compression method in ServerHello.
-
-        let addr = self
-            .target
-            .socket_addrs()
-            .first()
-            .copied()
-            .ok_or(crate::TlsError::NoSocketAddresses)?;
 
         let mut stream = match self.starttls_connect(addr, TLS_HANDSHAKE_TIMEOUT).await {
             Ok(s) => s,
@@ -262,13 +308,20 @@ impl<'a> CrimeTester<'a> {
     /// Detection approach: Parse the ServerHello extensions to find NPN (0x3374),
     /// then check if any negotiated protocol is SPDY (not h2/HTTP2).
     async fn test_spdy_compression(&self) -> Result<CompressionProbeStatus> {
-        let addr = self
-            .target
-            .socket_addrs()
-            .first()
-            .copied()
-            .ok_or(crate::TlsError::NoSocketAddresses)?;
+        let mut status = CompressionProbeStatus::Disabled;
+        for addr in self.probe_addrs()? {
+            status = Self::merge_probe_status(status, self.test_spdy_compression_addr(addr).await?);
+            if status == CompressionProbeStatus::Enabled {
+                break;
+            }
+        }
+        Ok(status)
+    }
 
+    async fn test_spdy_compression_addr(
+        &self,
+        addr: std::net::SocketAddr,
+    ) -> Result<CompressionProbeStatus> {
         let mut stream = match self.starttls_connect(addr, TLS_HANDSHAKE_TIMEOUT).await {
             Ok(s) => s,
             Err(_) => return Ok(CompressionProbeStatus::Inconclusive),
@@ -520,6 +573,36 @@ mod tests {
     use std::net::TcpListener;
     use tokio::io::AsyncWriteExt;
     use tokio::time::{Duration, sleep};
+
+    #[test]
+    fn test_crime_probe_addrs_honors_all_ips() {
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            443,
+            vec!["127.0.0.2".parse().unwrap(), "127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+
+        let single = CrimeTester::new(&target).probe_addrs().unwrap();
+        let all = CrimeTester::new(&target)
+            .with_test_all_ips(true)
+            .probe_addrs()
+            .unwrap();
+
+        assert_eq!(single.len(), 1);
+        assert_eq!(all.len(), 2);
+    }
+
+    #[test]
+    fn test_crime_merge_keeps_inconclusive_over_disabled() {
+        assert_eq!(
+            CrimeTester::merge_probe_status(
+                CompressionProbeStatus::Disabled,
+                CompressionProbeStatus::Inconclusive,
+            ),
+            CompressionProbeStatus::Inconclusive
+        );
+    }
 
     #[tokio::test]
     async fn test_read_complete_tls_record_accepts_record_above_default_buffer() {

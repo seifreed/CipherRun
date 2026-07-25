@@ -328,6 +328,7 @@ impl VulnerabilityScanner {
         use crate::vulnerabilities::crime::CrimeTester;
 
         let tester = CrimeTester::new(&self.target)
+            .with_test_all_ips(self.test_all_ips)
             .with_starttls(
                 self.starttls,
                 self.starttls_hostname.clone(),
