@@ -3,16 +3,14 @@
 // CVE-2009-3555 (insecure renegotiation vulnerability)
 
 use crate::Result;
-use crate::constants::{
-    BUFFER_SIZE_MAX_WITH_OVERHEAD, CONTENT_TYPE_HANDSHAKE, DEFAULT_READ_TIMEOUT, SHORT_TIMEOUT,
-    TLS_RECORD_HEADER_SIZE,
-};
+use crate::constants::{CONTENT_TYPE_HANDSHAKE, DEFAULT_READ_TIMEOUT, SHORT_TIMEOUT};
 use crate::utils::network::Target;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 use tokio::time::timeout;
 
 mod bytes;
 mod client_hello;
+mod record;
 mod server_hello;
 
 /// Renegotiation tester
@@ -363,7 +361,7 @@ impl<'a> RenegotiationTester<'a> {
                 stream.write_all(&client_hello).await?;
 
                 // Read ServerHello as a complete TLS record before parsing.
-                match timeout(SHORT_TIMEOUT, Self::read_tls_record(&mut stream)).await {
+                match timeout(SHORT_TIMEOUT, record::read_tls_record(&mut stream)).await {
                     Ok(Ok(Some(response))) => {
                         // Check if server responded with a valid ServerHello
                         // If server responds but WITHOUT renegotiation_info,
@@ -440,7 +438,7 @@ impl<'a> RenegotiationTester<'a> {
                 stream.write_all(&client_hello).await?;
 
                 // Read ServerHello as a complete TLS record before parsing.
-                match timeout(SHORT_TIMEOUT, Self::read_tls_record(&mut stream)).await {
+                match timeout(SHORT_TIMEOUT, record::read_tls_record(&mut stream)).await {
                     Ok(Ok(Some(buffer))) => {
                         // Look for renegotiation_info extension (0xff01)
                         let has_extension =
@@ -455,48 +453,6 @@ impl<'a> RenegotiationTester<'a> {
             }
             _ => Ok(None),
         }
-    }
-
-    async fn read_tls_record(
-        stream: &mut tokio::net::TcpStream,
-    ) -> std::io::Result<Option<Vec<u8>>> {
-        let mut header = [0u8; 5];
-        if stream.read_exact(&mut header).await.is_err() {
-            return Ok(None);
-        }
-
-        let Some(total_len) = Self::tls_record_total_len(&header)? else {
-            return Ok(None);
-        };
-        let mut response = vec![0u8; total_len];
-        response[..TLS_RECORD_HEADER_SIZE].copy_from_slice(&header);
-        if stream
-            .read_exact(&mut response[TLS_RECORD_HEADER_SIZE..])
-            .await
-            .is_err()
-        {
-            return Ok(None);
-        }
-
-        Ok(Some(response))
-    }
-
-    fn tls_record_total_len(
-        header: &[u8; TLS_RECORD_HEADER_SIZE],
-    ) -> std::io::Result<Option<usize>> {
-        let record_len = u16::from_be_bytes([header[3], header[4]]) as usize;
-        let total_len = TLS_RECORD_HEADER_SIZE
-            .checked_add(record_len)
-            .ok_or_else(|| {
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "TLS record length overflow",
-                )
-            })?;
-        if total_len > BUFFER_SIZE_MAX_WITH_OVERHEAD {
-            return Ok(None);
-        }
-        Ok(Some(total_len))
     }
 }
 
@@ -527,6 +483,7 @@ pub struct RenegotiationTestResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::AsyncReadExt;
 
     #[test]
     fn test_tls_record_total_len_rejects_oversized_record() {
@@ -537,15 +494,13 @@ mod tests {
 
         let allowed_header = [0x16, 0x03, 0x03, (allowed >> 8) as u8, allowed as u8];
         assert_eq!(
-            RenegotiationTester::tls_record_total_len(&allowed_header)
-                .expect("length should parse"),
+            record::total_len(&allowed_header).expect("length should parse"),
             Some(crate::constants::BUFFER_SIZE_MAX_WITH_OVERHEAD)
         );
 
         let rejected_header = [0x16, 0x03, 0x03, (rejected >> 8) as u8, rejected as u8];
         assert_eq!(
-            RenegotiationTester::tls_record_total_len(&rejected_header)
-                .expect("length should parse"),
+            record::total_len(&rejected_header).expect("length should parse"),
             None
         );
     }
