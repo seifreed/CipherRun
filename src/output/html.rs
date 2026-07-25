@@ -292,12 +292,14 @@ pub fn generate_html_report(results: &ScanResults) -> Result<String> {
                     .ocsp_stapling_details
                     .as_ref()
                     .map(|details| details.stapling_supported)
-                    .unwrap_or(false),
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "N/A".to_string()),
                 "ocsp_stapling_present": revocation
                     .ocsp_stapling_details
                     .as_ref()
                     .map(|details| details.stapled_response_present)
-                    .unwrap_or(false),
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "N/A".to_string()),
                 "ocsp_stapling_valid": revocation
                     .ocsp_stapling_details
                     .as_ref()
@@ -446,6 +448,8 @@ mod tests {
         assert!(html.contains("<h2>Revocation</h2>"));
         assert!(html.contains("OCSP"));
         assert!(html.contains("OCSP check via https://ocsp.example.com"));
+        assert!(html.contains("<tr><th>Stapling Supported</th><td>N/A</td></tr>"));
+        assert!(html.contains("<tr><th>Stapled Response Present</th><td>N/A</td></tr>"));
     }
 
     #[test]

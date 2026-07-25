@@ -167,12 +167,14 @@ pub fn generate_csv(results: &ScanResults) -> Result<String> {
                 .ocsp_stapling_details
                 .as_ref()
                 .map(|details| details.stapling_supported)
-                .unwrap_or(false);
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "N/A".to_string());
             let stapled_response_present = revocation
                 .ocsp_stapling_details
                 .as_ref()
                 .map(|details| details.stapled_response_present)
-                .unwrap_or(false);
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "N/A".to_string());
             let stapled_response_valid = revocation
                 .ocsp_stapling_details
                 .as_ref()
@@ -533,6 +535,7 @@ mod tests {
         assert!(csv.contains("http://ca.example.com"));
         assert!(csv.contains("Yes (certificate)"));
         assert!(csv.contains("=== REVOCATION ==="));
+        assert!(csv.contains("true,false,N/A,N/A,N/A,N/A"));
         assert!(csv.contains("Good"));
         assert!(csv.contains("OCSP"));
         assert!(csv.contains("OCSP check via https://ocsp.example.com"));
