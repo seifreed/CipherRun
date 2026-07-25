@@ -75,6 +75,7 @@ pub struct PaddingOracle2016Tester<'a> {
     starttls: Option<crate::starttls::StarttlsProtocol>,
     starttls_server_mode: bool,
     starttls_hostname: Option<String>,
+    test_all_ips: bool,
 }
 
 impl<'a> PaddingOracle2016Tester<'a> {
@@ -86,6 +87,7 @@ impl<'a> PaddingOracle2016Tester<'a> {
             starttls: None,
             starttls_server_mode: false,
             starttls_hostname: None,
+            test_all_ips: false,
         }
     }
 
@@ -100,6 +102,40 @@ impl<'a> PaddingOracle2016Tester<'a> {
         self.starttls_hostname = hostname;
         self.starttls_server_mode = server_mode;
         self
+    }
+
+    pub fn with_test_all_ips(mut self, test_all_ips: bool) -> Self {
+        self.test_all_ips = test_all_ips;
+        self
+    }
+
+    fn probe_addrs(&self) -> Result<Vec<std::net::SocketAddr>> {
+        let addrs = self.target.socket_addrs();
+        if self.test_all_ips {
+            if addrs.is_empty() {
+                Err(crate::TlsError::NoSocketAddresses)
+            } else {
+                Ok(addrs)
+            }
+        } else {
+            addrs
+                .first()
+                .copied()
+                .map(|addr| vec![addr])
+                .ok_or(crate::TlsError::NoSocketAddresses)
+        }
+    }
+
+    fn merge_cbc_status(best: CbcSupportStatus, next: CbcSupportStatus) -> CbcSupportStatus {
+        match (best, next) {
+            (CbcSupportStatus::Supported, _) | (_, CbcSupportStatus::Supported) => {
+                CbcSupportStatus::Supported
+            }
+            (CbcSupportStatus::Inconclusive, _) | (_, CbcSupportStatus::Inconclusive) => {
+                CbcSupportStatus::Inconclusive
+            }
+            _ => CbcSupportStatus::NotSupported,
+        }
     }
 
     /// Connect, upgrading via STARTTLS first for plaintext-first services.
@@ -199,14 +235,21 @@ impl<'a> PaddingOracle2016Tester<'a> {
 
     /// Check if server supports AES-CBC cipher suites
     async fn check_aes_cbc_support(&self) -> Result<CbcSupportStatus> {
-        use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode, SslVersion};
+        let mut best = CbcSupportStatus::NotSupported;
+        for addr in self.probe_addrs()? {
+            best = Self::merge_cbc_status(best, self.check_aes_cbc_support_addr(addr).await?);
+            if best == CbcSupportStatus::Supported {
+                break;
+            }
+        }
+        Ok(best)
+    }
 
-        let addr = self
-            .target
-            .socket_addrs()
-            .first()
-            .copied()
-            .ok_or(crate::TlsError::NoSocketAddresses)?;
+    async fn check_aes_cbc_support_addr(
+        &self,
+        addr: std::net::SocketAddr,
+    ) -> Result<CbcSupportStatus> {
+        use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode, SslVersion};
 
         // AES-CBC cipher suites (explicitly exclude GCM which is AEAD)
         let aes_cbc_ciphers = "AES128-SHA:AES256-SHA:AES128-SHA256:AES256-SHA256";
@@ -384,6 +427,45 @@ mod tests {
         let (hostname, use_sni) = openssl_hostname_and_sni("93.184.216.34");
         assert_eq!(hostname, "93.184.216.34");
         assert!(!use_sni);
+    }
+
+    #[test]
+    fn test_padding_oracle_probe_addrs_honors_all_ips() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec![IpAddr::from([192, 0, 2, 1]), IpAddr::from([192, 0, 2, 2])],
+        )
+        .expect("test assertion should succeed");
+
+        let first = PaddingOracle2016Tester::new(&target)
+            .probe_addrs()
+            .expect("test assertion should succeed");
+        assert_eq!(first.len(), 1);
+
+        let all = PaddingOracle2016Tester::new(&target)
+            .with_test_all_ips(true)
+            .probe_addrs()
+            .expect("test assertion should succeed");
+        assert_eq!(all.len(), 2);
+    }
+
+    #[test]
+    fn test_padding_oracle_merge_preserves_inconclusive_status() {
+        assert_eq!(
+            PaddingOracle2016Tester::merge_cbc_status(
+                CbcSupportStatus::NotSupported,
+                CbcSupportStatus::Inconclusive,
+            ),
+            CbcSupportStatus::Inconclusive
+        );
+        assert_eq!(
+            PaddingOracle2016Tester::merge_cbc_status(
+                CbcSupportStatus::Inconclusive,
+                CbcSupportStatus::Supported,
+            ),
+            CbcSupportStatus::Supported
+        );
     }
 
     async fn spawn_dummy_server() -> SocketAddr {

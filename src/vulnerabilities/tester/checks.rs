@@ -633,7 +633,8 @@ impl VulnerabilityScanner {
                 self.starttls,
                 self.starttls_hostname.clone(),
                 self.starttls_server_mode,
-            );
+            )
+            .with_test_all_ips(self.test_all_ips);
         let result = tester.test().await?;
 
         if !result.cbc_supported && !self.target_accepts_tcp().await? {
