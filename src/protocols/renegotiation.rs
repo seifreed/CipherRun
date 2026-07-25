@@ -18,6 +18,7 @@ pub struct RenegotiationTester<'a> {
     starttls: Option<crate::starttls::StarttlsProtocol>,
     starttls_hostname: Option<String>,
     starttls_server_mode: bool,
+    test_all_ips: bool,
 }
 
 /// Result of insecure renegotiation detection
@@ -116,6 +117,7 @@ impl<'a> RenegotiationTester<'a> {
             starttls: None,
             starttls_hostname: None,
             starttls_server_mode: false,
+            test_all_ips: false,
         }
     }
 
@@ -130,6 +132,76 @@ impl<'a> RenegotiationTester<'a> {
         self.starttls_hostname = hostname;
         self.starttls_server_mode = server_mode;
         self
+    }
+
+    pub fn with_test_all_ips(mut self, enable: bool) -> Self {
+        self.test_all_ips = enable;
+        self
+    }
+
+    fn probe_addrs(&self) -> Result<Vec<std::net::SocketAddr>> {
+        let addrs: Vec<_> = if self.test_all_ips {
+            self.target.socket_addrs()
+        } else {
+            self.target
+                .socket_addrs()
+                .first()
+                .copied()
+                .into_iter()
+                .collect()
+        };
+        if addrs.is_empty() {
+            Err(crate::TlsError::NoSocketAddresses)
+        } else {
+            Ok(addrs)
+        }
+    }
+
+    fn merge_secure_extension(current: Option<bool>, next: Option<bool>) -> Option<bool> {
+        match (current, next) {
+            (Some(true), _) | (_, Some(true)) => Some(true),
+            (None, _) | (_, None) => None,
+            _ => Some(false),
+        }
+    }
+
+    fn merge_insecure_result(
+        current: InsecureRenegotiationResult,
+        next: InsecureRenegotiationResult,
+    ) -> InsecureRenegotiationResult {
+        match (current, next) {
+            (InsecureRenegotiationResult::Detected, _)
+            | (_, InsecureRenegotiationResult::Detected) => InsecureRenegotiationResult::Detected,
+            (InsecureRenegotiationResult::Inconclusive, _)
+            | (_, InsecureRenegotiationResult::Inconclusive) => {
+                InsecureRenegotiationResult::Inconclusive
+            }
+            _ => InsecureRenegotiationResult::NotDetected,
+        }
+    }
+
+    fn merge_support(
+        current: RenegotiationSupport,
+        next: RenegotiationSupport,
+    ) -> RenegotiationSupport {
+        match (current, next) {
+            (RenegotiationSupport::SecureRenegotiation, _)
+            | (_, RenegotiationSupport::SecureRenegotiation) => {
+                RenegotiationSupport::SecureRenegotiation
+            }
+            (RenegotiationSupport::InsecureRenegotiation, _)
+            | (_, RenegotiationSupport::InsecureRenegotiation) => {
+                RenegotiationSupport::InsecureRenegotiation
+            }
+            (RenegotiationSupport::Inconclusive, _) | (_, RenegotiationSupport::Inconclusive) => {
+                RenegotiationSupport::Inconclusive
+            }
+            (RenegotiationSupport::ClientInitiatedDisabled, _)
+            | (_, RenegotiationSupport::ClientInitiatedDisabled) => {
+                RenegotiationSupport::ClientInitiatedDisabled
+            }
+            _ => RenegotiationSupport::NotSupported,
+        }
     }
 
     /// Connect, upgrading via STARTTLS first for plaintext-first services.
@@ -261,15 +333,25 @@ impl<'a> RenegotiationTester<'a> {
     ///
     /// This is implemented in test_insecure_renegotiation() below.
     async fn test_renegotiation_support(&self) -> Result<RenegotiationSupport> {
+        let mut result = RenegotiationSupport::NotSupported;
+        for addr in self.probe_addrs()? {
+            result = Self::merge_support(result, self.test_renegotiation_support_addr(addr).await?);
+            if matches!(
+                result,
+                RenegotiationSupport::SecureRenegotiation
+                    | RenegotiationSupport::InsecureRenegotiation
+            ) {
+                break;
+            }
+        }
+        Ok(result)
+    }
+
+    async fn test_renegotiation_support_addr(
+        &self,
+        addr: std::net::SocketAddr,
+    ) -> Result<RenegotiationSupport> {
         use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
-
-        let addr = self
-            .target
-            .socket_addrs()
-            .first()
-            .copied()
-            .ok_or(crate::TlsError::NoSocketAddresses)?;
-
         match self.starttls_connect(addr, DEFAULT_READ_TIMEOUT).await {
             Ok(stream) => {
                 let std_stream =
@@ -322,13 +404,23 @@ impl<'a> RenegotiationTester<'a> {
     /// - `Inconclusive`: Server responded without renegotiation_info extension - manual verification needed
     /// - `NotDetected`: Server has secure renegotiation or doesn't support renegotiation
     async fn test_insecure_renegotiation(&self) -> Result<InsecureRenegotiationResult> {
-        let addr = self
-            .target
-            .socket_addrs()
-            .first()
-            .copied()
-            .ok_or(crate::TlsError::NoSocketAddresses)?;
+        let mut result = InsecureRenegotiationResult::NotDetected;
+        for addr in self.probe_addrs()? {
+            result = Self::merge_insecure_result(
+                result,
+                self.test_insecure_renegotiation_addr(addr).await?,
+            );
+            if matches!(result, InsecureRenegotiationResult::Detected) {
+                break;
+            }
+        }
+        Ok(result)
+    }
 
+    async fn test_insecure_renegotiation_addr(
+        &self,
+        addr: std::net::SocketAddr,
+    ) -> Result<InsecureRenegotiationResult> {
         match self.starttls_connect(addr, DEFAULT_READ_TIMEOUT).await {
             Ok(mut stream) => {
                 // Send ClientHello WITHOUT renegotiation_info extension
@@ -389,13 +481,23 @@ impl<'a> RenegotiationTester<'a> {
 
     /// Test for secure renegotiation extension (RFC 5746)
     async fn test_secure_renegotiation_extension(&self) -> Result<Option<bool>> {
-        let addr = self
-            .target
-            .socket_addrs()
-            .first()
-            .copied()
-            .ok_or(crate::TlsError::NoSocketAddresses)?;
+        let mut result = Some(false);
+        for addr in self.probe_addrs()? {
+            result = Self::merge_secure_extension(
+                result,
+                self.test_secure_renegotiation_extension_addr(addr).await?,
+            );
+            if result == Some(true) {
+                break;
+            }
+        }
+        Ok(result)
+    }
 
+    async fn test_secure_renegotiation_extension_addr(
+        &self,
+        addr: std::net::SocketAddr,
+    ) -> Result<Option<bool>> {
         match self.starttls_connect(addr, DEFAULT_READ_TIMEOUT).await {
             Ok(mut stream) => {
                 // Send ClientHello
@@ -808,6 +910,47 @@ mod tests {
             RenegotiationTester::tls_record_total_len(&rejected_header)
                 .expect("length should parse"),
             None
+        );
+    }
+
+    #[test]
+    fn test_renegotiation_probe_addrs_honors_all_ips() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["192.0.2.1".parse().unwrap(), "192.0.2.2".parse().unwrap()],
+        )
+        .unwrap();
+
+        let first = RenegotiationTester::new(&target).probe_addrs().unwrap();
+        assert_eq!(first.len(), 1);
+
+        let all = RenegotiationTester::new(&target)
+            .with_test_all_ips(true)
+            .probe_addrs()
+            .unwrap();
+        assert_eq!(all.len(), 2);
+    }
+
+    #[test]
+    fn test_renegotiation_merges_preserve_uncertainty() {
+        assert_eq!(
+            RenegotiationTester::merge_secure_extension(Some(false), None),
+            None
+        );
+        assert_eq!(
+            RenegotiationTester::merge_insecure_result(
+                InsecureRenegotiationResult::NotDetected,
+                InsecureRenegotiationResult::Inconclusive,
+            ),
+            InsecureRenegotiationResult::Inconclusive
+        );
+        assert_eq!(
+            RenegotiationTester::merge_support(
+                RenegotiationSupport::NotSupported,
+                RenegotiationSupport::Inconclusive,
+            ),
+            RenegotiationSupport::Inconclusive
         );
     }
 
