@@ -12,16 +12,13 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::time::timeout;
 
+mod server_hello;
+
 fn read_u16_at(data: &[u8], offset: usize) -> Option<u16> {
     data.get(offset..offset.checked_add(2)?)?
         .try_into()
         .ok()
         .map(u16::from_be_bytes)
-}
-
-fn read_u24_at(data: &[u8], offset: usize) -> Option<usize> {
-    let bytes = data.get(offset..offset.checked_add(3)?)?;
-    Some(((bytes[0] as usize) << 16) | ((bytes[1] as usize) << 8) | bytes[2] as usize)
 }
 
 #[cfg(test)]
@@ -246,7 +243,7 @@ impl<'a> HeartbleedTester<'a> {
         }
 
         // Check if server accepted heartbeat extension
-        match self.check_heartbeat_extension(&response) {
+        match server_hello::has_heartbeat_extension(&response) {
             Ok(true) => {}
             Ok(false) => {
                 return Ok(HeartbleedResult {
@@ -270,159 +267,6 @@ impl<'a> HeartbleedTester<'a> {
 
         // Send malicious heartbeat request
         self.send_malicious_heartbeat(&mut stream).await
-    }
-
-    /// Check if ServerHello contains heartbeat extension.
-    /// Parses the TLS ServerHello structure to find extensions, avoiding
-    /// false positives from matching 0x000f in session ID or other fields.
-    fn check_heartbeat_extension(&self, data: &[u8]) -> Result<bool> {
-        // TLS ServerHello minimum: 5 (record) + 4 (handshake) + 2 (version) + 32 (random) + 1 (sid len) = 44
-        if data.len() < 44 {
-            if data.first() == Some(&0x16) && data.get(5) == Some(&0x02) {
-                return Err(crate::TlsError::ParseError {
-                    message: "ServerHello truncated before session_id_len".to_string(),
-                });
-            }
-            return Ok(false);
-        }
-
-        // Verify this is a Handshake record (0x16) containing ServerHello (0x02)
-        if data.first() != Some(&0x16) || data.get(5) != Some(&0x02) {
-            return Ok(false);
-        }
-
-        let Some(record_len) = read_u16_at(data, 3).map(usize::from) else {
-            return Err(crate::TlsError::ParseError {
-                message: "ServerHello truncated before record length".to_string(),
-            });
-        };
-        let Some(record_end) = 5usize.checked_add(record_len) else {
-            return Err(crate::TlsError::ParseError {
-                message: "ServerHello record length overflow".to_string(),
-            });
-        };
-        if record_end > data.len() {
-            return Err(crate::TlsError::ParseError {
-                message: "ServerHello record length extends beyond buffer".to_string(),
-            });
-        }
-        let Some(hs_len) = read_u24_at(data, 6) else {
-            return Err(crate::TlsError::ParseError {
-                message: "ServerHello truncated before handshake length".to_string(),
-            });
-        };
-        let Some(hs_end) = 9usize.checked_add(hs_len) else {
-            return Err(crate::TlsError::ParseError {
-                message: "ServerHello handshake length overflow".to_string(),
-            });
-        };
-        if hs_end > record_end {
-            return Err(crate::TlsError::ParseError {
-                message: "ServerHello handshake length exceeds record length".to_string(),
-            });
-        }
-
-        // Session ID length at offset 43
-        let Some(sid_len) = data.get(43).copied().map(usize::from) else {
-            return Err(crate::TlsError::ParseError {
-                message: "ServerHello truncated before session_id_len".to_string(),
-            });
-        };
-        if sid_len > 32 {
-            // Malformed ServerHello: session_id_length exceeds TLS maximum
-            return Err(crate::TlsError::ParseError {
-                message: "ServerHello session_id_length exceeds TLS maximum".to_string(),
-            });
-        }
-        // After session ID: cipher suite (2 bytes) + compression method (1 byte)
-        let Some(ext_offset) = 44usize
-            .checked_add(sid_len)
-            .and_then(|offset| offset.checked_add(2 + 1))
-        else {
-            return Err(crate::TlsError::ParseError {
-                message: "ServerHello extensions offset overflow".to_string(),
-            });
-        };
-        if ext_offset == hs_end {
-            return Ok(false);
-        }
-
-        // Check we have room for extensions length (2 bytes)
-        let Some(ext_start) = ext_offset.checked_add(2) else {
-            return Err(crate::TlsError::ParseError {
-                message: "ServerHello extensions length overflow".to_string(),
-            });
-        };
-        if ext_start > hs_end {
-            return Err(crate::TlsError::ParseError {
-                message: "ServerHello truncated before extensions length".to_string(),
-            });
-        }
-
-        let Some(ext_total_len) = read_u16_at(data, ext_offset).map(usize::from) else {
-            return Err(crate::TlsError::ParseError {
-                message: "ServerHello truncated before extensions length".to_string(),
-            });
-        };
-        let Some(ext_end) = ext_start.checked_add(ext_total_len) else {
-            return Err(crate::TlsError::ParseError {
-                message: "ServerHello extension block length overflow".to_string(),
-            });
-        };
-        if ext_end > hs_end {
-            return Err(crate::TlsError::ParseError {
-                message: "ServerHello extension block extends beyond declared length".to_string(),
-            });
-        }
-        if ext_end != hs_end {
-            return Err(crate::TlsError::ParseError {
-                message: "ServerHello extension block contains trailing bytes".to_string(),
-            });
-        }
-
-        // Walk extensions looking for heartbeat (type 0x000f)
-        let mut pos = ext_start;
-        while let Some(ext_header_end) = pos.checked_add(4).filter(|&end| end <= ext_end) {
-            let Some(ext_type) = read_u16_at(data, pos) else {
-                return Err(crate::TlsError::ParseError {
-                    message: "ServerHello extension type truncated".to_string(),
-                });
-            };
-            let Some(ext_len_offset) = pos.checked_add(2) else {
-                return Err(crate::TlsError::ParseError {
-                    message: "ServerHello extension length offset overflow".to_string(),
-                });
-            };
-            let Some(ext_len) = read_u16_at(data, ext_len_offset).map(usize::from) else {
-                return Err(crate::TlsError::ParseError {
-                    message: "ServerHello extension length truncated".to_string(),
-                });
-            };
-            pos = ext_header_end;
-
-            let Some(next_pos) = pos.checked_add(ext_len) else {
-                return Err(crate::TlsError::ParseError {
-                    message: "ServerHello extension data length overflow".to_string(),
-                });
-            };
-            if next_pos > ext_end {
-                return Err(crate::TlsError::ParseError {
-                    message: "ServerHello extension data extends beyond declared length"
-                        .to_string(),
-                });
-            }
-            if ext_type == 0x000f {
-                return Ok(true);
-            }
-            pos = next_pos;
-        }
-        if pos != ext_end {
-            return Err(crate::TlsError::ParseError {
-                message: "ServerHello extension block contains trailing bytes".to_string(),
-            });
-        }
-
-        Ok(false)
     }
 
     /// Validate that the response is a proper Heartbeat Response (not a TLS alert or other response).
@@ -1009,23 +853,6 @@ mod tests {
 
     #[test]
     fn test_heartbeat_extension_check() {
-        let target = Target::with_ips(
-            "test.com".to_string(),
-            443,
-            vec!["127.0.0.1".parse().unwrap()],
-        )
-        .unwrap();
-        let tester = HeartbleedTester {
-            target: &target,
-            sni_hostname: None,
-            connect_timeout: Duration::from_secs(5),
-            read_timeout: Duration::from_secs(5),
-            starttls: None,
-            starttls_server_mode: false,
-            starttls_hostname: None,
-            test_all_ips: false,
-        };
-
         // Build a minimal valid ServerHello with heartbeat extension (0x000f)
         // Record: type=0x16, version=0x0303, length=TBD
         // Handshake: type=0x02, length=TBD
@@ -1051,7 +878,7 @@ mod tests {
         let hs_len = data_with_ext.len() - 9;
         write_u24_at(&mut data_with_ext, 6, hs_len);
 
-        assert!(tester.check_heartbeat_extension(&data_with_ext).unwrap());
+        assert!(server_hello::has_heartbeat_extension(&data_with_ext).unwrap());
 
         // Same ServerHello but WITHOUT the heartbeat extension (no extensions)
         let mut data_without_ext = vec![
@@ -1065,7 +892,7 @@ mod tests {
         write_u16_at(&mut data_without_ext, 3, record_len);
         let hs_len = data_without_ext.len() - 9;
         write_u24_at(&mut data_without_ext, 6, hs_len);
-        assert!(!tester.check_heartbeat_extension(&data_without_ext).unwrap());
+        assert!(!server_hello::has_heartbeat_extension(&data_without_ext).unwrap());
 
         // Extra bytes after the declared TLS record must not be parsed as
         // ServerHello extensions.
@@ -1076,32 +903,11 @@ mod tests {
             0x00, 0x01, // extension length
             0x01, // heartbeat mode
         ]);
-        assert!(
-            !tester
-                .check_heartbeat_extension(&data_with_trailing_ext)
-                .unwrap()
-        );
+        assert!(!server_hello::has_heartbeat_extension(&data_with_trailing_ext).unwrap());
     }
 
     #[test]
     fn test_heartbeat_extension_in_combined_handshake_record() {
-        let target = Target::with_ips(
-            "test.com".to_string(),
-            443,
-            vec!["127.0.0.1".parse().unwrap()],
-        )
-        .unwrap();
-        let tester = HeartbleedTester {
-            target: &target,
-            sni_hostname: None,
-            connect_timeout: Duration::from_secs(5),
-            read_timeout: Duration::from_secs(5),
-            starttls: None,
-            starttls_server_mode: false,
-            starttls_hostname: None,
-            test_all_ips: false,
-        };
-
         let mut data = vec![
             0x16, 0x03, 0x03, 0x00, 0x00, // TLS record header (length placeholder)
             0x02, 0x00, 0x00, 0x00, // ServerHello header (length placeholder)
@@ -1126,75 +932,23 @@ mod tests {
         let record_len = (data.len() - 5) as u16;
         write_u16_at(&mut data, 3, record_len);
 
-        assert!(tester.check_heartbeat_extension(&data).unwrap());
+        assert!(server_hello::has_heartbeat_extension(&data).unwrap());
     }
 
     #[test]
     fn test_heartbeat_extension_short_data_false() {
-        let target = Target::with_ips(
-            "test.com".to_string(),
-            443,
-            vec!["127.0.0.1".parse().unwrap()],
-        )
-        .unwrap();
-        let tester = HeartbleedTester {
-            target: &target,
-            sni_hostname: None,
-            connect_timeout: Duration::from_secs(5),
-            read_timeout: Duration::from_secs(5),
-            starttls: None,
-            starttls_server_mode: false,
-            starttls_hostname: None,
-            test_all_ips: false,
-        };
-
-        assert!(!tester.check_heartbeat_extension(&[0x00]).unwrap());
+        assert!(!server_hello::has_heartbeat_extension(&[0x00]).unwrap());
     }
 
     #[test]
     fn test_heartbeat_extension_rejects_truncated_serverhello() {
-        let target = Target::with_ips(
-            "test.com".to_string(),
-            443,
-            vec!["127.0.0.1".parse().unwrap()],
-        )
-        .unwrap();
-        let tester = HeartbleedTester {
-            target: &target,
-            sni_hostname: None,
-            connect_timeout: Duration::from_secs(5),
-            read_timeout: Duration::from_secs(5),
-            starttls: None,
-            starttls_server_mode: false,
-            starttls_hostname: None,
-            test_all_ips: false,
-        };
-
-        let err = tester
-            .check_heartbeat_extension(&[0x16, 0x03, 0x03, 0x00, 0x01, 0x02])
+        let err = server_hello::has_heartbeat_extension(&[0x16, 0x03, 0x03, 0x00, 0x01, 0x02])
             .expect_err("truncated ServerHello should fail");
         assert!(err.to_string().contains("session_id_len"));
     }
 
     #[test]
     fn test_heartbeat_extension_rejects_oversized_session_id() {
-        let target = Target::with_ips(
-            "test.com".to_string(),
-            443,
-            vec!["127.0.0.1".parse().unwrap()],
-        )
-        .unwrap();
-        let tester = HeartbleedTester {
-            target: &target,
-            sni_hostname: None,
-            connect_timeout: Duration::from_secs(5),
-            read_timeout: Duration::from_secs(5),
-            starttls: None,
-            starttls_server_mode: false,
-            starttls_hostname: None,
-            test_all_ips: false,
-        };
-
         let mut data = vec![
             0x16, 0x03, 0x03, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x03, 0x03,
         ];
@@ -1205,35 +959,17 @@ mod tests {
         let hs_len = data.len() - 9;
         write_u24_at(&mut data, 6, hs_len);
 
-        let err = tester
-            .check_heartbeat_extension(&data)
+        let err = server_hello::has_heartbeat_extension(&data)
             .expect_err("oversized session id should fail");
         assert!(err.to_string().contains("session_id_length"));
     }
 
     #[test]
     fn test_heartbeat_extension_exact_two_bytes() {
-        let target = Target::with_ips(
-            "test.com".to_string(),
-            443,
-            vec!["127.0.0.1".parse().unwrap()],
-        )
-        .unwrap();
-        let tester = HeartbleedTester {
-            target: &target,
-            sni_hostname: None,
-            connect_timeout: Duration::from_secs(5),
-            read_timeout: Duration::from_secs(5),
-            starttls: None,
-            starttls_server_mode: false,
-            starttls_hostname: None,
-            test_all_ips: false,
-        };
-
         // Two bytes alone is insufficient - need at least 3 bytes for the search loop
         // (saturating_sub(2) means we need at least 3 to have one iteration)
         // This test validates that minimum length is enforced
-        assert!(!tester.check_heartbeat_extension(&[0x00, 0x0f]).unwrap());
+        assert!(!server_hello::has_heartbeat_extension(&[0x00, 0x0f]).unwrap());
     }
 
     #[test]
@@ -1261,23 +997,6 @@ mod tests {
 
     #[test]
     fn test_check_heartbeat_extension_rejects_truncated_extension_block() {
-        let target = Target::with_ips(
-            "test.com".to_string(),
-            443,
-            vec!["127.0.0.1".parse().unwrap()],
-        )
-        .unwrap();
-        let tester = HeartbleedTester {
-            target: &target,
-            sni_hostname: None,
-            connect_timeout: Duration::from_secs(5),
-            read_timeout: Duration::from_secs(5),
-            starttls: None,
-            starttls_server_mode: false,
-            starttls_hostname: None,
-            test_all_ips: false,
-        };
-
         let mut data = vec![
             0x16, 0x03, 0x03, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x03, 0x03,
         ];
@@ -1292,8 +1011,7 @@ mod tests {
         let hs_len = data.len() - 9;
         write_u24_at(&mut data, 6, hs_len);
 
-        let err = tester
-            .check_heartbeat_extension(&data)
+        let err = server_hello::has_heartbeat_extension(&data)
             .expect_err("truncated extension block should fail");
         assert!(
             err.to_string()
