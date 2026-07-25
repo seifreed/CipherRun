@@ -2,7 +2,7 @@
 
 use crate::api::{
     adapters::scan as scan_adapter,
-    jobs::{ScanJob, executor::validate_webhook_url},
+    jobs::ScanJob,
     models::{
         error::{ApiError, ApiErrorResponse},
         request::ScanRequest,
@@ -13,6 +13,7 @@ use crate::api::{
     state::AppState,
     ws::progress::scan_websocket_handler,
 };
+use crate::security::webhook::validate_webhook_url;
 use axum::{
     Json,
     extract::{Path, State, WebSocketUpgrade},

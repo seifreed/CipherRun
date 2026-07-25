@@ -21,6 +21,7 @@
 //! sanitization, and protection against common vulnerabilities.
 
 pub mod input_validation;
+pub mod webhook;
 
 pub use input_validation::{
     ValidationError, is_private_ip, sanitize_path, validate_cipher, validate_hostname,
