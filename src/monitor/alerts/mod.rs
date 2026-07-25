@@ -143,12 +143,12 @@ pub(crate) fn reject_private_webhook_host(host: &str, label: &str) -> Result<()>
             message: format!("Invalid {label}: private/local hosts are not allowed"),
         });
     }
-    if let Ok(ip) = host.parse::<IpAddr>() {
-        if is_private_ip(&ip) {
-            return Err(crate::error::TlsError::ConfigError {
-                message: format!("Invalid {label}: private/internal IP literal {ip}"),
-            });
-        }
+    if let Ok(ip) = host.parse::<IpAddr>()
+        && is_private_ip(&ip)
+    {
+        return Err(crate::error::TlsError::ConfigError {
+            message: format!("Invalid {label}: private/internal IP literal {ip}"),
+        });
     }
     Ok(())
 }

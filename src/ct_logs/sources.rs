@@ -279,12 +279,12 @@ async fn ct_log_url_resolves_publicly(url: &str) -> Result<bool> {
                 "Invalid CT log host: private/local host".to_string(),
             ));
         }
-        if let Ok(ip) = host.parse::<IpAddr>() {
-            if is_private_ip(&ip) {
-                return Err(TlsError::Other(format!(
-                    "Invalid CT log host: private/internal IP {ip}"
-                )));
-            }
+        if let Ok(ip) = host.parse::<IpAddr>()
+            && is_private_ip(&ip)
+        {
+            return Err(TlsError::Other(format!(
+                "Invalid CT log host: private/internal IP {ip}"
+            )));
         }
     }
     let parsed = url::Url::parse(url).map_err(|error| TlsError::Other(format!("{error}")))?;

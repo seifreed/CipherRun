@@ -246,7 +246,7 @@ impl JarmFingerprinter {
                 addr,
                 self.timeout,
                 Some(starttls),
-                &hostname,
+                hostname,
                 self.starttls_server_mode,
             )
             .await

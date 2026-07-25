@@ -212,22 +212,18 @@ impl AlpnTester {
             };
 
             // Attempt TLS handshake with ALPN
-            match timeout(
+            if let Ok(Ok(tls_stream)) = timeout(
                 Duration::from_secs(10),
                 connector.connect(server_name, stream),
             )
-            .await
-            {
-                Ok(Ok(tls_stream)) => {
-                    // Check which protocol was negotiated
-                    let (_, connection) = tls_stream.get_ref();
-                    if let Some(protocol) = connection.alpn_protocol() {
-                        let proto_str = String::from_utf8_lossy(protocol).to_string();
-                        return Ok(AlpnProbeOutcome::Negotiated(proto_str));
-                    }
-                    saw_not_negotiated = true;
+            .await {
+                // Check which protocol was negotiated
+                let (_, connection) = tls_stream.get_ref();
+                if let Some(protocol) = connection.alpn_protocol() {
+                    let proto_str = String::from_utf8_lossy(protocol).to_string();
+                    return Ok(AlpnProbeOutcome::Negotiated(proto_str));
                 }
-                _ => {}
+                saw_not_negotiated = true;
             }
         }
 

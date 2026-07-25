@@ -249,7 +249,7 @@ impl PerKeyRateLimiter {
 
         // Iterate the LIVE index from oldest to newest, collecting victims.
         let mut victims: Vec<String> = Vec::with_capacity(to_remove);
-        'collect: for (_ts, keys) in index.iter() {
+        'collect: for keys in index.values() {
             for key in keys {
                 victims.push(key.clone());
                 if victims.len() >= to_remove {
@@ -265,7 +265,7 @@ impl PerKeyRateLimiter {
         // Rebuild the index without evicted keys. We can't mutate values
         // during the iteration above, so we do a single filter pass now.
         let victims_set: std::collections::HashSet<String> = victims.iter().cloned().collect();
-        for (_ts, keys) in index.iter_mut() {
+        for keys in index.values_mut() {
             keys.retain(|k| !victims_set.contains(k));
         }
         index.retain(|_, keys| !keys.is_empty());

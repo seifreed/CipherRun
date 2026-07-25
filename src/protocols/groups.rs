@@ -286,7 +286,6 @@ impl GroupTester {
         let mut saw_supported = false;
         let mut saw_not_supported = false;
         let mut saw_unprobeable = false;
-        let mut saw_inconclusive = false;
 
         for addr in probe_addrs {
             let stream = if let Some(starttls) = self.starttls {
@@ -300,20 +299,14 @@ impl GroupTester {
                 .await
                 {
                     Ok(stream) => stream,
-                    Err(_) => {
-                        saw_inconclusive = true;
-                        continue;
-                    }
+                    Err(_) => continue,
                 }
             } else {
                 match crate::utils::network::connect_with_timeout(addr, PROBE_CONNECT_TIMEOUT, None)
                     .await
                 {
                     Ok(stream) => stream,
-                    Err(_) => {
-                        saw_inconclusive = true;
-                        continue;
-                    }
+                    Err(_) => continue,
                 }
             };
 
@@ -322,10 +315,7 @@ impl GroupTester {
                 PROBE_HANDSHAKE_TIMEOUT,
             ) {
                 Ok(stream) => stream,
-                Err(_) => {
-                    saw_inconclusive = true;
-                    continue;
-                }
+                Err(_) => continue,
             };
 
             let (hostname, use_sni) = openssl_hostname_and_sni(
@@ -379,7 +369,7 @@ impl GroupTester {
                 GroupProbeOutcome::Supported => saw_supported = true,
                 GroupProbeOutcome::NotSupported => saw_not_supported = true,
                 GroupProbeOutcome::Unprobeable => saw_unprobeable = true,
-                GroupProbeOutcome::Inconclusive => saw_inconclusive = true,
+                GroupProbeOutcome::Inconclusive => {}
             }
         }
 
@@ -389,8 +379,6 @@ impl GroupTester {
             GroupProbeOutcome::NotSupported
         } else if saw_unprobeable {
             GroupProbeOutcome::Unprobeable
-        } else if saw_inconclusive {
-            GroupProbeOutcome::Inconclusive
         } else {
             GroupProbeOutcome::Inconclusive
         }

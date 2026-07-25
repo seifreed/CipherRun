@@ -76,10 +76,10 @@ fn normalize_target_hostname(hostname: String) -> String {
     if hostname.parse::<IpAddr>().is_ok() {
         return hostname;
     }
-    if let Some(stripped) = hostname.strip_suffix('.') {
-        if stripped.parse::<IpAddr>().is_ok() {
-            return hostname;
-        }
+    if let Some(stripped) = hostname.strip_suffix('.')
+        && stripped.parse::<IpAddr>().is_ok()
+    {
+        return hostname;
     }
     match hostname.strip_suffix('.') {
         _ if hostname.ends_with("..") => hostname,
