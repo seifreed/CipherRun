@@ -354,6 +354,7 @@ impl VulnerabilityScanner {
 
         let tester = HeartbleedTester::new(&self.target)
             .with_sni(self.sni_hostname.clone())
+            .with_test_all_ips(self.test_all_ips)
             .with_starttls(
                 self.starttls,
                 self.starttls_hostname.clone(),

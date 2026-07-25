@@ -62,6 +62,7 @@ pub struct HeartbleedTester<'a> {
     starttls: Option<crate::starttls::StarttlsProtocol>,
     starttls_server_mode: bool,
     starttls_hostname: Option<String>,
+    test_all_ips: bool,
 }
 
 impl<'a> HeartbleedTester<'a> {
@@ -75,6 +76,7 @@ impl<'a> HeartbleedTester<'a> {
             starttls: None,
             starttls_server_mode: false,
             starttls_hostname: None,
+            test_all_ips: false,
         }
     }
 
@@ -93,6 +95,11 @@ impl<'a> HeartbleedTester<'a> {
         self.starttls = protocol;
         self.starttls_hostname = hostname;
         self.starttls_server_mode = server_mode;
+        self
+    }
+
+    pub fn with_test_all_ips(mut self, test_all_ips: bool) -> Self {
+        self.test_all_ips = test_all_ips;
         self
     }
 
@@ -132,13 +139,43 @@ impl<'a> HeartbleedTester<'a> {
 
     /// Test specific protocol for Heartbleed
     async fn test_protocol(&self, protocol: Protocol) -> Result<HeartbleedResult> {
-        let addr = self
-            .target
-            .socket_addrs()
-            .first()
-            .copied()
-            .ok_or(crate::TlsError::NoSocketAddresses)?;
+        let addrs: Vec<_> = if self.test_all_ips {
+            self.target.socket_addrs()
+        } else {
+            self.target
+                .socket_addrs()
+                .first()
+                .copied()
+                .into_iter()
+                .collect()
+        };
+        if addrs.is_empty() {
+            return Err(crate::TlsError::NoSocketAddresses);
+        }
 
+        let mut any_tested = false;
+        let mut last_result = None;
+        for addr in addrs {
+            let result = self.test_protocol_addr(protocol, addr).await?;
+            if result.tested {
+                any_tested = true;
+            }
+            if result.vulnerable {
+                return Ok(result);
+            }
+            last_result = Some(result);
+        }
+
+        let mut result = last_result.ok_or(crate::TlsError::NoSocketAddresses)?;
+        result.tested = any_tested;
+        Ok(result)
+    }
+
+    async fn test_protocol_addr(
+        &self,
+        protocol: Protocol,
+        addr: std::net::SocketAddr,
+    ) -> Result<HeartbleedResult> {
         // Connect TCP (upgrading via STARTTLS first for plaintext-first services)
         let mut stream = match crate::utils::network::connect_with_starttls(
             addr,
@@ -759,6 +796,37 @@ mod tests {
         port
     }
 
+    async fn spawn_heartbleed_probe_server(response_size: usize) -> u16 {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let mut buffer = [0u8; 4096];
+                let _ = socket.read(&mut buffer).await;
+                let _ = socket.write_all(&server_hello_with_heartbeat()).await;
+                let _ = socket.read(&mut buffer).await;
+
+                let payload_len = response_size.saturating_sub(3);
+                let record_len = 3 + payload_len;
+                let mut response = vec![
+                    0x18,
+                    0x03,
+                    0x03,
+                    (record_len >> 8) as u8,
+                    (record_len & 0xff) as u8,
+                    0x02,
+                    (payload_len >> 8) as u8,
+                    (payload_len & 0xff) as u8,
+                ];
+                response.extend(vec![0u8; payload_len]);
+                let _ = socket.write_all(&response).await;
+            }
+        });
+
+        port
+    }
+
     fn server_hello_with_heartbeat() -> Vec<u8> {
         let mut data = vec![
             0x16, 0x03, 0x03, 0x00, 0x00, // TLS record header
@@ -863,6 +931,7 @@ mod tests {
             starttls: None,
             starttls_server_mode: false,
             starttls_hostname: None,
+            test_all_ips: false,
         };
         let result = tester.test_protocol(Protocol::TLS12).await.unwrap();
 
@@ -900,6 +969,7 @@ mod tests {
             starttls: None,
             starttls_server_mode: false,
             starttls_hostname: None,
+            test_all_ips: false,
         };
         let result = tester.test_protocol(Protocol::TLS12).await.unwrap();
 
@@ -907,6 +977,34 @@ mod tests {
         assert!(!result.vulnerable);
 
         server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_heartbleed_all_ips_uses_any_vulnerable_ip() {
+        let port = spawn_heartbleed_probe_server(256).await;
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec![
+                IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2)),
+                IpAddr::V4(Ipv4Addr::LOCALHOST),
+            ],
+        )
+        .unwrap();
+        let tester = HeartbleedTester {
+            target: &target,
+            sni_hostname: None,
+            connect_timeout: Duration::from_millis(200),
+            read_timeout: Duration::from_millis(200),
+            starttls: None,
+            starttls_server_mode: false,
+            starttls_hostname: None,
+            test_all_ips: true,
+        };
+
+        let result = tester.test().await.unwrap();
+
+        assert!(result.vulnerable, "{result:?}");
     }
 
     #[test]
@@ -925,6 +1023,7 @@ mod tests {
             starttls: None,
             starttls_server_mode: false,
             starttls_hostname: None,
+            test_all_ips: false,
         };
 
         // Build a minimal valid ServerHello with heartbeat extension (0x000f)
@@ -1000,6 +1099,7 @@ mod tests {
             starttls: None,
             starttls_server_mode: false,
             starttls_hostname: None,
+            test_all_ips: false,
         };
 
         let mut data = vec![
@@ -1045,6 +1145,7 @@ mod tests {
             starttls: None,
             starttls_server_mode: false,
             starttls_hostname: None,
+            test_all_ips: false,
         };
 
         assert!(!tester.check_heartbeat_extension(&[0x00]).unwrap());
@@ -1066,6 +1167,7 @@ mod tests {
             starttls: None,
             starttls_server_mode: false,
             starttls_hostname: None,
+            test_all_ips: false,
         };
 
         let err = tester
@@ -1090,6 +1192,7 @@ mod tests {
             starttls: None,
             starttls_server_mode: false,
             starttls_hostname: None,
+            test_all_ips: false,
         };
 
         let mut data = vec![
@@ -1124,6 +1227,7 @@ mod tests {
             starttls: None,
             starttls_server_mode: false,
             starttls_hostname: None,
+            test_all_ips: false,
         };
 
         // Two bytes alone is insufficient - need at least 3 bytes for the search loop
@@ -1148,6 +1252,7 @@ mod tests {
             starttls: None,
             starttls_server_mode: false,
             starttls_hostname: None,
+            test_all_ips: false,
         };
 
         let response = [0x18, 0x03, 0x03, 0x00, 0x04, 0x02, 0x00, 0x01];
@@ -1170,6 +1275,7 @@ mod tests {
             starttls: None,
             starttls_server_mode: false,
             starttls_hostname: None,
+            test_all_ips: false,
         };
 
         let mut data = vec![
