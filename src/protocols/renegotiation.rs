@@ -12,6 +12,8 @@ use crate::utils::network::Target;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::timeout;
 
+mod bytes;
+
 /// Renegotiation tester
 pub struct RenegotiationTester<'a> {
     target: &'a Target,
@@ -43,74 +45,6 @@ pub enum RenegotiationSupport {
 }
 
 impl<'a> RenegotiationTester<'a> {
-    fn parse_error(message: &str) -> crate::TlsError {
-        crate::TlsError::ParseError {
-            message: message.to_string(),
-        }
-    }
-
-    fn read_u8_at(data: &[u8], offset: usize, context: &str) -> Result<u8> {
-        data.get(offset)
-            .copied()
-            .ok_or_else(|| Self::parse_error(context))
-    }
-
-    fn read_u16_at(data: &[u8], offset: usize, context: &str) -> Result<u16> {
-        let end = offset
-            .checked_add(2)
-            .ok_or_else(|| Self::parse_error(context))?;
-        let bytes = data
-            .get(offset..end)
-            .ok_or_else(|| Self::parse_error(context))?;
-        let bytes: [u8; 2] = bytes.try_into().map_err(|_| Self::parse_error(context))?;
-        Ok(u16::from_be_bytes(bytes))
-    }
-
-    fn read_u24_at(data: &[u8], offset: usize, context: &str) -> Result<usize> {
-        let end = offset
-            .checked_add(3)
-            .ok_or_else(|| Self::parse_error(context))?;
-        let bytes = data
-            .get(offset..end)
-            .ok_or_else(|| Self::parse_error(context))?;
-        let bytes: [u8; 3] = bytes.try_into().map_err(|_| Self::parse_error(context))?;
-        let [high, mid, low] = bytes;
-        Ok(u32::from_be_bytes([0, high, mid, low]) as usize)
-    }
-
-    fn write_u16_at(data: &mut [u8], offset: usize, value: u16, context: &str) -> Result<()> {
-        let bytes = value.to_be_bytes();
-        Self::slice_range_mut(data, offset, 2, context)?.copy_from_slice(&bytes);
-        Ok(())
-    }
-
-    fn u16_len(value: usize, context: &str) -> Result<u16> {
-        u16::try_from(value).map_err(|_| Self::parse_error(context))
-    }
-
-    fn write_u24_at(data: &mut [u8], offset: usize, value: usize, context: &str) -> Result<()> {
-        let value = u32::try_from(value).map_err(|_| Self::parse_error(context))?;
-        if value > 0x00ff_ffff {
-            return Err(Self::parse_error(context));
-        }
-        let bytes = value.to_be_bytes();
-        Self::slice_range_mut(data, offset, 3, context)?.copy_from_slice(&bytes[1..]);
-        Ok(())
-    }
-
-    fn slice_range_mut<'b>(
-        data: &'b mut [u8],
-        start: usize,
-        len: usize,
-        context: &str,
-    ) -> Result<&'b mut [u8]> {
-        let end = start
-            .checked_add(len)
-            .ok_or_else(|| Self::parse_error(context))?;
-        data.get_mut(start..end)
-            .ok_or_else(|| Self::parse_error(context))
-    }
-
     pub fn new(target: &'a Target) -> Self {
         Self {
             target,
@@ -581,16 +515,16 @@ impl<'a> RenegotiationTester<'a> {
 
         // Update extensions length
         let ext_len = hello.len() - ext_pos - 2;
-        Self::write_u16_at(
+        bytes::write_u16_at(
             &mut hello,
             ext_pos,
-            Self::u16_len(ext_len, "ClientHello extensions length")?,
+            bytes::u16_len(ext_len, "ClientHello extensions length")?,
             "ClientHello extensions length placeholder",
         )?;
 
         // Update handshake length
         let hs_len = hello.len() - hs_len_pos - 3;
-        Self::write_u24_at(
+        bytes::write_u24_at(
             &mut hello,
             hs_len_pos,
             hs_len,
@@ -599,10 +533,10 @@ impl<'a> RenegotiationTester<'a> {
 
         // Update record length
         let rec_len = hello.len() - len_pos - 2;
-        Self::write_u16_at(
+        bytes::write_u16_at(
             &mut hello,
             len_pos,
-            Self::u16_len(rec_len, "ClientHello record length")?,
+            bytes::u16_len(rec_len, "ClientHello record length")?,
             "ClientHello record length placeholder",
         )?;
 
@@ -703,7 +637,7 @@ impl<'a> RenegotiationTester<'a> {
 
         // Update handshake length
         let hs_len = hello.len() - hs_len_pos - 3;
-        Self::write_u24_at(
+        bytes::write_u24_at(
             &mut hello,
             hs_len_pos,
             hs_len,
@@ -712,10 +646,10 @@ impl<'a> RenegotiationTester<'a> {
 
         // Update record length
         let rec_len = hello.len() - len_pos - 2;
-        Self::write_u16_at(
+        bytes::write_u16_at(
             &mut hello,
             len_pos,
-            Self::u16_len(rec_len, "ClientHello record length")?,
+            bytes::u16_len(rec_len, "ClientHello record length")?,
             "ClientHello record length placeholder",
         )?;
 
@@ -731,7 +665,7 @@ impl<'a> RenegotiationTester<'a> {
 
         // Minimum ServerHello: 5 (record) + 4 (handshake) + 2 (version) + 32 (random) + 1 (sid len) = 44
         if response.first() != Some(&CONTENT_TYPE_HANDSHAKE)
-            || Self::read_u8_at(response, 5, "ServerHello handshake type")?
+            || bytes::read_u8_at(response, 5, "ServerHello handshake type")?
                 != HANDSHAKE_TYPE_SERVER_HELLO
         {
             return Err(crate::TlsError::ParseError {
@@ -746,14 +680,14 @@ impl<'a> RenegotiationTester<'a> {
             });
         }
 
-        let record_len = Self::read_u16_at(response, 3, "TLS record length")? as usize;
+        let record_len = bytes::read_u16_at(response, 3, "TLS record length")? as usize;
         let record_end = 5 + record_len;
         if record_end > response.len() {
             return Err(crate::TlsError::ParseError {
                 message: "TLS record length exceeds available data".to_string(),
             });
         }
-        let handshake_len = Self::read_u24_at(response, 6, "ServerHello handshake length")?;
+        let handshake_len = bytes::read_u24_at(response, 6, "ServerHello handshake length")?;
         let handshake_end =
             9usize
                 .checked_add(handshake_len)
@@ -775,7 +709,7 @@ impl<'a> RenegotiationTester<'a> {
             });
         }
         let sid_len =
-            Self::read_u8_at(response, sid_len_offset, "ServerHello session_id_len")? as usize;
+            bytes::read_u8_at(response, sid_len_offset, "ServerHello session_id_len")? as usize;
 
         // After session_id: cipher_suite(2) + compression(1) + extensions_length(2)
         let ext_len_offset = sid_len_offset
@@ -802,7 +736,7 @@ impl<'a> RenegotiationTester<'a> {
             });
         }
         let ext_total =
-            Self::read_u16_at(response, ext_len_offset, "ServerHello extensions length")? as usize;
+            bytes::read_u16_at(response, ext_len_offset, "ServerHello extensions length")? as usize;
 
         // Search only within the extensions section
         let ext_end =
@@ -829,14 +763,14 @@ impl<'a> RenegotiationTester<'a> {
         // to avoid false positives from extension data containing 0xff01
         let mut pos = ext_start;
         while let Some(ext_header_end) = pos.checked_add(4).filter(|&end| end <= ext_end) {
-            let ext_type = Self::read_u16_at(response, pos, "ServerHello extension type")?;
+            let ext_type = bytes::read_u16_at(response, pos, "ServerHello extension type")?;
             let ext_len_offset = pos
                 .checked_add(2)
                 .ok_or_else(|| crate::TlsError::ParseError {
                     message: "ServerHello extension length offset overflow".to_string(),
                 })?;
             let ext_len =
-                Self::read_u16_at(response, ext_len_offset, "ServerHello extension length")?
+                bytes::read_u16_at(response, ext_len_offset, "ServerHello extension length")?
                     as usize;
             let ext_data_end =
                 ext_header_end
@@ -957,7 +891,7 @@ mod tests {
     fn patch_test_server_hello_lengths(response: &mut [u8]) {
         let rec_len = u16::try_from(response.len() - 5)
             .expect("test ServerHello record length must fit in u16");
-        RenegotiationTester::write_u16_at(
+        bytes::write_u16_at(
             response,
             3,
             rec_len,
@@ -966,7 +900,7 @@ mod tests {
         .expect("test ServerHello should contain record length placeholder");
 
         let hs_len = response.len() - 9;
-        RenegotiationTester::write_u24_at(
+        bytes::write_u24_at(
             response,
             6,
             hs_len,
@@ -1173,7 +1107,7 @@ mod tests {
         response.extend_from_slice(&[0x00, 0x05, 0xff, 0x01, 0x00, 0x01, 0x00]);
         let rec_len = u16::try_from(response.len() - 5 - 7)
             .expect("test ServerHello record length must fit in u16");
-        RenegotiationTester::write_u16_at(
+        bytes::write_u16_at(
             &mut response,
             3,
             rec_len,
@@ -1199,8 +1133,7 @@ mod tests {
             .expect("ClientHello should build");
         assert!(hello.len() > 10);
 
-        let rec_len = RenegotiationTester::read_u16_at(&hello, 3, "ClientHello record length")
-            .unwrap() as usize;
+        let rec_len = bytes::read_u16_at(&hello, 3, "ClientHello record length").unwrap() as usize;
         assert_eq!(rec_len, hello.len() - 5);
     }
 
@@ -1406,7 +1339,7 @@ mod tests {
         response.extend_from_slice(&[0x00, 0x9c]);
         response.push(0x00);
         let record_len = (response.len() - 5) as u16;
-        RenegotiationTester::write_u16_at(
+        bytes::write_u16_at(
             &mut response,
             3,
             record_len,
@@ -1458,7 +1391,7 @@ mod tests {
             response.push(0x00);
             response.extend_from_slice(&[0x00, 0x00]); // no extensions
             let rec_len = u16::try_from(response.len() - 5).expect("record length");
-            RenegotiationTester::write_u16_at(
+            bytes::write_u16_at(
                 &mut response,
                 3,
                 rec_len,
