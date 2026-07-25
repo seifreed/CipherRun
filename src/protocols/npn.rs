@@ -9,6 +9,8 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::timeout;
 
+mod server_hello;
+
 /// NPN protocol tester
 pub struct NpnTester {
     target: Target,
@@ -24,61 +26,6 @@ enum NpnProbeOutcome {
 impl NpnTester {
     pub fn new(target: Target) -> Self {
         Self { target }
-    }
-
-    fn read_u8_at(data: &[u8], offset: usize, context: &str) -> Result<u8> {
-        data.get(offset)
-            .copied()
-            .ok_or_else(|| crate::TlsError::ParseError {
-                message: format!("{context} truncated"),
-            })
-    }
-
-    fn read_u16_at(data: &[u8], offset: usize, context: &str) -> Result<u16> {
-        let end = offset
-            .checked_add(2)
-            .ok_or_else(|| crate::TlsError::ParseError {
-                message: format!("{context} length overflow"),
-            })?;
-        let bytes = data
-            .get(offset..end)
-            .and_then(|bytes| <[u8; 2]>::try_from(bytes).ok())
-            .ok_or_else(|| crate::TlsError::ParseError {
-                message: format!("{context} truncated"),
-            })?;
-        Ok(u16::from_be_bytes(bytes))
-    }
-
-    fn read_u24_at(data: &[u8], offset: usize, context: &str) -> Result<usize> {
-        let end = offset
-            .checked_add(3)
-            .ok_or_else(|| crate::TlsError::ParseError {
-                message: format!("{context} length overflow"),
-            })?;
-        let [high, mid, low] = data
-            .get(offset..end)
-            .and_then(|bytes| <[u8; 3]>::try_from(bytes).ok())
-            .ok_or_else(|| crate::TlsError::ParseError {
-                message: format!("{context} truncated"),
-            })?;
-        Ok(((high as usize) << 16) | ((mid as usize) << 8) | low as usize)
-    }
-
-    fn slice_range<'a>(
-        data: &'a [u8],
-        start: usize,
-        len: usize,
-        context: &str,
-    ) -> Result<&'a [u8]> {
-        let end = start
-            .checked_add(len)
-            .ok_or_else(|| crate::TlsError::ParseError {
-                message: format!("{context} length overflow"),
-            })?;
-        data.get(start..end)
-            .ok_or_else(|| crate::TlsError::ParseError {
-                message: format!("{context} truncated"),
-            })
     }
 
     fn tls_record_total_len(
@@ -173,10 +120,10 @@ impl NpnTester {
                     _ => return Ok(NpnProbeOutcome::Inconclusive),
                 };
 
-                if !Self::is_parseable_server_hello(&response) {
+                if !server_hello::is_parseable(&response) {
                     return Ok(NpnProbeOutcome::Inconclusive);
                 }
-                let protocols = self.parse_npn_response(&response)?;
+                let protocols = server_hello::parse_npn_protocols(&response)?;
                 if protocols.is_empty() {
                     Ok(NpnProbeOutcome::NotSupported)
                 } else {
@@ -185,44 +132,6 @@ impl NpnTester {
             }
             _ => Ok(NpnProbeOutcome::Inconclusive),
         }
-    }
-
-    fn is_parseable_server_hello(response: &[u8]) -> bool {
-        if response.len() < 47 || response.first() != Some(&0x16) || response.get(5) != Some(&0x02)
-        {
-            return false;
-        }
-
-        let Some(record_len) = Self::read_u16_at(response, 3, "NPN ServerHello record length")
-            .ok()
-            .map(usize::from)
-        else {
-            return false;
-        };
-        if 5 + record_len > response.len() {
-            return false;
-        }
-
-        let Some(handshake_len) =
-            Self::read_u24_at(response, 6, "NPN ServerHello handshake length").ok()
-        else {
-            return false;
-        };
-        let Some(handshake_end) = 9usize.checked_add(handshake_len) else {
-            return false;
-        };
-        if handshake_end > 5 + record_len {
-            return false;
-        }
-
-        let Some(sid_len) = Self::read_u8_at(response, 43, "NPN ServerHello session ID length")
-            .ok()
-            .map(usize::from)
-        else {
-            return false;
-        };
-        let min_after_sid = 44 + sid_len + 2 + 1;
-        min_after_sid <= handshake_end
     }
 
     /// Build ClientHello with NPN extension
@@ -320,160 +229,6 @@ impl NpnTester {
         let bytes = len.to_be_bytes();
         Ok([bytes[1], bytes[2], bytes[3]])
     }
-
-    /// Parse NPN protocols from ServerHello using structured TLS extension parsing
-    fn parse_npn_response(&self, response: &[u8]) -> Result<Vec<String>> {
-        let mut protocols = Vec::new();
-        const MAX_PROTOCOLS: usize = 100;
-
-        // Need at least: record header (5) + handshake header (4) + version (2) + random (32) + sid_len (1) = 44
-        if response.len() < 44 || response.first() != Some(&0x16) || response.get(5) != Some(&0x02)
-        {
-            return Ok(protocols);
-        }
-
-        let record_len = Self::read_u16_at(response, 3, "NPN ServerHello record length")? as usize;
-        let record_end =
-            5usize
-                .checked_add(record_len)
-                .ok_or_else(|| crate::TlsError::ParseError {
-                    message: "NPN ServerHello record length overflow".to_string(),
-                })?;
-        if record_end > response.len() {
-            return Err(crate::TlsError::ParseError {
-                message: "NPN ServerHello record length exceeds available data".to_string(),
-            });
-        }
-
-        let handshake_len = Self::read_u24_at(response, 6, "NPN ServerHello handshake length")?;
-        let handshake_end =
-            9usize
-                .checked_add(handshake_len)
-                .ok_or_else(|| crate::TlsError::ParseError {
-                    message: "NPN ServerHello handshake length overflow".to_string(),
-                })?;
-        if handshake_end > record_end {
-            return Err(crate::TlsError::ParseError {
-                message: "NPN ServerHello handshake length exceeds record length".to_string(),
-            });
-        }
-
-        // Parse ServerHello structurally to find extensions
-        let sid_len = Self::read_u8_at(response, 43, "NPN ServerHello session ID length")? as usize;
-        // cipher suite (2) + compression (1) + extensions_length (2)
-        let Some(ext_len_offset) = 44usize
-            .checked_add(sid_len)
-            .and_then(|offset| offset.checked_add(2 + 1))
-        else {
-            return Ok(protocols);
-        };
-        let Some(ext_start) = ext_len_offset.checked_add(2) else {
-            return Ok(protocols);
-        };
-        if ext_len_offset == handshake_end {
-            return Ok(protocols);
-        }
-        if ext_len_offset > handshake_end {
-            return Err(crate::TlsError::ParseError {
-                message: "NPN ServerHello fields exceed handshake length".to_string(),
-            });
-        }
-        if ext_start > handshake_end {
-            return Err(crate::TlsError::ParseError {
-                message: "NPN extensions length truncated".to_string(),
-            });
-        }
-
-        let ext_total =
-            Self::read_u16_at(response, ext_len_offset, "NPN extensions length")? as usize;
-        let ext_end =
-            ext_start
-                .checked_add(ext_total)
-                .ok_or_else(|| crate::TlsError::ParseError {
-                    message: "NPN extension block length overflow".to_string(),
-                })?;
-        if ext_end > handshake_end {
-            return Err(crate::TlsError::ParseError {
-                message: "NPN extension block extends beyond handshake length".to_string(),
-            });
-        }
-        if ext_end != handshake_end {
-            return Err(crate::TlsError::ParseError {
-                message: "NPN extension block contains trailing bytes".to_string(),
-            });
-        }
-
-        // Walk extensions structurally
-        let mut pos = ext_start;
-        while let Some(ext_header_end) = pos.checked_add(4).filter(|&end| end <= ext_end) {
-            let ext_type = Self::read_u16_at(response, pos, "NPN extension type")?;
-            let ext_len_offset = pos
-                .checked_add(2)
-                .ok_or_else(|| crate::TlsError::ParseError {
-                    message: "NPN extension length offset overflow".to_string(),
-                })?;
-            let ext_len =
-                Self::read_u16_at(response, ext_len_offset, "NPN extension length")? as usize;
-            pos = ext_header_end;
-            let ext_data_end =
-                pos.checked_add(ext_len)
-                    .ok_or_else(|| crate::TlsError::ParseError {
-                        message: "NPN extension data length overflow".to_string(),
-                    })?;
-            if ext_data_end > ext_end {
-                return Err(crate::TlsError::ParseError {
-                    message: "NPN extension data extends beyond declared length".to_string(),
-                });
-            }
-
-            if ext_type == 0x3374 {
-                // Parse NPN protocol list
-                let npn_end = ext_data_end;
-                let mut npn_pos = pos;
-                while npn_pos < npn_end
-                    && npn_pos < response.len()
-                    && protocols.len() < MAX_PROTOCOLS
-                {
-                    let proto_len =
-                        Self::read_u8_at(response, npn_pos, "NPN protocol name length")? as usize;
-                    npn_pos += 1;
-                    if proto_len == 0 {
-                        return Err(crate::TlsError::ParseError {
-                            message: "NPN protocol name length cannot be zero".to_string(),
-                        });
-                    }
-                    let proto_end = npn_pos.checked_add(proto_len).ok_or_else(|| {
-                        crate::TlsError::ParseError {
-                            message: "NPN protocol name length overflow".to_string(),
-                        }
-                    })?;
-                    if proto_end > npn_end {
-                        return Err(crate::TlsError::ParseError {
-                            message: "NPN protocol name extends beyond extension data".to_string(),
-                        });
-                    }
-                    let proto = String::from_utf8(
-                        Self::slice_range(response, npn_pos, proto_len, "NPN protocol name")?
-                            .to_vec(),
-                    )
-                    .map_err(|error| crate::TlsError::ParseError {
-                        message: format!("Invalid NPN protocol name UTF-8: {error}"),
-                    })?;
-                    protocols.push(proto);
-                    npn_pos = proto_end;
-                }
-            }
-
-            pos = ext_data_end;
-        }
-        if pos != ext_end {
-            return Err(crate::TlsError::ParseError {
-                message: "NPN extension block contains truncated header".to_string(),
-            });
-        }
-
-        Ok(protocols)
-    }
 }
 
 /// NPN test result
@@ -489,6 +244,10 @@ pub struct NpnTestResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn parse_npn_response(response: &[u8]) -> Result<Vec<String>> {
+        server_hello::parse_npn_protocols(response)
+    }
 
     #[test]
     fn test_npn_record_total_len_rejects_oversized_record() {
@@ -558,14 +317,6 @@ mod tests {
 
     #[test]
     fn test_parse_npn_response_with_protocols() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().unwrap()],
-        )
-        .unwrap();
-        let tester = NpnTester::new(target);
-
         // Build a valid ServerHello with NPN extension
         let mut response = Vec::new();
         // TLS record header
@@ -604,22 +355,12 @@ mod tests {
         response[7] = ((hs_len >> 8) & 0xff) as u8;
         response[8] = (hs_len & 0xff) as u8;
 
-        let protocols = tester
-            .parse_npn_response(&response)
-            .expect("test assertion should succeed");
+        let protocols = parse_npn_response(&response).expect("test assertion should succeed");
         assert_eq!(protocols, vec!["h2".to_string(), "http/1.1".to_string()]);
     }
 
     #[test]
     fn test_parse_npn_response_rejects_invalid_protocol_utf8() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().unwrap()],
-        )
-        .unwrap();
-        let tester = NpnTester::new(target);
-
         let mut response = Vec::new();
         response.extend_from_slice(&[0x16, 0x03, 0x03, 0x00, 0x00]);
         response.extend_from_slice(&[0x02, 0x00, 0x00, 0x00]);
@@ -644,79 +385,39 @@ mod tests {
         response[7] = ((hs_len >> 8) & 0xff) as u8;
         response[8] = (hs_len & 0xff) as u8;
 
-        let err = tester
-            .parse_npn_response(&response)
-            .expect_err("invalid protocol UTF-8 should fail");
+        let err = parse_npn_response(&response).expect_err("invalid protocol UTF-8 should fail");
         assert!(err.to_string().contains("Invalid NPN protocol name UTF-8"));
     }
 
     #[test]
     fn test_parse_npn_response_invalid_data() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().unwrap()],
-        )
-        .unwrap();
-        let tester = NpnTester::new(target);
-
         // Not a valid ServerHello - should return empty
         let response = vec![0x33, 0x74, 0xff, 0xff];
-        let protocols = tester
-            .parse_npn_response(&response)
-            .expect("test assertion should succeed");
+        let protocols = parse_npn_response(&response).expect("test assertion should succeed");
         assert!(protocols.is_empty());
     }
 
     #[test]
     fn test_parse_npn_response_without_extension() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().unwrap()],
-        )
-        .unwrap();
-        let tester = NpnTester::new(target);
-
         // Too short for a ServerHello
         let response = vec![0x01, 0x02, 0x03, 0x04];
-        let protocols = tester
-            .parse_npn_response(&response)
-            .expect("test assertion should succeed");
+        let protocols = parse_npn_response(&response).expect("test assertion should succeed");
         assert!(protocols.is_empty());
     }
 
     #[test]
     fn test_parse_npn_response_truncated() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().unwrap()],
-        )
-        .unwrap();
-        let tester = NpnTester::new(target);
-
         // Truncated data - not a valid ServerHello
         let mut response = vec![0x16, 0x03, 0x03, 0x00, 0x02];
         response.push(0x03);
         response.push(b'h');
 
-        let protocols = tester
-            .parse_npn_response(&response)
-            .expect("test assertion should succeed");
+        let protocols = parse_npn_response(&response).expect("test assertion should succeed");
         assert!(protocols.is_empty());
     }
 
     #[test]
     fn test_parse_npn_response_rejects_truncated_extension_data() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().unwrap()],
-        )
-        .unwrap();
-        let tester = NpnTester::new(target);
-
         let mut response = vec![
             0x16, 0x03, 0x03, 0x00, 0x00, // record header
             0x02, 0x00, 0x00, 0x00, // ServerHello header
@@ -737,9 +438,7 @@ mod tests {
         response[7] = ((hs_len >> 8) & 0xff) as u8;
         response[8] = (hs_len & 0xff) as u8;
 
-        let err = tester
-            .parse_npn_response(&response)
-            .expect_err("truncated NPN extension should fail");
+        let err = parse_npn_response(&response).expect_err("truncated NPN extension should fail");
         assert!(
             err.to_string()
                 .contains("NPN extension data extends beyond declared length")
@@ -748,14 +447,6 @@ mod tests {
 
     #[test]
     fn test_parse_npn_response_rejects_truncated_extension_block() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().unwrap()],
-        )
-        .unwrap();
-        let tester = NpnTester::new(target);
-
         let mut response = Vec::new();
         response.extend_from_slice(&[0x16, 0x03, 0x03, 0x00, 0x00]);
         response.extend_from_slice(&[0x02, 0x00, 0x00, 0x00]);
@@ -784,9 +475,7 @@ mod tests {
         response[7] = ((hs_len >> 8) & 0xff) as u8;
         response[8] = (hs_len & 0xff) as u8;
 
-        let err = tester
-            .parse_npn_response(&response)
-            .expect_err("truncated extension block should fail");
+        let err = parse_npn_response(&response).expect_err("truncated extension block should fail");
         assert!(
             err.to_string()
                 .contains("NPN extension block extends beyond handshake length")
@@ -795,14 +484,6 @@ mod tests {
 
     #[test]
     fn test_parse_npn_response_rejects_extension_block_trailing_bytes() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().unwrap()],
-        )
-        .unwrap();
-        let tester = NpnTester::new(target);
-
         let mut response = Vec::new();
         response.extend_from_slice(&[0x16, 0x03, 0x03, 0x00, 0x00]);
         response.extend_from_slice(&[0x02, 0x00, 0x00, 0x00]);
@@ -820,9 +501,7 @@ mod tests {
         response[7] = ((hs_len >> 8) & 0xff) as u8;
         response[8] = (hs_len & 0xff) as u8;
 
-        let err = tester
-            .parse_npn_response(&response)
-            .expect_err("trailing extension bytes should fail");
+        let err = parse_npn_response(&response).expect_err("trailing extension bytes should fail");
         assert!(
             err.to_string()
                 .contains("NPN extension block contains trailing bytes")
@@ -831,14 +510,6 @@ mod tests {
 
     #[test]
     fn test_parse_npn_response_rejects_truncated_extension_header() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().unwrap()],
-        )
-        .unwrap();
-        let tester = NpnTester::new(target);
-
         let mut response = Vec::new();
         response.extend_from_slice(&[0x16, 0x03, 0x03, 0x00, 0x00]);
         response.extend_from_slice(&[0x02, 0x00, 0x00, 0x00]);
@@ -856,9 +527,8 @@ mod tests {
         response[7] = ((hs_len >> 8) & 0xff) as u8;
         response[8] = (hs_len & 0xff) as u8;
 
-        let err = tester
-            .parse_npn_response(&response)
-            .expect_err("truncated extension header should fail");
+        let err =
+            parse_npn_response(&response).expect_err("truncated extension header should fail");
         assert!(
             err.to_string()
                 .contains("NPN extension block contains truncated header")
@@ -867,14 +537,6 @@ mod tests {
 
     #[test]
     fn test_parse_npn_response_ignores_extension_after_handshake_end() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().unwrap()],
-        )
-        .unwrap();
-        let tester = NpnTester::new(target);
-
         let mut response = Vec::new();
         response.extend_from_slice(&[0x16, 0x03, 0x03, 0x00, 0x00]);
         response.extend_from_slice(&[0x02, 0x00, 0x00, 0x00]);
@@ -893,9 +555,8 @@ mod tests {
         response[3] = (rec_len >> 8) as u8;
         response[4] = (rec_len & 0xff) as u8;
 
-        let protocols = tester
-            .parse_npn_response(&response)
-            .expect("extension beyond ServerHello must be ignored");
+        let protocols =
+            parse_npn_response(&response).expect("extension beyond ServerHello must be ignored");
         assert!(protocols.is_empty());
     }
 
