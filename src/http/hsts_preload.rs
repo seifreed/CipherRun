@@ -446,7 +446,13 @@ const KNOWN_PRELOADED_DOMAINS: &[&str] = &[
 
 /// Check if domain is in the static preloaded list
 pub fn is_in_static_list(domain: &str) -> bool {
+    if domain.contains('@') {
+        return false;
+    }
     let normalized = HstsPreloadChecker::normalize_domain(domain);
+    if validate_hostname(&normalized).is_err() {
+        return false;
+    }
     KNOWN_PRELOADED_DOMAINS.contains(&normalized.as_str())
 }
 
@@ -582,6 +588,8 @@ mod tests {
         assert!(is_in_static_list("google.com"));
         assert!(is_in_static_list("www.google.com"));
         assert!(is_in_static_list("GOOGLE.COM"));
+        assert!(!is_in_static_list("https://user:pass@google.com"));
+        assert!(!is_in_static_list("bad host"));
         assert!(!is_in_static_list("example.com"));
     }
 
