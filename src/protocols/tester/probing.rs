@@ -1,10 +1,11 @@
 use super::{Protocol, ProtocolTestResult, ProtocolTester};
 use crate::Result;
-use crate::constants::{BUFFER_SIZE_MAX_WITH_OVERHEAD, CONTENT_TYPE_ALERT, TLS_RECORD_HEADER_SIZE};
-use crate::protocols::handshake::{ClientHelloBuilder, ServerHelloParser};
+use crate::constants::TLS_RECORD_HEADER_SIZE;
+use crate::protocols::handshake::ClientHelloBuilder;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::timeout;
 
+mod legacy_tls;
 pub(super) mod sslv2;
 
 /// Legacy-protocol cipher suites offered when probing SSLv3/TLS1.0/TLS1.1 by a
@@ -417,7 +418,7 @@ impl ProtocolTester {
                 return Ok::<Option<Vec<u8>>, std::io::Error>(None);
             }
 
-            let Some(total_len) = Self::legacy_probe_tls_record_total_len(&header)? else {
+            let Some(total_len) = legacy_tls::record_total_len(&header)? else {
                 return Ok::<Option<Vec<u8>>, std::io::Error>(None);
             };
 
@@ -436,7 +437,7 @@ impl ProtocolTester {
         .await
         {
             // Server answered: classify the ServerHello/alert by wire bytes.
-            Ok(Ok(Some(resp))) => Ok(classify_legacy_probe_response(&resp, protocol)),
+            Ok(Ok(Some(resp))) => Ok(legacy_tls::classify_response(&resp, protocol)),
             // TCP connected and the ClientHello was sent, but the server closed
             // (clean EOF) or reset the connection without any TLS response.
             // Accepting the connection and then refusing the handshake for a
@@ -449,24 +450,6 @@ impl ProtocolTester {
             // Write failure or read timeout: genuinely ambiguous transport state.
             _ => Ok(ProtocolProbeOutcome::Inconclusive),
         }
-    }
-
-    fn legacy_probe_tls_record_total_len(
-        header: &[u8; TLS_RECORD_HEADER_SIZE],
-    ) -> std::io::Result<Option<usize>> {
-        let record_len = u16::from_be_bytes([header[3], header[4]]) as usize;
-        let total_len = TLS_RECORD_HEADER_SIZE
-            .checked_add(record_len)
-            .ok_or_else(|| {
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "TLS record length overflow",
-                )
-            })?;
-        if total_len > BUFFER_SIZE_MAX_WITH_OVERHEAD {
-            return Ok(None);
-        }
-        Ok(Some(total_len))
     }
 
     pub(super) async fn test_tls12_with_openssl_on_ip(
@@ -678,45 +661,12 @@ fn openssl_hostname_and_sni(
     (hostname, sni_hostname.is_some())
 }
 
-/// Classify a raw legacy-protocol ClientHello response.
-///
-/// `Supported` only when the server returns a ServerHello whose negotiated
-/// version equals the probed version; a TLS alert means the version was rejected
-/// (`NotSupported`); a downgraded ServerHello (e.g. the server picked SSLv3 for
-/// a TLS1.0 probe) is also `NotSupported`; anything else (truncated, non-TLS) is
-/// `Inconclusive` so a transport anomaly is never reported as a clean pass.
-fn classify_legacy_probe_response(response: &[u8], protocol: Protocol) -> ProtocolProbeOutcome {
-    if response.first() == Some(&CONTENT_TYPE_ALERT) {
-        if response.len() < 7 {
-            return ProtocolProbeOutcome::Inconclusive;
-        }
-        let Some(alert_record_len) = response
-            .get(3..5)
-            .and_then(|bytes| bytes.try_into().ok())
-            .map(u16::from_be_bytes)
-            .map(usize::from)
-        else {
-            return ProtocolProbeOutcome::Inconclusive;
-        };
-        if alert_record_len != 2 || response.len() != 5 + alert_record_len {
-            return ProtocolProbeOutcome::Inconclusive;
-        }
-        return ProtocolProbeOutcome::NotSupported;
-    }
-
-    match ServerHelloParser::parse(response) {
-        Ok(server_hello) if server_hello.version == protocol => ProtocolProbeOutcome::Supported,
-        Ok(_) => ProtocolProbeOutcome::NotSupported,
-        Err(_) => ProtocolProbeOutcome::Inconclusive,
-    }
-}
-
 #[cfg(test)]
 mod legacy_probe_tests {
     use super::*;
     use crate::constants::{
-        BUFFER_SIZE_MAX_TLS_RECORD, CONTENT_TYPE_HANDSHAKE, HANDSHAKE_TYPE_SERVER_HELLO,
-        TLS_RECORD_HEADER_SIZE,
+        BUFFER_SIZE_MAX_TLS_RECORD, CONTENT_TYPE_ALERT, CONTENT_TYPE_HANDSHAKE,
+        HANDSHAKE_TYPE_SERVER_HELLO, TLS_RECORD_HEADER_SIZE,
     };
     use crate::utils::mtls::MtlsConfig;
     use crate::utils::network::Target;
@@ -737,8 +687,7 @@ mod legacy_probe_tests {
         ];
 
         assert_eq!(
-            ProtocolTester::legacy_probe_tls_record_total_len(&header)
-                .expect("length should parse"),
+            legacy_tls::record_total_len(&header).expect("length should parse"),
             Some(TLS_RECORD_HEADER_SIZE + BUFFER_SIZE_MAX_TLS_RECORD)
         );
     }
@@ -782,7 +731,7 @@ mod legacy_probe_tests {
     fn test_legacy_serverhello_matching_version_is_supported() {
         let record = server_hello_record(0x0301);
         assert_eq!(
-            classify_legacy_probe_response(&record, Protocol::TLS10),
+            legacy_tls::classify_response(&record, Protocol::TLS10),
             ProtocolProbeOutcome::Supported
         );
     }
@@ -791,7 +740,7 @@ mod legacy_probe_tests {
     fn test_legacy_alert_is_not_supported() {
         let alert = vec![CONTENT_TYPE_ALERT, 0x03, 0x01, 0x00, 0x02, 0x02, 0x46];
         assert_eq!(
-            classify_legacy_probe_response(&alert, Protocol::TLS10),
+            legacy_tls::classify_response(&alert, Protocol::TLS10),
             ProtocolProbeOutcome::NotSupported
         );
     }
@@ -800,7 +749,7 @@ mod legacy_probe_tests {
     fn test_legacy_truncated_alert_is_inconclusive() {
         let alert = vec![CONTENT_TYPE_ALERT, 0x03, 0x01, 0x00, 0x02, 0x02];
         assert_eq!(
-            classify_legacy_probe_response(&alert, Protocol::TLS10),
+            legacy_tls::classify_response(&alert, Protocol::TLS10),
             ProtocolProbeOutcome::Inconclusive
         );
     }
@@ -809,7 +758,7 @@ mod legacy_probe_tests {
     fn test_legacy_malformed_alert_length_is_inconclusive() {
         let alert = vec![CONTENT_TYPE_ALERT, 0x03, 0x01, 0x00, 0x03, 0x02, 0x46];
         assert_eq!(
-            classify_legacy_probe_response(&alert, Protocol::TLS10),
+            legacy_tls::classify_response(&alert, Protocol::TLS10),
             ProtocolProbeOutcome::Inconclusive
         );
     }
@@ -818,7 +767,7 @@ mod legacy_probe_tests {
     fn test_legacy_alert_with_trailing_bytes_is_inconclusive() {
         let alert = vec![CONTENT_TYPE_ALERT, 0x03, 0x01, 0x00, 0x02, 0x02, 0x46, 0x00];
         assert_eq!(
-            classify_legacy_probe_response(&alert, Protocol::TLS10),
+            legacy_tls::classify_response(&alert, Protocol::TLS10),
             ProtocolProbeOutcome::Inconclusive
         );
     }
@@ -827,7 +776,7 @@ mod legacy_probe_tests {
     fn test_legacy_downgraded_serverhello_is_not_supported() {
         let record = server_hello_record(0x0300);
         assert_eq!(
-            classify_legacy_probe_response(&record, Protocol::TLS10),
+            legacy_tls::classify_response(&record, Protocol::TLS10),
             ProtocolProbeOutcome::NotSupported
         );
     }
@@ -835,7 +784,7 @@ mod legacy_probe_tests {
     #[test]
     fn test_legacy_empty_response_is_inconclusive() {
         assert_eq!(
-            classify_legacy_probe_response(&[], Protocol::TLS10),
+            legacy_tls::classify_response(&[], Protocol::TLS10),
             ProtocolProbeOutcome::Inconclusive
         );
     }
