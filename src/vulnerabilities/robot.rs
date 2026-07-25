@@ -17,6 +17,8 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::timeout;
 
+mod alert_signal;
+
 fn read_u16_at(data: &[u8], offset: usize) -> Option<u16> {
     data.get(offset..offset.checked_add(2)?)?
         .try_into()
@@ -183,58 +185,6 @@ fn extract_rsa_key_len(buffer: &[u8]) -> Result<usize> {
     Err(crate::TlsError::ParseError {
         message: "Unable to determine RSA key length from server handshake".to_string(),
     })
-}
-
-/// Extract the description byte from a TLS alert record only if the record is
-/// structurally complete.
-fn alert_description_code(response: &[u8]) -> Option<u8> {
-    if response.len() >= 7 && response.first() == Some(&0x15) {
-        let record_len = usize::from(read_u16_at(response, 3)?);
-        if record_len == 2 && response.len() == 5 + record_len {
-            return response.get(6).copied();
-        }
-    }
-    None
-}
-
-#[derive(Debug, PartialEq, Eq)]
-enum RobotAlertCodeSignal {
-    ConfirmedOracle,
-    Inconclusive,
-    None,
-}
-
-fn robot_alert_code_signal(
-    per_vector: &[Vec<Vec<u8>>],
-    confirmation_rounds: usize,
-) -> RobotAlertCodeSignal {
-    let mut stable_codes: std::collections::HashSet<u8> = std::collections::HashSet::new();
-    let mut missing_confirmation = false;
-    for probes in per_vector {
-        let codes: std::collections::HashSet<u8> = probes
-            .iter()
-            .filter_map(|response| alert_description_code(response))
-            .collect();
-        if codes.is_empty() {
-            continue;
-        }
-        if probes.len() < confirmation_rounds {
-            missing_confirmation = true;
-            continue;
-        }
-        match codes.len() {
-            1 => stable_codes.extend(codes),
-            _ => return RobotAlertCodeSignal::Inconclusive,
-        }
-    }
-
-    if stable_codes.len() > 1 {
-        RobotAlertCodeSignal::ConfirmedOracle
-    } else if missing_confirmation {
-        RobotAlertCodeSignal::Inconclusive
-    } else {
-        RobotAlertCodeSignal::None
-    }
 }
 
 /// ROBOT vulnerability tester
@@ -408,15 +358,15 @@ impl RobotTester {
         // Bleichenbacher oracle. A vector whose alert code VARIES across rounds is
         // backend variance on a load-balanced deployment (e.g. a multi-backend CDN),
         // not an oracle, and must never produce a "vulnerable" verdict.
-        match robot_alert_code_signal(&per_vector, CONFIRMATION_ROUNDS) {
-            RobotAlertCodeSignal::ConfirmedOracle => return Ok(RobotStatus::Vulnerable),
-            RobotAlertCodeSignal::Inconclusive => {
+        match alert_signal::classify(&per_vector, CONFIRMATION_ROUNDS) {
+            alert_signal::CodeSignal::ConfirmedOracle => return Ok(RobotStatus::Vulnerable),
+            alert_signal::CodeSignal::Inconclusive => {
                 // The same malformed input produced different alerts across connections:
                 // multi-backend variance, not a deterministic padding oracle. A lone
                 // alert sample is also unconfirmed, so it cannot prove determinism.
                 return Ok(RobotStatus::Inconclusive);
             }
-            RobotAlertCodeSignal::None => {}
+            alert_signal::CodeSignal::None => {}
         }
 
         // Weak oracle: Two or more distinct response patterns indicate observable differences.
@@ -991,7 +941,7 @@ mod tests {
     #[test]
     fn test_alert_description_code_rejects_trailing_bytes() {
         let response = [0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x46, 0x00];
-        assert_eq!(alert_description_code(&response), None);
+        assert_eq!(alert_signal::alert_description_code(&response), None);
     }
 
     #[test]
@@ -1001,8 +951,8 @@ mod tests {
         let per_vector = vec![vec![alert_46], vec![alert_47]];
 
         assert_eq!(
-            robot_alert_code_signal(&per_vector, 2),
-            RobotAlertCodeSignal::Inconclusive
+            alert_signal::classify(&per_vector, 2),
+            alert_signal::CodeSignal::Inconclusive
         );
     }
 
@@ -1016,8 +966,8 @@ mod tests {
         ];
 
         assert_eq!(
-            robot_alert_code_signal(&per_vector, 2),
-            RobotAlertCodeSignal::ConfirmedOracle
+            alert_signal::classify(&per_vector, 2),
+            alert_signal::CodeSignal::ConfirmedOracle
         );
     }
 
