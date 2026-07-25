@@ -101,6 +101,24 @@ impl LogjamTester {
         self
     }
 
+    fn probe_addrs(&self) -> Result<Vec<std::net::SocketAddr>> {
+        let addrs: Vec<_> = if self.test_all_ips {
+            self.target.socket_addrs()
+        } else {
+            self.target
+                .socket_addrs()
+                .first()
+                .copied()
+                .into_iter()
+                .collect()
+        };
+        if addrs.is_empty() {
+            Err(crate::TlsError::NoSocketAddresses)
+        } else {
+            Ok(addrs)
+        }
+    }
+
     /// Connect, upgrading via STARTTLS first for plaintext-first services.
     async fn starttls_connect(
         &self,
@@ -206,15 +224,26 @@ impl LogjamTester {
     /// Performance optimization: Wraps blocking OpenSSL operations in spawn_blocking
     /// to prevent blocking the async runtime.
     async fn test_weak_dh_params(&self) -> Result<WeakDhStatus> {
+        let mut inconclusive = false;
+        for addr in self.probe_addrs()? {
+            match self.test_weak_dh_params_addr(addr).await? {
+                weak @ WeakDhStatus::Weak { .. } => return Ok(weak),
+                WeakDhStatus::Strong => {}
+                WeakDhStatus::Inconclusive => inconclusive = true,
+            }
+        }
+
+        Ok(if inconclusive {
+            WeakDhStatus::Inconclusive
+        } else {
+            WeakDhStatus::Strong
+        })
+    }
+
+    async fn test_weak_dh_params_addr(&self, addr: std::net::SocketAddr) -> Result<WeakDhStatus> {
         use openssl::pkey::Id;
         use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode, SslVersion};
 
-        let addr = self
-            .target
-            .socket_addrs()
-            .first()
-            .copied()
-            .ok_or(crate::TlsError::NoSocketAddresses)?;
         let stream = match self.starttls_connect(addr, TLS_HANDSHAKE_TIMEOUT).await {
             Ok(s) => s,
             Err(_) => return Ok(WeakDhStatus::Inconclusive),
@@ -327,14 +356,29 @@ impl LogjamTester {
     ///
     /// Performance optimization: Wraps blocking OpenSSL operations in spawn_blocking
     async fn test_cipher(&self, cipher: &str) -> Result<LogjamProbeStatus> {
+        let mut inconclusive = false;
+        for addr in self.probe_addrs()? {
+            match self.test_cipher_addr(addr, cipher).await? {
+                LogjamProbeStatus::Supported => return Ok(LogjamProbeStatus::Supported),
+                LogjamProbeStatus::NotSupported => {}
+                LogjamProbeStatus::Inconclusive => inconclusive = true,
+            }
+        }
+
+        Ok(if inconclusive {
+            LogjamProbeStatus::Inconclusive
+        } else {
+            LogjamProbeStatus::NotSupported
+        })
+    }
+
+    async fn test_cipher_addr(
+        &self,
+        addr: std::net::SocketAddr,
+        cipher: &str,
+    ) -> Result<LogjamProbeStatus> {
         use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode, SslVersion};
 
-        let addr = self
-            .target
-            .socket_addrs()
-            .first()
-            .copied()
-            .ok_or(crate::TlsError::NoSocketAddresses)?;
         let cipher = cipher.to_string();
 
         let handshake_timeout = Duration::from_secs(3);
@@ -415,10 +459,8 @@ fn openssl_hostname_and_sni(
     target_hostname: &str,
     override_hostname: Option<&str>,
 ) -> (String, bool) {
-    let sni_hostname = crate::utils::network::sni_hostname_for_target(
-        target_hostname,
-        override_hostname,
-    );
+    let sni_hostname =
+        crate::utils::network::sni_hostname_for_target(target_hostname, override_hostname);
     let hostname = sni_hostname
         .clone()
         .unwrap_or_else(|| target_hostname.to_string());
@@ -498,10 +540,28 @@ mod tests {
 
     #[test]
     fn test_openssl_hostname_and_sni_uses_override() {
-        let (hostname, use_sni) =
-            openssl_hostname_and_sni("93.184.216.34", Some("example.com"));
+        let (hostname, use_sni) = openssl_hostname_and_sni("93.184.216.34", Some("example.com"));
         assert_eq!(hostname, "example.com");
         assert!(use_sni);
+    }
+
+    #[test]
+    fn test_logjam_probe_addrs_honors_all_ips() {
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            443,
+            vec![IpAddr::from([127, 0, 0, 2]), IpAddr::from([127, 0, 0, 1])],
+        )
+        .unwrap();
+
+        let single = LogjamTester::new(target.clone()).probe_addrs().unwrap();
+        let all = LogjamTester::new(target)
+            .with_test_all_ips(true)
+            .probe_addrs()
+            .unwrap();
+
+        assert_eq!(single.len(), 1);
+        assert_eq!(all.len(), 2);
     }
 
     async fn spawn_dummy_server(max_accepts: usize) -> SocketAddr {
