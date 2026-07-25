@@ -22,6 +22,8 @@ use rustls::ClientConfig;
 use std::sync::Arc;
 use tokio::time::timeout;
 
+mod replay;
+
 /// Information about early data size from server
 #[derive(Debug, Clone)]
 pub struct EarlyDataSizeInfo {
@@ -343,7 +345,12 @@ impl<'a> EarlyDataTester<'a> {
         let addrs: Vec<_> = if self.test_all_ips {
             self.target.socket_addrs()
         } else {
-            self.target.socket_addrs().first().copied().into_iter().collect()
+            self.target
+                .socket_addrs()
+                .first()
+                .copied()
+                .into_iter()
+                .collect()
         };
         if addrs.is_empty() {
             return Ok(EarlyDataSupportStatus::Inconclusive);
@@ -380,7 +387,11 @@ impl<'a> EarlyDataTester<'a> {
         // Warm-up: a full handshake plus a request/response exchange so the
         // server issues a NewSessionTicket, which rustls stores in the shared
         // resumption store. If this fails we cannot test 0-RTT — inconclusive.
-        if self.warm_up_session(addr, config, domain.clone()).await.is_err() {
+        if self
+            .warm_up_session(addr, config, domain.clone())
+            .await
+            .is_err()
+        {
             return EarlyDataSupportStatus::Inconclusive;
         }
 
@@ -538,7 +549,12 @@ impl<'a> EarlyDataTester<'a> {
         let addrs: Vec<_> = if self.test_all_ips {
             self.target.socket_addrs()
         } else {
-            self.target.socket_addrs().first().copied().into_iter().collect()
+            self.target
+                .socket_addrs()
+                .first()
+                .copied()
+                .into_iter()
+                .collect()
         };
         if addrs.is_empty() {
             return Ok(ReplayTestResult {
@@ -568,52 +584,17 @@ impl<'a> EarlyDataTester<'a> {
                 .await;
 
             match (first, second) {
-                (EarlyDataSupportStatus::Supported, EarlyDataSupportStatus::Supported) => {
-                    return Ok(ReplayTestResult {
-                        tested: true,
-                        vulnerable: true,
-                        inconclusive: false,
-                        details: "Server accepted the same 0-RTT request on two resumed connections"
-                            .to_string(),
-                    });
-                }
-                (EarlyDataSupportStatus::Supported, EarlyDataSupportStatus::NotSupported) => {
-                    return Ok(ReplayTestResult {
-                        tested: true,
-                        vulnerable: false,
-                        inconclusive: false,
-                        details: "Server accepted initial 0-RTT data but rejected replayed early data"
-                            .to_string(),
-                    });
-                }
-                (EarlyDataSupportStatus::NotSupported, _) => {
-                    return Ok(ReplayTestResult {
-                        tested: true,
-                        vulnerable: false,
-                        inconclusive: false,
-                        details:
-                            "Server did not accept resumed 0-RTT data during replay probe"
-                                .to_string(),
-                    });
+                (EarlyDataSupportStatus::Supported, EarlyDataSupportStatus::Supported)
+                | (EarlyDataSupportStatus::Supported, EarlyDataSupportStatus::NotSupported)
+                | (EarlyDataSupportStatus::NotSupported, _) => {
+                    return Ok(replay::classify_pair(first, second));
                 }
                 _ => saw_inconclusive = true,
             }
         }
 
         if saw_inconclusive {
-            Ok(ReplayTestResult {
-                tested: false,
-                vulnerable: false,
-                inconclusive: true,
-                details: format!(
-                    "Early Data replay test inconclusive (max: {} bytes, estimated: {})",
-                    early_data_info
-                        .max_early_data_size
-                        .map(|s| s.to_string())
-                        .unwrap_or_else(|| "unknown".to_string()),
-                    early_data_info.is_estimated
-                ),
-            })
+            Ok(replay::inconclusive_with_size(&early_data_info))
         } else {
             Ok(ReplayTestResult {
                 tested: false,
@@ -629,7 +610,12 @@ impl<'a> EarlyDataTester<'a> {
         let addrs: Vec<_> = if self.test_all_ips {
             self.target.socket_addrs()
         } else {
-            self.target.socket_addrs().first().copied().into_iter().collect()
+            self.target
+                .socket_addrs()
+                .first()
+                .copied()
+                .into_iter()
+                .collect()
         };
         if addrs.is_empty() {
             return Err(crate::TlsError::NoSocketAddresses);
