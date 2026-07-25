@@ -31,22 +31,9 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::timeout;
 
-const SSLV2_MAX_RECORD_WITH_HEADER: usize = 32767 + 2;
+mod sslv2;
 
-fn sslv2_record_shape(data: &[u8]) -> Option<(usize, usize, usize)> {
-    let first = *data.first()?;
-    let second = *data.get(1)?;
-    if matches!(first, 0x14..=0x18) && second == 0x03 {
-        return None;
-    }
-    if (first & 0x80) != 0 {
-        let record_len = ((first & 0x7f) as usize) << 8 | second as usize;
-        Some((2, record_len, 2 + record_len))
-    } else {
-        let record_len = ((first & 0x3f) as usize) << 8 | second as usize;
-        Some((3, record_len, 3 + record_len))
-    }
-}
+const SSLV2_MAX_RECORD_WITH_HEADER: usize = 32767 + 2;
 
 /// SSLv2 detection status with granular confidence levels
 ///
@@ -265,7 +252,7 @@ impl DrownTester {
         };
 
         // Send SSLv2 ClientHello
-        let client_hello = self.build_sslv2_client_hello();
+        let client_hello = sslv2::client_hello();
         stream.write_all(&client_hello).await?;
 
         // Read the full SSLv2 response record so fragmented headers do not get
@@ -281,7 +268,7 @@ impl DrownTester {
                 let response = buffer.get(..n).ok_or_else(|| crate::TlsError::ParseError {
                     message: "DROWN SSLv2 response read length exceeded buffer".to_string(),
                 })?;
-                Self::analyze_sslv2_response(response)
+                sslv2::analyze_response(response)
             }
             Ok(Ok(_)) => {
                 // Zero bytes - connection closed
@@ -290,93 +277,6 @@ impl DrownTester {
             Ok(Err(_)) | Err(_) => {
                 // Read error or timeout
                 Ok(Sslv2Status::Inconclusive)
-            }
-        }
-    }
-
-    /// Analyze SSLv2 response and return detection status
-    fn analyze_sslv2_response(data: &[u8]) -> Result<Sslv2Status> {
-        if data.len() < 2 {
-            return Ok(Sslv2Status::Inconclusive);
-        }
-
-        let Some((header_len, record_len, record_total)) = sslv2_record_shape(data) else {
-            return Ok(Sslv2Status::NotSupported);
-        };
-        let is_reasonable_length = record_len > 0 && record_len <= 32767;
-        let has_enough_data = data.len() > header_len && data.len() >= record_total;
-
-        if !is_reasonable_length || !has_enough_data {
-            // SSLv2 header present but insufficient data
-            tracing::debug!(
-                "DROWN: SSLv2 header detected but response truncated (len={}, expected={})",
-                data.len(),
-                record_total
-            );
-            return Ok(Sslv2Status::Suspicious);
-        }
-
-        let Some(&msg_type) = data.get(header_len) else {
-            return Ok(Sslv2Status::Suspicious);
-        };
-
-        // SSLv2 message types
-        match msg_type {
-            0x04 => {
-                // ServerHello - definitive SSLv2 support
-                tracing::debug!("DROWN: SSLv2 ServerHello (0x04) confirmed");
-                Ok(Sslv2Status::Confirmed)
-            }
-            0x00 => {
-                // SSLv2 Error message (0x00) - server speaks SSLv2 but rejected our ClientHello
-                //
-                // IMPORTANT: This is marked as "Probable" rather than "Confirmed" because:
-                // 1. The server DOES speak SSLv2 (it responded with a valid SSLv2 Error message)
-                // 2. However, DROWN requires a server that accepts SSLv2 connections, not just speaks it
-                // 3. An Error response means our specific cipher/clienthello was rejected
-                // 4. The server might still be exploitable via a different cipher combination
-                //
-                // Security implication: Any SSLv2-speaking server should be considered a potential
-                // DROWN vector. Manual verification with different cipher combinations is recommended.
-                tracing::warn!(
-                    "DROWN: SSLv2 Error (0x00) received - server speaks SSLv2 but rejected handshake, \
-                     manual review recommended. Server may still be DROWN-vulnerable with different ciphers."
-                );
-                Ok(Sslv2Status::Probable)
-            }
-            0x02 | 0x03 => {
-                // ClientMasterKey (0x02) and ClientFinished (0x03) are client→server messages.
-                // Receiving them from a server indicates protocol confusion, not SSLv2 support.
-                // Use Suspicious (is_vulnerable() == false) to avoid false positives.
-                tracing::warn!(
-                    "DROWN: Client-only SSLv2 message type 0x{:02x} received from server — protocol confusion, not SSLv2 support",
-                    msg_type
-                );
-                Ok(Sslv2Status::Suspicious)
-            }
-            0x05..=0x07 => {
-                // ServerVerify (0x05), ServerFinished (0x06), RequestCertificate (0x07)
-                tracing::debug!(
-                    "DROWN: SSLv2 message type 0x{:02x} detected - SSLv2 probable",
-                    msg_type
-                );
-                Ok(Sslv2Status::Probable)
-            }
-            0x08 => {
-                // ClientCertificate (0x08) is a client→server message — receiving it from a server
-                // indicates protocol confusion, not SSLv2 support.
-                tracing::warn!(
-                    "DROWN: Client-only SSLv2 message 0x08 (ClientCertificate) received from server — protocol confusion"
-                );
-                Ok(Sslv2Status::Suspicious)
-            }
-            _ => {
-                // Unknown message type but valid SSLv2 structure
-                tracing::debug!(
-                    "DROWN: Suspicious SSLv2-like response with unknown message type 0x{:02x}",
-                    msg_type
-                );
-                Ok(Sslv2Status::Suspicious)
             }
         }
     }
@@ -404,7 +304,7 @@ impl DrownTester {
         };
 
         // Send SSLv2 ClientHello with export ciphers only
-        let client_hello = self.build_sslv2_client_hello_export();
+        let client_hello = sslv2::export_client_hello();
         stream.write_all(&client_hello).await?;
 
         // Read the full SSLv2 response record so fragmented headers do not get
@@ -420,145 +320,10 @@ impl DrownTester {
                 let response = buffer.get(..n).ok_or_else(|| crate::TlsError::ParseError {
                     message: "DROWN export response read length exceeded buffer".to_string(),
                 })?;
-                Self::analyze_sslv2_response(response)
+                sslv2::analyze_response(response)
             }
             _ => Ok(Sslv2Status::Inconclusive),
         }
-    }
-
-    /// Build SSLv2 ClientHello
-    fn build_sslv2_client_hello(&self) -> Vec<u8> {
-        // SSLv2 ClientHello structure:
-        // - Message type: 1 byte (CLIENT-HELLO = 0x01)
-        // - Version: 2 bytes (SSL 2.0 = 0x0002)
-        // - Cipher specs length: 2 bytes
-        // - Session ID length: 2 bytes (0 for ClientHello)
-        // - Challenge length: 2 bytes (16 bytes typical)
-        // - Cipher specs: variable (5 ciphers * 3 bytes = 15 bytes)
-        // - Challenge: 16 bytes
-
-        let cipher_specs_len: u16 = 15; // 5 ciphers * 3 bytes each
-        let session_id_len: u16 = 0;
-        let challenge_len: u16 = 16;
-
-        // Calculate body length (everything after the 2-byte header)
-        // body_len = 1 (msg_type) + 2 (version) + 2 (cipher_len) + 2 (session_id_len) + 2 (challenge_len) + cipher_specs + 16 (challenge)
-        let body_len: u16 = 1 + 2 + 2 + 2 + 2 + cipher_specs_len + challenge_len; // = 40 bytes
-
-        let mut hello = Vec::new();
-
-        // SSLv2 record header (2-byte format with high bit set)
-        // Length is in the lower 7 bits of first byte and all of second byte
-        let body_len_bytes = body_len.to_be_bytes();
-        let header_byte1 = 0x80 | (body_len_bytes[0] & 0x7f);
-        let header_byte2 = body_len_bytes[1];
-        hello.push(header_byte1); // 0x80 (since body_len = 40 < 128)
-        hello.push(header_byte2); // 0x28 (40 in hex)
-
-        // Message type: CLIENT-HELLO
-        hello.push(0x01);
-
-        // Version: SSL 2.0
-        hello.push(0x00);
-        hello.push(0x02);
-
-        // Cipher specs length
-        hello.extend_from_slice(&cipher_specs_len.to_be_bytes());
-
-        // Session ID length (always 0 for ClientHello)
-        hello.extend_from_slice(&session_id_len.to_be_bytes());
-
-        // Challenge length
-        hello.extend_from_slice(&challenge_len.to_be_bytes());
-
-        // Cipher specs (3-byte cipher codes)
-        // SSL_CK_DES_192_EDE3_CBC_WITH_MD5 (0x0700C0)
-        hello.push(0x07);
-        hello.push(0x00);
-        hello.push(0xC0);
-
-        // SSL_CK_RC4_128_WITH_MD5 (0x010080)
-        hello.push(0x01);
-        hello.push(0x00);
-        hello.push(0x80);
-
-        // SSL_CK_RC2_128_CBC_WITH_MD5
-        hello.push(0x03);
-        hello.push(0x00);
-        hello.push(0x80);
-
-        // SSL_CK_DES_64_CBC_WITH_MD5
-        hello.push(0x06);
-        hello.push(0x00);
-        hello.push(0x40);
-
-        // SSL_CK_RC2_128_CBC_EXPORT40_WITH_MD5 (0x040080)
-        hello.push(0x04);
-        hello.push(0x00);
-        hello.push(0x80);
-
-        // Challenge (16 bytes)
-        for i in 0_u8..16 {
-            hello.push(i * 13);
-        }
-
-        hello
-    }
-
-    /// Build SSLv2 ClientHello with export ciphers only
-    fn build_sslv2_client_hello_export(&self) -> Vec<u8> {
-        // SSLv2 ClientHello with export ciphers only
-        // 2 export ciphers * 3 bytes each = 6 bytes
-
-        let cipher_specs_len: u16 = 6; // 2 ciphers * 3 bytes each
-        let session_id_len: u16 = 0;
-        let challenge_len: u16 = 16;
-
-        // Calculate body length
-        let body_len: u16 = 1 + 2 + 2 + 2 + 2 + cipher_specs_len + challenge_len; // = 31 bytes
-
-        let mut hello = Vec::new();
-
-        // SSLv2 record header (2-byte format with high bit set)
-        let body_len_bytes = body_len.to_be_bytes();
-        let header_byte1 = 0x80 | (body_len_bytes[0] & 0x7f);
-        let header_byte2 = body_len_bytes[1];
-        hello.push(header_byte1); // 0x80 (since body_len = 31 < 128)
-        hello.push(header_byte2); // 0x1f (31 in hex)
-
-        // Message type: CLIENT-HELLO
-        hello.push(0x01);
-
-        // Version: SSL 2.0
-        hello.push(0x00);
-        hello.push(0x02);
-
-        // Cipher specs length
-        hello.extend_from_slice(&cipher_specs_len.to_be_bytes());
-
-        // Session ID length (always 0 for ClientHello)
-        hello.extend_from_slice(&session_id_len.to_be_bytes());
-
-        // Challenge length
-        hello.extend_from_slice(&challenge_len.to_be_bytes());
-
-        // Export cipher specs
-        // SSL_CK_RC4_128_EXPORT40_WITH_MD5 (0x020080)
-        hello.push(0x02);
-        hello.push(0x00);
-        hello.push(0x80);
-
-        // SSL_CK_RC2_128_CBC_EXPORT40_WITH_MD5 (0x040080)
-        hello.push(0x04);
-        hello.push(0x00);
-        hello.push(0x80);
-
-        // Challenge (16 bytes)
-        for i in 0_u8..16 {
-            hello.push(i * 17);
-        }
-
-        hello
     }
 
     async fn read_complete_sslv2_record(
@@ -576,7 +341,7 @@ impl DrownTester {
                     total += n;
                     if total >= 2 {
                         let Some((header_len, _record_len, record_total)) =
-                            sslv2_record_shape(buffer.get(..total).unwrap_or(&[]))
+                            sslv2::record_shape(buffer.get(..total).unwrap_or(&[]))
                         else {
                             continue;
                         };
@@ -734,7 +499,7 @@ mod tests {
         // Record length 0x40 = 64 bytes, so total = 66 bytes (header + body)
         let mut response = vec![0x80, 0x40, 0x04]; // header (length=64) + msg type
         response.extend(vec![0u8; 63]); // padding to match length
-        let result = DrownTester::analyze_sslv2_response(&response);
+        let result = sslv2::analyze_response(&response);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), Sslv2Status::Confirmed);
     }
@@ -742,7 +507,7 @@ mod tests {
     #[test]
     fn test_analyze_sslv2_response_confirmed_with_three_byte_header() {
         let response = [0x00, 0x04, 0x00, 0x04, 0x00, 0x00, 0x00];
-        let result = DrownTester::analyze_sslv2_response(&response);
+        let result = sslv2::analyze_response(&response);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), Sslv2Status::Confirmed);
     }
@@ -752,7 +517,7 @@ mod tests {
         // SSLv2 Error message (message type 0x00)
         let mut response = vec![0x80, 0x40, 0x00]; // header + msg type
         response.extend(vec![0u8; 63]); // padding to match length
-        let result = DrownTester::analyze_sslv2_response(&response);
+        let result = sslv2::analyze_response(&response);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), Sslv2Status::Probable);
     }
@@ -762,7 +527,7 @@ mod tests {
         // SSLv2 ServerVerify (message type 0x05)
         let mut response = vec![0x80, 0x40, 0x05];
         response.extend(vec![0u8; 63]);
-        let result = DrownTester::analyze_sslv2_response(&response);
+        let result = sslv2::analyze_response(&response);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), Sslv2Status::Probable);
     }
@@ -772,7 +537,7 @@ mod tests {
         // Unknown SSLv2 message type with valid length
         let mut response = vec![0x80, 0x40, 0xFF];
         response.extend(vec![0u8; 63]);
-        let result = DrownTester::analyze_sslv2_response(&response);
+        let result = sslv2::analyze_response(&response);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), Sslv2Status::Suspicious);
     }
@@ -781,7 +546,7 @@ mod tests {
     fn test_analyze_sslv2_response_not_sslv2() {
         // TLS record (not SSLv2)
         let response = vec![0x16, 0x03, 0x01]; // TLS handshake
-        let result = DrownTester::analyze_sslv2_response(&response);
+        let result = sslv2::analyze_response(&response);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), Sslv2Status::NotSupported);
     }
@@ -790,7 +555,7 @@ mod tests {
     fn test_analyze_sslv2_response_truncated() {
         // SSLv2 header but insufficient data
         let response = vec![0x80]; // Only 1 byte
-        let result = DrownTester::analyze_sslv2_response(&response);
+        let result = sslv2::analyze_response(&response);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), Sslv2Status::Inconclusive);
     }
@@ -957,15 +722,7 @@ mod tests {
 
     #[test]
     fn test_sslv2_client_hello() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().unwrap()],
-        )
-        .unwrap();
-
-        let tester = DrownTester::new(target);
-        let hello = tester.build_sslv2_client_hello();
+        let hello = sslv2::client_hello();
 
         assert!(hello.len() > 40);
         assert_eq!(byte_at(&hello, 0), Some(0x80)); // SSLv2 record
@@ -976,15 +733,7 @@ mod tests {
 
     #[test]
     fn test_sslv2_export_client_hello() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().unwrap()],
-        )
-        .unwrap();
-
-        let tester = DrownTester::new(target);
-        let hello = tester.build_sslv2_client_hello_export();
+        let hello = sslv2::export_client_hello();
 
         assert!(hello.len() > 30);
         assert_eq!(byte_at(&hello, 0), Some(0x80));
@@ -996,15 +745,7 @@ mod tests {
 
     #[test]
     fn test_sslv2_export_client_hello_cipher_length_matches_payload() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().unwrap()],
-        )
-        .unwrap();
-
-        let tester = DrownTester::new(target);
-        let hello = tester.build_sslv2_client_hello_export();
+        let hello = sslv2::export_client_hello();
         let cipher_specs_len =
             ((byte_at(&hello, 5).unwrap() as usize) << 8) | byte_at(&hello, 6).unwrap() as usize;
 
@@ -1015,30 +756,14 @@ mod tests {
 
     #[test]
     fn test_sslv2_client_hello_length_matches_header() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().unwrap()],
-        )
-        .unwrap();
-
-        let tester = DrownTester::new(target);
-        let hello = tester.build_sslv2_client_hello();
+        let hello = sslv2::client_hello();
         let len = sslv2_header_len(&hello);
         assert_eq!(hello.len(), len + 2);
     }
 
     #[test]
     fn test_sslv2_export_hello_length_matches_header() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().unwrap()],
-        )
-        .unwrap();
-
-        let tester = DrownTester::new(target);
-        let hello = tester.build_sslv2_client_hello_export();
+        let hello = sslv2::export_client_hello();
         let len = sslv2_header_len(&hello);
         assert_eq!(hello.len(), len + 2);
     }
