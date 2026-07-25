@@ -37,6 +37,43 @@ fn test_grease_tester_creation() {
 }
 
 #[test]
+fn test_grease_probe_addrs_honors_all_ips() {
+    let target = Target::with_ips(
+        "example.com".to_string(),
+        443,
+        vec![IpAddr::from([192, 0, 2, 1]), IpAddr::from([192, 0, 2, 2])],
+    )
+    .unwrap();
+
+    let first = GreaseTester::new(target.clone()).probe_addrs().unwrap();
+    assert_eq!(first.len(), 1);
+
+    let all = GreaseTester::new(target)
+        .with_test_all_ips(true)
+        .probe_addrs()
+        .unwrap();
+    assert_eq!(all.len(), 2);
+}
+
+#[test]
+fn test_grease_merge_preserves_bad_or_unclear_address() {
+    assert_eq!(
+        GreaseTester::merge_grease_outcome(
+            GreaseTestOutcome::Tolerated,
+            GreaseTestOutcome::Inconclusive("timeout".to_string()),
+        ),
+        GreaseTestOutcome::Inconclusive("timeout".to_string())
+    );
+    assert_eq!(
+        GreaseTester::merge_grease_outcome(
+            GreaseTestOutcome::Inconclusive("timeout".to_string()),
+            GreaseTestOutcome::Rejected,
+        ),
+        GreaseTestOutcome::Rejected
+    );
+}
+
+#[test]
 fn test_generate_recommendations_variants() {
     let target = Target::with_ips(
         "example.com".to_string(),

@@ -705,7 +705,9 @@ impl VulnerabilityScanner {
     pub async fn test_grease(&self) -> Result<VulnerabilityResult> {
         use crate::vulnerabilities::grease::GreaseTester;
 
-        let tester = GreaseTester::new(self.target.clone()).with_sni(self.sni_hostname.clone());
+        let tester = GreaseTester::new(self.target.clone())
+            .with_sni(self.sni_hostname.clone())
+            .with_test_all_ips(self.test_all_ips);
         let result = tester.test().await?;
 
         let details = if result.details.is_empty() && result.issues.is_empty() {

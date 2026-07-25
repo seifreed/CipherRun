@@ -39,7 +39,7 @@ pub struct GreaseResult {
 }
 
 /// GREASE test outcome
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GreaseTestOutcome {
     Tolerated,
     Rejected,
@@ -58,6 +58,7 @@ pub enum GreaseTestOutcome {
 pub struct GreaseTester {
     target: Target,
     sni_hostname: Option<String>,
+    test_all_ips: bool,
 }
 
 impl GreaseTester {
@@ -65,12 +66,48 @@ impl GreaseTester {
         Self {
             target,
             sni_hostname: None,
+            test_all_ips: false,
         }
     }
 
     pub fn with_sni(mut self, sni: Option<String>) -> Self {
         self.sni_hostname = sni;
         self
+    }
+
+    pub fn with_test_all_ips(mut self, test_all_ips: bool) -> Self {
+        self.test_all_ips = test_all_ips;
+        self
+    }
+
+    pub(super) fn probe_addrs(&self) -> Result<Vec<std::net::SocketAddr>> {
+        let addrs = self.target.socket_addrs();
+        if self.test_all_ips {
+            if addrs.is_empty() {
+                Err(crate::TlsError::NoSocketAddresses)
+            } else {
+                Ok(addrs)
+            }
+        } else {
+            addrs
+                .first()
+                .copied()
+                .map(|addr| vec![addr])
+                .ok_or(crate::TlsError::NoSocketAddresses)
+        }
+    }
+
+    pub(super) fn merge_grease_outcome(
+        best: GreaseTestOutcome,
+        next: GreaseTestOutcome,
+    ) -> GreaseTestOutcome {
+        match (&best, next) {
+            (GreaseTestOutcome::Rejected, _) => best,
+            (_, GreaseTestOutcome::Rejected) => GreaseTestOutcome::Rejected,
+            (GreaseTestOutcome::Inconclusive(_), _) => best,
+            (_, inconclusive @ GreaseTestOutcome::Inconclusive(_)) => inconclusive,
+            _ => GreaseTestOutcome::Tolerated,
+        }
     }
 
     /// Test server GREASE tolerance using raw TLS ClientHello injection
@@ -234,13 +271,23 @@ impl GreaseTester {
 
     /// Test baseline TLS connection (no GREASE)
     async fn test_baseline_connection(&self) -> Result<bool> {
-        let addr = self
-            .target
-            .socket_addrs()
-            .first()
-            .copied()
-            .ok_or(crate::TlsError::NoSocketAddresses)?;
+        let mut last_error = None;
+        for addr in self.probe_addrs()? {
+            match self.test_baseline_connection_addr(addr).await {
+                Ok(true) => return Ok(true),
+                Ok(false) => {}
+                Err(e) => last_error = Some(e.to_string()),
+            }
+        }
+        Err(crate::TlsError::Other(format!(
+            "GREASE baseline failed for all addresses{}",
+            last_error
+                .map(|e| format!("; last error: {e}"))
+                .unwrap_or_default()
+        )))
+    }
 
+    async fn test_baseline_connection_addr(&self, addr: std::net::SocketAddr) -> Result<bool> {
         let stream =
             crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None).await?;
 

@@ -12,14 +12,33 @@ use tokio::time::{Duration, timeout};
 impl GreaseTester {
     /// Send raw TLS ClientHello and check server response
     pub(super) async fn send_client_hello(&self, client_hello: &[u8]) -> Result<GreaseTestOutcome> {
-        use crate::error::TlsError;
+        let mut best = GreaseTestOutcome::Tolerated;
+        let mut last_error = None;
+        for addr in self.probe_addrs()? {
+            match self.send_client_hello_addr(addr, client_hello).await {
+                Ok(outcome) => {
+                    best = Self::merge_grease_outcome(best, outcome);
+                    if best == GreaseTestOutcome::Rejected {
+                        return Ok(best);
+                    }
+                }
+                Err(e) => last_error = Some(e.to_string()),
+            }
+        }
+        if let Some(error) = last_error {
+            return Err(crate::TlsError::Other(format!(
+                "GREASE ClientHello failed for at least one address: {error}"
+            )));
+        }
+        Ok(best)
+    }
 
-        let addr = self
-            .target
-            .socket_addrs()
-            .first()
-            .copied()
-            .ok_or(crate::TlsError::NoSocketAddresses)?;
+    async fn send_client_hello_addr(
+        &self,
+        addr: std::net::SocketAddr,
+        client_hello: &[u8],
+    ) -> Result<GreaseTestOutcome> {
+        use crate::error::TlsError;
 
         let mut stream =
             crate::utils::network::connect_with_timeout(addr, Duration::from_secs(10), None)
