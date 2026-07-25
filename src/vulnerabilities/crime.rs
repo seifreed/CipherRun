@@ -6,8 +6,7 @@
 
 use crate::Result;
 use crate::constants::{
-    BUFFER_SIZE_MAX_WITH_OVERHEAD, CONTENT_TYPE_HANDSHAKE, TLS_HANDSHAKE_TIMEOUT,
-    TLS_RECORD_HEADER_SIZE,
+    BUFFER_SIZE_MAX_WITH_OVERHEAD, TLS_HANDSHAKE_TIMEOUT, TLS_RECORD_HEADER_SIZE,
 };
 use crate::protocols::Protocol;
 use crate::protocols::handshake::ClientHelloBuilder;
@@ -15,6 +14,8 @@ use crate::utils::network::Target;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::timeout;
+
+mod server_hello;
 
 /// CRIME vulnerability tester
 pub struct CrimeTester<'a> {
@@ -30,22 +31,6 @@ enum CompressionProbeStatus {
     Enabled,
     Disabled,
     Inconclusive,
-}
-
-fn read_u16_at(data: &[u8], offset: usize) -> Option<u16> {
-    data.get(offset..offset.checked_add(2)?)?
-        .try_into()
-        .ok()
-        .map(u16::from_be_bytes)
-}
-
-fn read_u24_at(data: &[u8], offset: usize) -> Option<usize> {
-    let bytes = data.get(offset..offset.checked_add(3)?)?;
-    Some(((bytes[0] as usize) << 16) | ((bytes[1] as usize) << 8) | bytes[2] as usize)
-}
-
-fn slice_range(data: &[u8], start: usize, len: usize) -> Option<&[u8]> {
-    data.get(start..start.checked_add(len)?)
 }
 
 #[cfg(test)]
@@ -241,52 +226,7 @@ impl<'a> CrimeTester<'a> {
                 let Some(response) = buffer.get(..n) else {
                     return Ok(CompressionProbeStatus::Inconclusive);
                 };
-                // Validate the TLS record length so we only parse within the first record
-                let Some(record_len) = read_u16_at(response, 3).map(usize::from) else {
-                    return Ok(CompressionProbeStatus::Inconclusive);
-                };
-                if record_len + 5 > n {
-                    // Truncated ServerHello split across reads; the probe cannot decide.
-                    return Ok(CompressionProbeStatus::Inconclusive);
-                }
-                if response.first() == Some(&CONTENT_TYPE_HANDSHAKE)
-                    && response.get(5) == Some(&0x02)
-                {
-                    if n <= 43 {
-                        return Ok(CompressionProbeStatus::Inconclusive);
-                    }
-                    let Some(session_id_len) = response.get(43).copied().map(usize::from) else {
-                        return Ok(CompressionProbeStatus::Inconclusive);
-                    };
-                    if session_id_len > 32 {
-                        // Malformed ServerHello — cannot determine compression status
-                        return Ok(CompressionProbeStatus::Inconclusive);
-                    }
-                    let Some(cipher_offset) = 44usize.checked_add(session_id_len) else {
-                        return Ok(CompressionProbeStatus::Inconclusive);
-                    };
-                    // Ensure cipher_offset is within the first TLS record body (5+record_len)
-                    let Some(compression_offset) = cipher_offset.checked_add(2) else {
-                        return Ok(CompressionProbeStatus::Inconclusive);
-                    };
-                    let Some(record_end) = 5usize.checked_add(record_len) else {
-                        return Ok(CompressionProbeStatus::Inconclusive);
-                    };
-                    if compression_offset < record_end && n > compression_offset {
-                        let Some(compression_method) = response.get(compression_offset).copied()
-                        else {
-                            return Ok(CompressionProbeStatus::Inconclusive);
-                        };
-                        tracing::debug!("Server compression method: {}", compression_method);
-                        return Ok(if compression_method == 0x01 {
-                            CompressionProbeStatus::Enabled
-                        } else {
-                            CompressionProbeStatus::Disabled
-                        });
-                    }
-                    return Ok(CompressionProbeStatus::Inconclusive);
-                }
-                Ok(CompressionProbeStatus::Disabled)
+                Ok(server_hello::tls_compression_status(response))
             }
             _ => Ok(CompressionProbeStatus::Inconclusive),
         }
@@ -341,143 +281,10 @@ impl<'a> CrimeTester<'a> {
         .await
         {
             Ok(Ok(n)) if n > 43 => {
-                // Parse ServerHello structurally to find NPN extension
                 let Some(data) = buffer.get(..n) else {
                     return Ok(CompressionProbeStatus::Inconclusive);
                 };
-
-                // Verify it's a handshake ServerHello
-                if data.len() < 6 || data.first() != Some(&0x16) || data.get(5) != Some(&0x02) {
-                    return Ok(CompressionProbeStatus::Disabled);
-                }
-
-                // Parse to extensions: skip record header (5) + handshake header (4)
-                // + version (2) + random (32) + session_id
-                let sid_offset = 43;
-                if sid_offset >= n {
-                    return Ok(CompressionProbeStatus::Inconclusive);
-                }
-                let Some(sid_len) = data.get(sid_offset).copied().map(usize::from) else {
-                    return Ok(CompressionProbeStatus::Inconclusive);
-                };
-                // cipher suite (2) + compression (1) + extensions_length (2)
-                let Some(ext_len_offset) = sid_offset
-                    .checked_add(1)
-                    .and_then(|offset| offset.checked_add(sid_len))
-                    .and_then(|offset| offset.checked_add(2 + 1))
-                else {
-                    return Ok(CompressionProbeStatus::Inconclusive);
-                };
-                let Some(ext_start) = ext_len_offset.checked_add(2) else {
-                    return Ok(CompressionProbeStatus::Inconclusive);
-                };
-                if ext_start > n {
-                    return Ok(CompressionProbeStatus::Inconclusive);
-                }
-
-                // Validate TLS record length before parsing extensions
-                let Some(record_len) = read_u16_at(data, 3).map(usize::from) else {
-                    return Ok(CompressionProbeStatus::Inconclusive);
-                };
-                let Some(record_end) = 5usize.checked_add(record_len) else {
-                    return Ok(CompressionProbeStatus::Inconclusive);
-                };
-                if record_end > n {
-                    return Ok(CompressionProbeStatus::Inconclusive);
-                }
-                let Some(hs_len) = read_u24_at(data, 6) else {
-                    return Ok(CompressionProbeStatus::Inconclusive);
-                };
-                let Some(hs_end) = 9usize.checked_add(hs_len) else {
-                    return Ok(CompressionProbeStatus::Inconclusive);
-                };
-                if hs_end > record_end {
-                    return Ok(CompressionProbeStatus::Inconclusive);
-                }
-                if ext_len_offset == hs_end {
-                    return Ok(CompressionProbeStatus::Disabled);
-                }
-                if ext_start > hs_end {
-                    return Ok(CompressionProbeStatus::Inconclusive);
-                }
-
-                let Some(ext_total) = read_u16_at(data, ext_len_offset).map(usize::from) else {
-                    return Ok(CompressionProbeStatus::Inconclusive);
-                };
-                let Some(ext_end) = ext_start.checked_add(ext_total) else {
-                    return Ok(CompressionProbeStatus::Inconclusive);
-                };
-                if ext_end > hs_end {
-                    return Ok(CompressionProbeStatus::Inconclusive);
-                }
-                if ext_end != hs_end {
-                    return Ok(CompressionProbeStatus::Inconclusive);
-                }
-
-                // Walk extensions structurally looking for NPN (0x3374)
-                let mut pos = ext_start;
-                let mut spdy_detected = false;
-                while let Some(ext_header_end) = pos.checked_add(4).filter(|&end| end <= ext_end) {
-                    let Some(ext_type) = read_u16_at(data, pos) else {
-                        return Ok(CompressionProbeStatus::Inconclusive);
-                    };
-                    let Some(ext_len_offset) = pos.checked_add(2) else {
-                        return Ok(CompressionProbeStatus::Inconclusive);
-                    };
-                    let Some(ext_len) = read_u16_at(data, ext_len_offset).map(usize::from) else {
-                        return Ok(CompressionProbeStatus::Inconclusive);
-                    };
-                    pos = ext_header_end;
-                    let Some(next_pos) = pos.checked_add(ext_len) else {
-                        return Ok(CompressionProbeStatus::Inconclusive);
-                    };
-                    if next_pos > ext_end {
-                        return Ok(CompressionProbeStatus::Inconclusive);
-                    }
-
-                    if ext_type == 0x3374 {
-                        // Parse NPN protocol list within this extension
-                        let mut proto_pos = pos;
-                        let proto_end = next_pos;
-                        while proto_pos < proto_end {
-                            let Some(proto_len) = data.get(proto_pos).copied().map(usize::from)
-                            else {
-                                return Ok(CompressionProbeStatus::Inconclusive);
-                            };
-                            let Some(proto_start) = proto_pos.checked_add(1) else {
-                                return Ok(CompressionProbeStatus::Inconclusive);
-                            };
-                            proto_pos = proto_start;
-                            let Some(next_proto_pos) = proto_pos.checked_add(proto_len) else {
-                                return Ok(CompressionProbeStatus::Inconclusive);
-                            };
-                            if next_proto_pos > proto_end {
-                                return Ok(CompressionProbeStatus::Inconclusive);
-                            }
-                            if let Some(proto_bytes) = slice_range(data, proto_pos, proto_len)
-                                && let Ok(proto) = std::str::from_utf8(proto_bytes)
-                            {
-                                // Only flag SPDY protocols as CRIME-vulnerable
-                                // HTTP/2 (h2, h2c) uses HPACK which is CRIME-resistant
-                                if proto.starts_with("spdy/") {
-                                    spdy_detected = true;
-                                }
-                            }
-                            proto_pos = next_proto_pos;
-                        }
-                    }
-
-                    pos = next_pos;
-                }
-                if pos != ext_end {
-                    return Ok(CompressionProbeStatus::Inconclusive);
-                }
-
-                Ok(if spdy_detected {
-                    CompressionProbeStatus::Enabled
-                } else {
-                    CompressionProbeStatus::Disabled
-                })
+                Ok(server_hello::spdy_compression_status(data))
             }
             _ => Ok(CompressionProbeStatus::Inconclusive),
         }
@@ -568,7 +375,7 @@ pub struct CrimeTestResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::constants::BUFFER_SIZE_DEFAULT;
+    use crate::constants::{BUFFER_SIZE_DEFAULT, CONTENT_TYPE_HANDSHAKE};
     use std::io::ErrorKind;
     use std::net::TcpListener;
     use tokio::io::AsyncWriteExt;
