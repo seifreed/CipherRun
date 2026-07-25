@@ -6,6 +6,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::timeout;
 
 mod legacy_tls;
+mod openssl_tls12;
 pub(super) mod sslv2;
 
 /// Legacy-protocol cipher suites offered when probing SSLv3/TLS1.0/TLS1.1 by a
@@ -492,7 +493,7 @@ impl ProtocolTester {
 
         let enable_bugs_mode = self.enable_bugs_mode;
         let (sni_host, use_sni) =
-            openssl_hostname_and_sni(&self.target.hostname, self.sni_hostname.as_deref());
+            openssl_tls12::hostname_and_sni(&self.target.hostname, self.sni_hostname.as_deref());
         tokio::task::spawn_blocking(move || -> Result<ProtocolProbeOutcome> {
             let mut builder = SslConnector::builder(SslMethod::tls())?;
             builder.set_verify(SslVerifyMode::NONE);
@@ -512,7 +513,7 @@ impl ProtocolTester {
                 .connect(&sni_host, std_stream)
             {
                 Ok(_) => Ok(ProtocolProbeOutcome::Supported),
-                Err(error) => Ok(classify_tls12_handshake_error(&error)),
+                Err(error) => Ok(openssl_tls12::classify_handshake_error(&error)),
             }
         })
         .await
@@ -610,57 +611,6 @@ fn is_handshake_refusal(error: &std::io::Error) -> bool {
     )
 }
 
-/// Classify an OpenSSL handshake failure during the TLS 1.2 probe.
-///
-/// A protocol-level rejection (the server sends a TLS alert because it does not
-/// offer TLS 1.2) is `NotSupported`. A transport anomaly on a successfully
-/// connected socket — a read/write timeout (`SYSCALL`/`WANT_*`), a clean close
-/// (`ZERO_RETURN`), a local setup/would-block failure, or an SSL-class
-/// "unexpected eof"/reset (how OpenSSL 3.x reports a mid-handshake close) — is
-/// ambiguous and must stay `Inconclusive` rather than masquerade as definitive
-/// absence.
-fn classify_tls12_handshake_error(
-    error: &openssl::ssl::HandshakeError<std::net::TcpStream>,
-) -> ProtocolProbeOutcome {
-    use openssl::ssl::{ErrorCode, HandshakeError};
-
-    match error {
-        HandshakeError::SetupFailure(_) | HandshakeError::WouldBlock(_) => {
-            ProtocolProbeOutcome::Inconclusive
-        }
-        HandshakeError::Failure(stream) => match stream.error().code() {
-            ErrorCode::SYSCALL
-            | ErrorCode::ZERO_RETURN
-            | ErrorCode::WANT_READ
-            | ErrorCode::WANT_WRITE => ProtocolProbeOutcome::Inconclusive,
-            // OpenSSL 3.x reports a mid-handshake connection close as an
-            // SSL-class error rather than SYSCALL, so inspect the message to
-            // keep such transport anomalies inconclusive; a genuine TLS alert
-            // ("alert handshake failure"/"protocol version") falls through to
-            // NotSupported.
-            _ => {
-                if crate::utils::network::is_transport_anomaly_error(&stream.error().to_string()) {
-                    ProtocolProbeOutcome::Inconclusive
-                } else {
-                    ProtocolProbeOutcome::NotSupported
-                }
-            }
-        },
-    }
-}
-
-fn openssl_hostname_and_sni(
-    target_hostname: &str,
-    override_hostname: Option<&str>,
-) -> (String, bool) {
-    let sni_hostname =
-        crate::utils::network::sni_hostname_for_target(target_hostname, override_hostname);
-    let hostname = sni_hostname
-        .clone()
-        .unwrap_or_else(|| target_hostname.to_string());
-    (hostname, sni_hostname.is_some())
-}
-
 #[cfg(test)]
 mod legacy_probe_tests {
     use super::*;
@@ -694,7 +644,7 @@ mod legacy_probe_tests {
 
     #[test]
     fn test_openssl_hostname_and_sni_omits_sni_for_ip_targets() {
-        let (hostname, use_sni) = openssl_hostname_and_sni("93.184.216.34", None);
+        let (hostname, use_sni) = openssl_tls12::hostname_and_sni("93.184.216.34", None);
         assert_eq!(hostname, "93.184.216.34");
         assert!(!use_sni);
     }
