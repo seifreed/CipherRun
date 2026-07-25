@@ -243,6 +243,7 @@ pub struct RobotTester {
     starttls: Option<crate::starttls::StarttlsProtocol>,
     starttls_server_mode: bool,
     starttls_hostname: Option<String>,
+    test_all_ips: bool,
 }
 
 impl RobotTester {
@@ -252,6 +253,7 @@ impl RobotTester {
             starttls: None,
             starttls_server_mode: false,
             starttls_hostname: None,
+            test_all_ips: false,
         }
     }
 
@@ -266,6 +268,29 @@ impl RobotTester {
         self.starttls_hostname = hostname;
         self.starttls_server_mode = server_mode;
         self
+    }
+
+    pub fn with_test_all_ips(mut self, test_all_ips: bool) -> Self {
+        self.test_all_ips = test_all_ips;
+        self
+    }
+
+    fn probe_addrs(&self) -> Result<Vec<std::net::SocketAddr>> {
+        let addrs: Vec<_> = if self.test_all_ips {
+            self.target.socket_addrs()
+        } else {
+            self.target
+                .socket_addrs()
+                .first()
+                .copied()
+                .into_iter()
+                .collect()
+        };
+        if addrs.is_empty() {
+            Err(crate::TlsError::NoSocketAddresses)
+        } else {
+            Ok(addrs)
+        }
     }
 
     /// Test for ROBOT vulnerability
@@ -505,13 +530,19 @@ impl RobotTester {
 
     /// Send ClientKeyExchange with invalid RSA ciphertext
     async fn send_invalid_rsa_ciphertext(&self, variant: u8) -> Result<Option<Vec<u8>>> {
-        let addr = self
-            .target
-            .socket_addrs()
-            .first()
-            .copied()
-            .ok_or(crate::TlsError::NoSocketAddresses)?;
+        for addr in self.probe_addrs()? {
+            if let Some(response) = self.send_invalid_rsa_ciphertext_addr(addr, variant).await? {
+                return Ok(Some(response));
+            }
+        }
+        Ok(None)
+    }
 
+    async fn send_invalid_rsa_ciphertext_addr(
+        &self,
+        addr: std::net::SocketAddr,
+        variant: u8,
+    ) -> Result<Option<Vec<u8>>> {
         let hostname = self
             .starttls_hostname
             .clone()
@@ -732,6 +763,25 @@ mod tests {
     fn test_robot_status() {
         assert_eq!(RobotStatus::Vulnerable, RobotStatus::Vulnerable);
         assert_ne!(RobotStatus::Vulnerable, RobotStatus::NotVulnerable);
+    }
+
+    #[test]
+    fn test_robot_probe_addrs_honors_all_ips() {
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            443,
+            vec![IpAddr::from([127, 0, 0, 2]), IpAddr::from([127, 0, 0, 1])],
+        )
+        .unwrap();
+
+        let single = RobotTester::new(target.clone()).probe_addrs().unwrap();
+        let all = RobotTester::new(target)
+            .with_test_all_ips(true)
+            .probe_addrs()
+            .unwrap();
+
+        assert_eq!(single.len(), 1);
+        assert_eq!(all.len(), 2);
     }
 
     #[test]
