@@ -100,7 +100,7 @@ impl StrictRevocationChecker {
                         details: format!("Hard fail mode: revocation check error: {}", e),
                     })
                 } else {
-                    Ok(self.soft_fail_result(cert, e.to_string()))
+                    self.soft_fail_result(cert, e.to_string())
                 }
             }
         }
@@ -136,7 +136,7 @@ impl StrictRevocationChecker {
                         return Err(e);
                     }
                     // Soft fail: continue with remaining certificates
-                    results.push(self.soft_fail_result(cert, e.to_string()));
+                    results.push(self.soft_fail_result(cert, e.to_string())?);
                 }
             }
         }
@@ -154,10 +154,14 @@ impl StrictRevocationChecker {
         self.base_checker.is_phone_out_enabled()
     }
 
-    fn soft_fail_result(&self, cert: &CertificateInfo, error: String) -> StrictRevocationResult {
-        let must_staple = self.base_checker.check_must_staple(cert).unwrap_or(false);
+    fn soft_fail_result(
+        &self,
+        cert: &CertificateInfo,
+        error: String,
+    ) -> Result<StrictRevocationResult> {
+        let must_staple = self.base_checker.check_must_staple(cert)?;
 
-        StrictRevocationResult {
+        Ok(StrictRevocationResult {
             base_result: RevocationResult {
                 status: RevocationStatus::Unknown,
                 method: super::revocation::RevocationMethod::None,
@@ -168,7 +172,7 @@ impl StrictRevocationChecker {
             },
             hard_fail_mode_enabled: false,
             error_details: Some(error),
-        }
+        })
     }
 }
 
@@ -339,6 +343,25 @@ mod tests {
         assert!(result.is_unknown());
         assert!(result.base_result.must_staple);
         assert!(result.error_details.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_soft_fail_does_not_hide_must_staple_parse_error() {
+        let checker = StrictRevocationCheckerBuilder::new()
+            .with_phone_out(true)
+            .with_hard_fail(false)
+            .build();
+        let cert = CertificateInfo {
+            der_bytes: vec![0x30, 0x01, 0x00],
+            ..Default::default()
+        };
+
+        let err = checker
+            .check_revocation_with_hardfail(&cert, None)
+            .await
+            .expect_err("invalid DER should not become must_staple=false");
+
+        assert!(err.to_string().contains("Failed to parse certificate"));
     }
 
     #[test]
