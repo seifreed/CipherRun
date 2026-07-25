@@ -91,13 +91,29 @@ impl ProtocolTester {
     }
 
     async fn fetch_server_hello(&self, protocol: Protocol) -> Result<Option<ServerHello>> {
+        if self.test_all_ips {
+            for addr in self.target.socket_addrs() {
+                if let Some(server_hello) = self.fetch_server_hello_addr(protocol, addr).await? {
+                    return Ok(Some(server_hello));
+                }
+            }
+            return Ok(None);
+        }
+
         let addr = self
             .target
             .socket_addrs()
             .first()
             .copied()
             .ok_or(crate::TlsError::NoSocketAddresses)?;
+        self.fetch_server_hello_addr(protocol, addr).await
+    }
 
+    async fn fetch_server_hello_addr(
+        &self,
+        protocol: Protocol,
+        addr: std::net::SocketAddr,
+    ) -> Result<Option<ServerHello>> {
         let mut stream = match crate::utils::network::connect_with_timeout(
             addr,
             self.connect_timeout,
@@ -283,6 +299,7 @@ impl ProtocolTester {
 struct ProbeAggregate {
     supported: bool,
     rejected: bool,
+    inconclusive: bool,
 }
 
 impl ProbeAggregate {
@@ -290,13 +307,15 @@ impl ProbeAggregate {
         match value {
             Some(true) => self.supported = true,
             Some(false) => self.rejected = true,
-            None => {}
+            None => self.inconclusive = true,
         }
     }
 
     fn result(&self) -> Option<bool> {
         if self.supported {
             Some(true)
+        } else if self.inconclusive {
+            None
         } else if self.rejected {
             Some(false)
         } else {
@@ -352,11 +371,11 @@ mod tests {
     }
 
     #[test]
-    fn probe_aggregate_reports_rejection_when_no_support() {
+    fn probe_aggregate_preserves_unknown_over_rejection() {
         let mut aggregate = ProbeAggregate::default();
         aggregate.record(None);
         aggregate.record(Some(false));
-        assert_eq!(aggregate.result(), Some(false));
+        assert_eq!(aggregate.result(), None);
     }
 
     #[test]
