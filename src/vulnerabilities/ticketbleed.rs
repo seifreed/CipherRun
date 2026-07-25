@@ -7,8 +7,7 @@
 
 use crate::Result;
 use crate::constants::{
-    BUFFER_SIZE_MAX_WITH_OVERHEAD, CONTENT_TYPE_HANDSHAKE, TLS_HANDSHAKE_TIMEOUT,
-    TLS_RECORD_HEADER_SIZE,
+    BUFFER_SIZE_MAX_WITH_OVERHEAD, TLS_HANDSHAKE_TIMEOUT, TLS_RECORD_HEADER_SIZE,
 };
 use crate::protocols::Protocol;
 use crate::protocols::handshake::ClientHelloBuilder;
@@ -25,6 +24,8 @@ use tokio::time::timeout;
 /// coincidental "echo" from a healthy server (which would have to generate a
 /// fresh Session ID matching all 16 bytes) astronomically unlikely (2^-128),
 /// so the leak check below cannot false-positive.
+mod server_hello;
+
 const TICKETBLEED_SESSION_ID_MARKER: [u8; 16] = [
     0xca, 0xfe, 0xba, 0xbe, 0xde, 0xad, 0xbe, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef,
 ];
@@ -263,7 +264,8 @@ impl TicketbleedTester {
                                                     .to_string(),
                                         }
                                     })?;
-                                    let leaked = self.detect_memory_leak(resumed_response)?;
+                                    let leaked =
+                                        server_hello::detect_memory_leak(resumed_response)?;
                                     if leaked {
                                         Ok(TicketbleedProbeOutcome::Vulnerable)
                                     } else {
@@ -603,152 +605,6 @@ impl TicketbleedTester {
         }
         Ok(false)
     }
-
-    /// Extract the Session ID echoed in the server's ServerHello, if present.
-    ///
-    /// Walks TLS records looking for a Handshake record whose first message is a
-    /// ServerHello (handshake type `0x02`) and returns its `session_id` field.
-    /// Every offset is bounds-checked against both the declared record length
-    /// and the buffer, so a malformed/truncated TLS response is returned as an
-    /// error rather than being reported as "not vulnerable".
-    fn extract_serverhello_session_id(response: &[u8]) -> Result<Option<&[u8]>> {
-        let mut offset = 0usize;
-        while let Some(header_end) = offset.checked_add(5).filter(|&end| end <= response.len()) {
-            let record_len_offset =
-                offset
-                    .checked_add(3)
-                    .ok_or_else(|| crate::TlsError::ParseError {
-                        message: "Ticketbleed ServerHello record length offset overflow"
-                            .to_string(),
-                    })?;
-            let record_len = read_u16_at(response, record_len_offset)
-                .map(usize::from)
-                .ok_or_else(|| crate::TlsError::ParseError {
-                    message: "Ticketbleed ServerHello record length truncated".to_string(),
-                })?;
-            let record_end =
-                header_end
-                    .checked_add(record_len)
-                    .ok_or_else(|| crate::TlsError::ParseError {
-                        message: "Ticketbleed ServerHello record length overflow".to_string(),
-                    })?;
-            if record_end > response.len() {
-                return Err(crate::TlsError::ParseError {
-                    message: "Ticketbleed ServerHello record length exceeds available data"
-                        .to_string(),
-                });
-            }
-            if response.get(offset) == Some(&CONTENT_TYPE_HANDSHAKE) {
-                let mut hs_start = header_end;
-                while let Some(hs_body_start) =
-                    hs_start.checked_add(4).filter(|&end| end <= record_end)
-                {
-                    let hs_len = read_u24_at(response, hs_start + 1).ok_or_else(|| {
-                        crate::TlsError::ParseError {
-                            message: "Ticketbleed ServerHello handshake length truncated"
-                                .to_string(),
-                        }
-                    })?;
-                    let hs_end = hs_body_start.checked_add(hs_len).ok_or_else(|| {
-                        crate::TlsError::ParseError {
-                            message: "Ticketbleed ServerHello handshake length overflow"
-                                .to_string(),
-                        }
-                    })?;
-                    if hs_end > record_end {
-                        return Err(crate::TlsError::ParseError {
-                            message: "Ticketbleed ServerHello handshake length exceeds record"
-                                .to_string(),
-                        });
-                    }
-                    if response.get(hs_start) != Some(&0x02) {
-                        hs_start = hs_end;
-                        continue;
-                    }
-
-                    // ServerHello body: version(2) + random(32) + session_id_length(1) + session_id(..)
-                    let session_id_len_pos =
-                        hs_body_start.checked_add(2 + 32).ok_or_else(|| {
-                            crate::TlsError::ParseError {
-                                message: "Ticketbleed ServerHello session ID offset overflow"
-                                    .to_string(),
-                            }
-                        })?;
-                    let session_id_len = response
-                        .get(session_id_len_pos)
-                        .copied()
-                        .map(usize::from)
-                        .ok_or_else(|| crate::TlsError::ParseError {
-                            message: "Ticketbleed ServerHello session ID length truncated"
-                                .to_string(),
-                        })?;
-                    let session_id_start = session_id_len_pos.checked_add(1).ok_or_else(|| {
-                        crate::TlsError::ParseError {
-                            message: "Ticketbleed ServerHello session ID start overflow"
-                                .to_string(),
-                        }
-                    })?;
-                    let session_id_end =
-                        session_id_start
-                            .checked_add(session_id_len)
-                            .ok_or_else(|| crate::TlsError::ParseError {
-                                message: "Ticketbleed ServerHello session ID length overflow"
-                                    .to_string(),
-                            })?;
-                    if session_id_end <= hs_end {
-                        return response.get(session_id_start..session_id_end).map_or_else(
-                            || {
-                                Err(crate::TlsError::ParseError {
-                                    message: "Ticketbleed ServerHello session ID truncated"
-                                        .to_string(),
-                                })
-                            },
-                            |session_id| Ok(Some(session_id)),
-                        );
-                    }
-                    return Err(crate::TlsError::ParseError {
-                        message: "Ticketbleed ServerHello session ID exceeds handshake".to_string(),
-                    });
-                }
-                if hs_start != record_end {
-                    return Err(crate::TlsError::ParseError {
-                        message: "Ticketbleed ServerHello handshake header truncated".to_string(),
-                    });
-                }
-            }
-            offset = record_end;
-        }
-        if offset != response.len() {
-            if offset == 0 && response.first() != Some(&CONTENT_TYPE_HANDSHAKE) {
-                return Ok(None);
-            }
-            return Err(crate::TlsError::ParseError {
-                message: "Ticketbleed ServerHello record header truncated".to_string(),
-            });
-        }
-        Ok(None)
-    }
-
-    /// Detect a Ticketbleed memory leak in the server's resumption response.
-    ///
-    /// CVE-2016-9244: a vulnerable F5 BIG-IP echoes a full 32-byte Session ID in
-    /// its ServerHello even though the resumption ClientHello carried only the
-    /// 16-byte [`TICKETBLEED_SESSION_ID_MARKER`], padding the remaining bytes
-    /// with uninitialized memory. The leak therefore presents as an echoed
-    /// Session ID that *begins with* our marker but is *longer than* it.
-    ///
-    /// A healthy server either echoes the marker at its exact 16-byte length, or
-    /// negotiates a fresh session whose 32-byte Session ID will not begin with
-    /// the marker — so this check cannot false-positive (a coincidental 16-byte
-    /// prefix match has probability 2^-128).
-    fn detect_memory_leak(&self, response: &[u8]) -> Result<bool> {
-        Ok(
-            Self::extract_serverhello_session_id(response)?.is_some_and(|session_id| {
-                session_id.len() > TICKETBLEED_SESSION_ID_MARKER.len()
-                    && session_id.starts_with(&TICKETBLEED_SESSION_ID_MARKER)
-            }),
-        )
-    }
 }
 
 /// Ticketbleed test result
@@ -765,7 +621,7 @@ pub struct TicketbleedTestResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::constants::BUFFER_SIZE_MAX_TLS_RECORD;
+    use crate::constants::{BUFFER_SIZE_MAX_TLS_RECORD, CONTENT_TYPE_HANDSHAKE};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     #[test]
@@ -943,16 +799,14 @@ mod tests {
     fn test_detect_memory_leak_flags_padded_session_id_echo() {
         // Vulnerable F5: echoes a 32-byte Session ID that begins with our marker,
         // the trailing 16 bytes being leaked memory.
-        let tester = TicketbleedTester::new(ticketbleed_test_target());
         let mut session_id = TICKETBLEED_SESSION_ID_MARKER.to_vec();
         session_id.extend_from_slice(&[0x77u8; 16]);
         let response = server_hello_record_with_session_id(&session_id);
-        assert!(tester.detect_memory_leak(&response).unwrap());
+        assert!(server_hello::detect_memory_leak(&response).unwrap());
     }
 
     #[test]
     fn test_detect_memory_leak_finds_serverhello_inside_combined_record() {
-        let tester = TicketbleedTester::new(ticketbleed_test_target());
         let mut session_id = TICKETBLEED_SESSION_ID_MARKER.to_vec();
         session_id.extend_from_slice(&[0x77u8; 16]);
 
@@ -968,30 +822,27 @@ mod tests {
             handshake_message(0x02, &server_hello),
         ]);
 
-        assert!(tester.detect_memory_leak(&response).unwrap());
+        assert!(server_hello::detect_memory_leak(&response).unwrap());
     }
 
     #[test]
     fn test_detect_memory_leak_clears_exact_marker_echo() {
         // Healthy resumption: server echoes the marker at its exact length.
-        let tester = TicketbleedTester::new(ticketbleed_test_target());
         let response = server_hello_record_with_session_id(&TICKETBLEED_SESSION_ID_MARKER);
-        assert!(!tester.detect_memory_leak(&response).unwrap());
+        assert!(!server_hello::detect_memory_leak(&response).unwrap());
     }
 
     #[test]
     fn test_detect_memory_leak_clears_fresh_session_id() {
         // Fresh full handshake: a 32-byte Session ID not beginning with the marker.
-        let tester = TicketbleedTester::new(ticketbleed_test_target());
         let fresh: Vec<u8> = (0..32u8).map(|i| 0x10 ^ i).collect();
         let response = server_hello_record_with_session_id(&fresh);
-        assert!(!tester.detect_memory_leak(&response).unwrap());
+        assert!(!server_hello::detect_memory_leak(&response).unwrap());
     }
 
     #[test]
     fn test_detect_memory_leak_rejects_truncated_record() {
         // A record claiming more bytes than are present must not be parsed.
-        let tester = TicketbleedTester::new(ticketbleed_test_target());
         let mut session_id = TICKETBLEED_SESSION_ID_MARKER.to_vec();
         session_id.extend_from_slice(&[0x77u8; 16]);
         let mut response = server_hello_record_with_session_id(&session_id);
@@ -999,8 +850,7 @@ mod tests {
             .get_mut(4)
             .expect("test response should contain record length byte") = 0xff; // inflate the record length past the buffer
         assert!(
-            tester
-                .detect_memory_leak(&response)
+            server_hello::detect_memory_leak(&response)
                 .expect_err("truncated record should fail")
                 .to_string()
                 .contains("record length exceeds available data"),
