@@ -101,15 +101,11 @@ impl CipherTester {
             }
         }
 
-        // Union semantics: if any IP definitively rejects the cipher, the
-        // target does not support it overall even when other IPs are
-        // inconclusive. Only all-inconclusive probes should bubble an error.
-        if any_not_supported {
-            return Ok(false);
-        }
-
         if let Some(err) = last_error {
             return Err(err);
+        }
+        if any_not_supported {
+            return Ok(false);
         }
         Ok(false)
     }

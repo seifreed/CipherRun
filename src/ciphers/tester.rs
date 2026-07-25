@@ -736,8 +736,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_all_ip_cipher_probe_returns_false_when_any_ip_rejects_and_others_are_inconclusive()
-     {
+    async fn test_all_ip_cipher_probe_is_inconclusive_when_any_ip_errors() {
         let rejecting = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("listener should bind");
@@ -764,12 +763,12 @@ mod tests {
             .with_connect_timeout(Duration::from_millis(100))
             .with_read_timeout(Duration::from_millis(100));
 
-        let supported = tester
+        let err = tester
             .try_cipher_handshake_all_ips(Protocol::TLS12, 0xc02f)
             .await
-            .expect("mixed rejection/inconclusive should still classify");
+            .expect_err("mixed rejection/inconclusive must not be classified as unsupported");
 
-        assert!(!supported);
+        assert!(!err.to_string().is_empty());
         server.await.expect("server task should finish");
     }
 
