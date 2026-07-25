@@ -55,6 +55,7 @@ pub(crate) async fn probe_cipher_suite(
     sni_override: Option<&str>,
     starttls_hostname: Option<&str>,
     starttls_server_mode: bool,
+    test_all_ips: bool,
 ) -> CipherProbeStatus {
     let mut saw_inconclusive = false;
     for &protocol in protocols {
@@ -66,6 +67,7 @@ pub(crate) async fn probe_cipher_suite(
             sni_override,
             starttls_hostname,
             starttls_server_mode,
+            test_all_ips,
         )
         .await
         {
@@ -100,6 +102,7 @@ pub(crate) async fn probe_supported_suites(
     sni_override: Option<&str>,
     starttls_hostname: Option<&str>,
     starttls_server_mode: bool,
+    test_all_ips: bool,
 ) -> (Vec<String>, bool) {
     let mut supported = Vec::new();
     let mut inconclusive = false;
@@ -112,6 +115,7 @@ pub(crate) async fn probe_supported_suites(
             sni_override,
             starttls_hostname,
             starttls_server_mode,
+            test_all_ips,
         )
         .await
         {
@@ -132,11 +136,54 @@ async fn probe_cipher_at_protocol(
     sni_override: Option<&str>,
     starttls_hostname: Option<&str>,
     starttls_server_mode: bool,
+    test_all_ips: bool,
 ) -> CipherProbeStatus {
-    let Some(addr) = target.socket_addrs().first().copied() else {
+    let addrs: Vec<_> = if test_all_ips {
+        target.socket_addrs()
+    } else {
+        target.socket_addrs().first().copied().into_iter().collect()
+    };
+    if addrs.is_empty() {
         return CipherProbeStatus::Inconclusive;
     };
 
+    let mut saw_inconclusive = false;
+    for addr in addrs {
+        match probe_cipher_at_protocol_on_addr(
+            target,
+            addr,
+            hexcode,
+            protocol,
+            starttls,
+            sni_override,
+            starttls_hostname,
+            starttls_server_mode,
+        )
+        .await
+        {
+            CipherProbeStatus::Supported => return CipherProbeStatus::Supported,
+            CipherProbeStatus::NotSupported => {}
+            CipherProbeStatus::Inconclusive => saw_inconclusive = true,
+        }
+    }
+
+    if saw_inconclusive {
+        CipherProbeStatus::Inconclusive
+    } else {
+        CipherProbeStatus::NotSupported
+    }
+}
+
+async fn probe_cipher_at_protocol_on_addr(
+    target: &Target,
+    addr: std::net::SocketAddr,
+    hexcode: u16,
+    protocol: Protocol,
+    starttls: Option<crate::starttls::StarttlsProtocol>,
+    sni_override: Option<&str>,
+    starttls_hostname: Option<&str>,
+    starttls_server_mode: bool,
+) -> CipherProbeStatus {
     // STARTTLS negotiation hostname (e.g. XMPP stream `to=`, SMTP EHLO): honor
     // the explicit override (--xmpphost) when set, else the target hostname.
     let starttls_host = starttls_hostname.unwrap_or(target.hostname.as_str());
@@ -431,6 +478,45 @@ mod tests {
             None,
             None,
             false,
+            false,
+        )
+        .await;
+
+        assert_eq!(status, CipherProbeStatus::Supported);
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_probe_cipher_at_protocol_all_ips_uses_any_supported_ip() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = socket.read(&mut buf).await.unwrap();
+            socket
+                .write_all(&server_hello_record(Protocol::TLS12))
+                .await
+                .unwrap();
+        });
+
+        let target = Target::with_ips(
+            "example.test".to_string(),
+            addr.port(),
+            vec!["127.0.0.2".parse().unwrap(), addr.ip()],
+        )
+        .unwrap();
+
+        let status = probe_cipher_at_protocol(
+            &target,
+            0x1301,
+            Protocol::TLS12,
+            None,
+            None,
+            None,
+            false,
+            true,
         )
         .await;
 
@@ -462,6 +548,7 @@ mod tests {
             None,
             None,
             None,
+            false,
             false,
         )
         .await;

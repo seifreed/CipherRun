@@ -19,6 +19,7 @@ pub struct LogjamTester {
     starttls_server_mode: bool,
     starttls_hostname: Option<String>,
     sni_hostname: Option<String>,
+    test_all_ips: bool,
 }
 
 /// Minimum DH parameter size (bits) considered secure. Groups below this are
@@ -72,6 +73,7 @@ impl LogjamTester {
             starttls_server_mode: false,
             starttls_hostname: None,
             sni_hostname: None,
+            test_all_ips: false,
         }
     }
 
@@ -91,6 +93,11 @@ impl LogjamTester {
     /// Configure an explicit SNI hostname (e.g. `--sni-name`) for each probe.
     pub fn with_sni(mut self, sni: Option<String>) -> Self {
         self.sni_hostname = sni;
+        self
+    }
+
+    pub fn with_test_all_ips(mut self, enable: bool) -> Self {
+        self.test_all_ips = enable;
         self
     }
 
@@ -179,6 +186,7 @@ impl LogjamTester {
                 self.sni_hostname.as_deref(),
                 self.starttls_hostname.as_deref(),
                 self.starttls_server_mode,
+                self.test_all_ips,
             )
             .await
             {

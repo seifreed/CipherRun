@@ -19,6 +19,7 @@ pub struct Sweet32Tester {
     starttls_server_mode: bool,
     starttls_hostname: Option<String>,
     sni_hostname: Option<String>,
+    test_all_ips: bool,
 }
 
 /// 3DES (64-bit block) cipher suites (IANA wire IDs) paired with display names.
@@ -53,6 +54,7 @@ impl Sweet32Tester {
             starttls_server_mode: false,
             starttls_hostname: None,
             sni_hostname: None,
+            test_all_ips: false,
         }
     }
 
@@ -73,6 +75,11 @@ impl Sweet32Tester {
     /// Configure an explicit SNI hostname (e.g. `--sni-name`) for each probe.
     pub fn with_sni(mut self, sni: Option<String>) -> Self {
         self.sni_hostname = sni;
+        self
+    }
+
+    pub fn with_test_all_ips(mut self, enable: bool) -> Self {
+        self.test_all_ips = enable;
         self
     }
 
@@ -120,6 +127,7 @@ impl Sweet32Tester {
                 self.sni_hostname.as_deref(),
                 self.starttls_hostname.as_deref(),
                 self.starttls_server_mode,
+                self.test_all_ips,
             )
             .await
             {

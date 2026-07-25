@@ -47,6 +47,7 @@ impl VulnerabilityScanner {
                 self.sni_hostname.as_deref(),
                 self.starttls_hostname.as_deref(),
                 self.starttls_server_mode,
+                self.test_all_ips,
             )
             .await;
         Ok(super::cipher_checks::rc4_probe_verdict(
@@ -65,6 +66,7 @@ impl VulnerabilityScanner {
                 self.sni_hostname.as_deref(),
                 self.starttls_hostname.as_deref(),
                 self.starttls_server_mode,
+                self.test_all_ips,
             )
             .await;
         Ok(super::cipher_checks::null_probe_verdict(
@@ -478,6 +480,7 @@ impl VulnerabilityScanner {
 
         let tester = Sweet32Tester::new(self.target.clone())
             .with_sni(self.sni_hostname.clone())
+            .with_test_all_ips(self.test_all_ips)
             .with_starttls(
                 self.starttls,
                 self.starttls_hostname.clone(),
@@ -505,6 +508,7 @@ impl VulnerabilityScanner {
 
         let tester = FreakTester::new(self.target.clone())
             .with_sni(self.sni_hostname.clone())
+            .with_test_all_ips(self.test_all_ips)
             .with_starttls(
                 self.starttls,
                 self.starttls_hostname.clone(),
@@ -532,6 +536,7 @@ impl VulnerabilityScanner {
 
         let tester = LogjamTester::new(self.target.clone())
             .with_sni(self.sni_hostname.clone())
+            .with_test_all_ips(self.test_all_ips)
             .with_starttls(
                 self.starttls,
                 self.starttls_hostname.clone(),
