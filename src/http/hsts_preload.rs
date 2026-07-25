@@ -1,6 +1,7 @@
 // HSTS Preload List Checker - Verify if domain is in browser preload lists
 
 use crate::security::input_validation::{looks_like_dotted_ip_literal, looks_like_obfuscated_ip};
+use crate::security::validate_hostname;
 use std::net::IpAddr;
 use crate::constants::HTTP_REQUEST_TIMEOUT;
 use serde::{Deserialize, Serialize};
@@ -87,6 +88,13 @@ impl HstsPreloadChecker {
                     url.scheme()
                 ));
             }
+            if !url.username().is_empty() || url.password().is_some() {
+                return Err("HSTS preload lookup hostname must not contain credentials".to_string());
+            }
+        } else if domain.contains('@') {
+            return Err(
+                "Invalid HSTS preload lookup hostname: credentials are not allowed".to_string(),
+            );
         }
         if domain.trim().parse::<IpAddr>().is_ok() {
             return Err("HSTS preload lookup does not accept IP literals".to_string());
@@ -109,6 +117,8 @@ impl HstsPreloadChecker {
         {
             return Err("HSTS preload lookup does not accept private/local hostnames".to_string());
         }
+        validate_hostname(&normalized)
+            .map_err(|error| format!("Invalid HSTS preload lookup hostname: {error}"))?;
 
         // Check cache first
         if let Some(cached) = self.get_from_cache(&normalized)? {
@@ -523,6 +533,28 @@ mod tests {
             .await
             .expect_err("internal host should be rejected");
         assert!(err.contains("private/local hostnames"));
+    }
+
+    #[tokio::test]
+    async fn test_check_preload_status_rejects_invalid_hostnames() {
+        let checker = HstsPreloadChecker::new();
+        let err = checker
+            .check_preload_status("bad host")
+            .await
+            .expect_err("hostnames with spaces should be rejected before API lookup");
+        assert!(err.contains("Invalid HSTS preload lookup hostname"));
+
+        let err = checker
+            .check_preload_status("user:pass@example.com")
+            .await
+            .expect_err("userinfo-like input without URL scheme should not be truncated");
+        assert!(err.contains("Invalid HSTS preload lookup hostname"));
+
+        let err = checker
+            .check_preload_status("https://user:pass@example.com")
+            .await
+            .expect_err("URL credentials should be rejected before API lookup");
+        assert!(err.contains("credentials"));
     }
 
     #[tokio::test]
