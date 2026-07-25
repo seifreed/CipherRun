@@ -140,7 +140,12 @@ impl ProtocolTester {
         let addrs: Vec<_> = if self.test_all_ips {
             self.target.socket_addrs()
         } else {
-            self.target.socket_addrs().first().copied().into_iter().collect()
+            self.target
+                .socket_addrs()
+                .first()
+                .copied()
+                .into_iter()
+                .collect()
         };
         if addrs.is_empty() {
             return Ok(false);
@@ -243,10 +248,7 @@ mod tests {
 
     #[test]
     fn test_build_sslv2_client_hello_structure() {
-        let tester = ProtocolTester::new(dummy_target());
-        let hello = tester
-            .build_sslv2_client_hello()
-            .expect("SSLv2 ClientHello should build");
+        let hello = probing::sslv2::build_client_hello().expect("SSLv2 ClientHello should build");
 
         assert_eq!(hello[0] & 0x80, 0x80);
         assert_eq!(hello[2], 0x01);
@@ -401,17 +403,7 @@ mod tests {
 
     #[test]
     fn test_sslv2_client_hello_build() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().expect("valid IP")],
-        )
-        .expect("target should build");
-
-        let tester = ProtocolTester::new(target);
-        let hello = tester
-            .build_sslv2_client_hello()
-            .expect("SSLv2 ClientHello should build");
+        let hello = probing::sslv2::build_client_hello().expect("SSLv2 ClientHello should build");
 
         assert!(hello.len() > 30);
         assert_eq!(hello[0], 0x80);

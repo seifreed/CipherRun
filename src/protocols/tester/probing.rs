@@ -5,6 +5,8 @@ use crate::protocols::handshake::{ClientHelloBuilder, ServerHelloParser};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::timeout;
 
+pub(super) mod sslv2;
+
 /// Legacy-protocol cipher suites offered when probing SSLv3/TLS1.0/TLS1.1 by a
 /// raw ClientHello. The vendored OpenSSL build cannot negotiate these protocol
 /// versions at all (it answers `no protocols available`), so an OpenSSL probe
@@ -15,23 +17,6 @@ use tokio::time::timeout;
 const LEGACY_PROBE_CIPHERS: &[u16] = &[
     0xc014, 0xc013, 0xc00a, 0xc009, 0x0035, 0x002f, 0xc012, 0xc008, 0x000a, 0x0005, 0x0004,
 ];
-const SSLV2_MAX_RECORD_WITH_HEADER: usize = 32767 + 2;
-
-fn sslv2_record_shape(data: &[u8]) -> Option<(usize, usize, usize)> {
-    let first = *data.first()?;
-    let second = *data.get(1)?;
-    if matches!(first, 0x14..=0x18) && second == 0x03 {
-        return None;
-    }
-    if (first & 0x80) != 0 {
-        let record_len = ((first & 0x7f) as usize) << 8 | second as usize;
-        Some((2, record_len, 2 + record_len))
-    } else {
-        let record_len = ((first & 0x3f) as usize) << 8 | second as usize;
-        Some((3, record_len, 3 + record_len))
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ProtocolProbeOutcome {
     Supported,
@@ -310,18 +295,22 @@ impl ProtocolTester {
                     }
                 }
 
-                let client_hello = self.build_sslv2_client_hello()?;
+                let client_hello = sslv2::build_client_hello()?;
 
                 match timeout(self.read_timeout, async {
                     stream.write_all(&client_hello).await?;
-                    self.read_complete_sslv2_record(&mut stream, SSLV2_MAX_RECORD_WITH_HEADER)
-                        .await
+                    sslv2::read_complete_record(
+                        &mut stream,
+                        sslv2::MAX_RECORD_WITH_HEADER,
+                        self.read_timeout,
+                    )
+                    .await
                 })
                 .await
                 {
                     Ok(Ok(response)) if response.len() >= 3 => {
                         let Some((header_len, record_len, record_total)) =
-                            sslv2_record_shape(&response)
+                            sslv2::record_shape(&response)
                         else {
                             return Ok(ProtocolProbeOutcome::NotSupported);
                         };
@@ -362,78 +351,6 @@ impl ProtocolTester {
         }
     }
 
-    pub(super) fn build_sslv2_client_hello(&self) -> crate::Result<Vec<u8>> {
-        let mut body = vec![0x01, 0x00, 0x02];
-        body.push(0x00);
-        body.push(0x09); // cipher_spec_length: 9 bytes (3 ciphers × 3 bytes each)
-        body.push(0x00);
-        body.push(0x00);
-        body.push(0x00);
-        body.push(0x10);
-        body.extend_from_slice(&[0x01, 0x00, 0x80]);
-        body.extend_from_slice(&[0x02, 0x00, 0x80]);
-        body.extend_from_slice(&[0x03, 0x00, 0x80]);
-        body.extend_from_slice(&[
-            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
-            0x0f, 0x10,
-        ]);
-        let len = body.len();
-        let len = u8::try_from(len)
-            .map_err(|_| crate::TlsError::Other("SSLv2 ClientHello too long".to_string()))?;
-        let mut hello = vec![0x80, len];
-        hello.extend_from_slice(&body);
-        Ok(hello)
-    }
-
-    async fn read_complete_sslv2_record(
-        &self,
-        stream: &mut tokio::net::TcpStream,
-        max_len: usize,
-    ) -> std::io::Result<Vec<u8>> {
-        let mut response = vec![0u8; max_len];
-        let mut total = 0usize;
-
-        loop {
-            if total >= response.len() {
-                break;
-            }
-            let Some(read_buf) = response.get_mut(total..) else {
-                break;
-            };
-            let n = match timeout(self.read_timeout, stream.read(read_buf)).await {
-                Ok(Ok(n)) => n,
-                Ok(Err(err)) => return Err(err),
-                Err(_) => break,
-            };
-            if n == 0 {
-                break;
-            }
-            total += n;
-            if total >= 2 {
-                let Some((header_len, _record_len, record_total)) =
-                    sslv2_record_shape(response.get(..total).unwrap_or(&[]))
-                else {
-                    continue;
-                };
-                if total < header_len {
-                    continue;
-                }
-                if record_total > response.len() {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        "SSLv2 probe response length exceeds buffer",
-                    ));
-                }
-                if total >= record_total {
-                    break;
-                }
-            }
-        }
-
-        response.truncate(total);
-        Ok(response)
-    }
-
     /// Probe SSLv3/TLS1.0/TLS1.1 support with a raw ClientHello.
     ///
     /// OpenSSL cannot be used for these versions (see `LEGACY_PROBE_CIPHERS`),
@@ -465,11 +382,11 @@ impl ProtocolTester {
         }
 
         if let Some(starttls_proto) = self.starttls_protocol {
-                    let negotiator = crate::starttls::protocols::get_negotiator(
-                        starttls_proto,
-                        self.starttls_negotiation_hostname(),
-                        self.starttls_server_mode,
-                    );
+            let negotiator = crate::starttls::protocols::get_negotiator(
+                starttls_proto,
+                self.starttls_negotiation_hostname(),
+                self.starttls_server_mode,
+            );
             if crate::starttls::protocols::negotiate_starttls_with_timeout(
                 negotiator.as_ref(),
                 &mut stream,
@@ -591,10 +508,8 @@ impl ProtocolTester {
         let std_stream = crate::utils::network::into_blocking_std_stream(stream, socket_timeout)?;
 
         let enable_bugs_mode = self.enable_bugs_mode;
-        let (sni_host, use_sni) = openssl_hostname_and_sni(
-            &self.target.hostname,
-            self.sni_hostname.as_deref(),
-        );
+        let (sni_host, use_sni) =
+            openssl_hostname_and_sni(&self.target.hostname, self.sni_hostname.as_deref());
         tokio::task::spawn_blocking(move || -> Result<ProtocolProbeOutcome> {
             let mut builder = SslConnector::builder(SslMethod::tls())?;
             builder.set_verify(SslVerifyMode::NONE);
@@ -755,10 +670,8 @@ fn openssl_hostname_and_sni(
     target_hostname: &str,
     override_hostname: Option<&str>,
 ) -> (String, bool) {
-    let sni_hostname = crate::utils::network::sni_hostname_for_target(
-        target_hostname,
-        override_hostname,
-    );
+    let sni_hostname =
+        crate::utils::network::sni_hostname_for_target(target_hostname, override_hostname);
     let hostname = sni_hostname
         .clone()
         .unwrap_or_else(|| target_hostname.to_string());
