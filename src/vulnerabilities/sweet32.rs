@@ -7,7 +7,7 @@
 // a TLS cipher suite — the Blowfish Sweet32 variant (CVE-2016-6329) targets
 // protocols like OpenVPN, not TLS — so it is not probed here.
 
-use super::cipher_probe::{CipherProbeStatus, probe_cipher_suite};
+use super::cipher_probe::{CipherProbeOptions, CipherProbeStatus, probe_cipher_suite};
 use crate::Result;
 use crate::protocols::Protocol;
 use crate::utils::network::Target;
@@ -123,11 +123,13 @@ impl Sweet32Tester {
                 &self.target,
                 *hexcode,
                 SWEET32_PROBE_PROTOCOLS,
-                self.starttls,
-                self.sni_hostname.as_deref(),
-                self.starttls_hostname.as_deref(),
-                self.starttls_server_mode,
-                self.test_all_ips,
+                CipherProbeOptions {
+                    starttls: self.starttls,
+                    sni_override: self.sni_hostname.as_deref(),
+                    starttls_hostname: self.starttls_hostname.as_deref(),
+                    starttls_server_mode: self.starttls_server_mode,
+                    test_all_ips: self.test_all_ips,
+                },
             )
             .await
             {

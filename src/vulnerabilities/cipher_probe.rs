@@ -40,6 +40,15 @@ pub(crate) enum CipherProbeStatus {
     Inconclusive,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct CipherProbeOptions<'a> {
+    pub(crate) starttls: Option<crate::starttls::StarttlsProtocol>,
+    pub(crate) sni_override: Option<&'a str>,
+    pub(crate) starttls_hostname: Option<&'a str>,
+    pub(crate) starttls_server_mode: bool,
+    pub(crate) test_all_ips: bool,
+}
+
 /// Probe a single cipher suite by its wire ID across the given protocol
 /// versions.
 ///
@@ -51,11 +60,7 @@ pub(crate) async fn probe_cipher_suite(
     target: &Target,
     hexcode: u16,
     protocols: &[Protocol],
-    starttls: Option<crate::starttls::StarttlsProtocol>,
-    sni_override: Option<&str>,
-    starttls_hostname: Option<&str>,
-    starttls_server_mode: bool,
-    test_all_ips: bool,
+    options: CipherProbeOptions<'_>,
 ) -> CipherProbeStatus {
     let mut saw_inconclusive = false;
     for &protocol in protocols {
@@ -63,11 +68,7 @@ pub(crate) async fn probe_cipher_suite(
             target,
             hexcode,
             protocol,
-            starttls,
-            sni_override,
-            starttls_hostname,
-            starttls_server_mode,
-            test_all_ips,
+            options,
         )
         .await
         {
@@ -98,11 +99,7 @@ pub(crate) async fn probe_supported_suites(
     target: &Target,
     suites: &[(u16, &str)],
     protocols: &[Protocol],
-    starttls: Option<crate::starttls::StarttlsProtocol>,
-    sni_override: Option<&str>,
-    starttls_hostname: Option<&str>,
-    starttls_server_mode: bool,
-    test_all_ips: bool,
+    options: CipherProbeOptions<'_>,
 ) -> (Vec<String>, bool) {
     let mut supported = Vec::new();
     let mut inconclusive = false;
@@ -111,11 +108,7 @@ pub(crate) async fn probe_supported_suites(
             target,
             *hexcode,
             protocols,
-            starttls,
-            sni_override,
-            starttls_hostname,
-            starttls_server_mode,
-            test_all_ips,
+            options,
         )
         .await
         {
@@ -132,13 +125,9 @@ async fn probe_cipher_at_protocol(
     target: &Target,
     hexcode: u16,
     protocol: Protocol,
-    starttls: Option<crate::starttls::StarttlsProtocol>,
-    sni_override: Option<&str>,
-    starttls_hostname: Option<&str>,
-    starttls_server_mode: bool,
-    test_all_ips: bool,
+    options: CipherProbeOptions<'_>,
 ) -> CipherProbeStatus {
-    let addrs: Vec<_> = if test_all_ips {
+    let addrs: Vec<_> = if options.test_all_ips {
         target.socket_addrs()
     } else {
         target.socket_addrs().first().copied().into_iter().collect()
@@ -154,10 +143,7 @@ async fn probe_cipher_at_protocol(
             addr,
             hexcode,
             protocol,
-            starttls,
-            sni_override,
-            starttls_hostname,
-            starttls_server_mode,
+            options,
         )
         .await
         {
@@ -179,20 +165,17 @@ async fn probe_cipher_at_protocol_on_addr(
     addr: std::net::SocketAddr,
     hexcode: u16,
     protocol: Protocol,
-    starttls: Option<crate::starttls::StarttlsProtocol>,
-    sni_override: Option<&str>,
-    starttls_hostname: Option<&str>,
-    starttls_server_mode: bool,
+    options: CipherProbeOptions<'_>,
 ) -> CipherProbeStatus {
     // STARTTLS negotiation hostname (e.g. XMPP stream `to=`, SMTP EHLO): honor
     // the explicit override (--xmpphost) when set, else the target hostname.
-    let starttls_host = starttls_hostname.unwrap_or(target.hostname.as_str());
+    let starttls_host = options.starttls_hostname.unwrap_or(target.hostname.as_str());
     let mut stream = match crate::utils::network::connect_with_starttls(
         addr,
         PROBE_CONNECT_TIMEOUT,
-        starttls,
+        options.starttls,
         starttls_host,
-        starttls_server_mode,
+        options.starttls_server_mode,
     )
     .await
     {
@@ -202,7 +185,10 @@ async fn probe_cipher_at_protocol_on_addr(
 
     let mut builder = ClientHelloBuilder::new(protocol);
     builder.add_cipher(hexcode);
-    let sni = crate::utils::network::sni_hostname_for_target(&target.hostname, sni_override);
+    let sni = crate::utils::network::sni_hostname_for_target(
+        &target.hostname,
+        options.sni_override,
+    );
     let client_hello = match builder.build_with_defaults(sni.as_deref()) {
         Ok(hello) => hello,
         Err(_) => return CipherProbeStatus::Inconclusive,
@@ -474,11 +460,13 @@ mod tests {
             &target,
             0x1301,
             Protocol::TLS12,
-            None,
-            None,
-            None,
-            false,
-            false,
+            CipherProbeOptions {
+                starttls: None,
+                sni_override: None,
+                starttls_hostname: None,
+                starttls_server_mode: false,
+                test_all_ips: false,
+            },
         )
         .await;
 
@@ -512,11 +500,13 @@ mod tests {
             &target,
             0x1301,
             Protocol::TLS12,
-            None,
-            None,
-            None,
-            false,
-            true,
+            CipherProbeOptions {
+                starttls: None,
+                sni_override: None,
+                starttls_hostname: None,
+                starttls_server_mode: false,
+                test_all_ips: true,
+            },
         )
         .await;
 
@@ -545,11 +535,13 @@ mod tests {
             &target,
             0x1301,
             Protocol::TLS12,
-            None,
-            None,
-            None,
-            false,
-            false,
+            CipherProbeOptions {
+                starttls: None,
+                sni_override: None,
+                starttls_hostname: None,
+                starttls_server_mode: false,
+                test_all_ips: false,
+            },
         )
         .await;
 

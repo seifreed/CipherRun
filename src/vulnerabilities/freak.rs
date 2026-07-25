@@ -5,7 +5,7 @@
 // by manipulating the TLS handshake, making it possible to factor the key
 // and decrypt the connection.
 
-use super::cipher_probe::{CipherProbeStatus, probe_cipher_suite};
+use super::cipher_probe::{CipherProbeOptions, CipherProbeStatus, probe_cipher_suite};
 use crate::Result;
 use crate::protocols::Protocol;
 use crate::utils::network::Target;
@@ -117,11 +117,13 @@ impl FreakTester {
                 &self.target,
                 *hexcode,
                 FREAK_PROBE_PROTOCOLS,
-                self.starttls,
-                self.sni_hostname.as_deref(),
-                self.starttls_hostname.as_deref(),
-                self.starttls_server_mode,
-                self.test_all_ips,
+                CipherProbeOptions {
+                    starttls: self.starttls,
+                    sni_override: self.sni_hostname.as_deref(),
+                    starttls_hostname: self.starttls_hostname.as_deref(),
+                    starttls_server_mode: self.starttls_server_mode,
+                    test_all_ips: self.test_all_ips,
+                },
             )
             .await
             {

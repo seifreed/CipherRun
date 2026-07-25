@@ -43,11 +43,13 @@ impl VulnerabilityScanner {
                 &self.target,
                 super::cipher_checks::RC4_CIPHER_SUITES,
                 super::cipher_checks::WEAK_CIPHER_PROBE_PROTOCOLS,
-                self.starttls,
-                self.sni_hostname.as_deref(),
-                self.starttls_hostname.as_deref(),
-                self.starttls_server_mode,
-                self.test_all_ips,
+                crate::vulnerabilities::cipher_probe::CipherProbeOptions {
+                    starttls: self.starttls,
+                    sni_override: self.sni_hostname.as_deref(),
+                    starttls_hostname: self.starttls_hostname.as_deref(),
+                    starttls_server_mode: self.starttls_server_mode,
+                    test_all_ips: self.test_all_ips,
+                },
             )
             .await;
         Ok(super::cipher_checks::rc4_probe_verdict(
@@ -62,11 +64,13 @@ impl VulnerabilityScanner {
                 &self.target,
                 super::cipher_checks::NULL_CIPHER_SUITES,
                 super::cipher_checks::WEAK_CIPHER_PROBE_PROTOCOLS,
-                self.starttls,
-                self.sni_hostname.as_deref(),
-                self.starttls_hostname.as_deref(),
-                self.starttls_server_mode,
-                self.test_all_ips,
+                crate::vulnerabilities::cipher_probe::CipherProbeOptions {
+                    starttls: self.starttls,
+                    sni_override: self.sni_hostname.as_deref(),
+                    starttls_hostname: self.starttls_hostname.as_deref(),
+                    starttls_server_mode: self.starttls_server_mode,
+                    test_all_ips: self.test_all_ips,
+                },
             )
             .await;
         Ok(super::cipher_checks::null_probe_verdict(
