@@ -6,6 +6,7 @@ impl VulnerabilityScanner {
         use crate::vulnerabilities::drown::{DrownTester, Sslv2Status};
 
         let tester = DrownTester::new(self.target.clone())
+            .with_test_all_ips(self.test_all_ips)
             .with_starttls(
                 self.starttls,
                 self.starttls_hostname.clone(),

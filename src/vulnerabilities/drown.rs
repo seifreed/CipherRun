@@ -104,6 +104,7 @@ pub struct DrownTester {
     starttls: Option<crate::starttls::StarttlsProtocol>,
     starttls_server_mode: bool,
     starttls_hostname: Option<String>,
+    test_all_ips: bool,
 }
 
 impl DrownTester {
@@ -113,6 +114,7 @@ impl DrownTester {
             starttls: None,
             starttls_server_mode: false,
             starttls_hostname: None,
+            test_all_ips: false,
         }
     }
 
@@ -126,6 +128,11 @@ impl DrownTester {
         self.starttls = protocol;
         self.starttls_hostname = hostname;
         self.starttls_server_mode = server_mode;
+        self
+    }
+
+    pub fn with_test_all_ips(mut self, test_all_ips: bool) -> Self {
+        self.test_all_ips = test_all_ips;
         self
     }
 
@@ -154,6 +161,38 @@ impl DrownTester {
             Sslv2Status::Inconclusive => None,
             _ => Some(status),
         }
+    }
+
+    fn probe_addrs(&self) -> Result<Vec<std::net::SocketAddr>> {
+        let addrs: Vec<_> = if self.test_all_ips {
+            self.target.socket_addrs()
+        } else {
+            self.target
+                .socket_addrs()
+                .first()
+                .copied()
+                .into_iter()
+                .collect()
+        };
+        if addrs.is_empty() {
+            Err(crate::TlsError::NoSocketAddresses)
+        } else {
+            Ok(addrs)
+        }
+    }
+
+    fn merge_sslv2_status(best: Sslv2Status, next: Sslv2Status) -> Sslv2Status {
+        fn rank(status: Sslv2Status) -> u8 {
+            match status {
+                Sslv2Status::Confirmed => 5,
+                Sslv2Status::Probable => 4,
+                Sslv2Status::Suspicious => 3,
+                Sslv2Status::Inconclusive => 2,
+                Sslv2Status::NotSupported => 1,
+            }
+        }
+
+        if rank(next) > rank(best) { next } else { best }
     }
 
     /// Test for DROWN vulnerability
@@ -208,13 +247,18 @@ impl DrownTester {
 
     /// Test if SSLv2 is supported with detailed status
     async fn test_sslv2(&self) -> Result<Sslv2Status> {
-        let addr = self
-            .target
-            .socket_addrs()
-            .first()
-            .copied()
-            .ok_or(crate::TlsError::NoSocketAddresses)?;
+        let mut best = Sslv2Status::NotSupported;
+        for addr in self.probe_addrs()? {
+            let status = self.test_sslv2_addr(addr).await?;
+            best = Self::merge_sslv2_status(best, status);
+            if best == Sslv2Status::Confirmed {
+                break;
+            }
+        }
+        Ok(best)
+    }
 
+    async fn test_sslv2_addr(&self, addr: std::net::SocketAddr) -> Result<Sslv2Status> {
         let mut stream = match self.starttls_connect(addr, TLS_HANDSHAKE_TIMEOUT).await {
             Ok(s) => s,
             Err(_) => return Ok(Sslv2Status::Inconclusive),
@@ -339,13 +383,21 @@ impl DrownTester {
 
     /// Test for SSLv2 export ciphers (makes DROWN easier to exploit)
     async fn test_sslv2_export_ciphers(&self) -> Result<Sslv2Status> {
-        let addr = self
-            .target
-            .socket_addrs()
-            .first()
-            .copied()
-            .ok_or(crate::TlsError::NoSocketAddresses)?;
+        let mut best = Sslv2Status::NotSupported;
+        for addr in self.probe_addrs()? {
+            let status = self.test_sslv2_export_ciphers_addr(addr).await?;
+            best = Self::merge_sslv2_status(best, status);
+            if best == Sslv2Status::Confirmed {
+                break;
+            }
+        }
+        Ok(best)
+    }
 
+    async fn test_sslv2_export_ciphers_addr(
+        &self,
+        addr: std::net::SocketAddr,
+    ) -> Result<Sslv2Status> {
         let mut stream = match self.starttls_connect(addr, TLS_HANDSHAKE_TIMEOUT).await {
             Ok(s) => s,
             Err(_) => return Ok(Sslv2Status::Inconclusive),
@@ -829,6 +881,39 @@ mod tests {
         .unwrap();
 
         let result = DrownTester::new(target)
+            .test_sslv2()
+            .await
+            .expect("sslv2 probe should not error");
+        server.await.expect("server task");
+
+        assert_eq!(result, Sslv2Status::Confirmed);
+    }
+
+    #[tokio::test]
+    async fn test_sslv2_all_ips_uses_any_vulnerable_ip() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener");
+        let port = listener.local_addr().expect("local addr").port();
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept");
+            let mut buf = [0u8; 128];
+            let _ = socket.read(&mut buf).await.expect("read client hello");
+            let mut response = vec![0x80, 0x40, 0x04];
+            response.extend(vec![0u8; 63]);
+            socket.write_all(&response).await.expect("write response");
+        });
+
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec!["127.0.0.2".parse().unwrap(), "127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+
+        let result = DrownTester::new(target)
+            .with_test_all_ips(true)
             .test_sslv2()
             .await
             .expect("sslv2 probe should not error");
