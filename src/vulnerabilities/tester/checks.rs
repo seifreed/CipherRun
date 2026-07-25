@@ -465,7 +465,7 @@ impl VulnerabilityScanner {
     pub async fn test_breach(&self) -> Result<VulnerabilityResult> {
         use crate::vulnerabilities::breach::BreachTester;
 
-        let tester = BreachTester::new(self.target.clone());
+        let tester = BreachTester::new(self.target.clone()).with_test_all_ips(self.test_all_ips);
         let result = tester.test().await?;
 
         Ok(VulnerabilityResult {

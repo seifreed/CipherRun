@@ -14,11 +14,46 @@ const BREACH_HTTP_RESPONSE_LIMIT: usize = 1024 * 1024;
 /// BREACH vulnerability tester
 pub struct BreachTester {
     target: Target,
+    test_all_ips: bool,
 }
 
 impl BreachTester {
     pub fn new(target: Target) -> Self {
-        Self { target }
+        Self {
+            target,
+            test_all_ips: false,
+        }
+    }
+
+    pub fn with_test_all_ips(mut self, test_all_ips: bool) -> Self {
+        self.test_all_ips = test_all_ips;
+        self
+    }
+
+    fn probe_addrs(&self) -> Result<Vec<std::net::SocketAddr>> {
+        let addrs: Vec<_> = if self.test_all_ips {
+            self.target.socket_addrs()
+        } else {
+            self.target
+                .socket_addrs()
+                .first()
+                .copied()
+                .into_iter()
+                .collect()
+        };
+        if addrs.is_empty() {
+            Err(crate::TlsError::NoSocketAddresses)
+        } else {
+            Ok(addrs)
+        }
+    }
+
+    fn merge_probe_bool(current: Option<bool>, next: Option<bool>) -> Option<bool> {
+        match (current, next) {
+            (Some(true), _) | (_, Some(true)) => Some(true),
+            (None, _) | (_, None) => None,
+            _ => Some(false),
+        }
     }
 
     /// Test for BREACH vulnerability
@@ -77,13 +112,17 @@ impl BreachTester {
     /// not complete (TCP/TLS error, empty response) — the caller treats this as
     /// inconclusive rather than "compression disabled".
     async fn test_http_compression(&self) -> Result<Option<bool>> {
-        let addr = self
-            .target
-            .socket_addrs()
-            .first()
-            .copied()
-            .ok_or(crate::TlsError::NoSocketAddresses)?;
+        let mut result = Some(false);
+        for addr in self.probe_addrs()? {
+            result = Self::merge_probe_bool(result, self.test_http_compression_addr(addr).await?);
+            if result == Some(true) {
+                break;
+            }
+        }
+        Ok(result)
+    }
 
+    async fn test_http_compression_addr(&self, addr: std::net::SocketAddr) -> Result<Option<bool>> {
         // First establish TLS connection
         let stream =
             match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None)
@@ -154,13 +193,17 @@ impl BreachTester {
 
     /// Test if server reflects user input (dynamic content)
     async fn test_dynamic_content(&self) -> Result<Option<bool>> {
-        let addr = self
-            .target
-            .socket_addrs()
-            .first()
-            .copied()
-            .ok_or(crate::TlsError::NoSocketAddresses)?;
+        let mut result = Some(false);
+        for addr in self.probe_addrs()? {
+            result = Self::merge_probe_bool(result, self.test_dynamic_content_addr(addr).await?);
+            if result == Some(true) {
+                break;
+            }
+        }
+        Ok(result)
+    }
 
+    async fn test_dynamic_content_addr(&self, addr: std::net::SocketAddr) -> Result<Option<bool>> {
         let stream =
             match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None)
                 .await
@@ -227,13 +270,23 @@ impl BreachTester {
 
     /// Test if sensitive data might be reflected in responses
     async fn test_sensitive_data_reflection(&self) -> Result<Option<bool>> {
-        let addr = self
-            .target
-            .socket_addrs()
-            .first()
-            .copied()
-            .ok_or(crate::TlsError::NoSocketAddresses)?;
+        let mut result = Some(false);
+        for addr in self.probe_addrs()? {
+            result = Self::merge_probe_bool(
+                result,
+                self.test_sensitive_data_reflection_addr(addr).await?,
+            );
+            if result == Some(true) {
+                break;
+            }
+        }
+        Ok(result)
+    }
 
+    async fn test_sensitive_data_reflection_addr(
+        &self,
+        addr: std::net::SocketAddr,
+    ) -> Result<Option<bool>> {
         let stream =
             match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None)
                 .await
@@ -453,6 +506,30 @@ mod tests {
     use tokio::net::TcpListener;
     use tokio::time::{Duration, sleep};
     use tokio_rustls::TlsAcceptor;
+
+    #[test]
+    fn test_breach_probe_addrs_honors_all_ips() {
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            443,
+            vec![IpAddr::from([127, 0, 0, 2]), IpAddr::from([127, 0, 0, 1])],
+        )
+        .unwrap();
+
+        let single = BreachTester::new(target.clone()).probe_addrs().unwrap();
+        let all = BreachTester::new(target)
+            .with_test_all_ips(true)
+            .probe_addrs()
+            .unwrap();
+
+        assert_eq!(single.len(), 1);
+        assert_eq!(all.len(), 2);
+    }
+
+    #[test]
+    fn test_breach_merge_keeps_inconclusive_over_false() {
+        assert_eq!(BreachTester::merge_probe_bool(Some(false), None), None);
+    }
 
     async fn spawn_fragmented_https_server() -> u16 {
         let _ = rustls::crypto::ring::default_provider().install_default();
