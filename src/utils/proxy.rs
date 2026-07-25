@@ -319,10 +319,8 @@ fn normalize_connect_host(host: &str) -> &str {
 
 /// Check if proxy is working
 pub async fn test_proxy(proxy: &ProxyConfig) -> Result<bool> {
-    match connect_via_proxy(proxy, "example.com", 443, Duration::from_secs(10)).await {
-        Ok(_) => Ok(true),
-        Err(_) => Ok(false),
-    }
+    connect_via_proxy(proxy, "example.com", 443, Duration::from_secs(10)).await?;
+    Ok(true)
 }
 
 #[cfg(test)]
@@ -603,6 +601,27 @@ mod tests {
             .await
             .expect_err("malformed proxy status code should fail");
         assert!(err.to_string().contains("invalid status code"));
+    }
+
+    #[tokio::test]
+    async fn test_proxy_propagates_connection_errors() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let port = listener.local_addr().expect("listener should expose addr").port();
+        drop(listener);
+
+        let proxy = ProxyConfig {
+            host: "127.0.0.1".to_string(),
+            port,
+            username: None,
+            password: None,
+        };
+
+        let err = test_proxy(&proxy)
+            .await
+            .expect_err("proxy connection failure must not be collapsed to false");
+        assert!(!err.to_string().is_empty());
     }
 
     #[tokio::test]
