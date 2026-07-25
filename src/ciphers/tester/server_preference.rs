@@ -138,13 +138,46 @@ impl CipherTester {
         protocol: Protocol,
         cipher_hexcodes: &[u16],
     ) -> Result<Option<u16>> {
+        if self.test_all_ips {
+            let addrs = self.target.socket_addrs();
+            if addrs.is_empty() {
+                return Err(crate::TlsError::NoSocketAddresses);
+            }
+
+            let mut last_error = None;
+            for addr in addrs {
+                match self
+                    .get_server_chosen_cipher_addr(protocol, cipher_hexcodes, addr)
+                    .await
+                {
+                    Ok(Some(cipher)) => return Ok(Some(cipher)),
+                    Ok(None) => {}
+                    Err(error) => last_error = Some(error),
+                }
+            }
+
+            if let Some(error) = last_error {
+                return Err(error);
+            }
+            return Ok(None);
+        }
+
         let addr = self
             .target
             .socket_addrs()
             .first()
             .copied()
             .ok_or(crate::TlsError::NoSocketAddresses)?;
+        self.get_server_chosen_cipher_addr(protocol, cipher_hexcodes, addr)
+            .await
+    }
 
+    async fn get_server_chosen_cipher_addr(
+        &self,
+        protocol: Protocol,
+        cipher_hexcodes: &[u16],
+        addr: std::net::SocketAddr,
+    ) -> Result<Option<u16>> {
         let mut stream = crate::utils::network::connect_with_timeout(
             addr,
             self.connect_timeout,

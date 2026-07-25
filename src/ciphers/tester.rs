@@ -598,6 +598,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_server_preference_honors_all_ips() {
+        let addr = spawn_fake_tls_server(0xc030, 0, 1).await;
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            addr.port(),
+            vec![IpAddr::from([127, 0, 0, 2]), IpAddr::from([127, 0, 0, 1])],
+        )
+        .expect("target should build");
+
+        let tester = CipherTester::new(target)
+            .with_test_all_ips(true)
+            .with_connect_timeout(Duration::from_millis(100))
+            .with_read_timeout(Duration::from_millis(200));
+
+        let choice = tester
+            .get_server_chosen_cipher(Protocol::TLS12, &[0xc02f, 0xc030])
+            .await
+            .expect("second IP should provide server choice");
+
+        assert_eq!(choice, Some(0xc030));
+    }
+
+    #[tokio::test]
     async fn test_determine_server_preference_rejects_invalid_hexcode() {
         let tester = CipherTester::new(dummy_target());
         let ciphers = vec![make_cipher("TLSv1.2", "not-hex", "RSA", "AES", 128, false)];
