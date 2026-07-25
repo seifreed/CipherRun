@@ -11,6 +11,7 @@ use tokio::time::timeout;
 mod bytes;
 mod client_hello;
 mod record;
+mod result_analysis;
 mod server_hello;
 
 /// Renegotiation tester
@@ -166,27 +167,9 @@ impl<'a> RenegotiationTester<'a> {
         let insecure_result = self.test_insecure_renegotiation().await?;
 
         if secure_extension_probe.is_none() {
-            if matches!(insecure_result, InsecureRenegotiationResult::Detected) {
-                return Ok(RenegotiationTestResult {
-                    support: RenegotiationSupport::InsecureRenegotiation,
-                    secure_extension: false,
-                    vulnerable: true,
-                    needs_verification: false,
-                    inconclusive: false,
-                    details: "VULNERABLE: Insecure renegotiation enabled (CVE-2009-3555)"
-                        .to_string(),
-                });
-            }
-
-            return Ok(RenegotiationTestResult {
-                support: RenegotiationSupport::Inconclusive,
-                secure_extension: false,
-                vulnerable: false,
-                needs_verification: true,
-                inconclusive: true,
-                details: "Renegotiation support unclear - secure extension probe did not complete"
-                    .to_string(),
-            });
+            return Ok(result_analysis::failed_secure_extension_probe(
+                insecure_result,
+            ));
         }
 
         let secure_extension = secure_extension_probe.unwrap_or(false);
@@ -194,58 +177,23 @@ impl<'a> RenegotiationTester<'a> {
         // Determine support level
         let support = if secure_extension {
             RenegotiationSupport::SecureRenegotiation
-        } else if matches!(insecure_result, InsecureRenegotiationResult::Detected) {
-            RenegotiationSupport::InsecureRenegotiation
         } else {
             // secure_extension is false: server didn't echo RFC 5746 in ServerHello.
             // test_renegotiation_support() uses OpenSSL (which always includes RFC 5746)
             // and returns SecureRenegotiation whenever TLS works — but a successful TLS
             // handshake here doesn't imply the server truly supports RFC 5746 (we already
             // know it didn't echo the extension). Cap SecureRenegotiation to NotSupported.
-            match self.test_renegotiation_support().await? {
-                RenegotiationSupport::SecureRenegotiation => RenegotiationSupport::NotSupported,
-                other => other,
-            }
+            result_analysis::support_without_secure_extension(
+                insecure_result,
+                self.test_renegotiation_support().await?,
+            )
         };
 
-        // Determine if manual verification is needed
-        let needs_verification =
-            matches!(insecure_result, InsecureRenegotiationResult::Inconclusive)
-                || matches!(support, RenegotiationSupport::Inconclusive);
-
-        let vulnerable = matches!(support, RenegotiationSupport::InsecureRenegotiation);
-
-        let details = match support {
-            RenegotiationSupport::SecureRenegotiation => {
-                "Secure renegotiation supported (RFC 5746)".to_string()
-            }
-            RenegotiationSupport::InsecureRenegotiation => {
-                "VULNERABLE: Insecure renegotiation enabled (CVE-2009-3555)".to_string()
-            }
-            RenegotiationSupport::ClientInitiatedDisabled => {
-                "Client-initiated renegotiation disabled (secure configuration)".to_string()
-            }
-            RenegotiationSupport::NotSupported => {
-                if needs_verification {
-                    "Renegotiation support unclear - server responded without renegotiation_info extension. \
-                     Manual verification recommended for CVE-2009-3555.".to_string()
-                } else {
-                    "Renegotiation not supported".to_string()
-                }
-            }
-            RenegotiationSupport::Inconclusive => {
-                "Renegotiation support inconclusive - transport or handshake failures prevented a reliable result".to_string()
-            }
-        };
-
-        Ok(RenegotiationTestResult {
+        Ok(result_analysis::final_result(
             support,
             secure_extension,
-            vulnerable,
-            needs_verification,
-            inconclusive: needs_verification,
-            details,
-        })
+            insecure_result,
+        ))
     }
 
     /// Test renegotiation support
