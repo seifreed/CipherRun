@@ -409,6 +409,7 @@ impl VulnerabilityScanner {
         use crate::vulnerabilities::ticketbleed::TicketbleedTester;
 
         let tester = TicketbleedTester::new(self.target.clone())
+            .with_test_all_ips(self.test_all_ips)
             .with_starttls(
                 self.starttls,
                 self.starttls_hostname.clone(),

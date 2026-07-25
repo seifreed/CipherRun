@@ -62,6 +62,7 @@ pub struct TicketbleedTester {
     starttls: Option<crate::starttls::StarttlsProtocol>,
     starttls_server_mode: bool,
     starttls_hostname: Option<String>,
+    test_all_ips: bool,
 }
 
 /// Internal verdict from `test_session_ticket_leak` that separates conclusive
@@ -81,6 +82,7 @@ impl TicketbleedTester {
             starttls: None,
             starttls_server_mode: false,
             starttls_hostname: None,
+            test_all_ips: false,
         }
     }
 
@@ -95,6 +97,45 @@ impl TicketbleedTester {
         self.starttls_hostname = hostname;
         self.starttls_server_mode = server_mode;
         self
+    }
+
+    pub fn with_test_all_ips(mut self, test_all_ips: bool) -> Self {
+        self.test_all_ips = test_all_ips;
+        self
+    }
+
+    fn probe_addrs(&self) -> Result<Vec<std::net::SocketAddr>> {
+        let addrs: Vec<_> = if self.test_all_ips {
+            self.target.socket_addrs()
+        } else {
+            self.target
+                .socket_addrs()
+                .first()
+                .copied()
+                .into_iter()
+                .collect()
+        };
+        if addrs.is_empty() {
+            Err(crate::TlsError::NoSocketAddresses)
+        } else {
+            Ok(addrs)
+        }
+    }
+
+    fn merge_probe_outcome(
+        current: TicketbleedProbeOutcome,
+        next: TicketbleedProbeOutcome,
+    ) -> TicketbleedProbeOutcome {
+        match (current, next) {
+            (TicketbleedProbeOutcome::Vulnerable, _) | (_, TicketbleedProbeOutcome::Vulnerable) => {
+                TicketbleedProbeOutcome::Vulnerable
+            }
+            (TicketbleedProbeOutcome::Inconclusive(reason), _)
+            | (_, TicketbleedProbeOutcome::Inconclusive(reason)) => {
+                TicketbleedProbeOutcome::Inconclusive(reason)
+            }
+            (clean, _) => clean,
+        }
     }
 
     /// Connect, upgrading via STARTTLS first for plaintext-first services.
@@ -148,13 +189,25 @@ impl TicketbleedTester {
 
     /// Test for session ticket memory leak
     async fn test_session_ticket_leak(&self) -> Result<TicketbleedProbeOutcome> {
-        let addr = self
-            .target
-            .socket_addrs()
-            .first()
-            .copied()
-            .ok_or(crate::TlsError::NoSocketAddresses)?;
+        let mut outcome = None;
+        for addr in self.probe_addrs()? {
+            let next = self.test_session_ticket_leak_addr(addr).await?;
+            outcome = Some(match outcome {
+                Some(current) => Self::merge_probe_outcome(current, next),
+                None => next,
+            });
+            if matches!(outcome, Some(TicketbleedProbeOutcome::Vulnerable)) {
+                break;
+            }
+        }
 
+        outcome.ok_or(crate::TlsError::NoSocketAddresses)
+    }
+
+    async fn test_session_ticket_leak_addr(
+        &self,
+        addr: std::net::SocketAddr,
+    ) -> Result<TicketbleedProbeOutcome> {
         match self.starttls_connect(addr, TLS_HANDSHAKE_TIMEOUT).await {
             Ok(mut stream) => {
                 let client_hello = self.build_client_hello_with_session_ticket()?;
@@ -724,6 +777,40 @@ mod tests {
         };
         assert!(!result.vulnerable);
         assert!(!result.inconclusive);
+    }
+
+    #[test]
+    fn test_ticketbleed_probe_addrs_honors_all_ips() {
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            443,
+            vec!["127.0.0.2".parse().unwrap(), "127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+
+        let single = TicketbleedTester::new(target.clone())
+            .probe_addrs()
+            .unwrap();
+        let all = TicketbleedTester::new(target)
+            .with_test_all_ips(true)
+            .probe_addrs()
+            .unwrap();
+
+        assert_eq!(single.len(), 1);
+        assert_eq!(all.len(), 2);
+    }
+
+    #[test]
+    fn test_ticketbleed_merge_keeps_inconclusive_over_clean() {
+        let merged = TicketbleedTester::merge_probe_outcome(
+            TicketbleedProbeOutcome::NotVulnerable("clean"),
+            TicketbleedProbeOutcome::Inconclusive("timeout"),
+        );
+
+        assert!(matches!(
+            merged,
+            TicketbleedProbeOutcome::Inconclusive("timeout")
+        ));
     }
 
     #[test]
