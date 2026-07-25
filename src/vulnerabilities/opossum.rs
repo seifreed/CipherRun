@@ -28,6 +28,7 @@ pub struct OpossumTester {
     starttls: Option<crate::starttls::StarttlsProtocol>,
     starttls_server_mode: bool,
     starttls_hostname: Option<String>,
+    test_all_ips: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,6 +53,7 @@ impl OpossumTester {
             starttls: None,
             starttls_server_mode: false,
             starttls_hostname: None,
+            test_all_ips: false,
         }
     }
 
@@ -66,6 +68,40 @@ impl OpossumTester {
         self.starttls_hostname = hostname;
         self.starttls_server_mode = server_mode;
         self
+    }
+
+    pub fn with_test_all_ips(mut self, test_all_ips: bool) -> Self {
+        self.test_all_ips = test_all_ips;
+        self
+    }
+
+    fn probe_addrs(&self) -> Result<Vec<std::net::SocketAddr>> {
+        let addrs = self.target.socket_addrs();
+        if self.test_all_ips {
+            if addrs.is_empty() {
+                Err(crate::TlsError::NoSocketAddresses)
+            } else {
+                Ok(addrs)
+            }
+        } else {
+            addrs
+                .first()
+                .copied()
+                .map(|addr| vec![addr])
+                .ok_or(crate::TlsError::NoSocketAddresses)
+        }
+    }
+
+    fn merge_status(best: OpossumStatus, next: OpossumStatus) -> OpossumStatus {
+        match (best, next) {
+            (OpossumStatus::Vulnerable, _) | (_, OpossumStatus::Vulnerable) => {
+                OpossumStatus::Vulnerable
+            }
+            (OpossumStatus::Inconclusive, _) | (_, OpossumStatus::Inconclusive) => {
+                OpossumStatus::Inconclusive
+            }
+            _ => OpossumStatus::NotVulnerable,
+        }
     }
 
     /// Connect, upgrading via STARTTLS first for plaintext-first services.
@@ -145,12 +181,17 @@ impl OpossumTester {
 
     /// Test OpenSSL version detection
     async fn test_openssl_version(&self) -> Result<OpossumStatus> {
-        let addr = self
-            .target
-            .socket_addrs()
-            .first()
-            .copied()
-            .ok_or(crate::TlsError::NoSocketAddresses)?;
+        let mut best = OpossumStatus::NotVulnerable;
+        for addr in self.probe_addrs()? {
+            best = Self::merge_status(best, self.test_openssl_version_addr(addr).await?);
+            if best == OpossumStatus::Vulnerable {
+                break;
+            }
+        }
+        Ok(best)
+    }
+
+    async fn test_openssl_version_addr(&self, addr: std::net::SocketAddr) -> Result<OpossumStatus> {
         // Connect and try to extract OpenSSL version from server
         let stream = match self.starttls_connect(addr, TLS_HANDSHAKE_TIMEOUT).await {
             Ok(s) => s,
@@ -187,13 +228,21 @@ impl OpossumTester {
 
     /// Test certificate parsing for malformed EC parameters
     async fn test_certificate_parsing(&self) -> Result<OpossumStatus> {
+        let mut best = OpossumStatus::NotVulnerable;
+        for addr in self.probe_addrs()? {
+            best = Self::merge_status(best, self.test_certificate_parsing_addr(addr).await?);
+            if best == OpossumStatus::Vulnerable {
+                break;
+            }
+        }
+        Ok(best)
+    }
+
+    async fn test_certificate_parsing_addr(
+        &self,
+        addr: std::net::SocketAddr,
+    ) -> Result<OpossumStatus> {
         let hostname = self.target.hostname.clone();
-        let addr = self
-            .target
-            .socket_addrs()
-            .first()
-            .copied()
-            .ok_or(crate::TlsError::NoSocketAddresses)?;
         // Upgrade via STARTTLS first, mirroring the control handshake below. A raw
         // connect against a plaintext-first service would send the ClientHello in
         // the clear, fail/hang, and then trip the control-driven "hang detected"
@@ -229,14 +278,7 @@ impl OpossumTester {
             Ok(Err(_)) => Ok(OpossumStatus::Inconclusive),
             Err(_) => {
                 if self
-                    .control_handshake_completes_without_hang(
-                        self.target
-                            .socket_addrs()
-                            .first()
-                            .copied()
-                            .ok_or(crate::TlsError::NoSocketAddresses)?,
-                        &hostname,
-                    )
+                    .control_handshake_completes_without_hang(addr, &hostname)
                     .await?
                 {
                     Ok(OpossumStatus::Vulnerable)
@@ -359,6 +401,37 @@ mod tests {
 
         let tester = OpossumTester::new(target);
         assert_eq!(tester.target.hostname, "example.com");
+    }
+
+    #[test]
+    fn test_opossum_probe_addrs_honors_all_ips() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["192.0.2.1".parse().unwrap(), "192.0.2.2".parse().unwrap()],
+        )
+        .unwrap();
+
+        let first = OpossumTester::new(target.clone()).probe_addrs().unwrap();
+        assert_eq!(first.len(), 1);
+
+        let all = OpossumTester::new(target)
+            .with_test_all_ips(true)
+            .probe_addrs()
+            .unwrap();
+        assert_eq!(all.len(), 2);
+    }
+
+    #[test]
+    fn test_opossum_merge_status_preserves_uncertainty() {
+        assert_eq!(
+            OpossumTester::merge_status(OpossumStatus::NotVulnerable, OpossumStatus::Inconclusive),
+            OpossumStatus::Inconclusive
+        );
+        assert_eq!(
+            OpossumTester::merge_status(OpossumStatus::Inconclusive, OpossumStatus::Vulnerable),
+            OpossumStatus::Vulnerable
+        );
     }
 
     #[test]
