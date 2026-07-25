@@ -14,11 +14,13 @@ pub struct Lucky13Tester {
     starttls: Option<crate::starttls::StarttlsProtocol>,
     starttls_server_mode: bool,
     starttls_hostname: Option<String>,
+    test_all_ips: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CbcCipherSupportStatus {
     Supported,
+    NotSupported,
     Inconclusive,
 }
 
@@ -29,6 +31,7 @@ impl Lucky13Tester {
             starttls: None,
             starttls_server_mode: false,
             starttls_hostname: None,
+            test_all_ips: false,
         }
     }
 
@@ -43,6 +46,29 @@ impl Lucky13Tester {
         self.starttls_hostname = hostname;
         self.starttls_server_mode = server_mode;
         self
+    }
+
+    pub fn with_test_all_ips(mut self, test_all_ips: bool) -> Self {
+        self.test_all_ips = test_all_ips;
+        self
+    }
+
+    fn probe_addrs(&self) -> Result<Vec<std::net::SocketAddr>> {
+        let addrs: Vec<_> = if self.test_all_ips {
+            self.target.socket_addrs()
+        } else {
+            self.target
+                .socket_addrs()
+                .first()
+                .copied()
+                .into_iter()
+                .collect()
+        };
+        if addrs.is_empty() {
+            Err(crate::TlsError::NoSocketAddresses)
+        } else {
+            Ok(addrs)
+        }
     }
 
     /// Connect, upgrading via STARTTLS first for plaintext-first services.
@@ -101,19 +127,39 @@ impl Lucky13Tester {
                      cipher suites (AES-GCM, ChaCha20-Poly1305) and disable CBC."
                         .to_string(),
             }),
+            CbcCipherSupportStatus::NotSupported => Ok(Lucky13TestResult {
+                vulnerable: false,
+                partially_vulnerable: false,
+                cbc_supported: false,
+                inconclusive: false,
+                details: "Not vulnerable - server does not support CBC cipher suites".to_string(),
+            }),
         }
     }
 
     /// Test if CBC ciphers are supported.
     async fn test_cbc_ciphers(&self) -> Result<CbcCipherSupportStatus> {
-        use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode, SslVersion};
+        let mut inconclusive = false;
+        for addr in self.probe_addrs()? {
+            match self.test_cbc_ciphers_addr(addr).await? {
+                CbcCipherSupportStatus::Supported => return Ok(CbcCipherSupportStatus::Supported),
+                CbcCipherSupportStatus::NotSupported => {}
+                CbcCipherSupportStatus::Inconclusive => inconclusive = true,
+            }
+        }
 
-        let addr = self
-            .target
-            .socket_addrs()
-            .first()
-            .copied()
-            .ok_or(crate::TlsError::NoSocketAddresses)?;
+        Ok(if inconclusive {
+            CbcCipherSupportStatus::Inconclusive
+        } else {
+            CbcCipherSupportStatus::NotSupported
+        })
+    }
+
+    async fn test_cbc_ciphers_addr(
+        &self,
+        addr: std::net::SocketAddr,
+    ) -> Result<CbcCipherSupportStatus> {
+        use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode, SslVersion};
 
         // Test with various CBC ciphers
         let cbc_ciphers = "AES128-SHA:AES256-SHA:AES128-SHA256:AES256-SHA256:DES-CBC3-SHA";
@@ -142,7 +188,7 @@ impl Lucky13Tester {
                         .connect(&hostname, std_stream)
                     {
                         Ok(_) => Ok(CbcCipherSupportStatus::Supported),
-                        Err(_) => Ok(CbcCipherSupportStatus::Inconclusive),
+                        Err(error) => Ok(classify_cbc_handshake_error(&error.to_string())),
                     }
                 })
                 .await
@@ -150,6 +196,14 @@ impl Lucky13Tester {
             }
             _ => Ok(CbcCipherSupportStatus::Inconclusive),
         }
+    }
+}
+
+fn classify_cbc_handshake_error(error: &str) -> CbcCipherSupportStatus {
+    if crate::utils::network::is_transport_anomaly_error(error) {
+        CbcCipherSupportStatus::Inconclusive
+    } else {
+        CbcCipherSupportStatus::NotSupported
     }
 }
 
@@ -201,6 +255,22 @@ mod tests {
         };
         assert!(!result.vulnerable);
         assert!(result.details.contains("Not vulnerable"));
+    }
+
+    #[test]
+    fn test_cbc_handshake_error_without_shared_cipher_is_not_supported() {
+        assert_eq!(
+            classify_cbc_handshake_error("ssl handshake failure: no shared cipher"),
+            CbcCipherSupportStatus::NotSupported
+        );
+    }
+
+    #[test]
+    fn test_cbc_handshake_transport_error_is_inconclusive() {
+        assert_eq!(
+            classify_cbc_handshake_error("connection reset by peer"),
+            CbcCipherSupportStatus::Inconclusive
+        );
     }
 
     #[tokio::test]

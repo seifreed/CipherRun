@@ -569,6 +569,7 @@ impl VulnerabilityScanner {
         use crate::vulnerabilities::lucky13::Lucky13Tester;
 
         let tester = Lucky13Tester::new(self.target.clone())
+            .with_test_all_ips(self.test_all_ips)
             .with_starttls(
                 self.starttls,
                 self.starttls_hostname.clone(),
