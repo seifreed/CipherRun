@@ -5,14 +5,14 @@
 use crate::Result;
 use crate::constants::{
     BUFFER_SIZE_MAX_WITH_OVERHEAD, CONTENT_TYPE_HANDSHAKE, DEFAULT_READ_TIMEOUT,
-    EXTENSION_RENEGOTIATION_INFO, HANDSHAKE_TYPE_CLIENT_HELLO, SHORT_TIMEOUT,
-    TLS_RECORD_HEADER_SIZE, VERSION_TLS_1_2,
+    EXTENSION_RENEGOTIATION_INFO, SHORT_TIMEOUT, TLS_RECORD_HEADER_SIZE,
 };
 use crate::utils::network::Target;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::timeout;
 
 mod bytes;
+mod client_hello;
 
 /// Renegotiation tester
 pub struct RenegotiationTester<'a> {
@@ -358,7 +358,7 @@ impl<'a> RenegotiationTester<'a> {
         match self.starttls_connect(addr, DEFAULT_READ_TIMEOUT).await {
             Ok(mut stream) => {
                 // Send ClientHello WITHOUT renegotiation_info extension
-                let client_hello = self.build_client_hello_without_reneg_info()?;
+                let client_hello = client_hello::without_renegotiation_info()?;
                 stream.write_all(&client_hello).await?;
 
                 // Read ServerHello as a complete TLS record before parsing.
@@ -435,7 +435,7 @@ impl<'a> RenegotiationTester<'a> {
         match self.starttls_connect(addr, DEFAULT_READ_TIMEOUT).await {
             Ok(mut stream) => {
                 // Send ClientHello
-                let client_hello = self.build_client_hello()?;
+                let client_hello = client_hello::with_renegotiation_info()?;
                 stream.write_all(&client_hello).await?;
 
                 // Read ServerHello as a complete TLS record before parsing.
@@ -453,94 +453,6 @@ impl<'a> RenegotiationTester<'a> {
             }
             _ => Ok(None),
         }
-    }
-
-    /// Build ClientHello with renegotiation_info extension
-    fn build_client_hello(&self) -> Result<Vec<u8>> {
-        let mut hello = Vec::new();
-
-        // TLS Record: Handshake
-        hello.push(CONTENT_TYPE_HANDSHAKE);
-        hello.extend_from_slice(&VERSION_TLS_1_2.to_be_bytes());
-
-        // Length placeholder
-        let len_pos = hello.len();
-        hello.push(0x00);
-        hello.push(0x00);
-
-        // Handshake: ClientHello
-        hello.push(HANDSHAKE_TYPE_CLIENT_HELLO);
-
-        // Handshake length placeholder
-        let hs_len_pos = hello.len();
-        hello.push(0x00);
-        hello.push(0x00);
-        hello.push(0x00);
-
-        // Client Version: TLS 1.2
-        hello.extend_from_slice(&VERSION_TLS_1_2.to_be_bytes());
-
-        // Random (32 bytes)
-        let mut random_byte = 0_u8;
-        for _ in 0..32 {
-            hello.push(random_byte);
-            random_byte = random_byte.wrapping_add(13);
-        }
-
-        // Session ID (empty)
-        hello.push(0x00);
-
-        // Cipher Suites
-        hello.push(0x00);
-        hello.push(0x04);
-        hello.push(0xc0);
-        hello.push(0x2f); // TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
-        hello.push(0x00);
-        hello.push(0x9c); // TLS_RSA_WITH_AES_128_GCM_SHA256
-
-        // Compression (none)
-        hello.push(0x01);
-        hello.push(0x00);
-
-        // Extensions
-        let ext_pos = hello.len();
-        hello.push(0x00);
-        hello.push(0x00); // Extensions length placeholder
-
-        // Renegotiation Info Extension
-        hello.extend_from_slice(&EXTENSION_RENEGOTIATION_INFO.to_be_bytes());
-        hello.push(0x00);
-        hello.push(0x01); // Length: 1 byte
-        hello.push(0x00); // Empty renegotiation info
-
-        // Update extensions length
-        let ext_len = hello.len() - ext_pos - 2;
-        bytes::write_u16_at(
-            &mut hello,
-            ext_pos,
-            bytes::u16_len(ext_len, "ClientHello extensions length")?,
-            "ClientHello extensions length placeholder",
-        )?;
-
-        // Update handshake length
-        let hs_len = hello.len() - hs_len_pos - 3;
-        bytes::write_u24_at(
-            &mut hello,
-            hs_len_pos,
-            hs_len,
-            "ClientHello handshake length placeholder",
-        )?;
-
-        // Update record length
-        let rec_len = hello.len() - len_pos - 2;
-        bytes::write_u16_at(
-            &mut hello,
-            len_pos,
-            bytes::u16_len(rec_len, "ClientHello record length")?,
-            "ClientHello record length placeholder",
-        )?;
-
-        Ok(hello)
     }
 
     async fn read_tls_record(
@@ -583,77 +495,6 @@ impl<'a> RenegotiationTester<'a> {
             return Ok(None);
         }
         Ok(Some(total_len))
-    }
-
-    /// Build ClientHello WITHOUT renegotiation_info extension
-    /// Used to test for insecure renegotiation (CVE-2009-3555)
-    fn build_client_hello_without_reneg_info(&self) -> Result<Vec<u8>> {
-        let mut hello = Vec::new();
-
-        // TLS Record: Handshake
-        hello.push(CONTENT_TYPE_HANDSHAKE);
-        hello.extend_from_slice(&VERSION_TLS_1_2.to_be_bytes());
-
-        // Length placeholder
-        let len_pos = hello.len();
-        hello.push(0x00);
-        hello.push(0x00);
-
-        // Handshake: ClientHello
-        hello.push(HANDSHAKE_TYPE_CLIENT_HELLO);
-
-        // Handshake length placeholder
-        let hs_len_pos = hello.len();
-        hello.push(0x00);
-        hello.push(0x00);
-        hello.push(0x00);
-
-        // Client Version: TLS 1.2
-        hello.extend_from_slice(&VERSION_TLS_1_2.to_be_bytes());
-
-        // Random (32 bytes)
-        let mut random_byte = 0_u8;
-        for _ in 0..32 {
-            hello.push(random_byte);
-            random_byte = random_byte.wrapping_add(13);
-        }
-
-        // Session ID (empty)
-        hello.push(0x00);
-
-        // Cipher Suites
-        hello.push(0x00);
-        hello.push(0x04);
-        hello.push(0xc0);
-        hello.push(0x2f); // TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
-        hello.push(0x00);
-        hello.push(0x9c); // TLS_RSA_WITH_AES_128_GCM_SHA256
-
-        // Compression (none)
-        hello.push(0x01);
-        hello.push(0x00);
-
-        // NO extensions - ClientHello without renegotiation_info
-
-        // Update handshake length
-        let hs_len = hello.len() - hs_len_pos - 3;
-        bytes::write_u24_at(
-            &mut hello,
-            hs_len_pos,
-            hs_len,
-            "ClientHello handshake length placeholder",
-        )?;
-
-        // Update record length
-        let rec_len = hello.len() - len_pos - 2;
-        bytes::write_u16_at(
-            &mut hello,
-            len_pos,
-            bytes::u16_len(rec_len, "ClientHello record length")?,
-            "ClientHello record length placeholder",
-        )?;
-
-        Ok(hello)
     }
 
     /// Check if ServerHello response contains renegotiation_info extension (0xff01).
@@ -1014,17 +855,7 @@ mod tests {
 
     #[test]
     fn test_client_hello_with_renegotiation_info() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().unwrap()],
-        )
-        .unwrap();
-
-        let tester = RenegotiationTester::new(&target);
-        let hello = tester
-            .build_client_hello()
-            .expect("ClientHello should build");
+        let hello = client_hello::with_renegotiation_info().expect("ClientHello should build");
 
         assert!(hello.len() > 50);
         // Check for renegotiation_info extension (0xff01)
@@ -1121,16 +952,7 @@ mod tests {
 
     #[test]
     fn test_client_hello_record_length_matches() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().unwrap()],
-        )
-        .unwrap();
-        let tester = RenegotiationTester::new(&target);
-        let hello = tester
-            .build_client_hello()
-            .expect("ClientHello should build");
+        let hello = client_hello::with_renegotiation_info().expect("ClientHello should build");
         assert!(hello.len() > 10);
 
         let rec_len = bytes::read_u16_at(&hello, 3, "ClientHello record length").unwrap() as usize;
