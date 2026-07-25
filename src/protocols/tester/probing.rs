@@ -251,10 +251,10 @@ impl ProtocolTester {
 
         if any_supported {
             Ok(ProtocolProbeOutcome::Supported)
-        } else if any_not_supported {
-            Ok(ProtocolProbeOutcome::NotSupported)
         } else if any_inconclusive {
             Ok(ProtocolProbeOutcome::Inconclusive)
+        } else if any_not_supported {
+            Ok(ProtocolProbeOutcome::NotSupported)
         } else {
             Ok(ProtocolProbeOutcome::NotSupported)
         }

@@ -513,8 +513,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_test_all_ips_reports_not_supported_when_any_ip_rejects_and_others_are_inconclusive()
-     {
+    async fn test_test_all_ips_reports_inconclusive_when_any_ip_is_inconclusive() {
         let close_listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("close listener should bind");
@@ -549,7 +548,7 @@ mod tests {
             .expect("test assertion should succeed");
 
         assert!(!result.supported);
-        assert!(!result.inconclusive);
+        assert!(result.inconclusive);
     }
 
     #[tokio::test]
