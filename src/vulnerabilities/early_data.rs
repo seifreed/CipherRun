@@ -56,6 +56,7 @@ pub struct EarlyDataTester<'a> {
     starttls: Option<crate::starttls::StarttlsProtocol>,
     starttls_server_mode: bool,
     starttls_hostname: Option<String>,
+    test_all_ips: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,6 +80,7 @@ impl<'a> EarlyDataTester<'a> {
             starttls: None,
             starttls_server_mode: false,
             starttls_hostname: None,
+            test_all_ips: false,
         }
     }
 
@@ -92,6 +94,11 @@ impl<'a> EarlyDataTester<'a> {
         self.starttls = protocol;
         self.starttls_hostname = hostname;
         self.starttls_server_mode = server_mode;
+        self
+    }
+
+    pub fn with_test_all_ips(mut self, enable: bool) -> Self {
+        self.test_all_ips = enable;
         self
     }
 
@@ -333,31 +340,63 @@ impl<'a> EarlyDataTester<'a> {
         config.enable_early_data = true;
         let config = Arc::new(config);
 
-        // Warm-up: a full handshake plus a request/response exchange so the
-        // server issues a NewSessionTicket, which rustls stores in the shared
-        // resumption store. If this fails we cannot test 0-RTT — inconclusive.
-        if self.warm_up_session(&config, domain.clone()).await.is_err() {
+        let addrs: Vec<_> = if self.test_all_ips {
+            self.target.socket_addrs()
+        } else {
+            self.target.socket_addrs().first().copied().into_iter().collect()
+        };
+        if addrs.is_empty() {
             return Ok(EarlyDataSupportStatus::Inconclusive);
         }
 
-        Ok(self.probe_resumed_early_data(&config, domain).await)
+        let mut saw_not_supported = false;
+        let mut saw_inconclusive = false;
+        for addr in addrs {
+            match self
+                .probe_zero_rtt_early_data_on_addr(addr, &config, domain.clone())
+                .await
+            {
+                EarlyDataSupportStatus::Supported => return Ok(EarlyDataSupportStatus::Supported),
+                EarlyDataSupportStatus::NotSupported => saw_not_supported = true,
+                EarlyDataSupportStatus::Inconclusive => saw_inconclusive = true,
+            }
+        }
+
+        if saw_inconclusive {
+            Ok(EarlyDataSupportStatus::Inconclusive)
+        } else if saw_not_supported {
+            Ok(EarlyDataSupportStatus::NotSupported)
+        } else {
+            Ok(EarlyDataSupportStatus::Inconclusive)
+        }
+    }
+
+    async fn probe_zero_rtt_early_data_on_addr(
+        &self,
+        addr: std::net::SocketAddr,
+        config: &Arc<ClientConfig>,
+        domain: rustls::pki_types::ServerName<'static>,
+    ) -> EarlyDataSupportStatus {
+        // Warm-up: a full handshake plus a request/response exchange so the
+        // server issues a NewSessionTicket, which rustls stores in the shared
+        // resumption store. If this fails we cannot test 0-RTT — inconclusive.
+        if self.warm_up_session(addr, config, domain.clone()).await.is_err() {
+            return EarlyDataSupportStatus::Inconclusive;
+        }
+
+        self.probe_resumed_early_data(addr, config, domain).await
     }
 
     /// Establish a resumable session by completing a handshake and exchanging a
     /// request so the server delivers a NewSessionTicket.
     async fn warm_up_session(
         &self,
+        addr: std::net::SocketAddr,
         config: &Arc<ClientConfig>,
         domain: rustls::pki_types::ServerName<'static>,
     ) -> Result<()> {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-        let addr = self
-            .target
-            .socket_addrs()
-            .first()
-            .copied()
-            .ok_or(crate::TlsError::NoSocketAddresses)?;
         let stream = self.starttls_connect(addr, TLS_HANDSHAKE_TIMEOUT).await?;
         let connector = tokio_rustls::TlsConnector::from(config.clone());
         let request = self.minimal_http_request();
@@ -382,14 +421,12 @@ impl<'a> EarlyDataTester<'a> {
     /// server accepted it.
     async fn probe_resumed_early_data(
         &self,
+        addr: std::net::SocketAddr,
         config: &Arc<ClientConfig>,
         domain: rustls::pki_types::ServerName<'static>,
     ) -> EarlyDataSupportStatus {
         use tokio::io::AsyncWriteExt;
 
-        let Some(addr) = self.target.socket_addrs().first().copied() else {
-            return EarlyDataSupportStatus::Inconclusive;
-        };
         let stream = match self.starttls_connect(addr, TLS_HANDSHAKE_TIMEOUT).await {
             Ok(s) => s,
             Err(_) => return EarlyDataSupportStatus::Inconclusive,
@@ -498,44 +535,73 @@ impl<'a> EarlyDataTester<'a> {
         config.enable_early_data = true;
         let config = Arc::new(config);
 
-        if let Err(error) = self.warm_up_session(&config, domain.clone()).await {
+        let addrs: Vec<_> = if self.test_all_ips {
+            self.target.socket_addrs()
+        } else {
+            self.target.socket_addrs().first().copied().into_iter().collect()
+        };
+        if addrs.is_empty() {
             return Ok(ReplayTestResult {
                 tested: false,
                 vulnerable: false,
                 inconclusive: true,
-                details: format!("Early Data replay test inconclusive - warm-up failed: {error}"),
+                details: "Early Data replay test inconclusive - no socket addresses".to_string(),
             });
         }
 
-        let first = self.probe_resumed_early_data(&config, domain.clone()).await;
-        let second = self.probe_resumed_early_data(&config, domain).await;
+        let mut saw_inconclusive = false;
+        for addr in addrs {
+            if self
+                .warm_up_session(addr, &config, domain.clone())
+                .await
+                .is_err()
+            {
+                saw_inconclusive = true;
+                continue;
+            }
 
-        match (first, second) {
-            (EarlyDataSupportStatus::Supported, EarlyDataSupportStatus::Supported) => {
-                Ok(ReplayTestResult {
-                    tested: true,
-                    vulnerable: true,
-                    inconclusive: false,
-                    details: "Server accepted the same 0-RTT request on two resumed connections"
-                        .to_string(),
-                })
+            let first = self
+                .probe_resumed_early_data(addr, &config, domain.clone())
+                .await;
+            let second = self
+                .probe_resumed_early_data(addr, &config, domain.clone())
+                .await;
+
+            match (first, second) {
+                (EarlyDataSupportStatus::Supported, EarlyDataSupportStatus::Supported) => {
+                    return Ok(ReplayTestResult {
+                        tested: true,
+                        vulnerable: true,
+                        inconclusive: false,
+                        details: "Server accepted the same 0-RTT request on two resumed connections"
+                            .to_string(),
+                    });
+                }
+                (EarlyDataSupportStatus::Supported, EarlyDataSupportStatus::NotSupported) => {
+                    return Ok(ReplayTestResult {
+                        tested: true,
+                        vulnerable: false,
+                        inconclusive: false,
+                        details: "Server accepted initial 0-RTT data but rejected replayed early data"
+                            .to_string(),
+                    });
+                }
+                (EarlyDataSupportStatus::NotSupported, _) => {
+                    return Ok(ReplayTestResult {
+                        tested: true,
+                        vulnerable: false,
+                        inconclusive: false,
+                        details:
+                            "Server did not accept resumed 0-RTT data during replay probe"
+                                .to_string(),
+                    });
+                }
+                _ => saw_inconclusive = true,
             }
-            (EarlyDataSupportStatus::Supported, EarlyDataSupportStatus::NotSupported) => {
-                Ok(ReplayTestResult {
-                    tested: true,
-                    vulnerable: false,
-                    inconclusive: false,
-                    details: "Server accepted initial 0-RTT data but rejected replayed early data"
-                        .to_string(),
-                })
-            }
-            (EarlyDataSupportStatus::NotSupported, _) => Ok(ReplayTestResult {
-                tested: true,
-                vulnerable: false,
-                inconclusive: false,
-                details: "Server did not accept resumed 0-RTT data during replay probe".to_string(),
-            }),
-            _ => Ok(ReplayTestResult {
+        }
+
+        if saw_inconclusive {
+            Ok(ReplayTestResult {
                 tested: false,
                 vulnerable: false,
                 inconclusive: true,
@@ -547,52 +613,67 @@ impl<'a> EarlyDataTester<'a> {
                         .unwrap_or_else(|| "unknown".to_string()),
                     early_data_info.is_estimated
                 ),
-            }),
+            })
+        } else {
+            Ok(ReplayTestResult {
+                tested: false,
+                vulnerable: false,
+                inconclusive: true,
+                details: "Early Data replay test inconclusive - no probe result".to_string(),
+            })
         }
     }
 
     /// Attempt to connect with TLS 1.3
     async fn connect_tls13(&self) -> Result<Tls13SupportStatus> {
-        let addr = self
-            .target
-            .socket_addrs()
-            .first()
-            .copied()
-            .ok_or(crate::TlsError::NoSocketAddresses)?;
-
-        // Connect TCP
-        let stream = match self.starttls_connect(addr, TLS_HANDSHAKE_TIMEOUT).await {
-            Ok(s) => s,
-            Err(_) => return Ok(Tls13SupportStatus::Inconclusive),
+        let addrs: Vec<_> = if self.test_all_ips {
+            self.target.socket_addrs()
+        } else {
+            self.target.socket_addrs().first().copied().into_iter().collect()
+        };
+        if addrs.is_empty() {
+            return Err(crate::TlsError::NoSocketAddresses);
         };
 
-        // The scanner must determine TLS 1.3 support even on hosts with
-        // expired/self-signed/untrusted certificates; certificate validity is
-        // assessed separately. Use the non-verifying connector (as the 0-RTT
-        // probe does) and rely on the negotiated protocol version below — a
-        // verifying config would falsely report "no TLS 1.3" for any bad-cert
-        // host and contradict test_early_data_support.
-        let config = crate::utils::insecure_tls::insecure_client_config();
-        let connector = tokio_rustls::TlsConnector::from(Arc::new(config));
-
-        // Try to connect
         let domain = crate::utils::network::server_name_for_hostname(&self.target.hostname)?;
-
-        match timeout(TLS_HANDSHAKE_TIMEOUT, connector.connect(domain, stream)).await {
-            Ok(Ok(tls_stream)) => {
-                // Check if we got TLS 1.3
-                let (_, connection) = tls_stream.get_ref();
-                let protocol_version = connection.protocol_version();
-
-                // rustls::ProtocolVersion::TLSv1_3 indicates TLS 1.3
-                if protocol_version == Some(rustls::ProtocolVersion::TLSv1_3) {
-                    Ok(Tls13SupportStatus::Supported)
-                } else {
-                    Ok(Tls13SupportStatus::NotSupported)
+        let mut saw_not_supported = false;
+        let mut saw_inconclusive = false;
+        for addr in addrs {
+            let stream = match self.starttls_connect(addr, TLS_HANDSHAKE_TIMEOUT).await {
+                Ok(s) => s,
+                Err(_) => {
+                    saw_inconclusive = true;
+                    continue;
                 }
+            };
+
+            // Certificate validity is assessed separately; use the non-verifying connector.
+            let config = crate::utils::insecure_tls::insecure_client_config();
+            let connector = tokio_rustls::TlsConnector::from(Arc::new(config));
+
+            match timeout(
+                TLS_HANDSHAKE_TIMEOUT,
+                connector.connect(domain.clone(), stream),
+            )
+            .await
+            {
+                Ok(Ok(tls_stream)) => {
+                    let (_, connection) = tls_stream.get_ref();
+                    if connection.protocol_version() == Some(rustls::ProtocolVersion::TLSv1_3) {
+                        return Ok(Tls13SupportStatus::Supported);
+                    }
+                    saw_not_supported = true;
+                }
+                Ok(Err(_)) | Err(_) => saw_inconclusive = true,
             }
-            Ok(Err(_)) => Ok(Tls13SupportStatus::Inconclusive),
-            Err(_) => Ok(Tls13SupportStatus::Inconclusive),
+        }
+
+        if saw_inconclusive {
+            Ok(Tls13SupportStatus::Inconclusive)
+        } else if saw_not_supported {
+            Ok(Tls13SupportStatus::NotSupported)
+        } else {
+            Ok(Tls13SupportStatus::Inconclusive)
         }
     }
 }
@@ -682,6 +763,23 @@ mod tests {
         let status = tester.probe_zero_rtt_early_data().await.unwrap();
 
         assert_eq!(status, EarlyDataSupportStatus::NotSupported);
+    }
+
+    #[tokio::test]
+    async fn test_probe_zero_rtt_all_ips_uses_any_reachable_ip() {
+        install_crypto_provider();
+        let addr = spawn_tls13_server(16384).await;
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            addr.port(),
+            vec![IpAddr::from([127, 0, 0, 2]), addr.ip()],
+        )
+        .unwrap();
+
+        let tester = EarlyDataTester::new(&target).with_test_all_ips(true);
+        let status = tester.probe_zero_rtt_early_data().await.unwrap();
+
+        assert_eq!(status, EarlyDataSupportStatus::Supported);
     }
 
     #[tokio::test]

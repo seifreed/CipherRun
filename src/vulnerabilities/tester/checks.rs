@@ -591,6 +591,7 @@ impl VulnerabilityScanner {
         use crate::vulnerabilities::early_data::EarlyDataTester;
 
         let tester = EarlyDataTester::new(&self.target)
+            .with_test_all_ips(self.test_all_ips)
             .with_starttls(
                 self.starttls,
                 self.starttls_hostname.clone(),
