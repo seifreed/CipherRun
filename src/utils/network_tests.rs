@@ -226,6 +226,13 @@ fn test_sni_hostname_for_target_prefers_override() {
 }
 
 #[test]
+fn test_openssl_hostname_and_sni_omits_sni_for_ip_targets() {
+    let (hostname, use_sni) = openssl_hostname_and_sni("93.184.216.34", None);
+    assert_eq!(hostname, "93.184.216.34");
+    assert!(!use_sni);
+}
+
+#[test]
 fn test_starttls_port_detection() {
     assert!(is_starttls_port(25)); // SMTP
     assert!(is_starttls_port(143)); // IMAP

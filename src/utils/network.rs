@@ -810,6 +810,10 @@ pub async fn try_vuln_ssl_connection(
     };
 
     let std_stream = into_blocking_std_stream(stream, Duration::from_secs(config.timeout_secs))?;
+    let (hostname, use_sni) = openssl_hostname_and_sni(
+        &target.hostname,
+        config.starttls_hostname.as_deref(),
+    );
 
     // Wrap blocking SSL operations in spawn_blocking to avoid blocking async runtime
     let result = tokio::task::spawn_blocking(move || -> Result<VulnSslResult> {
@@ -836,7 +840,11 @@ pub async fn try_vuln_ssl_connection(
 
         let connector = builder.build();
 
-        match connector.connect(&hostname, std_stream) {
+        match connector
+            .configure()?
+            .use_server_name_indication(use_sni)
+            .connect(&hostname, std_stream)
+        {
             Ok(ssl_stream) => Ok(VulnSslResult::Connected(ssl_stream)),
             Err(error) => Ok(classify_vuln_ssl_handshake_error(error)),
         }
@@ -939,7 +947,6 @@ pub async fn test_cipher_support_outcome(
         .first()
         .copied()
         .ok_or(TlsError::NoSocketAddresses)?;
-    let hostname = target.hostname.clone();
     let cipher = cipher.to_string();
 
     let stream = match timeout(Duration::from_secs(timeout_secs), TcpStream::connect(addr)).await {
@@ -948,6 +955,7 @@ pub async fn test_cipher_support_outcome(
     };
 
     let std_stream = into_blocking_std_stream(stream, Duration::from_secs(timeout_secs))?;
+    let (hostname, use_sni) = openssl_hostname_and_sni(&target.hostname, None);
 
     // Wrap blocking SSL operations in spawn_blocking to avoid blocking async runtime
     let result = tokio::task::spawn_blocking(move || -> Result<CipherSupportOutcome> {
@@ -975,7 +983,11 @@ pub async fn test_cipher_support_outcome(
 
         let connector = builder.build();
 
-        match connector.connect(&hostname, std_stream) {
+        match connector
+            .configure()?
+            .use_server_name_indication(use_sni)
+            .connect(&hostname, std_stream)
+        {
             Ok(_) => Ok(CipherSupportOutcome::Supported),
             Err(error) => {
                 if is_transport_anomaly_error(&error.to_string()) {
@@ -990,6 +1002,17 @@ pub async fn test_cipher_support_outcome(
     .map_err(|e| TlsError::Other(format!("Spawn blocking failed: {e}")))??;
 
     Ok(result)
+}
+
+fn openssl_hostname_and_sni(
+    target_hostname: &str,
+    override_hostname: Option<&str>,
+) -> (String, bool) {
+    let sni_hostname = sni_hostname_for_target(target_hostname, override_hostname);
+    let hostname = sni_hostname
+        .clone()
+        .unwrap_or_else(|| target_hostname.to_string());
+    (hostname, sni_hostname.is_some())
 }
 
 #[cfg(test)]
