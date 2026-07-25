@@ -181,8 +181,6 @@ impl ProtocolTester {
             protocol
         );
 
-        let mut any_supported = false;
-        let mut any_inconclusive = false;
         let mut per_ip_results = Vec::new();
 
         for (idx, addr) in addrs.iter().enumerate() {
@@ -203,21 +201,9 @@ impl ProtocolTester {
             );
 
             per_ip_results.push((addr.ip(), ip_outcome));
-
-            if ip_outcome.is_supported() {
-                any_supported = true;
-            } else if ip_outcome.is_inconclusive() {
-                any_inconclusive = true;
-            }
         }
 
-        let inconsistent = per_ip_results
-            .iter()
-            .any(|(_, outcome)| outcome.is_supported())
-            && per_ip_results
-                .iter()
-                .any(|(_, outcome)| !outcome.is_supported());
-
+        let (outcome, inconsistent) = aggregate_protocol_probe_results(&per_ip_results);
         if inconsistent {
             tracing::warn!(
                 "WARNING: Inconsistent {} support across IPs for {}",
@@ -234,13 +220,7 @@ impl ProtocolTester {
             }
         }
 
-        if any_supported {
-            Ok(ProtocolProbeOutcome::Supported)
-        } else if any_inconclusive {
-            Ok(ProtocolProbeOutcome::Inconclusive)
-        } else {
-            Ok(ProtocolProbeOutcome::NotSupported)
-        }
+        Ok(outcome)
     }
 
     pub(super) async fn test_protocol_on_ip(
@@ -588,6 +568,30 @@ fn is_handshake_refusal(error: &std::io::Error) -> bool {
         error.kind(),
         ErrorKind::ConnectionReset | ErrorKind::ConnectionAborted | ErrorKind::BrokenPipe
     )
+}
+
+fn aggregate_protocol_probe_results(
+    per_ip_results: &[(std::net::IpAddr, ProtocolProbeOutcome)],
+) -> (ProtocolProbeOutcome, bool) {
+    let any_supported = per_ip_results
+        .iter()
+        .any(|(_, outcome)| outcome.is_supported());
+    let any_inconclusive = per_ip_results
+        .iter()
+        .any(|(_, outcome)| outcome.is_inconclusive());
+    let inconsistent = any_supported
+        && per_ip_results
+            .iter()
+            .any(|(_, outcome)| !outcome.is_supported());
+    let outcome = if any_supported {
+        ProtocolProbeOutcome::Supported
+    } else if any_inconclusive {
+        ProtocolProbeOutcome::Inconclusive
+    } else {
+        ProtocolProbeOutcome::NotSupported
+    };
+
+    (outcome, inconsistent)
 }
 
 #[cfg(test)]
@@ -973,6 +977,44 @@ mod legacy_probe_tests {
         // A read timeout / would-block is ambiguous, not a definitive refusal.
         assert!(!is_handshake_refusal(&Error::from(ErrorKind::TimedOut)));
         assert!(!is_handshake_refusal(&Error::from(ErrorKind::WouldBlock)));
+    }
+
+    #[test]
+    fn test_probe_aggregation_prefers_any_supported() {
+        let results = [
+            (
+                std::net::IpAddr::V4(Ipv4Addr::LOCALHOST),
+                ProtocolProbeOutcome::NotSupported,
+            ),
+            (
+                std::net::IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2)),
+                ProtocolProbeOutcome::Supported,
+            ),
+        ];
+
+        assert_eq!(
+            aggregate_protocol_probe_results(&results),
+            (ProtocolProbeOutcome::Supported, true)
+        );
+    }
+
+    #[test]
+    fn test_probe_aggregation_preserves_inconclusive_without_support() {
+        let results = [
+            (
+                std::net::IpAddr::V4(Ipv4Addr::LOCALHOST),
+                ProtocolProbeOutcome::NotSupported,
+            ),
+            (
+                std::net::IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2)),
+                ProtocolProbeOutcome::Inconclusive,
+            ),
+        ];
+
+        assert_eq!(
+            aggregate_protocol_probe_results(&results),
+            (ProtocolProbeOutcome::Inconclusive, false)
+        );
     }
 
     #[tokio::test]
