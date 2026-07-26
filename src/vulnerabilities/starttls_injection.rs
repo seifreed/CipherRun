@@ -10,6 +10,7 @@ use tokio::net::TcpStream;
 use tokio::time::{Duration, timeout};
 
 mod response_analysis;
+mod result_analysis;
 
 /// Test for STARTTLS injection vulnerabilities
 ///
@@ -360,27 +361,23 @@ impl StarttlsInjectionTester {
 
     /// Test all STARTTLS injection vectors
     pub async fn test_all(&self) -> Result<StarttlsInjectionResult> {
-        let mut result = StarttlsInjectionResult {
-            vulnerable: false,
-            smtp_vulnerable: false,
-            imap_vulnerable: false,
-            pop3_vulnerable: false,
-            inconclusive: false,
-            details: Vec::new(),
-        };
+        let mut result = result_analysis::empty_result();
         let mut tested_standard_port = false;
 
         // Test SMTP injection (port 25, 587)
         if self.target.port == 25 || self.target.port == 587 {
             tested_standard_port = true;
             match self.test_smtp_injection_status().await {
-                Ok(status) => {
-                    Self::record_probe_status(&mut result, StarttlsInjectionProtocol::Smtp, status)
-                }
-                Err(e) => {
-                    result.inconclusive = true;
-                    result.details.push(format!("SMTP test error: {}", e));
-                }
+                Ok(status) => result_analysis::record_probe_status(
+                    &mut result,
+                    StarttlsInjectionProtocol::Smtp,
+                    status,
+                ),
+                Err(e) => result_analysis::record_probe_error(
+                    &mut result,
+                    StarttlsInjectionProtocol::Smtp,
+                    &e,
+                ),
             }
         }
 
@@ -388,13 +385,16 @@ impl StarttlsInjectionTester {
         if self.target.port == 143 {
             tested_standard_port = true;
             match self.test_imap_injection_status().await {
-                Ok(status) => {
-                    Self::record_probe_status(&mut result, StarttlsInjectionProtocol::Imap, status)
-                }
-                Err(e) => {
-                    result.inconclusive = true;
-                    result.details.push(format!("IMAP test error: {}", e));
-                }
+                Ok(status) => result_analysis::record_probe_status(
+                    &mut result,
+                    StarttlsInjectionProtocol::Imap,
+                    status,
+                ),
+                Err(e) => result_analysis::record_probe_error(
+                    &mut result,
+                    StarttlsInjectionProtocol::Imap,
+                    &e,
+                ),
             }
         }
 
@@ -402,59 +402,25 @@ impl StarttlsInjectionTester {
         if self.target.port == 110 {
             tested_standard_port = true;
             match self.test_pop3_injection_status().await {
-                Ok(status) => {
-                    Self::record_probe_status(&mut result, StarttlsInjectionProtocol::Pop3, status)
-                }
-                Err(e) => {
-                    result.inconclusive = true;
-                    result.details.push(format!("POP3 test error: {}", e));
-                }
+                Ok(status) => result_analysis::record_probe_status(
+                    &mut result,
+                    StarttlsInjectionProtocol::Pop3,
+                    status,
+                ),
+                Err(e) => result_analysis::record_probe_error(
+                    &mut result,
+                    StarttlsInjectionProtocol::Pop3,
+                    &e,
+                ),
             }
         }
 
         // If not a standard STARTTLS port, mark as not applicable
         if !tested_standard_port {
-            result.details.push(format!(
-                "Port {} is not a standard STARTTLS port (25, 143, 110, 587)",
-                self.target.port
-            ));
+            result_analysis::record_nonstandard_port(&mut result, self.target.port);
         }
 
         Ok(result)
-    }
-
-    fn record_probe_status(
-        result: &mut StarttlsInjectionResult,
-        protocol: StarttlsInjectionProtocol,
-        status: StarttlsInjectionStatus,
-    ) {
-        let protocol_name = protocol.name();
-        match status {
-            StarttlsInjectionStatus::Vulnerable => {
-                result.vulnerable = true;
-                match protocol {
-                    StarttlsInjectionProtocol::Smtp => result.smtp_vulnerable = true,
-                    StarttlsInjectionProtocol::Imap => result.imap_vulnerable = true,
-                    StarttlsInjectionProtocol::Pop3 => result.pop3_vulnerable = true,
-                }
-                result.details.push(format!(
-                    "{} STARTTLS injection detected - commands can be injected before TLS upgrade",
-                    protocol_name
-                ));
-            }
-            StarttlsInjectionStatus::NotVulnerable => {
-                result
-                    .details
-                    .push(format!("{} STARTTLS injection not detected", protocol_name));
-            }
-            StarttlsInjectionStatus::Inconclusive => {
-                result.inconclusive = true;
-                result.details.push(format!(
-                    "{} STARTTLS injection test inconclusive - unable to complete probe",
-                    protocol_name
-                ));
-            }
-        }
     }
 }
 
@@ -948,16 +914,9 @@ mod tests {
 
     #[test]
     fn test_standard_port_not_vulnerable_detail_is_not_nonstandard() {
-        let mut result = StarttlsInjectionResult {
-            vulnerable: false,
-            smtp_vulnerable: false,
-            imap_vulnerable: false,
-            pop3_vulnerable: false,
-            inconclusive: false,
-            details: Vec::new(),
-        };
+        let mut result = result_analysis::empty_result();
 
-        StarttlsInjectionTester::record_probe_status(
+        result_analysis::record_probe_status(
             &mut result,
             StarttlsInjectionProtocol::Smtp,
             StarttlsInjectionStatus::NotVulnerable,
