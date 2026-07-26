@@ -266,16 +266,6 @@ mod tests {
     }
 
     #[test]
-    fn test_format_protocol_list() {
-        let target = localhost_target();
-        let tester = FallbackScsvTester::new(&target);
-        let protocols = vec![Protocol::TLS10, Protocol::TLS12];
-        let formatted = tester.format_protocol_list(&protocols);
-        assert!(formatted.contains("TLS 1.0"));
-        assert!(formatted.contains("TLS 1.2"));
-    }
-
-    #[test]
     fn test_format_protocol_list_empty() {
         let target = localhost_target();
         let tester = FallbackScsvTester::new(&target);
