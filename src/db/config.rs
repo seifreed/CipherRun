@@ -277,6 +277,13 @@ mod tests {
     #[cfg(unix)]
     use std::os::unix::ffi::OsStringExt;
 
+    fn write_config(contents: &str) -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().expect("test assertion should succeed");
+        let path = dir.path().join("db.toml");
+        std::fs::write(&path, contents).expect("test assertion should succeed");
+        (dir, path)
+    }
+
     #[test]
     fn test_postgres_connection_string() {
         let config = DatabaseConfig::postgres(
@@ -425,10 +432,7 @@ mod tests {
 
     #[test]
     fn test_config_from_file_rejects_zero_max_connections() {
-        let dir = tempfile::tempdir().expect("test assertion should succeed");
-        let path = dir.path().join("db.toml");
-        std::fs::write(
-            &path,
+        let (_dir, path) = write_config(
             r#"
 [database]
 type = "postgres"
@@ -439,8 +443,7 @@ username = "user"
 password = "pass"
 max_connections = 0
 "#,
-        )
-        .expect("test assertion should succeed");
+        );
 
         let err = DatabaseConfig::from_file(&path).expect_err("zero max_connections should fail");
 
@@ -461,10 +464,7 @@ max_connections = 0
 
     #[test]
     fn test_config_from_file_rejects_zero_postgres_port() {
-        let dir = tempfile::tempdir().expect("test assertion should succeed");
-        let path = dir.path().join("db.toml");
-        std::fs::write(
-            &path,
+        let (_dir, path) = write_config(
             r#"
 [database]
 type = "postgres"
@@ -474,8 +474,7 @@ database = "cipherrun"
 username = "user"
 password = "pass"
 "#,
-        )
-        .expect("test assertion should succeed");
+        );
 
         let err = DatabaseConfig::from_file(&path).expect_err("zero PostgreSQL port should fail");
 
@@ -484,10 +483,7 @@ password = "pass"
 
     #[test]
     fn test_config_from_file_rejects_negative_retention() {
-        let dir = tempfile::tempdir().expect("test assertion should succeed");
-        let path = dir.path().join("db.toml");
-        std::fs::write(
-            &path,
+        let (_dir, path) = write_config(
             r#"
 [database]
 type = "sqlite"
@@ -496,8 +492,7 @@ path = ":memory:"
 [retention]
 max_age_days = -1
 "#,
-        )
-        .expect("test assertion should succeed");
+        );
 
         let err = DatabaseConfig::from_file(&path).expect_err("negative retention should fail");
 
