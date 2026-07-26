@@ -458,6 +458,24 @@ mod tests {
     use super::*;
     use crate::policy::violation::PolicyViolation;
 
+    fn test_policy(name: &str) -> Policy {
+        Policy {
+            name: name.to_string(),
+            version: "1.0".to_string(),
+            description: None,
+            organization: None,
+            effective_date: None,
+            extends: None,
+            protocols: None,
+            ciphers: None,
+            certificates: None,
+            vulnerabilities: None,
+            rating: None,
+            compliance: None,
+            exceptions: Vec::new(),
+        }
+    }
+
     #[test]
     fn test_policy_action_is_failure() {
         assert!(PolicyAction::Fail.is_failure());
@@ -467,44 +485,12 @@ mod tests {
 
     #[test]
     fn test_policy_result_has_violations() {
-        let policy = Policy {
-            name: "test".to_string(),
-            version: "1.0".to_string(),
-            description: None,
-            organization: None,
-            effective_date: None,
-            extends: None,
-            protocols: None,
-            ciphers: None,
-            certificates: None,
-            vulnerabilities: None,
-            rating: None,
-            compliance: None,
-            exceptions: Vec::new(),
-        };
-
-        let result = PolicyResult::new(policy, Vec::new());
+        let result = PolicyResult::new(test_policy("test"), Vec::new());
         assert!(!result.has_violations());
     }
 
     #[test]
     fn test_policy_result_formatters() {
-        let policy = Policy {
-            name: "Example Policy".to_string(),
-            version: "1.0".to_string(),
-            description: None,
-            organization: None,
-            effective_date: None,
-            extends: None,
-            protocols: None,
-            ciphers: None,
-            certificates: None,
-            vulnerabilities: None,
-            rating: None,
-            compliance: None,
-            exceptions: Vec::new(),
-        };
-
         let violations = vec![
             PolicyViolation::new(
                 "protocols.prohibited",
@@ -522,7 +508,7 @@ mod tests {
             ),
         ];
 
-        let mut result = PolicyResult::new(policy, violations);
+        let mut result = PolicyResult::new(test_policy("Example Policy"), violations);
         result.target = "example.com:443".to_string();
         result.exceptions_applied = vec!["temp exception".to_string()];
 
@@ -552,22 +538,6 @@ mod tests {
 
     #[test]
     fn test_policy_result_csv_escapes_quotes() {
-        let policy = Policy {
-            name: "CSV Policy".to_string(),
-            version: "1.0".to_string(),
-            description: None,
-            organization: None,
-            effective_date: None,
-            extends: None,
-            protocols: None,
-            ciphers: None,
-            certificates: None,
-            vulnerabilities: None,
-            rating: None,
-            compliance: None,
-            exceptions: Vec::new(),
-        };
-
         let violations = vec![
             PolicyViolation::new(
                 "rules.\"example\"",
@@ -579,7 +549,7 @@ mod tests {
             .with_remediation("Fix \"now\""),
         ];
 
-        let result = PolicyResult::new(policy, violations);
+        let result = PolicyResult::new(test_policy("CSV Policy"), violations);
         let csv = result.format("csv").expect("test assertion should succeed");
         assert!(csv.contains("\"rules.\"\"example\"\"\""));
         assert!(csv.contains("\"Example \"\"Rule\"\"\""));
@@ -590,29 +560,13 @@ mod tests {
 
     #[test]
     fn test_policy_result_csv_neutralizes_formula_cells() {
-        let policy = Policy {
-            name: "CSV Policy".to_string(),
-            version: "1.0".to_string(),
-            description: None,
-            organization: None,
-            effective_date: None,
-            extends: None,
-            protocols: None,
-            ciphers: None,
-            certificates: None,
-            vulnerabilities: None,
-            rating: None,
-            compliance: None,
-            exceptions: Vec::new(),
-        };
-
         let violations = vec![
             PolicyViolation::new("=path", "+rule", PolicyAction::Fail, "@description")
                 .with_evidence("-evidence")
                 .with_remediation("=remediation"),
         ];
 
-        let result = PolicyResult::new(policy, violations);
+        let result = PolicyResult::new(test_policy("CSV Policy"), violations);
         let csv = result.format("csv").expect("test assertion should succeed");
         assert!(csv.contains("\"'=path\",\"'+rule\",\"Fail\",\"'@description\""));
         assert!(csv.contains("\"'-evidence\",\"'=remediation\""));
@@ -620,46 +574,14 @@ mod tests {
 
     #[test]
     fn test_policy_result_csv_header_only_when_no_violations() {
-        let policy = Policy {
-            name: "Empty Policy".to_string(),
-            version: "1.0".to_string(),
-            description: None,
-            organization: None,
-            effective_date: None,
-            extends: None,
-            protocols: None,
-            ciphers: None,
-            certificates: None,
-            vulnerabilities: None,
-            rating: None,
-            compliance: None,
-            exceptions: Vec::new(),
-        };
-
-        let result = PolicyResult::new(policy, Vec::new());
+        let result = PolicyResult::new(test_policy("Empty Policy"), Vec::new());
         let csv = result.format("csv").expect("test assertion should succeed");
         assert!(csv.starts_with("Rule Path,Rule Name,Action,Description,Evidence,Remediation"));
     }
 
     #[test]
     fn test_policy_result_rejects_invalid_format() {
-        let policy = Policy {
-            name: "Empty Policy".to_string(),
-            version: "1.0".to_string(),
-            description: None,
-            organization: None,
-            effective_date: None,
-            extends: None,
-            protocols: None,
-            ciphers: None,
-            certificates: None,
-            vulnerabilities: None,
-            rating: None,
-            compliance: None,
-            exceptions: Vec::new(),
-        };
-
-        let result = PolicyResult::new(policy, Vec::new());
+        let result = PolicyResult::new(test_policy("Empty Policy"), Vec::new());
         assert!(result.format("yaml").is_err());
     }
 }
