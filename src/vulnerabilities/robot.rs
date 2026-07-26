@@ -19,6 +19,9 @@ use tokio::time::timeout;
 
 mod alert_signal;
 mod oracle_analysis;
+mod result;
+
+pub use result::{RobotStatus, RobotTestResult};
 
 fn read_u16_at(data: &[u8], offset: usize) -> Option<u16> {
     data.get(offset..offset.checked_add(2)?)?
@@ -246,34 +249,9 @@ impl RobotTester {
 
     /// Test for ROBOT vulnerability
     pub async fn test(&self) -> Result<RobotTestResult> {
-        let result = self.test_robot_oracle().await?;
-
-        let details = match result {
-            RobotStatus::Vulnerable => {
-                "Vulnerable to ROBOT attack - Server responds differently to invalid RSA padding"
-                    .to_string()
-            }
-            RobotStatus::WeakOracle => {
-                "Potentially vulnerable - Weak oracle detected, may be exploitable".to_string()
-            }
-            RobotStatus::NotVulnerable => {
-                "Not vulnerable - No RSA padding oracle detected".to_string()
-            }
-            RobotStatus::Inconclusive => {
-                "ROBOT test inconclusive - transport or handshake failures prevented a reliable oracle comparison".to_string()
-            }
-        };
-
-        Ok(RobotTestResult {
-            // Only a clear oracle (distinct alert/error codes, RobotStatus::Vulnerable)
-            // is a confirmed verdict. WeakOracle is derived from raw response-byte
-            // divergence across independent connections, which legitimately varies
-            // (alert vs. handshake framing, ticket rotation) on non-vulnerable
-            // servers — it must be inconclusive, not a hard vulnerable verdict.
-            vulnerable: matches!(result, RobotStatus::Vulnerable),
-            status: result,
-            details,
-        })
+        Ok(RobotTestResult::from_status(
+            self.test_robot_oracle().await?,
+        ))
     }
 
     /// Test for ROBOT padding oracle
@@ -544,23 +522,6 @@ impl RobotTester {
             _ => Ok(None),
         }
     }
-}
-
-/// ROBOT status
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum RobotStatus {
-    Vulnerable,
-    WeakOracle,
-    NotVulnerable,
-    Inconclusive,
-}
-
-/// ROBOT test result
-#[derive(Debug, Clone)]
-pub struct RobotTestResult {
-    pub vulnerable: bool,
-    pub status: RobotStatus,
-    pub details: String,
 }
 
 #[cfg(test)]
