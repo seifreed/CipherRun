@@ -12,10 +12,14 @@ fn persisted_scan(results: &ScanResults) -> PersistedScan {
     PersistedScan::from_scan_results(results).expect("scan results should convert for persistence")
 }
 
+async fn test_db() -> CipherRunDatabase {
+    let config = common::sqlite::unique_sqlite_config("cipherruntest");
+    CipherRunDatabase::new(&config).await.unwrap()
+}
+
 #[tokio::test]
 async fn test_sqlite_database_creation() {
-    let config = common::sqlite::unique_sqlite_config("cipherruntest");
-    let db = CipherRunDatabase::new(&config).await.unwrap();
+    let db = test_db().await;
 
     // Verify database type
     assert_eq!(db.pool().db_type(), DatabaseType::Sqlite);
@@ -25,8 +29,7 @@ async fn test_sqlite_database_creation() {
 
 #[tokio::test]
 async fn test_scan_storage_and_retrieval() {
-    let config = common::sqlite::unique_sqlite_config("cipherruntest");
-    let db = CipherRunDatabase::new(&config).await.unwrap();
+    let db = test_db().await;
 
     // Create sample scan results
     let mut results = ScanResults {
@@ -66,8 +69,7 @@ async fn test_scan_storage_and_retrieval() {
 
 #[tokio::test]
 async fn test_scan_history_limit() {
-    let config = common::sqlite::unique_sqlite_config("cipherruntest");
-    let db = CipherRunDatabase::new(&config).await.unwrap();
+    let db = test_db().await;
 
     // Store 5 scans
     for i in 1..=5 {
@@ -92,8 +94,7 @@ async fn test_scan_history_limit() {
 
 #[tokio::test]
 async fn test_scan_history_rejects_non_positive_limit() {
-    let config = common::sqlite::unique_sqlite_config("cipherruntest");
-    let db = CipherRunDatabase::new(&config).await.unwrap();
+    let db = test_db().await;
 
     for i in 1..=2 {
         let results = ScanResults {
@@ -129,8 +130,7 @@ async fn test_scan_history_rejects_non_positive_limit() {
 
 #[tokio::test]
 async fn test_top_domains_rejects_invalid_scan_timestamp() {
-    let config = common::sqlite::unique_sqlite_config("cipherruntest");
-    let db = CipherRunDatabase::new(&config).await.unwrap();
+    let db = test_db().await;
 
     let results = ScanResults {
         target: "invalid-top-domain.test:443".to_string(),
@@ -164,8 +164,7 @@ async fn test_top_domains_rejects_invalid_scan_timestamp() {
 
 #[tokio::test]
 async fn test_latest_scan_retrieval() {
-    let config = common::sqlite::unique_sqlite_config("cipherruntest");
-    let db = CipherRunDatabase::new(&config).await.unwrap();
+    let db = test_db().await;
 
     // Store multiple scans
     for i in 1..=3 {
@@ -193,8 +192,7 @@ async fn test_latest_scan_retrieval() {
 
 #[tokio::test]
 async fn test_history_and_latest_are_empty_for_unknown_target() {
-    let config = common::sqlite::unique_sqlite_config("cipherruntest");
-    let db = CipherRunDatabase::new(&config).await.unwrap();
+    let db = test_db().await;
 
     let history = db.get_scan_history("unknown.com", 443, 10).await.unwrap();
     let latest = db.get_latest_scan("unknown.com", 443).await.unwrap();
@@ -207,8 +205,7 @@ async fn test_history_and_latest_are_empty_for_unknown_target() {
 
 #[tokio::test]
 async fn test_cleanup_old_scans() {
-    let config = common::sqlite::unique_sqlite_config("cipherruntest");
-    let db = CipherRunDatabase::new(&config).await.unwrap();
+    let db = test_db().await;
 
     // Store a scan
     let results = ScanResults {
@@ -230,8 +227,7 @@ async fn test_cleanup_old_scans() {
 
 #[tokio::test]
 async fn test_cleanup_old_scans_is_noop_on_empty_database() {
-    let config = common::sqlite::unique_sqlite_config("cipherruntest");
-    let db = CipherRunDatabase::new(&config).await.unwrap();
+    let db = test_db().await;
 
     let deleted = db.cleanup_old_scans(30).await.unwrap();
 
@@ -242,8 +238,7 @@ async fn test_cleanup_old_scans_is_noop_on_empty_database() {
 
 #[tokio::test]
 async fn test_cleanup_old_scans_rejects_negative_days() {
-    let config = common::sqlite::unique_sqlite_config("cipherruntest");
-    let db = CipherRunDatabase::new(&config).await.unwrap();
+    let db = test_db().await;
 
     let error = db
         .cleanup_old_scans(-7)
@@ -261,8 +256,7 @@ async fn test_cleanup_old_scans_rejects_negative_days() {
 
 #[tokio::test]
 async fn test_cleanup_old_scans_preserves_recent_history_lookup() {
-    let config = common::sqlite::unique_sqlite_config("cipherruntest");
-    let db = CipherRunDatabase::new(&config).await.unwrap();
+    let db = test_db().await;
 
     let results = ScanResults {
         target: "recent.com:443".to_string(),
@@ -324,8 +318,7 @@ async fn test_example_config_generation() {
 
 #[tokio::test]
 async fn test_protocol_storage() {
-    let config = common::sqlite::unique_sqlite_config("cipherruntest");
-    let db = CipherRunDatabase::new(&config).await.unwrap();
+    let db = test_db().await;
 
     // Create scan with multiple protocols
     let mut results = ScanResults {
@@ -372,8 +365,7 @@ async fn test_protocol_storage() {
 
 #[tokio::test]
 async fn test_vulnerability_storage() {
-    let config = common::sqlite::unique_sqlite_config("cipherruntest");
-    let db = CipherRunDatabase::new(&config).await.unwrap();
+    let db = test_db().await;
 
     // Create scan with vulnerabilities
     let mut results = ScanResults {
@@ -434,8 +426,7 @@ async fn test_connection_string_generation() {
 
 #[tokio::test]
 async fn test_multiple_scans_same_target() {
-    let config = common::sqlite::unique_sqlite_config("cipherruntest");
-    let db = CipherRunDatabase::new(&config).await.unwrap();
+    let db = test_db().await;
 
     // Store multiple scans for same target
     for i in 1..=5 {
@@ -460,8 +451,7 @@ async fn test_multiple_scans_same_target() {
 
 #[tokio::test]
 async fn test_scan_with_rating() {
-    let config = common::sqlite::unique_sqlite_config("cipherruntest");
-    let db = CipherRunDatabase::new(&config).await.unwrap();
+    let db = test_db().await;
 
     // Create scan with rating
     let mut results = ScanResults {
@@ -504,8 +494,7 @@ async fn test_store_scan_duplicate_certificate_dedupes_to_same_cert_id() {
     use cipherrun::application::persistence::PersistedCertificate;
     use cipherrun::db::BindValue;
 
-    let config = common::sqlite::unique_sqlite_config("cipherruntest");
-    let db = CipherRunDatabase::new(&config).await.unwrap();
+    let db = test_db().await;
 
     let fingerprint = "aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99";
     let make_scan = || PersistedScan {
