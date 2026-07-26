@@ -62,18 +62,7 @@ fn test_scanner_formatter_display_helpers() {
     let formatter = ScannerFormatter::new(&args);
 
     let protocols = vec![
-        ProtocolTestResult {
-            protocol: Protocol::TLS13,
-            supported: true,
-            inconclusive: false,
-            preferred: true,
-            ciphers_count: 1,
-            handshake_time_ms: Some(10),
-            heartbeat_enabled: Some(false),
-            session_resumption_caching: Some(true),
-            session_resumption_tickets: Some(false),
-            secure_renegotiation: Some(true),
-        },
+        common::output::supported_tls13_protocol_result(),
         ProtocolTestResult {
             protocol: Protocol::TLS12,
             supported: false,

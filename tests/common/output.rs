@@ -1,6 +1,6 @@
 use cipherrun::ciphers::CipherSuite;
 use cipherrun::ciphers::tester::{CipherCounts, ProtocolCipherSummary};
-use cipherrun::protocols::Protocol;
+use cipherrun::protocols::{Protocol, ProtocolTestResult};
 
 pub fn build_cipher_summary(protocol: Protocol) -> ProtocolCipherSummary {
     let cipher = CipherSuite {
@@ -33,5 +33,20 @@ pub fn build_cipher_summary(protocol: Protocol) -> ProtocolCipherSummary {
             aead: 1,
         },
         avg_handshake_time_ms: Some(10),
+    }
+}
+
+pub fn supported_tls13_protocol_result() -> ProtocolTestResult {
+    ProtocolTestResult {
+        protocol: Protocol::TLS13,
+        supported: true,
+        inconclusive: false,
+        preferred: true,
+        ciphers_count: 1,
+        handshake_time_ms: Some(10),
+        heartbeat_enabled: Some(false),
+        session_resumption_caching: Some(true),
+        session_resumption_tickets: Some(false),
+        secure_renegotiation: Some(true),
     }
 }

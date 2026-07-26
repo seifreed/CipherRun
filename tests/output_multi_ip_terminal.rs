@@ -25,18 +25,7 @@ fn build_scan_results() -> ScanResults {
         scan_time_ms: 250,
         ..Default::default()
     };
-    results.protocols = vec![ProtocolTestResult {
-        protocol: Protocol::TLS13,
-        supported: true,
-        inconclusive: false,
-        preferred: true,
-        ciphers_count: 1,
-        handshake_time_ms: Some(10),
-        heartbeat_enabled: Some(false),
-        session_resumption_caching: Some(true),
-        session_resumption_tickets: Some(false),
-        secure_renegotiation: Some(true),
-    }];
+    results.protocols = vec![common::output::supported_tls13_protocol_result()];
 
     let mut ciphers = HashMap::new();
     ciphers.insert(
