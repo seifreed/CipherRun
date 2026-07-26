@@ -13,6 +13,32 @@ fn loopback_target() -> Target {
     .unwrap()
 }
 
+fn grease_result(
+    tolerates_grease: bool,
+    inconclusive: bool,
+    direct_grease_test_performed: bool,
+    issues: &[&str],
+    details: &[&str],
+    tests_performed: &[&str],
+) -> GreaseResult {
+    GreaseResult {
+        tolerates_grease,
+        inconclusive,
+        direct_grease_test_performed,
+        issues: issues.iter().map(|value| value.to_string()).collect(),
+        details: details.iter().map(|value| value.to_string()).collect(),
+        tests_performed: tests_performed
+            .iter()
+            .map(|value| value.to_string())
+            .collect(),
+    }
+}
+
+fn assert_tls_client_hello(hello: &[u8]) {
+    assert_eq!(hello[0], 0x16);
+    assert_eq!(hello[5], 0x01);
+}
+
 #[test]
 fn test_grease_values_defined() {
     assert!(!GREASE_CIPHER_SUITES.is_empty());
@@ -74,25 +100,11 @@ fn test_generate_recommendations_variants() {
     let target = loopback_target();
     let tester = GreaseTester::new(target);
 
-    let ok_result = GreaseResult {
-        tolerates_grease: true,
-        inconclusive: false,
-        direct_grease_test_performed: true,
-        issues: vec![],
-        details: vec![],
-        tests_performed: vec![],
-    };
+    let ok_result = grease_result(true, false, true, &[], &[], &[]);
     let ok_recs = tester.generate_recommendations(&ok_result);
     assert!(ok_recs.iter().any(|r| r.contains("RFC 8701")));
 
-    let bad_result = GreaseResult {
-        tolerates_grease: false,
-        inconclusive: false,
-        direct_grease_test_performed: true,
-        issues: vec!["issue".to_string()],
-        details: vec![],
-        tests_performed: vec![],
-    };
+    let bad_result = grease_result(false, false, true, &["issue"], &[], &[]);
     let bad_recs = tester.generate_recommendations(&bad_result);
     assert!(bad_recs.iter().any(|r| r.contains("handle GREASE values")));
     assert!(
@@ -101,14 +113,14 @@ fn test_generate_recommendations_variants() {
             .any(|r| r.contains("Address the identified issues"))
     );
 
-    let inconclusive_result = GreaseResult {
-        tolerates_grease: false,
-        inconclusive: true,
-        direct_grease_test_performed: true,
-        issues: vec![],
-        details: vec!["GREASE extensions test inconclusive: timeout".to_string()],
-        tests_performed: vec!["GREASE extensions".to_string()],
-    };
+    let inconclusive_result = grease_result(
+        false,
+        true,
+        true,
+        &[],
+        &["GREASE extensions test inconclusive: timeout"],
+        &["GREASE extensions"],
+    );
     let inconclusive_recs = tester.generate_recommendations(&inconclusive_result);
     assert!(
         inconclusive_recs
@@ -125,14 +137,7 @@ fn test_generate_recommendations_variants() {
 
 #[test]
 fn test_grease_result() {
-    let result = GreaseResult {
-        tolerates_grease: true,
-        inconclusive: false,
-        direct_grease_test_performed: true,
-        issues: vec![],
-        details: vec!["Test".to_string()],
-        tests_performed: vec!["GREASE cipher suites".to_string()],
-    };
+    let result = grease_result(true, false, true, &[], &["Test"], &["GREASE cipher suites"]);
 
     assert!(result.tolerates_grease);
     assert_eq!(result.details.len(), 1);
@@ -142,14 +147,7 @@ fn test_grease_result() {
 #[test]
 fn test_grease_report_fields() {
     let report = GreaseReport {
-        grease_result: GreaseResult {
-            tolerates_grease: false,
-            inconclusive: true,
-            direct_grease_test_performed: false,
-            issues: vec!["issue".to_string()],
-            details: vec!["detail".to_string()],
-            tests_performed: vec![],
-        },
+        grease_result: grease_result(false, true, false, &["issue"], &["detail"], &[]),
         recommendations: vec!["rec".to_string()],
     };
 
@@ -168,8 +166,7 @@ fn test_build_client_hello_with_grease_ciphers() {
         .expect("test assertion should succeed");
 
     // Check it's a valid TLS handshake record
-    assert_eq!(hello[0], 0x16); // Handshake
-    assert_eq!(hello[5], 0x01); // ClientHello
+    assert_tls_client_hello(&hello);
 
     // Check that GREASE values are present
     let has_grease = hello
@@ -187,8 +184,7 @@ fn test_build_client_hello_with_grease_extensions() {
         .build_client_hello_with_grease_extensions()
         .expect("test assertion should succeed");
 
-    assert_eq!(hello[0], 0x16);
-    assert_eq!(hello[5], 0x01);
+    assert_tls_client_hello(&hello);
     assert!(hello.len() > 100);
 }
 
@@ -201,8 +197,7 @@ fn test_build_client_hello_with_grease_groups() {
         .build_client_hello_with_grease_groups()
         .expect("test assertion should succeed");
 
-    assert_eq!(hello[0], 0x16);
-    assert_eq!(hello[5], 0x01);
+    assert_tls_client_hello(&hello);
 }
 
 #[test]
@@ -214,8 +209,7 @@ fn test_build_client_hello_combined_grease() {
         .build_client_hello_combined_grease()
         .expect("test assertion should succeed");
 
-    assert_eq!(hello[0], 0x16);
-    assert_eq!(hello[5], 0x01);
+    assert_tls_client_hello(&hello);
 }
 
 async fn spawn_self_signed_tls_server(max_accepts: usize) -> std::net::SocketAddr {
@@ -297,14 +291,14 @@ async fn test_grease_tester_baseline_failure_path() {
 
 #[test]
 fn test_grease_result_details_includes_issues() {
-    let result = GreaseResult {
-        tolerates_grease: false,
-        inconclusive: true,
-        direct_grease_test_performed: false,
-        issues: vec!["Baseline connection failed".to_string()],
-        details: vec!["Not tolerant".to_string()],
-        tests_performed: vec![],
-    };
+    let result = grease_result(
+        false,
+        true,
+        false,
+        &["Baseline connection failed"],
+        &["Not tolerant"],
+        &[],
+    );
     assert!(!result.tolerates_grease);
     assert!(result.details.iter().any(|d| d.contains("Not tolerant")));
     assert_eq!(result.issues.len(), 1);
@@ -315,24 +309,10 @@ fn test_recommendations_count_increases_with_issues() {
     let target = loopback_target();
     let tester = GreaseTester::new(target);
 
-    let base_result = GreaseResult {
-        tolerates_grease: false,
-        inconclusive: true,
-        direct_grease_test_performed: false,
-        issues: Vec::new(),
-        details: Vec::new(),
-        tests_performed: Vec::new(),
-    };
+    let base_result = grease_result(false, true, false, &[], &[], &[]);
     let base_recs = tester.generate_recommendations(&base_result);
 
-    let issue_result = GreaseResult {
-        tolerates_grease: false,
-        inconclusive: true,
-        direct_grease_test_performed: false,
-        issues: vec!["issue".to_string()],
-        details: Vec::new(),
-        tests_performed: Vec::new(),
-    };
+    let issue_result = grease_result(false, true, false, &["issue"], &[], &[]);
     let issue_recs = tester.generate_recommendations(&issue_result);
 
     assert!(issue_recs.len() > base_recs.len());
@@ -340,28 +320,28 @@ fn test_recommendations_count_increases_with_issues() {
 
 #[test]
 fn test_tolerates_grease_logic() {
-    let mut result = GreaseResult {
-        tolerates_grease: false, // Will be computed
-        inconclusive: false,
-        direct_grease_test_performed: true,
-        issues: vec![],
-        details: vec!["✓ Server tolerates grease cipher suites".to_string()],
-        tests_performed: vec!["test1".to_string()],
-    };
+    let mut result = grease_result(
+        false,
+        false,
+        true,
+        &[],
+        &["✓ Server tolerates grease cipher suites"],
+        &["test1"],
+    );
 
     GreaseTester::finalize_grease_result(&mut result);
     assert!(result.tolerates_grease);
     assert!(!result.inconclusive);
 
     // When there are rejections, tolerates_grease should be false
-    let mut result_with_rejection = GreaseResult {
-        tolerates_grease: false,
-        inconclusive: false,
-        direct_grease_test_performed: true,
-        issues: vec!["Server rejected GREASE cipher suites (violates RFC 8701)".to_string()],
-        details: vec![],
-        tests_performed: vec!["test1".to_string()],
-    };
+    let mut result_with_rejection = grease_result(
+        false,
+        false,
+        true,
+        &["Server rejected GREASE cipher suites (violates RFC 8701)"],
+        &[],
+        &["test1"],
+    );
 
     GreaseTester::finalize_grease_result(&mut result_with_rejection);
     assert!(!result_with_rejection.tolerates_grease);
@@ -372,14 +352,14 @@ fn test_tolerates_grease_logic() {
 fn test_grease_partial_inconclusive_does_not_report_tolerant() {
     let target = loopback_target();
     let tester = GreaseTester::new(target);
-    let mut result = GreaseResult {
-        tolerates_grease: false,
-        inconclusive: false,
-        direct_grease_test_performed: false,
-        issues: vec![],
-        details: vec!["✓ Baseline connection successful".to_string()],
-        tests_performed: vec![],
-    };
+    let mut result = grease_result(
+        false,
+        false,
+        false,
+        &[],
+        &["✓ Baseline connection successful"],
+        &[],
+    );
 
     tester.record_grease_test(
         &mut result,
@@ -406,14 +386,14 @@ fn test_grease_partial_inconclusive_does_not_report_tolerant() {
 fn test_grease_all_category_inconclusive_ignores_baseline_success_detail() {
     let target = loopback_target();
     let tester = GreaseTester::new(target);
-    let mut result = GreaseResult {
-        tolerates_grease: false,
-        inconclusive: false,
-        direct_grease_test_performed: false,
-        issues: vec![],
-        details: vec!["✓ Baseline connection successful".to_string()],
-        tests_performed: vec![],
-    };
+    let mut result = grease_result(
+        false,
+        false,
+        false,
+        &[],
+        &["✓ Baseline connection successful"],
+        &[],
+    );
 
     tester.record_grease_test(
         &mut result,
