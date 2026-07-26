@@ -585,7 +585,7 @@ mod legacy_probe_tests {
     use crate::utils::mtls::MtlsConfig;
     use crate::utils::network::Target;
     use rustls_pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
-    use std::net::Ipv4Addr;
+    use std::net::{Ipv4Addr, SocketAddr};
     use std::time::Duration;
     use tokio::io::AsyncReadExt;
 
@@ -632,6 +632,11 @@ mod legacy_probe_tests {
         record.extend_from_slice(&(hello.len() as u16).to_be_bytes());
         record.extend_from_slice(&hello);
         record
+    }
+
+    fn example_target_for_addr(addr: SocketAddr) -> Target {
+        Target::with_ips("example.test".to_string(), addr.port(), vec![addr.ip()])
+            .expect("target should build")
     }
 
     #[test]
@@ -725,8 +730,7 @@ mod legacy_probe_tests {
             }
         });
 
-        let target = Target::with_ips("example.test".to_string(), addr.port(), vec![addr.ip()])
-            .expect("target should build");
+        let target = example_target_for_addr(addr);
         let tester = ProtocolTester::new(target)
             .with_connect_timeout(Duration::from_millis(100))
             .with_read_timeout(Duration::from_millis(100));
@@ -769,8 +773,7 @@ mod legacy_probe_tests {
             }
         });
 
-        let target = Target::with_ips("example.test".to_string(), addr.port(), vec![addr.ip()])
-            .expect("target should build");
+        let target = example_target_for_addr(addr);
         let tester = ProtocolTester::new(target)
             .with_connect_timeout(Duration::from_millis(100))
             .with_read_timeout(Duration::from_millis(100));
@@ -808,8 +811,7 @@ mod legacy_probe_tests {
             }
         });
 
-        let target = Target::with_ips("example.test".to_string(), addr.port(), vec![addr.ip()])
-            .expect("target should build");
+        let target = example_target_for_addr(addr);
         let tester = ProtocolTester::new(target)
             .with_connect_timeout(Duration::from_millis(100))
             .with_read_timeout(Duration::from_millis(100));
@@ -845,8 +847,7 @@ mod legacy_probe_tests {
             }
         });
 
-        let target = Target::with_ips("example.test".to_string(), addr.port(), vec![addr.ip()])
-            .expect("target should build");
+        let target = example_target_for_addr(addr);
         let tester = ProtocolTester::new(target)
             .with_connect_timeout(Duration::from_millis(100))
             .with_read_timeout(Duration::from_millis(100));
@@ -882,8 +883,7 @@ mod legacy_probe_tests {
             }
         });
 
-        let target = Target::with_ips("example.test".to_string(), addr.port(), vec![addr.ip()])
-            .expect("target should build");
+        let target = example_target_for_addr(addr);
         let tester = ProtocolTester::new(target)
             .with_connect_timeout(Duration::from_millis(100))
             .with_read_timeout(Duration::from_millis(100));
@@ -919,8 +919,7 @@ mod legacy_probe_tests {
             }
         });
 
-        let target = Target::with_ips("example.test".to_string(), addr.port(), vec![addr.ip()])
-            .expect("target should build");
+        let target = example_target_for_addr(addr);
         let tester = ProtocolTester::new(target)
             .with_connect_timeout(Duration::from_millis(100))
             .with_read_timeout(Duration::from_millis(100));
