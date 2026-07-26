@@ -293,6 +293,15 @@ mod tests {
     use std::time::Duration;
     use tokio::net::TcpListener as TokioTcpListener;
 
+    fn localhost_target(port: u16) -> Target {
+        Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap()
+    }
+
     #[test]
     fn test_ccs_probe_addrs_honors_all_ips() {
         let target = Target::with_ips(
@@ -501,12 +510,7 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         drop(listener);
 
-        let target = Target::with_ips(
-            "localhost".to_string(),
-            port,
-            vec!["127.0.0.1".parse().unwrap()],
-        )
-        .unwrap();
+        let target = localhost_target(port);
 
         let tester = CcsInjectionTester::new(target);
         let result = tester.test().await.unwrap();
@@ -533,12 +537,7 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(200)).await;
         });
 
-        let target = Target::with_ips(
-            "localhost".to_string(),
-            addr.port(),
-            vec!["127.0.0.1".parse().unwrap()],
-        )
-        .unwrap();
+        let target = localhost_target(addr.port());
 
         let tester = CcsInjectionTester::new(target);
         let result = tester.test().await.unwrap();
