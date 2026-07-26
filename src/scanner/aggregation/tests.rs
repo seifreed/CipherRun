@@ -1,8 +1,8 @@
 use super::*;
 use crate::certificates::parser::{CertificateChain, CertificateInfo};
 use crate::certificates::validator::ValidationResult;
-use crate::ciphers::CipherSuite;
 use crate::ciphers::tester::{CipherCounts, ProtocolCipherSummary};
+use crate::ciphers::CipherSuite;
 use crate::protocols::ProtocolTestResult;
 use crate::rating::grader::Grade;
 use crate::rating::scoring::RatingResult;
@@ -167,6 +167,26 @@ pub(crate) fn make_summary(protocol: Protocol, ciphers: Vec<CipherSuite>) -> Pro
     }
 }
 
+fn protocol_result(
+    protocol: Protocol,
+    supported: bool,
+    preferred: bool,
+    ciphers_count: usize,
+) -> ProtocolTestResult {
+    ProtocolTestResult {
+        protocol,
+        supported,
+        inconclusive: false,
+        preferred,
+        ciphers_count,
+        handshake_time_ms: None,
+        heartbeat_enabled: None,
+        session_resumption_caching: None,
+        session_resumption_tickets: None,
+        secure_renegotiation: None,
+    }
+}
+
 pub(crate) fn make_certificate(fingerprint: &str) -> CertificateAnalysisResult {
     let cert = CertificateInfo {
         fingerprint_sha256: Some(fingerprint.to_string()),
@@ -295,28 +315,14 @@ fn test_conservative_aggregation_merges_results() {
     let ip2: IpAddr = Ipv4Addr::new(127, 0, 0, 2).into();
 
     let protocol_tls12 = ProtocolTestResult {
-        protocol: Protocol::TLS12,
-        supported: true,
-        inconclusive: false,
-        preferred: true,
-        ciphers_count: 2,
-        handshake_time_ms: None,
-        heartbeat_enabled: None,
         session_resumption_caching: Some(true),
         session_resumption_tickets: Some(true),
-        secure_renegotiation: None,
+        ..protocol_result(Protocol::TLS12, true, true, 2)
     };
     let protocol_tls13 = ProtocolTestResult {
-        protocol: Protocol::TLS13,
-        supported: true,
-        inconclusive: false,
-        preferred: false,
-        ciphers_count: 1,
-        handshake_time_ms: None,
-        heartbeat_enabled: None,
         session_resumption_caching: Some(true),
         session_resumption_tickets: Some(true),
-        secure_renegotiation: None,
+        ..protocol_result(Protocol::TLS13, true, false, 1)
     };
 
     let mut ciphers_ip1 = HashMap::new();
@@ -444,16 +450,12 @@ fn test_aggregate_ciphers_conservative_is_stable_and_conservative() {
     ciphers_ip2.insert(Protocol::TLS12, summary_ip2);
 
     let protocol = ProtocolTestResult {
-        protocol: Protocol::TLS12,
-        supported: true,
-        inconclusive: false,
-        preferred: true,
-        ciphers_count: 1,
         handshake_time_ms: Some(10),
         heartbeat_enabled: Some(true),
         session_resumption_caching: Some(true),
         session_resumption_tickets: Some(true),
         secure_renegotiation: Some(true),
+        ..protocol_result(Protocol::TLS12, true, true, 1)
     };
     let protocol_ip2 = ProtocolTestResult {
         handshake_time_ms: Some(20),
@@ -634,16 +636,12 @@ fn test_aggregate_protocols_conservative_uses_consensus_metadata() {
     );
 
     let protocol_ip1 = ProtocolTestResult {
-        protocol: Protocol::TLS13,
-        supported: true,
-        inconclusive: false,
-        preferred: true,
-        ciphers_count: 1,
         handshake_time_ms: Some(10),
         heartbeat_enabled: Some(true),
         session_resumption_caching: Some(true),
         session_resumption_tickets: Some(true),
         secure_renegotiation: Some(true),
+        ..protocol_result(Protocol::TLS13, true, true, 1)
     };
     let protocol_ip2 = ProtocolTestResult {
         preferred: false,
@@ -815,31 +813,9 @@ fn test_aggregate_protocols_marks_unsupported_when_not_all_support() {
     let ip1: IpAddr = Ipv4Addr::new(127, 0, 0, 1).into();
     let ip2: IpAddr = Ipv4Addr::new(127, 0, 0, 2).into();
 
-    let protocols_ip1 = vec![ProtocolTestResult {
-        protocol: Protocol::TLS13,
-        supported: true,
-        inconclusive: false,
-        preferred: true,
-        ciphers_count: 1,
-        handshake_time_ms: None,
-        heartbeat_enabled: None,
-        session_resumption_caching: None,
-        session_resumption_tickets: None,
-        secure_renegotiation: None,
-    }];
+    let protocols_ip1 = vec![protocol_result(Protocol::TLS13, true, true, 1)];
 
-    let protocols_ip2 = vec![ProtocolTestResult {
-        protocol: Protocol::TLS13,
-        supported: false,
-        inconclusive: false,
-        preferred: false,
-        ciphers_count: 0,
-        handshake_time_ms: None,
-        heartbeat_enabled: None,
-        session_resumption_caching: None,
-        session_resumption_tickets: None,
-        secure_renegotiation: None,
-    }];
+    let protocols_ip2 = vec![protocol_result(Protocol::TLS13, false, false, 0)];
 
     let mut results = HashMap::new();
     results.insert(
@@ -891,18 +867,7 @@ fn test_aggregate_protocols_marks_partial_backend_failure_inconclusive() {
     let ip1: IpAddr = Ipv4Addr::new(127, 0, 0, 1).into();
     let ip2: IpAddr = Ipv4Addr::new(127, 0, 0, 2).into();
 
-    let protocols = vec![ProtocolTestResult {
-        protocol: Protocol::TLS13,
-        supported: true,
-        inconclusive: false,
-        preferred: true,
-        ciphers_count: 1,
-        handshake_time_ms: None,
-        heartbeat_enabled: None,
-        session_resumption_caching: None,
-        session_resumption_tickets: None,
-        secure_renegotiation: None,
-    }];
+    let protocols = vec![protocol_result(Protocol::TLS13, true, true, 1)];
 
     let mut results = HashMap::new();
     results.insert(
@@ -948,30 +913,11 @@ fn test_aggregate_protocols_preserves_inconclusive_when_all_support() {
     let ip2: IpAddr = Ipv4Addr::new(127, 0, 0, 2).into();
 
     let protocols_ip1 = vec![ProtocolTestResult {
-        protocol: Protocol::TLS13,
-        supported: true,
         inconclusive: true,
-        preferred: true,
-        ciphers_count: 1,
-        handshake_time_ms: None,
-        heartbeat_enabled: None,
-        session_resumption_caching: None,
-        session_resumption_tickets: None,
-        secure_renegotiation: None,
+        ..protocol_result(Protocol::TLS13, true, true, 1)
     }];
 
-    let protocols_ip2 = vec![ProtocolTestResult {
-        protocol: Protocol::TLS13,
-        supported: true,
-        inconclusive: false,
-        preferred: true,
-        ciphers_count: 1,
-        handshake_time_ms: None,
-        heartbeat_enabled: None,
-        session_resumption_caching: None,
-        session_resumption_tickets: None,
-        secure_renegotiation: None,
-    }];
+    let protocols_ip2 = vec![protocol_result(Protocol::TLS13, true, true, 1)];
 
     let mut results = HashMap::new();
     results.insert(
