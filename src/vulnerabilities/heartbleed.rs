@@ -13,7 +13,10 @@ use tokio::time::timeout;
 
 mod heartbeat_probe;
 mod heartbeat_response;
+mod result;
 mod server_hello;
+
+pub use result::HeartbleedResult;
 
 fn read_u16_at(data: &[u8], offset: usize) -> Option<u16> {
     data.get(offset..offset.checked_add(2)?)?
@@ -38,17 +41,6 @@ fn write_u24_at(data: &mut [u8], offset: usize, value: usize) {
             ((value >> 8) & 0xff) as u8,
             (value & 0xff) as u8,
         ]);
-}
-
-/// Heartbleed detection result with detailed information
-#[derive(Debug, Clone)]
-pub struct HeartbleedResult {
-    pub vulnerable: bool,
-    pub bytes_received: usize,
-    pub bytes_sent: usize,
-    pub details: String,
-    /// Whether the test was actually performed (false if connection/parsing failed)
-    pub tested: bool,
 }
 
 /// Heartbleed vulnerability tester
@@ -122,17 +114,7 @@ impl<'a> HeartbleedTester<'a> {
             }
         }
 
-        Ok(HeartbleedResult {
-            vulnerable: false,
-            bytes_received: 0,
-            bytes_sent: 3,
-            details: if any_tested {
-                "Not vulnerable - No memory leak detected across TLS 1.0/1.1/1.2".to_string()
-            } else {
-                "Unable to test - No TLS protocol connection succeeded (inconclusive)".to_string()
-            },
-            tested: any_tested,
-        })
+        Ok(HeartbleedResult::aggregate_clean(any_tested))
     }
 
     /// Test specific protocol for Heartbleed
@@ -186,14 +168,7 @@ impl<'a> HeartbleedTester<'a> {
         {
             Ok(s) => s,
             Err(_) => {
-                return Ok(HeartbleedResult {
-                    vulnerable: false,
-                    bytes_received: 0,
-                    bytes_sent: 0,
-                    details: "Connection failed - Vulnerability status UNKNOWN (unable to test)"
-                        .to_string(),
-                    tested: false,
-                });
+                return Ok(HeartbleedResult::connection_failed());
             }
         };
 
@@ -221,48 +196,22 @@ impl<'a> HeartbleedTester<'a> {
         {
             Ok(Ok(resp)) if !resp.is_empty() => resp,
             _ => {
-                return Ok(HeartbleedResult {
-                    vulnerable: false,
-                    bytes_received: 0,
-                    bytes_sent: 0,
-                    details: "ServerHello timeout or empty response".to_string(),
-                    tested: false,
-                });
+                return Ok(HeartbleedResult::server_hello_timeout());
             }
         };
 
         if response.first() != Some(&0x16) || response.get(5) != Some(&0x02) {
-            return Ok(HeartbleedResult {
-                vulnerable: false,
-                bytes_received: response.len(),
-                bytes_sent: 0,
-                details:
-                    "Unable to test - unexpected TLS response while probing heartbeat extension"
-                        .to_string(),
-                tested: false,
-            });
+            return Ok(HeartbleedResult::unexpected_server_hello(response.len()));
         }
 
         // Check if server accepted heartbeat extension
         match server_hello::has_heartbeat_extension(&response) {
             Ok(true) => {}
             Ok(false) => {
-                return Ok(HeartbleedResult {
-                    vulnerable: false,
-                    bytes_received: 0,
-                    bytes_sent: 0,
-                    details: "Heartbeat extension not supported by server".to_string(),
-                    tested: true,
-                });
+                return Ok(HeartbleedResult::heartbeat_not_supported());
             }
             Err(error) => {
-                return Ok(HeartbleedResult {
-                    vulnerable: false,
-                    bytes_received: 0,
-                    bytes_sent: 0,
-                    details: format!("Unable to test - malformed ServerHello: {}", error),
-                    tested: false,
-                });
+                return Ok(HeartbleedResult::malformed_server_hello(error));
             }
         }
 
@@ -280,26 +229,14 @@ impl<'a> HeartbleedTester<'a> {
         {
             Ok(response) => response,
             Err(error) if error.kind() == std::io::ErrorKind::TimedOut => {
-                return Ok(HeartbleedResult {
-                    vulnerable: false,
-                    bytes_received: 0,
-                    bytes_sent: heartbeat_probe::BYTES_SENT,
-                    details:
-                        "Timeout waiting for heartbeat response - server may have closed connection"
-                            .to_string(),
-                    tested: false,
-                });
+                return Ok(HeartbleedResult::heartbeat_timeout(
+                    heartbeat_probe::BYTES_SENT,
+                ));
             }
             Err(_) => {
-                return Ok(HeartbleedResult {
-                    vulnerable: false,
-                    bytes_received: 0,
-                    bytes_sent: heartbeat_probe::BYTES_SENT,
-                    details:
-                        "Connection error during heartbeat test - server may have closed connection"
-                            .to_string(),
-                    tested: false,
-                });
+                return Ok(HeartbleedResult::heartbeat_connection_error(
+                    heartbeat_probe::BYTES_SENT,
+                ));
             }
         };
 
