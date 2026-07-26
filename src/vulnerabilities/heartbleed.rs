@@ -1,18 +1,17 @@
 // Heartbleed (CVE-2014-0160) vulnerability checker
 
 use crate::Result;
-use crate::constants::{
-    BUFFER_SIZE_MAX_WITH_OVERHEAD, TLS_HANDSHAKE_TIMEOUT, TLS_RECORD_HEADER_SIZE,
-};
+use crate::constants::{BUFFER_SIZE_MAX_WITH_OVERHEAD, TLS_HANDSHAKE_TIMEOUT};
 use crate::protocols::{Protocol, handshake::ClientHelloBuilder};
 use crate::utils::network::Target;
 use std::time::Duration;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 use tokio::time::timeout;
 
 mod heartbeat_probe;
 mod heartbeat_response;
+mod read_io;
 mod result;
 mod server_hello;
 
@@ -189,8 +188,12 @@ impl<'a> HeartbleedTester<'a> {
         // Send ClientHello
         let response = match timeout(self.read_timeout, async {
             stream.write_all(&client_hello).await?;
-            self.read_complete_tls_record(&mut stream, BUFFER_SIZE_MAX_WITH_OVERHEAD)
-                .await
+            read_io::complete_tls_record(
+                &mut stream,
+                BUFFER_SIZE_MAX_WITH_OVERHEAD,
+                self.read_timeout,
+            )
+            .await
         })
         .await
         {
@@ -223,9 +226,12 @@ impl<'a> HeartbleedTester<'a> {
     async fn send_malicious_heartbeat(&self, stream: &mut TcpStream) -> Result<HeartbleedResult> {
         let heartbeat = heartbeat_probe::malicious_request()?;
         stream.write_all(&heartbeat).await?;
-        let result = match self
-            .read_complete_tls_record(stream, u16::MAX as usize + TLS_RECORD_HEADER_SIZE)
-            .await
+        let result = match read_io::complete_tls_record(
+            stream,
+            u16::MAX as usize + crate::constants::TLS_RECORD_HEADER_SIZE,
+            self.read_timeout,
+        )
+        .await
         {
             Ok(response) => response,
             Err(error) if error.kind() == std::io::ErrorKind::TimedOut => {
@@ -242,69 +248,14 @@ impl<'a> HeartbleedTester<'a> {
 
         Ok(heartbeat_probe::classify_response(&result))
     }
-
-    async fn read_complete_tls_record(
-        &self,
-        stream: &mut TcpStream,
-        max_len: usize,
-    ) -> std::io::Result<Vec<u8>> {
-        let mut response = vec![0u8; max_len];
-        let mut total = 0usize;
-        loop {
-            if total >= response.len() {
-                break;
-            }
-            let read_buf = response.get_mut(total..).ok_or_else(|| {
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "heartbeat response read offset exceeded buffer",
-                )
-            })?;
-            let n = match timeout(self.read_timeout, stream.read(read_buf)).await {
-                Ok(read) => read?,
-                Err(_) => {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::TimedOut,
-                        "heartbeat response read timed out",
-                    ));
-                }
-            };
-            if n == 0 {
-                break;
-            }
-            total += n;
-            if total >= TLS_RECORD_HEADER_SIZE {
-                let record_len = u16::from_be_bytes([response[3], response[4]]) as usize;
-                let record_total =
-                    TLS_RECORD_HEADER_SIZE
-                        .checked_add(record_len)
-                        .ok_or_else(|| {
-                            std::io::Error::new(
-                                std::io::ErrorKind::InvalidData,
-                                "heartbeat response record length overflow",
-                            )
-                        })?;
-                if record_total > response.len() {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        "heartbeat response record length exceeds buffer",
-                    ));
-                }
-                if total >= record_total {
-                    break;
-                }
-            }
-        }
-        response.truncate(total);
-        Ok(response)
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::constants::BUFFER_SIZE_MAX_TLS_RECORD;
+    use crate::constants::{BUFFER_SIZE_MAX_TLS_RECORD, TLS_RECORD_HEADER_SIZE};
     use std::net::{IpAddr, Ipv4Addr};
+    use tokio::io::AsyncReadExt;
     use tokio::net::TcpListener;
 
     async fn spawn_heartbeat_server(response_size: usize) -> u16 {
