@@ -76,6 +76,30 @@ impl RdpPreamble {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::net::TcpListener;
+
+    async fn stream_from_rdp_response(
+        response: Vec<u8>,
+    ) -> (TcpStream, tokio::task::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test assertion should succeed");
+        let addr = listener
+            .local_addr()
+            .expect("test assertion should succeed");
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buffer = vec![0u8; 64];
+            let _ = socket.read(&mut buffer).await.unwrap();
+            socket.write_all(&response).await.unwrap();
+        });
+
+        let stream = TcpStream::connect(addr)
+            .await
+            .expect("test assertion should succeed");
+        (stream, server)
+    }
 
     #[test]
     fn test_rdp_port_detection() {
@@ -91,30 +115,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_rdp_preamble_send() {
-        use tokio::net::TcpListener;
+        let mut response = vec![0u8; 11];
+        response[0] = 0x03;
+        response[2] = 0x00;
+        response[3] = 0x0b;
+        response[5] = 0xD0;
+        let (mut stream, server) = stream_from_rdp_response(response).await;
 
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("test assertion should succeed");
-        let addr = listener
-            .local_addr()
-            .expect("test assertion should succeed");
-
-        let server = tokio::spawn(async move {
-            let (mut socket, _) = listener.accept().await.unwrap();
-            let mut buffer = vec![0u8; 64];
-            let _ = socket.read(&mut buffer).await.unwrap();
-            let mut response = vec![0u8; 11];
-            response[0] = 0x03;
-            response[2] = 0x00;
-            response[3] = 0x0b;
-            response[5] = 0xD0;
-            socket.write_all(&response).await.unwrap();
-        });
-
-        let mut stream = TcpStream::connect(addr)
-            .await
-            .expect("test assertion should succeed");
         RdpPreamble::send(&mut stream)
             .await
             .expect("test assertion should succeed");
@@ -124,25 +131,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_rdp_preamble_short_response() {
-        use tokio::net::TcpListener;
-
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("test assertion should succeed");
-        let addr = listener
-            .local_addr()
-            .expect("test assertion should succeed");
-
-        let server = tokio::spawn(async move {
-            let (mut socket, _) = listener.accept().await.unwrap();
-            let mut buffer = vec![0u8; 64];
-            let _ = socket.read(&mut buffer).await.unwrap();
-            socket.write_all(&[0x03, 0x00]).await.unwrap();
-        });
-
-        let mut stream = TcpStream::connect(addr)
-            .await
-            .expect("test assertion should succeed");
+        let (mut stream, server) = stream_from_rdp_response(vec![0x03, 0x00]).await;
         let err = RdpPreamble::send(&mut stream).await.unwrap_err();
         assert!(err.to_string().contains("RDP response too short"));
 
@@ -151,30 +140,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_rdp_preamble_mismatched_length() {
-        use tokio::net::TcpListener;
+        let mut response = vec![0u8; 11];
+        response[0] = 0x03;
+        response[2] = 0x00;
+        response[3] = 0x0c; // claims 12 bytes, sends 11
+        response[5] = 0xD0;
+        let (mut stream, server) = stream_from_rdp_response(response).await;
 
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("test assertion should succeed");
-        let addr = listener
-            .local_addr()
-            .expect("test assertion should succeed");
-
-        let server = tokio::spawn(async move {
-            let (mut socket, _) = listener.accept().await.unwrap();
-            let mut buffer = vec![0u8; 64];
-            let _ = socket.read(&mut buffer).await.unwrap();
-            let mut response = vec![0u8; 11];
-            response[0] = 0x03;
-            response[2] = 0x00;
-            response[3] = 0x0c; // claims 12 bytes, sends 11
-            response[5] = 0xD0;
-            socket.write_all(&response).await.unwrap();
-        });
-
-        let mut stream = TcpStream::connect(addr)
-            .await
-            .expect("test assertion should succeed");
         let err = RdpPreamble::send(&mut stream).await.unwrap_err();
         assert!(err.to_string().contains("RDP response too short"));
 
@@ -183,8 +155,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_rdp_preamble_fragmented_response() {
-        use tokio::net::TcpListener;
-
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("test assertion should succeed");
