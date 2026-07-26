@@ -7,66 +7,93 @@ mod response_only_tests {
     use cipherrun::output::response_only::ResponseOnlyFormatter;
 
     #[test]
-    fn test_strip_bracket_format() {
-        let output = "[example.com:443] TLS 1.3";
-        let result = ResponseOnlyFormatter::strip_target_prefix(output, "example.com", 443);
-
-        assert_eq!(result, "TLS 1.3");
-    }
-
-    #[test]
-    fn test_strip_simple_format() {
-        let output = "example.com:443 TLS 1.2";
-        let result = ResponseOnlyFormatter::strip_target_prefix(output, "example.com", 443);
-
-        assert_eq!(result, "TLS 1.2");
-    }
-
-    #[test]
-    fn test_multiline_output() {
-        let output = "[example.com:443] Protocol Support:\n\
-                      [example.com:443]   TLS 1.2\n\
-                      [example.com:443]   TLS 1.3";
-
-        let result = ResponseOnlyFormatter::strip_target_prefix(output, "example.com", 443);
-
-        let lines: Vec<&str> = result.lines().collect();
-        assert_eq!(lines.len(), 3);
-        assert_eq!(lines[0], "Protocol Support:");
-        assert_eq!(lines[1], "TLS 1.2");
-        assert_eq!(lines[2], "TLS 1.3");
-    }
-
-    #[test]
-    fn test_preserves_content_without_prefix() {
-        let output = "TLS 1.3\nTLS_AES_128_GCM_SHA256";
-        let result = ResponseOnlyFormatter::strip_target_prefix(output, "example.com", 443);
-
-        assert_eq!(result, output);
-    }
-
-    #[test]
-    fn test_empty_output() {
-        let output = "";
-        let result = ResponseOnlyFormatter::strip_target_prefix(output, "example.com", 443);
-
-        assert_eq!(result, "");
-    }
-
-    #[test]
-    fn test_different_port() {
-        let output = "[example.com:8443] Status: OK";
-        let result = ResponseOnlyFormatter::strip_target_prefix(output, "example.com", 8443);
-
-        assert_eq!(result, "Status: OK");
-    }
-
-    #[test]
-    fn test_whitespace_handling() {
-        let output = "[example.com:443]   Data with leading spaces";
-        let result = ResponseOnlyFormatter::strip_target_prefix(output, "example.com", 443);
-
-        assert_eq!(result, "Data with leading spaces");
+    fn test_strip_target_prefix_cases() {
+        for (name, output, host, port, expected) in [
+            (
+                "bracket",
+                "[example.com:443] TLS 1.3",
+                "example.com",
+                443,
+                "TLS 1.3",
+            ),
+            (
+                "simple",
+                "example.com:443 TLS 1.2",
+                "example.com",
+                443,
+                "TLS 1.2",
+            ),
+            (
+                "multiline",
+                "[example.com:443] Protocol Support:\n\
+                 [example.com:443]   TLS 1.2\n\
+                 [example.com:443]   TLS 1.3",
+                "example.com",
+                443,
+                "Protocol Support:\nTLS 1.2\nTLS 1.3",
+            ),
+            (
+                "without prefix",
+                "TLS 1.3\nTLS_AES_128_GCM_SHA256",
+                "example.com",
+                443,
+                "TLS 1.3\nTLS_AES_128_GCM_SHA256",
+            ),
+            ("empty", "", "example.com", 443, ""),
+            (
+                "different port",
+                "[example.com:8443] Status: OK",
+                "example.com",
+                8443,
+                "Status: OK",
+            ),
+            (
+                "whitespace",
+                "[example.com:443]   Data with leading spaces",
+                "example.com",
+                443,
+                "Data with leading spaces",
+            ),
+            (
+                "mixed",
+                "[example.com:443] Line 1\n\
+                 example.com:443 Line 2\n\
+                 [example.com:443] Line 3",
+                "example.com",
+                443,
+                "Line 1\nLine 2\nLine 3",
+            ),
+            (
+                "dash separator",
+                "[example.com:443] - Certificate Info",
+                "example.com",
+                443,
+                "Certificate Info",
+            ),
+            ("ipv6", "[::1]:443 TLS 1.3", "::1", 443, "TLS 1.3"),
+            (
+                "preserves content",
+                "[example.com:443] Important: Certificate Expires in 30 days",
+                "example.com",
+                443,
+                "Important: Certificate Expires in 30 days",
+            ),
+            (
+                "trailing newline",
+                "[example.com:443] Line 1\n\
+                 [example.com:443] Line 2\n\
+                 [example.com:443] Line 3\n",
+                "example.com",
+                443,
+                "Line 1\nLine 2\nLine 3",
+            ),
+        ] {
+            assert_eq!(
+                ResponseOnlyFormatter::strip_target_prefix(output, host, port),
+                expected,
+                "{name}"
+            );
+        }
     }
 
     #[test]
@@ -75,59 +102,5 @@ mod response_only_tests {
         let result = ResponseOnlyFormatter::format(output, "example.com", 443);
 
         assert_eq!(result, "Certificate: Valid");
-    }
-
-    #[test]
-    fn test_mixed_format() {
-        let output = "[example.com:443] Line 1\n\
-                      example.com:443 Line 2\n\
-                      [example.com:443] Line 3";
-
-        let result = ResponseOnlyFormatter::strip_target_prefix(output, "example.com", 443);
-
-        let lines: Vec<&str> = result.lines().collect();
-        assert_eq!(lines.len(), 3);
-        assert_eq!(lines[0], "Line 1");
-        assert_eq!(lines[1], "Line 2");
-        assert_eq!(lines[2], "Line 3");
-    }
-
-    #[test]
-    fn test_with_dash_separator() {
-        let output = "[example.com:443] - Certificate Info";
-        let result = ResponseOnlyFormatter::strip_target_prefix(output, "example.com", 443);
-
-        assert_eq!(result, "Certificate Info");
-    }
-
-    #[test]
-    fn test_ipv6_address() {
-        let output = "[::1]:443 TLS 1.3";
-        let result = ResponseOnlyFormatter::strip_target_prefix(output, "::1", 443);
-
-        assert_eq!(result, "TLS 1.3");
-    }
-
-    #[test]
-    fn test_preserves_output_content() {
-        let original = "Important: Certificate Expires in 30 days";
-        let output = format!("[example.com:443] {}", original);
-
-        let result = ResponseOnlyFormatter::strip_target_prefix(&output, "example.com", 443);
-
-        assert_eq!(result, original);
-    }
-
-    #[test]
-    fn test_with_newlines() {
-        let output = "[example.com:443] Line 1\n\
-                      [example.com:443] Line 2\n\
-                      [example.com:443] Line 3\n";
-
-        let result = ResponseOnlyFormatter::strip_target_prefix(output, "example.com", 443);
-
-        let lines: Vec<&str> = result.lines().collect();
-        assert_eq!(lines.len(), 3);
-        assert!(lines.iter().all(|line| !line.contains("example.com")));
     }
 }
