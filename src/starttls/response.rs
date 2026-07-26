@@ -175,16 +175,20 @@ mod tests {
     use super::*;
     use tokio::io::AsyncWriteExt;
 
-    #[tokio::test]
-    async fn test_read_line_returns_full_line() {
-        let (mut client, mut server) = tokio::io::duplex(128);
+    fn response_client(capacity: usize, response: Vec<u8>) -> tokio::io::DuplexStream {
+        let (client, mut server) = tokio::io::duplex(capacity);
         tokio::spawn(async move {
             server
-                .write_all(b"hello world\r\n")
+                .write_all(&response)
                 .await
                 .expect("test should write data");
         });
+        client
+    }
 
+    #[tokio::test]
+    async fn test_read_line_returns_full_line() {
+        let mut client = response_client(128, b"hello world\r\n".to_vec());
         let mut reader = BufReader::new(&mut client);
         let line = read_line(&mut reader)
             .await
@@ -206,14 +210,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_read_line_rejects_unterminated_line() {
-        let (mut client, mut server) = tokio::io::duplex(16);
-        tokio::spawn(async move {
-            server
-                .write_all(b"220")
-                .await
-                .expect("test should write data");
-        });
-
+        let mut client = response_client(16, b"220".to_vec());
         let mut reader = BufReader::new(&mut client);
         let err = read_line(&mut reader)
             .await
@@ -223,14 +220,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_read_line_rejects_line_over_limit_without_newline() {
-        let (mut client, mut server) = tokio::io::duplex(MAX_LINE_LENGTH + 8);
-        tokio::spawn(async move {
-            server
-                .write_all(&vec![b'a'; MAX_LINE_LENGTH + 1])
-                .await
-                .expect("test should write data");
-        });
-
+        let mut client = response_client(MAX_LINE_LENGTH + 8, vec![b'a'; MAX_LINE_LENGTH + 1]);
         let mut reader = BufReader::new(&mut client);
         let err = read_line(&mut reader).await.unwrap_err();
         assert!(format!("{err}").contains("too long"));
@@ -238,14 +228,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_read_status_line_valid() {
-        let (mut client, mut server) = tokio::io::duplex(128);
-        tokio::spawn(async move {
-            server
-                .write_all(b"220 Ready\r\n")
-                .await
-                .expect("test should write data");
-        });
-
+        let mut client = response_client(128, b"220 Ready\r\n".to_vec());
         let mut reader = BufReader::new(&mut client);
         let (code, line) = read_status_line(&mut reader, "TEST")
             .await
@@ -256,14 +239,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_read_status_line_too_short() {
-        let (mut client, mut server) = tokio::io::duplex(64);
-        tokio::spawn(async move {
-            server
-                .write_all(b"a\n")
-                .await
-                .expect("test should write data");
-        });
-
+        let mut client = response_client(64, b"a\n".to_vec());
         let mut reader = BufReader::new(&mut client);
         let err = read_status_line(&mut reader, "TEST").await.unwrap_err();
         assert!(format!("{err}").contains("too short"));
@@ -273,14 +249,7 @@ mod tests {
     async fn test_read_status_line_multibyte_prefix_does_not_panic() {
         // A line whose first bytes form a multi-byte char crossing index 3 must
         // yield a ParseError, not a panic from slicing on a non-char boundary.
-        let (mut client, mut server) = tokio::io::duplex(64);
-        tokio::spawn(async move {
-            server
-                .write_all("a\u{1D400}xx\r\n".as_bytes())
-                .await
-                .expect("test should write data");
-        });
-
+        let mut client = response_client(64, "a\u{1D400}xx\r\n".as_bytes().to_vec());
         let mut reader = BufReader::new(&mut client);
         let err = read_status_line(&mut reader, "TEST").await.unwrap_err();
         assert!(format!("{err}").contains("Invalid TEST status code"));
@@ -288,14 +257,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_read_status_line_rejects_attached_text() {
-        let (mut client, mut server) = tokio::io::duplex(64);
-        tokio::spawn(async move {
-            server
-                .write_all(b"220Ready\r\n")
-                .await
-                .expect("test should write data");
-        });
-
+        let mut client = response_client(64, b"220Ready\r\n".to_vec());
         let mut reader = BufReader::new(&mut client);
         let err = read_status_line(&mut reader, "TEST").await.unwrap_err();
         assert!(format!("{err}").contains("status separator"));
@@ -305,14 +267,7 @@ mod tests {
     async fn test_read_status_line_rejects_multibyte_separator_without_panic() {
         // A multi-byte char at byte index 3 (the code/separator position) must
         // yield a ParseError, not a panic from slicing on a non-char boundary.
-        let (mut client, mut server) = tokio::io::duplex(64);
-        tokio::spawn(async move {
-            server
-                .write_all("250\u{1D400}cont\r\n".as_bytes())
-                .await
-                .expect("test should write data");
-        });
-
+        let mut client = response_client(64, "250\u{1D400}cont\r\n".as_bytes().to_vec());
         let mut reader = BufReader::new(&mut client);
         let err = read_status_line(&mut reader, "TEST").await.unwrap_err();
         assert!(format!("{err}").contains("status separator"));
@@ -320,14 +275,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_read_status_line_invalid_code() {
-        let (mut client, mut server) = tokio::io::duplex(64);
-        tokio::spawn(async move {
-            server
-                .write_all(b"abc Invalid\r\n")
-                .await
-                .expect("test should write data");
-        });
-
+        let mut client = response_client(64, b"abc Invalid\r\n".to_vec());
         let mut reader = BufReader::new(&mut client);
         let err = read_status_line(&mut reader, "TEST").await.unwrap_err();
         assert!(format!("{err}").contains("status code"));
@@ -335,14 +283,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_read_multiline_status() {
-        let (mut client, mut server) = tokio::io::duplex(1024);
-        tokio::spawn(async move {
-            server
-                .write_all(b"220-First line\r\n220 Ready\r\n")
-                .await
-                .expect("test should write data");
-        });
-
+        let mut client = response_client(1024, b"220-First line\r\n220 Ready\r\n".to_vec());
         let mut reader = BufReader::new(&mut client);
         let (code, response) = read_multiline_status(&mut reader, "TEST", 100)
             .await
@@ -354,14 +295,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_read_multiline_status_single_line() {
-        let (mut client, mut server) = tokio::io::duplex(128);
-        tokio::spawn(async move {
-            server
-                .write_all(b"220 Ready\r\n")
-                .await
-                .expect("test should write data");
-        });
-
+        let mut client = response_client(128, b"220 Ready\r\n".to_vec());
         let mut reader = BufReader::new(&mut client);
         let (code, response) = read_multiline_status(&mut reader, "TEST", 100)
             .await
@@ -372,14 +306,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_read_multiline_status_accepts_bare_final_line() {
-        let (mut client, mut server) = tokio::io::duplex(128);
-        tokio::spawn(async move {
-            server
-                .write_all(b"220\r\n")
-                .await
-                .expect("test should write data");
-        });
-
+        let mut client = response_client(128, b"220\r\n".to_vec());
         let mut reader = BufReader::new(&mut client);
         let (code, response) = read_multiline_status(&mut reader, "TEST", 100)
             .await
@@ -390,14 +317,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_read_multiline_status_rejects_missing_final_line() {
-        let (mut client, mut server) = tokio::io::duplex(128);
-        tokio::spawn(async move {
-            server
-                .write_all(b"220-First line\r\n220-Second line\r\n")
-                .await
-                .expect("test should write data");
-        });
-
+        let mut client = response_client(128, b"220-First line\r\n220-Second line\r\n".to_vec());
         let mut reader = BufReader::new(&mut client);
         let err = read_multiline_status(&mut reader, "TEST", 2)
             .await
@@ -407,14 +327,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_read_multiline_status_rejects_changed_status_code() {
-        let (mut client, mut server) = tokio::io::duplex(128);
-        tokio::spawn(async move {
-            server
-                .write_all(b"220-First line\r\n234 Ready\r\n")
-                .await
-                .expect("test should write data");
-        });
-
+        let mut client = response_client(128, b"220-First line\r\n234 Ready\r\n".to_vec());
         let mut reader = BufReader::new(&mut client);
         let err = read_multiline_status(&mut reader, "TEST", 100)
             .await
