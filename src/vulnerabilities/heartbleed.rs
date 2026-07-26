@@ -18,24 +18,6 @@ mod server_hello;
 
 pub use result::HeartbleedResult;
 
-#[cfg(test)]
-fn write_u16_at(data: &mut [u8], offset: usize, value: u16) {
-    data.get_mut(offset..offset + 2)
-        .expect("test fixture should contain u16 placeholder")
-        .copy_from_slice(&value.to_be_bytes());
-}
-
-#[cfg(test)]
-fn write_u24_at(data: &mut [u8], offset: usize, value: usize) {
-    data.get_mut(offset..offset + 3)
-        .expect("test fixture should contain u24 placeholder")
-        .copy_from_slice(&[
-            ((value >> 16) & 0xff) as u8,
-            ((value >> 8) & 0xff) as u8,
-            (value & 0xff) as u8,
-        ]);
-}
-
 /// Heartbleed vulnerability tester
 pub struct HeartbleedTester<'a> {
     target: &'a Target,
@@ -240,6 +222,7 @@ impl<'a> HeartbleedTester<'a> {
 mod tests {
     use super::*;
     use crate::constants::{BUFFER_SIZE_MAX_TLS_RECORD, TLS_RECORD_HEADER_SIZE};
+    use crate::vulnerabilities::test_support::{write_u16_at, write_u24_at};
     use std::net::{IpAddr, Ipv4Addr};
     use tokio::io::AsyncReadExt;
     use tokio::net::TcpListener;

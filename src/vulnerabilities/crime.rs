@@ -28,24 +28,6 @@ pub struct CrimeTester<'a> {
     test_all_ips: bool,
 }
 
-#[cfg(test)]
-fn write_u16_at(data: &mut [u8], offset: usize, value: u16) {
-    data.get_mut(offset..offset + 2)
-        .expect("test fixture should contain u16 placeholder")
-        .copy_from_slice(&value.to_be_bytes());
-}
-
-#[cfg(test)]
-fn write_u24_at(data: &mut [u8], offset: usize, value: usize) {
-    data.get_mut(offset..offset + 3)
-        .expect("test fixture should contain u24 placeholder")
-        .copy_from_slice(&[
-            ((value >> 16) & 0xff) as u8,
-            ((value >> 8) & 0xff) as u8,
-            (value & 0xff) as u8,
-        ]);
-}
-
 impl<'a> CrimeTester<'a> {
     pub fn new(target: &'a Target) -> Self {
         Self {
@@ -235,6 +217,7 @@ impl<'a> CrimeTester<'a> {
 mod tests {
     use super::*;
     use crate::constants::{BUFFER_SIZE_DEFAULT, CONTENT_TYPE_HANDSHAKE};
+    use crate::vulnerabilities::test_support::{write_u16_at, write_u24_at};
     use std::io::ErrorKind;
     use std::net::TcpListener;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};

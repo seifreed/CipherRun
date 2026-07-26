@@ -12,3 +12,19 @@ pub(crate) async fn spawn_dummy_server(max_accepts: usize) -> std::net::SocketAd
     });
     addr
 }
+
+pub(crate) fn write_u16_at(data: &mut [u8], offset: usize, value: u16) {
+    data.get_mut(offset..offset + 2)
+        .expect("test fixture should contain u16 placeholder")
+        .copy_from_slice(&value.to_be_bytes());
+}
+
+pub(crate) fn write_u24_at(data: &mut [u8], offset: usize, value: usize) {
+    data.get_mut(offset..offset + 3)
+        .expect("test fixture should contain u24 placeholder")
+        .copy_from_slice(&[
+            ((value >> 16) & 0xff) as u8,
+            ((value >> 8) & 0xff) as u8,
+            (value & 0xff) as u8,
+        ]);
+}
