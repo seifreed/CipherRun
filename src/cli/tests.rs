@@ -660,42 +660,28 @@ fn test_client_simulation_flag_disables_default_suite() {
 }
 
 #[test]
-fn test_validate_rejects_invalid_compliance_format() {
-    let args = Args {
-        compliance: ComplianceArgs {
+fn test_validate_rejects_invalid_compliance_values() {
+    for compliance in [
+        ComplianceArgs {
             format: "jsno".to_string(),
             ..Default::default()
         },
-        ..Default::default()
-    };
-
-    assert!(args.validate().is_err());
-}
-
-#[test]
-fn test_validate_rejects_invalid_policy_format() {
-    let args = Args {
-        compliance: ComplianceArgs {
+        ComplianceArgs {
             policy_format: "cvs".to_string(),
             ..Default::default()
         },
-        ..Default::default()
-    };
-
-    assert!(args.validate().is_err());
-}
-
-#[test]
-fn test_validate_rejects_invalid_compliance_severity() {
-    let args = Args {
-        compliance: ComplianceArgs {
+        ComplianceArgs {
             severity: Some("info".to_string()),
             ..Default::default()
         },
-        ..Default::default()
-    };
+    ] {
+        let args = Args {
+            compliance,
+            ..Default::default()
+        };
 
-    assert!(args.validate().is_err());
+        assert!(args.validate().is_err());
+    }
 }
 
 #[test]
