@@ -170,30 +170,19 @@ mod tests {
     }
 
     #[test]
-    fn test_client_hello_with_scsv() {
+    fn test_client_hello_scsv_toggle() {
         let target = example_target();
-
         let tester = FallbackScsvTester::new(&target);
-        let hello = tester
-            .build_client_hello_with_scsv(0x0303, true)
-            .expect("ClientHello should build");
 
-        assert!(hello.len() > 50);
-        let has_scsv = hello.windows(2).any(|window| window == [0x56, 0x00]);
-        assert!(has_scsv);
-    }
+        for include_scsv in [true, false] {
+            let hello = tester
+                .build_client_hello_with_scsv(0x0303, include_scsv)
+                .expect("ClientHello should build");
 
-    #[test]
-    fn test_client_hello_without_scsv() {
-        let target = example_target();
-
-        let tester = FallbackScsvTester::new(&target);
-        let hello = tester
-            .build_client_hello_with_scsv(0x0303, false)
-            .expect("ClientHello should build");
-
-        let has_scsv = hello.windows(2).any(|window| window == [0x56, 0x00]);
-        assert!(!has_scsv);
+            assert!(hello.len() > 50);
+            let has_scsv = hello.windows(2).any(|window| window == [0x56, 0x00]);
+            assert_eq!(has_scsv, include_scsv);
+        }
     }
 
     #[test]
