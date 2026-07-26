@@ -141,6 +141,15 @@ mod tests {
         .expect("target should build")
     }
 
+    fn loopback_target(port: u16) -> Target {
+        Target::with_ips(
+            "example.com".to_string(),
+            port,
+            vec!["127.0.0.1".parse().expect("valid IP")],
+        )
+        .expect("target should build")
+    }
+
     fn build_handshake_message(handshake_type: u8, body: &[u8]) -> Vec<u8> {
         let mut message = Vec::with_capacity(4 + body.len());
         message.push(handshake_type);
@@ -447,12 +456,7 @@ mod tests {
             }
         });
 
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            port,
-            vec!["127.0.0.1".parse().expect("valid IP")],
-        )
-        .expect("target should build");
+        let target = loopback_target(port);
         let addr = std::net::SocketAddr::new("127.0.0.1".parse().expect("valid IP"), target.port);
         let mut client = tokio::net::TcpStream::connect(addr)
             .await
@@ -515,12 +519,7 @@ mod tests {
             }
         });
 
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            port,
-            vec!["127.0.0.1".parse().expect("valid IP")],
-        )
-        .expect("target should build");
+        let target = loopback_target(port);
         let addr = std::net::SocketAddr::new("127.0.0.1".parse().expect("valid IP"), target.port);
         let mut client = tokio::net::TcpStream::connect(addr)
             .await
