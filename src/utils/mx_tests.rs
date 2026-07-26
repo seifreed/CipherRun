@@ -5,15 +5,24 @@ use crate::rating::grader::Grade;
 use crate::rating::scoring::RatingResult;
 use crate::scanner::{RatingResults, ScanResults};
 
+fn mx(priority: u16, hostname: &str) -> MxRecord {
+    MxRecord {
+        priority,
+        hostname: hostname.to_string(),
+    }
+}
+
+fn assert_mx_records(records: &[MxRecord], expected: &[(u16, &str)]) {
+    assert_eq!(records.len(), expected.len());
+    for (record, (priority, hostname)) in records.iter().zip(expected) {
+        assert_eq!(record.priority, *priority);
+        assert_eq!(record.hostname, *hostname);
+    }
+}
+
 #[test]
 fn test_mx_record_creation() {
-    let mx = MxRecord {
-        priority: 10,
-        hostname: "mx.example.com".to_string(),
-    };
-
-    assert_eq!(mx.priority, 10);
-    assert_eq!(mx.hostname, "mx.example.com");
+    assert_mx_records(&[mx(10, "mx.example.com")], &[(10, "mx.example.com")]);
 }
 
 #[test]
@@ -24,9 +33,10 @@ fn test_parse_dig_output() {
     let records = tester
         .parse_dig_output(output)
         .expect("test assertion should succeed");
-    assert_eq!(records.len(), 2);
-    assert_eq!(records[0].priority, 10);
-    assert_eq!(records[0].hostname, "mx1.example.com");
+    assert_mx_records(
+        &records,
+        &[(10, "mx1.example.com"), (20, "mx2.example.com")],
+    );
 }
 
 #[test]
@@ -37,9 +47,7 @@ fn test_parse_nslookup_output() {
     let records = tester
         .parse_nslookup_output(output)
         .expect("test assertion should succeed");
-    assert_eq!(records.len(), 2);
-    assert_eq!(records[0].priority, 5);
-    assert_eq!(records[0].hostname, "mx1.example.com");
+    assert_mx_records(&records, &[(5, "mx1.example.com"), (10, "mx2.example.com")]);
 }
 
 #[test]
@@ -50,9 +58,7 @@ fn test_parse_nslookup_output_is_case_insensitive() {
     let records = tester
         .parse_nslookup_output(output)
         .expect("test assertion should succeed");
-    assert_eq!(records.len(), 1);
-    assert_eq!(records[0].priority, 15);
-    assert_eq!(records[0].hostname, "MX.EXAMPLE.COM");
+    assert_mx_records(&records, &[(15, "MX.EXAMPLE.COM")]);
 }
 
 #[test]
@@ -63,11 +69,10 @@ fn test_parse_dig_output_handles_whitespace() {
     let records = tester
         .parse_dig_output(output)
         .expect("test assertion should succeed");
-    assert_eq!(records.len(), 2);
-    assert_eq!(records[0].priority, 10);
-    assert_eq!(records[0].hostname, "mx1.example.com");
-    assert_eq!(records[1].priority, 30);
-    assert_eq!(records[1].hostname, "mx3.example.com");
+    assert_mx_records(
+        &records,
+        &[(10, "mx1.example.com"), (30, "mx3.example.com")],
+    );
 }
 
 #[test]
@@ -78,21 +83,13 @@ fn test_parse_dig_output_skips_comment_lines() {
     let records = tester
         .parse_dig_output(output)
         .expect("comment lines should be ignored");
-    assert_eq!(records.len(), 1);
-    assert_eq!(records[0].priority, 10);
-    assert_eq!(records[0].hostname, "mx1.example.com");
+    assert_mx_records(&records, &[(10, "mx1.example.com")]);
 }
 
 #[test]
 fn test_generate_mx_summary() {
-    let mx1 = MxRecord {
-        priority: 10,
-        hostname: "mx1.example.com".to_string(),
-    };
-    let mx2 = MxRecord {
-        priority: 20,
-        hostname: "mx2.example.com".to_string(),
-    };
+    let mx1 = mx(10, "mx1.example.com");
+    let mx2 = mx(20, "mx2.example.com");
 
     let rating = RatingResult {
         grade: Grade::A,
@@ -187,10 +184,7 @@ fn test_parse_nslookup_output_rejects_invalid_priority() {
 
 #[test]
 fn test_generate_mx_summary_without_grades() {
-    let mx = MxRecord {
-        priority: 5,
-        hostname: "mx.example.com".to_string(),
-    };
+    let mx = mx(5, "mx.example.com");
 
     let results: Vec<(MxRecord, Result<ScanResults>)> = vec![(mx, Ok(ScanResults::default()))];
     let summary = MxTester::generate_mx_summary(&results);
@@ -201,10 +195,7 @@ fn test_generate_mx_summary_without_grades() {
 
 #[test]
 fn test_generate_mx_summary_error_line() {
-    let mx = MxRecord {
-        priority: 5,
-        hostname: "mx.example.com".to_string(),
-    };
+    let mx = mx(5, "mx.example.com");
     let results: Vec<(MxRecord, Result<ScanResults>)> =
         vec![(mx, Err(TlsError::Other("fail".to_string())))];
 
@@ -215,14 +206,8 @@ fn test_generate_mx_summary_error_line() {
 
 #[test]
 fn test_generate_mx_summary_grade_distribution_multiple() {
-    let mx1 = MxRecord {
-        priority: 10,
-        hostname: "mx1.example.com".to_string(),
-    };
-    let mx2 = MxRecord {
-        priority: 20,
-        hostname: "mx2.example.com".to_string(),
-    };
+    let mx1 = mx(10, "mx1.example.com");
+    let mx2 = mx(20, "mx2.example.com");
 
     let rating_a = RatingResult {
         grade: Grade::A,
@@ -307,10 +292,7 @@ fn test_parse_nslookup_output_skips_null_mx() {
 
 #[test]
 fn test_generate_mx_summary_with_failures() {
-    let mx = MxRecord {
-        priority: 10,
-        hostname: "mx.example.com".to_string(),
-    };
+    let mx = mx(10, "mx.example.com");
     let results: Vec<(MxRecord, Result<ScanResults>)> = vec![
         (mx.clone(), Ok(ScanResults::default())),
         (mx, Err(TlsError::Other("fail".to_string()))),
@@ -327,8 +309,7 @@ fn test_parse_nslookup_output_trims_dot_and_spaces() {
     let records = tester
         .parse_nslookup_output(output)
         .expect("test assertion should succeed");
-    assert_eq!(records.len(), 1);
-    assert_eq!(records[0].hostname, "mx.example.com");
+    assert_mx_records(&records, &[(10, "mx.example.com")]);
 }
 
 #[tokio::test]
@@ -369,20 +350,14 @@ fn test_aggregate_scan_results_for_domain_is_conservative() {
 
     let results: Vec<(MxRecord, Result<ScanResults>)> = vec![
         (
-            MxRecord {
-                priority: 10,
-                hostname: "mx1.example.com".to_string(),
-            },
+            mx(10, "mx1.example.com"),
             Ok(ScanResults {
                 protocols: vec![supported],
                 ..Default::default()
             }),
         ),
         (
-            MxRecord {
-                priority: 20,
-                hostname: "mx2.example.com".to_string(),
-            },
+            mx(20, "mx2.example.com"),
             Ok(ScanResults {
                 protocols: vec![unsupported],
                 ..Default::default()
@@ -403,13 +378,8 @@ fn test_aggregate_scan_results_for_domain_is_conservative() {
 
 #[test]
 fn test_aggregate_scan_results_normalizes_rooted_domain() {
-    let results: Vec<(MxRecord, Result<ScanResults>)> = vec![(
-        MxRecord {
-            priority: 10,
-            hostname: "mx1.example.com".to_string(),
-        },
-        Ok(ScanResults::default()),
-    )];
+    let results: Vec<(MxRecord, Result<ScanResults>)> =
+        vec![(mx(10, "mx1.example.com"), Ok(ScanResults::default()))];
 
     let aggregate = MxTester::aggregate_scan_results_for_domain("example.com.", &results).unwrap();
 
@@ -420,10 +390,7 @@ fn test_aggregate_scan_results_normalizes_rooted_domain() {
 fn test_aggregate_scan_results_marks_vulnerabilities_inconclusive_when_mx_fails() {
     let results: Vec<(MxRecord, Result<ScanResults>)> = vec![
         (
-            MxRecord {
-                priority: 10,
-                hostname: "mx1.example.com".to_string(),
-            },
+            mx(10, "mx1.example.com"),
             Ok(ScanResults {
                 vulnerabilities: vec![crate::vulnerabilities::VulnerabilityResult {
                     vuln_type: crate::vulnerabilities::VulnerabilityType::Heartbleed,
@@ -438,10 +405,7 @@ fn test_aggregate_scan_results_marks_vulnerabilities_inconclusive_when_mx_fails(
             }),
         ),
         (
-            MxRecord {
-                priority: 20,
-                hostname: "mx2.example.com".to_string(),
-            },
+            mx(20, "mx2.example.com"),
             Err(TlsError::Other("connection failed".to_string())),
         ),
     ];
@@ -461,20 +425,14 @@ fn test_aggregate_scan_results_marks_vulnerabilities_inconclusive_when_mx_fails(
 fn test_aggregate_scan_results_saturates_scan_time() {
     let results: Vec<(MxRecord, Result<ScanResults>)> = vec![
         (
-            MxRecord {
-                priority: 10,
-                hostname: "mx1.example.com".to_string(),
-            },
+            mx(10, "mx1.example.com"),
             Ok(ScanResults {
                 scan_time_ms: u64::MAX,
                 ..Default::default()
             }),
         ),
         (
-            MxRecord {
-                priority: 20,
-                hostname: "mx2.example.com".to_string(),
-            },
+            mx(20, "mx2.example.com"),
             Ok(ScanResults {
                 scan_time_ms: 1,
                 ..Default::default()
@@ -490,18 +448,9 @@ fn test_aggregate_scan_results_saturates_scan_time() {
 #[test]
 fn test_aggregate_scan_results_warns_when_clean_mx_coverage_is_partial() {
     let results: Vec<(MxRecord, Result<ScanResults>)> = vec![
+        (mx(10, "mx1.example.com"), Ok(ScanResults::default())),
         (
-            MxRecord {
-                priority: 10,
-                hostname: "mx1.example.com".to_string(),
-            },
-            Ok(ScanResults::default()),
-        ),
-        (
-            MxRecord {
-                priority: 20,
-                hostname: "mx2.example.com".to_string(),
-            },
+            mx(20, "mx2.example.com"),
             Err(TlsError::Other("connection failed".to_string())),
         ),
     ];
