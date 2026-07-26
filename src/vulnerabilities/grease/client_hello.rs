@@ -17,7 +17,7 @@ impl GreaseTester {
         for addr in self.probe_addrs()? {
             match self.send_client_hello_addr(addr, client_hello).await {
                 Ok(outcome) => {
-                    best = Self::merge_grease_outcome(best, outcome);
+                    best = best.merge(outcome);
                     if best == GreaseTestOutcome::Rejected {
                         return Ok(best);
                     }

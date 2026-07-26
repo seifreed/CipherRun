@@ -58,17 +58,11 @@ fn test_grease_probe_addrs_honors_all_ips() {
 #[test]
 fn test_grease_merge_preserves_bad_or_unclear_address() {
     assert_eq!(
-        GreaseTester::merge_grease_outcome(
-            GreaseTestOutcome::Tolerated,
-            GreaseTestOutcome::Inconclusive("timeout".to_string()),
-        ),
+        GreaseTestOutcome::Tolerated.merge(GreaseTestOutcome::Inconclusive("timeout".to_string())),
         GreaseTestOutcome::Inconclusive("timeout".to_string())
     );
     assert_eq!(
-        GreaseTester::merge_grease_outcome(
-            GreaseTestOutcome::Inconclusive("timeout".to_string()),
-            GreaseTestOutcome::Rejected,
-        ),
+        GreaseTestOutcome::Inconclusive("timeout".to_string()).merge(GreaseTestOutcome::Rejected),
         GreaseTestOutcome::Rejected
     );
 }

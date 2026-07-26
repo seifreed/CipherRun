@@ -46,6 +46,18 @@ pub enum GreaseTestOutcome {
     Inconclusive(String),
 }
 
+impl GreaseTestOutcome {
+    pub(super) fn merge(self, next: Self) -> Self {
+        match (&self, next) {
+            (Self::Rejected, _) => self,
+            (_, Self::Rejected) => Self::Rejected,
+            (Self::Inconclusive(_), _) => self,
+            (_, inconclusive @ Self::Inconclusive(_)) => inconclusive,
+            _ => Self::Tolerated,
+        }
+    }
+}
+
 /// GREASE tester
 ///
 /// Tests if a server properly handles unknown/reserved TLS extensions and values.
@@ -94,19 +106,6 @@ impl GreaseTester {
                 .copied()
                 .map(|addr| vec![addr])
                 .ok_or(crate::TlsError::NoSocketAddresses)
-        }
-    }
-
-    pub(super) fn merge_grease_outcome(
-        best: GreaseTestOutcome,
-        next: GreaseTestOutcome,
-    ) -> GreaseTestOutcome {
-        match (&best, next) {
-            (GreaseTestOutcome::Rejected, _) => best,
-            (_, GreaseTestOutcome::Rejected) => GreaseTestOutcome::Rejected,
-            (GreaseTestOutcome::Inconclusive(_), _) => best,
-            (_, inconclusive @ GreaseTestOutcome::Inconclusive(_)) => inconclusive,
-            _ => GreaseTestOutcome::Tolerated,
         }
     }
 
