@@ -337,26 +337,21 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_line_invalid_format() {
-        let line = "invalid line";
-        let err = CipherDatabase::parse_line(line).expect_err("should fail");
-        assert!(err.to_string().contains("Invalid format"));
-    }
-
-    #[test]
-    fn test_parse_line_rejects_invalid_hexcode() {
-        let line = "0xGG,0x02 - TLS_AES_256_GCM_SHA384 TLS_AES_256_GCM_SHA384 TLSv1.3 Kx=any Au=any Enc=AESGCM(256) Mac=AEAD";
-        let err = CipherDatabase::parse_line(line).expect_err("should fail");
-
-        assert!(err.to_string().contains("invalid cipher hexcode"));
-    }
-
-    #[test]
-    fn test_parse_line_rejects_missing_cipher_attributes() {
-        let line = "0x13,0x02 - TLS_AES_256_GCM_SHA384 TLS_AES_256_GCM_SHA384 TLSv1.3 Kx=any Au=any Enc=AESGCM(256)";
-        let err = CipherDatabase::parse_line(line).expect_err("should fail");
-
-        assert!(err.to_string().contains("missing cipher attributes"));
+    fn test_parse_line_rejects_invalid_lines() {
+        for (line, expected) in [
+            ("invalid line", "Invalid format"),
+            (
+                "0xGG,0x02 - TLS_AES_256_GCM_SHA384 TLS_AES_256_GCM_SHA384 TLSv1.3 Kx=any Au=any Enc=AESGCM(256) Mac=AEAD",
+                "invalid cipher hexcode",
+            ),
+            (
+                "0x13,0x02 - TLS_AES_256_GCM_SHA384 TLS_AES_256_GCM_SHA384 TLSv1.3 Kx=any Au=any Enc=AESGCM(256)",
+                "missing cipher attributes",
+            ),
+        ] {
+            let err = CipherDatabase::parse_line(line).expect_err("should fail");
+            assert!(err.to_string().contains(expected), "{line}");
+        }
     }
 
     #[test]
