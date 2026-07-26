@@ -356,6 +356,15 @@ mod tests {
     use tokio::time::{Duration, sleep};
     use tokio_rustls::TlsAcceptor;
 
+    fn localhost_target(port: u16) -> Target {
+        Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
+        )
+        .expect("target should build")
+    }
+
     #[test]
     fn test_breach_probe_addrs_honors_all_ips() {
         let target = Target::with_ips(
@@ -502,13 +511,7 @@ mod tests {
         // V11 regression: an unreachable server must not be classified as
         // confirmed-not-vulnerable. Probe failures on all three axes surface
         // via `inconclusive=true`.
-        use std::net::{IpAddr, Ipv4Addr};
-        let target = Target::with_ips(
-            "localhost".to_string(),
-            1,
-            vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
-        )
-        .expect("target should build");
+        let target = localhost_target(1);
 
         let rt = tokio::runtime::Runtime::new().expect("runtime");
         let result = rt.block_on(async {
@@ -571,12 +574,7 @@ mod tests {
     #[tokio::test]
     async fn test_http_compression_reads_fragmented_header_block() {
         let port = spawn_fragmented_https_server().await;
-        let target = Target::with_ips(
-            "localhost".to_string(),
-            port,
-            vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
-        )
-        .expect("target should build");
+        let target = localhost_target(port);
 
         let tester = BreachTester::new(target);
         let compression = tester
