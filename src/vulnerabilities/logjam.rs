@@ -12,6 +12,10 @@ use crate::protocols::Protocol;
 use crate::utils::network::Target;
 use std::time::Duration;
 
+mod result;
+
+pub use result::LogjamTestResult;
+
 /// LOGJAM vulnerability tester
 pub struct LogjamTester {
     target: Target,
@@ -145,47 +149,13 @@ impl LogjamTester {
         let weak_dh = self.test_weak_dh_params().await?;
         let (dhe_ciphers, dhe_inconclusive) = self.test_dhe_ciphers().await?;
 
-        let weak_dh_bits = match weak_dh {
-            WeakDhStatus::Weak { bits } => Some(bits),
-            _ => None,
-        };
-        let weak_dh_params = weak_dh.is_weak();
-        let vulnerable = export_dh || weak_dh_params;
-        let inconclusive =
-            !vulnerable && (export_inconclusive || weak_dh.is_inconclusive() || dhe_inconclusive);
-
-        let details = if vulnerable {
-            let mut parts: Vec<String> = Vec::new();
-            if export_dh {
-                parts.push("Export-grade DH supported".to_string());
-            }
-            match weak_dh_bits {
-                Some(bits) if bits > 0 => parts.push(format!(
-                    "Weak DH parameters ({} bits, below {}-bit minimum)",
-                    bits, MIN_SECURE_DH_BITS
-                )),
-                Some(_) => parts.push(
-                    "Weak DH parameters (rejected by the TLS library as too small)".to_string(),
-                ),
-                None => {}
-            }
-            format!("Vulnerable to LOGJAM (CVE-2015-4000): {}", parts.join(", "))
-        } else if inconclusive {
-            "LOGJAM test inconclusive - unable to determine DH cipher/parameter support".to_string()
-        } else if !dhe_ciphers.is_empty() {
-            "Not vulnerable - DHE supported with strong parameters".to_string()
-        } else {
-            "Not vulnerable - DHE not supported".to_string()
-        };
-
-        Ok(LogjamTestResult {
-            vulnerable,
-            inconclusive,
-            export_dh_supported: export_dh,
-            weak_dh_params,
+        Ok(LogjamTestResult::from_probe_results(
+            export_dh,
+            export_inconclusive,
+            weak_dh,
             dhe_ciphers,
-            details,
-        })
+            dhe_inconclusive,
+        ))
     }
 
     /// Test for export-grade DH cipher support.
@@ -442,17 +412,6 @@ impl LogjamTester {
 
         Ok(result)
     }
-}
-
-/// LOGJAM test result
-#[derive(Debug, Clone)]
-pub struct LogjamTestResult {
-    pub vulnerable: bool,
-    pub inconclusive: bool,
-    pub export_dh_supported: bool,
-    pub weak_dh_params: bool,
-    pub dhe_ciphers: Vec<String>,
-    pub details: String,
 }
 
 fn openssl_hostname_and_sni(
