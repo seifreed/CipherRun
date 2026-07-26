@@ -556,13 +556,11 @@ mod tests {
     #[test]
     fn test_summarize_results_counts_inconclusive() {
         let results = vec![VulnerabilityResult {
-            vuln_type: VulnerabilityType::GREASE,
             vulnerable: false,
             inconclusive: true,
             details: "Inconclusive".to_string(),
-            cve: None,
-            cwe: None,
             severity: Severity::Info,
+            ..sample_result()
         }];
 
         let summary = VulnerabilityScanner::summarize_results(&results);
@@ -576,13 +574,9 @@ mod tests {
     #[test]
     fn test_summarize_results_does_not_count_inconclusive_positive_as_confirmed() {
         let results = vec![VulnerabilityResult {
-            vuln_type: VulnerabilityType::Heartbleed,
-            vulnerable: true,
             inconclusive: true,
             details: "Possibly vulnerable from partial scan".to_string(),
-            cve: None,
-            cwe: None,
-            severity: Severity::High,
+            ..sample_result()
         }];
 
         let summary = VulnerabilityScanner::summarize_results(&results);
