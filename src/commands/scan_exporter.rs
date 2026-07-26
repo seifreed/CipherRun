@@ -402,6 +402,16 @@ mod tests {
     #[cfg(unix)]
     use std::os::unix::ffi::{OsStrExt, OsStringExt};
 
+    fn append_args() -> Args {
+        Args {
+            output: crate::cli::OutputArgs {
+                append: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
     #[test]
     fn test_sanitize_target_filename_replaces_unsafe_chars() {
         assert_eq!(
@@ -538,13 +548,7 @@ mod tests {
         let path = temp.path().join("report.csv");
         fs::write(&path, "col1,col2\n1,2\n").expect("seed csv should be written");
 
-        let args = Args {
-            output: crate::cli::OutputArgs {
-                append: true,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
+        let args = append_args();
         let exporter = ScanExporter::new(&args);
         exporter
             .write_text_file(&path, "col1,col2\n3,4\n", "CSV", ExportKind::Csv)
@@ -559,13 +563,7 @@ mod tests {
         let temp = tempdir().expect("tempdir should be created");
         let path = temp.path().join("report.json");
 
-        let args = Args {
-            output: crate::cli::OutputArgs {
-                append: true,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
+        let args = append_args();
         let exporter = ScanExporter::new(&args);
         let err = exporter
             .write_text_file(&path, "{}", "JSON", ExportKind::Json)
@@ -586,13 +584,7 @@ mod tests {
         file.set_len(MAX_APPEND_CSV_BYTES + 1)
             .expect("seed csv should be oversized");
 
-        let args = Args {
-            output: crate::cli::OutputArgs {
-                append: true,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
+        let args = append_args();
         let exporter = ScanExporter::new(&args);
         let err = exporter
             .write_text_file(&path, "col1,col2\n3,4\n", "CSV", ExportKind::Csv)
