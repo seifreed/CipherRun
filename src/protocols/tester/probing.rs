@@ -379,7 +379,7 @@ impl ProtocolTester {
                 return Ok::<Option<Vec<u8>>, std::io::Error>(None);
             }
 
-            let Some(total_len) = legacy_tls::record_total_len(&header)? else {
+            let Some(total_len) = crate::protocols::tls_record::total_len(&header)? else {
                 return Ok::<Option<Vec<u8>>, std::io::Error>(None);
             };
 
@@ -601,7 +601,7 @@ mod legacy_probe_tests {
         ];
 
         assert_eq!(
-            legacy_tls::record_total_len(&header).expect("length should parse"),
+            crate::protocols::tls_record::total_len(&header).expect("length should parse"),
             Some(TLS_RECORD_HEADER_SIZE + BUFFER_SIZE_MAX_TLS_RECORD)
         );
     }
