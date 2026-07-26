@@ -6,6 +6,7 @@ use crate::ciphers::tester::{CipherCounts, ProtocolCipherSummary};
 use crate::protocols::ProtocolTestResult;
 use crate::rating::grader::Grade;
 use crate::rating::scoring::RatingResult;
+use crate::scanner::test_support::make_cipher;
 use crate::scanner::{AdvancedResults, CertificateAnalysisResult, RatingResults, ScanResults};
 use std::net::{IpAddr, Ipv4Addr};
 
@@ -152,26 +153,6 @@ fn test_certificate_consistency_is_false_when_some_successful_backends_lack_cert
     let aggregated = aggregator.aggregate();
 
     assert!(!aggregated.certificate_consistent);
-}
-
-pub(crate) fn make_cipher(
-    openssl_name: &str,
-    bits: u16,
-    key_exchange: &str,
-    encryption: &str,
-) -> CipherSuite {
-    CipherSuite {
-        hexcode: "0001".to_string(),
-        openssl_name: openssl_name.to_string(),
-        iana_name: openssl_name.to_string(),
-        protocol: "TLSv1.2".to_string(),
-        key_exchange: key_exchange.to_string(),
-        authentication: "RSA".to_string(),
-        encryption: encryption.to_string(),
-        mac: "SHA256".to_string(),
-        bits,
-        export: false,
-    }
 }
 
 pub(crate) fn make_summary(protocol: Protocol, ciphers: Vec<CipherSuite>) -> ProtocolCipherSummary {

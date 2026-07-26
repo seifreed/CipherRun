@@ -32,4 +32,7 @@ pub use service::Scanner;
 pub use phases::{ScanProgressReporter, SilentProgressReporter, TerminalProgressReporter};
 
 #[cfg(test)]
+pub(crate) mod test_support;
+
+#[cfg(test)]
 mod tests;
