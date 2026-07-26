@@ -5,7 +5,7 @@
 use super::Result;
 use super::client::CtLogEntryResponse;
 use crate::error::TlsError;
-use crate::utils::result_byte_parse::{self, read_u8_at, read_u16_at};
+use crate::utils::result_byte_parse::{self, read_u8_at, read_u16_at, read_u64_at};
 use base64::Engine;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -86,19 +86,6 @@ fn datetime_from_millis(timestamp_ms: u64, field: &str) -> Result<DateTime<Utc>>
 
 fn read_u24_at(data: &[u8], offset: usize, context: &str) -> Result<u32> {
     Ok(result_byte_parse::read_u24_at(data, offset, context)? as u32)
-}
-
-fn read_u64_at(data: &[u8], offset: usize, context: &str) -> Result<u64> {
-    let end = offset.checked_add(8).ok_or_else(|| TlsError::ParseError {
-        message: format!("{context} length overflow"),
-    })?;
-    let bytes = data
-        .get(offset..end)
-        .and_then(|bytes| <[u8; 8]>::try_from(bytes).ok())
-        .ok_or_else(|| TlsError::ParseError {
-            message: format!("{context} truncated"),
-        })?;
-    Ok(u64::from_be_bytes(bytes))
 }
 
 impl Parser {
