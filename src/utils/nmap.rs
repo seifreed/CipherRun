@@ -263,32 +263,28 @@ Host: 192.168.1.1 (example.com)	Ports: 443/open/tcp//https///	Ignored State: clo
     }
 
     #[test]
-    fn test_parse_host_line_invalid_port_returns_error() {
-        let line = "Host: 10.0.0.4 (example.com) Ports: abc/open/tcp//https///";
-        let err = NmapParser::parse_host_line(line).expect_err("invalid port should fail");
-        assert!(err.to_string().contains("Invalid Nmap port value"));
-    }
-
-    #[test]
-    fn test_parse_host_line_rejects_zero_port() {
-        let line = "Host: 10.0.0.4 (example.com) Ports: 0/open/tcp//unknown///";
-        let err = NmapParser::parse_host_line(line).expect_err("zero port should fail");
-        assert!(err.to_string().contains("Invalid Nmap port value"));
-    }
-
-    #[test]
-    fn test_parse_host_line_invalid_port_entry_fails() {
-        let line =
-            "Host: 10.0.0.4 (example.com) Ports: abc/open/tcp//bad///, 443/open/tcp//https///";
-        let err = NmapParser::parse_host_line(line).expect_err("invalid port should fail");
-        assert!(err.to_string().contains("Invalid Nmap port value"));
-    }
-
-    #[test]
-    fn test_parse_host_line_incomplete_port_entry_fails() {
-        let line = "Host: 10.0.0.4 (example.com) Ports: 443/open";
-        let err = NmapParser::parse_host_line(line).expect_err("incomplete port should fail");
-        assert!(err.to_string().contains("Invalid Nmap port entry"));
+    fn test_parse_host_line_invalid_port_entries_fail() {
+        for (line, expected) in [
+            (
+                "Host: 10.0.0.4 (example.com) Ports: abc/open/tcp//https///",
+                "Invalid Nmap port value",
+            ),
+            (
+                "Host: 10.0.0.4 (example.com) Ports: 0/open/tcp//unknown///",
+                "Invalid Nmap port value",
+            ),
+            (
+                "Host: 10.0.0.4 (example.com) Ports: abc/open/tcp//bad///, 443/open/tcp//https///",
+                "Invalid Nmap port value",
+            ),
+            (
+                "Host: 10.0.0.4 (example.com) Ports: 443/open",
+                "Invalid Nmap port entry",
+            ),
+        ] {
+            let err = NmapParser::parse_host_line(line).expect_err("invalid port should fail");
+            assert!(err.to_string().contains(expected), "{line}");
+        }
     }
 
     #[test]
