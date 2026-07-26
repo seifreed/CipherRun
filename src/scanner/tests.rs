@@ -1,4 +1,5 @@
 use super::*;
+use crate::Args;
 use crate::certificates::parser::{CertificateChain, CertificateInfo};
 use crate::certificates::validator::ValidationResult;
 use crate::client_sim::simulator::ClientSimulationResult;
@@ -7,7 +8,6 @@ use crate::http::tester::{HeaderAnalysisResult, SecurityGrade};
 use crate::protocols::{Protocol, ProtocolTestResult};
 use crate::utils::network::Target;
 use crate::vulnerabilities::{Severity, VulnerabilityResult, VulnerabilityType};
-use crate::Args;
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -23,6 +23,20 @@ fn successful_protocol_result(protocol: Protocol, handshake_time_ms: u64) -> Pro
         session_resumption_caching: None,
         session_resumption_tickets: None,
         secure_renegotiation: None,
+    }
+}
+
+fn empty_aggregated_result() -> crate::scanner::aggregation::AggregatedScanResult {
+    crate::scanner::aggregation::AggregatedScanResult {
+        protocols: Vec::new(),
+        ciphers: HashMap::new(),
+        grade: ("F".to_string(), 0),
+        certificate_info: None,
+        certificate_consistent: true,
+        inconsistencies: Vec::new(),
+        alpn_protocols: Vec::new(),
+        session_resumption_caching: Some(false),
+        session_resumption_tickets: Some(false),
     }
 }
 
@@ -431,9 +445,11 @@ fn test_aggregate_vulnerabilities_marks_results_inconclusive_when_backend_fails(
     assert!(!aggregated[0].vulnerable);
     // Vulnerability confirmed on the successful backend remains conclusive
     assert!(!aggregated[0].inconclusive);
-    assert!(aggregated[0]
-        .details
-        .contains("incomplete backend coverage"));
+    assert!(
+        aggregated[0]
+            .details
+            .contains("incomplete backend coverage")
+    );
 }
 
 #[test]
@@ -1030,17 +1046,7 @@ fn test_build_conservative_multi_ip_result_missing_cert_yields_grade_unverified(
         },
     );
 
-    let aggregated = crate::scanner::aggregation::AggregatedScanResult {
-        protocols: Vec::new(),
-        ciphers: HashMap::new(),
-        grade: ("F".to_string(), 0),
-        certificate_info: None,
-        certificate_consistent: true,
-        inconsistencies: Vec::new(),
-        alpn_protocols: Vec::new(),
-        session_resumption_caching: Some(false),
-        session_resumption_tickets: Some(false),
-    };
+    let aggregated = empty_aggregated_result();
 
     let report = crate::scanner::multi_ip::MultiIpScanReport {
         target: Target::with_ips("example.com".to_string(), 443, vec![ip])
@@ -1107,17 +1113,7 @@ fn test_build_conservative_multi_ip_result_respects_disable_rating() {
         failed_scans: 0,
         total_duration_ms: 10,
         inconsistencies: Vec::new(),
-        aggregated: crate::scanner::aggregation::AggregatedScanResult {
-            protocols: Vec::new(),
-            ciphers: HashMap::new(),
-            grade: ("F".to_string(), 0),
-            certificate_info: None,
-            certificate_consistent: true,
-            inconsistencies: Vec::new(),
-            alpn_protocols: Vec::new(),
-            session_resumption_caching: Some(false),
-            session_resumption_tickets: Some(false),
-        },
+        aggregated: empty_aggregated_result(),
     };
 
     let result = scanner
@@ -1183,17 +1179,7 @@ fn test_build_conservative_multi_ip_result_aggregates_probe_metadata() {
         },
     );
 
-    let aggregated = crate::scanner::aggregation::AggregatedScanResult {
-        protocols: Vec::new(),
-        ciphers: HashMap::new(),
-        grade: ("F".to_string(), 0),
-        certificate_info: None,
-        certificate_consistent: true,
-        inconsistencies: Vec::new(),
-        alpn_protocols: Vec::new(),
-        session_resumption_caching: Some(false),
-        session_resumption_tickets: Some(false),
-    };
+    let aggregated = empty_aggregated_result();
 
     let report = crate::scanner::multi_ip::MultiIpScanReport {
         target: Target::with_ips("example.com".to_string(), 443, vec![ip1, ip2])
@@ -1347,17 +1333,7 @@ fn test_build_conservative_multi_ip_result_keeps_success_with_failed_ips() {
         },
     );
 
-    let aggregated = crate::scanner::aggregation::AggregatedScanResult {
-        protocols: Vec::new(),
-        ciphers: HashMap::new(),
-        grade: ("F".to_string(), 0),
-        certificate_info: None,
-        certificate_consistent: true,
-        inconsistencies: Vec::new(),
-        alpn_protocols: Vec::new(),
-        session_resumption_caching: Some(false),
-        session_resumption_tickets: Some(false),
-    };
+    let aggregated = empty_aggregated_result();
 
     let report = crate::scanner::multi_ip::MultiIpScanReport {
         target: Target::with_ips("example.com".to_string(), 443, vec![ip1, ip2])
@@ -1445,17 +1421,7 @@ fn test_build_conservative_multi_ip_result_uses_stable_probe_fallback() {
         },
     );
 
-    let aggregated = crate::scanner::aggregation::AggregatedScanResult {
-        protocols: Vec::new(),
-        ciphers: HashMap::new(),
-        grade: ("F".to_string(), 0),
-        certificate_info: None,
-        certificate_consistent: true,
-        inconsistencies: Vec::new(),
-        alpn_protocols: Vec::new(),
-        session_resumption_caching: Some(false),
-        session_resumption_tickets: Some(false),
-    };
+    let aggregated = empty_aggregated_result();
 
     let report = crate::scanner::multi_ip::MultiIpScanReport {
         target: Target::with_ips("example.com".to_string(), 443, vec![ip_high, ip_low])
@@ -1520,17 +1486,7 @@ fn test_build_conservative_multi_ip_result_partial_success_without_probe_attempt
         failed_scans: 0,
         total_duration_ms: 9,
         inconsistencies: Vec::new(),
-        aggregated: crate::scanner::aggregation::AggregatedScanResult {
-            protocols: Vec::new(),
-            ciphers: HashMap::new(),
-            grade: ("F".to_string(), 0),
-            certificate_info: None,
-            certificate_consistent: true,
-            inconsistencies: Vec::new(),
-            alpn_protocols: Vec::new(),
-            session_resumption_caching: Some(false),
-            session_resumption_tickets: Some(false),
-        },
+        aggregated: empty_aggregated_result(),
     };
 
     let result = scanner
@@ -1601,17 +1557,7 @@ fn test_build_conservative_multi_ip_result_partial_success_preserves_unknown_pro
         failed_scans: 1,
         total_duration_ms: 59,
         inconsistencies: Vec::new(),
-        aggregated: crate::scanner::aggregation::AggregatedScanResult {
-            protocols: Vec::new(),
-            ciphers: HashMap::new(),
-            grade: ("F".to_string(), 0),
-            certificate_info: None,
-            certificate_consistent: true,
-            inconsistencies: Vec::new(),
-            alpn_protocols: Vec::new(),
-            session_resumption_caching: Some(false),
-            session_resumption_tickets: Some(false),
-        },
+        aggregated: empty_aggregated_result(),
     };
 
     let result = scanner
@@ -1752,17 +1698,7 @@ fn test_build_conservative_multi_ip_result_clears_unaggregated_residual_sections
         failed_scans: 0,
         total_duration_ms: 10,
         inconsistencies: Vec::new(),
-        aggregated: crate::scanner::aggregation::AggregatedScanResult {
-            protocols: Vec::new(),
-            ciphers: HashMap::new(),
-            grade: ("F".to_string(), 0),
-            certificate_info: None,
-            certificate_consistent: true,
-            inconsistencies: Vec::new(),
-            alpn_protocols: Vec::new(),
-            session_resumption_caching: Some(false),
-            session_resumption_tickets: Some(false),
-        },
+        aggregated: empty_aggregated_result(),
     };
 
     let result = scanner
@@ -1785,7 +1721,8 @@ fn test_scanner_new_requires_target() {
     let err = Scanner::new(args.to_scan_request().expect("scan request should build"))
         .err()
         .expect("should error");
-    assert!(err
-        .to_string()
-        .contains("A target is required for scan execution"));
+    assert!(
+        err.to_string()
+            .contains("A target is required for scan execution")
+    );
 }
