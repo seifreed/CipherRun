@@ -9,7 +9,7 @@ use crate::constants::{
     EXTENSION_RENEGOTIATION_INFO, EXTENSION_SERVER_NAME, EXTENSION_SESSION_TICKET,
     EXTENSION_SIGNATURE_ALGORITHMS, EXTENSION_SUPPORTED_GROUPS, EXTENSION_SUPPORTED_VERSIONS,
 };
-use crate::protocols::{Extension, Protocol};
+use crate::protocols::{Extension, Protocol, tls_vector};
 use crate::{Result, TlsError};
 use bytes::{BufMut, BytesMut};
 
@@ -62,7 +62,7 @@ impl ClientHelloBuilder {
 
     pub fn add_sni(&mut self, hostname: &str) -> Result<&mut Self> {
         let mut data = BytesMut::new();
-        let hostname_len = Self::u16_len(hostname.len(), "SNI hostname")?;
+        let hostname_len = tls_vector::u16_len(hostname.len(), "SNI hostname")?;
         let list_len = hostname_len
             .checked_add(3)
             .ok_or_else(|| TlsError::Other("SNI hostname exceeds maximum length".to_string()))?;
@@ -77,7 +77,7 @@ impl ClientHelloBuilder {
 
     pub fn add_supported_groups(&mut self, curves: &[u16]) -> Result<&mut Self> {
         let mut data = BytesMut::new();
-        data.put_u16(Self::u16_byte_len(curves.len(), "supported groups")?);
+        data.put_u16(tls_vector::u16_byte_len(curves.len(), "supported groups")?);
         for curve in curves {
             data.put_u16(*curve);
         }
@@ -88,7 +88,7 @@ impl ClientHelloBuilder {
 
     pub fn add_signature_algorithms(&mut self, algorithms: &[(u8, u8)]) -> Result<&mut Self> {
         let mut data = BytesMut::new();
-        data.put_u16(Self::u16_byte_len(
+        data.put_u16(tls_vector::u16_byte_len(
             algorithms.len(),
             "signature algorithms",
         )?);
@@ -106,14 +106,14 @@ impl ClientHelloBuilder {
     pub fn add_alpn(&mut self, protocols: &[&str]) -> Result<&mut Self> {
         let mut data = BytesMut::new();
         let total_len = protocols.iter().try_fold(0usize, |total, protocol| {
-            Self::u8_len(protocol.len(), "ALPN protocol")?;
+            tls_vector::u8_len(protocol.len(), "ALPN protocol")?;
             total
                 .checked_add(1 + protocol.len())
                 .ok_or_else(|| TlsError::Other("ALPN protocols exceed maximum length".to_string()))
         })?;
-        data.put_u16(Self::u16_len(total_len, "ALPN protocols")?);
+        data.put_u16(tls_vector::u16_len(total_len, "ALPN protocols")?);
         for protocol in protocols {
-            data.put_u8(Self::u8_len(protocol.len(), "ALPN protocol")?);
+            data.put_u8(tls_vector::u8_len(protocol.len(), "ALPN protocol")?);
             data.put_slice(protocol.as_bytes());
         }
         self.extensions
@@ -183,7 +183,7 @@ impl ClientHelloBuilder {
         let versions_byte_len = versions.len().checked_mul(2).ok_or_else(|| {
             TlsError::Other("supported versions exceeds maximum length".to_string())
         })?;
-        data.put_u8(Self::u8_len(versions_byte_len, "supported versions")?);
+        data.put_u8(tls_vector::u8_len(versions_byte_len, "supported versions")?);
         for version in versions {
             data.put_u16(*version);
         }
@@ -223,9 +223,12 @@ impl ClientHelloBuilder {
         let share_len = public_key.len().checked_add(4).ok_or_else(|| {
             crate::TlsError::Other("key share exceeds maximum length".to_string())
         })?;
-        data.put_u16(Self::u16_len(share_len, "key share")?);
+        data.put_u16(tls_vector::u16_len(share_len, "key share")?);
         data.put_u16(group);
-        data.put_u16(Self::u16_len(public_key.len(), "key share public key")?);
+        data.put_u16(tls_vector::u16_len(
+            public_key.len(),
+            "key share public key",
+        )?);
         data.put_slice(&public_key);
         self.extensions
             .push(Extension::new(EXTENSION_KEY_SHARE, data.to_vec()));
@@ -252,21 +255,6 @@ impl ClientHelloBuilder {
             self.compression_methods = vec![COMPRESSION_NULL];
         }
         self
-    }
-
-    pub(super) fn u8_len(len: usize, context: &str) -> Result<u8> {
-        u8::try_from(len).map_err(|_| TlsError::Other(format!("{context} exceeds maximum length")))
-    }
-
-    pub(super) fn u16_len(len: usize, context: &str) -> Result<u16> {
-        u16::try_from(len).map_err(|_| TlsError::Other(format!("{context} exceeds maximum length")))
-    }
-
-    fn u16_byte_len(items: usize, context: &str) -> Result<u16> {
-        let bytes = items
-            .checked_mul(2)
-            .ok_or_else(|| TlsError::Other(format!("{context} exceeds maximum length")))?;
-        Self::u16_len(bytes, context)
     }
 }
 

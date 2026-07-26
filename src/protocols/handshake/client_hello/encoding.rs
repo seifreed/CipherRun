@@ -4,7 +4,7 @@ use crate::constants::{
     CONTENT_TYPE_HANDSHAKE, HANDSHAKE_TYPE_CLIENT_HELLO, VERSION_SSL_3_0, VERSION_TLS_1_0,
     VERSION_TLS_1_2,
 };
-use crate::protocols::Protocol;
+use crate::protocols::{Protocol, tls_vector};
 use bytes::{BufMut, BytesMut};
 
 impl ClientHelloBuilder {
@@ -81,18 +81,19 @@ impl ClientHelloBuilder {
         };
         buf.put_u16(client_version);
         buf.put_slice(&self.random);
-        buf.put_u8(Self::u8_len(self.session_id.len(), "session ID")?);
+        buf.put_u8(tls_vector::u8_len(self.session_id.len(), "session ID")?);
         if !self.session_id.is_empty() {
             buf.put_slice(&self.session_id);
         }
 
-        let cipher_list_len = Self::u16_byte_len(self.cipher_suites.len(), "cipher suite list")?;
+        let cipher_list_len =
+            tls_vector::u16_byte_len(self.cipher_suites.len(), "cipher suite list")?;
         buf.put_u16(cipher_list_len);
         for cipher in &self.cipher_suites {
             buf.put_u16(*cipher);
         }
 
-        buf.put_u8(Self::u8_len(
+        buf.put_u8(tls_vector::u8_len(
             self.compression_methods.len(),
             "compression methods",
         )?);
@@ -109,17 +110,13 @@ impl ClientHelloBuilder {
         buf.put_u16(0);
         for ext in &self.extensions {
             buf.put_u16(ext.extension_type);
-            let ext_len = u16::try_from(ext.data.len()).map_err(|_| {
-                crate::TlsError::Other("extension data exceeds maximum length".to_string())
-            })?;
+            let ext_len = tls_vector::u16_len(ext.data.len(), "extension data")?;
             buf.put_u16(ext_len);
             buf.put_slice(&ext.data);
         }
 
         let extensions_len = buf.len() - extensions_start - 2;
-        let extensions_len = u16::try_from(extensions_len).map_err(|_| {
-            crate::TlsError::Other("extensions list exceeds maximum length".to_string())
-        })?;
+        let extensions_len = tls_vector::u16_len(extensions_len, "extensions list")?;
         buf.get_mut(extensions_start..extensions_start + 2)
             .ok_or_else(|| {
                 crate::TlsError::Other("extensions length placeholder missing".to_string())
@@ -136,26 +133,15 @@ impl ClientHelloBuilder {
         handshake_length_pos: usize,
         hello_start: usize,
     ) -> crate::Result<()> {
-        let handshake_len = buf.len() - hello_start;
-        if handshake_len > 0x00ff_ffff {
-            return Err(crate::TlsError::Other(
-                "handshake length exceeds maximum length".to_string(),
-            ));
-        }
-        let handshake_len = u32::try_from(handshake_len).map_err(|_| {
-            crate::TlsError::Other("handshake length exceeds maximum length".to_string())
-        })?;
-        let handshake_len = handshake_len.to_be_bytes();
+        let handshake_len = tls_vector::u24_len(buf.len() - hello_start, "handshake length")?;
         buf.get_mut(handshake_length_pos..handshake_length_pos + 3)
             .ok_or_else(|| {
                 crate::TlsError::Other("handshake length placeholder missing".to_string())
             })?
-            .copy_from_slice(&handshake_len[1..]);
+            .copy_from_slice(&handshake_len);
 
         let record_len = buf.len() - handshake_start;
-        let record_len = u16::try_from(record_len).map_err(|_| {
-            crate::TlsError::Other("record length exceeds maximum length".to_string())
-        })?;
+        let record_len = tls_vector::u16_len(record_len, "record length")?;
         buf.get_mut(length_pos..length_pos + 2)
             .ok_or_else(|| crate::TlsError::Other("record length placeholder missing".to_string()))?
             .copy_from_slice(&record_len.to_be_bytes());

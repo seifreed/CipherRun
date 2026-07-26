@@ -4,6 +4,10 @@ fn length_error(context: &str) -> TlsError {
     TlsError::Other(format!("{context} exceeds maximum length"))
 }
 
+pub(crate) fn u8_len(len: usize, context: &str) -> Result<u8> {
+    u8::try_from(len).map_err(|_| length_error(context))
+}
+
 pub(crate) fn u16_len(len: usize, context: &str) -> Result<u16> {
     u16::try_from(len).map_err(|_| length_error(context))
 }
