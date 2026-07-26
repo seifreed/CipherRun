@@ -150,20 +150,15 @@ mod tests {
     }
 
     #[test]
-    fn test_output_args_no_color_flags() {
-        let parsed = TestCli::parse_from(["test", "--no-color"]);
-        let args = parsed.args;
+    fn test_output_args_no_color_aliases() {
+        for (flag, no_color, no_colour) in
+            [("--no-color", true, false), ("--no-colour", false, true)]
+        {
+            let parsed = TestCli::parse_from(["test", flag]);
+            let args = parsed.args;
 
-        assert!(args.no_color);
-        assert!(!args.no_colour);
-    }
-
-    #[test]
-    fn test_output_args_no_colour_alias() {
-        let parsed = TestCli::parse_from(["test", "--no-colour"]);
-        let args = parsed.args;
-
-        assert!(args.no_colour);
-        assert!(!args.no_color);
+            assert_eq!(args.no_color, no_color);
+            assert_eq!(args.no_colour, no_colour);
+        }
     }
 }
