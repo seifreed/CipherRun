@@ -381,6 +381,14 @@ mod tests {
         }
     }
 
+    fn summary_result(severity: Severity, vulnerable: bool) -> VulnerabilityResult {
+        VulnerabilityResult {
+            vulnerable,
+            severity,
+            ..sample_result()
+        }
+    }
+
     #[test]
     fn test_collect_result_ok_and_err() {
         let mut results = Vec::new();
@@ -518,27 +526,11 @@ mod tests {
     #[test]
     fn test_summarize_results_counts() {
         let results = vec![
-            VulnerabilityResult {
-                severity: Severity::Critical,
-                ..sample_result()
-            },
-            VulnerabilityResult {
-                severity: Severity::High,
-                ..sample_result()
-            },
-            VulnerabilityResult {
-                severity: Severity::Medium,
-                ..sample_result()
-            },
-            VulnerabilityResult {
-                severity: Severity::Low,
-                ..sample_result()
-            },
-            VulnerabilityResult {
-                vulnerable: false,
-                severity: Severity::High,
-                ..sample_result()
-            },
+            summary_result(Severity::Critical, true),
+            summary_result(Severity::High, true),
+            summary_result(Severity::Medium, true),
+            summary_result(Severity::Low, true),
+            summary_result(Severity::High, false),
         ];
 
         let summary = VulnerabilityScanner::summarize_results(&results);
