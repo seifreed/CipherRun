@@ -456,6 +456,15 @@ mod tests {
         }
     }
 
+    fn assessment_with_protocol(protocol: Protocol) -> ScanAssessment {
+        let mut results = ScanAssessment {
+            target: "example.com:443".to_string(),
+            ..Default::default()
+        };
+        results.protocols = vec![protocol_result(protocol)];
+        results
+    }
+
     #[test]
     fn test_evaluator_with_violations() {
         let policy = Policy {
@@ -467,11 +476,7 @@ mod tests {
             ..base_policy()
         };
 
-        let mut results = ScanAssessment {
-            target: "example.com:443".to_string(),
-            ..Default::default()
-        };
-        results.protocols = vec![protocol_result(Protocol::TLS12)];
+        let results = assessment_with_protocol(Protocol::TLS12);
 
         let evaluator = PolicyEvaluator::new(policy);
         let result = evaluator
@@ -493,11 +498,7 @@ mod tests {
             ..base_policy()
         };
 
-        let mut results = ScanAssessment {
-            target: "example.com:443".to_string(),
-            ..Default::default()
-        };
-        results.protocols = vec![protocol_result(Protocol::TLS12)];
+        let results = assessment_with_protocol(Protocol::TLS12);
 
         let evaluator = PolicyEvaluator::new(policy);
         let result = evaluator
@@ -530,11 +531,7 @@ mod tests {
             ..base_policy()
         };
 
-        let mut results = ScanAssessment {
-            target: "example.com:443".to_string(),
-            ..Default::default()
-        };
-        results.protocols = vec![protocol_result(Protocol::TLS12)];
+        let results = assessment_with_protocol(Protocol::TLS12);
 
         let evaluator = PolicyEvaluator::new(policy);
         let result = evaluator
@@ -630,15 +627,6 @@ mod tests {
         );
     }
 
-    fn assessment_with_sslv2() -> ScanAssessment {
-        let mut results = ScanAssessment {
-            target: "example.com:443".to_string(),
-            ..Default::default()
-        };
-        results.protocols = vec![protocol_result(Protocol::SSLv2)];
-        results
-    }
-
     fn policy_with_compliance(frameworks: Vec<String>, require_all: bool) -> Policy {
         Policy {
             compliance: Some(CompliancePolicy {
@@ -656,7 +644,7 @@ mod tests {
         let evaluator = PolicyEvaluator::new(policy);
 
         let result = evaluator
-            .evaluate(&assessment_with_sslv2())
+            .evaluate(&assessment_with_protocol(Protocol::SSLv2))
             .expect("evaluation should succeed");
 
         assert!(result.has_violations());
@@ -675,7 +663,7 @@ mod tests {
         let evaluator = PolicyEvaluator::new(policy);
 
         let err = evaluator
-            .evaluate(&assessment_with_sslv2())
+            .evaluate(&assessment_with_protocol(Protocol::SSLv2))
             .expect_err("unknown framework should be a configuration error");
         assert!(err.to_string().contains("does-not-exist"));
     }
@@ -689,7 +677,7 @@ mod tests {
         let evaluator = PolicyEvaluator::new(policy);
 
         let result = evaluator
-            .evaluate(&assessment_with_sslv2())
+            .evaluate(&assessment_with_protocol(Protocol::SSLv2))
             .expect("evaluation should succeed");
 
         assert!(result.has_violations());
