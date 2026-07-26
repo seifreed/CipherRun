@@ -16,8 +16,12 @@ use crate::Result;
 use crate::utils::network::Target;
 use std::time::Duration;
 
+mod result;
+
+pub use result::PaddingOracle2016Result;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CbcSupportStatus {
+pub(super) enum CbcSupportStatus {
     Supported,
     NotSupported,
     Inconclusive,
@@ -168,69 +172,15 @@ impl<'a> PaddingOracle2016Tester<'a> {
     pub async fn test(&self) -> Result<PaddingOracle2016Result> {
         // Step 1: Check if server supports AES-CBC ciphers
         let cbc_status = self.check_aes_cbc_support().await?;
-        let cbc_supported = cbc_status == CbcSupportStatus::Supported;
 
-        if cbc_status == CbcSupportStatus::Inconclusive {
-            return Ok(PaddingOracle2016Result {
-                vulnerable: false,
-                inconclusive: true,
-                cbc_supported: false,
-                timing_oracle_detected: false,
-                details:
-                    "INCONCLUSIVE: unable to determine AES-CBC cipher support for CVE-2016-2107"
-                        .to_string(),
-                average_valid_timing_ms: 0.0,
-                average_invalid_timing_ms: 0.0,
-            });
-        }
-
-        if cbc_status == CbcSupportStatus::NotSupported {
-            return Ok(PaddingOracle2016Result {
-                vulnerable: false,
-                inconclusive: false,
-                cbc_supported: false,
-                timing_oracle_detected: false,
-                details: "Server does not support AES-CBC cipher suites (only GCM/other AEAD)"
-                    .to_string(),
-                average_valid_timing_ms: 0.0,
-                average_invalid_timing_ms: 0.0,
-            });
+        if cbc_status != CbcSupportStatus::Supported {
+            return Ok(PaddingOracle2016Result::from_cbc_status(cbc_status));
         }
 
         // Step 2: Perform timing analysis to detect padding oracle
         let timing_result = self.perform_timing_analysis().await?;
 
-        let vulnerable = cbc_supported && timing_result.oracle_detected;
-
-        let details = if timing_result.inconclusive {
-            format!(
-                "INCONCLUSIVE: AES-CBC supported but timing analysis uncertain. {}. \
-                 Manual testing recommended as padding oracle may exist.",
-                timing_result.details
-            )
-        } else if vulnerable {
-            format!(
-                "VULNERABLE to CVE-2016-2107 Padding Oracle - Timing difference detected: valid={:.2}ms, invalid={:.2}ms. {}",
-                timing_result.valid_avg_ms, timing_result.invalid_avg_ms, timing_result.details
-            )
-        } else if cbc_supported {
-            format!(
-                "AES-CBC supported but no clear timing oracle detected - valid={:.2}ms, invalid={:.2}ms. {}",
-                timing_result.valid_avg_ms, timing_result.invalid_avg_ms, timing_result.details
-            )
-        } else {
-            "Not vulnerable - AES-CBC not supported".to_string()
-        };
-
-        Ok(PaddingOracle2016Result {
-            vulnerable,
-            inconclusive: timing_result.inconclusive,
-            cbc_supported,
-            timing_oracle_detected: timing_result.oracle_detected,
-            details,
-            average_valid_timing_ms: timing_result.valid_avg_ms,
-            average_invalid_timing_ms: timing_result.invalid_avg_ms,
-        })
+        Ok(PaddingOracle2016Result::from_timing_result(timing_result))
     }
 
     /// Check if server supports AES-CBC cipher suites
@@ -337,18 +287,6 @@ fn openssl_hostname_and_sni(target_hostname: &str) -> (String, bool) {
         .clone()
         .unwrap_or_else(|| target_hostname.to_string());
     (hostname, sni_hostname.is_some())
-}
-
-/// Padding Oracle 2016 test result
-#[derive(Debug, Clone)]
-pub struct PaddingOracle2016Result {
-    pub vulnerable: bool,
-    pub inconclusive: bool,
-    pub cbc_supported: bool,
-    pub timing_oracle_detected: bool,
-    pub details: String,
-    pub average_valid_timing_ms: f64,
-    pub average_invalid_timing_ms: f64,
 }
 
 #[cfg(test)]
