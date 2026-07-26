@@ -104,7 +104,7 @@ impl JarmDatabase {
     fn from_signatures(signatures: Vec<JarmSignature>) -> Result<Self> {
         let mut db = Self::new();
         for sig in signatures {
-            if !Self::is_valid_jarm_hash(&sig.hash) {
+            if !super::is_lower_hex_hash(&sig.hash, 62) {
                 return Err(TlsError::ParseError {
                     message: format!("Invalid JARM signature hash: {}", sig.hash),
                 });
@@ -118,13 +118,6 @@ impl JarmDatabase {
         }
 
         Ok(db)
-    }
-
-    fn is_valid_jarm_hash(hash: &str) -> bool {
-        hash.len() == 62
-            && hash
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
     }
 
     /// Look up a JARM hash

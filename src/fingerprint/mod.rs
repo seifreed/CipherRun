@@ -43,6 +43,13 @@ fn read_signature_database(path: &std::path::Path) -> crate::Result<String> {
     })
 }
 
+fn is_lower_hex_hash(hash: &str, len: usize) -> bool {
+    hash.len() == len
+        && hash
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

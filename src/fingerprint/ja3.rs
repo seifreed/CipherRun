@@ -284,7 +284,7 @@ impl Ja3Database {
 
     fn from_signatures(signatures: HashMap<String, Ja3Signature>) -> Result<Self> {
         for hash in signatures.keys() {
-            if !Self::is_valid_ja3_hash(hash) {
+            if !super::is_lower_hex_hash(hash, 32) {
                 return Err(crate::TlsError::ParseError {
                     message: format!("Invalid JA3 signature hash: {hash}"),
                 });
@@ -292,13 +292,6 @@ impl Ja3Database {
         }
 
         Ok(Self { signatures })
-    }
-
-    fn is_valid_ja3_hash(hash: &str) -> bool {
-        hash.len() == 32
-            && hash
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
     }
 
     /// Create database with common known signatures

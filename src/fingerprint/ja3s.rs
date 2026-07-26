@@ -187,7 +187,7 @@ impl Ja3sDatabase {
 
     fn from_signatures(signatures: HashMap<String, Ja3sSignature>) -> Result<Self> {
         for hash in signatures.keys() {
-            if !Self::is_valid_ja3s_hash(hash) {
+            if !super::is_lower_hex_hash(hash, 32) {
                 return Err(TlsError::ParseError {
                     message: format!("Invalid JA3S signature hash: {hash}"),
                 });
@@ -195,13 +195,6 @@ impl Ja3sDatabase {
         }
 
         Ok(Ja3sDatabase { signatures })
-    }
-
-    fn is_valid_ja3s_hash(hash: &str) -> bool {
-        hash.len() == 32
-            && hash
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
     }
 
     /// Match a JA3S hash against the database
