@@ -485,34 +485,20 @@ mod tests {
     }
 
     #[test]
-    fn test_prohibited_signature_algorithm_violation() {
-        let violations = prohibited_signature_violations("SHA1", "SHA1-RSA");
+    fn test_prohibited_signature_algorithm_matches_policy_values() {
+        for (prohibited, signature_algorithm) in [
+            ("SHA1", "SHA1-RSA"),
+            (" sha1 ", "SHA1-RSA"),
+            ("SHA1", "SHA-1-RSA"),
+        ] {
+            let violations = prohibited_signature_violations(prohibited, signature_algorithm);
 
-        assert_eq!(
-            violations[0].rule_path,
-            "certificates.prohibited_signature_algorithms"
-        );
-    }
-
-    #[test]
-    fn test_prohibited_signature_algorithm_trims_policy_values() {
-        let violations = prohibited_signature_violations(" sha1 ", "SHA1-RSA");
-
-        assert_eq!(
-            violations[0].rule_path,
-            "certificates.prohibited_signature_algorithms"
-        );
-    }
-
-    #[test]
-    fn test_prohibited_signature_algorithm_matches_hyphenated_alias() {
-        let violations = prohibited_signature_violations("SHA1", "SHA-1-RSA");
-
-        assert_eq!(violations.len(), 1);
-        assert_eq!(
-            violations[0].rule_path,
-            "certificates.prohibited_signature_algorithms"
-        );
+            assert_eq!(violations.len(), 1);
+            assert_eq!(
+                violations[0].rule_path,
+                "certificates.prohibited_signature_algorithms"
+            );
+        }
     }
 
     #[test]
