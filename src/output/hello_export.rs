@@ -70,22 +70,14 @@ mod tests {
 
     #[test]
     fn test_parse_accepts_known_formats_case_insensitive() {
-        assert_eq!(
-            HelloExportFormat::parse("HEX").expect("hex"),
-            HelloExportFormat::Hex
-        );
-        assert_eq!(
-            HelloExportFormat::parse("Base64").expect("base64"),
-            HelloExportFormat::Base64
-        );
-        assert_eq!(
-            HelloExportFormat::parse(" hexdump ").expect("hexdump"),
-            HelloExportFormat::Hexdump
-        );
-        assert_eq!(
-            HelloExportFormat::parse("binary").expect("binary"),
-            HelloExportFormat::Binary
-        );
+        for (input, expected) in [
+            ("HEX", HelloExportFormat::Hex),
+            ("Base64", HelloExportFormat::Base64),
+            (" hexdump ", HelloExportFormat::Hexdump),
+            ("binary", HelloExportFormat::Binary),
+        ] {
+            assert_eq!(HelloExportFormat::parse(input).expect(input), expected);
+        }
     }
 
     #[test]
