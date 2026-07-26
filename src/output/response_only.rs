@@ -144,124 +144,76 @@ mod tests {
             "example.com".to_string(),
         ];
 
-        // Test with bracket format
-        let result =
-            ResponseOnlyFormatter::strip_line_prefix("[example.com:443] TLS 1.3", &patterns);
-        assert_eq!(result, "TLS 1.3");
-
-        // Test with simple format
-        let result = ResponseOnlyFormatter::strip_line_prefix("example.com:443 TLS 1.3", &patterns);
-        assert_eq!(result, "TLS 1.3");
-
-        // Test with colon separator
-        let result =
-            ResponseOnlyFormatter::strip_line_prefix("example.com:443 - TLS 1.3", &patterns);
-        assert_eq!(result, "TLS 1.3");
-
-        // Test without prefix (should return as-is)
-        let result = ResponseOnlyFormatter::strip_line_prefix("TLS 1.3", &patterns);
-        assert_eq!(result, "TLS 1.3");
-
-        // Test with extra separator
-        let result =
-            ResponseOnlyFormatter::strip_line_prefix("example.com:443 -- TLS 1.2", &patterns);
-        assert_eq!(result, "TLS 1.2");
+        for (line, expected) in [
+            ("[example.com:443] TLS 1.3", "TLS 1.3"),
+            ("example.com:443 TLS 1.3", "TLS 1.3"),
+            ("example.com:443 - TLS 1.3", "TLS 1.3"),
+            ("TLS 1.3", "TLS 1.3"),
+            ("example.com:443 -- TLS 1.2", "TLS 1.2"),
+        ] {
+            assert_eq!(
+                ResponseOnlyFormatter::strip_line_prefix(line, &patterns),
+                expected
+            );
+        }
     }
 
     #[test]
-    fn test_strip_target_prefix() {
-        let output = "[example.com:443] TLS 1.3\n[example.com:443] TLS_AES_128_GCM_SHA256\n";
-
-        let result = ResponseOnlyFormatter::strip_target_prefix(output, "example.com", 443);
-
-        let lines: Vec<&str> = result.lines().collect();
-        assert_eq!(lines.len(), 2);
-        assert_eq!(lines[0], "TLS 1.3");
-        assert_eq!(lines[1], "TLS_AES_128_GCM_SHA256");
-    }
-
-    #[test]
-    fn test_empty_output() {
-        let result = ResponseOnlyFormatter::strip_target_prefix("", "example.com", 443);
-        assert_eq!(result, "");
-    }
-
-    #[test]
-    fn test_multiline_output() {
-        let output = "[example.com:443] Supported Protocols:\n\
-                      [example.com:443]   TLS 1.2\n\
-                      [example.com:443]   TLS 1.3\n";
-
-        let result = ResponseOnlyFormatter::strip_target_prefix(output, "example.com", 443);
-
-        let lines: Vec<&str> = result.lines().collect();
-        assert_eq!(lines[0], "Supported Protocols:");
-        assert_eq!(lines[1], "TLS 1.2");
-        assert_eq!(lines[2], "TLS 1.3");
-    }
-
-    #[test]
-    fn test_strip_target_prefix_line_only_prefix() {
-        let output = "example.com:443\n";
-        let result = ResponseOnlyFormatter::strip_target_prefix(output, "example.com", 443);
-        // When line is just the prefix, the result is empty after stripping
-        // because "example.com:443" matches the prefix pattern exactly
-        assert!(
-            result.is_empty(),
-            "Line with only prefix should result in empty output"
-        );
-    }
-
-    #[test]
-    fn test_strip_target_prefix_bracket_hostname_only() {
-        let output = "[example.com] TLS 1.2\n";
-        let result = ResponseOnlyFormatter::strip_target_prefix(output, "example.com", 443);
-        assert_eq!(result, "TLS 1.2");
-    }
-
-    #[test]
-    fn test_strip_target_prefix_omits_empty_lines() {
-        let output = "[example.com:443] -\n[example.com:443] TLS 1.2\n";
-        let result = ResponseOnlyFormatter::strip_target_prefix(output, "example.com", 443);
-        let lines: Vec<&str> = result.lines().collect();
-        assert_eq!(lines, vec!["TLS 1.2"]);
-    }
-
-    #[test]
-    fn test_strip_target_prefix_ignores_other_hosts() {
-        let output = "other.com:443 TLS 1.2\n[example.com:443] TLS 1.3\n";
-        let result = ResponseOnlyFormatter::strip_target_prefix(output, "example.com", 443);
-        let lines: Vec<&str> = result.lines().collect();
-        assert_eq!(lines, vec!["other.com:443 TLS 1.2", "TLS 1.3"]);
-    }
-
-    #[test]
-    fn test_strip_target_prefix_hostname_only() {
-        let output = "example.com TLS 1.2\nexample.com:443 TLS 1.3\n";
-        let result = ResponseOnlyFormatter::strip_target_prefix(output, "example.com", 443);
-        let lines: Vec<&str> = result.lines().collect();
-        assert_eq!(lines, vec!["TLS 1.2", "TLS 1.3"]);
-    }
-
-    #[test]
-    fn test_strip_target_prefix_ipv6() {
-        let output = "[::1]:443 TLS 1.3\n";
-        let result = ResponseOnlyFormatter::strip_target_prefix(output, "::1", 443);
-        assert_eq!(result, "TLS 1.3");
-    }
-
-    #[test]
-    fn test_strip_target_prefix_does_not_strip_hostname_prefix_substrings() {
-        let output = "example.comparison TLS 1.3\nexample.com:443comparison TLS 1.2\n";
-        let result = ResponseOnlyFormatter::strip_target_prefix(output, "example.com", 443);
-        let lines: Vec<&str> = result.lines().collect();
-
-        assert_eq!(
-            lines,
-            vec![
-                "example.comparison TLS 1.3",
-                "example.com:443comparison TLS 1.2"
-            ]
-        );
+    fn test_strip_target_prefix_cases() {
+        for (name, output, host, expected) in [
+            (
+                "target prefix",
+                "[example.com:443] TLS 1.3\n[example.com:443] TLS_AES_128_GCM_SHA256\n",
+                "example.com",
+                "TLS 1.3\nTLS_AES_128_GCM_SHA256",
+            ),
+            ("empty output", "", "example.com", ""),
+            (
+                "multiline",
+                "[example.com:443] Supported Protocols:\n\
+                 [example.com:443]   TLS 1.2\n\
+                 [example.com:443]   TLS 1.3\n",
+                "example.com",
+                "Supported Protocols:\nTLS 1.2\nTLS 1.3",
+            ),
+            ("line only prefix", "example.com:443\n", "example.com", ""),
+            (
+                "bracket hostname only",
+                "[example.com] TLS 1.2\n",
+                "example.com",
+                "TLS 1.2",
+            ),
+            (
+                "omits empty lines",
+                "[example.com:443] -\n[example.com:443] TLS 1.2\n",
+                "example.com",
+                "TLS 1.2",
+            ),
+            (
+                "ignores other hosts",
+                "other.com:443 TLS 1.2\n[example.com:443] TLS 1.3\n",
+                "example.com",
+                "other.com:443 TLS 1.2\nTLS 1.3",
+            ),
+            (
+                "hostname only",
+                "example.com TLS 1.2\nexample.com:443 TLS 1.3\n",
+                "example.com",
+                "TLS 1.2\nTLS 1.3",
+            ),
+            ("ipv6", "[::1]:443 TLS 1.3\n", "::1", "TLS 1.3"),
+            (
+                "hostname prefix substrings",
+                "example.comparison TLS 1.3\nexample.com:443comparison TLS 1.2\n",
+                "example.com",
+                "example.comparison TLS 1.3\nexample.com:443comparison TLS 1.2",
+            ),
+        ] {
+            assert_eq!(
+                ResponseOnlyFormatter::strip_target_prefix(output, host, 443),
+                expected,
+                "{name}"
+            );
+        }
     }
 }
