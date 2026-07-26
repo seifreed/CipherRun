@@ -236,6 +236,28 @@ mod tests {
         .unwrap()
     }
 
+    fn short_timeout_tester(target: &Target, test_all_ips: bool) -> HeartbleedTester<'_> {
+        HeartbleedTester {
+            target,
+            sni_hostname: None,
+            connect_timeout: Duration::from_millis(200),
+            read_timeout: Duration::from_millis(200),
+            starttls: None,
+            starttls_server_mode: false,
+            starttls_hostname: None,
+            test_all_ips,
+        }
+    }
+
+    async fn connect_to_target(target: &Target) -> TcpStream {
+        let addr = target
+            .socket_addrs()
+            .first()
+            .copied()
+            .expect("test target should have socket address");
+        TcpStream::connect(addr).await.unwrap()
+    }
+
     fn heartbeat_response(response_size: usize) -> Vec<u8> {
         let payload_len = response_size.saturating_sub(3);
         let record_len = 3 + payload_len;
@@ -412,16 +434,7 @@ mod tests {
         });
 
         let target = localhost_target(port);
-        let tester = HeartbleedTester {
-            target: &target,
-            sni_hostname: None,
-            connect_timeout: Duration::from_millis(200),
-            read_timeout: Duration::from_millis(200),
-            starttls: None,
-            starttls_server_mode: false,
-            starttls_hostname: None,
-            test_all_ips: false,
-        };
+        let tester = short_timeout_tester(&target, false);
         let result = tester.test_protocol(Protocol::TLS12).await.unwrap();
 
         assert!(result.bytes_sent > 0, "{result:?}");
@@ -445,16 +458,7 @@ mod tests {
         });
 
         let target = localhost_target(port);
-        let tester = HeartbleedTester {
-            target: &target,
-            sni_hostname: None,
-            connect_timeout: Duration::from_millis(200),
-            read_timeout: Duration::from_millis(200),
-            starttls: None,
-            starttls_server_mode: false,
-            starttls_hostname: None,
-            test_all_ips: false,
-        };
+        let tester = short_timeout_tester(&target, false);
         let result = tester.test_protocol(Protocol::TLS12).await.unwrap();
 
         assert!(result.bytes_sent > 0, "{result:?}");
@@ -475,16 +479,7 @@ mod tests {
             ],
         )
         .unwrap();
-        let tester = HeartbleedTester {
-            target: &target,
-            sni_hostname: None,
-            connect_timeout: Duration::from_millis(200),
-            read_timeout: Duration::from_millis(200),
-            starttls: None,
-            starttls_server_mode: false,
-            starttls_hostname: None,
-            test_all_ips: true,
-        };
+        let tester = short_timeout_tester(&target, true);
 
         let result = tester.test().await.unwrap();
 
@@ -647,12 +642,7 @@ mod tests {
         let port = spawn_heartbeat_server(256).await;
         let target = localhost_target(port);
         let tester = HeartbleedTester::new(&target);
-        let addr = target
-            .socket_addrs()
-            .first()
-            .copied()
-            .expect("test target should have socket address");
-        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let mut stream = connect_to_target(&target).await;
         let result = tester.send_malicious_heartbeat(&mut stream).await.unwrap();
         assert!(result.vulnerable);
         assert!(result.bytes_received > 16); // Above the threshold for vulnerability detection
@@ -663,12 +653,7 @@ mod tests {
         let port = spawn_split_heartbeat_server(256, 12).await;
         let target = localhost_target(port);
         let tester = HeartbleedTester::new(&target);
-        let addr = target
-            .socket_addrs()
-            .first()
-            .copied()
-            .expect("test target should have socket address");
-        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let mut stream = connect_to_target(&target).await;
 
         let result = tester.send_malicious_heartbeat(&mut stream).await.unwrap();
 
@@ -685,12 +670,7 @@ mod tests {
         let port = spawn_heartbeat_server(0).await;
         let target = localhost_target(port);
         let tester = HeartbleedTester::new(&target);
-        let addr = target
-            .socket_addrs()
-            .first()
-            .copied()
-            .expect("test target should have socket address");
-        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let mut stream = connect_to_target(&target).await;
         let result = tester.send_malicious_heartbeat(&mut stream).await.unwrap();
         assert!(!result.vulnerable);
         assert!(!result.tested);
