@@ -4,6 +4,15 @@ use std::net::IpAddr;
 use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
 
+fn loopback_target() -> Target {
+    Target::with_ips(
+        "example.com".to_string(),
+        443,
+        vec![IpAddr::from([127, 0, 0, 1])],
+    )
+    .unwrap()
+}
+
 #[test]
 fn test_grease_values_defined() {
     assert!(!GREASE_CIPHER_SUITES.is_empty());
@@ -62,12 +71,7 @@ fn test_grease_merge_preserves_bad_or_unclear_address() {
 
 #[test]
 fn test_generate_recommendations_variants() {
-    let target = Target::with_ips(
-        "example.com".to_string(),
-        443,
-        vec![IpAddr::from([127, 0, 0, 1])],
-    )
-    .unwrap();
+    let target = loopback_target();
     let tester = GreaseTester::new(target);
 
     let ok_result = GreaseResult {
@@ -156,12 +160,7 @@ fn test_grease_report_fields() {
 
 #[test]
 fn test_build_client_hello_with_grease_ciphers() {
-    let target = Target::with_ips(
-        "example.com".to_string(),
-        443,
-        vec![IpAddr::from([127, 0, 0, 1])],
-    )
-    .unwrap();
+    let target = loopback_target();
     let tester = GreaseTester::new(target);
 
     let hello = tester
@@ -181,12 +180,7 @@ fn test_build_client_hello_with_grease_ciphers() {
 
 #[test]
 fn test_build_client_hello_with_grease_extensions() {
-    let target = Target::with_ips(
-        "example.com".to_string(),
-        443,
-        vec![IpAddr::from([127, 0, 0, 1])],
-    )
-    .unwrap();
+    let target = loopback_target();
     let tester = GreaseTester::new(target);
 
     let hello = tester
@@ -200,12 +194,7 @@ fn test_build_client_hello_with_grease_extensions() {
 
 #[test]
 fn test_build_client_hello_with_grease_groups() {
-    let target = Target::with_ips(
-        "example.com".to_string(),
-        443,
-        vec![IpAddr::from([127, 0, 0, 1])],
-    )
-    .unwrap();
+    let target = loopback_target();
     let tester = GreaseTester::new(target);
 
     let hello = tester
@@ -218,12 +207,7 @@ fn test_build_client_hello_with_grease_groups() {
 
 #[test]
 fn test_build_client_hello_combined_grease() {
-    let target = Target::with_ips(
-        "example.com".to_string(),
-        443,
-        vec![IpAddr::from([127, 0, 0, 1])],
-    )
-    .unwrap();
+    let target = loopback_target();
     let tester = GreaseTester::new(target);
 
     let hello = tester
@@ -328,12 +312,7 @@ fn test_grease_result_details_includes_issues() {
 
 #[test]
 fn test_recommendations_count_increases_with_issues() {
-    let target = Target::with_ips(
-        "example.com".to_string(),
-        443,
-        vec![IpAddr::from([127, 0, 0, 1])],
-    )
-    .unwrap();
+    let target = loopback_target();
     let tester = GreaseTester::new(target);
 
     let base_result = GreaseResult {
@@ -391,12 +370,7 @@ fn test_tolerates_grease_logic() {
 
 #[test]
 fn test_grease_partial_inconclusive_does_not_report_tolerant() {
-    let target = Target::with_ips(
-        "example.com".to_string(),
-        443,
-        vec![IpAddr::from([127, 0, 0, 1])],
-    )
-    .unwrap();
+    let target = loopback_target();
     let tester = GreaseTester::new(target);
     let mut result = GreaseResult {
         tolerates_grease: false,
@@ -430,12 +404,7 @@ fn test_grease_partial_inconclusive_does_not_report_tolerant() {
 
 #[test]
 fn test_grease_all_category_inconclusive_ignores_baseline_success_detail() {
-    let target = Target::with_ips(
-        "example.com".to_string(),
-        443,
-        vec![IpAddr::from([127, 0, 0, 1])],
-    )
-    .unwrap();
+    let target = loopback_target();
     let tester = GreaseTester::new(target);
     let mut result = GreaseResult {
         tolerates_grease: false,
