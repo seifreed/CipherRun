@@ -1,6 +1,15 @@
 use super::*;
 use crate::constants::{CONTENT_TYPE_APPLICATION_DATA, VERSION_TLS_1_2};
 
+fn example_target() -> crate::utils::network::Target {
+    crate::utils::network::Target::with_ips(
+        "example.com".to_string(),
+        443,
+        vec!["127.0.0.1".parse().unwrap()],
+    )
+    .unwrap()
+}
+
 #[test]
 fn test_poodle_result() {
     let result = PoodleTestResult {
@@ -107,12 +116,7 @@ fn test_cbc_probe_inconclusive_result() {
 
 #[test]
 fn test_malformed_record_building() {
-    let target = crate::utils::network::Target::with_ips(
-        "example.com".to_string(),
-        443,
-        vec!["127.0.0.1".parse().unwrap()],
-    )
-    .unwrap();
+    let target = example_target();
 
     let _tester = PoodleTester::new(&target);
 
@@ -148,12 +152,7 @@ fn test_malformed_record_building() {
 
 #[test]
 fn test_with_starttls_sets_hostname_and_mode() {
-    let target = crate::utils::network::Target::with_ips(
-        "example.com".to_string(),
-        443,
-        vec!["127.0.0.1".parse().unwrap()],
-    )
-    .unwrap();
+    let target = example_target();
 
     let tester = PoodleTester::new(&target).with_starttls(
         Some(crate::starttls::StarttlsProtocol::XMPP),
