@@ -298,6 +298,26 @@ mod tests {
         }
     }
 
+    fn cert(not_before: &str, fingerprint_sha256: Option<&str>) -> CertificateInfo {
+        CertificateInfo {
+            subject: "CN=example.com".to_string(),
+            issuer: "CN=Test CA".to_string(),
+            serial_number: "123456".to_string(),
+            fingerprint_sha256: fingerprint_sha256.map(str::to_string),
+            not_before: not_before.to_string(),
+            not_after: "Jan 01 00:00:00 2030 GMT".to_string(),
+            ..Default::default()
+        }
+    }
+
+    fn scan_with_cert(cert: CertificateInfo) -> ScanResults {
+        ScanResults {
+            target: "example.com:443".to_string(),
+            certificate_chain: Some(certificate_analysis(cert, None)),
+            ..Default::default()
+        }
+    }
+
     #[test]
     fn maps_minimal_scan_results() {
         let results = ScanResults {
@@ -346,17 +366,11 @@ mod tests {
     #[test]
     fn maps_certificate_dates_without_replacing_non_rfc3339_formats_with_now() {
         let cert = CertificateInfo {
-            subject: "CN=example.com".to_string(),
-            issuer: "CN=Test CA".to_string(),
-            serial_number: "123456".to_string(),
-            fingerprint_sha256: Some("abc123".to_string()),
-            not_before: "2024-01-01 00:00:00 UTC".to_string(),
-            not_after: "Jan 01 00:00:00 2030 GMT".to_string(),
             signature_algorithm: "SHA256-RSA".to_string(),
             public_key_algorithm: "RSA".to_string(),
             public_key_size: Some(2048),
             san: vec!["example.com".to_string()],
-            ..Default::default()
+            ..cert("2024-01-01 00:00:00 UTC", Some("abc123"))
         };
         let expected_not_before = parse_cert_date(&cert.not_before).expect("date should parse");
         let expected_not_after = parse_cert_date(&cert.not_after).expect("date should parse");
@@ -388,21 +402,7 @@ mod tests {
 
     #[test]
     fn rejects_unparseable_certificate_dates() {
-        let cert = CertificateInfo {
-            subject: "CN=example.com".to_string(),
-            issuer: "CN=Test CA".to_string(),
-            serial_number: "123456".to_string(),
-            fingerprint_sha256: Some("abc123".to_string()),
-            not_before: "not-a-date".to_string(),
-            not_after: "Jan 01 00:00:00 2030 GMT".to_string(),
-            ..Default::default()
-        };
-
-        let results = ScanResults {
-            target: "example.com:443".to_string(),
-            certificate_chain: Some(certificate_analysis(cert, None)),
-            ..Default::default()
-        };
+        let results = scan_with_cert(cert("not-a-date", Some("abc123")));
 
         let err = PersistedScan::try_from_scan_results(&results)
             .expect_err("invalid certificate dates should fail persistence conversion");
@@ -414,20 +414,7 @@ mod tests {
 
     #[test]
     fn rejects_missing_certificate_fingerprint() {
-        let cert = CertificateInfo {
-            subject: "CN=example.com".to_string(),
-            issuer: "CN=Test CA".to_string(),
-            serial_number: "123456".to_string(),
-            not_before: "2024-01-01 00:00:00 UTC".to_string(),
-            not_after: "Jan 01 00:00:00 2030 GMT".to_string(),
-            ..Default::default()
-        };
-
-        let results = ScanResults {
-            target: "example.com:443".to_string(),
-            certificate_chain: Some(certificate_analysis(cert, None)),
-            ..Default::default()
-        };
+        let results = scan_with_cert(cert("2024-01-01 00:00:00 UTC", None));
 
         let err = PersistedScan::try_from_scan_results(&results)
             .expect_err("missing certificate fingerprint should fail persistence conversion");
