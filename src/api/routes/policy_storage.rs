@@ -150,6 +150,11 @@ mod tests {
     use super::*;
     use std::fs::File;
 
+    fn parse_policy_content(content: &str) -> ParsedPolicyContent {
+        parse_policy_file_content("fallback".to_string(), content)
+            .expect("policy content should parse")
+    }
+
     #[test]
     fn parse_policy_file_content_uses_defaults_for_missing_metadata() {
         let (name, description, _created_at, enabled, rules) =
@@ -212,9 +217,7 @@ mod tests {
     #[test]
     fn parse_policy_file_content_handles_partial_metadata_and_empty_rules() {
         let content = "# Policy: Partial\n# Enabled: false\n\n";
-        let (name, description, _created_at, enabled, rules) =
-            parse_policy_file_content("fallback".to_string(), content)
-                .expect("policy content should parse");
+        let (name, description, _created_at, enabled, rules) = parse_policy_content(content);
 
         assert_eq!(name, "Partial");
         assert_eq!(description, None);
@@ -233,9 +236,7 @@ mod tests {
     #[test]
     fn parse_policy_file_content_keeps_non_default_description_with_empty_rules() {
         let content = "# Policy: Partial\n# Description: Custom description\n# Enabled: true\n\n";
-        let (name, description, _created_at, enabled, rules) =
-            parse_policy_file_content("fallback".to_string(), content)
-                .expect("policy content should parse");
+        let (name, description, _created_at, enabled, rules) = parse_policy_content(content);
 
         assert_eq!(name, "Partial");
         assert_eq!(description.as_deref(), Some("Custom description"));
@@ -247,9 +248,7 @@ mod tests {
     fn parse_policy_file_content_preserves_non_metadata_rule_lines() {
         let content =
             "# Policy: Example\n# Enabled: true\n\nrules:\n  - type: allow\n# trailing comment\n";
-        let (_name, _description, _created_at, enabled, rules) =
-            parse_policy_file_content("fallback".to_string(), content)
-                .expect("policy content should parse");
+        let (_name, _description, _created_at, enabled, rules) = parse_policy_content(content);
 
         assert!(enabled);
         assert!(rules.contains("rules:"));
@@ -260,9 +259,7 @@ mod tests {
     fn parse_policy_file_content_ignores_unknown_metadata_comments_before_rules() {
         let content =
             "# Policy: Example\n# Unknown: value\n# Another: value\n\nrules:\n  - enabled: true\n";
-        let (name, description, _created_at, enabled, rules) =
-            parse_policy_file_content("fallback".to_string(), content)
-                .expect("policy content should parse");
+        let (name, description, _created_at, enabled, rules) = parse_policy_content(content);
 
         assert_eq!(name, "Example");
         assert_eq!(description, None);
@@ -273,9 +270,7 @@ mod tests {
     #[test]
     fn parse_policy_file_content_ignores_blank_lines_before_rules() {
         let content = "# Policy: Example\n# Enabled: false\n\n\nrules:\n  - severity: high\n";
-        let (name, _description, _created_at, enabled, rules) =
-            parse_policy_file_content("fallback".to_string(), content)
-                .expect("policy content should parse");
+        let (name, _description, _created_at, enabled, rules) = parse_policy_content(content);
 
         assert_eq!(name, "Example");
         assert!(!enabled);
@@ -285,9 +280,7 @@ mod tests {
     #[test]
     fn parse_policy_file_content_treats_indented_comments_inside_rules_as_content_boundary() {
         let content = "# Policy: Example\n# Enabled: true\n\nrules:\n  - severity: high\n  # inline comment\n  - enabled: true\n";
-        let (_name, _description, _created_at, enabled, rules) =
-            parse_policy_file_content("fallback".to_string(), content)
-                .expect("policy content should parse");
+        let (_name, _description, _created_at, enabled, rules) = parse_policy_content(content);
 
         assert!(enabled);
         assert!(rules.contains("severity: high"));
@@ -297,9 +290,7 @@ mod tests {
     #[test]
     fn parse_policy_file_content_keeps_comments_after_rules_out_of_results() {
         let content = "# Policy: Example\n# Enabled: true\n\nrules:\n  - severity: high\n# post rules comment\n";
-        let (_name, _description, _created_at, enabled, rules) =
-            parse_policy_file_content("fallback".to_string(), content)
-                .expect("policy content should parse");
+        let (_name, _description, _created_at, enabled, rules) = parse_policy_content(content);
 
         assert!(enabled);
         assert!(rules.contains("severity: high"));
@@ -309,9 +300,7 @@ mod tests {
     #[test]
     fn parse_policy_file_content_ignores_metadata_comments_between_blank_lines() {
         let content = "# Policy: Example\n\n# Unknown: value\n\nrules:\n  - action: allow\n";
-        let (name, description, _created_at, enabled, rules) =
-            parse_policy_file_content("fallback".to_string(), content)
-                .expect("policy content should parse");
+        let (name, description, _created_at, enabled, rules) = parse_policy_content(content);
 
         assert_eq!(name, "Example");
         assert_eq!(description, None);
@@ -322,9 +311,7 @@ mod tests {
     #[test]
     fn parse_policy_file_content_discards_comment_only_tail_after_rules() {
         let content = "# Policy: Example\n# Enabled: true\n\nrules:\n  - action: allow\n\n# trailing\n# comment\n";
-        let (_name, _description, _created_at, enabled, rules) =
-            parse_policy_file_content("fallback".to_string(), content)
-                .expect("policy content should parse");
+        let (_name, _description, _created_at, enabled, rules) = parse_policy_content(content);
 
         assert!(enabled);
         assert!(rules.contains("action: allow"));
@@ -334,9 +321,7 @@ mod tests {
     #[test]
     fn parse_policy_file_content_last_metadata_wins_for_repeated_fields() {
         let content = "# Policy: First\n# Policy: Second\n# Enabled: false\n# Enabled: true\n\nrules:\n  - action: allow\n";
-        let (name, _description, _created_at, enabled, rules) =
-            parse_policy_file_content("fallback".to_string(), content)
-                .expect("policy content should parse");
+        let (name, _description, _created_at, enabled, rules) = parse_policy_content(content);
 
         assert_eq!(name, "Second");
         assert!(enabled);
@@ -346,9 +331,7 @@ mod tests {
     #[test]
     fn parse_policy_file_content_last_description_wins_when_repeated() {
         let content = "# Policy: Example\n# Description: First\n# Description: Second\n\nrules:\n  - action: deny\n";
-        let (_name, description, _created_at, enabled, rules) =
-            parse_policy_file_content("fallback".to_string(), content)
-                .expect("policy content should parse");
+        let (_name, description, _created_at, enabled, rules) = parse_policy_content(content);
 
         assert_eq!(description.as_deref(), Some("Second"));
         assert!(enabled);
@@ -358,9 +341,7 @@ mod tests {
     #[test]
     fn parse_policy_file_content_last_created_timestamp_wins_when_repeated() {
         let content = "# Policy: Example\n# Created: 2025-01-01T00:00:00Z\n# Created: 2025-02-02T00:00:00Z\n\nrules:\n  - action: allow\n";
-        let (_name, _description, created_at, enabled, rules) =
-            parse_policy_file_content("fallback".to_string(), content)
-                .expect("policy content should parse");
+        let (_name, _description, created_at, enabled, rules) = parse_policy_content(content);
 
         assert_eq!(created_at.to_rfc3339(), "2025-02-02T00:00:00+00:00");
         assert!(enabled);
@@ -370,9 +351,7 @@ mod tests {
     #[test]
     fn parse_policy_file_content_keeps_last_non_empty_policy_name_when_blank_value_follows() {
         let content = "# Policy: Example\n# Policy: \n\nrules:\n  - action: allow\n";
-        let (name, _description, _created_at, enabled, rules) =
-            parse_policy_file_content("fallback".to_string(), content)
-                .expect("policy content should parse");
+        let (name, _description, _created_at, enabled, rules) = parse_policy_content(content);
 
         assert_eq!(name, "Example");
         assert!(enabled);
@@ -383,9 +362,7 @@ mod tests {
     fn parse_policy_file_content_last_enabled_flag_wins_when_repeated() {
         let content =
             "# Policy: Example\n# Enabled: true\n# Enabled: false\n\nrules:\n  - action: audit\n";
-        let (_name, _description, _created_at, enabled, rules) =
-            parse_policy_file_content("fallback".to_string(), content)
-                .expect("policy content should parse");
+        let (_name, _description, _created_at, enabled, rules) = parse_policy_content(content);
 
         assert!(!enabled);
         assert!(rules.contains("action: audit"));
@@ -394,9 +371,7 @@ mod tests {
     #[test]
     fn parse_policy_file_content_default_description_can_be_overridden_later() {
         let content = "# Policy: Example\n# Description: No description\n# Description: Real description\n\nrules:\n  - action: allow\n";
-        let (_name, description, _created_at, enabled, rules) =
-            parse_policy_file_content("fallback".to_string(), content)
-                .expect("policy content should parse");
+        let (_name, description, _created_at, enabled, rules) = parse_policy_content(content);
 
         assert_eq!(description.as_deref(), Some("Real description"));
         assert!(enabled);
@@ -420,9 +395,7 @@ mod tests {
     #[test]
     fn parse_policy_file_content_ignores_empty_description_even_when_repeated() {
         let content = "# Policy: Example\n# Description: Useful description\n# Description: \n\nrules:\n  - action: allow\n";
-        let (_name, description, _created_at, enabled, rules) =
-            parse_policy_file_content("fallback".to_string(), content)
-                .expect("policy content should parse");
+        let (_name, description, _created_at, enabled, rules) = parse_policy_content(content);
 
         assert_eq!(description.as_deref(), Some("Useful description"));
         assert!(enabled);
@@ -433,9 +406,7 @@ mod tests {
     fn parse_policy_file_content_keeps_last_valid_enabled_flag_when_invalid_value_follows() {
         let content =
             "# Policy: Example\n# Enabled: false\n# Enabled: maybe\n\nrules:\n  - action: deny\n";
-        let (_name, _description, _created_at, enabled, rules) =
-            parse_policy_file_content("fallback".to_string(), content)
-                .expect("policy content should parse");
+        let (_name, _description, _created_at, enabled, rules) = parse_policy_content(content);
 
         assert!(!enabled);
         assert!(rules.contains("action: deny"));
@@ -445,9 +416,7 @@ mod tests {
     fn parse_policy_file_content_last_valid_enabled_flag_wins_after_invalid_value() {
         let content =
             "# Policy: Example\n# Enabled: maybe\n# Enabled: false\n\nrules:\n  - action: allow\n";
-        let (_name, _description, _created_at, enabled, rules) =
-            parse_policy_file_content("fallback".to_string(), content)
-                .expect("policy content should parse");
+        let (_name, _description, _created_at, enabled, rules) = parse_policy_content(content);
 
         assert!(!enabled);
         assert!(rules.contains("action: allow"));
@@ -463,9 +432,7 @@ mod tests {
     #[test]
     fn parse_policy_file_content_last_valid_enabled_flag_wins_with_invalid_between_values() {
         let content = "# Policy: Example\n# Enabled: false\n# Enabled: maybe\n# Enabled: true\n\nrules:\n  - action: allow\n";
-        let (_name, _description, _created_at, enabled, rules) =
-            parse_policy_file_content("fallback".to_string(), content)
-                .expect("policy content should parse");
+        let (_name, _description, _created_at, enabled, rules) = parse_policy_content(content);
 
         assert!(enabled);
         assert!(rules.contains("action: allow"));
@@ -474,9 +441,7 @@ mod tests {
     #[test]
     fn parse_policy_file_content_keeps_last_non_default_description_when_empty_value_follows() {
         let content = "# Policy: Example\n# Description: Useful description\n# Description: \n# Description: No description\n\nrules:\n  - action: allow\n";
-        let (_name, description, _created_at, enabled, rules) =
-            parse_policy_file_content("fallback".to_string(), content)
-                .expect("policy content should parse");
+        let (_name, description, _created_at, enabled, rules) = parse_policy_content(content);
 
         assert_eq!(description.as_deref(), Some("Useful description"));
         assert!(enabled);
@@ -487,9 +452,7 @@ mod tests {
     fn parse_policy_file_content_keeps_last_non_empty_policy_name_when_invalid_metadata_follows() {
         let content =
             "# Policy: Useful\n# Policy: \n# Enabled: maybe\n\nrules:\n  - action: audit\n";
-        let (name, description, _created_at, enabled, rules) =
-            parse_policy_file_content("fallback".to_string(), content)
-                .expect("policy content should parse");
+        let (name, description, _created_at, enabled, rules) = parse_policy_content(content);
 
         assert_eq!(name, "Useful");
         assert_eq!(description, None);
@@ -507,9 +470,7 @@ mod tests {
     #[test]
     fn parse_policy_file_content_last_non_empty_policy_name_wins_after_blank_value() {
         let content = "# Policy: \n# Policy: Useful\n\nrules:\n  - action: allow\n";
-        let (name, _description, _created_at, enabled, rules) =
-            parse_policy_file_content("fallback".to_string(), content)
-                .expect("policy content should parse");
+        let (name, _description, _created_at, enabled, rules) = parse_policy_content(content);
 
         assert_eq!(name, "Useful");
         assert!(enabled);
@@ -519,9 +480,7 @@ mod tests {
     #[test]
     fn parse_policy_file_content_keeps_last_non_default_description_when_blank_values_repeat() {
         let content = "# Policy: Example\n# Description: Useful description\n# Description: \n# Description: \n\nrules:\n  - action: allow\n";
-        let (_name, description, _created_at, enabled, rules) =
-            parse_policy_file_content("fallback".to_string(), content)
-                .expect("policy content should parse");
+        let (_name, description, _created_at, enabled, rules) = parse_policy_content(content);
 
         assert_eq!(description.as_deref(), Some("Useful description"));
         assert!(enabled);
@@ -531,9 +490,7 @@ mod tests {
     #[test]
     fn parse_policy_file_content_keeps_last_valid_name_and_description_with_blank_repetitions() {
         let content = "# Policy: Useful\n# Policy: \n# Description: First description\n# Description: \n# Policy: Final\n# Description: Final description\n# Description: \n\nrules:\n  - action: allow\n";
-        let (name, description, _created_at, enabled, rules) =
-            parse_policy_file_content("fallback".to_string(), content)
-                .expect("policy content should parse");
+        let (name, description, _created_at, enabled, rules) = parse_policy_content(content);
 
         assert_eq!(name, "Final");
         assert_eq!(description.as_deref(), Some("Final description"));
@@ -558,9 +515,7 @@ mod tests {
     #[test]
     fn parse_policy_file_content_keeps_last_valid_name_when_blank_and_default_metadata_follow() {
         let content = "# Policy: Useful\n# Description: Useful description\n# Policy: \n# Description: No description\n# Description: \n\nrules:\n  - action: allow\n";
-        let (name, description, _created_at, enabled, rules) =
-            parse_policy_file_content("fallback".to_string(), content)
-                .expect("policy content should parse");
+        let (name, description, _created_at, enabled, rules) = parse_policy_content(content);
 
         assert_eq!(name, "Useful");
         assert_eq!(description.as_deref(), Some("Useful description"));
@@ -571,9 +526,7 @@ mod tests {
     #[test]
     fn parse_policy_file_content_keeps_last_valid_description_when_default_and_blank_repeat() {
         let content = "# Policy: Useful\n# Description: Useful description\n# Description: No description\n# Description: \n# Description: No description\n\nrules:\n  - action: allow\n";
-        let (_name, description, _created_at, enabled, rules) =
-            parse_policy_file_content("fallback".to_string(), content)
-                .expect("policy content should parse");
+        let (_name, description, _created_at, enabled, rules) = parse_policy_content(content);
 
         assert_eq!(description.as_deref(), Some("Useful description"));
         assert!(enabled);
@@ -583,9 +536,7 @@ mod tests {
     #[test]
     fn parse_policy_file_content_last_valid_description_wins_after_default_and_blank_noise() {
         let content = "# Policy: Useful\n# Description: No description\n# Description: \n# Description: Final description\n# Description: No description\n# Description: \n\nrules:\n  - action: allow\n";
-        let (_name, description, _created_at, enabled, rules) =
-            parse_policy_file_content("fallback".to_string(), content)
-                .expect("policy content should parse");
+        let (_name, description, _created_at, enabled, rules) = parse_policy_content(content);
 
         assert_eq!(description.as_deref(), Some("Final description"));
         assert!(enabled);
@@ -595,9 +546,7 @@ mod tests {
     #[test]
     fn parse_policy_file_content_keeps_last_valid_name_when_default_and_blank_noise_follow() {
         let content = "# Policy: Useful\n# Policy: \n# Policy: Useful Final\n# Policy: \n# Description: No description\n\nrules:\n  - action: allow\n";
-        let (name, description, _created_at, enabled, rules) =
-            parse_policy_file_content("fallback".to_string(), content)
-                .expect("policy content should parse");
+        let (name, description, _created_at, enabled, rules) = parse_policy_content(content);
 
         assert_eq!(name, "Useful Final");
         assert_eq!(description, None);
@@ -608,9 +557,7 @@ mod tests {
     #[test]
     fn parse_policy_file_content_keeps_last_valid_name_after_default_description_noise() {
         let content = "# Policy: Useful\n# Description: No description\n# Policy: Final\n# Description: \n# Description: No description\n\nrules:\n  - action: allow\n";
-        let (name, description, _created_at, enabled, rules) =
-            parse_policy_file_content("fallback".to_string(), content)
-                .expect("policy content should parse");
+        let (name, description, _created_at, enabled, rules) = parse_policy_content(content);
 
         assert_eq!(name, "Final");
         assert_eq!(description, None);
@@ -621,9 +568,7 @@ mod tests {
     #[test]
     fn parse_policy_file_content_keeps_last_valid_enabled_after_blank_and_invalid_noise() {
         let content = "# Policy: Useful\n# Enabled: false\n# Enabled: \n# Enabled: maybe\n# Enabled: true\n# Enabled: \n\nrules:\n  - action: allow\n";
-        let (_name, _description, _created_at, enabled, rules) =
-            parse_policy_file_content("fallback".to_string(), content)
-                .expect("policy content should parse");
+        let (_name, _description, _created_at, enabled, rules) = parse_policy_content(content);
 
         assert!(enabled);
         assert!(rules.contains("action: allow"));
@@ -646,9 +591,7 @@ mod tests {
     #[test]
     fn parse_policy_file_content_keeps_last_valid_enabled_when_invalid_tail_repeats() {
         let content = "# Policy: Useful\n# Enabled: false\n# Enabled: true\n# Enabled: maybe\n# Enabled: \n# Enabled: invalid\n\nrules:\n  - action: allow\n";
-        let (_name, _description, _created_at, enabled, rules) =
-            parse_policy_file_content("fallback".to_string(), content)
-                .expect("policy content should parse");
+        let (_name, _description, _created_at, enabled, rules) = parse_policy_content(content);
 
         assert!(enabled);
         assert!(rules.contains("action: allow"));
@@ -657,9 +600,7 @@ mod tests {
     #[test]
     fn parse_policy_file_content_keeps_last_valid_policy_after_blank_and_default_tail() {
         let content = "# Policy: Initial\n# Policy: Final Policy\n# Policy: \n# Description: No description\n# Policy: \n\nrules:\n  - action: allow\n";
-        let (name, _description, _created_at, enabled, rules) =
-            parse_policy_file_content("fallback".to_string(), content)
-                .expect("policy content should parse");
+        let (name, _description, _created_at, enabled, rules) = parse_policy_content(content);
 
         assert_eq!(name, "Final Policy");
         assert!(enabled);
@@ -669,9 +610,7 @@ mod tests {
     #[test]
     fn parse_policy_file_content_keeps_last_valid_description_after_blank_and_default_tail() {
         let content = "# Description: Initial description\n# Description: Final description\n# Description: \n# Description: No description\n\nrules:\n  - action: allow\n";
-        let (_name, description, _created_at, enabled, rules) =
-            parse_policy_file_content("fallback".to_string(), content)
-                .expect("policy content should parse");
+        let (_name, description, _created_at, enabled, rules) = parse_policy_content(content);
 
         assert_eq!(description.as_deref(), Some("Final description"));
         assert!(enabled);
@@ -681,9 +620,7 @@ mod tests {
     #[test]
     fn parse_policy_file_content_keeps_last_valid_enabled_after_false_tail_noise() {
         let content = "# Enabled: true\n# Enabled: false\n# Enabled: \n# Enabled: invalid\n# Enabled: true\n\nrules:\n  - action: allow\n";
-        let (_name, _description, _created_at, enabled, rules) =
-            parse_policy_file_content("fallback".to_string(), content)
-                .expect("policy content should parse");
+        let (_name, _description, _created_at, enabled, rules) = parse_policy_content(content);
 
         assert!(enabled);
         assert!(rules.contains("action: allow"));
