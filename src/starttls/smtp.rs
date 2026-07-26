@@ -57,6 +57,23 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
     use tokio::net::{TcpListener, TcpStream};
 
+    async fn read_smtp_status(response_bytes: &'static [u8]) -> Result<(u16, String)> {
+        let (mut client, mut server) = tokio::io::duplex(64);
+
+        let writer = tokio::spawn(async move {
+            server
+                .write_all(response_bytes)
+                .await
+                .expect("test server should write response");
+        });
+
+        let mut reader = BufReader::new(&mut client);
+        let result = response::read_status_line(&mut reader, "SMTP").await;
+
+        writer.await.expect("test server task should complete");
+        result
+    }
+
     #[test]
     fn test_smtp_negotiator_creation() {
         let negotiator = SmtpNegotiator::new("example.com".to_string());
@@ -66,63 +83,23 @@ mod tests {
 
     #[tokio::test]
     async fn test_smtp_read_response_short_line() {
-        let (mut client, mut server) = tokio::io::duplex(64);
-
-        let writer = tokio::spawn(async move {
-            server
-                .write_all(b"a\n")
-                .await
-                .expect("test server should write response");
-        });
-
-        let mut reader = BufReader::new(&mut client);
-        let err = response::read_status_line(&mut reader, "SMTP")
-            .await
-            .unwrap_err();
+        let err = read_smtp_status(b"a\n").await.unwrap_err();
         assert!(format!("{err}").contains("too short"));
-
-        writer.await.expect("test server task should complete");
     }
 
     #[tokio::test]
     async fn test_smtp_read_response_invalid_code() {
-        let (mut client, mut server) = tokio::io::duplex(64);
-
-        let writer = tokio::spawn(async move {
-            server
-                .write_all(b"xx0 Invalid\r\n")
-                .await
-                .expect("test server should write response");
-        });
-
-        let mut reader = BufReader::new(&mut client);
-        let err = response::read_status_line(&mut reader, "SMTP")
-            .await
-            .unwrap_err();
+        let err = read_smtp_status(b"xx0 Invalid\r\n").await.unwrap_err();
         assert!(format!("{err}").contains("status code"));
-
-        writer.await.expect("test server task should complete");
     }
 
     #[tokio::test]
     async fn test_smtp_read_response_valid_code() {
-        let (mut client, mut server) = tokio::io::duplex(64);
-
-        let writer = tokio::spawn(async move {
-            server
-                .write_all(b"220 Ready\r\n")
-                .await
-                .expect("test server should write response");
-        });
-
-        let mut reader = BufReader::new(&mut client);
-        let (code, line) = response::read_status_line(&mut reader, "SMTP")
+        let (code, line) = read_smtp_status(b"220 Ready\r\n")
             .await
             .expect("test assertion should succeed");
         assert_eq!(code, 220);
         assert!(line.contains("Ready"));
-
-        writer.await.expect("test server task should complete");
     }
 
     #[tokio::test]
