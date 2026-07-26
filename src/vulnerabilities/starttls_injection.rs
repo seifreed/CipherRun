@@ -220,6 +220,15 @@ mod tests {
         port
     }
 
+    fn loopback_target(port: u16) -> Target {
+        Target::with_ips(
+            "127.0.0.1".to_string(),
+            port,
+            vec!["127.0.0.1".parse().expect("valid IP")],
+        )
+        .expect("test assertion should succeed")
+    }
+
     #[tokio::test]
     async fn test_smtp_injection_vulnerable() {
         let port = start_scripted_server(
@@ -231,12 +240,7 @@ mod tests {
         )
         .await;
 
-        let target = Target::with_ips(
-            "127.0.0.1".to_string(),
-            port,
-            vec!["127.0.0.1".parse().expect("valid IP")],
-        )
-        .expect("test assertion should succeed");
+        let target = loopback_target(port);
         let tester = StarttlsInjectionTester::new(target);
 
         let vulnerable = tester
@@ -314,12 +318,7 @@ mod tests {
                 .unwrap();
         });
 
-        let target = Target::with_ips(
-            "127.0.0.1".to_string(),
-            port,
-            vec!["127.0.0.1".parse().unwrap()],
-        )
-        .unwrap();
+        let target = loopback_target(port);
         let tester = StarttlsInjectionTester::new(target);
         let status = tester.test_imap_injection_status().await.unwrap();
         server.await.unwrap();
@@ -346,12 +345,7 @@ mod tests {
             socket.write_all(b"+OK STLS\r\n+OK USER\r\n").await.unwrap();
         });
 
-        let target = Target::with_ips(
-            "127.0.0.1".to_string(),
-            port,
-            vec!["127.0.0.1".parse().unwrap()],
-        )
-        .unwrap();
+        let target = loopback_target(port);
         let tester = StarttlsInjectionTester::new(target);
         let status = tester.test_pop3_injection_status().await.unwrap();
         server.await.unwrap();
@@ -367,12 +361,7 @@ mod tests {
         )
         .await;
 
-        let target = Target::with_ips(
-            "127.0.0.1".to_string(),
-            port,
-            vec!["127.0.0.1".parse().expect("valid IP")],
-        )
-        .expect("test assertion should succeed");
+        let target = loopback_target(port);
         let tester = StarttlsInjectionTester::new(target);
 
         let vulnerable = tester
@@ -393,12 +382,7 @@ mod tests {
         )
         .await;
 
-        let target = Target::with_ips(
-            "127.0.0.1".to_string(),
-            port,
-            vec!["127.0.0.1".parse().expect("valid IP")],
-        )
-        .expect("test assertion should succeed");
+        let target = loopback_target(port);
         let tester = StarttlsInjectionTester::new(target);
 
         let vulnerable = tester
@@ -419,12 +403,7 @@ mod tests {
         )
         .await;
 
-        let target = Target::with_ips(
-            "127.0.0.1".to_string(),
-            port,
-            vec!["127.0.0.1".parse().expect("valid IP")],
-        )
-        .expect("test assertion should succeed");
+        let target = loopback_target(port);
         let tester = StarttlsInjectionTester::new(target);
 
         let vulnerable = tester
@@ -442,12 +421,7 @@ mod tests {
         )
         .await;
 
-        let target = Target::with_ips(
-            "127.0.0.1".to_string(),
-            port,
-            vec!["127.0.0.1".parse().expect("valid IP")],
-        )
-        .expect("test assertion should succeed");
+        let target = loopback_target(port);
         let tester = StarttlsInjectionTester::new(target);
 
         let vulnerable = tester
@@ -468,12 +442,7 @@ mod tests {
         )
         .await;
 
-        let target = Target::with_ips(
-            "127.0.0.1".to_string(),
-            port,
-            vec!["127.0.0.1".parse().expect("valid IP")],
-        )
-        .expect("test assertion should succeed");
+        let target = loopback_target(port);
         let tester = StarttlsInjectionTester::new(target);
 
         let vulnerable = tester
@@ -494,12 +463,7 @@ mod tests {
         )
         .await;
 
-        let target = Target::with_ips(
-            "127.0.0.1".to_string(),
-            port,
-            vec!["127.0.0.1".parse().expect("valid IP")],
-        )
-        .expect("test assertion should succeed");
+        let target = loopback_target(port);
         let tester = StarttlsInjectionTester::new(target);
 
         let vulnerable = tester
@@ -520,12 +484,7 @@ mod tests {
         )
         .await;
 
-        let target = Target::with_ips(
-            "127.0.0.1".to_string(),
-            port,
-            vec!["127.0.0.1".parse().expect("valid IP")],
-        )
-        .expect("test assertion should succeed");
+        let target = loopback_target(port);
         let tester = StarttlsInjectionTester::new(target);
 
         let vulnerable = tester
@@ -546,12 +505,7 @@ mod tests {
         )
         .await;
 
-        let target = Target::with_ips(
-            "127.0.0.1".to_string(),
-            port,
-            vec!["127.0.0.1".parse().expect("valid IP")],
-        )
-        .expect("test assertion should succeed");
+        let target = loopback_target(port);
         let tester = StarttlsInjectionTester::new(target);
 
         let vulnerable = tester
@@ -590,12 +544,7 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         drop(listener);
 
-        let target = Target::with_ips(
-            "127.0.0.1".to_string(),
-            port,
-            vec!["127.0.0.1".parse().expect("valid IP")],
-        )
-        .expect("test assertion should succeed");
+        let target = loopback_target(port);
         let tester = StarttlsInjectionTester::new(target);
 
         let status = tester.test_smtp_injection_status().await.unwrap();
@@ -608,12 +557,7 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         drop(listener);
 
-        let target = Target::with_ips(
-            "127.0.0.1".to_string(),
-            port,
-            vec!["127.0.0.1".parse().expect("valid IP")],
-        )
-        .expect("test assertion should succeed");
+        let target = loopback_target(port);
         let tester = StarttlsInjectionTester::new(target);
 
         let status = tester.test_imap_injection_status().await.unwrap();
@@ -626,12 +570,7 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         drop(listener);
 
-        let target = Target::with_ips(
-            "127.0.0.1".to_string(),
-            port,
-            vec!["127.0.0.1".parse().expect("valid IP")],
-        )
-        .expect("test assertion should succeed");
+        let target = loopback_target(port);
         let tester = StarttlsInjectionTester::new(target);
 
         let status = tester.test_pop3_injection_status().await.unwrap();
