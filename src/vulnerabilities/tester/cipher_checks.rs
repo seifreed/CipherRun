@@ -29,6 +29,10 @@ fn no_cipher_evidence_result(
     }
 }
 
+fn severity_if_vulnerable(vulnerable: bool, severity: Severity) -> Severity {
+    if vulnerable { severity } else { Severity::Info }
+}
+
 /// Protocol versions probed for weak stream/NULL cipher support. These suites
 /// are offered from SSL 3.0 through TLS 1.2 (TLS 1.3 dropped them entirely).
 pub(crate) const WEAK_CIPHER_PROBE_PROTOCOLS: &[Protocol] =
@@ -86,11 +90,7 @@ pub(crate) fn rc4_probe_verdict(
         },
         cve: Some("CVE-2013-2566, CVE-2015-2808".to_string()),
         cwe: Some("CWE-326".to_string()),
-        severity: if vulnerable {
-            Severity::Medium
-        } else {
-            Severity::Info
-        },
+        severity: severity_if_vulnerable(vulnerable, Severity::Medium),
     }
 }
 
@@ -118,11 +118,7 @@ pub(crate) fn null_probe_verdict(
         },
         cve: None,
         cwe: Some("CWE-327".to_string()),
-        severity: if vulnerable {
-            Severity::Critical
-        } else {
-            Severity::Info
-        },
+        severity: severity_if_vulnerable(vulnerable, Severity::Critical),
     }
 }
 
@@ -167,11 +163,7 @@ pub(crate) fn evaluate_export<'a>(
         },
         cve: Some("CVE-2015-0204".to_string()),
         cwe: Some("CWE-327".to_string()),
-        severity: if vulnerable {
-            Severity::High
-        } else {
-            Severity::Info
-        },
+        severity: severity_if_vulnerable(vulnerable, Severity::High),
     }
 }
 
@@ -222,10 +214,6 @@ pub(crate) fn evaluate_beast(
         },
         cve: Some("CVE-2011-3389".to_string()),
         cwe: Some("CWE-326".to_string()),
-        severity: if vulnerable {
-            Severity::Medium
-        } else {
-            Severity::Info
-        },
+        severity: severity_if_vulnerable(vulnerable, Severity::Medium),
     }
 }
