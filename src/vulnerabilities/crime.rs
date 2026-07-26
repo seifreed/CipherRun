@@ -6,13 +6,12 @@
 
 use crate::Result;
 use crate::constants::{BUFFER_SIZE_MAX_WITH_OVERHEAD, TLS_HANDSHAKE_TIMEOUT};
-use crate::protocols::Protocol;
-use crate::protocols::handshake::ClientHelloBuilder;
 use crate::utils::network::Target;
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 use tokio::time::timeout;
 
+mod client_hello;
 mod outcome;
 mod read_io;
 mod server_hello;
@@ -158,7 +157,7 @@ impl<'a> CrimeTester<'a> {
         };
 
         // Send ClientHello with compression method DEFLATE (0x01)
-        let client_hello = self.build_client_hello_with_compression()?;
+        let client_hello = client_hello::with_compression()?;
         stream.write_all(&client_hello).await?;
 
         // Read the full ServerHello record so a fragmented response is not
@@ -178,13 +177,6 @@ impl<'a> CrimeTester<'a> {
             }
             _ => Ok(CompressionProbeStatus::Inconclusive),
         }
-    }
-
-    /// Build ClientHello offering DEFLATE compression
-    fn build_client_hello_with_compression(&self) -> Result<Vec<u8>> {
-        let mut builder = ClientHelloBuilder::new(Protocol::TLS12);
-        builder.for_rsa_key_exchange().with_compression(true);
-        builder.build()
     }
 
     /// Test if SPDY compression is enabled
@@ -216,7 +208,7 @@ impl<'a> CrimeTester<'a> {
         };
 
         // Send ClientHello with NPN extension advertising SPDY support
-        let client_hello = self.build_client_hello_with_npn()?;
+        let client_hello = client_hello::with_npn()?;
         stream.write_all(&client_hello).await?;
 
         // Read the full ServerHello record so a fragmented response is not
@@ -236,16 +228,6 @@ impl<'a> CrimeTester<'a> {
             }
             _ => Ok(CompressionProbeStatus::Inconclusive),
         }
-    }
-
-    /// Build ClientHello with NPN extension for SPDY using ClientHelloBuilder
-    fn build_client_hello_with_npn(&self) -> Result<Vec<u8>> {
-        let mut builder = ClientHelloBuilder::new(Protocol::TLS12);
-        builder
-            .for_rsa_key_exchange()
-            .with_compression(true) // Enable DEFLATE for CRIME testing
-            .add_npn(); // Add NPN extension for SPDY
-        builder.build()
     }
 }
 
@@ -365,17 +347,7 @@ mod tests {
 
     #[test]
     fn test_client_hello_with_npn() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().unwrap()],
-        )
-        .unwrap();
-
-        let tester = CrimeTester::new(&target);
-        let hello = tester
-            .build_client_hello_with_npn()
-            .expect("ClientHello should build");
+        let hello = client_hello::with_npn().expect("ClientHello should build");
 
         assert!(hello.len() > 50);
         assert_eq!(hello.first(), Some(&0x16)); // Handshake
@@ -414,17 +386,7 @@ mod tests {
 
     #[test]
     fn test_client_hello_with_npn_contains_extension_id() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().unwrap()],
-        )
-        .unwrap();
-
-        let tester = CrimeTester::new(&target);
-        let hello = tester
-            .build_client_hello_with_npn()
-            .expect("ClientHello should build");
+        let hello = client_hello::with_npn().expect("ClientHello should build");
 
         // NPN extension type is 0x3374
         assert!(hello.windows(2).any(|w| w == [0x33, 0x74]));
@@ -668,17 +630,7 @@ mod tests {
 
     #[test]
     fn test_client_hello_with_compression() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().unwrap()],
-        )
-        .unwrap();
-
-        let tester = CrimeTester::new(&target);
-        let hello = tester
-            .build_client_hello_with_compression()
-            .expect("ClientHello should build");
+        let hello = client_hello::with_compression().expect("ClientHello should build");
 
         assert!(hello.len() > 50);
         assert_eq!(hello.first(), Some(&0x16)); // Handshake
