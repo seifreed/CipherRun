@@ -229,6 +229,17 @@ mod tests {
         .expect("test assertion should succeed")
     }
 
+    fn loopback_tester(port: u16) -> StarttlsInjectionTester {
+        StarttlsInjectionTester::new(loopback_target(port))
+    }
+
+    async fn inactive_loopback_port() -> u16 {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        port
+    }
+
     #[tokio::test]
     async fn test_smtp_injection_vulnerable() {
         let port = start_scripted_server(
@@ -240,8 +251,7 @@ mod tests {
         )
         .await;
 
-        let target = loopback_target(port);
-        let tester = StarttlsInjectionTester::new(target);
+        let tester = loopback_tester(port);
 
         let vulnerable = tester
             .test_smtp_injection()
@@ -318,8 +328,7 @@ mod tests {
                 .unwrap();
         });
 
-        let target = loopback_target(port);
-        let tester = StarttlsInjectionTester::new(target);
+        let tester = loopback_tester(port);
         let status = tester.test_imap_injection_status().await.unwrap();
         server.await.unwrap();
 
@@ -345,8 +354,7 @@ mod tests {
             socket.write_all(b"+OK STLS\r\n+OK USER\r\n").await.unwrap();
         });
 
-        let target = loopback_target(port);
-        let tester = StarttlsInjectionTester::new(target);
+        let tester = loopback_tester(port);
         let status = tester.test_pop3_injection_status().await.unwrap();
         server.await.unwrap();
 
@@ -361,8 +369,7 @@ mod tests {
         )
         .await;
 
-        let target = loopback_target(port);
-        let tester = StarttlsInjectionTester::new(target);
+        let tester = loopback_tester(port);
 
         let vulnerable = tester
             .test_smtp_injection()
@@ -382,8 +389,7 @@ mod tests {
         )
         .await;
 
-        let target = loopback_target(port);
-        let tester = StarttlsInjectionTester::new(target);
+        let tester = loopback_tester(port);
 
         let vulnerable = tester
             .test_imap_injection()
@@ -403,8 +409,7 @@ mod tests {
         )
         .await;
 
-        let target = loopback_target(port);
-        let tester = StarttlsInjectionTester::new(target);
+        let tester = loopback_tester(port);
 
         let vulnerable = tester
             .test_imap_injection()
@@ -421,8 +426,7 @@ mod tests {
         )
         .await;
 
-        let target = loopback_target(port);
-        let tester = StarttlsInjectionTester::new(target);
+        let tester = loopback_tester(port);
 
         let vulnerable = tester
             .test_pop3_injection()
@@ -442,8 +446,7 @@ mod tests {
         )
         .await;
 
-        let target = loopback_target(port);
-        let tester = StarttlsInjectionTester::new(target);
+        let tester = loopback_tester(port);
 
         let vulnerable = tester
             .test_pop3_injection()
@@ -463,8 +466,7 @@ mod tests {
         )
         .await;
 
-        let target = loopback_target(port);
-        let tester = StarttlsInjectionTester::new(target);
+        let tester = loopback_tester(port);
 
         let vulnerable = tester
             .test_pop3_injection()
@@ -484,8 +486,7 @@ mod tests {
         )
         .await;
 
-        let target = loopback_target(port);
-        let tester = StarttlsInjectionTester::new(target);
+        let tester = loopback_tester(port);
 
         let vulnerable = tester
             .test_pop3_injection()
@@ -505,8 +506,7 @@ mod tests {
         )
         .await;
 
-        let target = loopback_target(port);
-        let tester = StarttlsInjectionTester::new(target);
+        let tester = loopback_tester(port);
 
         let vulnerable = tester
             .test_pop3_injection()
@@ -517,8 +517,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_non_starttls_port_details() {
-        let target = loopback_target(9999);
-        let tester = StarttlsInjectionTester::new(target);
+        let tester = loopback_tester(9999);
 
         let result = tester
             .test_all()
@@ -535,12 +534,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_smtp_injection_inactive_target_is_inconclusive() {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = listener.local_addr().unwrap().port();
-        drop(listener);
-
-        let target = loopback_target(port);
-        let tester = StarttlsInjectionTester::new(target);
+        let tester = loopback_tester(inactive_loopback_port().await);
 
         let status = tester.test_smtp_injection_status().await.unwrap();
         assert_eq!(status, StarttlsInjectionStatus::Inconclusive);
@@ -548,12 +542,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_imap_injection_inactive_target_is_inconclusive() {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = listener.local_addr().unwrap().port();
-        drop(listener);
-
-        let target = loopback_target(port);
-        let tester = StarttlsInjectionTester::new(target);
+        let tester = loopback_tester(inactive_loopback_port().await);
 
         let status = tester.test_imap_injection_status().await.unwrap();
         assert_eq!(status, StarttlsInjectionStatus::Inconclusive);
@@ -561,12 +550,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_pop3_injection_inactive_target_is_inconclusive() {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = listener.local_addr().unwrap().port();
-        drop(listener);
-
-        let target = loopback_target(port);
-        let tester = StarttlsInjectionTester::new(target);
+        let tester = loopback_tester(inactive_loopback_port().await);
 
         let status = tester.test_pop3_injection_status().await.unwrap();
         assert_eq!(status, StarttlsInjectionStatus::Inconclusive);
