@@ -187,6 +187,10 @@ mod tests {
         }
     }
 
+    fn expected_domains(entries: &[&str]) -> Vec<String> {
+        entries.iter().map(|entry| entry.to_string()).collect()
+    }
+
     #[test]
     fn test_normalize_domain() {
         for (case, input, expected) in [
@@ -243,10 +247,7 @@ mod tests {
 
         let mut domains = DnsOnlyMode::extract_domains(&cert);
         domains.sort();
-        assert_eq!(
-            domains,
-            vec!["example.com".to_string(), "www.example.com".to_string()]
-        );
+        assert_eq!(domains, expected_domains(&["example.com", "www.example.com"]));
     }
 
     #[test]
@@ -265,11 +266,7 @@ mod tests {
 
         assert_eq!(
             domains,
-            vec![
-                "api.example.com".to_string(),
-                "example.com".to_string(),
-                "www.example.com".to_string(),
-            ]
+            expected_domains(&["api.example.com", "example.com", "www.example.com"])
         );
     }
 
@@ -282,7 +279,7 @@ mod tests {
 
         let domains = DnsOnlyMode::extract_domains(&cert);
 
-        assert_eq!(domains, vec!["example.com".to_string()]);
+        assert_eq!(domains, expected_domains(&["example.com"]));
     }
 
     #[test]
@@ -294,7 +291,7 @@ mod tests {
 
         let domains = DnsOnlyMode::extract_domains(&cert);
 
-        assert_eq!(domains, vec!["example.com".to_string()]);
+        assert_eq!(domains, expected_domains(&["example.com"]));
     }
 
     #[test]
@@ -311,7 +308,7 @@ mod tests {
 
         let domains = DnsOnlyMode::extract_domains(&cert);
 
-        assert_eq!(domains, vec!["good.example.com".to_string()]);
+        assert_eq!(domains, expected_domains(&["good.example.com"]));
     }
 
     #[test]
@@ -330,7 +327,7 @@ mod tests {
         let cert = cert("", &["DNS:EXAMPLE.COM"]);
 
         let domains = DnsOnlyMode::extract_domains(&cert);
-        assert_eq!(domains, vec!["example.com".to_string()]);
+        assert_eq!(domains, expected_domains(&["example.com"]));
     }
 
     #[test]
@@ -343,11 +340,7 @@ mod tests {
         let domains = DnsOnlyMode::extract_domains(&cert);
         assert_eq!(
             domains,
-            vec![
-                "a.example.com".to_string(),
-                "b.example.com".to_string(),
-                "c.example.com".to_string(),
-            ]
+            expected_domains(&["a.example.com", "b.example.com", "c.example.com"])
         );
     }
 
