@@ -374,6 +374,10 @@ mod tests {
         assert!(PolicyLoader::load_from_string(yaml).is_err());
     }
 
+    fn write_policy(path: &std::path::Path, yaml: &str) {
+        std::fs::write(path, yaml).expect("test assertion should succeed");
+    }
+
     #[test]
     fn test_parse_basic_policy() {
         let yaml = r#"
@@ -729,7 +733,7 @@ policy:
         let base_path = temp_dir.path().join("base.yaml");
         let child_path = temp_dir.path().join("child.yaml");
 
-        std::fs::write(
+        write_policy(
             &base_path,
             r#"
 policy:
@@ -739,9 +743,8 @@ policy:
     required: ["TLSv1.2"]
     action: FAIL
 "#,
-        )
-        .expect("test assertion should succeed");
-        std::fs::write(
+        );
+        write_policy(
             &child_path,
             r#"
 policy:
@@ -749,8 +752,7 @@ policy:
   version: "1.0"
   extends: "base.yaml"
 "#,
-        )
-        .expect("test assertion should succeed");
+        );
 
         let source = crate::policy::source::FilesystemPolicySource;
         let policy = PolicyLoader::from_source(temp_dir.path(), &source)
@@ -769,16 +771,15 @@ policy:
         let outside_path = temp_dir.path().join("outside.yaml");
         let child_path = policy_dir.join("child.yaml");
 
-        std::fs::write(
+        write_policy(
             &outside_path,
             r#"
 policy:
   name: "Outside Policy"
   version: "1.0"
 "#,
-        )
-        .expect("test assertion should succeed");
-        std::fs::write(
+        );
+        write_policy(
             &child_path,
             r#"
 policy:
@@ -786,8 +787,7 @@ policy:
   version: "1.0"
   extends: "../outside.yaml"
 "#,
-        )
-        .expect("test assertion should succeed");
+        );
 
         let source = crate::policy::source::FilesystemPolicySource;
         let err = PolicyLoader::from_source(&policy_dir, &source)
@@ -803,7 +803,7 @@ policy:
         let policy_a = temp_dir.path().join("a.yaml");
         let policy_b = temp_dir.path().join("b.yaml");
 
-        std::fs::write(
+        write_policy(
             &policy_a,
             r#"
 policy:
@@ -811,9 +811,8 @@ policy:
   version: "1.0"
   extends: "b.yaml"
 "#,
-        )
-        .expect("test assertion should succeed");
-        std::fs::write(
+        );
+        write_policy(
             &policy_b,
             r#"
 policy:
@@ -821,8 +820,7 @@ policy:
   version: "1.0"
   extends: "a.yaml"
 "#,
-        )
-        .expect("test assertion should succeed");
+        );
 
         let source = crate::policy::source::FilesystemPolicySource;
         let err = PolicyLoader::from_source(temp_dir.path(), &source)
@@ -842,9 +840,9 @@ policy:
             } else {
                 String::new()
             };
-            std::fs::write(
-                temp_dir.path().join(format!("policy-{i}.yaml")),
-                format!(
+            write_policy(
+                &temp_dir.path().join(format!("policy-{i}.yaml")),
+                &format!(
                     r#"
 policy:
   name: "Policy {i}"
@@ -852,8 +850,7 @@ policy:
 {extends}
 "#
                 ),
-            )
-            .expect("test assertion should succeed");
+            );
         }
 
         let source = crate::policy::source::FilesystemPolicySource;
