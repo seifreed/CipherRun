@@ -1,8 +1,8 @@
 // JSON Output Module
 
-use crate::scanner::multi_ip::MultiIpScanReport;
-use crate::scanner::ScanResults;
 use crate::Result;
+use crate::scanner::ScanResults;
+use crate::scanner::multi_ip::MultiIpScanReport;
 
 fn serialize_json<T: serde::Serialize + ?Sized>(value: &T, pretty: bool) -> Result<String> {
     if pretty {
@@ -119,22 +119,11 @@ mod tests {
 
         let json = generate_json(&results, false).expect("test assertion should succeed");
         assert!(json.contains("example.com"));
+        assert!(!json.contains('\n'));
 
         let pretty_json = generate_json(&results, true).expect("test assertion should succeed");
         assert!(pretty_json.contains("example.com"));
         assert!(pretty_json.contains("\n")); // Check for pretty printing
-    }
-
-    #[test]
-    fn test_json_generation_compact_has_no_newlines() {
-        let results = ScanResults {
-            target: "example.com:443".to_string(),
-            scan_time_ms: 1000,
-            ..Default::default()
-        };
-
-        let json = generate_json(&results, false).expect("test assertion should succeed");
-        assert!(!json.contains('\n'));
     }
 
     #[test]
