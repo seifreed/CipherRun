@@ -36,6 +36,33 @@ use preference::CipherPreferenceAnalyzer;
 
 type CipherBatchResult = Vec<(CipherSuite, Result<(bool, Option<u64>)>)>;
 
+#[cfg(test)]
+mod test_support {
+    use super::CipherSuite;
+
+    pub(super) fn make_cipher(
+        hexcode: &str,
+        protocol: &str,
+        encryption: &str,
+        bits: u16,
+        export: bool,
+        key_exchange: &str,
+    ) -> CipherSuite {
+        CipherSuite {
+            hexcode: hexcode.to_string(),
+            openssl_name: format!("TEST-{}", hexcode),
+            iana_name: format!("TLS_TEST_{}", hexcode),
+            protocol: protocol.to_string(),
+            key_exchange: key_exchange.to_string(),
+            authentication: "RSA".to_string(),
+            encryption: encryption.to_string(),
+            mac: "SHA256".to_string(),
+            bits,
+            export,
+        }
+    }
+}
+
 #[async_trait::async_trait]
 pub trait CipherTestable: Send + Sync {
     async fn test_all_protocols(&self) -> Result<HashMap<Protocol, ProtocolCipherSummary>>;
@@ -176,6 +203,7 @@ impl CipherTestable for CipherTester {
 
 #[cfg(test)]
 mod tests {
+    use super::test_support::make_cipher;
     use super::*;
     use std::net::{IpAddr, SocketAddr};
     use std::time::Duration;
@@ -265,28 +293,6 @@ mod tests {
         addr
     }
 
-    fn make_cipher(
-        protocol: &str,
-        hexcode: &str,
-        key_exchange: &str,
-        encryption: &str,
-        bits: u16,
-        export: bool,
-    ) -> CipherSuite {
-        CipherSuite {
-            hexcode: hexcode.to_string(),
-            openssl_name: format!("OPENSSL_{}", hexcode),
-            iana_name: format!("IANA_{}", hexcode),
-            protocol: protocol.to_string(),
-            key_exchange: key_exchange.to_string(),
-            authentication: "RSA".to_string(),
-            encryption: encryption.to_string(),
-            mac: "SHA256".to_string(),
-            bits,
-            export,
-        }
-    }
-
     #[test]
     fn test_cipher_preference_analyzer_client_preference() {
         let analyzer = CipherPreferenceAnalyzer::new(
@@ -337,8 +343,8 @@ mod tests {
     #[test]
     fn test_cipher_preference_build_order() {
         let ciphers = vec![
-            make_cipher("TLSv1.2", "0001", "RSA", "AES", 128, false),
-            make_cipher("TLSv1.2", "0002", "RSA", "AES", 128, false),
+            make_cipher("0001", "TLSv1.2", "AES", 128, false, "RSA"),
+            make_cipher("0002", "TLSv1.2", "AES", 128, false, "RSA"),
         ];
         let analyzer = CipherPreferenceAnalyzer::new(
             Some(0x0002),
@@ -357,9 +363,9 @@ mod tests {
     #[test]
     fn test_cipher_compatibility_and_counts() {
         let tester = CipherTester::new(dummy_target());
-        let tls13_cipher = make_cipher("TLSv1.3", "1301", "ECDHE", "AES_GCM", 128, false);
-        let tls12_cipher = make_cipher("TLSv1.2", "003c", "RSA", "AES", 128, false);
-        let sslv2_cipher = make_cipher("SSLv2", "0000", "RSA", "NULL", 0, false);
+        let tls13_cipher = make_cipher("1301", "TLSv1.3", "AES_GCM", 128, false, "ECDHE");
+        let tls12_cipher = make_cipher("003c", "TLSv1.2", "AES", 128, false, "RSA");
+        let sslv2_cipher = make_cipher("0000", "SSLv2", "NULL", 0, false, "RSA");
 
         assert!(tester.is_cipher_compatible_with_protocol(&tls13_cipher, Protocol::TLS13));
         assert!(!tester.is_cipher_compatible_with_protocol(&tls12_cipher, Protocol::TLS13));
@@ -388,7 +394,7 @@ mod tests {
     #[test]
     fn test_cipher_counts_export_ciphers() {
         let tester = CipherTester::new(dummy_target());
-        let export_cipher = make_cipher("TLSv1.2", "0003", "RSA", "AES", 40, true);
+        let export_cipher = make_cipher("0003", "TLSv1.2", "AES", 40, true, "RSA");
         let counts = tester.calculate_cipher_counts(&[export_cipher]);
         assert_eq!(counts.export_ciphers, 1);
     }
@@ -553,9 +559,9 @@ mod tests {
             .with_read_timeout(Duration::from_millis(200));
 
         let ciphers = vec![
-            make_cipher("TLSv1.2", "c030", "RSA", "AES", 256, false),
-            make_cipher("TLSv1.2", "c02f", "RSA", "AES", 128, false),
-            make_cipher("TLSv1.2", "c02b", "RSA", "AES", 128, false),
+            make_cipher("c030", "TLSv1.2", "AES", 256, false, "RSA"),
+            make_cipher("c02f", "TLSv1.2", "AES", 128, false, "RSA"),
+            make_cipher("c02b", "TLSv1.2", "AES", 128, false, "RSA"),
         ];
 
         let preference = tester
@@ -593,7 +599,7 @@ mod tests {
     #[tokio::test]
     async fn test_determine_server_preference_rejects_invalid_hexcode() {
         let tester = CipherTester::new(dummy_target());
-        let ciphers = vec![make_cipher("TLSv1.2", "not-hex", "RSA", "AES", 128, false)];
+        let ciphers = vec![make_cipher("not-hex", "TLSv1.2", "AES", 128, false, "RSA")];
 
         let error = tester
             .determine_server_preference(Protocol::TLS12, &ciphers)
@@ -606,7 +612,7 @@ mod tests {
     #[tokio::test]
     async fn test_cipher_handshake_rejects_invalid_hexcode() {
         let tester = CipherTester::new(dummy_target());
-        let cipher = make_cipher("TLSv1.2", "not-hex", "RSA", "AES", 128, false);
+        let cipher = make_cipher("not-hex", "TLSv1.2", "AES", 128, false, "RSA");
 
         let error = tester
             .test_cipher_handshake_only(&cipher, Protocol::TLS12, None)
@@ -894,7 +900,7 @@ mod tests {
     #[tokio::test]
     async fn test_cipher_handshake_only_invalid_hexcode() {
         let tester = CipherTester::new(dummy_target());
-        let mut cipher = make_cipher("TLSv1.2", "0001", "RSA", "AES", 128, false);
+        let mut cipher = make_cipher("0001", "TLSv1.2", "AES", 128, false, "RSA");
         cipher.hexcode = "ZZZZ".to_string();
 
         let error = tester

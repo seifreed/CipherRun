@@ -427,6 +427,7 @@ fn average_handshake_time(handshake_times: &[u64]) -> Option<u64> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::test_support::make_cipher;
     use super::*;
     use crate::utils::network::Target;
     use std::net::{IpAddr, Ipv4Addr};
@@ -438,28 +439,6 @@ mod tests {
             vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
         )
         .expect("test target should be valid")
-    }
-
-    fn make_cipher(
-        hexcode: &str,
-        protocol: &str,
-        encryption: &str,
-        bits: u16,
-        export: bool,
-        key_exchange: &str,
-    ) -> CipherSuite {
-        CipherSuite {
-            hexcode: hexcode.to_string(),
-            openssl_name: format!("TEST-{}", hexcode),
-            iana_name: format!("TLS_TEST_{}", hexcode),
-            protocol: protocol.to_string(),
-            key_exchange: key_exchange.to_string(),
-            authentication: "RSA".to_string(),
-            encryption: encryption.to_string(),
-            mac: "SHA256".to_string(),
-            bits,
-            export,
-        }
     }
 
     fn tls12_cipher(hexcode: &str, encryption: &str, bits: u16) -> CipherSuite {
