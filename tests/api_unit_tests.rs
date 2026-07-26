@@ -126,104 +126,70 @@ fn test_permission_deserialization() {
 // ============================================================================
 
 #[test]
-fn test_api_error_status_codes() {
+fn test_api_error_metadata() {
     use axum::http::StatusCode;
     use cipherrun::api::models::error::ApiError;
 
-    assert_eq!(
-        ApiError::BadRequest("test".to_string()).status_code(),
-        StatusCode::BAD_REQUEST
-    );
-    assert_eq!(
-        ApiError::Unauthorized("test".to_string()).status_code(),
-        StatusCode::UNAUTHORIZED
-    );
-    assert_eq!(
-        ApiError::Forbidden("test".to_string()).status_code(),
-        StatusCode::FORBIDDEN
-    );
-    assert_eq!(
-        ApiError::NotFound("test".to_string()).status_code(),
-        StatusCode::NOT_FOUND
-    );
-    assert_eq!(
-        ApiError::Conflict("test".to_string()).status_code(),
-        StatusCode::CONFLICT
-    );
-    assert_eq!(
-        ApiError::RateLimited("test".to_string()).status_code(),
-        StatusCode::TOO_MANY_REQUESTS
-    );
-    assert_eq!(
-        ApiError::Internal("test".to_string()).status_code(),
-        StatusCode::INTERNAL_SERVER_ERROR
-    );
-    assert_eq!(
-        ApiError::ServiceUnavailable("test".to_string()).status_code(),
-        StatusCode::SERVICE_UNAVAILABLE
-    );
-    assert_eq!(
-        ApiError::Scanner("test".to_string()).status_code(),
-        StatusCode::INTERNAL_SERVER_ERROR
-    );
-    assert_eq!(
-        ApiError::Validation("test".to_string()).status_code(),
-        StatusCode::BAD_REQUEST
-    );
-    assert_eq!(
-        ApiError::Timeout("test".to_string()).status_code(),
-        StatusCode::REQUEST_TIMEOUT
-    );
-}
-
-#[test]
-fn test_api_error_codes() {
-    use cipherrun::api::models::error::ApiError;
-
-    assert_eq!(
-        ApiError::BadRequest("test".to_string()).error_code(),
-        "BAD_REQUEST"
-    );
-    assert_eq!(
-        ApiError::Unauthorized("test".to_string()).error_code(),
-        "UNAUTHORIZED"
-    );
-    assert_eq!(
-        ApiError::Forbidden("test".to_string()).error_code(),
-        "FORBIDDEN"
-    );
-    assert_eq!(
-        ApiError::NotFound("test".to_string()).error_code(),
-        "NOT_FOUND"
-    );
-    assert_eq!(
-        ApiError::Conflict("test".to_string()).error_code(),
-        "CONFLICT"
-    );
-    assert_eq!(
-        ApiError::RateLimited("test".to_string()).error_code(),
-        "RATE_LIMITED"
-    );
-    assert_eq!(
-        ApiError::Internal("test".to_string()).error_code(),
-        "INTERNAL_ERROR"
-    );
-    assert_eq!(
-        ApiError::ServiceUnavailable("test".to_string()).error_code(),
-        "SERVICE_UNAVAILABLE"
-    );
-    assert_eq!(
-        ApiError::Scanner("test".to_string()).error_code(),
-        "SCANNER_ERROR"
-    );
-    assert_eq!(
-        ApiError::Validation("test".to_string()).error_code(),
-        "VALIDATION_ERROR"
-    );
-    assert_eq!(
-        ApiError::Timeout("test".to_string()).error_code(),
-        "TIMEOUT"
-    );
+    for (error, status, code) in [
+        (
+            ApiError::BadRequest("test".to_string()),
+            StatusCode::BAD_REQUEST,
+            "BAD_REQUEST",
+        ),
+        (
+            ApiError::Unauthorized("test".to_string()),
+            StatusCode::UNAUTHORIZED,
+            "UNAUTHORIZED",
+        ),
+        (
+            ApiError::Forbidden("test".to_string()),
+            StatusCode::FORBIDDEN,
+            "FORBIDDEN",
+        ),
+        (
+            ApiError::NotFound("test".to_string()),
+            StatusCode::NOT_FOUND,
+            "NOT_FOUND",
+        ),
+        (
+            ApiError::Conflict("test".to_string()),
+            StatusCode::CONFLICT,
+            "CONFLICT",
+        ),
+        (
+            ApiError::RateLimited("test".to_string()),
+            StatusCode::TOO_MANY_REQUESTS,
+            "RATE_LIMITED",
+        ),
+        (
+            ApiError::Internal("test".to_string()),
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL_ERROR",
+        ),
+        (
+            ApiError::ServiceUnavailable("test".to_string()),
+            StatusCode::SERVICE_UNAVAILABLE,
+            "SERVICE_UNAVAILABLE",
+        ),
+        (
+            ApiError::Scanner("test".to_string()),
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "SCANNER_ERROR",
+        ),
+        (
+            ApiError::Validation("test".to_string()),
+            StatusCode::BAD_REQUEST,
+            "VALIDATION_ERROR",
+        ),
+        (
+            ApiError::Timeout("test".to_string()),
+            StatusCode::REQUEST_TIMEOUT,
+            "TIMEOUT",
+        ),
+    ] {
+        assert_eq!(error.status_code(), status);
+        assert_eq!(error.error_code(), code);
+    }
 }
 
 #[test]
