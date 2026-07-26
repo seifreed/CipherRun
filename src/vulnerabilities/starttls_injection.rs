@@ -3,16 +3,14 @@
 
 use crate::Result;
 use crate::constants::TLS_HANDSHAKE_TIMEOUT;
-use crate::starttls::response;
 use crate::utils::network::Target;
-use tokio::io::{AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
-use tokio::time::{Duration, timeout};
 
 mod imap_probe;
 mod pop3_probe;
 mod response_analysis;
 mod result_analysis;
+mod smtp_probe;
 
 pub use result_analysis::StarttlsInjectionResult;
 use result_analysis::{StarttlsInjectionProtocol, StarttlsInjectionStatus};
@@ -61,83 +59,7 @@ impl StarttlsInjectionTester {
             return Ok(StarttlsInjectionStatus::Inconclusive);
         };
 
-        self.test_command_injection_smtp(stream).await
-    }
-
-    /// Test command injection in SMTP STARTTLS
-    async fn test_command_injection_smtp(
-        &self,
-        mut stream: TcpStream,
-    ) -> Result<StarttlsInjectionStatus> {
-        let mut reader = BufReader::new(&mut stream);
-
-        let (code, _greeting) = match timeout(
-            Duration::from_secs(2),
-            response::read_multiline_status(&mut reader, "SMTP", 100),
-        )
-        .await
-        {
-            Ok(Ok(result)) => result,
-            _ => return Ok(StarttlsInjectionStatus::Inconclusive),
-        };
-
-        if code != 220 {
-            return Ok(StarttlsInjectionStatus::NotVulnerable);
-        }
-
-        // Send EHLO
-        reader.get_mut().write_all(b"EHLO test.local\r\n").await?;
-        let _ = match timeout(
-            Duration::from_secs(2),
-            response::read_multiline_status(&mut reader, "SMTP", 100),
-        )
-        .await
-        {
-            Ok(Ok(result)) => result,
-            _ => return Ok(StarttlsInjectionStatus::Inconclusive),
-        };
-
-        // Send STARTTLS followed immediately by injected command
-        // A vulnerable server will execute the injected command before TLS upgrade
-        let injection_payload = b"STARTTLS\r\nMAIL FROM:<injection@test.com>\r\n";
-        reader.get_mut().write_all(injection_payload).await?;
-
-        // Read the full STARTTLS response burst, including a follow-up injected
-        // command reply that may arrive in a separate TCP packet.
-        let mut response = String::new();
-        for _ in 0..8 {
-            match timeout(
-                Duration::from_secs(2),
-                response::read_status_line(&mut reader, "SMTP"),
-            )
-            .await
-            {
-                Ok(Ok((_code, line))) => response.push_str(&line),
-                Ok(Err(_)) if response.is_empty() => {
-                    return Ok(StarttlsInjectionStatus::Inconclusive);
-                }
-                Ok(Err(_)) => break,
-                Err(_) => break,
-            }
-        }
-
-        // If server accepts the injected MAIL FROM before TLS, it's vulnerable.
-        // Expected: Only "220 Ready to start TLS" (no "250" at all)
-        // Vulnerable: "220 Ready..." followed by "250 OK" for the injected MAIL FROM
-        //
-        // We verify ORDER: "250" must appear AFTER "220" to confirm the server
-        // processed the injected command after acknowledging STARTTLS.
-        // IMPORTANT: We check that codes appear at the START of lines to avoid
-        // false positives from these strings appearing in hostnames, banners, or
-        // other parts of the response.
-        if let Some(pos_220) = response_analysis::find_code_at_line_start(&response, "220")
-            && let Some(pos_250) = response_analysis::find_code_at_line_start(&response, "250")
-            && pos_250 > pos_220
-        {
-            return Ok(StarttlsInjectionStatus::Vulnerable);
-        }
-
-        Ok(StarttlsInjectionStatus::NotVulnerable)
+        smtp_probe::test_command_injection(stream).await
     }
 
     /// Test IMAP STARTTLS injection
@@ -240,7 +162,8 @@ impl StarttlsInjectionTester {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::io::AsyncReadExt;
+    use std::time::Duration;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
     #[test]
