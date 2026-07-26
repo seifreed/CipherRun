@@ -418,6 +418,14 @@ mod tests {
         assert_eq!(stats.scans_last_7d(), 0);
     }
 
+    fn assert_state_config_rejected(config: ApiConfig, expected_message: &str) {
+        let err = match AppState::new(config) {
+            Ok(_) => panic!("invalid API config should fail"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains(expected_message));
+    }
+
     #[test]
     fn test_app_state_rejects_zero_rate_limit() {
         let config = ApiConfig {
@@ -425,12 +433,7 @@ mod tests {
             ..Default::default()
         };
 
-        let err = match AppState::new(config) {
-            Ok(_) => panic!("zero rate limit should fail"),
-            Err(err) => err,
-        };
-
-        assert!(err.to_string().contains("rate_limit_per_minute"));
+        assert_state_config_rejected(config, "rate_limit_per_minute");
     }
 
     #[test]
@@ -440,12 +443,7 @@ mod tests {
             ..Default::default()
         };
 
-        let err = match AppState::new(config) {
-            Ok(_) => panic!("zero API port should fail"),
-            Err(err) => err,
-        };
-
-        assert!(err.to_string().contains("port"));
+        assert_state_config_rejected(config, "port");
     }
 
     #[test]
@@ -455,12 +453,7 @@ mod tests {
             ..Default::default()
         };
 
-        let err = match AppState::new(config) {
-            Ok(_) => panic!("zero concurrency should fail"),
-            Err(err) => err,
-        };
-
-        assert!(err.to_string().contains("max_concurrent_scans"));
+        assert_state_config_rejected(config, "max_concurrent_scans");
     }
 
     #[test]
@@ -470,12 +463,7 @@ mod tests {
             ..Default::default()
         };
 
-        let err = match AppState::new(config) {
-            Ok(_) => panic!("zero queue capacity should fail"),
-            Err(err) => err,
-        };
-
-        assert!(err.to_string().contains("job_queue_capacity"));
+        assert_state_config_rejected(config, "job_queue_capacity");
     }
 
     #[test]
@@ -485,12 +473,7 @@ mod tests {
             ..Default::default()
         };
 
-        let err = match AppState::new(config) {
-            Ok(_) => panic!("zero websocket ping interval should fail"),
-            Err(err) => err,
-        };
-
-        assert!(err.to_string().contains("ws_ping_interval_seconds"));
+        assert_state_config_rejected(config, "ws_ping_interval_seconds");
     }
 
     #[test]
@@ -500,12 +483,7 @@ mod tests {
             ..Default::default()
         };
 
-        let err = match AppState::new(config) {
-            Ok(_) => panic!("zero request timeout should fail"),
-            Err(err) => err,
-        };
-
-        assert!(err.to_string().contains("request_timeout_seconds"));
+        assert_state_config_rejected(config, "request_timeout_seconds");
     }
 
     #[test]
@@ -515,12 +493,7 @@ mod tests {
             ..Default::default()
         };
 
-        let err = match AppState::new(config) {
-            Ok(_) => panic!("zero max body size should fail"),
-            Err(err) => err,
-        };
-
-        assert!(err.to_string().contains("max_body_size"));
+        assert_state_config_rejected(config, "max_body_size");
     }
 
     #[test]
@@ -528,12 +501,7 @@ mod tests {
         let mut config = ApiConfig::default();
         config.api_keys.clear();
 
-        let err = match AppState::new(config) {
-            Ok(_) => panic!("empty api key set should fail"),
-            Err(err) => err,
-        };
-
-        assert!(err.to_string().contains("api_keys"));
+        assert_state_config_rejected(config, "api_keys");
     }
 
     #[test]
@@ -544,11 +512,6 @@ mod tests {
             .api_keys
             .insert(String::new(), crate::api::config::Permission::Admin);
 
-        let err = match AppState::new(config) {
-            Ok(_) => panic!("empty api key should fail"),
-            Err(err) => err,
-        };
-
-        assert!(err.to_string().contains("empty keys"));
+        assert_state_config_rejected(config, "empty keys");
     }
 }
