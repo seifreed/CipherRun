@@ -1,4 +1,4 @@
-use super::read_u16_at;
+use super::parse::read_u16_at;
 use crate::constants::CONTENT_TYPE_HEARTBEAT;
 
 /// Validate that the response is a proper Heartbeat Response, not a TLS alert

@@ -12,18 +12,12 @@ use tokio::time::timeout;
 mod client_hello;
 mod heartbeat_probe;
 mod heartbeat_response;
+mod parse;
 mod read_io;
 mod result;
 mod server_hello;
 
 pub use result::HeartbleedResult;
-
-fn read_u16_at(data: &[u8], offset: usize) -> Option<u16> {
-    data.get(offset..offset.checked_add(2)?)?
-        .try_into()
-        .ok()
-        .map(u16::from_be_bytes)
-}
 
 #[cfg(test)]
 fn write_u16_at(data: &mut [u8], offset: usize, value: u16) {

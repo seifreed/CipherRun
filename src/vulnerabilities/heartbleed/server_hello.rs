@@ -1,6 +1,6 @@
 use crate::Result;
 
-use super::read_u16_at;
+use super::parse::read_u16_at;
 
 fn read_u24_at(data: &[u8], offset: usize) -> Option<usize> {
     let bytes = data.get(offset..offset.checked_add(3)?)?;
