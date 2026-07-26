@@ -54,6 +54,43 @@ mod tests {
     use crate::starttls::response;
     use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
     use tokio::net::TcpListener;
+    use tokio::task::JoinHandle;
+
+    async fn spawn_response_server(
+        response: &'static [u8],
+    ) -> (std::net::SocketAddr, JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test listener should bind to localhost");
+        let addr = listener
+            .local_addr()
+            .expect("test listener should have local addr");
+
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener
+                .accept()
+                .await
+                .expect("test server should accept connection");
+            stream
+                .write_all(response)
+                .await
+                .expect("test server should write response");
+        });
+
+        (addr, server)
+    }
+
+    async fn read_lmtp_status(response: &'static [u8]) -> Result<(u16, String)> {
+        let (addr, server) = spawn_response_server(response).await;
+        let mut client = TcpStream::connect(addr)
+            .await
+            .expect("test client should connect");
+        let mut reader = BufReader::new(&mut client);
+        let result = response::read_status_line(&mut reader, "LMTP").await;
+
+        server.await.expect("test server task should complete");
+        result
+    }
 
     #[test]
     fn test_lmtp_negotiator_creation() {
@@ -63,67 +100,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_lmtp_read_response_invalid() {
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("test listener should bind to localhost");
-        let addr = listener
-            .local_addr()
-            .expect("test listener should have local addr");
-
-        let server = tokio::spawn(async move {
-            let (mut stream, _) = listener
-                .accept()
-                .await
-                .expect("test server should accept connection");
-            stream
-                .write_all(b"\r\n")
-                .await
-                .expect("test server should write response");
-        });
-
-        let mut client = TcpStream::connect(addr)
-            .await
-            .expect("test client should connect");
-        let mut reader = BufReader::new(&mut client);
-        let err = response::read_status_line(&mut reader, "LMTP")
-            .await
-            .unwrap_err();
+        let err = read_lmtp_status(b"\r\n").await.unwrap_err();
         assert!(format!("{err}").contains("too short"));
-
-        server.await.expect("test server task should complete");
     }
 
     #[tokio::test]
     async fn test_lmtp_read_response_valid() {
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("test listener should bind to localhost");
-        let addr = listener
-            .local_addr()
-            .expect("test listener should have local addr");
-
-        let server = tokio::spawn(async move {
-            let (mut stream, _) = listener
-                .accept()
-                .await
-                .expect("test server should accept connection");
-            stream
-                .write_all(b"250 OK\r\n")
-                .await
-                .expect("test server should write response");
-        });
-
-        let mut client = TcpStream::connect(addr)
-            .await
-            .expect("test client should connect");
-        let mut reader = BufReader::new(&mut client);
-        let (code, line) = response::read_status_line(&mut reader, "LMTP")
+        let (code, line) = read_lmtp_status(b"250 OK\r\n")
             .await
             .expect("test assertion should succeed");
         assert_eq!(code, 250);
         assert!(line.contains("OK"));
-
-        server.await.expect("test server task should complete");
     }
 
     #[tokio::test]
