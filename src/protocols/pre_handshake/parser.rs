@@ -1,8 +1,8 @@
 use super::{HandshakeParseResult, PreHandshakeScanner};
-use crate::Result;
 use crate::certificates::parser::CertificateInfo;
 use crate::error::TlsError;
 use crate::utils::result_byte_parse as parse_bytes;
+use crate::Result;
 use tracing::trace;
 
 impl PreHandshakeScanner {
@@ -391,6 +391,15 @@ mod tests {
         builder.build().to_der().unwrap()
     }
 
+    fn assert_handshake_error(record: &[u8], expected: &str) {
+        let scanner = test_scanner();
+        let error = match scanner.parse_handshake_response(record) {
+            Ok(_) => panic!("handshake parse should fail"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains(expected));
+    }
+
     #[test]
     fn test_parse_certificate_rejects_malformed_san() {
         let scanner = test_scanner();
@@ -400,67 +409,34 @@ mod tests {
             .parse_certificate(&der)
             .expect_err("malformed SAN should fail");
 
-        assert!(
-            error
-                .to_string()
-                .contains("Failed to parse subject alternative name")
-        );
+        assert!(error
+            .to_string()
+            .contains("Failed to parse subject alternative name"));
     }
 
     #[test]
     fn test_parse_handshake_rejects_certificate_list_beyond_message() {
-        let scanner = test_scanner();
         let record = handshake_record(0x0b, &[0x00, 0x00, 0x01]);
 
-        let error = match scanner.parse_handshake_response(&record) {
-            Ok(_) => panic!("certificate list past handshake should fail"),
-            Err(error) => error,
-        };
-
-        assert!(
-            error
-                .to_string()
-                .contains("Certificate list length exceeds available data")
-        );
+        assert_handshake_error(&record, "Certificate list length exceeds available data");
     }
 
     #[test]
     fn test_parse_handshake_rejects_truncated_certificate_entry() {
-        let scanner = test_scanner();
         let record = handshake_record(0x0b, &[0x00, 0x00, 0x05, 0x00, 0x00, 0x04, 0x00, 0x00]);
 
-        let error = match scanner.parse_handshake_response(&record) {
-            Ok(_) => panic!("truncated certificate entry should fail"),
-            Err(error) => error,
-        };
-
-        assert!(
-            error
-                .to_string()
-                .contains("Certificate length exceeds list")
-        );
+        assert_handshake_error(&record, "Certificate length exceeds list");
     }
 
     #[test]
     fn test_parse_handshake_rejects_certificate_trailing_bytes() {
-        let scanner = test_scanner();
         let record = handshake_record(0x0b, &[0x00, 0x00, 0x00, 0xff]);
 
-        let error = match scanner.parse_handshake_response(&record) {
-            Ok(_) => panic!("certificate trailing bytes should fail"),
-            Err(error) => error,
-        };
-
-        assert!(
-            error
-                .to_string()
-                .contains("Certificate message contains trailing bytes")
-        );
+        assert_handshake_error(&record, "Certificate message contains trailing bytes");
     }
 
     #[test]
     fn test_parse_handshake_rejects_trailing_bytes_after_first_certificate() {
-        let scanner = test_scanner();
         let cert = cert_with_raw_extension_der("1.2.3.4", b"\x05\x00");
         let cert_len = cert.len() as u32;
         let list_len = cert.len() as u32 + 4;
@@ -477,21 +453,11 @@ mod tests {
         body.push(0xff);
         let record = handshake_record(0x0b, &body);
 
-        let error = match scanner.parse_handshake_response(&record) {
-            Ok(_) => panic!("certificate list trailing bytes should fail"),
-            Err(error) => error,
-        };
-
-        assert!(
-            error
-                .to_string()
-                .contains("Certificate entry header truncated")
-        );
+        assert_handshake_error(&record, "Certificate entry header truncated");
     }
 
     #[test]
     fn test_parse_handshake_rejects_certificate_der_trailing_bytes() {
-        let scanner = test_scanner();
         let mut cert = cert_with_raw_extension_der("1.2.3.4", b"\x05\x00");
         cert.push(0xff);
         let cert_len = cert.len() as u32;
@@ -508,10 +474,6 @@ mod tests {
         body.extend_from_slice(&cert);
         let record = handshake_record(0x0b, &body);
 
-        let error = match scanner.parse_handshake_response(&record) {
-            Ok(_) => panic!("certificate DER trailing bytes should fail"),
-            Err(error) => error,
-        };
-        assert!(error.to_string().contains("trailing bytes"));
+        assert_handshake_error(&record, "trailing bytes");
     }
 }
