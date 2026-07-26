@@ -146,38 +146,23 @@ mod tests {
     #[test]
     fn summary_marks_expired_certificates() {
         let now = Utc::now();
-        let summary = present_certificate_summary(CertificateView {
-            fingerprint: "expired".to_string(),
-            not_before: now - chrono::Duration::days(90),
-            san_json: Some("[]".to_string()),
-            hostnames: vec!["expired.example".to_string()],
-            ..view("CN=expired.example", now - chrono::Duration::days(1))
-        })
-        .expect("valid SAN JSON should present");
+        for (name, not_after) in [
+            ("expired.example", now - chrono::Duration::days(1)),
+            ("recently-expired.example", now - chrono::Duration::hours(1)),
+        ] {
+            let summary = present_certificate_summary(CertificateView {
+                fingerprint: name.to_string(),
+                not_before: now - chrono::Duration::days(90),
+                san_json: Some("[]".to_string()),
+                hostnames: vec![name.to_string()],
+                ..view(&format!("CN={name}"), not_after)
+            })
+            .expect("valid SAN JSON should present");
 
-        assert!(summary.is_expired);
-        assert!(!summary.is_expiring_soon);
-        assert!(summary.days_until_expiry < 0);
-    }
-
-    #[test]
-    fn summary_marks_recently_expired_certificates_as_expired_not_expiring_soon() {
-        let now = Utc::now();
-        let summary = present_certificate_summary(CertificateView {
-            fingerprint: "recently-expired".to_string(),
-            not_before: now - chrono::Duration::days(90),
-            san_json: Some("[]".to_string()),
-            hostnames: vec!["recently-expired.example".to_string()],
-            ..view(
-                "CN=recently-expired.example",
-                now - chrono::Duration::hours(1),
-            )
-        })
-        .expect("valid SAN JSON should present");
-
-        assert!(summary.is_expired);
-        assert!(!summary.is_expiring_soon);
-        assert!(summary.days_until_expiry < 0);
+            assert!(summary.is_expired);
+            assert!(!summary.is_expiring_soon);
+            assert!(summary.days_until_expiry < 0);
+        }
     }
 
     #[test]
