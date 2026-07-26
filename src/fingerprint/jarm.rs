@@ -12,7 +12,6 @@
 
 use crate::Result;
 use crate::error::TlsError;
-use ring::digest::{SHA256, digest};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -23,6 +22,9 @@ use tokio::net::TcpStream;
 use tokio::time::timeout;
 
 pub use super::jarm_probes::{JarmProbe, JarmProbeOptions, get_probes};
+
+mod fuzzy_hash;
+use fuzzy_hash::raw_hash_to_fuzzy_hash;
 
 fn read_u8_at(data: &[u8], offset: usize) -> Option<u8> {
     data.get(offset).copied()
@@ -235,10 +237,7 @@ impl JarmFingerprinter {
         hostname: &str,
         probe: &JarmProbe,
     ) -> Result<String> {
-        let hostname = self
-            .starttls_hostname
-            .as_deref()
-            .unwrap_or(hostname);
+        let hostname = self.starttls_hostname.as_deref().unwrap_or(hostname);
 
         // Connect with timeout, optionally upgrading with STARTTLS first.
         let stream = if let Some(starttls) = self.starttls {
@@ -578,217 +577,12 @@ fn extract_extension_type(ext: &[u8], etypes: &[[u8; 2]], evals: &[Vec<u8>]) -> 
     String::new()
 }
 
-/// Zero hash (all probes failed)
-const ZERO_HASH: &str = "00000000000000000000000000000000000000000000000000000000000000";
-
-/// Expected number of JARM probes per the specification
-const JARM_PROBE_COUNT: usize = 10;
-
-/// Convert raw hash to fuzzy JARM hash
-fn raw_hash_to_fuzzy_hash(raw: &str) -> String {
-    // All probes failed
-    if raw == "|||,|||,|||,|||,|||,|||,|||,|||,|||,|||" {
-        return ZERO_HASH.to_string();
-    }
-
-    let mut fhash = String::new();
-    let mut alpex = String::new();
-
-    let handshakes: Vec<&str> = raw.split(',').collect();
-
-    // JARM specification requires exactly 10 probe responses
-    if handshakes.len() != JARM_PROBE_COUNT {
-        tracing::warn!(
-            "JARM fingerprint requires {} probe responses, got {}",
-            JARM_PROBE_COUNT,
-            handshakes.len()
-        );
-        return ZERO_HASH.to_string();
-    }
-
-    for handshake in handshakes {
-        let mut comp = handshake.split('|');
-        let (Some(cipher), Some(version), Some(alpn), Some(extensions), None) = (
-            comp.next(),
-            comp.next(),
-            comp.next(),
-            comp.next(),
-            comp.next(),
-        ) else {
-            return ZERO_HASH.to_string();
-        };
-
-        fhash.push_str(&extract_cipher_bytes(cipher));
-        fhash.push_str(&extract_version_byte(version));
-        alpex.push_str(alpn);
-        alpex.push_str(extensions);
-    }
-
-    // Hash the ALPN and extensions portion
-    let hash_result = digest(&SHA256, alpex.as_bytes());
-    let hash_hex = hex::encode(hash_result.as_ref());
-
-    // Append first 32 characters of SHA256 hash
-    fhash.push_str(hash_hex.get(..32).unwrap_or(&hash_hex));
-
-    fhash
-}
-
-/// Cipher list order for JARM (used for index-based encoding)
-const CIPHER_LIST_ORDER: &[[u8; 2]] = &[
-    [0x00, 0x04],
-    [0x00, 0x05],
-    [0x00, 0x07],
-    [0x00, 0x0a],
-    [0x00, 0x16],
-    [0x00, 0x2f],
-    [0x00, 0x33],
-    [0x00, 0x35],
-    [0x00, 0x39],
-    [0x00, 0x3c],
-    [0x00, 0x3d],
-    [0x00, 0x41],
-    [0x00, 0x45],
-    [0x00, 0x67],
-    [0x00, 0x6b],
-    [0x00, 0x84],
-    [0x00, 0x88],
-    [0x00, 0x9a],
-    [0x00, 0x9c],
-    [0x00, 0x9d],
-    [0x00, 0x9e],
-    [0x00, 0x9f],
-    [0x00, 0xba],
-    [0x00, 0xbe],
-    [0x00, 0xc0],
-    [0x00, 0xc4],
-    [0xc0, 0x07],
-    [0xc0, 0x08],
-    [0xc0, 0x09],
-    [0xc0, 0x0a],
-    [0xc0, 0x11],
-    [0xc0, 0x12],
-    [0xc0, 0x13],
-    [0xc0, 0x14],
-    [0xc0, 0x23],
-    [0xc0, 0x24],
-    [0xc0, 0x27],
-    [0xc0, 0x28],
-    [0xc0, 0x2b],
-    [0xc0, 0x2c],
-    [0xc0, 0x2f],
-    [0xc0, 0x30],
-    [0xc0, 0x60],
-    [0xc0, 0x61],
-    [0xc0, 0x72],
-    [0xc0, 0x73],
-    [0xc0, 0x76],
-    [0xc0, 0x77],
-    [0xc0, 0x9c],
-    [0xc0, 0x9d],
-    [0xc0, 0x9e],
-    [0xc0, 0x9f],
-    [0xc0, 0xa0],
-    [0xc0, 0xa1],
-    [0xc0, 0xa2],
-    [0xc0, 0xa3],
-    [0xc0, 0xac],
-    [0xc0, 0xad],
-    [0xc0, 0xae],
-    [0xc0, 0xaf],
-    [0xcc, 0x13],
-    [0xcc, 0x14],
-    [0xcc, 0xa8],
-    [0xcc, 0xa9],
-    [0x13, 0x01],
-    [0x13, 0x02],
-    [0x13, 0x03],
-    [0x13, 0x04],
-    [0x13, 0x05],
-];
-
-/// Convert cipher hex to index-based encoding
-fn extract_cipher_bytes(cipher_hex: &str) -> String {
-    if cipher_hex.is_empty() {
-        return "00".to_string();
-    }
-
-    // Decode hex string
-    let cipher_bytes = match hex::decode(cipher_hex) {
-        Ok(bytes) => match <[u8; 2]>::try_from(bytes.as_slice()) {
-            Ok(bytes) => bytes,
-            Err(_) => return "00".to_string(),
-        },
-        _ => return "00".to_string(),
-    };
-
-    // Find index in cipher list (1-based).
-    for (i, known_cipher) in CIPHER_LIST_ORDER.iter().enumerate() {
-        if known_cipher == &cipher_bytes {
-            return format!("{:02x}", i + 1);
-        }
-    }
-
-    // Cipher present but not in JARM's known list. Canonical JARM encodes this as
-    // the post-loop counter (list length + 1), NOT "00" — "00" is reserved for
-    // the no-cipher case (empty/failed probe). Returning "00" here would make the
-    // fuzzy hash diverge from canonical for any server negotiating an off-list
-    // cipher, so it would never match the canonical-derived signature database.
-    format!("{:02x}", CIPHER_LIST_ORDER.len() + 1)
-}
-
-/// Extract version byte (convert to character)
-fn extract_version_byte(version_hex: &str) -> String {
-    if version_hex.is_empty() || version_hex.len() < 4 {
-        return "0".to_string();
-    }
-
-    // Extract last character and convert to number
-    match version_hex.chars().nth(3).and_then(|c| c.to_digit(16)) {
-        Some(val) => char::from_u32(0x61 + val)
-            .map(|ch| ch.to_string())
-            .unwrap_or_else(|| "0".to_string()),
-        None => "0".to_string(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
     use tokio::time::{Duration, sleep};
-
-    #[test]
-    fn test_zero_hash() {
-        let raw = "|||,|||,|||,|||,|||,|||,|||,|||,|||,|||";
-        let hash = raw_hash_to_fuzzy_hash(raw);
-        assert_eq!(hash, ZERO_HASH);
-    }
-
-    #[test]
-    fn test_cipher_extraction() {
-        // TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256 (0xc02f)
-        assert_eq!(extract_cipher_bytes("c02f"), "29");
-
-        // TLS_AES_128_GCM_SHA256 (0x1301)
-        assert_eq!(extract_cipher_bytes("1301"), "41");
-
-        // Empty (no cipher negotiated / failed probe) encodes as "00".
-        assert_eq!(extract_cipher_bytes(""), "00");
-
-        // A cipher not in JARM's known list encodes as the post-loop counter
-        // (list length + 1 = 70 = 0x46), matching canonical JARM — not "00".
-        assert_eq!(extract_cipher_bytes("ffff"), "46");
-    }
-
-    #[test]
-    fn test_version_extraction() {
-        assert_eq!(extract_version_byte("0303"), "d"); // TLS 1.2 (0x0303)
-        assert_eq!(extract_version_byte("0304"), "e"); // TLS 1.3 (0x0304)
-        assert_eq!(extract_version_byte("0301"), "b"); // TLS 1.0 (0x0301)
-        assert_eq!(extract_version_byte(""), "0");
-    }
 
     #[test]
     fn test_database_lookup() {
