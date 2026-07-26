@@ -18,6 +18,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::timeout;
 
 mod alert_signal;
+mod oracle_analysis;
 
 fn read_u16_at(data: &[u8], offset: usize) -> Option<u16> {
     data.get(offset..offset.checked_add(2)?)?
@@ -334,148 +335,11 @@ impl RobotTester {
             return Ok(RobotStatus::Inconclusive);
         }
 
-        // Analyze responses for padding oracle detection
-        // Count unique response patterns (by error codes and lengths)
-        let mut response_patterns: std::collections::BTreeSet<Vec<u8>> =
-            std::collections::BTreeSet::new();
-
-        for response in &successful_responses {
-            // Create a pattern from first N bytes for comparison
-            let pattern_len = response.len().min(32);
-            if let Some(pattern) = response.get(..pattern_len) {
-                response_patterns.insert(pattern.to_vec());
-            }
-        }
-
-        let unique_patterns = response_patterns.len();
-
-        // Extract a TLS alert description byte if the response is a single alert
-        // record (0x15 .. record_len 0x0002 <level> <description>). The record
-        // length check avoids reading stray bytes from concatenated/malformed records.
-        // Strong oracle: a malformed-padding vector must DETERMINISTICALLY yield its
-        // own alert code (stable across rounds), and the stable codes must differ
-        // between vectors — i.e. the server distinguishes padding by type, a real
-        // Bleichenbacher oracle. A vector whose alert code VARIES across rounds is
-        // backend variance on a load-balanced deployment (e.g. a multi-backend CDN),
-        // not an oracle, and must never produce a "vulnerable" verdict.
-        match alert_signal::classify(&per_vector, CONFIRMATION_ROUNDS) {
-            alert_signal::CodeSignal::ConfirmedOracle => return Ok(RobotStatus::Vulnerable),
-            alert_signal::CodeSignal::Inconclusive => {
-                // The same malformed input produced different alerts across connections:
-                // multi-backend variance, not a deterministic padding oracle. A lone
-                // alert sample is also unconfirmed, so it cannot prove determinism.
-                return Ok(RobotStatus::Inconclusive);
-            }
-            alert_signal::CodeSignal::None => {}
-        }
-
-        // Weak oracle: Two or more distinct response patterns indicate observable differences.
-        // However, we need additional validation to avoid false positives from noise.
-        // Response length alone is NOT a reliable oracle indicator — network fragmentation,
-        // error message variation, and TCP buffering can cause length differences without
-        // revealing padding validity.
-        //
-        // To be classified as a weak oracle, two patterns must:
-        // 1. Be genuinely different (not just a few bytes apart)
-        // 2. Have sufficient byte-level differences to indicate real oracle behavior
-        if unique_patterns >= 2 {
-            let patterns: Vec<_> = response_patterns.iter().collect();
-
-            // Find the pair with the greatest byte-level divergence.
-            // BTreeSet ordering is lexicographic, so the first two entries are not
-            // necessarily the most different — iterate all pairs to find the true maximum.
-            let mut best_diff = 0usize;
-            let Some((&mut_p1, rest)) = patterns.split_first() else {
-                return Ok(RobotStatus::Inconclusive);
-            };
-            let Some(&mut_p2) = rest.first() else {
-                return Ok(RobotStatus::Inconclusive);
-            };
-            let (mut p1, mut p2) = (mut_p1, mut_p2);
-            for (i, left) in patterns.iter().enumerate() {
-                for right in patterns.iter().skip(i + 1) {
-                    let min_len = left.len().min(right.len());
-                    let diff: usize = (0..min_len)
-                        .filter(|&k| left.get(k) != right.get(k))
-                        .count()
-                        + left.len().abs_diff(right.len());
-                    if diff > best_diff {
-                        best_diff = diff;
-                        p1 = left;
-                        p2 = right;
-                    }
-                }
-            }
-
-            // Count byte-level differences between the most divergent pair
-            let min_len = p1.len().min(p2.len());
-            let mut content_differences = 0usize;
-            for i in 0..min_len {
-                if p1.get(i) != p2.get(i) {
-                    content_differences += 1;
-                }
-            }
-            // Add length difference as additional divergence
-            let len_difference = p1.len().abs_diff(p2.len());
-            let byte_differences = content_differences + len_difference;
-
-            // Pure length-only differences (no content divergence) are TCP segmentation noise,
-            // not an actual oracle — a real Bleichenbacher oracle produces distinct error bytes.
-            if content_differences == 0 && len_difference > 0 {
-                tracing::debug!(
-                    "ROBOT: {} patterns differ only in length ({} bytes) — TCP noise, not an oracle",
-                    unique_patterns,
-                    len_difference
-                );
-                return Ok(RobotStatus::NotVulnerable);
-            }
-
-            // Adaptive threshold: use absolute count OR relative percentage
-            const MIN_BYTE_DIFFERENCES: usize = 4;
-            const MIN_RELATIVE_DIFFERENCE: f64 = 0.1; // 10% of pattern length
-
-            let pattern_len = p1.len().max(p2.len());
-            let relative_diff = if pattern_len > 0 {
-                byte_differences as f64 / pattern_len as f64
-            } else {
-                0.0
-            };
-
-            // Consider it a weak oracle if:
-            // 1. Absolute difference >= MIN_BYTE_DIFFERENCES, OR
-            // 2. Relative difference >= 10% of the longer pattern
-            if byte_differences >= MIN_BYTE_DIFFERENCES || relative_diff >= MIN_RELATIVE_DIFFERENCE
-            {
-                tracing::debug!(
-                    "ROBOT: Weak oracle detected - {} byte differences ({:.1}% of {} bytes)",
-                    byte_differences,
-                    relative_diff * 100.0,
-                    pattern_len
-                );
-                return Ok(RobotStatus::WeakOracle);
-            }
-
-            // Borderline case (2-3 byte differences): log for manual investigation
-            if byte_differences >= 2 {
-                tracing::info!(
-                    "ROBOT: Borderline detection - {} byte differences ({:.1}% of pattern), manual investigation recommended",
-                    byte_differences,
-                    relative_diff * 100.0
-                );
-            }
-
-            // Fewer differences - could be noise, classify as not vulnerable
-            tracing::debug!(
-                "ROBOT: {} patterns detected but only {} byte differences (min: {} or {:.0}%), likely noise",
-                unique_patterns,
-                byte_differences,
-                MIN_BYTE_DIFFERENCES,
-                MIN_RELATIVE_DIFFERENCE * 100.0
-            );
-        }
-
-        // All responses identical - no observable oracle
-        Ok(RobotStatus::NotVulnerable)
+        Ok(oracle_analysis::classify_responses(
+            &successful_responses,
+            &per_vector,
+            CONFIRMATION_ROUNDS,
+        ))
     }
 
     /// Send ClientKeyExchange with invalid RSA ciphertext
