@@ -160,10 +160,15 @@ mod tests {
     use std::io::Write;
     use tempfile::NamedTempFile;
 
+    fn pem_file(contents: &str) -> NamedTempFile {
+        let mut file = NamedTempFile::new().expect("test assertion should succeed");
+        write!(file, "{contents}").expect("test assertion should succeed");
+        file.flush().expect("test assertion should succeed");
+        file
+    }
+
     #[test]
     fn test_mtls_config_parsing() {
-        let mut temp_file = NamedTempFile::new().expect("test assertion should succeed");
-
         let pem_data = r#"-----BEGIN CERTIFICATE-----
 MIIBkTCB+wIJAKHHCgVZU6RqMA0GCSqGSIb3DQEBCwUAMBkxFzAVBgNVBAMMDnRl
 c3QtY2VydGlmaWNhdGUwHhcNMjMwMTAxMDAwMDAwWhcNMjQwMTAxMDAwMDAwWjAZ
@@ -184,9 +189,7 @@ z2H2IWYh2fKcFO6s7AYL6G0KOm6KQAECIBNKDX+4tN7R4x/pNMxsqHrG4k5pZGRq
 KHvHJKYnrKyB
 -----END PRIVATE KEY-----"#;
 
-        write!(temp_file, "{}", pem_data).expect("test assertion should succeed");
-        temp_file.flush().expect("test assertion should succeed");
-
+        let temp_file = pem_file(pem_data);
         let result = MtlsConfig::from_pem_file(temp_file.path());
         if let Ok(config) = result {
             assert!(!config.cert_chain.is_empty());
@@ -230,9 +233,8 @@ KHvHJKYnrKyB
 
     #[test]
     fn test_mtls_from_separate_files_missing_data() {
-        let mut cert_file = NamedTempFile::new().expect("test assertion should succeed");
+        let cert_file = pem_file("not a cert\n");
         let key_file = NamedTempFile::new().expect("test assertion should succeed");
-        writeln!(cert_file, "not a cert").expect("test assertion should succeed");
 
         let err = MtlsConfig::from_separate_files(cert_file.path(), key_file.path(), None)
             .err()
@@ -250,9 +252,7 @@ KHvHJKYnrKyB
 
     #[test]
     fn test_mtls_from_pem_file_rejects_multiple_private_keys() {
-        let mut temp_file = NamedTempFile::new().expect("test assertion should succeed");
-        write!(
-            temp_file,
+        let temp_file = pem_file(
             r#"-----BEGIN CERTIFICATE-----
 AQID
 -----END CERTIFICATE-----
@@ -261,10 +261,8 @@ BAUG
 -----END PRIVATE KEY-----
 -----BEGIN PRIVATE KEY-----
 BwgJ
------END PRIVATE KEY-----"#
-        )
-        .expect("test assertion should succeed");
-        temp_file.flush().expect("test assertion should succeed");
+-----END PRIVATE KEY-----"#,
+        );
 
         let err = MtlsConfig::from_pem_file(temp_file.path())
             .err()
