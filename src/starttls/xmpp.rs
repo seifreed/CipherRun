@@ -290,6 +290,16 @@ mod tests {
         (addr, server)
     }
 
+    async fn negotiate_xmpp_response(starttls_response: &'static [u8]) -> Result<()> {
+        let (addr, server) = spawn_xmpp_starttls_server(starttls_response).await;
+        let mut client = TcpStream::connect(addr).await.unwrap();
+        let result = XmppNegotiator::new("example.com".to_string(), false)
+            .negotiate_starttls(&mut client)
+            .await;
+        server.await.unwrap();
+        result
+    }
+
     #[test]
     fn test_xmpp_negotiator_creation() {
         let negotiator = XmppNegotiator::new("example.com".to_string(), false);
@@ -440,42 +450,24 @@ mod tests {
 
     #[tokio::test]
     async fn test_xmpp_negotiate_starttls_success() {
-        let (addr, server) =
-            spawn_xmpp_starttls_server(b"<proceed xmlns='urn:ietf:params:xml:ns:xmpp-tls'/>").await;
-
-        let mut client = TcpStream::connect(addr).await.unwrap();
-        let negotiator = XmppNegotiator::new("example.com".to_string(), false);
-        let result = negotiator.negotiate_starttls(&mut client).await;
+        let result =
+            negotiate_xmpp_response(b"<proceed xmlns='urn:ietf:params:xml:ns:xmpp-tls'/>").await;
         assert!(result.is_ok());
-
-        server.await.unwrap();
     }
 
     #[tokio::test]
     async fn test_xmpp_negotiate_starttls_failure_response() {
-        let (addr, server) =
-            spawn_xmpp_starttls_server(b"<failure xmlns='urn:ietf:params:xml:ns:xmpp-tls'/>").await;
-
-        let mut client = TcpStream::connect(addr).await.unwrap();
-        let negotiator = XmppNegotiator::new("example.com".to_string(), false);
-        let result = negotiator.negotiate_starttls(&mut client).await;
+        let result =
+            negotiate_xmpp_response(b"<failure xmlns='urn:ietf:params:xml:ns:xmpp-tls'/>").await;
         assert!(result.is_err());
-
-        server.await.unwrap();
     }
 
     #[tokio::test]
     async fn test_xmpp_negotiate_starttls_ignores_unrelated_self_closing_tags() {
-        let (addr, server) = spawn_xmpp_starttls_server(
+        let result = negotiate_xmpp_response(
             b"<stream:error/><proceed xmlns='urn:ietf:params:xml:ns:xmpp-tls'/>",
         )
         .await;
-
-        let mut client = TcpStream::connect(addr).await.unwrap();
-        let negotiator = XmppNegotiator::new("example.com".to_string(), false);
-        let result = negotiator.negotiate_starttls(&mut client).await;
         assert!(result.is_ok());
-
-        server.await.unwrap();
     }
 }
