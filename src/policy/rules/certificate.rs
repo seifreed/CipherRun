@@ -302,23 +302,12 @@ mod tests {
             serial_number: "123456".to_string(),
             not_before: "2024-01-01 00:00:00 UTC".to_string(),
             not_after: "2025-01-01 00:00:00 UTC".to_string(),
-            expiry_countdown: None,
             signature_algorithm: "SHA256-RSA".to_string(),
             public_key_algorithm: "RSA".to_string(),
             public_key_size: Some(2048),
-            rsa_exponent: None,
             san: vec!["example.com".to_string()],
-            is_ca: false,
-            key_usage: vec![],
-            extended_key_usage: vec![],
-            extended_validation: false,
-            ev_oids: vec![],
-            pin_sha256: None,
-            fingerprint_sha256: None,
-            debian_weak_key: None,
-            aia_url: None,
             certificate_transparency: Some("Yes (certificate)".to_string()),
-            der_bytes: vec![],
+            ..Default::default()
         };
 
         CertificateAnalysisResult {
@@ -365,6 +354,15 @@ mod tests {
         }
     }
 
+    fn violations(
+        policy: &CertificatePolicy,
+        cert_result: Option<&CertificateAnalysisResult>,
+    ) -> Vec<PolicyViolation> {
+        CertificateRule::new(policy, cert_result)
+            .evaluate("example.com:443")
+            .expect("test assertion should succeed")
+    }
+
     #[test]
     fn test_min_key_size_violation() {
         let policy = CertificatePolicy {
@@ -373,10 +371,7 @@ mod tests {
         };
 
         let cert_result = create_test_cert_result();
-        let rule = CertificateRule::new(&policy, Some(&cert_result));
-        let violations = rule
-            .evaluate("example.com:443")
-            .expect("test assertion should succeed");
+        let violations = violations(&policy, Some(&cert_result));
 
         assert!(!violations.is_empty());
         assert_eq!(violations[0].rule_path, "certificates.min_key_size");
@@ -386,10 +381,7 @@ mod tests {
     fn test_missing_certificate_result() {
         let policy = base_policy();
 
-        let rule = CertificateRule::new(&policy, None);
-        let violations = rule
-            .evaluate("example.com:443")
-            .expect("test assertion should succeed");
+        let violations = violations(&policy, None);
 
         assert_eq!(violations.len(), 1);
         assert_eq!(violations[0].rule_path, "certificates.missing");
@@ -412,10 +404,7 @@ mod tests {
         cert_result.chain.certificates.clear();
         cert_result.chain.chain_length = 0;
 
-        let rule = CertificateRule::new(&policy, Some(&cert_result));
-        let violations = rule
-            .evaluate("example.com:443")
-            .expect("test assertion should succeed");
+        let violations = violations(&policy, Some(&cert_result));
 
         assert_eq!(violations.len(), 1);
         assert_eq!(violations[0].rule_path, "certificates.missing");
@@ -431,10 +420,7 @@ mod tests {
         let mut cert_result = create_test_cert_result();
         cert_result.chain.certificates[0].san.clear();
 
-        let rule = CertificateRule::new(&policy, Some(&cert_result));
-        let violations = rule
-            .evaluate("example.com:443")
-            .expect("test assertion should succeed");
+        let violations = violations(&policy, Some(&cert_result));
 
         assert!(!violations.is_empty());
         assert_eq!(violations[0].rule_path, "certificates.require_san");
@@ -452,10 +438,7 @@ mod tests {
             .format("%Y-%m-%d %H:%M:%S %z")
             .to_string();
 
-        let rule = CertificateRule::new(&policy, Some(&cert_result));
-        let violations = rule
-            .evaluate("example.com:443")
-            .expect("test assertion should succeed");
+        let violations = violations(&policy, Some(&cert_result));
 
         assert_eq!(violations.len(), 1);
         assert_eq!(
@@ -479,28 +462,13 @@ mod tests {
         let mut cert_result = create_test_cert_result();
         cert_result.chain.certificates[0].not_after = "not a date".to_string();
 
-        let rule = CertificateRule::new(&policy, Some(&cert_result));
-        let violations = rule
-            .evaluate("example.com:443")
-            .expect("test assertion should succeed");
+        let violations = violations(&policy, Some(&cert_result));
 
         assert_eq!(violations.len(), 1);
         assert_eq!(
             violations[0].rule_path,
             "certificates.max_days_until_expiry"
         );
-    }
-
-    #[test]
-    fn test_missing_certificate_violation() {
-        let policy = base_policy();
-
-        let rule = CertificateRule::new(&policy, None);
-        let violations = rule
-            .evaluate("example.com:443")
-            .expect("test assertion should succeed");
-
-        assert_eq!(violations[0].rule_path, "certificates.missing");
     }
 
     #[test]
@@ -513,10 +481,7 @@ mod tests {
         let mut cert_result = create_test_cert_result();
         cert_result.chain.certificates[0].signature_algorithm = "SHA1-RSA".to_string();
 
-        let rule = CertificateRule::new(&policy, Some(&cert_result));
-        let violations = rule
-            .evaluate("example.com:443")
-            .expect("test assertion should succeed");
+        let violations = violations(&policy, Some(&cert_result));
 
         assert_eq!(
             violations[0].rule_path,
@@ -534,10 +499,7 @@ mod tests {
         let mut cert_result = create_test_cert_result();
         cert_result.chain.certificates[0].signature_algorithm = "SHA1-RSA".to_string();
 
-        let rule = CertificateRule::new(&policy, Some(&cert_result));
-        let violations = rule
-            .evaluate("example.com:443")
-            .expect("test assertion should succeed");
+        let violations = violations(&policy, Some(&cert_result));
 
         assert_eq!(
             violations[0].rule_path,
@@ -555,10 +517,7 @@ mod tests {
         let mut cert_result = create_test_cert_result();
         cert_result.chain.certificates[0].signature_algorithm = "SHA-1-RSA".to_string();
 
-        let rule = CertificateRule::new(&policy, Some(&cert_result));
-        let violations = rule
-            .evaluate("example.com:443")
-            .expect("test assertion should succeed");
+        let violations = violations(&policy, Some(&cert_result));
 
         assert_eq!(violations.len(), 1);
         assert_eq!(
@@ -577,10 +536,7 @@ mod tests {
         let mut cert_result = create_test_cert_result();
         cert_result.chain.certificates[0].signature_algorithm = "SHA-1-RSA".to_string();
 
-        let rule = CertificateRule::new(&policy, Some(&cert_result));
-        let violations = rule
-            .evaluate("example.com:443")
-            .expect("test assertion should succeed");
+        let violations = violations(&policy, Some(&cert_result));
 
         assert!(violations.is_empty(), "{violations:?}");
     }
@@ -595,10 +551,7 @@ mod tests {
         let mut cert_result = create_test_cert_result();
         cert_result.validation.trust_chain_valid = false;
 
-        let rule = CertificateRule::new(&policy, Some(&cert_result));
-        let violations = rule
-            .evaluate("example.com:443")
-            .expect("test assertion should succeed");
+        let violations = violations(&policy, Some(&cert_result));
 
         assert_eq!(
             violations[0].rule_path,
@@ -616,10 +569,7 @@ mod tests {
         let mut cert_result = create_test_cert_result();
         cert_result.revocation = Some(create_revocation_result(RevocationStatus::Revoked));
 
-        let rule = CertificateRule::new(&policy, Some(&cert_result));
-        let violations = rule
-            .evaluate("example.com:443")
-            .expect("test assertion should succeed");
+        let violations = violations(&policy, Some(&cert_result));
 
         assert_eq!(violations.len(), 1);
         assert_eq!(
