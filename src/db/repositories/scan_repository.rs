@@ -327,19 +327,21 @@ mod tests {
     use super::*;
     use crate::db::config::DatabaseConfig;
     use crate::db::migrations::run_migrations;
-    use std::path::PathBuf;
 
-    #[tokio::test]
-    async fn test_scan_repository() {
-        let config = DatabaseConfig::sqlite(PathBuf::from(":memory:"));
+    async fn test_pool() -> DatabasePool {
+        let config = DatabaseConfig::sqlite(std::path::PathBuf::from(":memory:"));
         let pool = DatabasePool::new(&config)
             .await
             .expect("test assertion should succeed");
-
-        // Run migrations to create tables
         run_migrations(&pool)
             .await
             .expect("test assertion should succeed");
+        pool
+    }
+
+    #[tokio::test]
+    async fn test_scan_repository() {
+        let pool = test_pool().await;
 
         // Create repository
         let repo = ScanRepositoryImpl::new(pool.clone());
@@ -366,15 +368,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_scan_repository_matches_hostname_case_insensitively() {
-        let config = DatabaseConfig::sqlite(PathBuf::from(":memory:"));
-        let pool = DatabasePool::new(&config)
-            .await
-            .expect("test assertion should succeed");
-
-        run_migrations(&pool)
-            .await
-            .expect("test assertion should succeed");
-
+        let pool = test_pool().await;
         let repo = ScanRepositoryImpl::new(pool.clone());
 
         let scan = ScanRecord::new("EXAMPLE.COM".to_string(), 443);
