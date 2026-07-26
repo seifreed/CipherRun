@@ -503,6 +503,10 @@ mod tests {
         }
     }
 
+    fn example_target(ip: &str) -> Target {
+        Target::with_ips("example.com".to_string(), 443, vec![ip.parse().unwrap()]).unwrap()
+    }
+
     #[test]
     fn test_color_grade_includes_grade_text() {
         let grade = MultiIpScanReport::color_grade("A", 95).to_string();
@@ -527,12 +531,7 @@ mod tests {
 
     #[test]
     fn test_display_report_includes_header_and_target() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["192.0.2.10".parse().unwrap()],
-        )
-        .unwrap();
+        let target = example_target("192.0.2.10");
 
         let report = MultiIpScanReport {
             target,
@@ -574,12 +573,7 @@ mod tests {
 
     #[test]
     fn test_display_report_includes_totals() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["192.0.2.11".parse().unwrap()],
-        )
-        .unwrap();
+        let target = example_target("192.0.2.11");
 
         let report = MultiIpScanReport {
             target,
@@ -600,12 +594,7 @@ mod tests {
 
     #[test]
     fn test_display_report_includes_inconsistency_warning() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["192.0.2.12".parse().unwrap()],
-        )
-        .unwrap();
+        let target = example_target("192.0.2.12");
 
         let inconsistency = Inconsistency {
             inconsistency_type: InconsistencyType::ProtocolSupport,
@@ -637,12 +626,7 @@ mod tests {
 
     #[test]
     fn test_display_report_without_inconsistencies() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["192.0.2.13".parse().unwrap()],
-        )
-        .unwrap();
+        let target = example_target("192.0.2.13");
 
         let report = MultiIpScanReport {
             target,
@@ -663,12 +647,7 @@ mod tests {
 
     #[test]
     fn test_display_certificate_inconsistency_handles_short_fingerprint() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["192.0.2.14".parse().unwrap()],
-        )
-        .unwrap();
+        let target = example_target("192.0.2.14");
 
         let ip: IpAddr = "192.0.2.14".parse().unwrap();
         let mut fingerprints = HashMap::new();
