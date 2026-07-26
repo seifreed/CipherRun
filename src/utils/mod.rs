@@ -45,19 +45,12 @@ mod tests {
 
     #[test]
     fn test_path_ext_reexport() {
-        let path = Path::new("/tmp/example");
-        assert_eq!(path.to_str_checked().unwrap(), "/tmp/example");
-    }
-
-    #[test]
-    fn test_path_ext_reexport_relative() {
-        let path = Path::new("relative/example");
-        assert_eq!(path.to_str_checked().unwrap(), "relative/example");
-    }
-
-    #[test]
-    fn test_path_ext_reexport_with_spaces() {
-        let path = Path::new("relative/with space.txt");
-        assert_eq!(path.to_str_checked().unwrap(), "relative/with space.txt");
+        for value in [
+            "/tmp/example",
+            "relative/example",
+            "relative/with space.txt",
+        ] {
+            assert_eq!(Path::new(value).to_str_checked().unwrap(), value);
+        }
     }
 }
