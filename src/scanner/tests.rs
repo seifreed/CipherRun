@@ -1,5 +1,4 @@
 use super::*;
-use crate::Args;
 use crate::certificates::parser::{CertificateChain, CertificateInfo};
 use crate::certificates::validator::ValidationResult;
 use crate::client_sim::simulator::ClientSimulationResult;
@@ -8,8 +7,24 @@ use crate::http::tester::{HeaderAnalysisResult, SecurityGrade};
 use crate::protocols::{Protocol, ProtocolTestResult};
 use crate::utils::network::Target;
 use crate::vulnerabilities::{Severity, VulnerabilityResult, VulnerabilityType};
+use crate::Args;
 use std::collections::HashMap;
 use std::time::Duration;
+
+fn successful_protocol_result(protocol: Protocol, handshake_time_ms: u64) -> ProtocolTestResult {
+    ProtocolTestResult {
+        protocol,
+        supported: true,
+        inconclusive: false,
+        preferred: true,
+        ciphers_count: 1,
+        handshake_time_ms: Some(handshake_time_ms),
+        heartbeat_enabled: None,
+        session_resumption_caching: None,
+        session_resumption_tickets: None,
+        secure_renegotiation: None,
+    }
+}
 
 #[test]
 fn test_scan_results_json() {
@@ -416,11 +431,9 @@ fn test_aggregate_vulnerabilities_marks_results_inconclusive_when_backend_fails(
     assert!(!aggregated[0].vulnerable);
     // Vulnerability confirmed on the successful backend remains conclusive
     assert!(!aggregated[0].inconclusive);
-    assert!(
-        aggregated[0]
-            .details
-            .contains("incomplete backend coverage")
-    );
+    assert!(aggregated[0]
+        .details
+        .contains("incomplete backend coverage"));
 }
 
 #[test]
@@ -924,18 +937,7 @@ fn test_build_conservative_multi_ip_result() {
     let scan_result = ScanResults {
         target: "192.0.2.10:443".to_string(),
         certificate_chain: Some(chain),
-        protocols: vec![ProtocolTestResult {
-            protocol: Protocol::TLS12,
-            supported: true,
-            inconclusive: false,
-            preferred: true,
-            ciphers_count: 1,
-            handshake_time_ms: Some(5),
-            heartbeat_enabled: None,
-            session_resumption_caching: None,
-            session_resumption_tickets: None,
-            secure_renegotiation: None,
-        }],
+        protocols: vec![successful_protocol_result(Protocol::TLS12, 5)],
         vulnerabilities: vec![VulnerabilityResult {
             vuln_type: VulnerabilityType::RC4,
             vulnerable: true,
@@ -1012,18 +1014,7 @@ fn test_build_conservative_multi_ip_result_missing_cert_yields_grade_unverified(
     let scan_result = ScanResults {
         target: "192.0.2.10:443".to_string(),
         certificate_chain: None,
-        protocols: vec![ProtocolTestResult {
-            protocol: Protocol::TLS12,
-            supported: true,
-            inconclusive: false,
-            preferred: true,
-            ciphers_count: 1,
-            handshake_time_ms: Some(5),
-            heartbeat_enabled: None,
-            session_resumption_caching: None,
-            session_resumption_tickets: None,
-            secure_renegotiation: None,
-        }],
+        protocols: vec![successful_protocol_result(Protocol::TLS12, 5)],
         ..Default::default()
     };
 
@@ -1092,18 +1083,7 @@ fn test_build_conservative_multi_ip_result_respects_disable_rating() {
     let ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
     let scan_result = ScanResults {
         target: "example.com:443".to_string(),
-        protocols: vec![ProtocolTestResult {
-            protocol: Protocol::TLS12,
-            supported: true,
-            inconclusive: false,
-            preferred: true,
-            ciphers_count: 1,
-            handshake_time_ms: Some(5),
-            heartbeat_enabled: None,
-            session_resumption_caching: None,
-            session_resumption_tickets: None,
-            secure_renegotiation: None,
-        }],
+        protocols: vec![successful_protocol_result(Protocol::TLS12, 5)],
         ..Default::default()
     };
 
@@ -1169,18 +1149,7 @@ fn test_build_conservative_multi_ip_result_aggregates_probe_metadata() {
             pre_handshake_used: false,
             ..Default::default()
         },
-        protocols: vec![ProtocolTestResult {
-            protocol: Protocol::TLS12,
-            supported: true,
-            inconclusive: false,
-            preferred: true,
-            ciphers_count: 1,
-            handshake_time_ms: Some(5),
-            heartbeat_enabled: None,
-            session_resumption_caching: None,
-            session_resumption_tickets: None,
-            secure_renegotiation: None,
-        }],
+        protocols: vec![successful_protocol_result(Protocol::TLS12, 5)],
         ..Default::default()
     };
 
@@ -1190,18 +1159,7 @@ fn test_build_conservative_multi_ip_result_aggregates_probe_metadata() {
             pre_handshake_used: true,
             ..Default::default()
         },
-        protocols: vec![ProtocolTestResult {
-            protocol: Protocol::TLS13,
-            supported: true,
-            inconclusive: false,
-            preferred: true,
-            ciphers_count: 1,
-            handshake_time_ms: Some(4),
-            heartbeat_enabled: None,
-            session_resumption_caching: None,
-            session_resumption_tickets: None,
-            secure_renegotiation: None,
-        }],
+        protocols: vec![successful_protocol_result(Protocol::TLS13, 4)],
         ..Default::default()
     };
 
@@ -1365,18 +1323,7 @@ fn test_build_conservative_multi_ip_result_keeps_success_with_failed_ips() {
             probe_status: ProbeStatus::success(Duration::from_millis(11)),
             ..Default::default()
         },
-        protocols: vec![ProtocolTestResult {
-            protocol: Protocol::TLS12,
-            supported: true,
-            inconclusive: false,
-            preferred: true,
-            ciphers_count: 1,
-            handshake_time_ms: Some(5),
-            heartbeat_enabled: None,
-            session_resumption_caching: None,
-            session_resumption_tickets: None,
-            secure_renegotiation: None,
-        }],
+        protocols: vec![successful_protocol_result(Protocol::TLS12, 5)],
         ..Default::default()
     };
 
@@ -1549,18 +1496,7 @@ fn test_build_conservative_multi_ip_result_partial_success_without_probe_attempt
 
     let ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
     let scan_result = ScanResults {
-        protocols: vec![ProtocolTestResult {
-            protocol: Protocol::TLS12,
-            supported: true,
-            inconclusive: false,
-            preferred: true,
-            ciphers_count: 1,
-            handshake_time_ms: Some(5),
-            heartbeat_enabled: None,
-            session_resumption_caching: None,
-            session_resumption_tickets: None,
-            secure_renegotiation: None,
-        }],
+        protocols: vec![successful_protocol_result(Protocol::TLS12, 5)],
         ..Default::default()
     };
 
@@ -1707,18 +1643,7 @@ fn test_build_conservative_multi_ip_result_clears_unaggregated_residual_sections
 
     let mut scan_result = ScanResults {
         target: "example.com:443".to_string(),
-        protocols: vec![ProtocolTestResult {
-            protocol: Protocol::TLS12,
-            supported: true,
-            inconclusive: false,
-            preferred: true,
-            ciphers_count: 1,
-            handshake_time_ms: Some(5),
-            heartbeat_enabled: None,
-            session_resumption_caching: None,
-            session_resumption_tickets: None,
-            secure_renegotiation: None,
-        }],
+        protocols: vec![successful_protocol_result(Protocol::TLS12, 5)],
         ..Default::default()
     };
     scan_result.http_mut().http_headers = Some(HeaderAnalysisResult {
@@ -1860,8 +1785,7 @@ fn test_scanner_new_requires_target() {
     let err = Scanner::new(args.to_scan_request().expect("scan request should build"))
         .err()
         .expect("should error");
-    assert!(
-        err.to_string()
-            .contains("A target is required for scan execution")
-    );
+    assert!(err
+        .to_string()
+        .contains("A target is required for scan execution"));
 }
