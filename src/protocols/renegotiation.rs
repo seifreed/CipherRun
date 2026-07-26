@@ -73,53 +73,6 @@ impl<'a> RenegotiationTester<'a> {
         }
     }
 
-    fn merge_secure_extension(current: Option<bool>, next: Option<bool>) -> Option<bool> {
-        match (current, next) {
-            (Some(true), _) | (_, Some(true)) => Some(true),
-            (None, _) | (_, None) => None,
-            _ => Some(false),
-        }
-    }
-
-    fn merge_insecure_result(
-        current: InsecureRenegotiationResult,
-        next: InsecureRenegotiationResult,
-    ) -> InsecureRenegotiationResult {
-        match (current, next) {
-            (InsecureRenegotiationResult::Detected, _)
-            | (_, InsecureRenegotiationResult::Detected) => InsecureRenegotiationResult::Detected,
-            (InsecureRenegotiationResult::Inconclusive, _)
-            | (_, InsecureRenegotiationResult::Inconclusive) => {
-                InsecureRenegotiationResult::Inconclusive
-            }
-            _ => InsecureRenegotiationResult::NotDetected,
-        }
-    }
-
-    fn merge_support(
-        current: RenegotiationSupport,
-        next: RenegotiationSupport,
-    ) -> RenegotiationSupport {
-        match (current, next) {
-            (RenegotiationSupport::SecureRenegotiation, _)
-            | (_, RenegotiationSupport::SecureRenegotiation) => {
-                RenegotiationSupport::SecureRenegotiation
-            }
-            (RenegotiationSupport::InsecureRenegotiation, _)
-            | (_, RenegotiationSupport::InsecureRenegotiation) => {
-                RenegotiationSupport::InsecureRenegotiation
-            }
-            (RenegotiationSupport::Inconclusive, _) | (_, RenegotiationSupport::Inconclusive) => {
-                RenegotiationSupport::Inconclusive
-            }
-            (RenegotiationSupport::ClientInitiatedDisabled, _)
-            | (_, RenegotiationSupport::ClientInitiatedDisabled) => {
-                RenegotiationSupport::ClientInitiatedDisabled
-            }
-            _ => RenegotiationSupport::NotSupported,
-        }
-    }
-
     /// Connect, upgrading via STARTTLS first for plaintext-first services.
     async fn starttls_connect(
         &self,
@@ -198,7 +151,7 @@ impl<'a> RenegotiationTester<'a> {
     async fn test_renegotiation_support(&self) -> Result<RenegotiationSupport> {
         let mut result = RenegotiationSupport::NotSupported;
         for addr in self.probe_addrs()? {
-            result = Self::merge_support(result, self.test_renegotiation_support_addr(addr).await?);
+            result = result.merge(self.test_renegotiation_support_addr(addr).await?);
             if matches!(
                 result,
                 RenegotiationSupport::SecureRenegotiation
@@ -269,10 +222,7 @@ impl<'a> RenegotiationTester<'a> {
     async fn test_insecure_renegotiation(&self) -> Result<InsecureRenegotiationResult> {
         let mut result = InsecureRenegotiationResult::NotDetected;
         for addr in self.probe_addrs()? {
-            result = Self::merge_insecure_result(
-                result,
-                self.test_insecure_renegotiation_addr(addr).await?,
-            );
+            result = result.merge(self.test_insecure_renegotiation_addr(addr).await?);
             if matches!(result, InsecureRenegotiationResult::Detected) {
                 break;
             }
@@ -346,7 +296,7 @@ impl<'a> RenegotiationTester<'a> {
     async fn test_secure_renegotiation_extension(&self) -> Result<Option<bool>> {
         let mut result = Some(false);
         for addr in self.probe_addrs()? {
-            result = Self::merge_secure_extension(
+            result = model::merge_secure_extension_probe(
                 result,
                 self.test_secure_renegotiation_extension_addr(addr).await?,
             );
@@ -440,22 +390,14 @@ mod tests {
 
     #[test]
     fn test_renegotiation_merges_preserve_uncertainty() {
+        assert_eq!(model::merge_secure_extension_probe(Some(false), None), None);
         assert_eq!(
-            RenegotiationTester::merge_secure_extension(Some(false), None),
-            None
-        );
-        assert_eq!(
-            RenegotiationTester::merge_insecure_result(
-                InsecureRenegotiationResult::NotDetected,
-                InsecureRenegotiationResult::Inconclusive,
-            ),
+            InsecureRenegotiationResult::NotDetected
+                .merge(InsecureRenegotiationResult::Inconclusive),
             InsecureRenegotiationResult::Inconclusive
         );
         assert_eq!(
-            RenegotiationTester::merge_support(
-                RenegotiationSupport::NotSupported,
-                RenegotiationSupport::Inconclusive,
-            ),
+            RenegotiationSupport::NotSupported.merge(RenegotiationSupport::Inconclusive),
             RenegotiationSupport::Inconclusive
         );
     }
