@@ -9,8 +9,12 @@ use crate::Result;
 use crate::constants::TLS_HANDSHAKE_TIMEOUT;
 use crate::utils::network::Target;
 
+mod result;
+
+pub use result::BeastTestResult;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BeastProbeStatus {
+pub(super) enum BeastProbeStatus {
     Supported,
     NotSupported,
     Inconclusive,
@@ -106,32 +110,7 @@ impl BeastTester {
         let tls10_cbc = self.test_tls10_cbc().await?;
         let ssl3_cbc = self.test_ssl3_cbc().await?;
 
-        let vulnerable = tls10_cbc.is_supported() || ssl3_cbc.is_supported();
-        let inconclusive =
-            !vulnerable && (tls10_cbc.is_inconclusive() || ssl3_cbc.is_inconclusive());
-
-        let details = if vulnerable {
-            let mut parts = Vec::new();
-            if tls10_cbc.is_supported() {
-                parts.push("TLS 1.0 with CBC ciphers enabled");
-            }
-            if ssl3_cbc.is_supported() {
-                parts.push("SSL 3.0 with CBC ciphers enabled");
-            }
-            format!("Vulnerable: {}", parts.join(", "))
-        } else if inconclusive {
-            "BEAST test inconclusive - unable to complete TLS 1.0/SSL 3.0 CBC probes".to_string()
-        } else {
-            "Not vulnerable - TLS 1.0/SSL 3.0 CBC ciphers not supported".to_string()
-        };
-
-        Ok(BeastTestResult {
-            vulnerable,
-            inconclusive,
-            tls10_cbc_supported: tls10_cbc.is_supported(),
-            ssl3_cbc_supported: ssl3_cbc.is_supported(),
-            details,
-        })
+        Ok(BeastTestResult::from_probe_statuses(tls10_cbc, ssl3_cbc))
     }
 
     /// Test for TLS 1.0 with CBC ciphers
@@ -269,16 +248,6 @@ fn openssl_hostname_and_sni(target_hostname: &str) -> (String, bool) {
         .clone()
         .unwrap_or_else(|| target_hostname.to_string());
     (hostname, sni_hostname.is_some())
-}
-
-/// BEAST test result
-#[derive(Debug, Clone)]
-pub struct BeastTestResult {
-    pub vulnerable: bool,
-    pub inconclusive: bool,
-    pub tls10_cbc_supported: bool,
-    pub ssl3_cbc_supported: bool,
-    pub details: String,
 }
 
 #[cfg(test)]
