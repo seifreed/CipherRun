@@ -126,18 +126,12 @@ mod tests {
 
     #[test]
     fn test_parse_json_text_array_tolerates_empty_values() {
-        assert_eq!(
-            CertificateRecord::parse_json_text_array(None, "san_domains").unwrap(),
-            Vec::<String>::new()
-        );
-        assert_eq!(
-            CertificateRecord::parse_json_text_array(Some(""), "san_domains").unwrap(),
-            Vec::<String>::new()
-        );
-        assert_eq!(
-            CertificateRecord::parse_json_text_array(Some("[]"), "san_domains").unwrap(),
-            Vec::<String>::new()
-        );
+        for value in [None, Some(""), Some("[]")] {
+            assert_eq!(
+                CertificateRecord::parse_json_text_array(value, "san_domains").unwrap(),
+                Vec::<String>::new()
+            );
+        }
     }
 
     #[test]
