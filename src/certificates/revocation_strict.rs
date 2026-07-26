@@ -364,20 +364,24 @@ mod tests {
         assert!(err.to_string().contains("Failed to parse certificate"));
     }
 
-    #[test]
-    fn test_strict_result_status_checks() {
-        let result = StrictRevocationResult {
+    fn strict_result(status: RevocationStatus, details: &str) -> StrictRevocationResult {
+        StrictRevocationResult {
             base_result: RevocationResult {
-                status: RevocationStatus::Good,
+                status,
                 method: super::super::revocation::RevocationMethod::OCSP,
-                details: "Test".to_string(),
+                details: details.to_string(),
                 ocsp_stapling: false,
                 ocsp_stapling_details: None,
                 must_staple: false,
             },
             hard_fail_mode_enabled: false,
             error_details: None,
-        };
+        }
+    }
+
+    #[test]
+    fn test_strict_result_status_checks() {
+        let result = strict_result(RevocationStatus::Good, "Test");
 
         assert!(result.is_good());
         assert!(!result.is_revoked());
@@ -387,18 +391,7 @@ mod tests {
 
     #[test]
     fn test_strict_result_revoked() {
-        let result = StrictRevocationResult {
-            base_result: RevocationResult {
-                status: RevocationStatus::Revoked,
-                method: super::super::revocation::RevocationMethod::OCSP,
-                details: "Certificate is revoked".to_string(),
-                ocsp_stapling: false,
-                ocsp_stapling_details: None,
-                must_staple: false,
-            },
-            hard_fail_mode_enabled: false,
-            error_details: None,
-        };
+        let result = strict_result(RevocationStatus::Revoked, "Certificate is revoked");
 
         assert!(!result.is_good());
         assert!(result.is_revoked());
