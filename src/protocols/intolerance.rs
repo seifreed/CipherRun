@@ -143,20 +143,8 @@ mod tests {
         .expect("target should build")
     }
 
-    #[test]
-    fn test_minimal_client_hello_has_no_extensions_additional() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["127.0.0.1".parse().expect("valid IP")],
-        )
-        .expect("test assertion should succeed");
-        let tester = IntoleranceTester::new(target);
-        let hello = tester
-            .build_minimal_client_hello()
-            .expect("test assertion should succeed");
-        let extensions = parse_client_hello_extensions(&hello);
-        assert!(extensions.is_empty());
+    fn example_tester() -> IntoleranceTester {
+        IntoleranceTester::new(example_target())
     }
 
     #[test]
@@ -180,9 +168,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_build_minimal_client_hello() {
-        let target = example_target();
-
-        let tester = IntoleranceTester::new(target);
+        let tester = example_tester();
         let hello = tester
             .build_minimal_client_hello()
             .expect("test assertion should succeed");
@@ -193,9 +179,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_build_extended_client_hello() {
-        let target = example_target();
-
-        let tester = IntoleranceTester::new(target);
+        let tester = example_tester();
         let hello = tester
             .build_extended_client_hello()
             .expect("test assertion should succeed");
@@ -211,9 +195,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_build_long_client_hello() {
-        let target = example_target();
-
-        let tester = IntoleranceTester::new(target);
+        let tester = example_tester();
         let hello = tester
             .build_long_client_hello()
             .expect("test assertion should succeed");
@@ -223,9 +205,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_build_versioned_client_hello() {
-        let target = example_target();
-
-        let tester = IntoleranceTester::new(target);
+        let tester = example_tester();
         let hello = tester
             .build_versioned_client_hello(VERSION_TLS_1_0)
             .expect("test assertion should succeed");
@@ -237,9 +217,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_build_invalid_sni_client_hello() {
-        let target = example_target();
-
-        let tester = IntoleranceTester::new(target);
+        let tester = example_tester();
         let hello = tester
             .build_invalid_sni_client_hello()
             .expect("test assertion should succeed");
@@ -251,9 +229,7 @@ mod tests {
 
     #[test]
     fn test_minimal_client_hello_has_no_extensions() {
-        let target = example_target();
-
-        let tester = IntoleranceTester::new(target);
+        let tester = example_tester();
         let hello = tester
             .build_minimal_client_hello()
             .expect("test assertion should succeed");
@@ -263,9 +239,7 @@ mod tests {
 
     #[test]
     fn test_extended_client_hello_includes_expected_extensions() {
-        let target = example_target();
-
-        let tester = IntoleranceTester::new(target);
+        let tester = example_tester();
         let hello = tester
             .build_extended_client_hello()
             .expect("test assertion should succeed");
@@ -282,9 +256,7 @@ mod tests {
 
     #[test]
     fn test_long_client_hello_includes_padding_extension() {
-        let target = example_target();
-
-        let tester = IntoleranceTester::new(target);
+        let tester = example_tester();
         let hello = tester
             .build_long_client_hello()
             .expect("test assertion should succeed");
@@ -298,9 +270,7 @@ mod tests {
 
     #[test]
     fn test_invalid_sni_client_hello_contains_invalid_hostname() {
-        let target = example_target();
-
-        let tester = IntoleranceTester::new(target);
+        let tester = example_tester();
         let hello = tester
             .build_invalid_sni_client_hello()
             .expect("test assertion should succeed");
