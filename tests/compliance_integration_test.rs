@@ -13,6 +13,21 @@ fn assessment(results: &ScanResults) -> ScanAssessment {
     ScanAssessment::from_scan_results(results)
 }
 
+fn protocol_result(protocol: Protocol, preferred: bool) -> ProtocolTestResult {
+    ProtocolTestResult {
+        protocol,
+        supported: true,
+        inconclusive: false,
+        preferred,
+        ciphers_count: 0,
+        heartbeat_enabled: None,
+        handshake_time_ms: None,
+        session_resumption_caching: None,
+        session_resumption_tickets: None,
+        secure_renegotiation: None,
+    }
+}
+
 #[test]
 fn test_load_all_builtin_frameworks() {
     let framework_ids = vec![
@@ -52,30 +67,8 @@ fn test_pci_dss_pass_scenario() {
 
     // Only TLS 1.2 and TLS 1.3 enabled (compliant)
     results.protocols = vec![
-        ProtocolTestResult {
-            protocol: Protocol::TLS12,
-            supported: true,
-            inconclusive: false,
-            preferred: false,
-            ciphers_count: 0,
-            heartbeat_enabled: None,
-            handshake_time_ms: None,
-            session_resumption_caching: None,
-            session_resumption_tickets: None,
-            secure_renegotiation: None,
-        },
-        ProtocolTestResult {
-            protocol: Protocol::TLS13,
-            supported: true,
-            inconclusive: false,
-            preferred: true,
-            ciphers_count: 0,
-            heartbeat_enabled: None,
-            handshake_time_ms: None,
-            session_resumption_caching: None,
-            session_resumption_tickets: None,
-            secure_renegotiation: None,
-        },
+        protocol_result(Protocol::TLS12, false),
+        protocol_result(Protocol::TLS13, true),
     ];
 
     // Evaluate compliance
@@ -99,30 +92,8 @@ fn test_pci_dss_fail_scenario() {
 
     // TLS 1.0 enabled (non-compliant)
     results.protocols = vec![
-        ProtocolTestResult {
-            protocol: Protocol::TLS10,
-            supported: true,
-            inconclusive: false,
-            preferred: false,
-            ciphers_count: 0,
-            heartbeat_enabled: None,
-            handshake_time_ms: None,
-            session_resumption_caching: None,
-            session_resumption_tickets: None,
-            secure_renegotiation: None,
-        },
-        ProtocolTestResult {
-            protocol: Protocol::TLS12,
-            supported: true,
-            inconclusive: false,
-            preferred: true,
-            ciphers_count: 0,
-            heartbeat_enabled: None,
-            handshake_time_ms: None,
-            session_resumption_caching: None,
-            session_resumption_tickets: None,
-            secure_renegotiation: None,
-        },
+        protocol_result(Protocol::TLS10, false),
+        protocol_result(Protocol::TLS12, true),
     ];
 
     // Evaluate compliance
@@ -151,30 +122,8 @@ fn test_mozilla_modern_tls13_only() {
     let mut results = ScanResults::default();
     results.target = "test.example.com:443".to_string();
     results.protocols = vec![
-        ProtocolTestResult {
-            protocol: Protocol::TLS12,
-            supported: true,
-            inconclusive: false,
-            preferred: false,
-            ciphers_count: 0,
-            heartbeat_enabled: None,
-            handshake_time_ms: None,
-            session_resumption_caching: None,
-            session_resumption_tickets: None,
-            secure_renegotiation: None,
-        },
-        ProtocolTestResult {
-            protocol: Protocol::TLS13,
-            supported: true,
-            inconclusive: false,
-            preferred: true,
-            ciphers_count: 0,
-            heartbeat_enabled: None,
-            handshake_time_ms: None,
-            session_resumption_caching: None,
-            session_resumption_tickets: None,
-            secure_renegotiation: None,
-        },
+        protocol_result(Protocol::TLS12, false),
+        protocol_result(Protocol::TLS13, true),
     ];
 
     let engine = ComplianceEngine::new(framework);
@@ -193,30 +142,8 @@ fn test_mozilla_intermediate_tls12_allowed() {
     let mut results = ScanResults::default();
     results.target = "test.example.com:443".to_string();
     results.protocols = vec![
-        ProtocolTestResult {
-            protocol: Protocol::TLS12,
-            supported: true,
-            inconclusive: false,
-            preferred: false,
-            ciphers_count: 0,
-            heartbeat_enabled: None,
-            handshake_time_ms: None,
-            session_resumption_caching: None,
-            session_resumption_tickets: None,
-            secure_renegotiation: None,
-        },
-        ProtocolTestResult {
-            protocol: Protocol::TLS13,
-            supported: true,
-            inconclusive: false,
-            preferred: true,
-            ciphers_count: 0,
-            heartbeat_enabled: None,
-            handshake_time_ms: None,
-            session_resumption_caching: None,
-            session_resumption_tickets: None,
-            secure_renegotiation: None,
-        },
+        protocol_result(Protocol::TLS12, false),
+        protocol_result(Protocol::TLS13, true),
     ];
 
     let engine = ComplianceEngine::new(framework);
@@ -240,18 +167,7 @@ fn test_report_json_serialization() {
 
     let mut results = ScanResults::default();
     results.target = "test.example.com:443".to_string();
-    results.protocols = vec![ProtocolTestResult {
-        protocol: Protocol::TLS12,
-        supported: true,
-        inconclusive: false,
-        preferred: true,
-        ciphers_count: 0,
-        heartbeat_enabled: None,
-        handshake_time_ms: None,
-        session_resumption_caching: None,
-        session_resumption_tickets: None,
-        secure_renegotiation: None,
-    }];
+    results.protocols = vec![protocol_result(Protocol::TLS12, true)];
 
     let engine = ComplianceEngine::new(framework);
     let report = engine.evaluate(&assessment(&results)).unwrap();
@@ -273,18 +189,7 @@ fn test_report_csv_generation() {
 
     let mut results = ScanResults::default();
     results.target = "test.example.com:443".to_string();
-    results.protocols = vec![ProtocolTestResult {
-        protocol: Protocol::TLS13,
-        supported: true,
-        inconclusive: false,
-        preferred: true,
-        ciphers_count: 0,
-        heartbeat_enabled: None,
-        handshake_time_ms: None,
-        session_resumption_caching: None,
-        session_resumption_tickets: None,
-        secure_renegotiation: None,
-    }];
+    results.protocols = vec![protocol_result(Protocol::TLS13, true)];
 
     let engine = ComplianceEngine::new(framework);
     let report = engine.evaluate(&assessment(&results)).unwrap();
@@ -301,18 +206,7 @@ fn test_report_html_generation() {
 
     let mut results = ScanResults::default();
     results.target = "test.example.com:443".to_string();
-    results.protocols = vec![ProtocolTestResult {
-        protocol: Protocol::TLS12,
-        supported: true,
-        inconclusive: false,
-        preferred: true,
-        ciphers_count: 0,
-        heartbeat_enabled: None,
-        handshake_time_ms: None,
-        session_resumption_caching: None,
-        session_resumption_tickets: None,
-        secure_renegotiation: None,
-    }];
+    results.protocols = vec![protocol_result(Protocol::TLS12, true)];
 
     let engine = ComplianceEngine::new(framework);
     let report = engine.evaluate(&assessment(&results)).unwrap();
@@ -330,18 +224,7 @@ fn test_report_terminal_output() {
 
     let mut results = ScanResults::default();
     results.target = "test.example.com:443".to_string();
-    results.protocols = vec![ProtocolTestResult {
-        protocol: Protocol::TLS12,
-        supported: true,
-        inconclusive: false,
-        preferred: true,
-        ciphers_count: 0,
-        heartbeat_enabled: None,
-        handshake_time_ms: None,
-        session_resumption_caching: None,
-        session_resumption_tickets: None,
-        secure_renegotiation: None,
-    }];
+    results.protocols = vec![protocol_result(Protocol::TLS12, true)];
 
     let engine = ComplianceEngine::new(framework);
     let report = engine.evaluate(&assessment(&results)).unwrap();
@@ -385,30 +268,8 @@ fn test_compliance_summary_calculation() {
     let mut results = ScanResults::default();
     results.target = "test.example.com:443".to_string();
     results.protocols = vec![
-        ProtocolTestResult {
-            protocol: Protocol::TLS12,
-            supported: true,
-            inconclusive: false,
-            preferred: false,
-            ciphers_count: 0,
-            heartbeat_enabled: None,
-            handshake_time_ms: None,
-            session_resumption_caching: None,
-            session_resumption_tickets: None,
-            secure_renegotiation: None,
-        },
-        ProtocolTestResult {
-            protocol: Protocol::TLS13,
-            supported: true,
-            inconclusive: false,
-            preferred: true,
-            ciphers_count: 0,
-            heartbeat_enabled: None,
-            handshake_time_ms: None,
-            session_resumption_caching: None,
-            session_resumption_tickets: None,
-            secure_renegotiation: None,
-        },
+        protocol_result(Protocol::TLS12, false),
+        protocol_result(Protocol::TLS13, true),
     ];
 
     let engine = ComplianceEngine::new(framework);
