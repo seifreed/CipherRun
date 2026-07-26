@@ -1,8 +1,8 @@
 use super::*;
-use crate::db::{BindValue, CipherRunDatabase, DatabaseConfig, create_unique_test_db_path};
+use crate::db::analytics::test_support::{insert_scan, setup_db};
+use crate::db::{BindValue, CipherRunDatabase};
 use chrono::{Duration, Utc};
 use std::collections::BTreeMap;
-use std::sync::Arc;
 
 #[test]
 fn test_cutoff_days_ago_rejects_invalid_days() {
@@ -190,53 +190,6 @@ fn test_trend_functions_are_order_independent() {
     );
 }
 
-async fn setup_db() -> Arc<CipherRunDatabase> {
-    let config = DatabaseConfig::sqlite(create_unique_test_db_path("trend"));
-    let db = CipherRunDatabase::new(&config)
-        .await
-        .expect("test assertion should succeed");
-    Arc::new(db)
-}
-
-async fn insert_scan(
-    db: &CipherRunDatabase,
-    hostname: &str,
-    port: u16,
-    timestamp: chrono::DateTime<chrono::Utc>,
-    grade: Option<&str>,
-    score: Option<i32>,
-) -> i64 {
-    let mut qb = db.pool().query_builder();
-    let query = qb.insert_returning_query(
-        "scans",
-        &[
-            "target_hostname",
-            "target_port",
-            "scan_timestamp",
-            "overall_grade",
-            "overall_score",
-            "scan_duration_ms",
-            "scanner_version",
-        ],
-        "scan_id",
-    );
-
-    let bindings = vec![
-        BindValue::String(hostname.to_string()),
-        BindValue::Int32(port as i32),
-        BindValue::DateTime(timestamp),
-        BindValue::OptString(grade.map(|g| g.to_string())),
-        BindValue::OptInt32(score),
-        BindValue::OptInt32(Some(1200)),
-        BindValue::OptString(Some("test".to_string())),
-    ];
-
-    db.pool()
-        .execute_insert_returning(&query, bindings)
-        .await
-        .expect("test assertion should succeed")
-}
-
 async fn insert_protocol(
     db: &CipherRunDatabase,
     scan_id: i64,
@@ -336,7 +289,7 @@ async fn insert_vulnerability(
 
 #[tokio::test]
 async fn test_trend_analyzer_with_database_data() {
-    let db = setup_db().await;
+    let db = setup_db("trend").await;
     let hostname = "2001:db8::1";
     let port = 443;
 

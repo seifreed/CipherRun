@@ -10,6 +10,9 @@ pub mod scan_comparator;
 pub mod trend_analyzer;
 pub mod vulnerability_trend;
 
+#[cfg(test)]
+pub(crate) mod test_support;
+
 pub use change_tracker::{ChangeEvent, ChangeSeverity, ChangeTracker, ChangeType};
 pub use dashboard_generator::{
     DashboardData, DashboardGenerator, DashboardSummary, DistributionPoint, IssueItem,
