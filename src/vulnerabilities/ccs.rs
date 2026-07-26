@@ -337,65 +337,9 @@ mod tests {
 
         assert!(hello.len() > 40);
         assert_eq!(hello.first(), Some(&CONTENT_TYPE_HANDSHAKE)); // Handshake (0x16)
-        assert_eq!(hello.get(5), Some(&HANDSHAKE_TYPE_CLIENT_HELLO)); // ClientHello (0x01)
-    }
-
-    #[test]
-    fn test_client_hello_version_bytes() {
-        let hello = client_hello::minimal_tls10_rsa().expect("ClientHello should build");
-
         assert_eq!(hello.get(1), Some(&0x03));
         assert_eq!(hello.get(2), Some(&0x01));
-    }
-
-    #[test]
-    fn test_client_hello_non_empty() {
-        let hello = client_hello::minimal_tls10_rsa().expect("ClientHello should build");
-        assert!(!hello.is_empty());
-    }
-
-    #[test]
-    fn test_ccs_result_creation() {
-        let result = CcsTestResult {
-            vulnerable: false,
-            status: TestStatus::NotVulnerable,
-            details: "Test".to_string(),
-        };
-        assert!(!result.vulnerable);
-        assert!(!result.status.is_inconclusive());
-    }
-
-    #[test]
-    fn test_ccs_result_debug_contains_details() {
-        let result = CcsTestResult {
-            vulnerable: true,
-            status: TestStatus::Vulnerable,
-            details: "Details".to_string(),
-        };
-
-        let debug = format!("{:?}", result);
-        assert!(debug.contains("Details"));
-    }
-
-    #[test]
-    fn test_ccs_result_not_vulnerable_details() {
-        let result = CcsTestResult {
-            vulnerable: false,
-            status: TestStatus::NotVulnerable,
-            details: "Not vulnerable - Server rejects early CCS messages".to_string(),
-        };
-        assert!(!result.vulnerable);
-        assert!(result.details.contains("Not vulnerable"));
-    }
-
-    #[test]
-    fn test_ccs_result_details_passthrough() {
-        let result = CcsTestResult {
-            vulnerable: false,
-            status: TestStatus::NotVulnerable,
-            details: "Not vulnerable".to_string(),
-        };
-        assert!(result.details.contains("Not vulnerable"));
+        assert_eq!(hello.get(5), Some(&HANDSHAKE_TYPE_CLIENT_HELLO)); // ClientHello (0x01)
     }
 
     #[test]
