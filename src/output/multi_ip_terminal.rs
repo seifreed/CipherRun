@@ -485,6 +485,24 @@ mod tests {
     use crate::utils::network::Target;
     use std::collections::HashMap;
 
+    fn aggregated_result(
+        grade: &str,
+        score: u8,
+        certificate_consistent: bool,
+    ) -> AggregatedScanResult {
+        AggregatedScanResult {
+            protocols: Vec::new(),
+            ciphers: HashMap::new(),
+            grade: (grade.to_string(), score),
+            certificate_info: None,
+            certificate_consistent,
+            inconsistencies: Vec::new(),
+            alpn_protocols: Vec::new(),
+            session_resumption_caching: Some(false),
+            session_resumption_tickets: Some(false),
+        }
+    }
+
     #[test]
     fn test_color_grade_includes_grade_text() {
         let grade = MultiIpScanReport::color_grade("A", 95).to_string();
@@ -523,17 +541,7 @@ mod tests {
             successful_scans: 0,
             failed_scans: 1,
             total_duration_ms: 0,
-            aggregated: AggregatedScanResult {
-                protocols: Vec::new(),
-                ciphers: HashMap::new(),
-                grade: ("F".to_string(), 0),
-                certificate_info: None,
-                certificate_consistent: true,
-                inconsistencies: Vec::new(),
-                alpn_protocols: Vec::new(),
-                session_resumption_caching: Some(false),
-                session_resumption_tickets: Some(false),
-            },
+            aggregated: aggregated_result("F", 0, true),
             inconsistencies: Vec::new(),
         };
 
@@ -555,17 +563,7 @@ mod tests {
             successful_scans: 0,
             failed_scans: 1,
             total_duration_ms: 0,
-            aggregated: AggregatedScanResult {
-                protocols: Vec::new(),
-                ciphers: HashMap::new(),
-                grade: ("F".to_string(), 0),
-                certificate_info: None,
-                certificate_consistent: true,
-                inconsistencies: Vec::new(),
-                alpn_protocols: Vec::new(),
-                session_resumption_caching: Some(false),
-                session_resumption_tickets: Some(false),
-            },
+            aggregated: aggregated_result("F", 0, true),
             inconsistencies: Vec::new(),
         };
 
@@ -590,17 +588,7 @@ mod tests {
             successful_scans: 1,
             failed_scans: 1,
             total_duration_ms: 123,
-            aggregated: AggregatedScanResult {
-                protocols: Vec::new(),
-                ciphers: HashMap::new(),
-                grade: ("B".to_string(), 80),
-                certificate_info: None,
-                certificate_consistent: true,
-                inconsistencies: Vec::new(),
-                alpn_protocols: Vec::new(),
-                session_resumption_caching: Some(false),
-                session_resumption_tickets: Some(false),
-            },
+            aggregated: aggregated_result("B", 80, true),
             inconsistencies: Vec::new(),
         };
 
@@ -638,17 +626,7 @@ mod tests {
             successful_scans: 2,
             failed_scans: 0,
             total_duration_ms: 20,
-            aggregated: AggregatedScanResult {
-                protocols: Vec::new(),
-                ciphers: HashMap::new(),
-                grade: ("A".to_string(), 95),
-                certificate_info: None,
-                certificate_consistent: true,
-                inconsistencies: Vec::new(),
-                alpn_protocols: Vec::new(),
-                session_resumption_caching: Some(false),
-                session_resumption_tickets: Some(false),
-            },
+            aggregated: aggregated_result("A", 95, true),
             inconsistencies: vec![inconsistency],
         };
 
@@ -673,17 +651,7 @@ mod tests {
             successful_scans: 1,
             failed_scans: 0,
             total_duration_ms: 5,
-            aggregated: AggregatedScanResult {
-                protocols: Vec::new(),
-                ciphers: HashMap::new(),
-                grade: ("A".to_string(), 95),
-                certificate_info: None,
-                certificate_consistent: true,
-                inconsistencies: Vec::new(),
-                alpn_protocols: Vec::new(),
-                session_resumption_caching: Some(false),
-                session_resumption_tickets: Some(false),
-            },
+            aggregated: aggregated_result("A", 95, true),
             inconsistencies: Vec::new(),
         };
 
@@ -713,17 +681,7 @@ mod tests {
             successful_scans: 1,
             failed_scans: 0,
             total_duration_ms: 1,
-            aggregated: AggregatedScanResult {
-                protocols: Vec::new(),
-                ciphers: HashMap::new(),
-                grade: ("A".to_string(), 95),
-                certificate_info: None,
-                certificate_consistent: false,
-                inconsistencies: Vec::new(),
-                alpn_protocols: Vec::new(),
-                session_resumption_caching: Some(false),
-                session_resumption_tickets: Some(false),
-            },
+            aggregated: aggregated_result("A", 95, false),
             inconsistencies: vec![Inconsistency {
                 inconsistency_type: InconsistencyType::Certificates,
                 severity: crate::vulnerabilities::Severity::High,
