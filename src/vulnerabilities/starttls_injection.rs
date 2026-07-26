@@ -517,12 +517,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_non_starttls_port_details() {
-        let target = Target::with_ips(
-            "127.0.0.1".to_string(),
-            9999,
-            vec!["127.0.0.1".parse().expect("valid IP")],
-        )
-        .expect("test assertion should succeed");
+        let target = loopback_target(9999);
         let tester = StarttlsInjectionTester::new(target);
 
         let result = tester
