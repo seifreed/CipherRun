@@ -265,6 +265,7 @@ impl DrownTester {
 mod tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
     use tokio::time::{Duration, sleep};
 
     fn byte_at(data: &[u8], offset: usize) -> Option<u8> {
@@ -427,22 +428,47 @@ mod tests {
         .unwrap()
     }
 
-    #[tokio::test]
-    async fn test_sslv2_one_byte_response_is_inconclusive() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("listener");
+    fn sslv2_server_hello_response() -> Vec<u8> {
+        let mut response = vec![0x80, 0x40, 0x04];
+        response.extend(vec![0u8; 63]);
+        response
+    }
+
+    async fn spawn_sslv2_response_server(response: Vec<u8>) -> (u16, tokio::task::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener");
         let port = listener.local_addr().expect("local addr").port();
 
         let server = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.expect("accept");
             let mut buf = [0u8; 128];
             let _ = socket.read(&mut buf).await.expect("read client hello");
-            socket
-                .write_all(&[0x80])
-                .await
-                .expect("write partial header");
+            socket.write_all(&response).await.expect("write response");
         });
+
+        (port, server)
+    }
+
+    async fn spawn_fragmented_sslv2_response_server(
+        response: Vec<u8>,
+    ) -> (u16, tokio::task::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener");
+        let port = listener.local_addr().expect("local addr").port();
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept");
+            let mut buf = [0u8; 128];
+            let _ = socket.read(&mut buf).await.expect("read client hello");
+            let _ = socket.write_all(&response[..1]).await;
+            sleep(Duration::from_millis(50)).await;
+            let _ = socket.write_all(&response[1..]).await;
+        });
+
+        (port, server)
+    }
+
+    #[tokio::test]
+    async fn test_sslv2_one_byte_response_is_inconclusive() {
+        let (port, server) = spawn_sslv2_response_server(vec![0x80]).await;
 
         let target = localhost_target(port);
 
@@ -457,9 +483,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_sslv2_zero_byte_response_is_inconclusive() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("listener");
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener");
         let port = listener.local_addr().expect("local addr").port();
 
         let server = tokio::spawn(async move {
@@ -479,21 +503,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_sslv2_reads_fragmented_response_record() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("listener");
-        let port = listener.local_addr().expect("local addr").port();
-
-        let server = tokio::spawn(async move {
-            let (mut socket, _) = listener.accept().await.expect("accept");
-            let mut buf = [0u8; 128];
-            let _ = socket.read(&mut buf).await.expect("read client hello");
-            let mut response = vec![0x80, 0x40, 0x04];
-            response.extend(vec![0u8; 63]);
-            let _ = socket.write_all(&response[..1]).await;
-            sleep(Duration::from_millis(50)).await;
-            let _ = socket.write_all(&response[1..]).await;
-        });
+        let (port, server) =
+            spawn_fragmented_sslv2_response_server(sslv2_server_hello_response()).await;
 
         let target = localhost_target(port);
 
@@ -508,19 +519,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_sslv2_all_ips_uses_any_vulnerable_ip() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("listener");
-        let port = listener.local_addr().expect("local addr").port();
-
-        let server = tokio::spawn(async move {
-            let (mut socket, _) = listener.accept().await.expect("accept");
-            let mut buf = [0u8; 128];
-            let _ = socket.read(&mut buf).await.expect("read client hello");
-            let mut response = vec![0x80, 0x40, 0x04];
-            response.extend(vec![0u8; 63]);
-            socket.write_all(&response).await.expect("write response");
-        });
+        let (port, server) = spawn_sslv2_response_server(sslv2_server_hello_response()).await;
 
         let target = Target::with_ips(
             "localhost".to_string(),
@@ -541,20 +540,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_sslv2_reads_large_response_record() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("listener");
-        let port = listener.local_addr().expect("local addr").port();
-
-        let server = tokio::spawn(async move {
-            let (mut socket, _) = listener.accept().await.expect("accept");
-            let mut buf = [0u8; 128];
-            let _ = socket.read(&mut buf).await.expect("read client hello");
-            let record_len = 5000usize;
-            let mut response = vec![0x80 | ((record_len >> 8) as u8), record_len as u8, 0x04];
-            response.extend(vec![0u8; record_len - 1]);
-            let _ = socket.write_all(&response).await;
-        });
+        let record_len = 5000usize;
+        let mut response = vec![0x80 | ((record_len >> 8) as u8), record_len as u8, 0x04];
+        response.extend(vec![0u8; record_len - 1]);
+        let (port, server) = spawn_sslv2_response_server(response).await;
 
         let target = localhost_target(port);
 
