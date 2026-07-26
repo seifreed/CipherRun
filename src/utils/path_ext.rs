@@ -4,8 +4,8 @@
 
 //! Path extension trait for convenient path-to-string conversion with typed errors.
 
-use crate::Result;
 use crate::error::TlsError;
+use crate::Result;
 use std::path::{Path, PathBuf};
 
 /// Extension trait for converting paths to strings with proper error handling.
@@ -49,9 +49,7 @@ impl PathExt for Path {
 
 impl PathExt for PathBuf {
     fn to_str_checked(&self) -> Result<&str> {
-        self.to_str().ok_or_else(|| {
-            TlsError::Other("Invalid file path: path contains invalid UTF-8".to_string())
-        })
+        self.as_path().to_str_checked()
     }
 }
 
