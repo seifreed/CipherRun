@@ -749,43 +749,27 @@ fn test_validate_rejects_append_and_overwrite() {
 }
 
 #[test]
-fn test_validate_rejects_mass_scan_csv_export() {
-    let args = Args {
-        input_file: Some(std::path::PathBuf::from("targets.txt")),
-        output: OutputArgs {
+fn test_validate_rejects_mass_scan_single_report_exports() {
+    for output in [
+        OutputArgs {
             csv: Some(std::path::PathBuf::from("report.csv")),
             ..Default::default()
         },
-        ..Default::default()
-    };
-
-    assert!(args.validate().is_err());
-}
-
-#[test]
-fn test_validate_rejects_mass_scan_html_export() {
-    let args = Args {
-        input_file: Some(std::path::PathBuf::from("targets.txt")),
-        output: OutputArgs {
+        OutputArgs {
             html: Some(std::path::PathBuf::from("report.html")),
             ..Default::default()
         },
-        ..Default::default()
-    };
-
-    assert!(args.validate().is_err());
-}
-
-#[test]
-fn test_validate_rejects_mass_scan_xml_export() {
-    let args = Args {
-        input_file: Some(std::path::PathBuf::from("targets.txt")),
-        output: OutputArgs {
+        OutputArgs {
             xml: Some(std::path::PathBuf::from("report.xml")),
             ..Default::default()
         },
-        ..Default::default()
-    };
+    ] {
+        let args = Args {
+            input_file: Some(std::path::PathBuf::from("targets.txt")),
+            output,
+            ..Default::default()
+        };
 
-    assert!(args.validate().is_err());
+        assert!(args.validate().is_err());
+    }
 }
