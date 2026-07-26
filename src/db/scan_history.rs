@@ -244,15 +244,19 @@ fn scan_history_entry_from_sqlite_row(row: SqliteRow) -> crate::Result<ScanHisto
 mod tests {
     use super::*;
     use crate::db::{DatabaseConfig, DatabasePool, run_migrations};
-    use std::path::PathBuf;
 
-    #[tokio::test]
-    async fn sqlite_scan_history_service_returns_latest_first() {
-        let config = DatabaseConfig::sqlite(PathBuf::from(":memory:"));
+    async fn sqlite_pool() -> DatabasePool {
+        let config = DatabaseConfig::sqlite(std::path::PathBuf::from(":memory:"));
         let pool = DatabasePool::new(&config)
             .await
             .expect("pool should be created");
         run_migrations(&pool).await.expect("migrations should run");
+        pool
+    }
+
+    #[tokio::test]
+    async fn sqlite_scan_history_service_returns_latest_first() {
+        let pool = sqlite_pool().await;
 
         let DatabasePool::Sqlite(sqlite) = &pool else {
             panic!("expected sqlite pool");
@@ -310,11 +314,7 @@ mod tests {
 
     #[tokio::test]
     async fn sqlite_scan_history_matches_hostname_case_insensitively() {
-        let config = DatabaseConfig::sqlite(PathBuf::from(":memory:"));
-        let pool = DatabasePool::new(&config)
-            .await
-            .expect("pool should be created");
-        run_migrations(&pool).await.expect("migrations should run");
+        let pool = sqlite_pool().await;
 
         let DatabasePool::Sqlite(sqlite) = &pool else {
             panic!("expected sqlite pool");
@@ -353,11 +353,7 @@ mod tests {
 
     #[tokio::test]
     async fn sqlite_scan_history_rejects_invalid_timestamp() {
-        let config = DatabaseConfig::sqlite(PathBuf::from(":memory:"));
-        let pool = DatabasePool::new(&config)
-            .await
-            .expect("pool should be created");
-        run_migrations(&pool).await.expect("migrations should run");
+        let pool = sqlite_pool().await;
 
         let DatabasePool::Sqlite(sqlite) = &pool else {
             panic!("expected sqlite pool");
@@ -398,11 +394,7 @@ mod tests {
 
     #[tokio::test]
     async fn sqlite_scan_history_reports_total_count_independently_of_limit() {
-        let config = DatabaseConfig::sqlite(PathBuf::from(":memory:"));
-        let pool = DatabasePool::new(&config)
-            .await
-            .expect("pool should be created");
-        run_migrations(&pool).await.expect("migrations should run");
+        let pool = sqlite_pool().await;
 
         let DatabasePool::Sqlite(sqlite) = &pool else {
             panic!("expected sqlite pool");
