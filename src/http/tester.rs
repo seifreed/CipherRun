@@ -395,6 +395,15 @@ mod tests {
         spawn_https_server_bytes(response.into_bytes()).await
     }
 
+    fn localhost_target(port: u16) -> Target {
+        Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
+        )
+        .unwrap()
+    }
+
     async fn spawn_https_server_bytes(response: Vec<u8>) -> u16 {
         let _ = rustls::crypto::ring::default_provider().install_default();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -486,12 +495,7 @@ mod tests {
         let response =
             "HTTP/1.1 200 OK\r\nServer: TestServer\r\nContent-Length: 0\r\n\r\n".to_string();
         let port = spawn_https_server(response).await;
-        let target = Target::with_ips(
-            "localhost".to_string(),
-            port,
-            vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
-        )
-        .unwrap();
+        let target = localhost_target(port);
 
         let analyzer = HeaderAnalyzer::new(target);
         let result = analyzer.analyze().await.unwrap();
@@ -507,12 +511,7 @@ mod tests {
             "HTTP/1.1 302 Found\r\nLocation: https://example.com/\r\nContent-Length: 0\r\n\r\n"
                 .to_string();
         let port = spawn_https_server(response).await;
-        let target = Target::with_ips(
-            "localhost".to_string(),
-            port,
-            vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
-        )
-        .unwrap();
+        let target = localhost_target(port);
 
         let analyzer = HeaderAnalyzer::new(target);
         let result = analyzer.analyze().await.unwrap();
@@ -546,12 +545,7 @@ mod tests {
     async fn test_analyze_headers_rejects_invalid_header_encoding() {
         let response = b"HTTP/1.1 200 OK\r\nServer: \xff\r\nContent-Length: 0\r\n\r\n".to_vec();
         let port = spawn_https_server_bytes(response).await;
-        let target = Target::with_ips(
-            "localhost".to_string(),
-            port,
-            vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
-        )
-        .unwrap();
+        let target = localhost_target(port);
 
         let analyzer = HeaderAnalyzer::new(target);
         let err = analyzer
