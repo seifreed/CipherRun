@@ -416,14 +416,7 @@ mod tests {
 
     #[test]
     fn test_logjam_result_vulnerable() {
-        let result = LogjamTestResult {
-            vulnerable: true,
-            inconclusive: false,
-            export_dh_supported: true,
-            weak_dh_params: false,
-            dhe_ciphers: vec!["DHE-RSA-AES256-SHA".to_string()],
-            details: "Vulnerable".to_string(),
-        };
+        let result = logjam_result(true, true, "Vulnerable");
         assert!(result.vulnerable);
         assert!(result.export_dh_supported);
     }
@@ -469,12 +462,7 @@ mod tests {
     #[tokio::test]
     async fn test_logjam_not_vulnerable_on_dummy_server() {
         let addr = spawn_dummy_server(30).await;
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            addr.port(),
-            vec![IpAddr::from([127, 0, 0, 1])],
-        )
-        .unwrap();
+        let target = localhost_target(addr.port());
 
         let tester = LogjamTester::new(target);
         let result = tester.test().await.unwrap();
