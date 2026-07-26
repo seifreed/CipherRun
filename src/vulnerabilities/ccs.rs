@@ -16,6 +16,10 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::timeout;
 
+mod result;
+
+pub use result::{CcsTestResult, TestStatus};
+
 /// CCS Injection vulnerability tester
 pub struct CcsInjectionTester {
     target: Target,
@@ -72,50 +76,16 @@ impl CcsInjectionTester {
         }
     }
 
-    fn merge_status(current: TestStatus, next: TestStatus) -> TestStatus {
-        match (current, next) {
-            (TestStatus::Vulnerable, _) | (_, TestStatus::Vulnerable) => TestStatus::Vulnerable,
-            (status, _) if status.is_inconclusive() => status,
-            (_, status) if status.is_inconclusive() => status,
-            _ => TestStatus::NotVulnerable,
-        }
-    }
-
     /// Test for CCS Injection vulnerability
     pub async fn test(&self) -> Result<CcsTestResult> {
-        let status = self.test_ccs_injection().await?;
-
-        let details = match status {
-            TestStatus::Vulnerable => {
-                "Vulnerable to CCS Injection (CVE-2014-0224) - Server accepts early CCS messages"
-                    .to_string()
-            }
-            TestStatus::NotVulnerable => {
-                "Not vulnerable - Server rejects early CCS messages".to_string()
-            }
-            TestStatus::Inconclusive => {
-                "CCS Injection test inconclusive - unexpected response pattern".to_string()
-            }
-            TestStatus::ConnectionFailed => {
-                "CCS Injection test inconclusive - connection failed".to_string()
-            }
-            TestStatus::HandshakeFailed => {
-                "CCS Injection test inconclusive - handshake timeout or error".to_string()
-            }
-        };
-
-        Ok(CcsTestResult {
-            vulnerable: status.is_vulnerable(),
-            status,
-            details,
-        })
+        Ok(CcsTestResult::from_status(self.test_ccs_injection().await?))
     }
 
     /// Test CCS injection by sending early ChangeCipherSpec
     async fn test_ccs_injection(&self) -> Result<TestStatus> {
         let mut status = TestStatus::NotVulnerable;
         for addr in self.probe_addrs()? {
-            status = Self::merge_status(status, self.test_ccs_injection_addr(addr).await?);
+            status = status.merge(self.test_ccs_injection_addr(addr).await?);
             if status == TestStatus::Vulnerable {
                 break;
             }
@@ -381,44 +351,6 @@ async fn read_complete_tls_record(
     Ok(total_len)
 }
 
-/// CCS test status with detailed failure reasons
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TestStatus {
-    /// Server correctly rejected CCS - not vulnerable
-    NotVulnerable,
-    /// Server accepted CCS - vulnerable to CVE-2014-0224
-    Vulnerable,
-    /// Connection or handshake error - test inconclusive
-    Inconclusive,
-    /// Connection failed to establish
-    ConnectionFailed,
-    /// Handshake failed during ServerHello read
-    HandshakeFailed,
-}
-
-impl TestStatus {
-    /// Returns true if the test result indicates vulnerability
-    pub fn is_vulnerable(&self) -> bool {
-        matches!(self, Self::Vulnerable)
-    }
-
-    /// Returns true if the test could not complete
-    pub fn is_inconclusive(&self) -> bool {
-        matches!(
-            self,
-            Self::Inconclusive | Self::ConnectionFailed | Self::HandshakeFailed
-        )
-    }
-}
-
-/// CCS test result
-#[derive(Debug, Clone)]
-pub struct CcsTestResult {
-    pub vulnerable: bool,
-    pub status: TestStatus,
-    pub details: String,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -452,10 +384,7 @@ mod tests {
     #[test]
     fn test_ccs_merge_keeps_inconclusive_over_clean() {
         assert_eq!(
-            CcsInjectionTester::merge_status(
-                TestStatus::NotVulnerable,
-                TestStatus::HandshakeFailed
-            ),
+            TestStatus::NotVulnerable.merge(TestStatus::HandshakeFailed),
             TestStatus::HandshakeFailed
         );
     }
