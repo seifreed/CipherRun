@@ -77,51 +77,21 @@ mod tests {
             serial_number: "123".to_string(),
             not_before,
             not_after,
-            expiry_countdown: None,
             signature_algorithm: "sha256WithRSAEncryption".to_string(),
             public_key_algorithm: "rsaEncryption".to_string(),
             public_key_size: Some(2048),
-            rsa_exponent: None,
             san: vec!["example.com".to_string()],
-            is_ca: false,
-            key_usage: vec![],
-            extended_key_usage: vec![],
-            extended_validation: false,
-            ev_oids: vec![],
-            pin_sha256: None,
-            fingerprint_sha256: None,
-            debian_weak_key: None,
-            aia_url: None,
-            certificate_transparency: None,
-            der_bytes: vec![],
+            ..Default::default()
         }
     }
 
     #[test]
     fn test_weak_key_detection() {
         let cert = CertificateInfo {
-            subject: "CN=example.com".to_string(),
-            issuer: "CN=CA".to_string(),
-            serial_number: "123".to_string(),
-            not_before: "2024-01-01".to_string(),
-            not_after: "2025-01-01".to_string(),
-            expiry_countdown: Some("expires in 1 year".to_string()),
-            signature_algorithm: "sha256WithRSAEncryption".to_string(),
-            public_key_algorithm: "rsaEncryption".to_string(),
-            public_key_size: Some(1024), // Weak!
+            public_key_size: Some(1024),
             rsa_exponent: Some("e 65537".to_string()),
-            san: vec!["example.com".to_string()],
-            is_ca: false,
-            key_usage: vec![],
-            extended_key_usage: vec![],
-            extended_validation: false,
-            ev_oids: vec![],
-            pin_sha256: None,
-            fingerprint_sha256: None,
-            debian_weak_key: None,
-            aia_url: None,
-            certificate_transparency: None,
-            der_bytes: vec![],
+            expiry_countdown: Some("expires in 1 year".to_string()),
+            ..base_cert("2024-01-01".to_string(), "2025-01-01".to_string())
         };
 
         let validator = CertificateValidator::new("example.com".to_string());

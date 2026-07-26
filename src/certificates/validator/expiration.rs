@@ -157,23 +157,11 @@ mod tests {
             serial_number: "123".to_string(),
             not_before,
             not_after,
-            expiry_countdown: None,
             signature_algorithm: "sha256WithRSAEncryption".to_string(),
             public_key_algorithm: "rsaEncryption".to_string(),
             public_key_size: Some(2048),
-            rsa_exponent: None,
             san: vec!["example.com".to_string()],
-            is_ca: false,
-            key_usage: vec![],
-            extended_key_usage: vec![],
-            extended_validation: false,
-            ev_oids: vec![],
-            pin_sha256: None,
-            fingerprint_sha256: None,
-            debian_weak_key: None,
-            aia_url: None,
-            certificate_transparency: None,
-            der_bytes: vec![],
+            ..Default::default()
         }
     }
 
