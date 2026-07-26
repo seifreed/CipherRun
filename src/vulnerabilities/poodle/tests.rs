@@ -10,18 +10,21 @@ fn example_target() -> crate::utils::network::Target {
     .unwrap()
 }
 
-fn server_response(
+fn server_responses(
     connection_accepted: bool,
     alert_type: Option<u8>,
-    response_time_ms: f64,
+    response_times_ms: &[f64],
     shows_differential_behavior: bool,
-) -> ServerResponse {
-    ServerResponse {
-        connection_accepted,
-        alert_type,
-        response_time_ms,
-        shows_differential_behavior,
-    }
+) -> Vec<ServerResponse> {
+    response_times_ms
+        .iter()
+        .map(|&response_time_ms| ServerResponse {
+            connection_accepted,
+            alert_type,
+            response_time_ms,
+            shows_differential_behavior,
+        })
+        .collect()
 }
 
 #[test]
@@ -219,9 +222,8 @@ fn test_build_malformed_record_dispatch() {
 fn test_detect_response_oracle_alert_difference() {
     // A genuine oracle: both record types reliably alert, but with a
     // consistently different alert type across all samples.
-    let alert = |code: u8| server_response(true, Some(code), 5.0, true);
-    let responses_a = vec![alert(20), alert(20), alert(20)];
-    let responses_b = vec![alert(40), alert(40), alert(40)];
+    let responses_a = server_responses(true, Some(20), &[5.0, 5.0, 5.0], true);
+    let responses_b = server_responses(true, Some(40), &[5.0, 5.0, 5.0], true);
 
     assert!(oracle_detection::detect_response_oracle(
         &responses_a,
@@ -231,18 +233,10 @@ fn test_detect_response_oracle_alert_difference() {
 
 #[test]
 fn test_detect_response_oracle_timing_difference() {
-    let responses_a = vec![
-        server_response(true, None, 1.0, false),
-        server_response(true, None, 1.5, false),
-        server_response(true, None, 1.2, false),
-    ];
+    let responses_a = server_responses(true, None, &[1.0, 1.5, 1.2], false);
     // Stricter threshold (>3*stddev + 50ms): use a clearly large, low-variance
     // timing gap that survives the jitter guard.
-    let responses_b = vec![
-        server_response(true, None, 150.0, false),
-        server_response(true, None, 152.0, false),
-        server_response(true, None, 151.0, false),
-    ];
+    let responses_b = server_responses(true, None, &[150.0, 152.0, 151.0], false);
 
     assert!(oracle_detection::detect_response_oracle(
         &responses_a,
@@ -259,14 +253,8 @@ fn test_build_malformed_record_selector() {
 
 #[test]
 fn test_detect_response_oracle_no_difference() {
-    let responses_a = vec![
-        server_response(false, Some(40), 5.0, false),
-        server_response(false, Some(40), 6.0, false),
-    ];
-    let responses_b = vec![
-        server_response(false, Some(40), 5.5, false),
-        server_response(false, Some(40), 5.2, false),
-    ];
+    let responses_a = server_responses(false, Some(40), &[5.0, 6.0], false);
+    let responses_b = server_responses(false, Some(40), &[5.5, 5.2], false);
 
     assert!(!oracle_detection::detect_response_oracle(
         &responses_a,
