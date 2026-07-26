@@ -3,56 +3,11 @@ use std::collections::HashMap;
 mod common;
 
 use cipherrun::Args;
-use cipherrun::certificates::parser::{CertificateChain, CertificateInfo};
-use cipherrun::certificates::validator::{
-    IssueSeverity, IssueType, ValidationIssue, ValidationResult,
-};
 use cipherrun::output::ScannerFormatter;
 use cipherrun::protocols::{Protocol, ProtocolTestResult};
 use cipherrun::rating::RatingResult;
 use cipherrun::rating::grader::Grade;
-use cipherrun::scanner::CertificateAnalysisResult;
 use cipherrun::vulnerabilities::{Severity, VulnerabilityResult, VulnerabilityType};
-
-fn build_cert_result() -> CertificateAnalysisResult {
-    let cert = CertificateInfo {
-        subject: "CN=example.com".to_string(),
-        issuer: "CN=Example CA".to_string(),
-        serial_number: "01".to_string(),
-        not_before: "2024-01-01 00:00:00 +00:00".to_string(),
-        not_after: "2026-01-01 00:00:00 +00:00".to_string(),
-        extended_validation: false,
-        der_bytes: vec![1, 2],
-        ..Default::default()
-    };
-
-    let chain = CertificateChain {
-        certificates: vec![cert],
-        chain_length: 1,
-        chain_size_bytes: 2,
-    };
-
-    let validation = ValidationResult {
-        valid: true,
-        issues: vec![ValidationIssue {
-            severity: IssueSeverity::Info,
-            issue_type: IssueType::MissingExtension,
-            description: "Missing SCT".to_string(),
-        }],
-        trust_chain_valid: true,
-        hostname_match: true,
-        not_expired: true,
-        signature_valid: true,
-        trusted_ca: None,
-        platform_trust: None,
-    };
-
-    CertificateAnalysisResult {
-        chain,
-        validation,
-        revocation: None,
-    }
-}
 
 #[test]
 fn test_scanner_formatter_display_helpers() {
@@ -83,7 +38,7 @@ fn test_scanner_formatter_display_helpers() {
         common::output::build_cipher_summary(Protocol::TLS13),
     );
 
-    let cert_result = build_cert_result();
+    let cert_result = common::output::build_certificate_result();
 
     let vulns = vec![VulnerabilityResult {
         vuln_type: VulnerabilityType::Heartbleed,

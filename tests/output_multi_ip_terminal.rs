@@ -3,10 +3,6 @@ use std::net::IpAddr;
 
 mod common;
 
-use cipherrun::certificates::parser::{CertificateChain, CertificateInfo};
-use cipherrun::certificates::validator::{
-    IssueSeverity, IssueType, ValidationIssue, ValidationResult,
-};
 use cipherrun::protocols::{Protocol, ProtocolTestResult};
 use cipherrun::rating::RatingResult;
 use cipherrun::rating::grader::Grade;
@@ -15,7 +11,7 @@ use cipherrun::scanner::inconsistency::{
     Inconsistency, InconsistencyDetails, InconsistencyType, SingleIpScanResult,
 };
 use cipherrun::scanner::multi_ip::MultiIpScanReport;
-use cipherrun::scanner::{CertificateAnalysisResult, RatingResults, ScanResults};
+use cipherrun::scanner::{RatingResults, ScanResults};
 use cipherrun::utils::network::Target;
 use cipherrun::vulnerabilities::Severity;
 
@@ -34,43 +30,7 @@ fn build_scan_results() -> ScanResults {
     );
     results.ciphers = ciphers;
 
-    let cert = CertificateInfo {
-        subject: "CN=example.com".to_string(),
-        issuer: "CN=Example CA".to_string(),
-        serial_number: "01".to_string(),
-        not_before: "2024-01-01 00:00:00 +00:00".to_string(),
-        not_after: "2026-01-01 00:00:00 +00:00".to_string(),
-        extended_validation: false,
-        der_bytes: vec![1, 2],
-        ..Default::default()
-    };
-
-    let chain = CertificateChain {
-        certificates: vec![cert],
-        chain_length: 1,
-        chain_size_bytes: 2,
-    };
-
-    let validation = ValidationResult {
-        valid: true,
-        issues: vec![ValidationIssue {
-            severity: IssueSeverity::Info,
-            issue_type: IssueType::MissingExtension,
-            description: "Missing SCT".to_string(),
-        }],
-        trust_chain_valid: true,
-        hostname_match: true,
-        not_expired: true,
-        signature_valid: true,
-        trusted_ca: None,
-        platform_trust: None,
-    };
-
-    results.certificate_chain = Some(CertificateAnalysisResult {
-        chain,
-        validation,
-        revocation: None,
-    });
+    results.certificate_chain = Some(common::output::build_certificate_result());
 
     results.rating = Some(RatingResults {
         ssl_rating: Some(RatingResult {

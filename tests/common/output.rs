@@ -1,6 +1,11 @@
+use cipherrun::certificates::parser::{CertificateChain, CertificateInfo};
+use cipherrun::certificates::validator::{
+    IssueSeverity, IssueType, ValidationIssue, ValidationResult,
+};
 use cipherrun::ciphers::CipherSuite;
 use cipherrun::ciphers::tester::{CipherCounts, ProtocolCipherSummary};
 use cipherrun::protocols::{Protocol, ProtocolTestResult};
+use cipherrun::scanner::CertificateAnalysisResult;
 
 pub fn build_cipher_summary(protocol: Protocol) -> ProtocolCipherSummary {
     let cipher = CipherSuite {
@@ -48,5 +53,45 @@ pub fn supported_tls13_protocol_result() -> ProtocolTestResult {
         session_resumption_caching: Some(true),
         session_resumption_tickets: Some(false),
         secure_renegotiation: Some(true),
+    }
+}
+
+pub fn build_certificate_result() -> CertificateAnalysisResult {
+    let cert = CertificateInfo {
+        subject: "CN=example.com".to_string(),
+        issuer: "CN=Example CA".to_string(),
+        serial_number: "01".to_string(),
+        not_before: "2024-01-01 00:00:00 +00:00".to_string(),
+        not_after: "2026-01-01 00:00:00 +00:00".to_string(),
+        extended_validation: false,
+        der_bytes: vec![1, 2],
+        ..Default::default()
+    };
+
+    let chain = CertificateChain {
+        certificates: vec![cert],
+        chain_length: 1,
+        chain_size_bytes: 2,
+    };
+
+    let validation = ValidationResult {
+        valid: true,
+        issues: vec![ValidationIssue {
+            severity: IssueSeverity::Info,
+            issue_type: IssueType::MissingExtension,
+            description: "Missing SCT".to_string(),
+        }],
+        trust_chain_valid: true,
+        hostname_match: true,
+        not_expired: true,
+        signature_valid: true,
+        trusted_ca: None,
+        platform_trust: None,
+    };
+
+    CertificateAnalysisResult {
+        chain,
+        validation,
+        revocation: None,
     }
 }
