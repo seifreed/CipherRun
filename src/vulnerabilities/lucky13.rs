@@ -174,6 +174,15 @@ mod tests {
     use super::*;
     use std::net::IpAddr;
 
+    fn localhost_target(port: u16) -> Target {
+        Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .unwrap()
+    }
+
     #[test]
     fn test_lucky13_result() {
         let result = Lucky13TestResult {
@@ -223,12 +232,7 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         drop(listener);
 
-        let target = Target::with_ips(
-            "localhost".to_string(),
-            port,
-            vec![IpAddr::from([127, 0, 0, 1])],
-        )
-        .unwrap();
+        let target = localhost_target(port);
 
         let tester = Lucky13Tester::new(target);
         let result = tester.test().await.unwrap();
@@ -252,12 +256,7 @@ mod tests {
             }
         });
 
-        let target = Target::with_ips(
-            "localhost".to_string(),
-            port,
-            vec![IpAddr::from([127, 0, 0, 1])],
-        )
-        .unwrap();
+        let target = localhost_target(port);
 
         let tester = Lucky13Tester::new(target);
         let result = tester.test().await.unwrap();
