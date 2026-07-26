@@ -1,15 +1,7 @@
 use super::*;
 use std::net::IpAddr;
-use std::sync::Once;
 use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
-
-fn install_crypto_provider() {
-    static ONCE: Once = Once::new();
-    ONCE.call_once(|| {
-        let _ = rustls::crypto::ring::default_provider().install_default();
-    });
-}
 
 #[test]
 fn test_grease_values_defined() {
@@ -292,7 +284,7 @@ async fn spawn_self_signed_tls_server(max_accepts: usize) -> std::net::SocketAdd
 
 #[tokio::test]
 async fn test_grease_baseline_ignores_certificate_validation_errors() {
-    install_crypto_provider();
+    crate::utils::insecure_tls::ensure_ring_provider();
     let addr = spawn_self_signed_tls_server(1).await;
     let target = Target::with_ips(
         "localhost".to_string(),
@@ -308,7 +300,7 @@ async fn test_grease_baseline_ignores_certificate_validation_errors() {
 
 #[tokio::test]
 async fn test_grease_tester_baseline_failure_path() {
-    install_crypto_provider();
+    crate::utils::insecure_tls::ensure_ring_provider();
     let addr = spawn_dummy_server(5).await;
     let target = Target::with_ips(
         "127.0.0.1".to_string(),

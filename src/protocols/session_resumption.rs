@@ -427,7 +427,6 @@ mod tests {
     use super::*;
     use std::net::{IpAddr, SocketAddr};
     use std::sync::Arc;
-    use std::sync::Once;
     use tokio::net::TcpListener;
     use tokio_rustls::TlsAcceptor;
 
@@ -522,13 +521,6 @@ mod tests {
         assert_eq!(tester.connect_timeout, Duration::from_secs(7));
     }
 
-    fn install_crypto_provider() {
-        static ONCE: Once = Once::new();
-        ONCE.call_once(|| {
-            let _ = rustls::crypto::ring::default_provider().install_default();
-        });
-    }
-
     async fn spawn_tls_server(max_accepts: usize) -> (SocketAddr, std::path::PathBuf) {
         let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
         let cert_der = cert.cert.der().clone();
@@ -582,7 +574,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_session_resumption_against_local_tls() {
-        install_crypto_provider();
+        crate::utils::insecure_tls::ensure_ring_provider();
         let (addr, cert_path) = spawn_tls_server(40).await;
 
         let target = Target::with_ips(

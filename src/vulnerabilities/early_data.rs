@@ -538,17 +538,9 @@ impl<'a> EarlyDataTester<'a> {
 mod tests {
     use super::*;
     use std::net::{IpAddr, SocketAddr};
-    use std::sync::Once;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
     use tokio_rustls::TlsAcceptor;
-
-    fn install_crypto_provider() {
-        static ONCE: Once = Once::new();
-        ONCE.call_once(|| {
-            let _ = rustls::crypto::ring::default_provider().install_default();
-        });
-    }
 
     /// Spawn a local TLS 1.3 server with the given early-data limit (0 disables
     /// 0-RTT). Returns the bound address; the server runs as a detached task.
@@ -594,7 +586,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_probe_zero_rtt_without_early_data_reports_not_supported() {
-        install_crypto_provider();
+        crate::utils::insecure_tls::ensure_ring_provider();
         let addr = spawn_tls13_server(0).await;
         let target = Target::with_ips(
             "localhost".to_string(),
@@ -611,7 +603,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_probe_zero_rtt_all_ips_uses_any_reachable_ip() {
-        install_crypto_provider();
+        crate::utils::insecure_tls::ensure_ring_provider();
         let addr = spawn_tls13_server(16384).await;
         let target = Target::with_ips(
             "localhost".to_string(),
@@ -628,7 +620,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_probe_zero_rtt_with_early_data_reports_supported() {
-        install_crypto_provider();
+        crate::utils::insecure_tls::ensure_ring_provider();
         let addr = spawn_tls13_server(16384).await;
         let target = Target::with_ips(
             "localhost".to_string(),
@@ -645,7 +637,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_early_data_full_flow_consistent_on_self_signed_tls13() {
-        install_crypto_provider();
+        crate::utils::insecure_tls::ensure_ring_provider();
         // Self-signed cert (the common scanner case). connect_tls13 must use the
         // non-verifying connector, otherwise it false-reports "no TLS 1.3" and
         // contradicts the early-data support result.
@@ -667,7 +659,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_replay_attack_exercises_two_resumed_early_data_connections() {
-        install_crypto_provider();
+        crate::utils::insecure_tls::ensure_ring_provider();
         let addr = spawn_tls13_server(16384).await;
         let target = Target::with_ips(
             "localhost".to_string(),
@@ -706,7 +698,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_early_data_inactive_target_is_inconclusive() {
-        install_crypto_provider();
+        crate::utils::insecure_tls::ensure_ring_provider();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         drop(listener);
@@ -732,7 +724,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_connect_tls13_invalid_hostname() {
-        install_crypto_provider();
+        crate::utils::insecure_tls::ensure_ring_provider();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
 
@@ -755,7 +747,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_connect_tls13_transport_anomaly_is_inconclusive() {
-        install_crypto_provider();
+        crate::utils::insecure_tls::ensure_ring_provider();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
 
@@ -781,7 +773,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_max_early_data_size_none_when_no_tls13() {
-        install_crypto_provider();
+        crate::utils::insecure_tls::ensure_ring_provider();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
 
