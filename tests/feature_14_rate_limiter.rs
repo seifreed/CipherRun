@@ -74,34 +74,27 @@ mod rate_limiter_tests {
     }
 
     #[test]
-    fn test_parse_delay_milliseconds() {
-        assert_eq!(parse_delay("500ms").unwrap(), Duration::from_millis(500));
-        assert_eq!(parse_delay("1000ms").unwrap(), Duration::from_secs(1));
-        assert_eq!(parse_delay("0ms").unwrap(), Duration::ZERO);
-    }
-
-    #[test]
-    fn test_parse_delay_seconds() {
-        assert_eq!(parse_delay("1s").unwrap(), Duration::from_secs(1));
-        assert_eq!(parse_delay("2s").unwrap(), Duration::from_secs(2));
-        assert_eq!(parse_delay("0.5s").unwrap(), Duration::from_millis(500));
-        assert_eq!(parse_delay("1.5s").unwrap(), Duration::from_millis(1500));
-    }
-
-    #[test]
-    fn test_parse_delay_plain_number() {
-        // Plain numbers default to milliseconds
-        assert_eq!(parse_delay("500").unwrap(), Duration::from_millis(500));
-        assert_eq!(parse_delay("1000").unwrap(), Duration::from_secs(1));
-    }
-
-    #[test]
-    fn test_parse_delay_with_whitespace() {
-        assert_eq!(
-            parse_delay("  500ms  ").unwrap(),
-            Duration::from_millis(500)
-        );
-        assert_eq!(parse_delay("  2s  ").unwrap(), Duration::from_secs(2));
+    fn test_parse_delay_valid_inputs() {
+        for (input, expected) in [
+            ("500ms", Duration::from_millis(500)),
+            ("1000ms", Duration::from_secs(1)),
+            ("0ms", Duration::ZERO),
+            ("1s", Duration::from_secs(1)),
+            ("2s", Duration::from_secs(2)),
+            ("0.5s", Duration::from_millis(500)),
+            ("1.5s", Duration::from_millis(1500)),
+            ("500", Duration::from_millis(500)),
+            ("1000", Duration::from_secs(1)),
+            ("  500ms  ", Duration::from_millis(500)),
+            ("  2s  ", Duration::from_secs(2)),
+            ("2.5s", Duration::from_millis(2500)),
+            ("0.1s", Duration::from_millis(100)),
+            ("1ms", Duration::from_millis(1)),
+            ("60s", Duration::from_secs(60)),
+            ("5000ms", Duration::from_secs(5)),
+        ] {
+            assert_eq!(parse_delay(input).unwrap(), expected);
+        }
     }
 
     #[test]
@@ -109,12 +102,6 @@ mod rate_limiter_tests {
         assert!(parse_delay("invalid").is_err());
         assert!(parse_delay("abc ms").is_err());
         assert!(parse_delay("").is_err());
-    }
-
-    #[test]
-    fn test_parse_delay_floating_point() {
-        assert_eq!(parse_delay("2.5s").unwrap(), Duration::from_millis(2500));
-        assert_eq!(parse_delay("0.1s").unwrap(), Duration::from_millis(100));
     }
 
     #[test]
@@ -152,17 +139,6 @@ mod rate_limiter_tests {
 
         // All requests should respect the rate limit
         assert!(elapsed.as_millis() >= 40);
-    }
-
-    #[test]
-    fn test_parse_delay_edge_cases() {
-        // Very small delays
-        assert_eq!(parse_delay("1ms").unwrap(), Duration::from_millis(1));
-        assert_eq!(parse_delay("0.1s").unwrap(), Duration::from_millis(100));
-
-        // Large delays
-        assert_eq!(parse_delay("60s").unwrap(), Duration::from_secs(60));
-        assert_eq!(parse_delay("5000ms").unwrap(), Duration::from_secs(5));
     }
 
     #[tokio::test]
