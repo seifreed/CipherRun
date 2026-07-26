@@ -30,6 +30,20 @@ fn aggregated_protocol_result() -> ProtocolTestResult {
     }
 }
 
+fn aggregated_result(inconsistencies: &[Inconsistency]) -> AggregatedScanResult {
+    AggregatedScanResult {
+        protocols: vec![aggregated_protocol_result()],
+        ciphers: HashMap::new(),
+        grade: ("B".to_string(), 85),
+        certificate_info: None,
+        certificate_consistent: false,
+        inconsistencies: inconsistencies.to_vec(),
+        alpn_protocols: vec!["h2".to_string()],
+        session_resumption_caching: Some(true),
+        session_resumption_tickets: Some(false),
+    }
+}
+
 fn build_scan_results() -> ScanResults {
     let mut results = ScanResults {
         target: "example.com:443".to_string(),
@@ -162,17 +176,7 @@ fn test_multi_ip_report_display() {
         },
     ];
 
-    let aggregated = AggregatedScanResult {
-        protocols: vec![aggregated_protocol_result()],
-        ciphers: HashMap::new(),
-        grade: ("B".to_string(), 85),
-        certificate_info: None,
-        certificate_consistent: false,
-        inconsistencies: inconsistencies.clone(),
-        alpn_protocols: vec!["h2".to_string()],
-        session_resumption_caching: Some(true),
-        session_resumption_tickets: Some(false),
-    };
+    let aggregated = aggregated_result(&inconsistencies);
 
     let report = MultiIpScanReport {
         target,
@@ -321,17 +325,7 @@ fn test_multi_ip_report_display_is_deterministic() {
             },
         ];
 
-        let aggregated = AggregatedScanResult {
-            protocols: vec![aggregated_protocol_result()],
-            ciphers: HashMap::new(),
-            grade: ("B".to_string(), 85),
-            certificate_info: None,
-            certificate_consistent: false,
-            inconsistencies: inconsistencies.clone(),
-            alpn_protocols: vec!["h2".to_string()],
-            session_resumption_caching: Some(true),
-            session_resumption_tickets: Some(false),
-        };
+        let aggregated = aggregated_result(&inconsistencies);
 
         MultiIpScanReport {
             target,
