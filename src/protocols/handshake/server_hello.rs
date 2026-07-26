@@ -1,7 +1,7 @@
+use crate::Result;
 use crate::constants::{CONTENT_TYPE_HANDSHAKE, HANDSHAKE_TYPE_SERVER_HELLO};
 use crate::protocols::{Extension, Protocol};
 use crate::utils::result_byte_parse as parse_bytes;
-use crate::Result;
 
 pub struct ServerHelloParser;
 
@@ -365,15 +365,7 @@ mod tests {
 
     #[test]
     fn test_server_hello_rejects_truncated_extensions_length() {
-        let mut server_hello = vec![
-            0x16, 0x03, 0x03, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x03, 0x03,
-        ];
-        server_hello.extend_from_slice(&[0u8; 32]);
-        server_hello.push(0x00);
-        server_hello.extend_from_slice(&[0xc0, 0x2f]);
-        server_hello.push(0x00);
-        server_hello.push(0x00);
-        patch_lengths(&mut server_hello);
+        let server_hello = server_hello_with_tail(&[0x00]);
 
         let err = ServerHelloParser::parse(&server_hello).expect_err("parser should reject");
         assert!(err.to_string().contains("extensions length"));
@@ -381,15 +373,7 @@ mod tests {
 
     #[test]
     fn test_server_hello_rejects_truncated_extension_header() {
-        let mut server_hello = vec![
-            0x16, 0x03, 0x03, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x03, 0x03,
-        ];
-        server_hello.extend_from_slice(&[0u8; 32]);
-        server_hello.push(0x00);
-        server_hello.extend_from_slice(&[0xc0, 0x2f]);
-        server_hello.push(0x00);
-        server_hello.extend_from_slice(&[0x00, 0x03, 0x00, 0x05, 0x00]);
-        patch_lengths(&mut server_hello);
+        let server_hello = server_hello_with_tail(&[0x00, 0x03, 0x00, 0x05, 0x00]);
 
         let err = ServerHelloParser::parse(&server_hello).expect_err("parser should reject");
         assert!(err.to_string().contains("extension header"));
@@ -397,15 +381,7 @@ mod tests {
 
     #[test]
     fn test_server_hello_rejects_extension_block_trailing_bytes() {
-        let mut server_hello = vec![
-            0x16, 0x03, 0x03, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x03, 0x03,
-        ];
-        server_hello.extend_from_slice(&[0u8; 32]);
-        server_hello.push(0x00);
-        server_hello.extend_from_slice(&[0xc0, 0x2f]);
-        server_hello.push(0x00);
-        server_hello.extend_from_slice(&[0x00, 0x00, 0x00]);
-        patch_lengths(&mut server_hello);
+        let server_hello = server_hello_with_tail(&[0x00, 0x00, 0x00]);
 
         let err = ServerHelloParser::parse(&server_hello).expect_err("parser should reject");
         assert!(err.to_string().contains("trailing bytes"));
@@ -445,7 +421,7 @@ mod tests {
         server_hello.push(0x00); // session_id length
         server_hello.extend_from_slice(&[0x13, 0x01]); // cipher suite
         server_hello.push(0x00); // compression
-                                 // extensions: length 6, supported_versions (0x002b) body 0x0304
+        // extensions: length 6, supported_versions (0x002b) body 0x0304
         server_hello.extend_from_slice(&[0x00, 0x06, 0x00, 0x2b, 0x00, 0x02, 0x03, 0x04]);
         patch_lengths(&mut server_hello);
 
@@ -467,9 +443,10 @@ mod tests {
         patch_lengths(&mut server_hello);
 
         let err = ServerHelloParser::parse(&server_hello).expect_err("parser should reject");
-        assert!(err
-            .to_string()
-            .contains("Unknown ServerHello protocol version"));
+        assert!(
+            err.to_string()
+                .contains("Unknown ServerHello protocol version")
+        );
     }
 
     #[test]
@@ -485,9 +462,10 @@ mod tests {
         patch_lengths(&mut server_hello);
 
         let err = ServerHelloParser::parse(&server_hello).expect_err("parser should reject");
-        assert!(err
-            .to_string()
-            .contains("Unknown ServerHello protocol version"));
+        assert!(
+            err.to_string()
+                .contains("Unknown ServerHello protocol version")
+        );
     }
 
     #[test]
