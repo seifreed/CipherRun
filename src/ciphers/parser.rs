@@ -335,6 +335,21 @@ mod tests {
         }
     }
 
+    fn tls13_aead_cipher(hexcode: &str, name: &str, bits: u16) -> CipherSuite {
+        CipherSuite {
+            hexcode: hexcode.to_string(),
+            openssl_name: name.to_string(),
+            iana_name: name.to_string(),
+            protocol: "TLSv1.3".to_string(),
+            key_exchange: "ECDHE".to_string(),
+            authentication: "RSA".to_string(),
+            encryption: "AESGCM".to_string(),
+            mac: "AEAD".to_string(),
+            bits,
+            export: false,
+        }
+    }
+
     #[test]
     fn test_cipher_formatting() {
         let cipher = tls12_aes256_gcm_cipher();
@@ -401,18 +416,7 @@ mod tests {
 
     #[test]
     fn test_format_cipher_detailed_includes_bits_and_flags() {
-        let cipher = CipherSuite {
-            hexcode: "1301".to_string(),
-            openssl_name: "TLS_AES_128_GCM_SHA256".to_string(),
-            iana_name: "TLS_AES_128_GCM_SHA256".to_string(),
-            protocol: "TLSv1.3".to_string(),
-            key_exchange: "ECDHE".to_string(),
-            authentication: "RSA".to_string(),
-            encryption: "AESGCM".to_string(),
-            mac: "AEAD".to_string(),
-            bits: 128,
-            export: false,
-        };
+        let cipher = tls13_aead_cipher("1301", "TLS_AES_128_GCM_SHA256", 128);
 
         let formatted = CipherFormatter::format_cipher_detailed(&cipher, false);
         assert!(formatted.contains("Kx=ECDHE"));
@@ -423,18 +427,7 @@ mod tests {
 
     #[test]
     fn test_format_cipher_detailed_omits_mac_for_aead() {
-        let cipher = CipherSuite {
-            hexcode: "1302".to_string(),
-            openssl_name: "TLS_AES_256_GCM_SHA384".to_string(),
-            iana_name: "TLS_AES_256_GCM_SHA384".to_string(),
-            protocol: "TLSv1.3".to_string(),
-            key_exchange: "ECDHE".to_string(),
-            authentication: "RSA".to_string(),
-            encryption: "AESGCM".to_string(),
-            mac: "AEAD".to_string(),
-            bits: 256,
-            export: false,
-        };
+        let cipher = tls13_aead_cipher("1302", "TLS_AES_256_GCM_SHA384", 256);
 
         let formatted = CipherFormatter::format_cipher_detailed(&cipher, false);
         assert!(!formatted.contains("Mac="));
