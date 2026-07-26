@@ -1,5 +1,20 @@
 use super::*;
 
+fn protocol_result(protocol: Protocol, preferred: bool, ciphers_count: usize) -> ProtocolTestResult {
+    ProtocolTestResult {
+        protocol,
+        supported: true,
+        inconclusive: false,
+        preferred,
+        ciphers_count,
+        handshake_time_ms: None,
+        heartbeat_enabled: None,
+        session_resumption_caching: None,
+        session_resumption_tickets: None,
+        secure_renegotiation: None,
+    }
+}
+
 #[test]
 fn test_overall_score_calculation() {
     // All perfect scores
@@ -46,30 +61,8 @@ fn test_certificate_score_expired() {
 fn test_protocol_score_with_tls13() {
     // Server with TLS 1.3 should get full score (no cap)
     let protocols = vec![
-        ProtocolTestResult {
-            protocol: Protocol::TLS12,
-            supported: true,
-            inconclusive: false,
-            preferred: false,
-            ciphers_count: 10,
-            handshake_time_ms: None,
-            heartbeat_enabled: None,
-            session_resumption_caching: None,
-            session_resumption_tickets: None,
-            secure_renegotiation: None,
-        },
-        ProtocolTestResult {
-            protocol: Protocol::TLS13,
-            supported: true,
-            inconclusive: false,
-            preferred: true,
-            ciphers_count: 5,
-            handshake_time_ms: None,
-            heartbeat_enabled: None,
-            session_resumption_caching: None,
-            session_resumption_tickets: None,
-            secure_renegotiation: None,
-        },
+        protocol_result(Protocol::TLS12, false, 10),
+        protocol_result(Protocol::TLS13, true, 5),
     ];
     let score = RatingCalculator::calculate_protocol_score(&protocols);
     assert_eq!(score, 100, "Server with TLS 1.3 should get full score");
@@ -79,18 +72,7 @@ fn test_protocol_score_with_tls13() {
 fn test_protocol_score_without_tls13_gets_penalty() {
     // Server with only TLS 1.2 (no TLS 1.3): no penalty in protocol_score.
     // The A- cap is enforced at the overall score level in calculate().
-    let protocols = vec![ProtocolTestResult {
-        protocol: Protocol::TLS12,
-        supported: true,
-        inconclusive: false,
-        preferred: true,
-        ciphers_count: 10,
-        handshake_time_ms: None,
-        heartbeat_enabled: None,
-        session_resumption_caching: None,
-        session_resumption_tickets: None,
-        secure_renegotiation: None,
-    }];
+    let protocols = vec![protocol_result(Protocol::TLS12, true, 10)];
     let score = RatingCalculator::calculate_protocol_score(&protocols);
     assert_eq!(
         score, 100,
@@ -103,42 +85,9 @@ fn test_protocol_score_without_tls13_with_old_tls() {
     // Server with TLS 1.0, 1.1, 1.2 but no TLS 1.3
     // Initial score 100 - 5 (TLS 1.0) - 3 (TLS 1.1) - 15 (no TLS 1.3) = 77
     let protocols = vec![
-        ProtocolTestResult {
-            protocol: Protocol::TLS10,
-            supported: true,
-            inconclusive: false,
-            preferred: false,
-            ciphers_count: 20,
-            handshake_time_ms: None,
-            heartbeat_enabled: None,
-            session_resumption_caching: None,
-            session_resumption_tickets: None,
-            secure_renegotiation: None,
-        },
-        ProtocolTestResult {
-            protocol: Protocol::TLS11,
-            supported: true,
-            inconclusive: false,
-            preferred: false,
-            ciphers_count: 15,
-            handshake_time_ms: None,
-            heartbeat_enabled: None,
-            session_resumption_caching: None,
-            session_resumption_tickets: None,
-            secure_renegotiation: None,
-        },
-        ProtocolTestResult {
-            protocol: Protocol::TLS12,
-            supported: true,
-            inconclusive: false,
-            preferred: true,
-            ciphers_count: 10,
-            handshake_time_ms: None,
-            heartbeat_enabled: None,
-            session_resumption_caching: None,
-            session_resumption_tickets: None,
-            secure_renegotiation: None,
-        },
+        protocol_result(Protocol::TLS10, false, 20),
+        protocol_result(Protocol::TLS11, false, 15),
+        protocol_result(Protocol::TLS12, true, 10),
     ];
     let score = RatingCalculator::calculate_protocol_score(&protocols);
     // Score: 100 - 5 (TLS 1.0) - 3 (TLS 1.1) = 92 (no TLS 1.3 cap applied at overall level)
@@ -153,30 +102,8 @@ fn test_protocol_score_sslv3_with_penalties() {
     // Server with SSLv3 and TLS 1.2 (no TLS 1.3)
     // Initial score 100 - 20 (SSLv3) = 80 (no TLS 1.3 cap applied at overall level)
     let protocols = vec![
-        ProtocolTestResult {
-            protocol: Protocol::SSLv3,
-            supported: true,
-            inconclusive: false,
-            preferred: false,
-            ciphers_count: 50,
-            handshake_time_ms: None,
-            heartbeat_enabled: None,
-            session_resumption_caching: None,
-            session_resumption_tickets: None,
-            secure_renegotiation: None,
-        },
-        ProtocolTestResult {
-            protocol: Protocol::TLS12,
-            supported: true,
-            inconclusive: false,
-            preferred: true,
-            ciphers_count: 10,
-            handshake_time_ms: None,
-            heartbeat_enabled: None,
-            session_resumption_caching: None,
-            session_resumption_tickets: None,
-            secure_renegotiation: None,
-        },
+        protocol_result(Protocol::SSLv3, false, 50),
+        protocol_result(Protocol::TLS12, true, 10),
     ];
     let score = RatingCalculator::calculate_protocol_score(&protocols);
     assert_eq!(
@@ -189,30 +116,8 @@ fn test_protocol_score_sslv3_with_penalties() {
 fn test_protocol_score_sslv2_instant_fail() {
     // SSLv2 should result in instant 0 score regardless of TLS 1.3
     let protocols = vec![
-        ProtocolTestResult {
-            protocol: Protocol::SSLv2,
-            supported: true,
-            inconclusive: false,
-            preferred: false,
-            ciphers_count: 20,
-            handshake_time_ms: None,
-            heartbeat_enabled: None,
-            session_resumption_caching: None,
-            session_resumption_tickets: None,
-            secure_renegotiation: None,
-        },
-        ProtocolTestResult {
-            protocol: Protocol::TLS13,
-            supported: true,
-            inconclusive: false,
-            preferred: true,
-            ciphers_count: 5,
-            handshake_time_ms: None,
-            heartbeat_enabled: None,
-            session_resumption_caching: None,
-            session_resumption_tickets: None,
-            secure_renegotiation: None,
-        },
+        protocol_result(Protocol::SSLv2, false, 20),
+        protocol_result(Protocol::TLS13, true, 5),
     ];
     let score = RatingCalculator::calculate_protocol_score(&protocols);
     assert_eq!(score, 0, "SSLv2 support should result in instant fail");
@@ -226,30 +131,8 @@ fn test_sslv2_forces_grade_f_in_calculate() {
     use std::collections::HashMap;
 
     let protocols = vec![
-        ProtocolTestResult {
-            protocol: Protocol::SSLv2,
-            supported: true,
-            inconclusive: false,
-            preferred: false,
-            ciphers_count: 20,
-            handshake_time_ms: None,
-            heartbeat_enabled: None,
-            session_resumption_caching: None,
-            session_resumption_tickets: None,
-            secure_renegotiation: None,
-        },
-        ProtocolTestResult {
-            protocol: Protocol::TLS13,
-            supported: true,
-            inconclusive: false,
-            preferred: true,
-            ciphers_count: 5,
-            handshake_time_ms: None,
-            heartbeat_enabled: None,
-            session_resumption_caching: None,
-            session_resumption_tickets: None,
-            secure_renegotiation: None,
-        },
+        protocol_result(Protocol::SSLv2, false, 20),
+        protocol_result(Protocol::TLS13, true, 5),
     ];
 
     let ciphers = HashMap::new();
@@ -283,30 +166,8 @@ fn test_user_reported_issue_fix() {
 
     // With TLS 1.3 supported
     let protocols_with_tls13 = vec![
-        ProtocolTestResult {
-            protocol: Protocol::TLS12,
-            supported: true,
-            inconclusive: false,
-            preferred: false,
-            ciphers_count: 10,
-            handshake_time_ms: None,
-            heartbeat_enabled: None,
-            session_resumption_caching: None,
-            session_resumption_tickets: None,
-            secure_renegotiation: None,
-        },
-        ProtocolTestResult {
-            protocol: Protocol::TLS13,
-            supported: true,
-            inconclusive: false,
-            preferred: true,
-            ciphers_count: 5,
-            handshake_time_ms: None,
-            heartbeat_enabled: None,
-            session_resumption_caching: None,
-            session_resumption_tickets: None,
-            secure_renegotiation: None,
-        },
+        protocol_result(Protocol::TLS12, false, 10),
+        protocol_result(Protocol::TLS13, true, 5),
     ];
 
     let ciphers = HashMap::new();
@@ -347,30 +208,8 @@ fn test_inconclusive_vulnerability_does_not_penalize_grade() {
     use std::collections::HashMap;
 
     let protocols_with_tls13 = vec![
-        ProtocolTestResult {
-            protocol: Protocol::TLS12,
-            supported: true,
-            inconclusive: false,
-            preferred: false,
-            ciphers_count: 10,
-            handshake_time_ms: None,
-            heartbeat_enabled: None,
-            session_resumption_caching: None,
-            session_resumption_tickets: None,
-            secure_renegotiation: None,
-        },
-        ProtocolTestResult {
-            protocol: Protocol::TLS13,
-            supported: true,
-            inconclusive: false,
-            preferred: true,
-            ciphers_count: 5,
-            handshake_time_ms: None,
-            heartbeat_enabled: None,
-            session_resumption_caching: None,
-            session_resumption_tickets: None,
-            secure_renegotiation: None,
-        },
+        protocol_result(Protocol::TLS12, false, 10),
+        protocol_result(Protocol::TLS13, true, 5),
     ];
     let ciphers = HashMap::new();
 
@@ -413,18 +252,7 @@ fn test_confirmed_critical_vulnerability_penalizes_grade() {
     // real findings.
     use std::collections::HashMap;
 
-    let protocols_with_tls13 = vec![ProtocolTestResult {
-        protocol: Protocol::TLS13,
-        supported: true,
-        inconclusive: false,
-        preferred: true,
-        ciphers_count: 5,
-        handshake_time_ms: None,
-        heartbeat_enabled: None,
-        session_resumption_caching: None,
-        session_resumption_tickets: None,
-        secure_renegotiation: None,
-    }];
+    let protocols_with_tls13 = vec![protocol_result(Protocol::TLS13, true, 5)];
     let ciphers = HashMap::new();
 
     let confirmed_critical = vec![crate::vulnerabilities::VulnerabilityResult {
@@ -456,18 +284,7 @@ fn test_tls13_overall_score_cap() {
     // Without TLS 1.3, the OVERALL score should be capped at 84 (A-)
     use std::collections::HashMap;
 
-    let protocols_without_tls13 = vec![ProtocolTestResult {
-        protocol: Protocol::TLS12,
-        supported: true,
-        inconclusive: false,
-        preferred: true,
-        ciphers_count: 10,
-        handshake_time_ms: None,
-        heartbeat_enabled: None,
-        session_resumption_caching: None,
-        session_resumption_tickets: None,
-        secure_renegotiation: None,
-    }];
+    let protocols_without_tls13 = vec![protocol_result(Protocol::TLS12, true, 10)];
 
     let ciphers = HashMap::new();
     let vulnerabilities = vec![];
@@ -657,18 +474,7 @@ fn test_cipher_strength_score_handles_extreme_weak_counts() {
 /// Build a supported `ProtocolTestResult` for the given protocol.
 #[cfg(test)]
 fn supported_protocol(protocol: Protocol) -> ProtocolTestResult {
-    ProtocolTestResult {
-        protocol,
-        supported: true,
-        inconclusive: false,
-        preferred: false,
-        ciphers_count: 0,
-        handshake_time_ms: None,
-        heartbeat_enabled: None,
-        session_resumption_caching: None,
-        session_resumption_tickets: None,
-        secure_renegotiation: None,
-    }
+    protocol_result(protocol, false, 0)
 }
 
 #[test]
