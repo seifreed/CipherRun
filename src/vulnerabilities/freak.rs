@@ -10,6 +10,10 @@ use crate::Result;
 use crate::protocols::Protocol;
 use crate::utils::network::Target;
 
+mod result;
+
+pub use result::FreakTestResult;
+
 /// FREAK vulnerability tester
 pub struct FreakTester {
     target: Target,
@@ -80,27 +84,11 @@ impl FreakTester {
     /// Test for FREAK vulnerability
     pub async fn test(&self) -> Result<FreakTestResult> {
         let (export_ciphers, export_inconclusive) = self.test_export_ciphers().await?;
-        let vulnerable = !export_ciphers.is_empty();
-        let inconclusive = !vulnerable && export_inconclusive;
 
-        let details = if vulnerable {
-            format!(
-                "Vulnerable to FREAK (CVE-2015-0204) - Server supports {} RSA export cipher(s): {}",
-                export_ciphers.len(),
-                export_ciphers.join(", ")
-            )
-        } else if inconclusive {
-            "FREAK test inconclusive - unable to determine RSA export cipher support".to_string()
-        } else {
-            "Not vulnerable - No RSA export ciphers supported".to_string()
-        };
-
-        Ok(FreakTestResult {
-            vulnerable,
-            inconclusive,
+        Ok(FreakTestResult::from_export_probe(
             export_ciphers,
-            details,
-        })
+            export_inconclusive,
+        ))
     }
 
     /// Test for RSA export cipher support.
@@ -135,15 +123,6 @@ impl FreakTester {
 
         Ok((supported, inconclusive))
     }
-}
-
-/// FREAK test result
-#[derive(Debug, Clone)]
-pub struct FreakTestResult {
-    pub vulnerable: bool,
-    pub inconclusive: bool,
-    pub export_ciphers: Vec<String>,
-    pub details: String,
 }
 
 #[cfg(test)]
