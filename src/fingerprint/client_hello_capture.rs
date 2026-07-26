@@ -6,6 +6,7 @@ use crate::constants::{
     EXTENSION_SUPPORTED_GROUPS, HANDSHAKE_TYPE_CLIENT_HELLO, RANDOM_BYTES_SIZE,
     TLS_RECORD_HEADER_SIZE,
 };
+use crate::fingerprint::length;
 use crate::{Result, TlsError};
 use serde::{Deserialize, Serialize};
 
@@ -94,25 +95,6 @@ impl ClientHelloCapture {
         u8::try_from(len).map_err(|_| TlsError::ParseError {
             message: format!("{context} length is too large"),
         })
-    }
-
-    fn u16_len(len: usize, context: &str) -> Result<u16> {
-        u16::try_from(len).map_err(|_| TlsError::ParseError {
-            message: format!("{context} length is too large"),
-        })
-    }
-
-    fn u24_len(len: usize, context: &str) -> Result<[u8; 3]> {
-        let len = u32::try_from(len).map_err(|_| TlsError::ParseError {
-            message: format!("{context} length is too large"),
-        })?;
-        if len > 0x00FF_FFFF {
-            return Err(TlsError::ParseError {
-                message: format!("{context} length is too large"),
-            });
-        }
-        let bytes = len.to_be_bytes();
-        Ok([bytes[1], bytes[2], bytes[3]])
     }
 
     /// Parse ClientHello from raw TLS record
@@ -500,7 +482,7 @@ impl ClientHelloCapture {
                 .ok_or_else(|| TlsError::ParseError {
                     message: "Cipher suites length is too large".to_string(),
                 })?;
-        let cipher_suites_len = Self::u16_len(cipher_suites_len, "Cipher suites")?;
+        let cipher_suites_len = length::u16_len(cipher_suites_len, "Cipher suites")?;
         bytes.extend_from_slice(&cipher_suites_len.to_be_bytes());
         for cipher in &self.cipher_suites {
             bytes.extend_from_slice(&cipher.to_be_bytes());
@@ -519,24 +501,24 @@ impl ClientHelloCapture {
 
             for ext in &self.extensions {
                 extensions_bytes.extend_from_slice(&ext.extension_type.to_be_bytes());
-                let ext_data_len = Self::u16_len(ext.data.len(), "Extension data")?;
+                let ext_data_len = length::u16_len(ext.data.len(), "Extension data")?;
                 extensions_bytes.extend_from_slice(&ext_data_len.to_be_bytes());
                 extensions_bytes.extend_from_slice(&ext.data);
             }
 
-            let extensions_len = Self::u16_len(extensions_bytes.len(), "Extensions")?;
+            let extensions_len = length::u16_len(extensions_bytes.len(), "Extensions")?;
             bytes.extend_from_slice(&extensions_len.to_be_bytes());
             bytes.extend_from_slice(&extensions_bytes);
         }
 
         // Update handshake length
-        let handshake_len = Self::u24_len(bytes.len() - handshake_len_pos - 3, "Handshake")?;
+        let handshake_len = length::u24_len(bytes.len() - handshake_len_pos - 3, "Handshake")?;
         if let Some(len_bytes) = bytes.get_mut(handshake_len_pos..handshake_len_pos + 3) {
             len_bytes.copy_from_slice(&handshake_len);
         }
 
         // Update record length
-        let record_len = Self::u16_len(bytes.len() - record_len_pos - 2, "TLS record")?;
+        let record_len = length::u16_len(bytes.len() - record_len_pos - 2, "TLS record")?;
         if let Some(len_bytes) = bytes.get_mut(record_len_pos..record_len_pos + 2) {
             len_bytes.copy_from_slice(&record_len.to_be_bytes());
         }

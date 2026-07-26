@@ -7,6 +7,7 @@ pub mod ja3;
 pub mod ja3s;
 pub mod jarm;
 pub mod jarm_probes;
+pub(crate) mod length;
 pub mod server_hello;
 
 pub use capture::ClientHelloNetworkCapture;

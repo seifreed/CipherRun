@@ -5,6 +5,7 @@
 
 use crate::Result;
 use crate::error::TlsError;
+use crate::fingerprint::length;
 use crate::fingerprint::server_hello::ServerHelloCapture;
 use crate::utils::network::Target;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -239,7 +240,7 @@ impl ServerHelloNetworkCapture {
             0xC0, 0x2D, // TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256
             0xC0, 0x2E, // TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA384
         ];
-        let cipher_suites_len = Self::u16_len(cipher_suites.len(), "cipher suites")?;
+        let cipher_suites_len = length::u16_len(cipher_suites.len(), "cipher suites")?;
         client_hello.extend_from_slice(&cipher_suites_len.to_be_bytes());
         client_hello.extend_from_slice(&cipher_suites);
 
@@ -261,13 +262,13 @@ impl ServerHelloNetworkCapture {
 
         // Update extensions length
         let extensions_len =
-            Self::u16_len(client_hello.len() - extensions_start - 2, "extensions")?;
+            length::u16_len(client_hello.len() - extensions_start - 2, "extensions")?;
         if let Some(len_bytes) = client_hello.get_mut(extensions_start..extensions_start + 2) {
             len_bytes.copy_from_slice(&extensions_len.to_be_bytes());
         }
 
         // Update handshake length (3 bytes, big-endian, excludes handshake header)
-        let handshake_body_len = Self::u24_len(
+        let handshake_body_len = length::u24_len(
             client_hello.len() - handshake_length_pos - 3,
             "handshake body",
         )?;
@@ -278,7 +279,7 @@ impl ServerHelloNetworkCapture {
         }
 
         // Update record length
-        let record_len = Self::u16_len(client_hello.len() - length_pos - 2, "TLS record")?;
+        let record_len = length::u16_len(client_hello.len() - length_pos - 2, "TLS record")?;
         if let Some(len_bytes) = client_hello.get_mut(length_pos..length_pos + 2) {
             len_bytes.copy_from_slice(&record_len.to_be_bytes());
         }
@@ -389,44 +390,25 @@ impl ServerHelloNetworkCapture {
         extension.push(0x00);
 
         // Server Name Length
-        let server_name_len = Self::u16_len(server_name.len(), "SNI server name")?;
+        let server_name_len = length::u16_len(server_name.len(), "SNI server name")?;
         extension.extend_from_slice(&server_name_len.to_be_bytes());
 
         // Server Name
         extension.extend_from_slice(server_name);
 
         // Update Server Name List Length
-        let list_len = Self::u16_len(extension.len() - list_len_pos - 2, "SNI server name list")?;
+        let list_len = length::u16_len(extension.len() - list_len_pos - 2, "SNI server name list")?;
         if let Some(len_bytes) = extension.get_mut(list_len_pos..list_len_pos + 2) {
             len_bytes.copy_from_slice(&list_len.to_be_bytes());
         }
 
         // Update Extension Length
-        let ext_len = Self::u16_len(extension.len() - ext_len_pos - 2, "SNI extension")?;
+        let ext_len = length::u16_len(extension.len() - ext_len_pos - 2, "SNI extension")?;
         if let Some(len_bytes) = extension.get_mut(ext_len_pos..ext_len_pos + 2) {
             len_bytes.copy_from_slice(&ext_len.to_be_bytes());
         }
 
         Ok(extension)
-    }
-
-    fn u16_len(len: usize, field: &str) -> Result<u16> {
-        u16::try_from(len).map_err(|_| TlsError::ParseError {
-            message: format!("{field} length is too large"),
-        })
-    }
-
-    fn u24_len(len: usize, field: &str) -> Result<[u8; 3]> {
-        let len = u32::try_from(len).map_err(|_| TlsError::ParseError {
-            message: format!("{field} length is too large"),
-        })?;
-        if len > 0x00FF_FFFF {
-            return Err(TlsError::ParseError {
-                message: format!("{field} length is too large"),
-            });
-        }
-        let bytes = len.to_be_bytes();
-        Ok([bytes[1], bytes[2], bytes[3]])
     }
 }
 

@@ -4,6 +4,7 @@
 
 use crate::Result;
 use crate::error::TlsError;
+use crate::fingerprint::length;
 use serde::{Deserialize, Serialize};
 use std::io::{Cursor, Read};
 
@@ -34,12 +35,6 @@ impl ServerHelloCapture {
 
     fn u8_len(len: usize, context: &str) -> Result<u8> {
         u8::try_from(len).map_err(|_| TlsError::ParseError {
-            message: format!("{context} length is too large"),
-        })
-    }
-
-    fn u16_len(len: usize, context: &str) -> Result<u16> {
-        u16::try_from(len).map_err(|_| TlsError::ParseError {
             message: format!("{context} length is too large"),
         })
     }
@@ -332,12 +327,12 @@ impl ServerHelloCapture {
             let mut extensions_bytes = Vec::new();
             for ext in &self.extensions {
                 extensions_bytes.extend_from_slice(&ext.extension_type.to_be_bytes());
-                let ext_len = Self::u16_len(ext.data.len(), "Extension data")?;
+                let ext_len = length::u16_len(ext.data.len(), "Extension data")?;
                 extensions_bytes.extend_from_slice(&ext_len.to_be_bytes());
                 extensions_bytes.extend_from_slice(&ext.data);
             }
 
-            let ext_total_len = Self::u16_len(extensions_bytes.len(), "Extensions")?;
+            let ext_total_len = length::u16_len(extensions_bytes.len(), "Extensions")?;
             bytes.extend_from_slice(&ext_total_len.to_be_bytes());
             bytes.extend_from_slice(&extensions_bytes);
         }
