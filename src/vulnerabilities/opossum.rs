@@ -8,6 +8,10 @@ use rustls::{ClientConfig, RootCertStore};
 use std::sync::Arc;
 use tokio::time::{Duration, timeout};
 
+mod result;
+
+pub use result::{OpossumStatus, OpossumTestResult};
+
 /// Test for Opossum vulnerability (March 2022)
 ///
 /// Opossum is a denial-of-service vulnerability affecting OpenSSL versions prior to 1.1.1n / 1.0.2ze / 3.0.2
@@ -29,21 +33,6 @@ pub struct OpossumTester {
     starttls_server_mode: bool,
     starttls_hostname: Option<String>,
     test_all_ips: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OpossumStatus {
-    Vulnerable,
-    NotVulnerable,
-    Inconclusive,
-}
-
-#[derive(Debug, Clone)]
-pub struct OpossumTestResult {
-    pub vulnerable: bool,
-    pub inconclusive: bool,
-    pub status: OpossumStatus,
-    pub details: String,
 }
 
 impl OpossumTester {
@@ -141,42 +130,10 @@ impl OpossumTester {
         let version_status = self.test_openssl_version().await?;
         let parsing_status = self.test_certificate_parsing().await?;
 
-        let status = if matches!(version_status, OpossumStatus::Vulnerable)
-            || matches!(parsing_status, OpossumStatus::Vulnerable)
-        {
-            // Downgrade to Inconclusive: remote detection is unreliable for this CVE
-            OpossumStatus::Inconclusive
-        } else if matches!(version_status, OpossumStatus::Inconclusive)
-            || matches!(parsing_status, OpossumStatus::Inconclusive)
-        {
-            OpossumStatus::Inconclusive
-        } else {
-            OpossumStatus::NotVulnerable
-        };
-
-        let details = match status {
-            OpossumStatus::Inconclusive => {
-                "Opossum test inconclusive - CVE-2022-0778 is a client-side parsing vulnerability \
-                 that cannot be reliably detected via remote scanning. Manual verification of \
-                 OpenSSL version (< 1.1.1n / 1.0.2ze / 3.0.2) is recommended."
-                    .to_string()
-            }
-            OpossumStatus::NotVulnerable => "No Opossum-like parsing hang observed".to_string(),
-            // Defensive: treat Vulnerable as Inconclusive in case upstream logic changes
-            OpossumStatus::Vulnerable => {
-                "Opossum test inconclusive - CVE-2022-0778 is a client-side parsing vulnerability \
-                 that cannot be reliably detected via remote scanning. Manual verification of \
-                 OpenSSL version (< 1.1.1n / 1.0.2ze / 3.0.2) is recommended."
-                    .to_string()
-            }
-        };
-
-        Ok(OpossumTestResult {
-            vulnerable: false, // Never report as definitively vulnerable via remote scan
-            inconclusive: matches!(status, OpossumStatus::Inconclusive),
-            status,
-            details,
-        })
+        Ok(OpossumTestResult::from_probe_statuses(
+            version_status,
+            parsing_status,
+        ))
     }
 
     /// Test OpenSSL version detection
