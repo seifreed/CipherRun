@@ -340,21 +340,9 @@ mod tests {
 
     #[test]
     fn test_parse_delay_invalid() {
-        assert!(parse_delay("invalid").is_err());
-        assert!(parse_delay("abc ms").is_err());
-        assert!(parse_delay("").is_err());
-    }
-
-    #[test]
-    fn test_parse_delay_rejects_non_finite_seconds() {
-        assert!(parse_delay("NaNs").is_err());
-        assert!(parse_delay("infs").is_err());
-    }
-
-    #[test]
-    fn test_parse_delay_negative_rejected() {
-        assert!(parse_delay("-1").is_err());
-        assert!(parse_delay("-2s").is_err());
+        for input in ["invalid", "abc ms", "", "NaNs", "infs", "-1", "-2s"] {
+            assert!(parse_delay(input).is_err(), "{input}");
+        }
     }
 
     #[tokio::test]
