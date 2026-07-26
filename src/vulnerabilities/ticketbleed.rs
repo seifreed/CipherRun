@@ -6,15 +6,12 @@
 // session keys, passwords, and other confidential data.
 
 use crate::Result;
-use crate::constants::{
-    BUFFER_SIZE_MAX_WITH_OVERHEAD, TLS_HANDSHAKE_TIMEOUT, TLS_RECORD_HEADER_SIZE,
-};
+use crate::constants::{BUFFER_SIZE_MAX_WITH_OVERHEAD, TLS_HANDSHAKE_TIMEOUT};
 use crate::protocols::Protocol;
 use crate::protocols::handshake::ClientHelloBuilder;
 use crate::utils::network::Target;
 use std::time::Duration;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::time::timeout;
+use tokio::io::AsyncWriteExt;
 
 mod outcome;
 /// Distinctive 16-byte Session ID sent in the resumption ClientHello.
@@ -25,6 +22,7 @@ mod outcome;
 /// coincidental "echo" from a healthy server (which would have to generate a
 /// fresh Session ID matching all 16 bytes) astronomically unlikely (2^-128),
 /// so the leak check below cannot false-positive.
+mod read_io;
 mod server_hello;
 mod session_ticket;
 
@@ -170,9 +168,12 @@ impl TicketbleedTester {
                 stream.write_all(&client_hello).await?;
 
                 let mut buffer = vec![0u8; BUFFER_SIZE_MAX_WITH_OVERHEAD];
-                let n = self
-                    .read_until_new_session_ticket(&mut stream, &mut buffer, Duration::from_secs(3))
-                    .await;
+                let n = read_io::until_new_session_ticket(
+                    &mut stream,
+                    &mut buffer,
+                    Duration::from_secs(3),
+                )
+                .await;
                 match n {
                     n if n > 0 => {
                         let server_response =
@@ -203,13 +204,12 @@ impl TicketbleedTester {
                             stream.write_all(&client_hello2).await?;
 
                             let mut response = vec![0u8; BUFFER_SIZE_MAX_WITH_OVERHEAD];
-                            match self
-                                .read_complete_tls_record(
-                                    &mut stream,
-                                    &mut response,
-                                    Duration::from_secs(3),
-                                )
-                                .await
+                            match read_io::complete_tls_record(
+                                &mut stream,
+                                &mut response,
+                                Duration::from_secs(3),
+                            )
+                            .await
                             {
                                 Ok(m) if m > 0 => {
                                     let resumed_response = response.get(..m).ok_or_else(|| {
@@ -248,87 +248,6 @@ impl TicketbleedTester {
                 "Failed to establish TCP connection to target",
             )),
         }
-    }
-
-    async fn read_until_new_session_ticket(
-        &self,
-        stream: &mut tokio::net::TcpStream,
-        buffer: &mut [u8],
-        per_read_timeout: Duration,
-    ) -> usize {
-        let mut total = 0usize;
-        loop {
-            if total >= buffer.len() {
-                break;
-            }
-            let Some(read_buffer) = buffer.get_mut(total..) else {
-                break;
-            };
-            let n = match timeout(per_read_timeout, stream.read(read_buffer)).await {
-                Ok(Ok(n)) => n,
-                _ => break,
-            };
-            if n == 0 {
-                break;
-            }
-            total += n;
-            let Some(accumulated) = buffer.get(..total) else {
-                break;
-            };
-            match session_ticket::is_present(accumulated) {
-                Ok(true) => break,
-                Ok(false) => {}
-                Err(_) => {}
-            }
-        }
-        total
-    }
-
-    async fn read_complete_tls_record(
-        &self,
-        stream: &mut tokio::net::TcpStream,
-        buffer: &mut [u8],
-        per_read_timeout: Duration,
-    ) -> std::io::Result<usize> {
-        let mut total = 0usize;
-        loop {
-            if total >= buffer.len() {
-                break;
-            }
-            let Some(read_buffer) = buffer.get_mut(total..) else {
-                break;
-            };
-            let n = match timeout(per_read_timeout, stream.read(read_buffer)).await {
-                Ok(Ok(n)) => n,
-                _ => break,
-            };
-            if n == 0 {
-                break;
-            }
-            total += n;
-            if total >= TLS_RECORD_HEADER_SIZE {
-                let record_len = u16::from_be_bytes([buffer[3], buffer[4]]) as usize;
-                let record_total =
-                    TLS_RECORD_HEADER_SIZE
-                        .checked_add(record_len)
-                        .ok_or_else(|| {
-                            std::io::Error::new(
-                                std::io::ErrorKind::InvalidData,
-                                "Ticketbleed TLS record length overflow",
-                            )
-                        })?;
-                if record_total > buffer.len() {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        "Ticketbleed TLS record length exceeds buffer",
-                    ));
-                }
-                if total >= record_total {
-                    break;
-                }
-            }
-        }
-        Ok(total)
     }
 
     /// Build ClientHello with SessionTicket extension using ClientHelloBuilder
@@ -793,21 +712,12 @@ mod tests {
                 .expect("write second chunk");
         });
 
-        let target = Target::with_ips(
-            "localhost".to_string(),
-            port,
-            vec!["127.0.0.1".parse().unwrap()],
-        )
-        .unwrap();
-        let tester = TicketbleedTester::new(target);
-
         let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
             .await
             .expect("connect");
         stream.write_all(b"hello").await.expect("write request");
         let mut buffer = vec![0u8; BUFFER_SIZE_MAX_WITH_OVERHEAD];
-        let n = tester
-            .read_complete_tls_record(&mut stream, &mut buffer, Duration::from_secs(2))
+        let n = read_io::complete_tls_record(&mut stream, &mut buffer, Duration::from_secs(2))
             .await
             .expect("record should read");
         assert!(n >= 5);
