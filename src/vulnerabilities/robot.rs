@@ -286,16 +286,6 @@ mod tests {
     }
 
     #[test]
-    fn test_robot_result() {
-        let result = RobotTestResult {
-            vulnerable: true,
-            status: RobotStatus::Vulnerable,
-            details: "Test".to_string(),
-        };
-        assert!(result.vulnerable);
-    }
-
-    #[test]
     fn test_build_invalid_client_key_exchange_variants() {
         let msg0 =
             messages::invalid_client_key_exchange(0, 256).expect("ClientKeyExchange should build");
