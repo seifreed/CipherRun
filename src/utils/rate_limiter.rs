@@ -313,45 +313,29 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_delay_milliseconds() {
-        assert_eq!(parse_delay("500ms").unwrap(), Duration::from_millis(500));
-        assert_eq!(parse_delay("1000ms").unwrap(), Duration::from_secs(1));
-        assert_eq!(parse_delay("0ms").unwrap(), Duration::ZERO);
-    }
-
-    #[test]
-    fn test_parse_delay_seconds() {
-        assert_eq!(parse_delay("1s").unwrap(), Duration::from_secs(1));
-        assert_eq!(parse_delay("2s").unwrap(), Duration::from_secs(2));
-        assert_eq!(parse_delay("0.5s").unwrap(), Duration::from_millis(500));
-        assert_eq!(parse_delay("1.5s").unwrap(), Duration::from_millis(1500));
-    }
-
-    #[test]
-    fn test_parse_delay_plain_number() {
-        // Plain numbers default to milliseconds
-        assert_eq!(parse_delay("500").unwrap(), Duration::from_millis(500));
-        assert_eq!(parse_delay("1000").unwrap(), Duration::from_secs(1));
-    }
-
-    #[test]
-    fn test_parse_delay_fractional_seconds() {
-        assert_eq!(parse_delay("1.25s").unwrap(), Duration::from_millis(1250));
+    fn test_parse_delay_valid_inputs() {
+        for (input, expected) in [
+            ("500ms", Duration::from_millis(500)),
+            ("1000ms", Duration::from_secs(1)),
+            ("0ms", Duration::ZERO),
+            ("1s", Duration::from_secs(1)),
+            ("2s", Duration::from_secs(2)),
+            ("0.5s", Duration::from_millis(500)),
+            ("1.5s", Duration::from_millis(1500)),
+            ("500", Duration::from_millis(500)),
+            ("1000", Duration::from_secs(1)),
+            ("1.25s", Duration::from_millis(1250)),
+            ("  500ms  ", Duration::from_millis(500)),
+            ("  2s  ", Duration::from_secs(2)),
+        ] {
+            assert_eq!(parse_delay(input).unwrap(), expected);
+        }
     }
 
     #[test]
     fn test_rate_limiter_delay_accessor() {
         let limiter = RateLimiter::new(Duration::from_millis(250));
         assert_eq!(limiter.delay(), Duration::from_millis(250));
-    }
-
-    #[test]
-    fn test_parse_delay_with_whitespace() {
-        assert_eq!(
-            parse_delay("  500ms  ").unwrap(),
-            Duration::from_millis(500)
-        );
-        assert_eq!(parse_delay("  2s  ").unwrap(), Duration::from_secs(2));
     }
 
     #[test]
