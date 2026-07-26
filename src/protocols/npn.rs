@@ -319,30 +319,15 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_npn_response_invalid_data() {
-        // Not a valid ServerHello - should return empty
-        let response = vec![0x33, 0x74, 0xff, 0xff];
-        let protocols = parse_npn_response(&response).expect("test assertion should succeed");
-        assert!(protocols.is_empty());
-    }
-
-    #[test]
-    fn test_parse_npn_response_without_extension() {
-        // Too short for a ServerHello
-        let response = vec![0x01, 0x02, 0x03, 0x04];
-        let protocols = parse_npn_response(&response).expect("test assertion should succeed");
-        assert!(protocols.is_empty());
-    }
-
-    #[test]
-    fn test_parse_npn_response_truncated() {
-        // Truncated data - not a valid ServerHello
-        let mut response = vec![0x16, 0x03, 0x03, 0x00, 0x02];
-        response.push(0x03);
-        response.push(b'h');
-
-        let protocols = parse_npn_response(&response).expect("test assertion should succeed");
-        assert!(protocols.is_empty());
+    fn test_parse_npn_response_returns_empty_for_non_server_hello_inputs() {
+        for (case, response) in [
+            ("invalid data", vec![0x33, 0x74, 0xff, 0xff]),
+            ("too short", vec![0x01, 0x02, 0x03, 0x04]),
+            ("truncated", vec![0x16, 0x03, 0x03, 0x00, 0x02, 0x03, b'h']),
+        ] {
+            let protocols = parse_npn_response(&response).expect(case);
+            assert!(protocols.is_empty(), "{case}");
+        }
     }
 
     #[test]
