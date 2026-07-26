@@ -217,8 +217,43 @@ pub struct NpnTestResult {
 mod tests {
     use super::*;
 
+    const NPN_H2_HTTP11_EXTENSION: &[u8] = &[
+        0x33, 0x74, 0x00, 0x0c, 0x02, b'h', b'2', 0x08, b'h', b't', b't', b'p', b'/', b'1', b'.',
+        b'1',
+    ];
+
     fn parse_npn_response(response: &[u8]) -> Result<Vec<String>> {
         server_hello::parse_npn_protocols(response)
+    }
+
+    fn npn_server_hello(extension_data: &[u8], declared_ext_len: Option<u16>) -> Vec<u8> {
+        let mut response = Vec::new();
+        response.extend_from_slice(&[0x16, 0x03, 0x03, 0x00, 0x00]);
+        response.extend_from_slice(&[0x02, 0x00, 0x00, 0x00]);
+        response.extend_from_slice(&[0x03, 0x03]);
+        response.extend_from_slice(&[0x00; 32]);
+        response.push(0x00);
+        response.extend_from_slice(&[0x00, 0x9c]);
+        response.push(0x00);
+        let ext_len_pos = response.len();
+        response.extend_from_slice(&[0x00, 0x00]);
+        response.extend_from_slice(extension_data);
+
+        let ext_len = declared_ext_len.unwrap_or((response.len() - ext_len_pos - 2) as u16);
+        response[ext_len_pos] = (ext_len >> 8) as u8;
+        response[ext_len_pos + 1] = (ext_len & 0xff) as u8;
+        patch_server_hello_lengths(&mut response);
+        response
+    }
+
+    fn patch_server_hello_lengths(response: &mut [u8]) {
+        let rec_len = (response.len() - 5) as u16;
+        response[3] = (rec_len >> 8) as u8;
+        response[4] = (rec_len & 0xff) as u8;
+        let hs_len = (response.len() - 9) as u32;
+        response[6] = ((hs_len >> 16) & 0xff) as u8;
+        response[7] = ((hs_len >> 8) & 0xff) as u8;
+        response[8] = (hs_len & 0xff) as u8;
     }
 
     #[test]
@@ -269,43 +304,7 @@ mod tests {
 
     #[test]
     fn test_parse_npn_response_with_protocols() {
-        // Build a valid ServerHello with NPN extension
-        let mut response = Vec::new();
-        // TLS record header
-        response.extend_from_slice(&[0x16, 0x03, 0x03, 0x00, 0x00]); // type=handshake, version, length placeholder
-        // Handshake header
-        response.extend_from_slice(&[0x02, 0x00, 0x00, 0x00]); // type=ServerHello, length placeholder
-        // Server version
-        response.extend_from_slice(&[0x03, 0x03]);
-        // Server random (32 bytes)
-        response.extend_from_slice(&[0x00; 32]);
-        // Session ID length: 0
-        response.push(0x00);
-        // Cipher suite
-        response.extend_from_slice(&[0x00, 0x9c]);
-        // Compression: none
-        response.push(0x00);
-        // Extensions length placeholder
-        let ext_len_pos = response.len();
-        response.extend_from_slice(&[0x00, 0x00]);
-        // NPN extension (0x3374), data = protocol list
-        response.extend_from_slice(&[0x33, 0x74, 0x00, 0x0c]); // ext type + len=12
-        response.push(0x02);
-        response.extend_from_slice(b"h2");
-        response.push(0x08);
-        response.extend_from_slice(b"http/1.1");
-
-        // Patch lengths
-        let ext_len = (response.len() - ext_len_pos - 2) as u16;
-        response[ext_len_pos] = (ext_len >> 8) as u8;
-        response[ext_len_pos + 1] = (ext_len & 0xff) as u8;
-        let rec_len = (response.len() - 5) as u16;
-        response[3] = (rec_len >> 8) as u8;
-        response[4] = (rec_len & 0xff) as u8;
-        let hs_len = (response.len() - 9) as u32;
-        response[6] = ((hs_len >> 16) & 0xff) as u8;
-        response[7] = ((hs_len >> 8) & 0xff) as u8;
-        response[8] = (hs_len & 0xff) as u8;
+        let response = npn_server_hello(NPN_H2_HTTP11_EXTENSION, None);
 
         let protocols = parse_npn_response(&response).expect("test assertion should succeed");
         assert_eq!(protocols, vec!["h2".to_string(), "http/1.1".to_string()]);
@@ -313,29 +312,7 @@ mod tests {
 
     #[test]
     fn test_parse_npn_response_rejects_invalid_protocol_utf8() {
-        let mut response = Vec::new();
-        response.extend_from_slice(&[0x16, 0x03, 0x03, 0x00, 0x00]);
-        response.extend_from_slice(&[0x02, 0x00, 0x00, 0x00]);
-        response.extend_from_slice(&[0x03, 0x03]);
-        response.extend_from_slice(&[0x00; 32]);
-        response.push(0x00);
-        response.extend_from_slice(&[0x00, 0x9c]);
-        response.push(0x00);
-        let ext_len_pos = response.len();
-        response.extend_from_slice(&[0x00, 0x00]);
-        response.extend_from_slice(&[0x33, 0x74, 0x00, 0x02]);
-        response.extend_from_slice(&[0x01, 0xff]);
-
-        let ext_len = (response.len() - ext_len_pos - 2) as u16;
-        response[ext_len_pos] = (ext_len >> 8) as u8;
-        response[ext_len_pos + 1] = (ext_len & 0xff) as u8;
-        let rec_len = (response.len() - 5) as u16;
-        response[3] = (rec_len >> 8) as u8;
-        response[4] = (rec_len & 0xff) as u8;
-        let hs_len = (response.len() - 9) as u32;
-        response[6] = ((hs_len >> 16) & 0xff) as u8;
-        response[7] = ((hs_len >> 8) & 0xff) as u8;
-        response[8] = (hs_len & 0xff) as u8;
+        let response = npn_server_hello(&[0x33, 0x74, 0x00, 0x02, 0x01, 0xff], None);
 
         let err = parse_npn_response(&response).expect_err("invalid protocol UTF-8 should fail");
         assert!(err.to_string().contains("Invalid NPN protocol name UTF-8"));
@@ -370,25 +347,7 @@ mod tests {
 
     #[test]
     fn test_parse_npn_response_rejects_truncated_extension_data() {
-        let mut response = vec![
-            0x16, 0x03, 0x03, 0x00, 0x00, // record header
-            0x02, 0x00, 0x00, 0x00, // ServerHello header
-            0x03, 0x03, // version
-        ];
-        response.extend_from_slice(&[0x00; 32]);
-        response.push(0x00); // session id len
-        response.extend_from_slice(&[0x00, 0x9c]); // cipher
-        response.push(0x00); // compression
-        response.extend_from_slice(&[0x00, 0x05]); // extensions len
-        response.extend_from_slice(&[0x33, 0x74, 0x00, 0x02]); // NPN ext claims 2 bytes
-        response.push(0x01); // truncated protocol list
-        let rec_len = (response.len() - 5) as u16;
-        response[3] = (rec_len >> 8) as u8;
-        response[4] = (rec_len & 0xff) as u8;
-        let hs_len = (response.len() - 9) as u32;
-        response[6] = ((hs_len >> 16) & 0xff) as u8;
-        response[7] = ((hs_len >> 8) & 0xff) as u8;
-        response[8] = (hs_len & 0xff) as u8;
+        let response = npn_server_hello(&[0x33, 0x74, 0x00, 0x02, 0x01], None);
 
         let err = parse_npn_response(&response).expect_err("truncated NPN extension should fail");
         assert!(
@@ -399,33 +358,10 @@ mod tests {
 
     #[test]
     fn test_parse_npn_response_rejects_truncated_extension_block() {
-        let mut response = Vec::new();
-        response.extend_from_slice(&[0x16, 0x03, 0x03, 0x00, 0x00]);
-        response.extend_from_slice(&[0x02, 0x00, 0x00, 0x00]);
-        response.extend_from_slice(&[0x03, 0x03]);
-        response.extend_from_slice(&[0x00; 32]);
-        response.push(0x00);
-        response.extend_from_slice(&[0x00, 0x9c]);
-        response.push(0x00);
-        let ext_len_pos = response.len();
-        response.extend_from_slice(&[0x00, 0x00]);
-        response.extend_from_slice(&[0x33, 0x74, 0x00, 0x0c]);
-        response.push(0x02);
-        response.extend_from_slice(b"h2");
-        response.push(0x08);
-        response.extend_from_slice(b"http/1.1");
-
-        let ext_len = (response.len() - ext_len_pos - 2) as u16;
-        let declared_ext_len = ext_len + 1;
-        response[ext_len_pos] = (declared_ext_len >> 8) as u8;
-        response[ext_len_pos + 1] = (declared_ext_len & 0xff) as u8;
-        let rec_len = (response.len() - 5) as u16;
-        response[3] = (rec_len >> 8) as u8;
-        response[4] = (rec_len & 0xff) as u8;
-        let hs_len = (response.len() - 9) as u32;
-        response[6] = ((hs_len >> 16) & 0xff) as u8;
-        response[7] = ((hs_len >> 8) & 0xff) as u8;
-        response[8] = (hs_len & 0xff) as u8;
+        let response = npn_server_hello(
+            NPN_H2_HTTP11_EXTENSION,
+            Some(NPN_H2_HTTP11_EXTENSION.len() as u16 + 1),
+        );
 
         let err = parse_npn_response(&response).expect_err("truncated extension block should fail");
         assert!(
@@ -436,22 +372,7 @@ mod tests {
 
     #[test]
     fn test_parse_npn_response_rejects_extension_block_trailing_bytes() {
-        let mut response = Vec::new();
-        response.extend_from_slice(&[0x16, 0x03, 0x03, 0x00, 0x00]);
-        response.extend_from_slice(&[0x02, 0x00, 0x00, 0x00]);
-        response.extend_from_slice(&[0x03, 0x03]);
-        response.extend_from_slice(&[0x00; 32]);
-        response.push(0x00);
-        response.extend_from_slice(&[0x00, 0x9c]);
-        response.push(0x00);
-        response.extend_from_slice(&[0x00, 0x00, 0xff]);
-        let rec_len = (response.len() - 5) as u16;
-        response[3] = (rec_len >> 8) as u8;
-        response[4] = (rec_len & 0xff) as u8;
-        let hs_len = (response.len() - 9) as u32;
-        response[6] = ((hs_len >> 16) & 0xff) as u8;
-        response[7] = ((hs_len >> 8) & 0xff) as u8;
-        response[8] = (hs_len & 0xff) as u8;
+        let response = npn_server_hello(&[0xff], Some(0));
 
         let err = parse_npn_response(&response).expect_err("trailing extension bytes should fail");
         assert!(
@@ -462,22 +383,7 @@ mod tests {
 
     #[test]
     fn test_parse_npn_response_rejects_truncated_extension_header() {
-        let mut response = Vec::new();
-        response.extend_from_slice(&[0x16, 0x03, 0x03, 0x00, 0x00]);
-        response.extend_from_slice(&[0x02, 0x00, 0x00, 0x00]);
-        response.extend_from_slice(&[0x03, 0x03]);
-        response.extend_from_slice(&[0x00; 32]);
-        response.push(0x00);
-        response.extend_from_slice(&[0x00, 0x9c]);
-        response.push(0x00);
-        response.extend_from_slice(&[0x00, 0x03, 0x33, 0x74, 0x00]);
-        let rec_len = (response.len() - 5) as u16;
-        response[3] = (rec_len >> 8) as u8;
-        response[4] = (rec_len & 0xff) as u8;
-        let hs_len = (response.len() - 9) as u32;
-        response[6] = ((hs_len >> 16) & 0xff) as u8;
-        response[7] = ((hs_len >> 8) & 0xff) as u8;
-        response[8] = (hs_len & 0xff) as u8;
+        let response = npn_server_hello(&[0x33, 0x74, 0x00], None);
 
         let err =
             parse_npn_response(&response).expect_err("truncated extension header should fail");
@@ -567,32 +473,7 @@ mod tests {
                 let mut buffer = [0u8; 1024];
                 let _ = socket.read(&mut buffer).await;
 
-                let mut response = Vec::new();
-                response.extend_from_slice(&[0x16, 0x03, 0x03, 0x00, 0x00]);
-                response.extend_from_slice(&[0x02, 0x00, 0x00, 0x00]);
-                response.extend_from_slice(&[0x03, 0x03]);
-                response.extend_from_slice(&[0x00; 32]);
-                response.push(0x00);
-                response.extend_from_slice(&[0x00, 0x9c]);
-                response.push(0x00);
-                let ext_len_pos = response.len();
-                response.extend_from_slice(&[0x00, 0x00]);
-                response.extend_from_slice(&[0x33, 0x74, 0x00, 0x0c]);
-                response.push(0x02);
-                response.extend_from_slice(b"h2");
-                response.push(0x08);
-                response.extend_from_slice(b"http/1.1");
-
-                let ext_len = (response.len() - ext_len_pos - 2) as u16;
-                response[ext_len_pos] = (ext_len >> 8) as u8;
-                response[ext_len_pos + 1] = (ext_len & 0xff) as u8;
-                let hs_len = (response.len() - 9) as u32;
-                response[6] = ((hs_len >> 16) & 0xff) as u8;
-                response[7] = ((hs_len >> 8) & 0xff) as u8;
-                response[8] = (hs_len & 0xff) as u8;
-                let rec_len = (response.len() - 5) as u16;
-                response[3] = (rec_len >> 8) as u8;
-                response[4] = (rec_len & 0xff) as u8;
+                let response = npn_server_hello(NPN_H2_HTTP11_EXTENSION, None);
 
                 socket.write_all(&response[..7]).await.unwrap();
                 socket.flush().await.unwrap();
