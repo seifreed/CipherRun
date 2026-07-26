@@ -340,19 +340,14 @@ mod tests {
     }
 
     fn build_leaf_input(cert_der: &[u8]) -> String {
-        let mut leaf = Vec::new();
-        leaf.push(0u8); // version
-        leaf.push(0u8); // leaf type
-        leaf.extend_from_slice(&0u64.to_be_bytes()); // timestamp ms
-        leaf.extend_from_slice(&0u16.to_be_bytes()); // entry type X509
+        build_leaf_input_with_timestamp(0, cert_der)
+    }
 
-        let len = cert_der.len() as u32;
-        leaf.push(((len >> 16) & 0xff) as u8);
-        leaf.push(((len >> 8) & 0xff) as u8);
-        leaf.push((len & 0xff) as u8);
-        leaf.extend_from_slice(cert_der);
-
-        base64::engine::general_purpose::STANDARD.encode(leaf)
+    fn append_u24_len(out: &mut Vec<u8>, len: usize) {
+        let len = len as u32;
+        out.push(((len >> 16) & 0xff) as u8);
+        out.push(((len >> 8) & 0xff) as u8);
+        out.push((len & 0xff) as u8);
     }
 
     fn build_leaf_input_with_timestamp(timestamp_ms: u64, cert_der: &[u8]) -> String {
@@ -362,10 +357,7 @@ mod tests {
         leaf.extend_from_slice(&timestamp_ms.to_be_bytes());
         leaf.extend_from_slice(&0u16.to_be_bytes()); // entry type X509
 
-        let len = cert_der.len() as u32;
-        leaf.push(((len >> 16) & 0xff) as u8);
-        leaf.push(((len >> 8) & 0xff) as u8);
-        leaf.push((len & 0xff) as u8);
+        append_u24_len(&mut leaf, cert_der.len());
         leaf.extend_from_slice(cert_der);
 
         base64::engine::general_purpose::STANDARD.encode(leaf)
@@ -494,10 +486,7 @@ mod tests {
         leaf.extend_from_slice(&1u16.to_be_bytes()); // entry type: precert = 1
         leaf.extend_from_slice(&[0u8; 32]); // issuer_key_hash
 
-        let len = tbs_der.len() as u32;
-        leaf.push(((len >> 16) & 0xff) as u8);
-        leaf.push(((len >> 8) & 0xff) as u8);
-        leaf.push((len & 0xff) as u8);
+        append_u24_len(&mut leaf, tbs_der.len());
         leaf.extend_from_slice(tbs_der);
 
         base64::engine::general_purpose::STANDARD.encode(leaf)
