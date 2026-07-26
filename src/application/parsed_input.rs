@@ -233,19 +233,21 @@ mod tests {
     }
 
     #[test]
-    fn rejects_non_positive_host_port_days() {
-        assert!(HostPortDaysInput::parse("example.com:443:0").is_err());
-        assert!(HostPortDaysInput::parse("example.com:443:-7").is_err());
-    }
-
-    #[test]
-    fn rejects_oversized_host_port_days() {
-        assert!(HostPortDaysInput::parse(&format!("example.com:443:{}", i64::MAX)).is_err());
-    }
-
-    #[test]
-    fn rejects_zero_port_host_port_days() {
-        assert!(HostPortDaysInput::parse("example.com:0:7").is_err());
+    fn rejects_invalid_host_port_days() {
+        for input in [
+            "example.com:443:0",
+            "example.com:443:-7",
+            &format!("example.com:443:{}", i64::MAX),
+            "example.com:0:7",
+            "::1:443:7",
+            "127.1:443:7",
+            "2130706433:443:7",
+            "localhost:443:7",
+            "service.local:443:7",
+            "service.internal:443:7",
+        ] {
+            assert!(HostPortDaysInput::parse(input).is_err(), "{input}");
+        }
     }
 
     #[test]
@@ -254,24 +256,6 @@ mod tests {
         assert_eq!(parsed.hostname, "::1");
         assert_eq!(parsed.port, 443);
         assert_eq!(parsed.days, 7);
-    }
-
-    #[test]
-    fn rejects_host_port_days_with_ipv6_without_brackets() {
-        assert!(HostPortDaysInput::parse("::1:443:7").is_err());
-    }
-
-    #[test]
-    fn rejects_obfuscated_ip_host_port_days() {
-        assert!(HostPortDaysInput::parse("127.1:443:7").is_err());
-        assert!(HostPortDaysInput::parse("2130706433:443:7").is_err());
-    }
-
-    #[test]
-    fn rejects_private_host_port_days() {
-        assert!(HostPortDaysInput::parse("localhost:443:7").is_err());
-        assert!(HostPortDaysInput::parse("service.local:443:7").is_err());
-        assert!(HostPortDaysInput::parse("service.internal:443:7").is_err());
     }
 
     #[test]
@@ -312,35 +296,22 @@ mod tests {
     }
 
     #[test]
-    fn rejects_obfuscated_ip_host_port_with_default_port() {
-        assert!(HostPortInput::parse_with_default_port("127.1", 443).is_err());
-        assert!(HostPortInput::parse_with_default_port("2130706433", 443).is_err());
-    }
-
-    #[test]
-    fn rejects_private_host_port_with_default_port() {
-        assert!(HostPortInput::parse_with_default_port("localhost", 443).is_err());
-        assert!(HostPortInput::parse_with_default_port("service.local", 443).is_err());
-        assert!(HostPortInput::parse_with_default_port("service.internal", 443).is_err());
-    }
-
-    #[test]
-    fn rejects_malformed_host_port_input() {
-        assert!(HostPortInput::parse_with_default_port("example.com:443:extra", 443).is_err());
-    }
-
-    #[test]
-    fn rejects_empty_host_port_input() {
-        assert!(HostPortInput::parse_with_default_port("", 443).is_err());
-    }
-
-    #[test]
-    fn rejects_zero_port_host_port_input() {
-        assert!(HostPortInput::parse_with_default_port("example.com:0", 443).is_err());
-    }
-
-    #[test]
-    fn rejects_zero_default_port_host_port_input() {
-        assert!(HostPortInput::parse_with_default_port("example.com", 0).is_err());
+    fn rejects_invalid_host_port_input() {
+        for (input, default_port) in [
+            ("127.1", 443),
+            ("2130706433", 443),
+            ("localhost", 443),
+            ("service.local", 443),
+            ("service.internal", 443),
+            ("example.com:443:extra", 443),
+            ("", 443),
+            ("example.com:0", 443),
+            ("example.com", 0),
+        ] {
+            assert!(
+                HostPortInput::parse_with_default_port(input, default_port).is_err(),
+                "{input}:{default_port}"
+            );
+        }
     }
 }
