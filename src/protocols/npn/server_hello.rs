@@ -1,5 +1,5 @@
 use crate::Result;
-use crate::protocols::parse_bytes;
+use crate::utils::result_byte_parse as parse_bytes;
 
 const MAX_PROTOCOLS: usize = 100;
 

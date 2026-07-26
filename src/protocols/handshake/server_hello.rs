@@ -1,7 +1,7 @@
 use crate::Result;
 use crate::constants::{CONTENT_TYPE_HANDSHAKE, HANDSHAKE_TYPE_SERVER_HELLO};
-use crate::protocols::parse_bytes;
 use crate::protocols::{Extension, Protocol};
+use crate::utils::result_byte_parse as parse_bytes;
 
 pub struct ServerHelloParser;
 

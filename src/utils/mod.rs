@@ -15,6 +15,7 @@ pub mod network_runtime;
 pub mod nmap;
 pub mod path_ext;
 pub mod proxy;
+pub(crate) mod result_byte_parse;
 pub mod retry;
 pub mod reverse_ptr;
 pub mod sneaky;

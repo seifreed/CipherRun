@@ -1,5 +1,5 @@
 use super::{ClientCA, ClientCAsTester};
-use crate::protocols::parse_bytes;
+use crate::utils::result_byte_parse as parse_bytes;
 
 impl ClientCAsTester {
     pub(super) fn find_certificate_request(

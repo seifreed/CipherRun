@@ -3,7 +3,6 @@
 use serde::{Deserialize, Serialize};
 
 mod model;
-pub(crate) mod parse_bytes;
 pub(crate) mod tls_record;
 pub(crate) mod tls_vector;
 pub use model::{Protocol, ProtocolTestResult};
