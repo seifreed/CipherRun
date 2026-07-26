@@ -116,6 +116,21 @@ mod tests {
     use crate::protocols::{Protocol, ProtocolTestResult};
     use std::collections::HashMap;
 
+    fn protocol_result(protocol: Protocol) -> ProtocolTestResult {
+        ProtocolTestResult {
+            protocol,
+            supported: true,
+            inconclusive: false,
+            preferred: false,
+            ciphers_count: 0,
+            heartbeat_enabled: None,
+            handshake_time_ms: None,
+            session_resumption_caching: None,
+            session_resumption_tickets: None,
+            secure_renegotiation: None,
+        }
+    }
+
     #[test]
     fn test_compliance_engine_evaluation() {
         let framework = ComplianceFramework {
@@ -157,30 +172,8 @@ mod tests {
         let results = ScanAssessment {
             target: "test.com:443".to_string(),
             protocols: vec![
-                ProtocolTestResult {
-                    protocol: Protocol::SSLv2,
-                    supported: true,
-                    inconclusive: false,
-                    preferred: false,
-                    ciphers_count: 0,
-                    heartbeat_enabled: None,
-                    handshake_time_ms: None,
-                    session_resumption_caching: None,
-                    session_resumption_tickets: None,
-                    secure_renegotiation: None,
-                },
-                ProtocolTestResult {
-                    protocol: Protocol::TLS12,
-                    supported: true,
-                    inconclusive: false,
-                    preferred: false,
-                    ciphers_count: 0,
-                    heartbeat_enabled: None,
-                    handshake_time_ms: None,
-                    session_resumption_caching: None,
-                    session_resumption_tickets: None,
-                    secure_renegotiation: None,
-                },
+                protocol_result(Protocol::SSLv2),
+                protocol_result(Protocol::TLS12),
             ],
             ..Default::default()
         };
@@ -237,18 +230,7 @@ mod tests {
 
         let results = ScanAssessment {
             target: "test.com:443".to_string(),
-            protocols: vec![ProtocolTestResult {
-                protocol: Protocol::TLS12,
-                supported: true,
-                inconclusive: false,
-                preferred: false,
-                ciphers_count: 0,
-                heartbeat_enabled: None,
-                handshake_time_ms: None,
-                session_resumption_caching: None,
-                session_resumption_tickets: None,
-                secure_renegotiation: None,
-            }],
+            protocols: vec![protocol_result(Protocol::TLS12)],
             ..Default::default()
         };
 
@@ -322,18 +304,7 @@ mod tests {
         let engine = ComplianceEngine::new(framework);
         let results = ScanAssessment {
             target: "test.com:443".to_string(),
-            protocols: vec![ProtocolTestResult {
-                protocol: Protocol::TLS12,
-                supported: true,
-                inconclusive: false,
-                preferred: false,
-                ciphers_count: 0,
-                heartbeat_enabled: None,
-                handshake_time_ms: None,
-                session_resumption_caching: None,
-                session_resumption_tickets: None,
-                secure_renegotiation: None,
-            }],
+            protocols: vec![protocol_result(Protocol::TLS12)],
             ..Default::default()
         };
 
