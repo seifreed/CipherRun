@@ -184,33 +184,6 @@ mod tests {
     }
 
     #[test]
-    fn test_lucky13_result() {
-        let result = Lucky13TestResult {
-            vulnerable: false,
-            partially_vulnerable: true,
-            cbc_supported: true,
-            inconclusive: false,
-            details: "Test".to_string(),
-        };
-        assert!(!result.vulnerable);
-        assert!(result.partially_vulnerable);
-        assert!(result.cbc_supported);
-    }
-
-    #[test]
-    fn test_lucky13_result_not_vulnerable_details() {
-        let result = Lucky13TestResult {
-            vulnerable: false,
-            partially_vulnerable: false,
-            cbc_supported: false,
-            inconclusive: false,
-            details: "Not vulnerable - server does not support CBC cipher suites".to_string(),
-        };
-        assert!(!result.vulnerable);
-        assert!(result.details.contains("Not vulnerable"));
-    }
-
-    #[test]
     fn test_cbc_handshake_error_without_shared_cipher_is_not_supported() {
         assert_eq!(
             classify_cbc_handshake_error("ssl handshake failure: no shared cipher"),
