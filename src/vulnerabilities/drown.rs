@@ -380,38 +380,34 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_sslv2_one_byte_response_is_inconclusive() {
-        let (port, server) = spawn_sslv2_response_server(vec![0x80]).await;
+    async fn test_sslv2_short_responses_are_inconclusive() {
+        for (case, response) in [("one byte", Some(vec![0x80])), ("zero byte", None)] {
+            let (port, server) = match response {
+                Some(response) => spawn_sslv2_response_server(response).await,
+                None => {
+                    let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener");
+                    let port = listener.local_addr().expect("local addr").port();
+                    let server = tokio::spawn(async move {
+                        let (_socket, _) = listener.accept().await.expect("accept");
+                    });
+                    (port, server)
+                }
+            };
 
-        let target = localhost_target(port);
+            let result = DrownTester::new(localhost_target(port))
+                .test()
+                .await
+                .unwrap();
+            server.await.expect("server task");
 
-        let result = DrownTester::new(target).test().await.unwrap();
-        server.await.expect("server task");
-
-        assert!(!result.vulnerable);
-        assert!(!result.sslv2_supported);
-        assert_eq!(result.sslv2_status, None);
-        assert!(result.details.contains("inconclusive"), "{result:?}");
-    }
-
-    #[tokio::test]
-    async fn test_sslv2_zero_byte_response_is_inconclusive() {
-        let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener");
-        let port = listener.local_addr().expect("local addr").port();
-
-        let server = tokio::spawn(async move {
-            let (_socket, _) = listener.accept().await.expect("accept");
-        });
-
-        let target = localhost_target(port);
-
-        let result = DrownTester::new(target).test().await.unwrap();
-        server.await.expect("server task");
-
-        assert!(!result.vulnerable);
-        assert!(!result.sslv2_supported);
-        assert_eq!(result.sslv2_status, None);
-        assert!(result.details.contains("inconclusive"), "{result:?}");
+            assert!(!result.vulnerable, "{case}: {result:?}");
+            assert!(!result.sslv2_supported, "{case}: {result:?}");
+            assert_eq!(result.sslv2_status, None, "{case}");
+            assert!(
+                result.details.contains("inconclusive"),
+                "{case}: {result:?}"
+            );
+        }
     }
 
     #[tokio::test]
