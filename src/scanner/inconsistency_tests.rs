@@ -30,12 +30,7 @@ fn test_inconsistency_type_display_alpn() {
 #[test]
 fn test_single_ip_scan_result_success_flag_with_error() {
     let ip = "192.0.2.1".parse().expect("test assertion should succeed");
-    let result = SingleIpScanResult {
-        ip,
-        scan_result: ScanResults::default(),
-        scan_duration_ms: 10,
-        error: None,
-    };
+    let result = successful_ip_scan(ip, ScanResults::default(), 10);
     assert!(result.is_successful());
 
     let result = SingleIpScanResult {
@@ -52,21 +47,35 @@ fn test_detector_with_no_results() {
     assert!(inconsistencies.is_empty());
 }
 
+fn successful_ip_scan(
+    ip: IpAddr,
+    scan_result: ScanResults,
+    scan_duration_ms: u64,
+) -> SingleIpScanResult {
+    SingleIpScanResult {
+        ip,
+        scan_result,
+        scan_duration_ms,
+        error: None,
+    }
+}
+
+fn failed_ip_scan(ip: IpAddr, scan_duration_ms: u64, error: &str) -> SingleIpScanResult {
+    SingleIpScanResult {
+        ip,
+        scan_result: ScanResults::default(),
+        scan_duration_ms,
+        error: Some(error.to_string()),
+    }
+}
+
 #[test]
 fn test_detector_with_single_result() {
     let mut results = HashMap::new();
     let ip = "192.168.1.1"
         .parse()
         .expect("test assertion should succeed");
-    results.insert(
-        ip,
-        SingleIpScanResult {
-            ip,
-            scan_result: ScanResults::default(),
-            scan_duration_ms: 1000,
-            error: None,
-        },
-    );
+    results.insert(ip, successful_ip_scan(ip, ScanResults::default(), 1000));
 
     let detector = InconsistencyDetector::new(results);
     let inconsistencies = detector.detect_all();
@@ -207,24 +216,8 @@ fn test_detects_multiple_inconsistencies() {
     );
 
     let mut results = HashMap::new();
-    results.insert(
-        ip1,
-        SingleIpScanResult {
-            ip: ip1,
-            scan_result: scan1,
-            scan_duration_ms: 100,
-            error: None,
-        },
-    );
-    results.insert(
-        ip2,
-        SingleIpScanResult {
-            ip: ip2,
-            scan_result: scan2,
-            scan_duration_ms: 120,
-            error: None,
-        },
-    );
+    results.insert(ip1, successful_ip_scan(ip1, scan1, 100));
+    results.insert(ip2, successful_ip_scan(ip2, scan2, 120));
 
     let detector = InconsistencyDetector::new(results);
     let inconsistencies = detector.detect_all();
@@ -270,33 +263,9 @@ fn test_protocol_inconsistency_denominator_excludes_failed_scans() {
     );
 
     let mut results = HashMap::new();
-    results.insert(
-        ip1,
-        SingleIpScanResult {
-            ip: ip1,
-            scan_result: scan1,
-            scan_duration_ms: 100,
-            error: None,
-        },
-    );
-    results.insert(
-        ip2,
-        SingleIpScanResult {
-            ip: ip2,
-            scan_result: scan2,
-            scan_duration_ms: 120,
-            error: None,
-        },
-    );
-    results.insert(
-        ip3,
-        SingleIpScanResult {
-            ip: ip3,
-            scan_result: ScanResults::default(),
-            scan_duration_ms: 80,
-            error: Some("timeout".to_string()),
-        },
-    );
+    results.insert(ip1, successful_ip_scan(ip1, scan1, 100));
+    results.insert(ip2, successful_ip_scan(ip2, scan2, 120));
+    results.insert(ip3, failed_ip_scan(ip3, 80, "timeout"));
 
     let detector = InconsistencyDetector::new(results);
     let inconsistencies = detector.detect_all();
@@ -350,24 +319,8 @@ fn test_session_resumption_ignores_ips_without_supported_protocols() {
     );
 
     let mut results = HashMap::new();
-    results.insert(
-        ip1,
-        SingleIpScanResult {
-            ip: ip1,
-            scan_result: scan1,
-            scan_duration_ms: 100,
-            error: None,
-        },
-    );
-    results.insert(
-        ip2,
-        SingleIpScanResult {
-            ip: ip2,
-            scan_result: scan2,
-            scan_duration_ms: 120,
-            error: None,
-        },
-    );
+    results.insert(ip1, successful_ip_scan(ip1, scan1, 100));
+    results.insert(ip2, successful_ip_scan(ip2, scan2, 120));
 
     let detector = InconsistencyDetector::new(results);
     let inconsistencies = detector.detect_all();
@@ -394,19 +347,9 @@ fn test_single_ip_scan_result_success_flag() {
         None,
     );
 
-    let ok = SingleIpScanResult {
-        ip,
-        scan_result: scan,
-        scan_duration_ms: 1,
-        error: None,
-    };
+    let ok = successful_ip_scan(ip, scan, 1);
     assert!(ok.is_successful());
 
-    let failed = SingleIpScanResult {
-        ip,
-        scan_result: ScanResults::default(),
-        scan_duration_ms: 1,
-        error: Some("boom".to_string()),
-    };
+    let failed = failed_ip_scan(ip, 1, "boom");
     assert!(!failed.is_successful());
 }
