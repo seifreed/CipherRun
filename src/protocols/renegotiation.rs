@@ -411,6 +411,22 @@ mod tests {
         .expect("test ServerHello should contain handshake length placeholder");
     }
 
+    fn test_server_hello(extensions: &[u8]) -> Vec<u8> {
+        let mut response = vec![
+            0x16, 0x03, 0x03, 0x00, 0x00, // record
+            0x02, 0x00, 0x00, 0x00, // ServerHello
+            0x03, 0x03,
+        ];
+        response.extend_from_slice(&[0x00; 32]);
+        response.push(0x00);
+        response.extend_from_slice(&[0x00, 0x9c]);
+        response.push(0x00);
+        response.extend_from_slice(&(extensions.len() as u16).to_be_bytes());
+        response.extend_from_slice(extensions);
+        patch_test_server_hello_lengths(&mut response);
+        response
+    }
+
     #[test]
     fn test_renegotiation_result() {
         let result = RenegotiationTestResult {
@@ -523,44 +539,14 @@ mod tests {
     #[test]
     fn test_has_renegotiation_info_extension_detects_present() {
         // Build a minimal valid ServerHello with renegotiation_info extension
-        let mut response = vec![0u8; 0];
-        // TLS record header: type=handshake(0x16), version=TLS1.2, length placeholder
-        response.extend_from_slice(&[0x16, 0x03, 0x03, 0x00, 0x00]);
-        // Handshake header: type=ServerHello(0x02), length placeholder
-        response.extend_from_slice(&[0x02, 0x00, 0x00, 0x00]);
-        // Server version: TLS 1.2
-        response.extend_from_slice(&[0x03, 0x03]);
-        // Server random: 32 bytes
-        response.extend_from_slice(&[0x00; 32]);
-        // Session ID length: 0
-        response.push(0x00);
-        // Cipher suite: TLS_RSA_WITH_AES_128_GCM_SHA256
-        response.extend_from_slice(&[0x00, 0x9c]);
-        // Compression method: none
-        response.push(0x00);
-        // Extensions length: 5 bytes (renegotiation_info ext)
-        response.extend_from_slice(&[0x00, 0x05]);
-        // Extension: renegotiation_info (0xff01), length=1, data=0x00
-        response.extend_from_slice(&[0xff, 0x01, 0x00, 0x01, 0x00]);
-
-        patch_test_server_hello_lengths(&mut response);
+        let response = test_server_hello(&[0xff, 0x01, 0x00, 0x01, 0x00]);
 
         assert!(server_hello::has_renegotiation_info_extension(&response).unwrap());
     }
 
     #[test]
     fn test_has_renegotiation_info_extension_ignores_bytes_after_handshake() {
-        let mut response = vec![
-            0x16, 0x03, 0x03, 0x00, 0x00, // record
-            0x02, 0x00, 0x00, 0x00, // ServerHello
-            0x03, 0x03,
-        ];
-        response.extend_from_slice(&[0x00; 32]);
-        response.push(0x00);
-        response.extend_from_slice(&[0x00, 0x9c]);
-        response.push(0x00);
-        response.extend_from_slice(&[0x00, 0x00]); // empty extensions
-        patch_test_server_hello_lengths(&mut response);
+        let mut response = test_server_hello(&[]);
 
         let handshake_len = [response[6], response[7], response[8]];
         response.extend_from_slice(&[0x00, 0x05, 0xff, 0x01, 0x00, 0x01, 0x00]);
@@ -612,15 +598,7 @@ mod tests {
 
     #[test]
     fn test_has_renegotiation_info_extension_rejects_truncated_extension_data() {
-        let mut response = vec![0x16, 0x03, 0x03, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00];
-        response.extend_from_slice(&[0x03, 0x03]);
-        response.extend_from_slice(&[0x00; 32]);
-        response.push(0x00);
-        response.extend_from_slice(&[0x00, 0x2f]);
-        response.push(0x00);
-        response.extend_from_slice(&[0x00, 0x05, 0xff, 0x01, 0x00, 0x02, 0x01]);
-
-        patch_test_server_hello_lengths(&mut response);
+        let response = test_server_hello(&[0xff, 0x01, 0x00, 0x02, 0x01]);
 
         let err = server_hello::has_renegotiation_info_extension(&response).unwrap_err();
         assert!(
@@ -631,19 +609,8 @@ mod tests {
 
     #[test]
     fn test_has_renegotiation_info_extension_rejects_truncated_extension_block() {
-        let mut response = vec![
-            0x16, 0x03, 0x03, 0x00, 0x00, // record
-            0x02, 0x00, 0x00, 0x00, // ServerHello
-            0x03, 0x03,
-        ];
-        response.extend_from_slice(&[0x00; 32]);
-        response.push(0x00);
-        response.extend_from_slice(&[0x00, 0x9c]);
-        response.push(0x00);
-        response.extend_from_slice(&[0x00, 0x06]); // claims 6 bytes of extensions
-        response.extend_from_slice(&[0xff, 0x01, 0x00, 0x01]); // missing final data byte
-
-        patch_test_server_hello_lengths(&mut response);
+        let mut response = test_server_hello(&[0xff, 0x01, 0x00, 0x01]);
+        response[48] = 0x06; // claims 6 bytes of extensions
 
         let err = server_hello::has_renegotiation_info_extension(&response)
             .expect_err("truncated extension block should fail");
@@ -655,16 +622,7 @@ mod tests {
 
     #[test]
     fn test_has_renegotiation_info_extension_rejects_trailing_bytes_in_record() {
-        let mut response = vec![
-            0x16, 0x03, 0x03, 0x00, 0x00, // record
-            0x02, 0x00, 0x00, 0x00, // ServerHello
-            0x03, 0x03,
-        ];
-        response.extend_from_slice(&[0x00; 32]);
-        response.push(0x00);
-        response.extend_from_slice(&[0x00, 0x9c]);
-        response.push(0x00);
-        response.extend_from_slice(&[0x00, 0x00]); // no extensions
+        let mut response = test_server_hello(&[]);
         response.push(0xff); // trailing byte inside the record
 
         patch_test_server_hello_lengths(&mut response);
@@ -679,18 +637,7 @@ mod tests {
 
     #[test]
     fn test_has_renegotiation_info_extension_rejects_partial_extension_header() {
-        let mut response = vec![
-            0x16, 0x03, 0x03, 0x00, 0x00, // record
-            0x02, 0x00, 0x00, 0x00, // ServerHello
-            0x03, 0x03,
-        ];
-        response.extend_from_slice(&[0x00; 32]);
-        response.push(0x00);
-        response.extend_from_slice(&[0x00, 0x9c]);
-        response.push(0x00);
-        response.extend_from_slice(&[0x00, 0x03, 0x00, 0x01, 0x00]); // partial extension header
-
-        patch_test_server_hello_lengths(&mut response);
+        let response = test_server_hello(&[0x00, 0x01, 0x00]); // partial extension header
 
         let err = server_hello::has_renegotiation_info_extension(&response)
             .expect_err("partial extension header should fail");
@@ -761,28 +708,7 @@ mod tests {
             let (mut socket2, _) = listener.accept().await.expect("accept second");
             let _ = socket2.read(&mut buf).await.expect("read second hello");
 
-            let mut response = vec![
-                0x16, 0x03, 0x03, 0x00, 0x00, // record
-                0x02, 0x00, 0x00, 0x00, // ServerHello
-                0x03, 0x03,
-            ];
-            response.extend_from_slice(&[0x00; 32]);
-            response.push(0x00);
-            response.extend_from_slice(&[0x00, 0x9c]);
-            response.push(0x00);
-            response.extend_from_slice(&[0x00, 0x00]); // no extensions
-            let rec_len = u16::try_from(response.len() - 5).expect("record length");
-            bytes::write_u16_at(
-                &mut response,
-                3,
-                rec_len,
-                "test ServerHello record length placeholder",
-            )
-            .expect("record length placeholder");
-            let hs_len = (response.len() - 9) as u32;
-            response[6] = ((hs_len >> 16) & 0xff) as u8;
-            response[7] = ((hs_len >> 8) & 0xff) as u8;
-            response[8] = (hs_len & 0xff) as u8;
+            let response = test_server_hello(&[]);
             socket2
                 .write_all(&response)
                 .await
@@ -822,17 +748,7 @@ mod tests {
             let mut buf = vec![0u8; 4096];
             let _ = socket.read(&mut buf).await.expect("read client hello");
 
-            let mut response = vec![
-                0x16, 0x03, 0x03, 0x00, 0x00, // record
-                0x02, 0x00, 0x00, 0x00, // ServerHello
-                0x03, 0x03,
-            ];
-            response.extend_from_slice(&[0x00; 32]);
-            response.push(0x00);
-            response.extend_from_slice(&[0x00, 0x9c]);
-            response.push(0x00);
-            response.extend_from_slice(&[0x00, 0x05, 0xff, 0x01, 0x00, 0x01, 0x00]);
-            patch_test_server_hello_lengths(&mut response);
+            let response = test_server_hello(&[0xff, 0x01, 0x00, 0x01, 0x00]);
 
             socket
                 .write_all(&response[..8])
