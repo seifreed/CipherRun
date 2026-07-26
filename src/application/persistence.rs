@@ -266,8 +266,37 @@ impl PersistedScan {
 mod tests {
     use super::*;
     use crate::certificates::parser::{CertificateChain, CertificateInfo};
+    use crate::certificates::revocation::RevocationResult;
     use crate::certificates::validator::{ValidationResult, parse_cert_date};
     use crate::scanner::CertificateAnalysisResult;
+
+    fn valid_validation() -> ValidationResult {
+        ValidationResult {
+            valid: true,
+            issues: Vec::new(),
+            trust_chain_valid: true,
+            hostname_match: true,
+            not_expired: true,
+            signature_valid: true,
+            trusted_ca: None,
+            platform_trust: None,
+        }
+    }
+
+    fn certificate_analysis(
+        cert: CertificateInfo,
+        revocation: Option<RevocationResult>,
+    ) -> CertificateAnalysisResult {
+        CertificateAnalysisResult {
+            chain: CertificateChain {
+                certificates: vec![cert],
+                chain_length: 1,
+                chain_size_bytes: 1000,
+            },
+            validation: valid_validation(),
+            revocation,
+        }
+    }
 
     #[test]
     fn maps_minimal_scan_results() {
@@ -334,23 +363,9 @@ mod tests {
 
         let results = ScanResults {
             target: "example.com:443".to_string(),
-            certificate_chain: Some(CertificateAnalysisResult {
-                chain: CertificateChain {
-                    certificates: vec![cert],
-                    chain_length: 1,
-                    chain_size_bytes: 1000,
-                },
-                validation: ValidationResult {
-                    valid: true,
-                    issues: Vec::new(),
-                    trust_chain_valid: true,
-                    hostname_match: true,
-                    not_expired: true,
-                    signature_valid: true,
-                    trusted_ca: None,
-                    platform_trust: None,
-                },
-                revocation: Some(crate::certificates::revocation::RevocationResult {
+            certificate_chain: Some(certificate_analysis(
+                cert,
+                Some(crate::certificates::revocation::RevocationResult {
                     status: crate::certificates::revocation::RevocationStatus::Good,
                     method: crate::certificates::revocation::RevocationMethod::OCSP,
                     details: "OCSP".to_string(),
@@ -358,7 +373,7 @@ mod tests {
                     ocsp_stapling_details: None,
                     must_staple: false,
                 }),
-            }),
+            )),
             ..Default::default()
         };
 
@@ -385,24 +400,7 @@ mod tests {
 
         let results = ScanResults {
             target: "example.com:443".to_string(),
-            certificate_chain: Some(CertificateAnalysisResult {
-                chain: CertificateChain {
-                    certificates: vec![cert],
-                    chain_length: 1,
-                    chain_size_bytes: 1000,
-                },
-                validation: ValidationResult {
-                    valid: true,
-                    issues: Vec::new(),
-                    trust_chain_valid: true,
-                    hostname_match: true,
-                    not_expired: true,
-                    signature_valid: true,
-                    trusted_ca: None,
-                    platform_trust: None,
-                },
-                revocation: None,
-            }),
+            certificate_chain: Some(certificate_analysis(cert, None)),
             ..Default::default()
         };
 
@@ -427,24 +425,7 @@ mod tests {
 
         let results = ScanResults {
             target: "example.com:443".to_string(),
-            certificate_chain: Some(CertificateAnalysisResult {
-                chain: CertificateChain {
-                    certificates: vec![cert],
-                    chain_length: 1,
-                    chain_size_bytes: 1000,
-                },
-                validation: ValidationResult {
-                    valid: true,
-                    issues: Vec::new(),
-                    trust_chain_valid: true,
-                    hostname_match: true,
-                    not_expired: true,
-                    signature_valid: true,
-                    trusted_ca: None,
-                    platform_trust: None,
-                },
-                revocation: None,
-            }),
+            certificate_chain: Some(certificate_analysis(cert, None)),
             ..Default::default()
         };
 
