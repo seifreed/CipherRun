@@ -153,6 +153,13 @@ fn has_alg_prefix(value: &str, prefix: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
+
+    fn scan_config(config: &str) -> SshScanResult {
+        let mut f = tempfile::NamedTempFile::new().expect("create temp file");
+        write!(f, "{config}").expect("write config");
+        SshScanner::scan(f.path()).expect("scan should succeed")
+    }
 
     #[test]
     fn test_extract_algorithms() {
@@ -175,17 +182,11 @@ mod tests {
 
     #[test]
     fn test_ssh_ed25519_hostkey_is_quantum_vulnerable() {
-        use std::io::Write;
-        let mut f = tempfile::NamedTempFile::new().expect("create temp file");
         // PQC kex but a classical Ed25519 host key: the host key must still be
         // counted vulnerable (Shor breaks Ed25519), so the config is not 100/100.
-        writeln!(
-            f,
-            "KexAlgorithms mlkem768nistp256-sha256@openssh.com\nHostKeyAlgorithms ssh-ed25519"
-        )
-        .expect("write config");
-
-        let result = SshScanner::scan(f.path()).expect("scan should succeed");
+        let result = scan_config(
+            "KexAlgorithms mlkem768nistp256-sha256@openssh.com\nHostKeyAlgorithms ssh-ed25519",
+        );
         assert!(
             result
                 .quantum_vulnerable
@@ -212,15 +213,9 @@ mod tests {
 
     #[test]
     fn test_ssh_mixed_config_generates_removal_recommendation() {
-        use std::io::Write;
-        let mut f = tempfile::NamedTempFile::new().expect("create temp file");
-        writeln!(
-            f,
-            "KexAlgorithms mlkem768nistp256-sha256@openssh.com,curve25519-sha256,ecdh-sha2-nistp256"
-        )
-        .expect("write config");
-
-        let result = SshScanner::scan(f.path()).expect("scan should succeed");
+        let result = scan_config(
+            "KexAlgorithms mlkem768nistp256-sha256@openssh.com,curve25519-sha256,ecdh-sha2-nistp256",
+        );
         assert_eq!(result.score, 50, "mixed config must score 50");
         assert!(
             !result.pqc_safe.is_empty() && !result.quantum_vulnerable.is_empty(),
@@ -238,15 +233,8 @@ mod tests {
 
     #[test]
     fn test_ssh_ignores_directives_that_only_share_a_prefix() {
-        use std::io::Write;
-        let mut f = tempfile::NamedTempFile::new().expect("create temp file");
-        writeln!(
-            f,
-            "KexAlgorithmsExtra curve25519-sha256\nHostKeyAlgorithmsExtra ssh-rsa"
-        )
-        .expect("write config");
-
-        let result = SshScanner::scan(f.path()).expect("scan should succeed");
+        let result =
+            scan_config("KexAlgorithmsExtra curve25519-sha256\nHostKeyAlgorithmsExtra ssh-rsa");
 
         assert!(
             result.quantum_vulnerable.is_empty(),
@@ -258,15 +246,8 @@ mod tests {
 
     #[test]
     fn test_ssh_removal_modifiers_do_not_count_as_enabled_algorithms() {
-        use std::io::Write;
-        let mut f = tempfile::NamedTempFile::new().expect("create temp file");
-        writeln!(
-            f,
-            "KexAlgorithms -diffie-hellman-group14-sha1\nHostKeyAlgorithms -ssh-rsa"
-        )
-        .expect("write config");
-
-        let result = SshScanner::scan(f.path()).expect("scan should succeed");
+        let result =
+            scan_config("KexAlgorithms -diffie-hellman-group14-sha1\nHostKeyAlgorithms -ssh-rsa");
 
         assert!(
             result.quantum_vulnerable.is_empty(),
