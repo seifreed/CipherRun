@@ -2,19 +2,12 @@
 // Tests SMTP, IMAP, POP3 STARTTLS upgrades against real servers
 // Run with: cargo test --test integration_starttls -- --ignored --test-threads=1
 
-use cipherrun::utils::network::Target;
+mod common;
+
 use cipherrun::vulnerabilities::starttls_injection::StarttlsInjectionTester;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::time::{Duration, timeout};
-
-/// Helper to create target
-async fn create_target(host: &str, port: u16) -> Target {
-    let target_str = format!("{}:{}", host, port);
-    Target::parse(&target_str)
-        .await
-        .expect("Failed to parse target")
-}
 
 /// Test SMTP STARTTLS detection (port 587)
 /// Uses Gmail's public SMTP server
@@ -22,7 +15,7 @@ async fn create_target(host: &str, port: u16) -> Target {
 #[ignore]
 async fn test_smtp_starttls_detection() {
     // Gmail SMTP submission port
-    let target = create_target("smtp.gmail.com", 587).await;
+    let target = common::create_target("smtp.gmail.com", 587).await;
 
     // Connect to SMTP server
     let addr = format!("{}:{}", target.hostname, target.port);
@@ -43,7 +36,7 @@ async fn test_smtp_starttls_detection() {
 #[ignore]
 async fn test_smtp_port_25_starttls() {
     // Note: Many ISPs block port 25, this test might fail
-    let target = create_target("smtp.gmail.com", 25).await;
+    let target = common::create_target("smtp.gmail.com", 25).await;
 
     let addr = format!("{}:{}", target.hostname, target.port);
     match timeout(Duration::from_secs(10), TcpStream::connect(&addr)).await {
@@ -101,7 +94,7 @@ async fn test_smtp_starttls_handshake(
 #[tokio::test]
 #[ignore]
 async fn test_imap_starttls_detection() {
-    let target = create_target("imap.gmail.com", 143).await;
+    let target = common::create_target("imap.gmail.com", 143).await;
 
     let addr = format!("{}:{}", target.hostname, target.port);
     let stream = timeout(Duration::from_secs(10), TcpStream::connect(&addr))
@@ -149,7 +142,7 @@ async fn test_imap_starttls_handshake(
 #[tokio::test]
 #[ignore]
 async fn test_pop3_starttls_detection() {
-    let target = create_target("pop.gmail.com", 110).await;
+    let target = common::create_target("pop.gmail.com", 110).await;
 
     let addr = format!("{}:{}", target.hostname, target.port);
     let stream = timeout(Duration::from_secs(10), TcpStream::connect(&addr))
@@ -199,7 +192,7 @@ async fn test_pop3_starttls_handshake(
 #[tokio::test]
 #[ignore]
 async fn test_starttls_injection_smtp_gmail() {
-    let target = create_target("smtp.gmail.com", 587).await;
+    let target = common::create_target("smtp.gmail.com", 587).await;
     let tester = StarttlsInjectionTester::new(target);
 
     let result = tester.test_smtp_injection().await;
@@ -223,7 +216,7 @@ async fn test_starttls_injection_smtp_gmail() {
 #[tokio::test]
 #[ignore]
 async fn test_starttls_injection_imap_gmail() {
-    let target = create_target("imap.gmail.com", 143).await;
+    let target = common::create_target("imap.gmail.com", 143).await;
     let tester = StarttlsInjectionTester::new(target);
 
     let result = tester.test_imap_injection().await;
@@ -247,7 +240,7 @@ async fn test_starttls_injection_imap_gmail() {
 #[tokio::test]
 #[ignore]
 async fn test_starttls_injection_pop3_gmail() {
-    let target = create_target("pop.gmail.com", 110).await;
+    let target = common::create_target("pop.gmail.com", 110).await;
     let tester = StarttlsInjectionTester::new(target);
 
     let result = tester.test_pop3_injection().await;
@@ -272,7 +265,7 @@ async fn test_starttls_injection_pop3_gmail() {
 #[ignore]
 async fn test_starttls_injection_all_protocols() {
     // Test SMTP
-    let smtp_target = create_target("smtp.gmail.com", 587).await;
+    let smtp_target = common::create_target("smtp.gmail.com", 587).await;
     let smtp_tester = StarttlsInjectionTester::new(smtp_target);
 
     match smtp_tester.test_all().await {
@@ -294,7 +287,7 @@ async fn test_starttls_injection_all_protocols() {
     }
 
     // Test IMAP
-    let imap_target = create_target("imap.gmail.com", 143).await;
+    let imap_target = common::create_target("imap.gmail.com", 143).await;
     let imap_tester = StarttlsInjectionTester::new(imap_target);
 
     match imap_tester.test_all().await {
@@ -316,7 +309,7 @@ async fn test_starttls_injection_all_protocols() {
     }
 
     // Test POP3
-    let pop3_target = create_target("pop.gmail.com", 110).await;
+    let pop3_target = common::create_target("pop.gmail.com", 110).await;
     let pop3_tester = StarttlsInjectionTester::new(pop3_target);
 
     match pop3_tester.test_all().await {
@@ -342,7 +335,7 @@ async fn test_starttls_injection_all_protocols() {
 #[tokio::test]
 #[ignore]
 async fn test_smtp_starttls_outlook() {
-    let target = create_target("smtp-mail.outlook.com", 587).await;
+    let target = common::create_target("smtp-mail.outlook.com", 587).await;
 
     let addr = format!("{}:{}", target.hostname, target.port);
     match timeout(Duration::from_secs(10), TcpStream::connect(&addr)).await {
@@ -371,7 +364,7 @@ async fn test_smtp_starttls_outlook() {
 #[tokio::test]
 #[ignore]
 async fn test_imap_starttls_outlook() {
-    let target = create_target("outlook.office365.com", 143).await;
+    let target = common::create_target("outlook.office365.com", 143).await;
 
     let addr = format!("{}:{}", target.hostname, target.port);
     match timeout(Duration::from_secs(10), TcpStream::connect(&addr)).await {
@@ -401,7 +394,7 @@ async fn test_imap_starttls_outlook() {
 #[ignore]
 async fn test_starttls_on_https_port() {
     // This should fail gracefully - port 443 doesn't speak SMTP/IMAP/POP3
-    let target = create_target("smtp.gmail.com", 443).await;
+    let target = common::create_target("smtp.gmail.com", 443).await;
     let tester = StarttlsInjectionTester::new(target);
 
     let result = tester.test_all().await;
@@ -437,7 +430,7 @@ async fn test_multiple_starttls_protocols_sequential() {
     let mut results = Vec::new();
 
     for (host, port, protocol_name) in protocols {
-        let target = create_target(host, port).await;
+        let target = common::create_target(host, port).await;
         let addr = format!("{}:{}", target.hostname, target.port);
 
         match timeout(Duration::from_secs(10), TcpStream::connect(&addr)).await {

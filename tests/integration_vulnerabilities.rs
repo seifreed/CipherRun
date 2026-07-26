@@ -2,24 +2,18 @@
 // Tests all vulnerability checks against real servers
 // Run with: cargo test --test integration_vulnerabilities -- --ignored --test-threads=1
 
+mod common;
+
 use cipherrun::utils::network::Target;
 use cipherrun::vulnerabilities::heartbleed::HeartbleedTester;
 use cipherrun::vulnerabilities::tester::VulnerabilityScanner;
 use std::time::Instant;
 
-/// Helper to create target
-async fn create_target(host: &str, port: u16) -> Target {
-    let target_str = format!("{}:{}", host, port);
-    Target::parse(&target_str)
-        .await
-        .expect("Failed to parse target")
-}
-
 /// Test full vulnerability scan against secure modern server
 #[tokio::test]
 #[ignore]
 async fn test_full_vulnerability_scan_secure_server() {
-    let target = create_target("www.google.com", 443).await;
+    let target = common::create_target("www.google.com", 443).await;
     let scanner = VulnerabilityScanner::new(target);
 
     let start = Instant::now();
@@ -63,7 +57,7 @@ async fn test_full_vulnerability_scan_secure_server() {
 #[tokio::test]
 #[ignore]
 async fn test_drown_vulnerability_async() {
-    let target = create_target("www.google.com", 443).await;
+    let target = common::create_target("www.google.com", 443).await;
     let scanner = VulnerabilityScanner::new(target);
 
     let result = scanner.test_drown().await;
@@ -84,7 +78,7 @@ async fn test_drown_vulnerability_async() {
 #[tokio::test]
 #[ignore]
 async fn test_rc4_vulnerability_async() {
-    let target = create_target("www.cloudflare.com", 443).await;
+    let target = common::create_target("www.cloudflare.com", 443).await;
     let scanner = VulnerabilityScanner::new(target);
 
     let result = scanner.test_rc4().await;
@@ -105,7 +99,7 @@ async fn test_rc4_vulnerability_async() {
 #[tokio::test]
 #[ignore]
 async fn test_sweet32_vulnerability_async() {
-    let target = create_target("www.github.com", 443).await;
+    let target = common::create_target("www.github.com", 443).await;
     let scanner = VulnerabilityScanner::new(target);
 
     let result = scanner.test_sweet32().await;
@@ -126,7 +120,7 @@ async fn test_sweet32_vulnerability_async() {
 #[tokio::test]
 #[ignore]
 async fn test_null_cipher_vulnerability_async() {
-    let target = create_target("www.google.com", 443).await;
+    let target = common::create_target("www.google.com", 443).await;
     let scanner = VulnerabilityScanner::new(target);
 
     let result = scanner.test_null_ciphers().await;
@@ -147,7 +141,7 @@ async fn test_null_cipher_vulnerability_async() {
 #[tokio::test]
 #[ignore]
 async fn test_export_cipher_vulnerability_async() {
-    let target = create_target("www.cloudflare.com", 443).await;
+    let target = common::create_target("www.cloudflare.com", 443).await;
     let scanner = VulnerabilityScanner::new(target);
 
     let result = scanner.test_export_ciphers().await;
@@ -168,7 +162,7 @@ async fn test_export_cipher_vulnerability_async() {
 #[tokio::test]
 #[ignore]
 async fn test_poodle_vulnerability_async() {
-    let target = create_target("www.github.com", 443).await;
+    let target = common::create_target("www.github.com", 443).await;
     let scanner = VulnerabilityScanner::new(target);
 
     let result = scanner.test_poodle_ssl().await;
@@ -189,7 +183,7 @@ async fn test_poodle_vulnerability_async() {
 #[tokio::test]
 #[ignore]
 async fn test_beast_vulnerability_async() {
-    let target = create_target("www.google.com", 443).await;
+    let target = common::create_target("www.google.com", 443).await;
     let scanner = VulnerabilityScanner::new(target);
 
     let result = scanner.test_beast().await;
@@ -208,7 +202,7 @@ async fn test_beast_vulnerability_async() {
 #[tokio::test]
 #[ignore]
 async fn test_heartbleed_vulnerability_async() {
-    let target = create_target("www.google.com", 443).await;
+    let target = common::create_target("www.google.com", 443).await;
     let tester = HeartbleedTester::new(&target);
 
     let result = tester.test().await;
@@ -235,9 +229,9 @@ async fn test_heartbleed_vulnerability_async() {
 #[tokio::test]
 #[ignore]
 async fn test_parallel_vulnerability_scans() {
-    let target1 = create_target("www.google.com", 443).await;
-    let target2 = create_target("www.github.com", 443).await;
-    let target3 = create_target("www.cloudflare.com", 443).await;
+    let target1 = common::create_target("www.google.com", 443).await;
+    let target2 = common::create_target("www.github.com", 443).await;
+    let target3 = common::create_target("www.cloudflare.com", 443).await;
 
     let targets = vec![target1, target2, target3];
 
@@ -284,7 +278,7 @@ async fn test_parallel_vulnerability_scans() {
 #[tokio::test]
 #[ignore]
 async fn test_vulnerability_scan_performance_sequential() {
-    let target = create_target("www.google.com", 443).await;
+    let target = common::create_target("www.google.com", 443).await;
 
     let mut times = Vec::new();
 
@@ -322,7 +316,7 @@ async fn test_vulnerability_scan_performance_sequential() {
 #[tokio::test]
 #[ignore]
 async fn test_vulnerabilities_against_badssl() {
-    let target = create_target("badssl.com", 443).await;
+    let target = common::create_target("badssl.com", 443).await;
     let scanner = VulnerabilityScanner::new(target);
 
     let result = scanner.test_all().await;
@@ -349,7 +343,7 @@ async fn test_vulnerabilities_against_badssl() {
 #[tokio::test]
 #[ignore]
 async fn test_renegotiation_vulnerability_async() {
-    let target = create_target("www.google.com", 443).await;
+    let target = common::create_target("www.google.com", 443).await;
     let scanner = VulnerabilityScanner::new(target);
 
     let result = scanner.test_renegotiation().await;
@@ -376,7 +370,7 @@ async fn test_renegotiation_vulnerability_async() {
 #[tokio::test]
 #[ignore]
 async fn test_tls_fallback_scsv_async() {
-    let target = create_target("www.cloudflare.com", 443).await;
+    let target = common::create_target("www.cloudflare.com", 443).await;
     let scanner = VulnerabilityScanner::new(target);
 
     let result = scanner.test_tls_fallback().await;
@@ -467,7 +461,7 @@ async fn test_vulnerability_scan_different_ports() {
 #[tokio::test]
 #[ignore]
 async fn test_vulnerability_summary_output() {
-    let target = create_target("www.google.com", 443).await;
+    let target = common::create_target("www.google.com", 443).await;
     let scanner = VulnerabilityScanner::new(target);
 
     let results = scanner.test_all().await;
@@ -491,7 +485,7 @@ async fn test_vulnerability_summary_output() {
 #[tokio::test]
 #[ignore]
 async fn test_concurrent_vulnerability_tests() {
-    let target = create_target("www.google.com", 443).await;
+    let target = common::create_target("www.google.com", 443).await;
 
     // Create multiple scanners concurrently
     let scanner1 = VulnerabilityScanner::new(target.clone());
