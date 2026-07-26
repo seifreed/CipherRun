@@ -416,16 +416,18 @@ impl ServerHelloNetworkCapture {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_build_client_hello() {
-        let target = Target::with_ips(
+    fn example_target() -> Target {
+        Target::with_ips(
             "example.com".to_string(),
             443,
             vec!["93.184.216.34".parse().unwrap()],
         )
-        .unwrap();
+        .unwrap()
+    }
 
-        let capture = ServerHelloNetworkCapture::new(target);
+    #[test]
+    fn test_build_client_hello() {
+        let capture = ServerHelloNetworkCapture::new(example_target());
         let client_hello = capture
             .build_client_hello()
             .expect("ClientHello should build");
@@ -442,18 +444,10 @@ mod tests {
 
     #[test]
     fn test_build_client_hello_uses_starttls_hostname_override() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().unwrap()],
-        )
-        .unwrap();
-
-        let capture = ServerHelloNetworkCapture::new(target)
-            .with_starttls(
-                Some(crate::starttls::StarttlsProtocol::XMPP),
-                Some("xmpp.example.net".to_string()),
-            );
+        let capture = ServerHelloNetworkCapture::new(example_target()).with_starttls(
+            Some(crate::starttls::StarttlsProtocol::XMPP),
+            Some("xmpp.example.net".to_string()),
+        );
         let client_hello = capture
             .build_client_hello()
             .expect("ClientHello should build");
