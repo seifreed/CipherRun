@@ -1,10 +1,10 @@
 // Cipher policy rules
 
-use crate::Result;
 use crate::ciphers::tester::ProtocolCipherSummary;
-use crate::policy::CipherPolicy;
 use crate::policy::violation::PolicyViolation;
+use crate::policy::CipherPolicy;
 use crate::protocols::Protocol;
+use crate::Result;
 use regex::RegexBuilder;
 use std::collections::HashMap;
 
@@ -257,8 +257,8 @@ fn compile_cipher_pattern(pattern: &str) -> std::result::Result<regex::Regex, re
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ciphers::CipherSuite;
     use crate::ciphers::tester::CipherCounts;
+    use crate::ciphers::CipherSuite;
     use crate::policy::PolicyAction;
 
     fn create_test_cipher(name: &str) -> CipherSuite {
@@ -287,6 +287,22 @@ mod tests {
         }
     }
 
+    fn test_summary(ciphers: Vec<CipherSuite>, counts: CipherCounts) -> ProtocolCipherSummary {
+        ProtocolCipherSummary {
+            protocol: Protocol::TLS12,
+            supported_ciphers: ciphers,
+            counts,
+            server_ordered: true,
+            server_preference: vec![],
+            preferred_cipher: None,
+            avg_handshake_time_ms: None,
+        }
+    }
+
+    fn tls12_results(summary: ProtocolCipherSummary) -> HashMap<Protocol, ProtocolCipherSummary> {
+        HashMap::from([(Protocol::TLS12, summary)])
+    }
+
     #[test]
     fn test_prohibited_cipher_pattern() {
         let policy = CipherPolicy {
@@ -294,19 +310,10 @@ mod tests {
             ..base_policy()
         };
 
-        let mut results = HashMap::new();
-        results.insert(
-            Protocol::TLS12,
-            ProtocolCipherSummary {
-                protocol: Protocol::TLS12,
-                supported_ciphers: vec![create_test_cipher("TLS_RSA_WITH_RC4_128_SHA")],
-                counts: CipherCounts::default(),
-                server_ordered: true,
-                server_preference: vec![],
-                preferred_cipher: None,
-                avg_handshake_time_ms: None,
-            },
-        );
+        let results = tls12_results(test_summary(
+            vec![create_test_cipher("TLS_RSA_WITH_RC4_128_SHA")],
+            CipherCounts::default(),
+        ));
 
         let rule = CipherRule::new(&policy, &results);
         let violations = rule
@@ -325,19 +332,10 @@ mod tests {
             ..base_policy()
         };
 
-        let mut results = HashMap::new();
-        results.insert(
-            Protocol::TLS12,
-            ProtocolCipherSummary {
-                protocol: Protocol::TLS12,
-                supported_ciphers: vec![create_test_cipher("TLS_RSA_WITH_RC4_128_SHA")],
-                counts: CipherCounts::default(),
-                server_ordered: true,
-                server_preference: vec![],
-                preferred_cipher: None,
-                avg_handshake_time_ms: None,
-            },
-        );
+        let results = tls12_results(test_summary(
+            vec![create_test_cipher("TLS_RSA_WITH_RC4_128_SHA")],
+            CipherCounts::default(),
+        ));
 
         let rule = CipherRule::new(&policy, &results);
         let violations = rule
@@ -346,11 +344,9 @@ mod tests {
 
         assert_eq!(violations.len(), 1);
         assert_eq!(violations[0].rule_path, "ciphers.prohibited_patterns");
-        assert!(
-            violations[0]
-                .description
-                .contains("Invalid prohibited cipher pattern")
-        );
+        assert!(violations[0]
+            .description
+            .contains("Invalid prohibited cipher pattern"));
     }
 
     #[test]
@@ -361,19 +357,10 @@ mod tests {
             ..base_policy()
         };
 
-        let mut results = HashMap::new();
-        results.insert(
-            Protocol::TLS12,
-            ProtocolCipherSummary {
-                protocol: Protocol::TLS12,
-                supported_ciphers: vec![create_test_cipher("TLS_AES_128_GCM_SHA256")],
-                counts: CipherCounts::default(),
-                server_ordered: true,
-                server_preference: vec![],
-                preferred_cipher: None,
-                avg_handshake_time_ms: None,
-            },
-        );
+        let results = tls12_results(test_summary(
+            vec![create_test_cipher("TLS_AES_128_GCM_SHA256")],
+            CipherCounts::default(),
+        ));
 
         let rule = CipherRule::new(&policy, &results);
         let violations = rule
@@ -382,11 +369,9 @@ mod tests {
 
         assert_eq!(violations.len(), 1);
         assert_eq!(violations[0].rule_path, "ciphers.required_patterns");
-        assert!(
-            violations[0]
-                .description
-                .contains("Invalid required cipher pattern")
-        );
+        assert!(violations[0]
+            .description
+            .contains("Invalid required cipher pattern"));
     }
 
     #[test]
@@ -396,19 +381,10 @@ mod tests {
             ..base_policy()
         };
 
-        let mut results = HashMap::new();
-        results.insert(
-            Protocol::TLS12,
-            ProtocolCipherSummary {
-                protocol: Protocol::TLS12,
-                supported_ciphers: vec![create_test_cipher("tls_rsa_with_rc4_128_sha")],
-                counts: CipherCounts::default(),
-                server_ordered: true,
-                server_preference: vec![],
-                preferred_cipher: None,
-                avg_handshake_time_ms: None,
-            },
-        );
+        let results = tls12_results(test_summary(
+            vec![create_test_cipher("tls_rsa_with_rc4_128_sha")],
+            CipherCounts::default(),
+        ));
 
         let rule = CipherRule::new(&policy, &results);
         let violations = rule
@@ -426,28 +402,19 @@ mod tests {
             ..base_policy()
         };
 
-        let mut results = HashMap::new();
-        results.insert(
-            Protocol::TLS12,
-            ProtocolCipherSummary {
-                protocol: Protocol::TLS12,
-                supported_ciphers: vec![],
-                counts: CipherCounts {
-                    total: 10,
-                    high_strength: 5,
-                    medium_strength: 3,
-                    low_strength: 2,
-                    null_ciphers: 0,
-                    export_ciphers: 0,
-                    forward_secrecy: 8,
-                    aead: 5,
-                },
-                server_ordered: true,
-                server_preference: vec![],
-                preferred_cipher: None,
-                avg_handshake_time_ms: None,
+        let results = tls12_results(test_summary(
+            vec![],
+            CipherCounts {
+                total: 10,
+                high_strength: 5,
+                medium_strength: 3,
+                low_strength: 2,
+                null_ciphers: 0,
+                export_ciphers: 0,
+                forward_secrecy: 8,
+                aead: 5,
             },
-        );
+        ));
 
         let rule = CipherRule::new(&policy, &results);
         let violations = rule
@@ -465,23 +432,14 @@ mod tests {
             ..base_policy()
         };
 
-        let mut results = HashMap::new();
-        results.insert(
-            Protocol::TLS12,
-            ProtocolCipherSummary {
-                protocol: Protocol::TLS12,
-                supported_ciphers: vec![],
-                counts: CipherCounts {
-                    total: 4,
-                    forward_secrecy: 2,
-                    ..Default::default()
-                },
-                server_ordered: true,
-                server_preference: vec![],
-                preferred_cipher: None,
-                avg_handshake_time_ms: None,
+        let results = tls12_results(test_summary(
+            vec![],
+            CipherCounts {
+                total: 4,
+                forward_secrecy: 2,
+                ..Default::default()
             },
-        );
+        ));
 
         let rule = CipherRule::new(&policy, &results);
         let violations = rule
@@ -498,23 +456,14 @@ mod tests {
             ..base_policy()
         };
 
-        let mut results = HashMap::new();
-        results.insert(
-            Protocol::TLS12,
-            ProtocolCipherSummary {
-                protocol: Protocol::TLS12,
-                supported_ciphers: vec![],
-                counts: CipherCounts {
-                    total: 3,
-                    aead: 1,
-                    ..Default::default()
-                },
-                server_ordered: true,
-                server_preference: vec![],
-                preferred_cipher: None,
-                avg_handshake_time_ms: None,
+        let results = tls12_results(test_summary(
+            vec![],
+            CipherCounts {
+                total: 3,
+                aead: 1,
+                ..Default::default()
             },
-        );
+        ));
 
         let rule = CipherRule::new(&policy, &results);
         let violations = rule
@@ -531,19 +480,10 @@ mod tests {
             ..base_policy()
         };
 
-        let mut results = HashMap::new();
-        results.insert(
-            Protocol::TLS12,
-            ProtocolCipherSummary {
-                protocol: Protocol::TLS12,
-                supported_ciphers: vec![create_test_cipher("TLS_RSA_WITH_AES_128_CBC_SHA")],
-                counts: CipherCounts::default(),
-                server_ordered: true,
-                server_preference: vec![],
-                preferred_cipher: None,
-                avg_handshake_time_ms: None,
-            },
-        );
+        let results = tls12_results(test_summary(
+            vec![create_test_cipher("TLS_RSA_WITH_AES_128_CBC_SHA")],
+            CipherCounts::default(),
+        ));
 
         let rule = CipherRule::new(&policy, &results);
         let violations = rule
@@ -560,19 +500,10 @@ mod tests {
             ..base_policy()
         };
 
-        let mut results = HashMap::new();
-        results.insert(
-            Protocol::TLS12,
-            ProtocolCipherSummary {
-                protocol: Protocol::TLS12,
-                supported_ciphers: vec![create_test_cipher("TLS_AES_128_GCM_SHA256")],
-                counts: CipherCounts::default(),
-                server_ordered: true,
-                server_preference: vec![],
-                preferred_cipher: None,
-                avg_handshake_time_ms: None,
-            },
-        );
+        let results = tls12_results(test_summary(
+            vec![create_test_cipher("TLS_AES_128_GCM_SHA256")],
+            CipherCounts::default(),
+        ));
 
         let rule = CipherRule::new(&policy, &results);
         let violations = rule
@@ -589,19 +520,10 @@ mod tests {
             ..base_policy()
         };
 
-        let mut results = HashMap::new();
-        results.insert(
-            Protocol::TLS12,
-            ProtocolCipherSummary {
-                protocol: Protocol::TLS12,
-                supported_ciphers: vec![create_test_cipher("tls_aes_128_gcm_sha256")],
-                counts: CipherCounts::default(),
-                server_ordered: true,
-                server_preference: vec![],
-                preferred_cipher: None,
-                avg_handshake_time_ms: None,
-            },
-        );
+        let results = tls12_results(test_summary(
+            vec![create_test_cipher("tls_aes_128_gcm_sha256")],
+            CipherCounts::default(),
+        ));
 
         let rule = CipherRule::new(&policy, &results);
         let violations = rule
