@@ -264,35 +264,28 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_database_rejects_invalid_curve_line() {
-        let err = match CurvesDatabase::parse("0x00,0x1d - X25519  Curve25519\ninvalid") {
-            Ok(_) => panic!("invalid curve line should fail database parsing"),
-            Err(err) => err,
-        };
+    fn test_parse_database_rejects_invalid_entries() {
+        for (data, expected) in [
+            (
+                "0x00,0x1d - X25519  Curve25519\ninvalid",
+                "Invalid curve mapping line 2",
+            ),
+            (
+                "0x00,0x1d - X25519  Curve25519\n0x00,0x1d - X448  X448",
+                "Duplicate curve ID on line 2",
+            ),
+            (
+                "0x00,0x1d - X25519  Curve25519\n0x00,0x1e - x25519  Duplicate",
+                "Duplicate curve name on line 2",
+            ),
+        ] {
+            let err = match CurvesDatabase::parse(data) {
+                Ok(_) => panic!("invalid database should fail"),
+                Err(err) => err,
+            };
 
-        assert!(err.to_string().contains("Invalid curve mapping line 2"));
-    }
-
-    #[test]
-    fn test_parse_database_rejects_duplicate_curve_id() {
-        let data = "0x00,0x1d - X25519  Curve25519\n0x00,0x1d - X448  X448";
-        let err = match CurvesDatabase::parse(data) {
-            Ok(_) => panic!("duplicate curve ID should fail"),
-            Err(err) => err,
-        };
-
-        assert!(err.to_string().contains("Duplicate curve ID on line 2"));
-    }
-
-    #[test]
-    fn test_parse_database_rejects_duplicate_curve_name() {
-        let data = "0x00,0x1d - X25519  Curve25519\n0x00,0x1e - x25519  Duplicate";
-        let err = match CurvesDatabase::parse(data) {
-            Ok(_) => panic!("duplicate curve name should fail"),
-            Err(err) => err,
-        };
-
-        assert!(err.to_string().contains("Duplicate curve name on line 2"));
+            assert!(err.to_string().contains(expected), "{data}");
+        }
     }
 
     #[test]
