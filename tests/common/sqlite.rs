@@ -3,7 +3,13 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use cipherrun::db::DatabaseConfig;
+
 static DB_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+pub fn unique_sqlite_config(prefix: &str) -> DatabaseConfig {
+    DatabaseConfig::sqlite(unique_sqlite_db_path(prefix))
+}
 
 pub fn unique_sqlite_db_path(prefix: &str) -> PathBuf {
     let counter = DB_COUNTER.fetch_add(1, Ordering::SeqCst);

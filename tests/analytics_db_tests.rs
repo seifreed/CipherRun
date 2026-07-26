@@ -8,15 +8,12 @@ use cipherrun::db::analytics::{
     ChangeEvent, ChangeSeverity, ChangeTracker, ChangeType, DashboardGenerator, ScanComparator,
 };
 use cipherrun::db::{
-    BindValue, CipherRunDatabase, DatabaseConfig, get_certificate_inventory,
-    list_certificate_inventory,
+    BindValue, CipherRunDatabase, get_certificate_inventory, list_certificate_inventory,
 };
 use std::sync::Arc;
 
 async fn setup_db() -> Arc<CipherRunDatabase> {
-    let config = DatabaseConfig::sqlite(common::sqlite::unique_sqlite_db_path(
-        "cipherrun-analytics-test",
-    ));
+    let config = common::sqlite::unique_sqlite_config("cipherrun-analytics-test");
     let db = CipherRunDatabase::new(&config)
         .await
         .expect("test assertion should succeed");

@@ -8,12 +8,11 @@ use cipherrun::api::config::ApiConfig;
 use cipherrun::api::models::request::CertificateQuery;
 use cipherrun::api::routes::certificates::{get_certificate, list_certificates};
 use cipherrun::api::state::AppState;
-use cipherrun::db::{DatabaseConfig, DatabasePool, run_migrations};
+use cipherrun::db::{DatabasePool, run_migrations};
 use std::sync::Arc;
 
 async fn setup_state() -> Arc<AppState> {
-    let config =
-        DatabaseConfig::sqlite(common::sqlite::unique_sqlite_db_path("cipherrun-cert-test"));
+    let config = common::sqlite::unique_sqlite_config("cipherrun-cert-test");
     let pool = DatabasePool::new(&config)
         .await
         .expect("test assertion should succeed");
