@@ -306,14 +306,32 @@ impl MultiIpScanReport {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_multi_ip_report_successful_results() {
-        let target = Target::with_ips(
+    fn target_with_ips(ips: &[&str]) -> Target {
+        Target::with_ips(
             "example.com".to_string(),
             443,
-            vec!["93.184.216.34".parse().unwrap()],
+            ips.iter().map(|ip| ip.parse().unwrap()).collect(),
         )
-        .unwrap();
+        .unwrap()
+    }
+
+    fn empty_aggregated_result() -> AggregatedScanResult {
+        AggregatedScanResult {
+            protocols: Vec::new(),
+            ciphers: HashMap::new(),
+            grade: ("F".to_string(), 0),
+            certificate_info: None,
+            certificate_consistent: true,
+            inconsistencies: Vec::new(),
+            alpn_protocols: Vec::new(),
+            session_resumption_caching: Some(false),
+            session_resumption_tickets: Some(false),
+        }
+    }
+
+    #[test]
+    fn test_multi_ip_report_successful_results() {
+        let target = target_with_ips(&["93.184.216.34"]);
 
         let mut per_ip_results = HashMap::new();
         per_ip_results.insert(
@@ -333,17 +351,7 @@ mod tests {
             successful_scans: 1,
             failed_scans: 0,
             total_duration_ms: 1000,
-            aggregated: AggregatedScanResult {
-                protocols: Vec::new(),
-                ciphers: HashMap::new(),
-                grade: ("F".to_string(), 0),
-                certificate_info: None,
-                certificate_consistent: true,
-                inconsistencies: Vec::new(),
-                alpn_protocols: Vec::new(),
-                session_resumption_caching: Some(false),
-                session_resumption_tickets: Some(false),
-            },
+            aggregated: empty_aggregated_result(),
             inconsistencies: Vec::new(),
         };
 
@@ -354,15 +362,7 @@ mod tests {
 
     #[test]
     fn test_multi_ip_report_with_failures() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec![
-                "93.184.216.34".parse().unwrap(),
-                "93.184.216.35".parse().unwrap(),
-            ],
-        )
-        .unwrap();
+        let target = target_with_ips(&["93.184.216.34", "93.184.216.35"]);
 
         let mut per_ip_results = HashMap::new();
         per_ip_results.insert(
@@ -391,17 +391,7 @@ mod tests {
             successful_scans: 1,
             failed_scans: 1,
             total_duration_ms: 2000,
-            aggregated: AggregatedScanResult {
-                protocols: Vec::new(),
-                ciphers: HashMap::new(),
-                grade: ("F".to_string(), 0),
-                certificate_info: None,
-                certificate_consistent: true,
-                inconsistencies: Vec::new(),
-                alpn_protocols: Vec::new(),
-                session_resumption_caching: Some(false),
-                session_resumption_tickets: Some(false),
-            },
+            aggregated: empty_aggregated_result(),
             inconsistencies: Vec::new(),
         };
 
@@ -464,12 +454,7 @@ mod tests {
 
     #[test]
     fn test_avg_scan_duration_none_when_no_success() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().unwrap()],
-        )
-        .unwrap();
+        let target = target_with_ips(&["93.184.216.34"]);
 
         let mut per_ip_results = HashMap::new();
         per_ip_results.insert(
@@ -489,17 +474,7 @@ mod tests {
             successful_scans: 0,
             failed_scans: 1,
             total_duration_ms: 1200,
-            aggregated: AggregatedScanResult {
-                protocols: Vec::new(),
-                ciphers: HashMap::new(),
-                grade: ("F".to_string(), 0),
-                certificate_info: None,
-                certificate_consistent: true,
-                inconsistencies: Vec::new(),
-                alpn_protocols: Vec::new(),
-                session_resumption_caching: Some(false),
-                session_resumption_tickets: Some(false),
-            },
+            aggregated: empty_aggregated_result(),
             inconsistencies: Vec::new(),
         };
 
@@ -508,15 +483,7 @@ mod tests {
 
     #[test]
     fn test_avg_scan_duration_saturates_overflowing_total() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec![
-                "93.184.216.34".parse().unwrap(),
-                "93.184.216.35".parse().unwrap(),
-            ],
-        )
-        .unwrap();
+        let target = target_with_ips(&["93.184.216.34", "93.184.216.35"]);
 
         let mut per_ip_results = HashMap::new();
         per_ip_results.insert(
@@ -545,17 +512,7 @@ mod tests {
             successful_scans: 2,
             failed_scans: 0,
             total_duration_ms: u64::MAX,
-            aggregated: AggregatedScanResult {
-                protocols: Vec::new(),
-                ciphers: HashMap::new(),
-                grade: ("F".to_string(), 0),
-                certificate_info: None,
-                certificate_consistent: true,
-                inconsistencies: Vec::new(),
-                alpn_protocols: Vec::new(),
-                session_resumption_caching: Some(false),
-                session_resumption_tickets: Some(false),
-            },
+            aggregated: empty_aggregated_result(),
             inconsistencies: Vec::new(),
         };
 
@@ -564,12 +521,7 @@ mod tests {
 
     #[test]
     fn test_multi_ip_scanner_sets_callback() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().unwrap()],
-        )
-        .unwrap();
+        let target = target_with_ips(&["93.184.216.34"]);
         let request = ScanRequest::default();
 
         let scanner = MultiIpScanner::new(target, request).with_terminal_progress();
