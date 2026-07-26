@@ -96,6 +96,19 @@ mod tests {
         }
     }
 
+    fn failed_multi_ip_report() -> MultiIpScanReport {
+        MultiIpScanReport {
+            target: single_ip_target(),
+            per_ip_results: HashMap::new(),
+            total_ips: 1,
+            successful_scans: 0,
+            failed_scans: 1,
+            total_duration_ms: 1,
+            inconsistencies: Vec::new(),
+            aggregated: empty_aggregated_result(),
+        }
+    }
+
     #[test]
     fn test_json_generation() {
         let results = ScanResults {
@@ -324,18 +337,7 @@ mod tests {
 
     #[test]
     fn test_multi_ip_json_compact_has_no_newlines() {
-        let target = single_ip_target();
-
-        let report = MultiIpScanReport {
-            target,
-            per_ip_results: HashMap::new(),
-            total_ips: 1,
-            successful_scans: 0,
-            failed_scans: 1,
-            total_duration_ms: 1,
-            inconsistencies: Vec::new(),
-            aggregated: empty_aggregated_result(),
-        };
+        let report = failed_multi_ip_report();
 
         let json = generate_multi_ip_json(&report, false).expect("test assertion should succeed");
         assert!(!json.contains('\n'));
@@ -343,18 +345,7 @@ mod tests {
 
     #[test]
     fn test_write_multi_ip_json_compact_file_has_no_newlines() {
-        let target = single_ip_target();
-
-        let report = MultiIpScanReport {
-            target,
-            per_ip_results: HashMap::new(),
-            total_ips: 1,
-            successful_scans: 0,
-            failed_scans: 1,
-            total_duration_ms: 1,
-            inconsistencies: Vec::new(),
-            aggregated: empty_aggregated_result(),
-        };
+        let report = failed_multi_ip_report();
 
         let path = temp_file_path(".multi.compact.json");
         write_multi_ip_json_file(&report, path.to_str().unwrap(), false)
