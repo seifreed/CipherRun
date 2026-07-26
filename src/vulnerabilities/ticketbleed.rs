@@ -20,17 +20,6 @@ mod session_ticket;
 use outcome::TicketbleedProbeOutcome;
 pub use outcome::TicketbleedTestResult;
 
-#[cfg(test)]
-fn write_u24_at(data: &mut [u8], offset: usize, value: usize) {
-    data.get_mut(offset..offset + 3)
-        .expect("test fixture should contain u24 placeholder")
-        .copy_from_slice(&[
-            ((value >> 16) & 0xff) as u8,
-            ((value >> 8) & 0xff) as u8,
-            (value & 0xff) as u8,
-        ]);
-}
-
 /// Ticketbleed vulnerability tester
 pub struct TicketbleedTester {
     target: Target,
@@ -227,6 +216,7 @@ impl TicketbleedTester {
 mod tests {
     use super::*;
     use crate::constants::{BUFFER_SIZE_MAX_TLS_RECORD, CONTENT_TYPE_HANDSHAKE};
+    use crate::vulnerabilities::test_support::write_u24_at;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     #[test]
