@@ -276,15 +276,22 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_prohibited_cipher_pattern() {
-        let policy = CipherPolicy {
+    fn base_policy() -> CipherPolicy {
+        CipherPolicy {
             min_strength: None,
             require_forward_secrecy: None,
             require_aead: None,
-            prohibited_patterns: Some(vec![".*_RC4_.*".to_string()]),
+            prohibited_patterns: None,
             required_patterns: None,
             action: PolicyAction::Fail,
+        }
+    }
+
+    #[test]
+    fn test_prohibited_cipher_pattern() {
+        let policy = CipherPolicy {
+            prohibited_patterns: Some(vec![".*_RC4_.*".to_string()]),
+            ..base_policy()
         };
 
         let mut results = HashMap::new();
@@ -313,13 +320,9 @@ mod tests {
     #[test]
     fn test_invalid_prohibited_pattern_fails_closed_with_violation() {
         let policy = CipherPolicy {
-            min_strength: None,
-            require_forward_secrecy: None,
-            require_aead: None,
             // Unbalanced bracket — invalid regex.
             prohibited_patterns: Some(vec!["RC4[".to_string()]),
-            required_patterns: None,
-            action: PolicyAction::Fail,
+            ..base_policy()
         };
 
         let mut results = HashMap::new();
@@ -353,13 +356,9 @@ mod tests {
     #[test]
     fn test_invalid_required_pattern_fails_closed_with_violation() {
         let policy = CipherPolicy {
-            min_strength: None,
-            require_forward_secrecy: None,
-            require_aead: None,
-            prohibited_patterns: None,
             // Unbalanced bracket — invalid regex.
             required_patterns: Some(vec!["AES[".to_string()]),
-            action: PolicyAction::Fail,
+            ..base_policy()
         };
 
         let mut results = HashMap::new();
@@ -393,12 +392,8 @@ mod tests {
     #[test]
     fn test_prohibited_cipher_pattern_is_case_insensitive() {
         let policy = CipherPolicy {
-            min_strength: None,
-            require_forward_secrecy: None,
-            require_aead: None,
             prohibited_patterns: Some(vec![".*_RC4_.*".to_string()]),
-            required_patterns: None,
-            action: PolicyAction::Fail,
+            ..base_policy()
         };
 
         let mut results = HashMap::new();
@@ -428,11 +423,7 @@ mod tests {
     fn test_minimum_strength() {
         let policy = CipherPolicy {
             min_strength: Some("HIGH".to_string()),
-            require_forward_secrecy: None,
-            require_aead: None,
-            prohibited_patterns: None,
-            required_patterns: None,
-            action: PolicyAction::Fail,
+            ..base_policy()
         };
 
         let mut results = HashMap::new();
@@ -470,12 +461,8 @@ mod tests {
     #[test]
     fn test_require_forward_secrecy_violation() {
         let policy = CipherPolicy {
-            min_strength: None,
             require_forward_secrecy: Some(true),
-            require_aead: None,
-            prohibited_patterns: None,
-            required_patterns: None,
-            action: PolicyAction::Fail,
+            ..base_policy()
         };
 
         let mut results = HashMap::new();
@@ -507,12 +494,8 @@ mod tests {
     #[test]
     fn test_require_aead_violation() {
         let policy = CipherPolicy {
-            min_strength: None,
-            require_forward_secrecy: None,
             require_aead: Some(true),
-            prohibited_patterns: None,
-            required_patterns: None,
-            action: PolicyAction::Fail,
+            ..base_policy()
         };
 
         let mut results = HashMap::new();
@@ -544,12 +527,8 @@ mod tests {
     #[test]
     fn test_required_patterns_violation() {
         let policy = CipherPolicy {
-            min_strength: None,
-            require_forward_secrecy: None,
-            require_aead: None,
-            prohibited_patterns: None,
             required_patterns: Some(vec!["TLS_AES_128_GCM_SHA256".to_string()]),
-            action: PolicyAction::Fail,
+            ..base_policy()
         };
 
         let mut results = HashMap::new();
@@ -577,12 +556,8 @@ mod tests {
     #[test]
     fn test_required_patterns_satisfied() {
         let policy = CipherPolicy {
-            min_strength: None,
-            require_forward_secrecy: None,
-            require_aead: None,
-            prohibited_patterns: None,
             required_patterns: Some(vec![".*GCM.*".to_string()]),
-            action: PolicyAction::Fail,
+            ..base_policy()
         };
 
         let mut results = HashMap::new();
@@ -610,12 +585,8 @@ mod tests {
     #[test]
     fn test_required_cipher_pattern_is_case_insensitive() {
         let policy = CipherPolicy {
-            min_strength: None,
-            require_forward_secrecy: None,
-            require_aead: None,
-            prohibited_patterns: None,
             required_patterns: Some(vec![".*GCM.*".to_string()]),
-            action: PolicyAction::Fail,
+            ..base_policy()
         };
 
         let mut results = HashMap::new();
