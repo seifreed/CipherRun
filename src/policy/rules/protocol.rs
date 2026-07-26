@@ -161,13 +161,33 @@ mod tests {
         }
     }
 
+    fn required(protocol: &str) -> ProtocolPolicy {
+        ProtocolPolicy {
+            required: Some(vec![protocol.to_string()]),
+            ..base_policy()
+        }
+    }
+
+    fn prohibited(protocol: &str) -> ProtocolPolicy {
+        ProtocolPolicy {
+            prohibited: Some(vec![protocol.to_string()]),
+            ..base_policy()
+        }
+    }
+
+    fn violations(
+        policy: &ProtocolPolicy,
+        results: &[ProtocolTestResult],
+        any_supported_protocols: &[Protocol],
+    ) -> Vec<PolicyViolation> {
+        ProtocolRule::new(policy, results, any_supported_protocols)
+            .evaluate("example.com:443")
+            .expect("test assertion should succeed")
+    }
+
     #[test]
     fn test_required_protocol_rejects_invalid_name() {
-        let policy = ProtocolPolicy {
-            required: Some(vec!["TLSv9.9".to_string()]),
-            ..base_policy()
-        };
-
+        let policy = required("TLSv9.9");
         let rule = ProtocolRule::new(&policy, &[], &[]);
         let error = rule
             .evaluate("example.com:443")
@@ -182,11 +202,7 @@ mod tests {
 
     #[test]
     fn test_prohibited_protocol_rejects_invalid_name() {
-        let policy = ProtocolPolicy {
-            prohibited: Some(vec!["TLSv9.9".to_string()]),
-            ..base_policy()
-        };
-
+        let policy = prohibited("TLSv9.9");
         let rule = ProtocolRule::new(&policy, &[], &[]);
         let error = rule
             .evaluate("example.com:443")
@@ -201,17 +217,9 @@ mod tests {
 
     #[test]
     fn test_required_protocol_violation() {
-        let policy = ProtocolPolicy {
-            required: Some(vec!["TLSv1.3".to_string()]),
-            ..base_policy()
-        };
-
+        let policy = required("TLSv1.3");
         let results = vec![protocol_result(Protocol::TLS12, true)];
-
-        let rule = ProtocolRule::new(&policy, &results, &[Protocol::TLS12]);
-        let violations = rule
-            .evaluate("example.com:443")
-            .expect("test assertion should succeed");
+        let violations = violations(&policy, &results, &[Protocol::TLS12]);
 
         assert_eq!(violations.len(), 1);
         assert_eq!(violations[0].rule_path, "protocols.required");
@@ -219,17 +227,9 @@ mod tests {
 
     #[test]
     fn test_prohibited_protocol_violation() {
-        let policy = ProtocolPolicy {
-            prohibited: Some(vec!["TLSv1.0".to_string()]),
-            ..base_policy()
-        };
-
+        let policy = prohibited("TLSv1.0");
         let results = vec![protocol_result(Protocol::TLS10, true)];
-
-        let rule = ProtocolRule::new(&policy, &results, &[Protocol::TLS10]);
-        let violations = rule
-            .evaluate("example.com:443")
-            .expect("test assertion should succeed");
+        let violations = violations(&policy, &results, &[Protocol::TLS10]);
 
         assert_eq!(violations.len(), 1);
         assert_eq!(violations[0].rule_path, "protocols.prohibited");
@@ -237,17 +237,9 @@ mod tests {
 
     #[test]
     fn test_prohibited_protocol_uses_direct_results_when_any_supported_list_is_empty() {
-        let policy = ProtocolPolicy {
-            prohibited: Some(vec!["TLSv1.0".to_string()]),
-            ..base_policy()
-        };
-
+        let policy = prohibited("TLSv1.0");
         let results = vec![protocol_result(Protocol::TLS10, true)];
-
-        let rule = ProtocolRule::new(&policy, &results, &[]);
-        let violations = rule
-            .evaluate("example.com:443")
-            .expect("test assertion should succeed");
+        let violations = violations(&policy, &results, &[]);
 
         assert_eq!(violations.len(), 1);
         assert_eq!(violations[0].rule_path, "protocols.prohibited");
@@ -255,34 +247,18 @@ mod tests {
 
     #[test]
     fn test_required_protocol_satisfied() {
-        let policy = ProtocolPolicy {
-            required: Some(vec!["TLS 1.2".to_string()]),
-            ..base_policy()
-        };
-
+        let policy = required("TLS 1.2");
         let results = vec![protocol_result(Protocol::TLS12, true)];
-
-        let rule = ProtocolRule::new(&policy, &results, &[Protocol::TLS12]);
-        let violations = rule
-            .evaluate("example.com:443")
-            .expect("test assertion should succeed");
+        let violations = violations(&policy, &results, &[Protocol::TLS12]);
 
         assert!(violations.is_empty());
     }
 
     #[test]
     fn test_prohibited_protocol_with_spaces() {
-        let policy = ProtocolPolicy {
-            prohibited: Some(vec!["TLS 1.2".to_string()]),
-            ..base_policy()
-        };
-
+        let policy = prohibited("TLS 1.2");
         let results = vec![protocol_result(Protocol::TLS12, true)];
-
-        let rule = ProtocolRule::new(&policy, &results, &[Protocol::TLS12]);
-        let violations = rule
-            .evaluate("example.com:443")
-            .expect("test assertion should succeed");
+        let violations = violations(&policy, &results, &[Protocol::TLS12]);
 
         assert_eq!(violations.len(), 1);
         assert_eq!(violations[0].rule_path, "protocols.prohibited");
@@ -290,34 +266,18 @@ mod tests {
 
     #[test]
     fn test_required_protocol_with_underscore_alias_is_satisfied() {
-        let policy = ProtocolPolicy {
-            required: Some(vec!["tls1_2".to_string()]),
-            ..base_policy()
-        };
-
+        let policy = required("tls1_2");
         let results = vec![protocol_result(Protocol::TLS12, true)];
-
-        let rule = ProtocolRule::new(&policy, &results, &[Protocol::TLS12]);
-        let violations = rule
-            .evaluate("example.com:443")
-            .expect("test assertion should succeed");
+        let violations = violations(&policy, &results, &[Protocol::TLS12]);
 
         assert!(violations.is_empty());
     }
 
     #[test]
     fn test_prohibited_protocol_with_underscore_alias_is_detected() {
-        let policy = ProtocolPolicy {
-            prohibited: Some(vec!["tls1_2".to_string()]),
-            ..base_policy()
-        };
-
+        let policy = prohibited("tls1_2");
         let results = vec![protocol_result(Protocol::TLS12, true)];
-
-        let rule = ProtocolRule::new(&policy, &results, &[Protocol::TLS12]);
-        let violations = rule
-            .evaluate("example.com:443")
-            .expect("test assertion should succeed");
+        let violations = violations(&policy, &results, &[Protocol::TLS12]);
 
         assert_eq!(violations.len(), 1);
         assert_eq!(violations[0].rule_path, "protocols.prohibited");
@@ -325,34 +285,18 @@ mod tests {
 
     #[test]
     fn test_prohibited_protocol_not_supported_no_violation() {
-        let policy = ProtocolPolicy {
-            prohibited: Some(vec!["TLSv1.3".to_string()]),
-            ..base_policy()
-        };
-
+        let policy = prohibited("TLSv1.3");
         let results = vec![protocol_result(Protocol::TLS13, false)];
-
-        let rule = ProtocolRule::new(&policy, &results, &[]);
-        let violations = rule
-            .evaluate("example.com:443")
-            .expect("test assertion should succeed");
+        let violations = violations(&policy, &results, &[]);
 
         assert!(violations.is_empty());
     }
 
     #[test]
     fn test_prohibited_protocol_violation_when_supported_on_subset_of_backends() {
-        let policy = ProtocolPolicy {
-            prohibited: Some(vec!["TLSv1.0".to_string()]),
-            ..base_policy()
-        };
-
+        let policy = prohibited("TLSv1.0");
         let results = vec![protocol_result(Protocol::TLS10, false)];
-
-        let rule = ProtocolRule::new(&policy, &results, &[Protocol::TLS10]);
-        let violations = rule
-            .evaluate("example.com:443")
-            .expect("test assertion should succeed");
+        let violations = violations(&policy, &results, &[Protocol::TLS10]);
 
         assert_eq!(violations.len(), 1);
         assert_eq!(violations[0].rule_path, "protocols.prohibited");
