@@ -2,7 +2,11 @@ use super::*;
 use crate::ciphers::tester::{CipherCounts, ProtocolCipherSummary};
 use std::collections::HashMap;
 
-fn protocol_result(protocol: Protocol, preferred: bool, ciphers_count: usize) -> ProtocolTestResult {
+fn protocol_result(
+    protocol: Protocol,
+    preferred: bool,
+    ciphers_count: usize,
+) -> ProtocolTestResult {
     ProtocolTestResult {
         protocol,
         supported: true,
@@ -17,21 +21,31 @@ fn protocol_result(protocol: Protocol, preferred: bool, ciphers_count: usize) ->
     }
 }
 
+fn ciphers_with_counts(counts: CipherCounts) -> HashMap<Protocol, ProtocolCipherSummary> {
+    HashMap::from([(
+        Protocol::TLS12,
+        ProtocolCipherSummary {
+            protocol: Protocol::TLS12,
+            supported_ciphers: Vec::new(),
+            server_ordered: false,
+            server_preference: Vec::new(),
+            preferred_cipher: None,
+            counts,
+            avg_handshake_time_ms: None,
+        },
+    )])
+}
+
 #[test]
 fn test_overall_score_calculation() {
-    // All perfect scores
-    let score = RatingCalculator::calculate_overall_score(100, 100, 100);
-    assert_eq!(score, 100);
-
-    // Mixed scores: Protocol 90%, Key Exchange 85%, Cipher 95%
-    // (90*30 + 85*30 + 95*40) / 100 = (2700 + 2550 + 3800) / 100 = 90
-    let score = RatingCalculator::calculate_overall_score(90, 85, 95);
-    assert_eq!(score, 90);
-
-    // Test case from user report: Protocol 100%, Key Exchange 95%, Cipher 95%
-    // (100*30 + 95*30 + 95*40) / 100 = (3000 + 2850 + 3800) / 100 = 96
-    let score = RatingCalculator::calculate_overall_score(100, 95, 95);
-    assert_eq!(score, 96);
+    for (protocol, key_exchange, cipher, expected) in
+        [(100, 100, 100, 100), (90, 85, 95, 90), (100, 95, 95, 96)]
+    {
+        assert_eq!(
+            RatingCalculator::calculate_overall_score(protocol, key_exchange, cipher),
+            expected
+        );
+    }
 }
 
 #[test]
@@ -143,17 +157,9 @@ fn test_sslv2_forces_grade_f_in_calculate() {
 
 #[test]
 fn test_grade_conversion_with_tls13_cap() {
-    // Test that score of 84 converts to A- grade
-    let grade = Grade::from_score(84);
-    assert_eq!(grade, Grade::AMinus, "Score 84 should be grade A-");
-
-    // Test that score of 85 converts to A grade
-    let grade = Grade::from_score(85);
-    assert_eq!(grade, Grade::A, "Score 85 should be grade A");
-
-    // Test that score of 100 converts to A+ grade
-    let grade = Grade::from_score(100);
-    assert_eq!(grade, Grade::APlus, "Score 100 should be grade A+");
+    for (score, grade) in [(84, Grade::AMinus), (85, Grade::A), (100, Grade::APlus)] {
+        assert_eq!(Grade::from_score(score), grade, "Score {score}");
+    }
 }
 
 #[test]
@@ -328,22 +334,11 @@ fn test_certificate_score_with_issues() {
 
 #[test]
 fn test_key_exchange_score_penalty_for_low_fs() {
-    let summary = ProtocolCipherSummary {
-        protocol: Protocol::TLS12,
-        supported_ciphers: Vec::new(),
-        server_ordered: false,
-        server_preference: Vec::new(),
-        preferred_cipher: None,
-        counts: CipherCounts {
-            total: 10,
-            forward_secrecy: 4,
-            ..Default::default()
-        },
-        avg_handshake_time_ms: None,
-    };
-
-    let mut ciphers = HashMap::new();
-    ciphers.insert(Protocol::TLS12, summary);
+    let ciphers = ciphers_with_counts(CipherCounts {
+        total: 10,
+        forward_secrecy: 4,
+        ..Default::default()
+    });
 
     let score = RatingCalculator::calculate_key_exchange_score(&ciphers);
     assert_eq!(score, 80);
@@ -351,22 +346,11 @@ fn test_key_exchange_score_penalty_for_low_fs() {
 
 #[test]
 fn test_key_exchange_score_handles_extreme_cipher_counts() {
-    let summary = ProtocolCipherSummary {
-        protocol: Protocol::TLS12,
-        supported_ciphers: Vec::new(),
-        server_ordered: false,
-        server_preference: Vec::new(),
-        preferred_cipher: None,
-        counts: CipherCounts {
-            total: usize::MAX,
-            forward_secrecy: usize::MAX,
-            ..Default::default()
-        },
-        avg_handshake_time_ms: None,
-    };
-
-    let mut ciphers = HashMap::new();
-    ciphers.insert(Protocol::TLS12, summary);
+    let ciphers = ciphers_with_counts(CipherCounts {
+        total: usize::MAX,
+        forward_secrecy: usize::MAX,
+        ..Default::default()
+    });
 
     let score = RatingCalculator::calculate_key_exchange_score(&ciphers);
     assert_eq!(score, 100);
@@ -374,22 +358,11 @@ fn test_key_exchange_score_handles_extreme_cipher_counts() {
 
 #[test]
 fn test_cipher_strength_score_export_ciphers_zero() {
-    let summary = ProtocolCipherSummary {
-        protocol: Protocol::TLS12,
-        supported_ciphers: Vec::new(),
-        server_ordered: false,
-        server_preference: Vec::new(),
-        preferred_cipher: None,
-        counts: CipherCounts {
-            total: 1,
-            export_ciphers: 1,
-            ..Default::default()
-        },
-        avg_handshake_time_ms: None,
-    };
-
-    let mut ciphers = HashMap::new();
-    ciphers.insert(Protocol::TLS12, summary);
+    let ciphers = ciphers_with_counts(CipherCounts {
+        total: 1,
+        export_ciphers: 1,
+        ..Default::default()
+    });
 
     let score = RatingCalculator::calculate_cipher_strength_score(&ciphers);
     assert_eq!(score, 0);
@@ -399,22 +372,11 @@ fn test_cipher_strength_score_export_ciphers_zero() {
 fn test_cipher_strength_score_counts_medium_strength_as_weak() {
     // All ciphers medium-strength: weak_percentage is 100%, which must incur the
     // 75%+ weak penalty (-20) plus the <50% AEAD penalty (-5) -> 75.
-    let summary = ProtocolCipherSummary {
-        protocol: Protocol::TLS12,
-        supported_ciphers: Vec::new(),
-        server_ordered: false,
-        server_preference: Vec::new(),
-        preferred_cipher: None,
-        counts: CipherCounts {
-            total: 4,
-            medium_strength: 4,
-            ..Default::default()
-        },
-        avg_handshake_time_ms: None,
-    };
-
-    let mut ciphers = HashMap::new();
-    ciphers.insert(Protocol::TLS12, summary);
+    let ciphers = ciphers_with_counts(CipherCounts {
+        total: 4,
+        medium_strength: 4,
+        ..Default::default()
+    });
 
     let score = RatingCalculator::calculate_cipher_strength_score(&ciphers);
     assert!(
@@ -426,23 +388,12 @@ fn test_cipher_strength_score_counts_medium_strength_as_weak() {
 
 #[test]
 fn test_cipher_strength_score_handles_extreme_weak_counts() {
-    let summary = ProtocolCipherSummary {
-        protocol: Protocol::TLS12,
-        supported_ciphers: Vec::new(),
-        server_ordered: false,
-        server_preference: Vec::new(),
-        preferred_cipher: None,
-        counts: CipherCounts {
-            total: usize::MAX,
-            low_strength: usize::MAX,
-            medium_strength: 1,
-            ..Default::default()
-        },
-        avg_handshake_time_ms: None,
-    };
-
-    let mut ciphers = HashMap::new();
-    ciphers.insert(Protocol::TLS12, summary);
+    let ciphers = ciphers_with_counts(CipherCounts {
+        total: usize::MAX,
+        low_strength: usize::MAX,
+        medium_strength: 1,
+        ..Default::default()
+    });
 
     let score = RatingCalculator::calculate_cipher_strength_score(&ciphers);
     assert_eq!(score, 75);
