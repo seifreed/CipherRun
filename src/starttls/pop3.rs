@@ -63,7 +63,10 @@ mod tests {
     use tokio::net::TcpStream;
     use tokio::task::JoinHandle;
 
-    async fn spawn_pop3_server(send_stls: bool) -> (u16, JoinHandle<()>) {
+    async fn spawn_pop3_server(
+        capability_response: &'static [u8],
+        starttls_response: Option<&'static [u8]>,
+    ) -> (u16, JoinHandle<()>) {
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("listener should bind");
@@ -78,25 +81,13 @@ mod tests {
                 let mut buf = String::new();
                 let _ = reader.read_line(&mut buf).await;
 
-                let _ = reader
-                    .get_mut()
-                    .write_all(b"+OK Capability list follows\r\n")
-                    .await;
-                if send_stls {
-                    let _ = reader.get_mut().write_all(b"STLS\r\n").await;
-                } else {
-                    let _ = reader.get_mut().write_all(b"TOP\r\n").await;
-                }
-                let _ = reader.get_mut().write_all(b".\r\n").await;
+                let _ = reader.get_mut().write_all(capability_response).await;
                 let _ = reader.get_mut().flush().await;
 
-                if send_stls {
+                if let Some(response) = starttls_response {
                     buf.clear();
                     let _ = reader.read_line(&mut buf).await;
-                    let _ = reader
-                        .get_mut()
-                        .write_all(b"+OK Begin TLS negotiation\r\n")
-                        .await;
+                    let _ = reader.get_mut().write_all(response).await;
                     let _ = reader.get_mut().flush().await;
                 }
             }
@@ -114,7 +105,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_pop3_negotiation_success() {
-        let (port, handle) = spawn_pop3_server(true).await;
+        let (port, handle) = spawn_pop3_server(
+            b"+OK Capability list follows\r\nSTLS\r\n.\r\n",
+            Some(b"+OK Begin TLS negotiation\r\n"),
+        )
+        .await;
         let mut stream = TcpStream::connect(("127.0.0.1", port))
             .await
             .expect("test assertion should succeed");
@@ -130,7 +125,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_pop3_negotiation_missing_stls() {
-        let (port, handle) = spawn_pop3_server(false).await;
+        let (port, handle) =
+            spawn_pop3_server(b"+OK Capability list follows\r\nTOP\r\n.\r\n", None).await;
         let mut stream = TcpStream::connect(("127.0.0.1", port))
             .await
             .expect("test assertion should succeed");
@@ -144,23 +140,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_pop3_negotiation_capa_failed() {
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("listener should bind");
-        let port = listener.local_addr().expect("local addr").port();
-
-        let handle = tokio::spawn(async move {
-            if let Ok((mut socket, _)) = listener.accept().await {
-                let mut reader = BufReader::new(&mut socket);
-                let _ = reader.get_mut().write_all(b"+OK POP3 ready\r\n").await;
-                let _ = reader.get_mut().flush().await;
-
-                let mut buf = String::new();
-                let _ = reader.read_line(&mut buf).await;
-                let _ = reader.get_mut().write_all(b"-ERR not supported\r\n").await;
-                let _ = reader.get_mut().flush().await;
-            }
-        });
+        let (port, handle) = spawn_pop3_server(b"-ERR not supported\r\n", None).await;
 
         let mut stream = TcpStream::connect(("127.0.0.1", port))
             .await
