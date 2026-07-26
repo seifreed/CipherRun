@@ -68,6 +68,15 @@ fn create_certificate_assessment_with_revocation(
     }
 }
 
+fn leaf_certificate_mut(results: &mut ScanAssessment) -> &mut CertificateInfo {
+    &mut results
+        .certificate_chain
+        .as_mut()
+        .unwrap()
+        .chain
+        .certificates[0]
+}
+
 fn protocol_result(protocol: Protocol) -> ProtocolTestResult {
     ProtocolTestResult {
         protocol,
@@ -228,12 +237,7 @@ fn test_check_key_size_flags_ec_public_key_algorithm() {
         ..base_rule("CertificateKeySize")
     };
     let mut results = create_certificate_assessment("2027-01-01 00:00:00 +0000".to_string(), true);
-    let cert = &mut results
-        .certificate_chain
-        .as_mut()
-        .unwrap()
-        .chain
-        .certificates[0];
+    let cert = leaf_certificate_mut(&mut results);
     cert.public_key_algorithm = "id-ecPublicKey".to_string();
     cert.public_key_size = Some(224);
 
@@ -373,13 +377,7 @@ fn test_check_signature_denied_matches_hyphenated_alias() {
         ..base_rule("SignatureAlgorithm")
     };
     let mut results = create_certificate_assessment("2027-01-01 00:00:00 +0000".to_string(), true);
-    results
-        .certificate_chain
-        .as_mut()
-        .unwrap()
-        .chain
-        .certificates[0]
-        .signature_algorithm = "SHA-1-RSA".to_string();
+    leaf_certificate_mut(&mut results).signature_algorithm = "SHA-1-RSA".to_string();
 
     let violations =
         ComplianceChecker::check_signature(&rule, &results).expect("test assertion should succeed");
@@ -397,13 +395,7 @@ fn test_check_signature_allowed_matches_separator_alias() {
         ..base_rule("SignatureAlgorithm")
     };
     let mut results = create_certificate_assessment("2027-01-01 00:00:00 +0000".to_string(), true);
-    results
-        .certificate_chain
-        .as_mut()
-        .unwrap()
-        .chain
-        .certificates[0]
-        .signature_algorithm = "SHA-1-RSA".to_string();
+    leaf_certificate_mut(&mut results).signature_algorithm = "SHA-1-RSA".to_string();
 
     let violations =
         ComplianceChecker::check_signature(&rule, &results).expect("test assertion should succeed");
@@ -417,13 +409,7 @@ fn test_check_signature_denied_rejects_partial_match() {
         ..base_rule("SignatureAlgorithm")
     };
     let mut results = create_certificate_assessment("2027-01-01 00:00:00 +0000".to_string(), true);
-    results
-        .certificate_chain
-        .as_mut()
-        .unwrap()
-        .chain
-        .certificates[0]
-        .signature_algorithm = "SHA-1-RSA".to_string();
+    leaf_certificate_mut(&mut results).signature_algorithm = "SHA-1-RSA".to_string();
 
     let violations =
         ComplianceChecker::check_signature(&rule, &results).expect("test assertion should succeed");
