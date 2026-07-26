@@ -1,4 +1,36 @@
-use super::{StarttlsInjectionProtocol, StarttlsInjectionResult, StarttlsInjectionStatus};
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum StarttlsInjectionStatus {
+    Vulnerable,
+    NotVulnerable,
+    Inconclusive,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum StarttlsInjectionProtocol {
+    Smtp,
+    Imap,
+    Pop3,
+}
+
+impl StarttlsInjectionProtocol {
+    pub(super) fn name(self) -> &'static str {
+        match self {
+            Self::Smtp => "SMTP",
+            Self::Imap => "IMAP",
+            Self::Pop3 => "POP3",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct StarttlsInjectionResult {
+    pub vulnerable: bool,
+    pub smtp_vulnerable: bool,
+    pub imap_vulnerable: bool,
+    pub pop3_vulnerable: bool,
+    pub inconclusive: bool,
+    pub details: Vec<String>,
+}
 
 pub(super) fn empty_result() -> StarttlsInjectionResult {
     StarttlsInjectionResult {

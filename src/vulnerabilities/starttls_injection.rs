@@ -12,6 +12,9 @@ use tokio::time::{Duration, timeout};
 mod response_analysis;
 mod result_analysis;
 
+pub use result_analysis::StarttlsInjectionResult;
+use result_analysis::{StarttlsInjectionProtocol, StarttlsInjectionStatus};
+
 /// Test for STARTTLS injection vulnerabilities
 ///
 /// This vulnerability allows attackers to inject commands before the TLS handshake
@@ -22,30 +25,6 @@ mod result_analysis;
 /// - "A Real-World Analysis of the STARTTLS Vulnerabilities" (2021)
 pub struct StarttlsInjectionTester {
     target: Target,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum StarttlsInjectionStatus {
-    Vulnerable,
-    NotVulnerable,
-    Inconclusive,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum StarttlsInjectionProtocol {
-    Smtp,
-    Imap,
-    Pop3,
-}
-
-impl StarttlsInjectionProtocol {
-    fn name(self) -> &'static str {
-        match self {
-            Self::Smtp => "SMTP",
-            Self::Imap => "IMAP",
-            Self::Pop3 => "POP3",
-        }
-    }
 }
 
 impl StarttlsInjectionTester {
@@ -422,16 +401,6 @@ impl StarttlsInjectionTester {
 
         Ok(result)
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct StarttlsInjectionResult {
-    pub vulnerable: bool,
-    pub smtp_vulnerable: bool,
-    pub imap_vulnerable: bool,
-    pub pop3_vulnerable: bool,
-    pub inconclusive: bool,
-    pub details: Vec<String>,
 }
 
 #[cfg(test)]
