@@ -135,26 +135,28 @@ mod tests {
     use super::*;
     use std::net::{IpAddr, Ipv4Addr, TcpListener};
 
+    fn localhost_target(port: u16) -> Target {
+        Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
+        )
+        .unwrap()
+    }
+
     #[test]
     fn test_sweet32_result_not_vulnerable() {
-        let result = Sweet32TestResult {
-            vulnerable: false,
-            inconclusive: false,
-            des3_ciphers: vec![],
-            details: "Not vulnerable".to_string(),
-        };
+        let result = Sweet32TestResult::from_des3_probe(Vec::new(), false);
         assert!(!result.vulnerable);
         assert!(result.des3_ciphers.is_empty());
     }
 
     #[test]
     fn test_sweet32_result_vulnerable() {
-        let result = Sweet32TestResult {
-            vulnerable: true,
-            inconclusive: false,
-            des3_ciphers: vec!["TLS_RSA_WITH_3DES_EDE_CBC_SHA".to_string()],
-            details: "Vulnerable".to_string(),
-        };
+        let result = Sweet32TestResult::from_des3_probe(
+            vec!["TLS_RSA_WITH_3DES_EDE_CBC_SHA".to_string()],
+            false,
+        );
         assert!(result.vulnerable);
         assert_eq!(result.des3_ciphers.len(), 1);
     }
@@ -165,12 +167,7 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         drop(listener);
 
-        let target = Target::with_ips(
-            "localhost".to_string(),
-            port,
-            vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
-        )
-        .unwrap();
+        let target = localhost_target(port);
 
         let tester = Sweet32Tester::new(target);
         let result = tester.test().await.unwrap();
@@ -186,12 +183,10 @@ mod tests {
 
     #[test]
     fn test_sweet32_result_details_contains_cipher() {
-        let result = Sweet32TestResult {
-            vulnerable: true,
-            inconclusive: false,
-            des3_ciphers: vec!["TLS_RSA_WITH_3DES_EDE_CBC_SHA".to_string()],
-            details: "TLS_RSA_WITH_3DES_EDE_CBC_SHA supported".to_string(),
-        };
+        let result = Sweet32TestResult::from_des3_probe(
+            vec!["TLS_RSA_WITH_3DES_EDE_CBC_SHA".to_string()],
+            false,
+        );
         assert!(result.details.contains("3DES_EDE"));
     }
 }
