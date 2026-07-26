@@ -61,13 +61,7 @@ impl DatabaseCommand {
         Ok((parsed.hostname, parsed.port))
     }
 
-    fn format_optional_i32(value: Option<i32>) -> String {
-        value
-            .map(|value| value.to_string())
-            .unwrap_or_else(|| "N/A".to_string())
-    }
-
-    fn format_optional_i64(value: Option<i64>) -> String {
+    fn format_optional<T: std::fmt::Display>(value: Option<T>) -> String {
         value
             .map(|value| value.to_string())
             .unwrap_or_else(|| "N/A".to_string())
@@ -87,8 +81,8 @@ impl DatabaseCommand {
                 "  {} - Grade: {} | Score: {} | Duration: {}ms",
                 scan.scan_timestamp.format("%Y-%m-%d %H:%M:%S"),
                 scan.overall_grade.as_deref().unwrap_or("N/A"),
-                Self::format_optional_i32(scan.overall_score),
-                Self::format_optional_i64(scan.scan_duration_ms)
+                Self::format_optional(scan.overall_score),
+                Self::format_optional(scan.scan_duration_ms)
             );
         }
     }
@@ -144,10 +138,10 @@ mod tests {
 
     #[test]
     fn test_database_history_formats_missing_numbers_as_unknown() {
-        assert_eq!(DatabaseCommand::format_optional_i32(None), "N/A");
-        assert_eq!(DatabaseCommand::format_optional_i64(None), "N/A");
-        assert_eq!(DatabaseCommand::format_optional_i32(Some(90)), "90");
-        assert_eq!(DatabaseCommand::format_optional_i64(Some(1200)), "1200");
+        assert_eq!(DatabaseCommand::format_optional::<i32>(None), "N/A");
+        assert_eq!(DatabaseCommand::format_optional::<i64>(None), "N/A");
+        assert_eq!(DatabaseCommand::format_optional(Some(90)), "90");
+        assert_eq!(DatabaseCommand::format_optional(Some(1200)), "1200");
     }
 
     #[cfg(unix)]
