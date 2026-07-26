@@ -1,61 +1,7 @@
 use super::{ClientCA, ClientCAsTester};
+use crate::protocols::parse_bytes;
 
 impl ClientCAsTester {
-    fn read_u8_at(data: &[u8], offset: usize, context: &str) -> crate::Result<u8> {
-        data.get(offset)
-            .copied()
-            .ok_or_else(|| crate::TlsError::ParseError {
-                message: format!("{context} truncated"),
-            })
-    }
-
-    fn read_u16_at(data: &[u8], offset: usize, context: &str) -> crate::Result<u16> {
-        let end = offset
-            .checked_add(2)
-            .ok_or_else(|| crate::TlsError::ParseError {
-                message: format!("{context} length overflow"),
-            })?;
-        let bytes = data
-            .get(offset..end)
-            .and_then(|bytes| <[u8; 2]>::try_from(bytes).ok())
-            .ok_or_else(|| crate::TlsError::ParseError {
-                message: format!("{context} truncated"),
-            })?;
-        Ok(u16::from_be_bytes(bytes))
-    }
-
-    fn read_u24_at(data: &[u8], offset: usize, context: &str) -> crate::Result<usize> {
-        let end = offset
-            .checked_add(3)
-            .ok_or_else(|| crate::TlsError::ParseError {
-                message: format!("{context} length overflow"),
-            })?;
-        let [high, mid, low] = data
-            .get(offset..end)
-            .and_then(|bytes| <[u8; 3]>::try_from(bytes).ok())
-            .ok_or_else(|| crate::TlsError::ParseError {
-                message: format!("{context} truncated"),
-            })?;
-        Ok(((high as usize) << 16) | ((mid as usize) << 8) | low as usize)
-    }
-
-    fn slice_range<'a>(
-        data: &'a [u8],
-        start: usize,
-        len: usize,
-        context: &str,
-    ) -> crate::Result<&'a [u8]> {
-        let end = start
-            .checked_add(len)
-            .ok_or_else(|| crate::TlsError::ParseError {
-                message: format!("{context} length overflow"),
-            })?;
-        data.get(start..end)
-            .ok_or_else(|| crate::TlsError::ParseError {
-                message: format!("{context} truncated"),
-            })
-    }
-
     pub(super) fn find_certificate_request(
         &self,
         data: &[u8],
@@ -71,7 +17,7 @@ impl ClientCAsTester {
                         message: "TLS record length offset overflow".to_string(),
                     })?;
             let record_len =
-                Self::read_u16_at(data, record_len_offset, "TLS record length")? as usize;
+                parse_bytes::read_u16_at(data, record_len_offset, "TLS record length")? as usize;
             let record_end =
                 header_end
                     .checked_add(record_len)
@@ -84,7 +30,7 @@ impl ClientCAsTester {
                 });
             }
 
-            if Self::read_u8_at(data, pos, "TLS record type")? != 0x16 {
+            if parse_bytes::read_u8_at(data, pos, "TLS record type")? != 0x16 {
                 // Skip non-handshake records by reading the full record header + length
                 pos = record_end;
                 continue;
@@ -92,7 +38,7 @@ impl ClientCAsTester {
 
             pos = header_end;
 
-            handshake_bytes.extend_from_slice(Self::slice_range(
+            handshake_bytes.extend_from_slice(parse_bytes::slice_range(
                 data,
                 pos,
                 record_len,
@@ -111,15 +57,19 @@ impl ClientCAsTester {
             .checked_add(4)
             .filter(|&end| end <= handshake_bytes.len())
         {
-            let msg_type = Self::read_u8_at(&handshake_bytes, msg_pos, "Handshake message type")?;
+            let msg_type =
+                parse_bytes::read_u8_at(&handshake_bytes, msg_pos, "Handshake message type")?;
             let msg_len_offset =
                 msg_pos
                     .checked_add(1)
                     .ok_or_else(|| crate::TlsError::ParseError {
                         message: "Handshake message length offset overflow".to_string(),
                     })?;
-            let msg_len =
-                Self::read_u24_at(&handshake_bytes, msg_len_offset, "Handshake message length")?;
+            let msg_len = parse_bytes::read_u24_at(
+                &handshake_bytes,
+                msg_len_offset,
+                "Handshake message length",
+            )?;
             let msg_end =
                 msg_body_start
                     .checked_add(msg_len)
@@ -134,7 +84,7 @@ impl ClientCAsTester {
             }
 
             if msg_type == 13 {
-                cert_request = Some(self.parse_ca_list(Self::slice_range(
+                cert_request = Some(self.parse_ca_list(parse_bytes::slice_range(
                     &handshake_bytes,
                     msg_pos,
                     4 + msg_len,
@@ -176,7 +126,7 @@ impl ClientCAsTester {
             });
         }
         let cert_types_len =
-            Self::read_u8_at(data, pos, "CertificateRequest certificate types")? as usize;
+            parse_bytes::read_u8_at(data, pos, "CertificateRequest certificate types")? as usize;
         pos += 1;
         let cert_types_end =
             pos.checked_add(cert_types_len)
@@ -197,7 +147,7 @@ impl ClientCAsTester {
             });
         }
         let sig_algs_len =
-            Self::read_u16_at(data, pos, "CertificateRequest signature algorithms length")?
+            parse_bytes::read_u16_at(data, pos, "CertificateRequest signature algorithms length")?
                 as usize;
         pos += 2;
         let sig_algs_end =
@@ -221,7 +171,7 @@ impl ClientCAsTester {
         }
 
         let ca_list_len =
-            Self::read_u16_at(data, pos, "CertificateRequest CA list length")? as usize;
+            parse_bytes::read_u16_at(data, pos, "CertificateRequest CA list length")? as usize;
         pos += 2;
 
         let ca_list_end =
@@ -241,12 +191,14 @@ impl ClientCAsTester {
         }
 
         let mut cas = Vec::new();
-        let ca_data = Self::slice_range(data, pos, ca_list_len, "CertificateRequest CA list")?;
+        let ca_data =
+            parse_bytes::slice_range(data, pos, ca_list_len, "CertificateRequest CA list")?;
         let mut ca_pos = 0usize;
 
         while let Some(dn_len_end) = ca_pos.checked_add(2).filter(|&end| end <= ca_data.len()) {
             let dn_len =
-                Self::read_u16_at(ca_data, ca_pos, "CertificateRequest CA DN length")? as usize;
+                parse_bytes::read_u16_at(ca_data, ca_pos, "CertificateRequest CA DN length")?
+                    as usize;
             ca_pos = dn_len_end;
 
             let dn_end = ca_pos
@@ -261,7 +213,8 @@ impl ClientCAsTester {
                 });
             }
 
-            let dn_data = Self::slice_range(ca_data, ca_pos, dn_len, "CertificateRequest CA DN")?;
+            let dn_data =
+                parse_bytes::slice_range(ca_data, ca_pos, dn_len, "CertificateRequest CA DN")?;
             let dn_hex = hex::encode(dn_data);
             let (cn, org) = self.extract_dn_fields(dn_data)?;
 
@@ -330,14 +283,15 @@ impl ClientCAsTester {
 
     fn read_dn_string_value(data: &[u8], len_offset: usize) -> crate::Result<&str> {
         let (len, value_start) = Self::read_der_length(data, len_offset)?;
-        let value_bytes = Self::slice_range(data, value_start, len, "CertificateRequest DN value")?;
+        let value_bytes =
+            parse_bytes::slice_range(data, value_start, len, "CertificateRequest DN value")?;
         std::str::from_utf8(value_bytes).map_err(|error| crate::TlsError::ParseError {
             message: format!("Invalid certificate request DN UTF-8: {error}"),
         })
     }
 
     fn read_der_length(data: &[u8], offset: usize) -> crate::Result<(usize, usize)> {
-        let first = Self::read_u8_at(data, offset, "CertificateRequest DN value length")?;
+        let first = parse_bytes::read_u8_at(data, offset, "CertificateRequest DN value length")?;
         let value_start = offset
             .checked_add(1)
             .ok_or_else(|| crate::TlsError::ParseError {

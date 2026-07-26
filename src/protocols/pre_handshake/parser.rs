@@ -2,57 +2,10 @@ use super::{HandshakeParseResult, PreHandshakeScanner};
 use crate::Result;
 use crate::certificates::parser::CertificateInfo;
 use crate::error::TlsError;
+use crate::protocols::parse_bytes;
 use tracing::trace;
 
 impl PreHandshakeScanner {
-    fn read_u8_at(data: &[u8], offset: usize, context: &str) -> Result<u8> {
-        data.get(offset)
-            .copied()
-            .ok_or_else(|| TlsError::ParseError {
-                message: format!("{context} truncated"),
-            })
-    }
-
-    fn read_u16_at(data: &[u8], offset: usize, context: &str) -> Result<u16> {
-        let end = offset.checked_add(2).ok_or_else(|| TlsError::ParseError {
-            message: format!("{context} length overflow"),
-        })?;
-        let bytes = data
-            .get(offset..end)
-            .and_then(|bytes| <[u8; 2]>::try_from(bytes).ok())
-            .ok_or_else(|| TlsError::ParseError {
-                message: format!("{context} truncated"),
-            })?;
-        Ok(u16::from_be_bytes(bytes))
-    }
-
-    fn read_u24_at(data: &[u8], offset: usize, context: &str) -> Result<usize> {
-        let end = offset.checked_add(3).ok_or_else(|| TlsError::ParseError {
-            message: format!("{context} length overflow"),
-        })?;
-        let [high, mid, low] = data
-            .get(offset..end)
-            .and_then(|bytes| <[u8; 3]>::try_from(bytes).ok())
-            .ok_or_else(|| TlsError::ParseError {
-                message: format!("{context} truncated"),
-            })?;
-        Ok(((high as usize) << 16) | ((mid as usize) << 8) | low as usize)
-    }
-
-    fn slice_range<'a>(
-        data: &'a [u8],
-        start: usize,
-        len: usize,
-        context: &str,
-    ) -> Result<&'a [u8]> {
-        let end = start.checked_add(len).ok_or_else(|| TlsError::ParseError {
-            message: format!("{context} length overflow"),
-        })?;
-        data.get(start..end).ok_or_else(|| TlsError::ParseError {
-            message: format!("{context} truncated"),
-        })
-    }
-
     pub(super) fn parse_handshake_response(&self, data: &[u8]) -> Result<HandshakeParseResult> {
         let mut offset = 0usize;
         let mut certificate_data = None;
@@ -71,12 +24,12 @@ impl PreHandshakeScanner {
                 });
             }
 
-            let content_type = Self::read_u8_at(data, offset, "TLS record type")?;
+            let content_type = parse_bytes::read_u8_at(data, offset, "TLS record type")?;
             let record_len_offset = offset.checked_add(3).ok_or_else(|| TlsError::ParseError {
                 message: "TLS record length offset overflow".to_string(),
             })?;
             let record_length =
-                Self::read_u16_at(data, record_len_offset, "TLS record length")? as usize;
+                parse_bytes::read_u16_at(data, record_len_offset, "TLS record length")? as usize;
             offset = header_end;
 
             let record_end =
@@ -107,13 +60,13 @@ impl PreHandshakeScanner {
                     });
                 }
 
-                let handshake_type = Self::read_u8_at(data, offset, "Handshake type")?;
+                let handshake_type = parse_bytes::read_u8_at(data, offset, "Handshake type")?;
                 let handshake_len_offset =
                     offset.checked_add(1).ok_or_else(|| TlsError::ParseError {
                         message: "Handshake length offset overflow".to_string(),
                     })?;
                 let handshake_length =
-                    Self::read_u24_at(data, handshake_len_offset, "Handshake length")?;
+                    parse_bytes::read_u24_at(data, handshake_len_offset, "Handshake length")?;
 
                 offset = handshake_body_start;
                 let handshake_end =
@@ -131,7 +84,8 @@ impl PreHandshakeScanner {
                 match handshake_type {
                     0x02 => {
                         if handshake_length >= 38 {
-                            let version = Self::read_u16_at(data, offset, "ServerHello version")?;
+                            let version =
+                                parse_bytes::read_u16_at(data, offset, "ServerHello version")?;
                             // Map two-byte version field to canonical name. Arithmetic
                             // on `version_maj - 2` panics on SSLv2 (0x02) and produces
                             // nonsense for non-standard bytes; a match over the u16
@@ -160,9 +114,11 @@ impl PreHandshakeScanner {
                                         .to_string(),
                                 });
                             }
-                            let session_id_len =
-                                Self::read_u8_at(data, sid_len_at, "ServerHello session ID")?
-                                    as usize;
+                            let session_id_len = parse_bytes::read_u8_at(
+                                data,
+                                sid_len_at,
+                                "ServerHello session ID",
+                            )? as usize;
                             let cipher_offset = offset
                                 .checked_add(35)
                                 .and_then(|base| base.checked_add(session_id_len))
@@ -180,8 +136,11 @@ impl PreHandshakeScanner {
                                         .to_string(),
                                 });
                             }
-                            let cipher =
-                                Self::read_u16_at(data, cipher_offset, "ServerHello cipher")?;
+                            let cipher = parse_bytes::read_u16_at(
+                                data,
+                                cipher_offset,
+                                "ServerHello cipher",
+                            )?;
                             cipher_suite = Some(format!("0x{:04x}", cipher));
 
                             let compression_offset =
@@ -196,14 +155,14 @@ impl PreHandshakeScanner {
                                     message: "ServerHello truncated before compression".to_string(),
                                 });
                             }
-                            compression_method = Some(Self::read_u8_at(
+                            compression_method = Some(parse_bytes::read_u8_at(
                                 data,
                                 compression_offset,
                                 "ServerHello compression",
                             )?);
 
                             server_hello_data = Some(
-                                Self::slice_range(
+                                parse_bytes::slice_range(
                                     data,
                                     offset,
                                     handshake_length,
@@ -216,7 +175,7 @@ impl PreHandshakeScanner {
                     0x0b => {
                         if handshake_length >= 3 {
                             let certs_length =
-                                Self::read_u24_at(data, offset, "Certificate list length")?;
+                                parse_bytes::read_u24_at(data, offset, "Certificate list length")?;
 
                             // Prevent integer overflow/wraparound on malicious input
                             if certs_length > handshake_end - offset - 3 {
@@ -252,8 +211,11 @@ impl PreHandshakeScanner {
                                         message: "Certificate entry header truncated".to_string(),
                                     });
                                 }
-                                let cert_length =
-                                    Self::read_u24_at(data, cert_offset, "Certificate length")?;
+                                let cert_length = parse_bytes::read_u24_at(
+                                    data,
+                                    cert_offset,
+                                    "Certificate length",
+                                )?;
                                 cert_offset = cert_offset.checked_add(3).ok_or_else(|| {
                                     TlsError::ParseError {
                                         message: "Certificate offset overflow".to_string(),
@@ -271,7 +233,7 @@ impl PreHandshakeScanner {
                                         message: "Certificate length exceeds list".to_string(),
                                     });
                                 }
-                                let cert_der = Self::slice_range(
+                                let cert_der = parse_bytes::slice_range(
                                     data,
                                     cert_offset,
                                     cert_length,

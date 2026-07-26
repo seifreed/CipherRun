@@ -1,63 +1,14 @@
 use crate::Result;
+use crate::protocols::parse_bytes;
 
 const MAX_PROTOCOLS: usize = 100;
-
-fn read_u8_at(data: &[u8], offset: usize, context: &str) -> Result<u8> {
-    data.get(offset)
-        .copied()
-        .ok_or_else(|| crate::TlsError::ParseError {
-            message: format!("{context} truncated"),
-        })
-}
-
-fn read_u16_at(data: &[u8], offset: usize, context: &str) -> Result<u16> {
-    let end = offset
-        .checked_add(2)
-        .ok_or_else(|| crate::TlsError::ParseError {
-            message: format!("{context} length overflow"),
-        })?;
-    let bytes = data
-        .get(offset..end)
-        .and_then(|bytes| <[u8; 2]>::try_from(bytes).ok())
-        .ok_or_else(|| crate::TlsError::ParseError {
-            message: format!("{context} truncated"),
-        })?;
-    Ok(u16::from_be_bytes(bytes))
-}
-
-fn read_u24_at(data: &[u8], offset: usize, context: &str) -> Result<usize> {
-    let end = offset
-        .checked_add(3)
-        .ok_or_else(|| crate::TlsError::ParseError {
-            message: format!("{context} length overflow"),
-        })?;
-    let [high, mid, low] = data
-        .get(offset..end)
-        .and_then(|bytes| <[u8; 3]>::try_from(bytes).ok())
-        .ok_or_else(|| crate::TlsError::ParseError {
-            message: format!("{context} truncated"),
-        })?;
-    Ok(((high as usize) << 16) | ((mid as usize) << 8) | low as usize)
-}
-
-fn slice_range<'a>(data: &'a [u8], start: usize, len: usize, context: &str) -> Result<&'a [u8]> {
-    let end = start
-        .checked_add(len)
-        .ok_or_else(|| crate::TlsError::ParseError {
-            message: format!("{context} length overflow"),
-        })?;
-    data.get(start..end)
-        .ok_or_else(|| crate::TlsError::ParseError {
-            message: format!("{context} truncated"),
-        })
-}
 
 pub(super) fn is_parseable(response: &[u8]) -> bool {
     if response.len() < 47 || response.first() != Some(&0x16) || response.get(5) != Some(&0x02) {
         return false;
     }
 
-    let Some(record_len) = read_u16_at(response, 3, "NPN ServerHello record length")
+    let Some(record_len) = parse_bytes::read_u16_at(response, 3, "NPN ServerHello record length")
         .ok()
         .map(usize::from)
     else {
@@ -67,7 +18,8 @@ pub(super) fn is_parseable(response: &[u8]) -> bool {
         return false;
     }
 
-    let Some(handshake_len) = read_u24_at(response, 6, "NPN ServerHello handshake length").ok()
+    let Some(handshake_len) =
+        parse_bytes::read_u24_at(response, 6, "NPN ServerHello handshake length").ok()
     else {
         return false;
     };
@@ -78,7 +30,7 @@ pub(super) fn is_parseable(response: &[u8]) -> bool {
         return false;
     }
 
-    let Some(sid_len) = read_u8_at(response, 43, "NPN ServerHello session ID length")
+    let Some(sid_len) = parse_bytes::read_u8_at(response, 43, "NPN ServerHello session ID length")
         .ok()
         .map(usize::from)
     else {
@@ -94,7 +46,8 @@ pub(super) fn parse_npn_protocols(response: &[u8]) -> Result<Vec<String>> {
         return Ok(protocols);
     }
 
-    let record_len = read_u16_at(response, 3, "NPN ServerHello record length")? as usize;
+    let record_len =
+        parse_bytes::read_u16_at(response, 3, "NPN ServerHello record length")? as usize;
     let record_end = 5usize
         .checked_add(record_len)
         .ok_or_else(|| crate::TlsError::ParseError {
@@ -106,7 +59,7 @@ pub(super) fn parse_npn_protocols(response: &[u8]) -> Result<Vec<String>> {
         });
     }
 
-    let handshake_len = read_u24_at(response, 6, "NPN ServerHello handshake length")?;
+    let handshake_len = parse_bytes::read_u24_at(response, 6, "NPN ServerHello handshake length")?;
     let handshake_end =
         9usize
             .checked_add(handshake_len)
@@ -119,7 +72,8 @@ pub(super) fn parse_npn_protocols(response: &[u8]) -> Result<Vec<String>> {
         });
     }
 
-    let sid_len = read_u8_at(response, 43, "NPN ServerHello session ID length")? as usize;
+    let sid_len =
+        parse_bytes::read_u8_at(response, 43, "NPN ServerHello session ID length")? as usize;
     let Some(ext_len_offset) = 44usize
         .checked_add(sid_len)
         .and_then(|offset| offset.checked_add(2 + 1))
@@ -143,7 +97,8 @@ pub(super) fn parse_npn_protocols(response: &[u8]) -> Result<Vec<String>> {
         });
     }
 
-    let ext_total = read_u16_at(response, ext_len_offset, "NPN extensions length")? as usize;
+    let ext_total =
+        parse_bytes::read_u16_at(response, ext_len_offset, "NPN extensions length")? as usize;
     let ext_end = ext_start
         .checked_add(ext_total)
         .ok_or_else(|| crate::TlsError::ParseError {
@@ -162,13 +117,14 @@ pub(super) fn parse_npn_protocols(response: &[u8]) -> Result<Vec<String>> {
 
     let mut pos = ext_start;
     while let Some(ext_header_end) = pos.checked_add(4).filter(|&end| end <= ext_end) {
-        let ext_type = read_u16_at(response, pos, "NPN extension type")?;
+        let ext_type = parse_bytes::read_u16_at(response, pos, "NPN extension type")?;
         let ext_len_offset = pos
             .checked_add(2)
             .ok_or_else(|| crate::TlsError::ParseError {
                 message: "NPN extension length offset overflow".to_string(),
             })?;
-        let ext_len = read_u16_at(response, ext_len_offset, "NPN extension length")? as usize;
+        let ext_len =
+            parse_bytes::read_u16_at(response, ext_len_offset, "NPN extension length")? as usize;
         pos = ext_header_end;
         let ext_data_end = pos
             .checked_add(ext_len)
@@ -203,7 +159,8 @@ fn parse_protocol_list(
     protocols: &mut Vec<String>,
 ) -> Result<()> {
     while npn_pos < npn_end && npn_pos < response.len() && protocols.len() < MAX_PROTOCOLS {
-        let proto_len = read_u8_at(response, npn_pos, "NPN protocol name length")? as usize;
+        let proto_len =
+            parse_bytes::read_u8_at(response, npn_pos, "NPN protocol name length")? as usize;
         npn_pos += 1;
         if proto_len == 0 {
             return Err(crate::TlsError::ParseError {
@@ -222,7 +179,7 @@ fn parse_protocol_list(
             });
         }
         let proto = String::from_utf8(
-            slice_range(response, npn_pos, proto_len, "NPN protocol name")?.to_vec(),
+            parse_bytes::slice_range(response, npn_pos, proto_len, "NPN protocol name")?.to_vec(),
         )
         .map_err(|error| crate::TlsError::ParseError {
             message: format!("Invalid NPN protocol name UTF-8: {error}"),
