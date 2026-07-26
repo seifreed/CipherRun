@@ -587,7 +587,8 @@ mod legacy_probe_tests {
     use rustls_pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
     use std::net::{Ipv4Addr, SocketAddr};
     use std::time::Duration;
-    use tokio::io::AsyncReadExt;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
 
     #[test]
     fn test_tls_record_total_len_accepts_full_fragment_with_header() {
@@ -637,6 +638,50 @@ mod legacy_probe_tests {
     fn example_target_for_addr(addr: SocketAddr) -> Target {
         Target::with_ips("example.test".to_string(), addr.port(), vec![addr.ip()])
             .expect("target should build")
+    }
+
+    async fn spawn_probe_response_server(response: Vec<u8>) -> SocketAddr {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("local addr should exist");
+
+        tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let mut buffer = vec![0u8; 64];
+                let _ = socket.read(&mut buffer).await.unwrap();
+                socket.write_all(&response).await.expect("write response");
+            }
+        });
+
+        addr
+    }
+
+    async fn spawn_fragmented_probe_response_server(response: Vec<u8>, split: usize) -> SocketAddr {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("local addr should exist");
+
+        tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let mut buffer = vec![0u8; 64];
+                let _ = socket.read(&mut buffer).await.unwrap();
+                socket
+                    .write_all(&response[..split])
+                    .await
+                    .expect("write first fragment");
+                socket.flush().await.expect("flush first fragment");
+                tokio::time::sleep(Duration::from_millis(20)).await;
+                socket
+                    .write_all(&response[split..])
+                    .await
+                    .expect("write second fragment");
+                socket.flush().await.expect("flush second fragment");
+            }
+        });
+
+        addr
     }
 
     #[test]
@@ -703,32 +748,7 @@ mod legacy_probe_tests {
 
     #[tokio::test]
     async fn test_tls_legacy_raw_probe_handles_fragmented_server_hello() {
-        use tokio::net::TcpListener;
-
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("listener should bind");
-        let addr = listener.local_addr().expect("local addr should exist");
-
-        tokio::spawn(async move {
-            if let Ok((mut socket, _)) = listener.accept().await {
-                let mut buffer = vec![0u8; 64];
-                let _ = socket.read(&mut buffer).await.unwrap();
-
-                let record = server_hello_record(0x0301);
-                socket
-                    .write_all(&record[..6])
-                    .await
-                    .expect("write first fragment");
-                socket.flush().await.expect("flush first fragment");
-                tokio::time::sleep(Duration::from_millis(20)).await;
-                socket
-                    .write_all(&record[6..])
-                    .await
-                    .expect("write second fragment");
-                socket.flush().await.expect("flush second fragment");
-            }
-        });
+        let addr = spawn_fragmented_probe_response_server(server_hello_record(0x0301), 6).await;
 
         let target = example_target_for_addr(addr);
         let tester = ProtocolTester::new(target)
@@ -745,33 +765,9 @@ mod legacy_probe_tests {
 
     #[tokio::test]
     async fn test_sslv2_probe_handles_fragmented_server_hello() {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        use tokio::net::TcpListener;
-
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("listener should bind");
-        let addr = listener.local_addr().expect("local addr should exist");
-
-        tokio::spawn(async move {
-            if let Ok((mut socket, _)) = listener.accept().await {
-                let mut buffer = vec![0u8; 64];
-                let _ = socket.read(&mut buffer).await.unwrap();
-
-                let record = [0x80, 0x04, 0x04, 0x00, 0x00, 0x00];
-                socket
-                    .write_all(&record[..2])
-                    .await
-                    .expect("write first fragment");
-                socket.flush().await.expect("flush first fragment");
-                tokio::time::sleep(Duration::from_millis(20)).await;
-                socket
-                    .write_all(&record[2..])
-                    .await
-                    .expect("write second fragment");
-                socket.flush().await.expect("flush second fragment");
-            }
-        });
+        let addr =
+            spawn_fragmented_probe_response_server(vec![0x80, 0x04, 0x04, 0x00, 0x00, 0x00], 2)
+                .await;
 
         let target = example_target_for_addr(addr);
         let tester = ProtocolTester::new(target)
@@ -788,28 +784,10 @@ mod legacy_probe_tests {
 
     #[tokio::test]
     async fn test_sslv2_probe_handles_large_server_hello() {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        use tokio::net::TcpListener;
-
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("listener should bind");
-        let addr = listener.local_addr().expect("local addr should exist");
-
-        tokio::spawn(async move {
-            if let Ok((mut socket, _)) = listener.accept().await {
-                let mut buffer = vec![0u8; 64];
-                let _ = socket.read(&mut buffer).await.unwrap();
-
-                let record_len = 5000usize;
-                let mut record = vec![0x80 | ((record_len >> 8) as u8), record_len as u8, 0x04];
-                record.extend(vec![0u8; record_len - 1]);
-                socket
-                    .write_all(&record)
-                    .await
-                    .expect("write SSLv2 response");
-            }
-        });
+        let record_len = 5000usize;
+        let mut record = vec![0x80 | ((record_len >> 8) as u8), record_len as u8, 0x04];
+        record.extend(vec![0u8; record_len - 1]);
+        let addr = spawn_probe_response_server(record).await;
 
         let target = example_target_for_addr(addr);
         let tester = ProtocolTester::new(target)
@@ -826,26 +804,8 @@ mod legacy_probe_tests {
 
     #[tokio::test]
     async fn test_sslv2_probe_handles_three_byte_header_server_hello() {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        use tokio::net::TcpListener;
-
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("listener should bind");
-        let addr = listener.local_addr().expect("local addr should exist");
-
-        tokio::spawn(async move {
-            if let Ok((mut socket, _)) = listener.accept().await {
-                let mut buffer = vec![0u8; 64];
-                let _ = socket.read(&mut buffer).await.unwrap();
-
-                let record = [0x00, 0x04, 0x00, 0x04, 0x00, 0x00, 0x00];
-                socket
-                    .write_all(&record)
-                    .await
-                    .expect("write SSLv2 response");
-            }
-        });
+        let addr =
+            spawn_probe_response_server(vec![0x00, 0x04, 0x00, 0x04, 0x00, 0x00, 0x00]).await;
 
         let target = example_target_for_addr(addr);
         let tester = ProtocolTester::new(target)
@@ -862,26 +822,7 @@ mod legacy_probe_tests {
 
     #[tokio::test]
     async fn test_sslv2_probe_rejects_client_only_message_from_server() {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        use tokio::net::TcpListener;
-
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("listener should bind");
-        let addr = listener.local_addr().expect("local addr should exist");
-
-        tokio::spawn(async move {
-            if let Ok((mut socket, _)) = listener.accept().await {
-                let mut buffer = vec![0u8; 64];
-                let _ = socket.read(&mut buffer).await.unwrap();
-
-                let record = [0x80, 0x04, 0x02, 0x00, 0x00, 0x00];
-                socket
-                    .write_all(&record)
-                    .await
-                    .expect("write SSLv2 client-only message");
-            }
-        });
+        let addr = spawn_probe_response_server(vec![0x80, 0x04, 0x02, 0x00, 0x00, 0x00]).await;
 
         let target = example_target_for_addr(addr);
         let tester = ProtocolTester::new(target)
@@ -898,26 +839,7 @@ mod legacy_probe_tests {
 
     #[tokio::test]
     async fn test_sslv2_probe_truncated_known_record_is_inconclusive() {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        use tokio::net::TcpListener;
-
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("listener should bind");
-        let addr = listener.local_addr().expect("local addr should exist");
-
-        tokio::spawn(async move {
-            if let Ok((mut socket, _)) = listener.accept().await {
-                let mut buffer = vec![0u8; 64];
-                let _ = socket.read(&mut buffer).await.unwrap();
-
-                let truncated_record = [0x80, 0x06, 0x04, 0x00, 0x00, 0x00];
-                socket
-                    .write_all(&truncated_record)
-                    .await
-                    .expect("write truncated SSLv2 response");
-            }
-        });
+        let addr = spawn_probe_response_server(vec![0x80, 0x06, 0x04, 0x00, 0x00, 0x00]).await;
 
         let target = example_target_for_addr(addr);
         let tester = ProtocolTester::new(target)
