@@ -209,29 +209,24 @@ fn test_validate_invalid_mx_domain() {
 }
 
 #[test]
-fn test_validate_parallel_requires_mass_or_mx_mode() {
-    let args = Args {
-        target: Some("example.com:443".to_string()),
-        network: NetworkArgs {
+fn test_validate_parallel_options_require_mass_or_mx_mode() {
+    for network in [
+        NetworkArgs {
             parallel: true,
             ..Default::default()
         },
-        ..Default::default()
-    };
-    assert!(args.validate().is_err());
-}
-
-#[test]
-fn test_validate_custom_max_parallel_requires_mass_or_mx_mode() {
-    let args = Args {
-        target: Some("example.com:443".to_string()),
-        network: NetworkArgs {
+        NetworkArgs {
             max_parallel: DEFAULT_MAX_PARALLEL + 1,
             ..Default::default()
         },
-        ..Default::default()
-    };
-    assert!(args.validate().is_err());
+    ] {
+        let args = Args {
+            target: Some("example.com:443".to_string()),
+            network,
+            ..Default::default()
+        };
+        assert!(args.validate().is_err());
+    }
 }
 
 #[test]
