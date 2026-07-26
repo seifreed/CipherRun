@@ -352,10 +352,9 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_min_key_size_violation() {
-        let policy = CertificatePolicy {
-            min_key_size: Some(4096),
+    fn base_policy() -> CertificatePolicy {
+        CertificatePolicy {
+            min_key_size: None,
             max_days_until_expiry: None,
             prohibited_signature_algorithms: None,
             require_valid_trust_chain: None,
@@ -363,6 +362,14 @@ mod tests {
             require_hostname_match: None,
             require_revocation_check: None,
             action: PolicyAction::Fail,
+        }
+    }
+
+    #[test]
+    fn test_min_key_size_violation() {
+        let policy = CertificatePolicy {
+            min_key_size: Some(4096),
+            ..base_policy()
         };
 
         let cert_result = create_test_cert_result();
@@ -377,16 +384,7 @@ mod tests {
 
     #[test]
     fn test_missing_certificate_result() {
-        let policy = CertificatePolicy {
-            min_key_size: None,
-            max_days_until_expiry: None,
-            prohibited_signature_algorithms: None,
-            require_valid_trust_chain: None,
-            require_san: None,
-            require_hostname_match: None,
-            require_revocation_check: None,
-            action: PolicyAction::Fail,
-        };
+        let policy = base_policy();
 
         let rule = CertificateRule::new(&policy, None);
         let violations = rule
@@ -426,14 +424,8 @@ mod tests {
     #[test]
     fn test_san_requirement() {
         let policy = CertificatePolicy {
-            min_key_size: None,
-            max_days_until_expiry: None,
-            prohibited_signature_algorithms: None,
-            require_valid_trust_chain: None,
             require_san: Some(true),
-            require_hostname_match: None,
-            require_revocation_check: None,
-            action: PolicyAction::Fail,
+            ..base_policy()
         };
 
         let mut cert_result = create_test_cert_result();
@@ -451,14 +443,8 @@ mod tests {
     #[test]
     fn test_recently_expired_certificate_is_reported_as_expired() {
         let policy = CertificatePolicy {
-            min_key_size: None,
             max_days_until_expiry: Some(30),
-            prohibited_signature_algorithms: None,
-            require_valid_trust_chain: None,
-            require_san: None,
-            require_hostname_match: None,
-            require_revocation_check: None,
-            action: PolicyAction::Fail,
+            ..base_policy()
         };
 
         let mut cert_result = create_test_cert_result();
@@ -486,14 +472,8 @@ mod tests {
     #[test]
     fn test_unparseable_expiry_date_fails_expiry_policy() {
         let policy = CertificatePolicy {
-            min_key_size: None,
             max_days_until_expiry: Some(30),
-            prohibited_signature_algorithms: None,
-            require_valid_trust_chain: None,
-            require_san: None,
-            require_hostname_match: None,
-            require_revocation_check: None,
-            action: PolicyAction::Fail,
+            ..base_policy()
         };
 
         let mut cert_result = create_test_cert_result();
@@ -513,16 +493,7 @@ mod tests {
 
     #[test]
     fn test_missing_certificate_violation() {
-        let policy = CertificatePolicy {
-            min_key_size: None,
-            max_days_until_expiry: None,
-            prohibited_signature_algorithms: None,
-            require_valid_trust_chain: None,
-            require_san: None,
-            require_hostname_match: None,
-            require_revocation_check: None,
-            action: PolicyAction::Fail,
-        };
+        let policy = base_policy();
 
         let rule = CertificateRule::new(&policy, None);
         let violations = rule
@@ -535,14 +506,8 @@ mod tests {
     #[test]
     fn test_prohibited_signature_algorithm_violation() {
         let policy = CertificatePolicy {
-            min_key_size: None,
-            max_days_until_expiry: None,
             prohibited_signature_algorithms: Some(vec!["SHA1".to_string()]),
-            require_valid_trust_chain: None,
-            require_san: None,
-            require_hostname_match: None,
-            require_revocation_check: None,
-            action: PolicyAction::Fail,
+            ..base_policy()
         };
 
         let mut cert_result = create_test_cert_result();
@@ -562,14 +527,8 @@ mod tests {
     #[test]
     fn test_prohibited_signature_algorithm_trims_policy_values() {
         let policy = CertificatePolicy {
-            min_key_size: None,
-            max_days_until_expiry: None,
             prohibited_signature_algorithms: Some(vec![" sha1 ".to_string()]),
-            require_valid_trust_chain: None,
-            require_san: None,
-            require_hostname_match: None,
-            require_revocation_check: None,
-            action: PolicyAction::Fail,
+            ..base_policy()
         };
 
         let mut cert_result = create_test_cert_result();
@@ -589,14 +548,8 @@ mod tests {
     #[test]
     fn test_prohibited_signature_algorithm_matches_hyphenated_alias() {
         let policy = CertificatePolicy {
-            min_key_size: None,
-            max_days_until_expiry: None,
             prohibited_signature_algorithms: Some(vec!["SHA1".to_string()]),
-            require_valid_trust_chain: None,
-            require_san: None,
-            require_hostname_match: None,
-            require_revocation_check: None,
-            action: PolicyAction::Fail,
+            ..base_policy()
         };
 
         let mut cert_result = create_test_cert_result();
@@ -617,14 +570,8 @@ mod tests {
     #[test]
     fn test_prohibited_signature_algorithm_rejects_partial_match() {
         let policy = CertificatePolicy {
-            min_key_size: None,
-            max_days_until_expiry: None,
             prohibited_signature_algorithms: Some(vec!["HA1".to_string()]),
-            require_valid_trust_chain: None,
-            require_san: None,
-            require_hostname_match: None,
-            require_revocation_check: None,
-            action: PolicyAction::Fail,
+            ..base_policy()
         };
 
         let mut cert_result = create_test_cert_result();
@@ -641,14 +588,8 @@ mod tests {
     #[test]
     fn test_require_valid_trust_chain_violation() {
         let policy = CertificatePolicy {
-            min_key_size: None,
-            max_days_until_expiry: None,
-            prohibited_signature_algorithms: None,
             require_valid_trust_chain: Some(true),
-            require_san: None,
-            require_hostname_match: None,
-            require_revocation_check: None,
-            action: PolicyAction::Fail,
+            ..base_policy()
         };
 
         let mut cert_result = create_test_cert_result();
@@ -668,14 +609,8 @@ mod tests {
     #[test]
     fn test_require_revocation_check_violation_for_revoked_certificate() {
         let policy = CertificatePolicy {
-            min_key_size: None,
-            max_days_until_expiry: None,
-            prohibited_signature_algorithms: None,
-            require_valid_trust_chain: None,
-            require_san: None,
-            require_hostname_match: None,
             require_revocation_check: Some(true),
-            action: PolicyAction::Fail,
+            ..base_policy()
         };
 
         let mut cert_result = create_test_cert_result();
