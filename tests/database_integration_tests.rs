@@ -4,9 +4,30 @@
 mod common;
 
 use cipherrun::db::*;
-use cipherrun::protocols::Protocol;
+use cipherrun::protocols::{Protocol, ProtocolTestResult};
 use cipherrun::scanner::ScanResults;
 use std::path::PathBuf;
+
+fn protocol_result(
+    protocol: Protocol,
+    preferred: bool,
+    ciphers_count: usize,
+    handshake_time_ms: u64,
+    heartbeat_enabled: Option<bool>,
+) -> ProtocolTestResult {
+    ProtocolTestResult {
+        protocol,
+        supported: true,
+        inconclusive: false,
+        preferred,
+        ciphers_count,
+        handshake_time_ms: Some(handshake_time_ms),
+        session_resumption_caching: None,
+        session_resumption_tickets: None,
+        secure_renegotiation: None,
+        heartbeat_enabled,
+    }
+}
 
 fn persisted_scan(results: &ScanResults) -> PersistedScan {
     PersistedScan::from_scan_results(results).expect("scan results should convert for persistence")
@@ -41,18 +62,7 @@ async fn test_scan_storage_and_retrieval() {
     // Add a protocol
     results
         .protocols
-        .push(cipherrun::protocols::ProtocolTestResult {
-            protocol: Protocol::TLS13,
-            supported: true,
-            inconclusive: false,
-            preferred: true,
-            ciphers_count: 5,
-            handshake_time_ms: Some(120),
-            session_resumption_caching: None,
-            session_resumption_tickets: None,
-            secure_renegotiation: None,
-            heartbeat_enabled: Some(false),
-        });
+        .push(protocol_result(Protocol::TLS13, true, 5, 120, Some(false)));
 
     // Store scan
     let scan_id = db.store_scan(&persisted_scan(&results)).await.unwrap();
@@ -329,33 +339,11 @@ async fn test_protocol_storage() {
 
     results
         .protocols
-        .push(cipherrun::protocols::ProtocolTestResult {
-            protocol: Protocol::TLS12,
-            supported: true,
-            inconclusive: false,
-            preferred: false,
-            ciphers_count: 30,
-            handshake_time_ms: Some(150),
-            session_resumption_caching: None,
-            session_resumption_tickets: None,
-            secure_renegotiation: None,
-            heartbeat_enabled: None,
-        });
+        .push(protocol_result(Protocol::TLS12, false, 30, 150, None));
 
     results
         .protocols
-        .push(cipherrun::protocols::ProtocolTestResult {
-            protocol: Protocol::TLS13,
-            supported: true,
-            inconclusive: false,
-            preferred: true,
-            ciphers_count: 5,
-            handshake_time_ms: Some(100),
-            session_resumption_caching: None,
-            session_resumption_tickets: None,
-            secure_renegotiation: None,
-            heartbeat_enabled: Some(false),
-        });
+        .push(protocol_result(Protocol::TLS13, true, 5, 100, Some(false)));
 
     // Store scan
     db.store_scan(&persisted_scan(&results)).await.unwrap();
