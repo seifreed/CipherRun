@@ -1,48 +1,11 @@
 use super::{OcspStaplingResult, RevocationChecker, parse_x509_der_exact};
 use crate::Result;
 use crate::certificates::parser::CertificateInfo;
+use crate::utils::result_byte_parse;
 use tracing::trace;
 use x509_parser::prelude::*;
 
 impl RevocationChecker {
-    fn read_u8_at(data: &[u8], offset: usize, context: &str) -> Result<u8> {
-        data.get(offset)
-            .copied()
-            .ok_or_else(|| crate::TlsError::ParseError {
-                message: format!("{context} truncated"),
-            })
-    }
-
-    fn read_u16_at(data: &[u8], offset: usize, context: &str) -> Result<u16> {
-        let end = offset
-            .checked_add(2)
-            .ok_or_else(|| crate::TlsError::ParseError {
-                message: format!("{context} length overflow"),
-            })?;
-        let bytes = data
-            .get(offset..end)
-            .and_then(|bytes| <[u8; 2]>::try_from(bytes).ok())
-            .ok_or_else(|| crate::TlsError::ParseError {
-                message: format!("{context} truncated"),
-            })?;
-        Ok(u16::from_be_bytes(bytes))
-    }
-
-    fn read_u24_at(data: &[u8], offset: usize, context: &str) -> Result<usize> {
-        let end = offset
-            .checked_add(3)
-            .ok_or_else(|| crate::TlsError::ParseError {
-                message: format!("{context} length overflow"),
-            })?;
-        let [high, mid, low] = data
-            .get(offset..end)
-            .and_then(|bytes| <[u8; 3]>::try_from(bytes).ok())
-            .ok_or_else(|| crate::TlsError::ParseError {
-                message: format!("{context} truncated"),
-            })?;
-        Ok(((high as usize) << 16) | ((mid as usize) << 8) | low as usize)
-    }
-
     fn slice_range<'a>(
         data: &'a [u8],
         start: usize,
@@ -151,16 +114,19 @@ impl RevocationChecker {
             .filter(|&end| end <= tls_handshake_data.len())
         {
             // TLS record header: type (1) + version (2) + length (2)
-            let record_type = Self::read_u8_at(tls_handshake_data, offset, "TLS record header")?;
+            let record_type =
+                result_byte_parse::read_u8_at(tls_handshake_data, offset, "TLS record header")?;
             let record_len_offset =
                 offset
                     .checked_add(3)
                     .ok_or_else(|| crate::TlsError::ParseError {
                         message: "TLS record length offset overflow".to_string(),
                     })?;
-            let record_len =
-                Self::read_u16_at(tls_handshake_data, record_len_offset, "TLS record length")?
-                    as usize;
+            let record_len = result_byte_parse::read_u16_at(
+                tls_handshake_data,
+                record_len_offset,
+                "TLS record length",
+            )? as usize;
             let record_end =
                 header_end
                     .checked_add(record_len)
@@ -202,16 +168,22 @@ impl RevocationChecker {
                 .checked_add(4)
                 .filter(|&end| end <= handshake_data.len())
             {
-                let msg_type =
-                    Self::read_u8_at(handshake_data, msg_offset, "Handshake message type")?;
+                let msg_type = result_byte_parse::read_u8_at(
+                    handshake_data,
+                    msg_offset,
+                    "Handshake message type",
+                )?;
                 let msg_len_offset =
                     msg_offset
                         .checked_add(1)
                         .ok_or_else(|| crate::TlsError::ParseError {
                             message: "Handshake length offset overflow".to_string(),
                         })?;
-                let msg_len =
-                    Self::read_u24_at(handshake_data, msg_len_offset, "Handshake message length")?;
+                let msg_len = result_byte_parse::read_u24_at(
+                    handshake_data,
+                    msg_len_offset,
+                    "Handshake message length",
+                )?;
 
                 let msg_end = msg_body_start.checked_add(msg_len).ok_or_else(|| {
                     crate::TlsError::ParseError {
@@ -260,7 +232,7 @@ impl RevocationChecker {
                                         message: "OCSP response length offset overflow".to_string(),
                                     }
                                 })?;
-                            let response_len = Self::read_u24_at(
+                            let response_len = result_byte_parse::read_u24_at(
                                 handshake_data,
                                 response_len_offset,
                                 "OCSP response length",
@@ -365,7 +337,8 @@ impl RevocationChecker {
             });
         }
         let session_id_len =
-            Self::read_u8_at(server_hello, offset, "ServerHello session ID length")? as usize;
+            result_byte_parse::read_u8_at(server_hello, offset, "ServerHello session ID length")?
+                as usize;
         offset = end;
 
         // Session ID
@@ -423,7 +396,8 @@ impl RevocationChecker {
             });
         }
         let extensions_len =
-            Self::read_u16_at(server_hello, offset, "ServerHello extensions length")? as usize;
+            result_byte_parse::read_u16_at(server_hello, offset, "ServerHello extensions length")?
+                as usize;
         offset = end;
 
         // Parse extensions
@@ -446,16 +420,19 @@ impl RevocationChecker {
 
         while let Some(ext_header_end) = offset.checked_add(4).filter(|&end| end <= extensions_end)
         {
-            let ext_type = Self::read_u16_at(server_hello, offset, "ServerHello extension type")?;
+            let ext_type =
+                result_byte_parse::read_u16_at(server_hello, offset, "ServerHello extension type")?;
             let ext_len_offset =
                 offset
                     .checked_add(2)
                     .ok_or_else(|| crate::TlsError::ParseError {
                         message: "ServerHello extension length offset overflow".to_string(),
                     })?;
-            let ext_len =
-                Self::read_u16_at(server_hello, ext_len_offset, "ServerHello extension length")?
-                    as usize;
+            let ext_len = result_byte_parse::read_u16_at(
+                server_hello,
+                ext_len_offset,
+                "ServerHello extension length",
+            )? as usize;
 
             if ext_type == extension_type {
                 return Ok(Some(true));
