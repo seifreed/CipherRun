@@ -314,6 +314,10 @@ mod tests {
         assert_eq!(cmd.name(), expected_name);
     }
 
+    fn assert_routing_rejected(args: Args) {
+        assert!(CommandRouter::validate_routing(&args).is_err());
+    }
+
     #[test]
     fn test_route_pqc_subcommand() {
         let args = Args {
@@ -374,12 +378,11 @@ mod tests {
 
     #[test]
     fn test_validate_rejects_multiple_analytics_operations() {
-        let args = Args {
+        assert_routing_rejected(Args {
             compare: Some("1:2".to_string()),
             trends: Some("example.com:443:30".to_string()),
             ..Default::default()
-        };
-        assert!(CommandRouter::validate_routing(&args).is_err());
+        });
     }
 
     #[test]
@@ -432,42 +435,38 @@ mod tests {
 
     #[test]
     fn test_validate_target_and_cidr_conflict() {
-        let args = Args {
+        assert_routing_rejected(Args {
             target: Some("example.com:443".to_string()),
             cidr: Some("192.0.2.0/24".to_string()),
             ..Default::default()
-        };
-        assert!(CommandRouter::validate_routing(&args).is_err());
+        });
     }
 
     #[test]
     fn test_validate_asn_and_cidr_conflict() {
-        let args = Args {
+        assert_routing_rejected(Args {
             asn: Some("AS13335".to_string()),
             cidr: Some("192.0.2.0/24".to_string()),
             ..Default::default()
-        };
-        assert!(CommandRouter::validate_routing(&args).is_err());
+        });
     }
 
     #[test]
     fn test_validate_file_and_asn_conflict() {
-        let args = Args {
+        assert_routing_rejected(Args {
             input_file: Some(std::path::PathBuf::from("targets.txt")),
             asn: Some("AS13335".to_string()),
             ..Default::default()
-        };
-        assert!(CommandRouter::validate_routing(&args).is_err());
+        });
     }
 
     #[test]
     fn test_validate_mx_and_target_conflict() {
-        let args = Args {
+        assert_routing_rejected(Args {
             mx_domain: Some("example.com".to_string()),
             target: Some("example.com:443".to_string()),
             ..Default::default()
-        };
-        assert!(CommandRouter::validate_routing(&args).is_err());
+        });
     }
 
     #[test]
@@ -517,7 +516,7 @@ mod tests {
 
     #[test]
     fn test_validate_conflicting_modes() {
-        let args = Args {
+        assert_routing_rejected(Args {
             api_server: ApiServerArgs {
                 enable: true,
                 ..Default::default()
@@ -527,39 +526,32 @@ mod tests {
                 ..Default::default()
             },
             ..Default::default()
-        };
-        let result = CommandRouter::validate_routing(&args);
-        assert!(result.is_err());
+        });
     }
 
     #[test]
     fn test_validate_mx_file_conflict() {
-        let args = Args {
+        assert_routing_rejected(Args {
             mx_domain: Some("example.com".to_string()),
             input_file: Some(std::path::PathBuf::from("targets.txt")),
             ..Default::default()
-        };
-        let result = CommandRouter::validate_routing(&args);
-        assert!(result.is_err());
+        });
     }
 
     #[test]
     fn test_validate_operational_mode_with_target_conflict() {
-        let args = Args {
+        assert_routing_rejected(Args {
             api_server: ApiServerArgs {
                 enable: true,
                 ..Default::default()
             },
             target: Some("example.com:443".to_string()),
             ..Default::default()
-        };
-        let result = CommandRouter::validate_routing(&args);
-        assert!(result.is_err());
+        });
     }
 
     #[test]
     fn test_validate_requires_target_or_mode() {
-        let result = CommandRouter::validate_routing(&Args::default());
-        assert!(result.is_err());
+        assert_routing_rejected(Args::default());
     }
 }
